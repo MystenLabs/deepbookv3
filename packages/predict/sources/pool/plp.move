@@ -48,6 +48,7 @@ const EZeroPoolValue: u64 = 8;
 const EPackageVersionDisabled: u64 = 9;
 const ENoPlpHolders: u64 = 10;
 const ELifecycleCapNotValid: u64 = 11;
+const ELifecycleCapNotFound: u64 = 12;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -500,7 +501,9 @@ public fun revoke_lifecycle_cap(
     _admin_cap: &AdminCap,
     lifecycle_cap_id: ID,
 ) {
-    assert!(vault.allowed_lifecycle_caps.contains(&lifecycle_cap_id), ELifecycleCapNotValid);
+    // Distinct from the gate code so expected_failure tests that revoke first
+    // stay pinned to the create/compact gate under test.
+    assert!(vault.allowed_lifecycle_caps.contains(&lifecycle_cap_id), ELifecycleCapNotFound);
     vault.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
 }
 

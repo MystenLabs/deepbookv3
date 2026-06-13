@@ -237,7 +237,7 @@ public fun update_block_scholes_prices(
     if (market.is_settled()) return;
     if (block_scholes_source_timestamp_ms <= market.block_scholes_price_source_timestamp_ms) return;
 
-    // Malformed payloads abort: these mean a broken writer, not a race.
+    // Malformed payloads that would be applied abort: a broken writer, not a race.
     assert!(block_scholes_spot > 0, EZeroSpot);
     assert!(block_scholes_forward > 0, EZeroForward);
     assert!(block_scholes_source_timestamp_ms <= clock.timestamp_ms(), EFuturePriceSourceUpdate);
@@ -310,7 +310,7 @@ public fun update_svi(
     if (market.status(clock) != STATUS_ACTIVE) return;
     if (source_timestamp_ms <= market.block_scholes_svi_source_timestamp_ms) return;
 
-    // Malformed payloads abort: these mean a broken writer, not a race.
+    // Malformed payloads that would be applied abort: a broken writer, not a race.
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFutureSVISourceUpdate);
     assert_valid_svi(&svi);
 

@@ -172,7 +172,7 @@ pub async fn run_server(
     Ok(())
 }
 
-pub(crate) fn make_router(state: Arc<AppState>) -> Router {
+pub fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![
             Method::GET,
@@ -707,9 +707,10 @@ async fn protocol_config(
     Ok(Json(state.reader.get_protocol_config().await?))
 }
 
-/// `order_state` rows for one manager. `?status` defaults to `open`; each row
-/// carries a `"root"` object with the root order's entry facts when the row is
-/// a replacement.
+/// `order_state` rows for one manager, windowed by `opened_at_ms`
+/// (`?start_time`/`?end_time`, unix seconds). `?status` defaults to `open`;
+/// each row carries a `"root"` object with the root order's entry facts when
+/// the row is a replacement.
 async fn manager_positions(
     Path(predict_manager_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -721,7 +722,13 @@ async fn manager_positions(
         .unwrap_or_else(|| predict_schema::models::order_status::OPEN.to_string());
     let data = state
         .reader
-        .get_manager_positions(predict_manager_id, status, params.limit())
+        .get_manager_positions(
+            predict_manager_id,
+            status,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
         .await?;
     Ok(Json(data))
 }

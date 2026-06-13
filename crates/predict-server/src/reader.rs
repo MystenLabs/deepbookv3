@@ -29,45 +29,68 @@ use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_pg_db::{Db, DbArgs};
 use url::Url;
 
-/// Total intra-checkpoint ordering triple `(checkpoint_timestamp_ms, tx_index,
-/// event_index)`. The timestamp is the page filter/sort key; `tx_index` and
-/// `event_index` break ties within a checkpoint (all events in one checkpoint
-/// share a timestamp).
-type SortKey = (i64, i64, i64);
+/// Windowed-feed sort key `(checkpoint_timestamp_ms, checkpoint, tx_index,
+/// event_index)`. Checkpoint timestamps are only NON-DECREASING — two
+/// different checkpoints can share a `checkpoint_timestamp_ms` — so the
+/// timestamp alone is not a total order, and `tx_index` (a per-checkpoint
+/// position) is meaningless across checkpoints. `(checkpoint, tx_index,
+/// event_index)` is the deterministic tiebreak within a timestamp.
+type SortKey = (i64, i64, i64, i64);
 
-/// Runs a single-table timestamp-window query and projects each row into a
-/// `(SortKey, serde_json::Value)` feed item, injecting a `"kind"` field naming
-/// the event. Rows are filtered to `[start_time_ms, end_time_ms]`, ordered
-/// newest-first, and capped at `limit`. `$model` must be the table's
-/// `Selectable` model; `$table` is its schema module and (stringified) the
-/// `"kind"`.
-macro_rules! feed_page {
+/// Loads one table's timestamp-window page: rows filtered to `[start, end]`
+/// (and to `$filter_col = id` when `$id` is `Some`), ordered newest-first by
+/// `(checkpoint_timestamp_ms, checkpoint, tx_index, event_index)`, capped at
+/// `limit`. The single home of the windowed-feed ordering contract;
+/// `feed_page!` / `feed_page_opt!` only project its rows.
+macro_rules! window_rows {
     ($conn:expr, $table:ident, $model:ty, $filter_col:ident, $id:expr, $start:expr, $end:expr, $limit:expr) => {{
-        let rows: Vec<$model> = schema::$table::table
-            .filter(schema::$table::$filter_col.eq($id))
+        let mut query = schema::$table::table
             .filter(schema::$table::checkpoint_timestamp_ms.between($start, $end))
             .order_by((
                 schema::$table::checkpoint_timestamp_ms.desc(),
+                schema::$table::checkpoint.desc(),
                 schema::$table::tx_index.desc(),
                 schema::$table::event_index.desc(),
             ))
             .limit($limit)
             .select(<$model>::as_select())
-            .load(&mut $conn)
+            .into_boxed();
+        if let Some(id) = $id {
+            query = query.filter(schema::$table::$filter_col.eq(id));
+        }
+        query
+            .load::<$model>(&mut $conn)
             .await
-            .map_err(|e| PredictError::database(e.to_string()))?;
+            .map_err(|e| PredictError::database(e.to_string()))
+    }};
+}
 
+/// Runs a single-table timestamp-window query (`window_rows!`, mandatory id
+/// filter) and projects each row into a `(SortKey, serde_json::Value)` feed
+/// item, injecting a `"kind"` field naming the event. `$model` must be the
+/// table's `Selectable` model; `$table` is its schema module and
+/// (stringified) the `"kind"`.
+macro_rules! feed_page {
+    ($conn:expr, $table:ident, $model:ty, $filter_col:ident, $id:expr, $start:expr, $end:expr, $limit:expr) => {{
+        let rows: Vec<$model> = window_rows!(
+            $conn,
+            $table,
+            $model,
+            $filter_col,
+            Some($id),
+            $start,
+            $end,
+            $limit
+        )?;
         rows.into_iter()
             .map(|row| {
-                let key: SortKey = (row.checkpoint_timestamp_ms, row.tx_index, row.event_index);
-                let mut value = serde_json::to_value(row)
-                    .map_err(|e| PredictError::deserialization(e.to_string()))?;
-                if let Value::Object(map) = &mut value {
-                    map.insert(
-                        "kind".to_string(),
-                        Value::String(stringify!($table).to_string()),
-                    );
-                }
+                let key: SortKey = (
+                    row.checkpoint_timestamp_ms,
+                    row.checkpoint,
+                    row.tx_index,
+                    row.event_index,
+                );
+                let value = project_row(row, stringify!($table))?;
                 Ok((key, value))
             })
             .collect::<Result<Vec<(SortKey, Value)>, PredictError>>()
@@ -102,31 +125,23 @@ fn merge_feed(mut items: Vec<(SortKey, Value)>, limit: i64) -> Vec<Value> {
     items.into_iter().map(|(_, v)| v).collect()
 }
 
-/// Runs a single-table timestamp-window query with an OPTIONAL id filter and
-/// returns a finished page (`Vec<Value>`, each row carrying its `"kind"`). When
-/// `$id` is `Some`, filters `$filter_col.eq(id)`; when `None`, windows the whole
-/// table. Otherwise identical to `feed_page!`: windowed to `[start, end]`,
-/// newest-first, capped at `limit`. Used by the optional-filter list endpoints
-/// (`/managers`, `/markets`).
+/// Runs a single-table timestamp-window query (`window_rows!`) with an
+/// OPTIONAL id filter and returns a finished page (`Vec<Value>`, each row
+/// carrying its `"kind"`). When `$id` is `Some`, filters `$filter_col.eq(id)`;
+/// when `None`, windows the whole table. Used by the optional-filter list
+/// endpoints (`/managers`, `/markets`).
 macro_rules! feed_page_opt {
     ($conn:expr, $table:ident, $model:ty, $filter_col:ident, $id:expr, $start:expr, $end:expr, $limit:expr) => {{
-        let mut query = schema::$table::table
-            .filter(schema::$table::checkpoint_timestamp_ms.between($start, $end))
-            .order_by((
-                schema::$table::checkpoint_timestamp_ms.desc(),
-                schema::$table::tx_index.desc(),
-                schema::$table::event_index.desc(),
-            ))
-            .limit($limit)
-            .select(<$model>::as_select())
-            .into_boxed();
-        if let Some(id) = $id {
-            query = query.filter(schema::$table::$filter_col.eq(id));
-        }
-        let rows: Vec<$model> = query
-            .load(&mut $conn)
-            .await
-            .map_err(|e| PredictError::database(e.to_string()))?;
+        let rows: Vec<$model> = window_rows!(
+            $conn,
+            $table,
+            $model,
+            $filter_col,
+            $id,
+            $start,
+            $end,
+            $limit
+        )?;
         project_rows(rows, stringify!($table))
     }};
 }
@@ -148,46 +163,42 @@ fn project_row<T: serde::Serialize>(row: T, kind: &str) -> Result<Value, Predict
     Ok(value)
 }
 
-/// Latest row of a raw event table for one id: a bounded top-1 index scan
-/// ordered by the `(checkpoint_timestamp_ms, tx_index, event_index)` triple.
-/// This is the Predict "current state" read for everything except the open
-/// order set (which the indexer maintains in `order_state`): the raw table
-/// stays the source of truth and there is no upsert machinery to get wrong.
-macro_rules! latest_row {
-    ($conn:expr, $table:ident, $model:ty, $filter_col:ident, $id:expr) => {{
-        let row: Option<$model> = schema::$table::table
-            .filter(schema::$table::$filter_col.eq($id))
+/// Typed latest row of a raw event table: a bounded top-1 index scan ordered
+/// by `(checkpoint, tx_index, event_index)` — the only total event order
+/// (`checkpoint_timestamp_ms` is unnecessary for top-1 and ties across
+/// checkpoints). With `$filter_col`/`$id`, scopes to one id; without, scans
+/// the whole table (only for the tiny admin-config tables, one row per admin
+/// update). The single home of the top-1 ordering contract.
+macro_rules! latest_row_typed {
+    ($conn:expr, $table:ident, $model:ty) => {
+        latest_row_typed!(@query $conn, $table, $model, schema::$table::table)
+    };
+    ($conn:expr, $table:ident, $model:ty, $filter_col:ident, $id:expr) => {
+        latest_row_typed!(@query $conn, $table, $model,
+            schema::$table::table.filter(schema::$table::$filter_col.eq($id)))
+    };
+    (@query $conn:expr, $table:ident, $model:ty, $query:expr) => {
+        $query
             .order_by((
-                schema::$table::checkpoint_timestamp_ms.desc(),
+                schema::$table::checkpoint.desc(),
                 schema::$table::tx_index.desc(),
                 schema::$table::event_index.desc(),
             ))
             .select(<$model>::as_select())
-            .first(&mut $conn)
+            .first::<$model>(&mut $conn)
             .await
             .optional()
-            .map_err(|e| PredictError::database(e.to_string()))?;
-        row.map(|r| project_row(r, stringify!($table)))
-            .transpose()?
-    }};
+            .map_err(|e| PredictError::database(e.to_string()))?
+    };
 }
 
-/// Latest row of a raw event table with no id filter. Only for the tiny
-/// admin-config tables (one row per admin update), where a whole-table top-1
-/// is trivially bounded.
-macro_rules! latest_row_global {
-    ($conn:expr, $table:ident, $model:ty) => {{
-        let row: Option<$model> = schema::$table::table
-            .order_by((
-                schema::$table::checkpoint_timestamp_ms.desc(),
-                schema::$table::tx_index.desc(),
-                schema::$table::event_index.desc(),
-            ))
-            .select(<$model>::as_select())
-            .first(&mut $conn)
-            .await
-            .optional()
-            .map_err(|e| PredictError::database(e.to_string()))?;
+/// Projected latest row (`latest_row_typed!` + `project_row`). This is the
+/// Predict "current state" read for everything except the open order set
+/// (which the indexer maintains in `order_state`): the raw table stays the
+/// source of truth and there is no upsert machinery to get wrong.
+macro_rules! latest_row {
+    ($conn:expr, $table:ident, $model:ty $(, $filter_col:ident, $id:expr)?) => {{
+        let row: Option<$model> = latest_row_typed!($conn, $table, $model $(, $filter_col, $id)?);
         row.map(|r| project_row(r, stringify!($table)))
             .transpose()?
     }};
@@ -209,24 +220,6 @@ macro_rules! bucket_feed {
             .map_err(|e| PredictError::database(e.to_string()))?;
         project_rows(rows, stringify!($table))
     }};
-}
-
-/// Ordering triple of a projected event row, for picking the newest among
-/// latest-rows from different tables.
-fn value_triple(value: &Value) -> (i64, i64, i64) {
-    (
-        value["checkpoint"].as_i64().unwrap_or(0),
-        value["tx_index"].as_i64().unwrap_or(0),
-        value["event_index"].as_i64().unwrap_or(0),
-    )
-}
-
-/// Newest (by event triple) among already-projected latest rows.
-fn newest<'a>(candidates: &'a [&'a Option<Value>]) -> Option<&'a Value> {
-    candidates
-        .iter()
-        .filter_map(|v| v.as_ref())
-        .max_by_key(|v| value_triple(v))
 }
 
 #[derive(Clone)]
@@ -280,7 +273,8 @@ impl Reader {
 
     /// Interleaved order feed for a single market: merges all 5 order tables
     /// filtered by `expiry_market_id` within `[start_time_ms, end_time_ms]`,
-    /// newest first by `(checkpoint_timestamp_ms, tx_index, event_index)`.
+    /// newest first by `(checkpoint_timestamp_ms, checkpoint, tx_index,
+    /// event_index)`.
     pub async fn get_market_orders(
         &self,
         expiry_market_id: String,
@@ -348,7 +342,7 @@ impl Reader {
     /// Interleaved order feed for a single manager: merges the 4 order tables
     /// that carry `predict_manager_id` (excludes `order_liquidated`, which has
     /// no manager column) within `[start_time_ms, end_time_ms]`, newest first
-    /// by `(checkpoint_timestamp_ms, tx_index, event_index)`.
+    /// by `(checkpoint_timestamp_ms, checkpoint, tx_index, event_index)`.
     pub async fn get_manager_orders(
         &self,
         predict_manager_id: String,
@@ -669,7 +663,8 @@ impl Reader {
 
     /// Interleaved DEEP staking feed for one manager: merges `deep_staked` +
     /// `deep_unstaked` filtered by `predict_manager_id` within the window,
-    /// newest-first by `(checkpoint_timestamp_ms, tx_index, event_index)`.
+    /// newest-first by `(checkpoint_timestamp_ms, checkpoint, tx_index,
+    /// event_index)`.
     pub async fn get_manager_staking(
         &self,
         predict_manager_id: String,
@@ -855,41 +850,42 @@ impl Reader {
     }
 
     /// Composed current state for one vault. The vault events all carry
-    /// `*_after` snapshot fields, so "current" is the newest event (by triple)
-    /// among the tables that carry each field.
+    /// `*_after` snapshot fields, so "current" is the newest event — by the
+    /// typed `(checkpoint, tx_index, event_index)` triple, compared before
+    /// projecting to JSON — among the tables that carry each field.
     pub async fn get_vault_state(&self, pool_vault_id: String) -> Result<Value, PredictError> {
         let mut conn = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        let supply = latest_row!(
+        let supply: Option<SupplyExecuted> = latest_row_typed!(
             conn,
             supply_executed,
             SupplyExecuted,
             pool_vault_id,
             pool_vault_id.clone()
         );
-        let withdraw = latest_row!(
+        let withdraw: Option<WithdrawExecuted> = latest_row_typed!(
             conn,
             withdraw_executed,
             WithdrawExecuted,
             pool_vault_id,
             pool_vault_id.clone()
         );
-        let rebalance = latest_row!(
+        let rebalance: Option<ExpiryCashRebalanced> = latest_row_typed!(
             conn,
             expiry_cash_rebalanced,
             ExpiryCashRebalanced,
             pool_vault_id,
             pool_vault_id.clone()
         );
-        let receipt = latest_row!(
+        let receipt: Option<ExpiryCashReceived> = latest_row_typed!(
             conn,
             expiry_cash_received,
             ExpiryCashReceived,
             pool_vault_id,
             pool_vault_id.clone()
         );
-        let profit = latest_row!(
+        let profit: Option<ExpiryProfitMaterialized> = latest_row_typed!(
             conn,
             expiry_profit_materialized,
             ExpiryProfitMaterialized,
@@ -897,28 +893,56 @@ impl Reader {
             pool_vault_id.clone()
         );
 
+        // `$field` of `$row`, keyed by the row's typed event triple.
+        macro_rules! keyed {
+            ($row:expr, $field:ident) => {
+                $row.as_ref()
+                    .map(|r| ((r.checkpoint, r.tx_index, r.event_index), r.$field.clone()))
+            };
+        }
+        // Newest (by typed event triple) among `keyed!` candidates.
+        fn newest<T>(
+            candidates: impl IntoIterator<Item = Option<((i64, i64, i64), T)>>,
+        ) -> Option<T> {
+            candidates
+                .into_iter()
+                .flatten()
+                .max_by_key(|(triple, _)| *triple)
+                .map(|(_, v)| v)
+        }
+
         // idle_balance_after is carried by all five tables; total_supply_after
         // only by supply/withdraw; reserve/profit-basis only by profit.
-        let balance_candidates = [&supply, &withdraw, &rebalance, &receipt, &profit];
-        let idle = newest(&balance_candidates).map(|v| v["idle_balance_after"].clone());
-        let supply_candidates = [&supply, &withdraw];
-        let supply_state = newest(&supply_candidates);
+        let idle = newest([
+            keyed!(supply, idle_balance_after),
+            keyed!(withdraw, idle_balance_after),
+            keyed!(rebalance, idle_balance_after),
+            keyed!(receipt, idle_balance_after),
+            keyed!(profit, idle_balance_after),
+        ]);
+        let total_supply = newest([
+            keyed!(supply, total_supply_after),
+            keyed!(withdraw, total_supply_after),
+        ]);
         let current = json!({
             "idle_balance_after": idle,
-            "total_supply_after": supply_state.map(|v| v["total_supply_after"].clone()),
+            "total_supply_after": total_supply,
             "protocol_reserve_balance_after":
-                profit.as_ref().map(|v| v["protocol_reserve_balance_after"].clone()),
-            "profit_basis_after": profit.as_ref().map(|v| v["profit_basis_after"].clone()),
+                profit.as_ref().map(|r| r.protocol_reserve_balance_after.clone()),
+            "profit_basis_after": profit.as_ref().map(|r| r.profit_basis_after.clone()),
         });
 
         Ok(json!({
             "pool_vault_id": pool_vault_id,
             "current": current,
-            "latest_supply": supply,
-            "latest_withdrawal": withdraw,
-            "latest_cash_rebalance": rebalance,
-            "latest_cash_receipt": receipt,
-            "latest_profit": profit,
+            "latest_supply": supply.map(|r| project_row(r, "supply_executed")).transpose()?,
+            "latest_withdrawal": withdraw.map(|r| project_row(r, "withdraw_executed")).transpose()?,
+            "latest_cash_rebalance":
+                rebalance.map(|r| project_row(r, "expiry_cash_rebalanced")).transpose()?,
+            "latest_cash_receipt":
+                receipt.map(|r| project_row(r, "expiry_cash_received")).transpose()?,
+            "latest_profit":
+                profit.map(|r| project_row(r, "expiry_profit_materialized")).transpose()?,
         }))
     }
 
@@ -929,27 +953,27 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         Ok(json!({
-            "pricing": latest_row_global!(conn, pricing_config_updated, PricingConfigUpdated),
-            "fee": latest_row_global!(conn, fee_config_updated, FeeConfigUpdated),
-            "risk": latest_row_global!(conn, risk_config_updated, RiskConfigUpdated),
-            "expiry_cash_template": latest_row_global!(
+            "pricing": latest_row!(conn, pricing_config_updated, PricingConfigUpdated),
+            "fee": latest_row!(conn, fee_config_updated, FeeConfigUpdated),
+            "risk": latest_row!(conn, risk_config_updated, RiskConfigUpdated),
+            "expiry_cash_template": latest_row!(
                 conn,
                 expiry_cash_template_config_updated,
                 ExpiryCashTemplateConfigUpdated
             ),
-            "strike_exposure_template": latest_row_global!(
+            "strike_exposure_template": latest_row!(
                 conn,
                 strike_exposure_template_config_updated,
                 StrikeExposureTemplateConfigUpdated
             ),
-            "market_oracle_template": latest_row_global!(
+            "market_oracle_template": latest_row!(
                 conn,
                 market_oracle_template_config_updated,
                 MarketOracleTemplateConfigUpdated
             ),
-            "ewma": latest_row_global!(conn, ewma_config_updated, EwmaConfigUpdated),
-            "stake": latest_row_global!(conn, stake_config_updated, StakeConfigUpdated),
-            "trading_paused": latest_row_global!(
+            "ewma": latest_row!(conn, ewma_config_updated, EwmaConfigUpdated),
+            "stake": latest_row!(conn, stake_config_updated, StakeConfigUpdated),
+            "trading_paused": latest_row!(
                 conn,
                 trading_paused_updated,
                 TradingPausedUpdated
@@ -988,14 +1012,19 @@ impl Reader {
         }))
     }
 
-    /// `order_state` rows for one manager filtered by status, newest-opened
-    /// first. Each row carries a `"root"` object with the root order's entry
-    /// facts when the row is a replacement (entry facts live on the root row;
-    /// see the order_state pipeline), `null` when the row is its own root.
+    /// `order_state` rows for one manager filtered by status, windowed by
+    /// `opened_at_ms` within `[start_time_ms, end_time_ms]`, newest-opened
+    /// first with the expiry-local mint `sequence` as the deterministic
+    /// tiebreak (`opened_at_ms` is checkpoint-quantized, so ties are common).
+    /// Each row carries a `"root"` object with the root order's entry facts
+    /// when the row is a replacement (entry facts live on the root row; see
+    /// the order_state pipeline), `null` when the row is its own root.
     pub async fn get_manager_positions(
         &self,
         predict_manager_id: String,
         status: String,
+        start_time_ms: i64,
+        end_time_ms: i64,
         limit: i64,
     ) -> Result<Vec<Value>, PredictError> {
         let mut conn = self.db.connect().await?;
@@ -1004,7 +1033,11 @@ impl Reader {
         let rows: Vec<OrderState> = schema::order_state::table
             .filter(schema::order_state::predict_manager_id.eq(predict_manager_id))
             .filter(schema::order_state::status.eq(status))
-            .order_by(schema::order_state::opened_at_ms.desc())
+            .filter(schema::order_state::opened_at_ms.between(start_time_ms, end_time_ms))
+            .order_by((
+                schema::order_state::opened_at_ms.desc(),
+                schema::order_state::sequence.desc(),
+            ))
             .limit(limit)
             .select(OrderState::as_select())
             .load(&mut conn)

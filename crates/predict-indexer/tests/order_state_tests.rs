@@ -399,8 +399,212 @@ fn fold_replay_of_identical_batch_is_idempotent() {
     assert_eq!(sort(once), sort(twice));
 }
 
-#[test]
-#[ignore = "TODO(testnet-deploy): needs Postgres — feed the same checkpoint twice through \
-            OrderStateHandler::commit against TempDb and assert the order_state row is \
-            unchanged and never regresses (status LWW, write-once entry facts)"]
-fn order_state_upsert_reprocess_idempotency() {}
+// === commit() against Postgres (TempDb) ===
+//
+// The fold/merge tests above pin the Rust half of the pipeline; these execute
+// the actual multi-row UPSERT SQL (22 positional binds per row, COALESCE
+// write-once columns, `>=`-guarded LWW CASE columns) against a real Postgres
+// so a positional-bind swap or an inverted comparison cannot pass CI.
+//
+// Expected rows are hand-built literals derived from the documented upsert
+// semantics (module doc of `order_state_handler`), never read back through
+// the code under test.
+
+use predict_indexer::handlers::order_state_handler::OrderStateHandler;
+use predict_schema::models::OrderState;
+use predict_schema::schema::order_state;
+use sui_indexer_alt_framework::postgres::handler::Handler;
+use sui_pg_db::temp::TempDb;
+use sui_pg_db::{Db, DbArgs};
+
+/// Fresh migrated database. The `TempDb` must stay in scope for the whole
+/// test, otherwise the postgres process is torn down.
+async fn temp_store() -> (TempDb, Db) {
+    let temp_db = TempDb::new().expect("postgres binaries (initdb/postgres) must be on PATH");
+    let db = Db::for_write(temp_db.database().url().clone(), DbArgs::default())
+        .await
+        .unwrap();
+    db.run_migrations(Some(&predict_schema::MIGRATIONS))
+        .await
+        .unwrap();
+    (temp_db, db)
+}
+
+/// A fully-populated `order_state` row with every optional column NULL and
+/// fixed decoded-terms filler; tests override the fields they exercise.
+fn db_row(
+    market: &str,
+    order_id: &str,
+    st: &str,
+    (checkpoint, tx_index, event_index): (i64, i64, i64),
+    updated_at_ms: i64,
+) -> OrderState {
+    OrderState {
+        expiry_market_id: market.to_string(),
+        order_id: order_id.to_string(),
+        predict_manager_id: None,
+        position_root_id: None,
+        owner: None,
+        status: st.to_string(),
+        replacement_order_id: None,
+        opened_at_ms: NONLEV_OPENED as i64,
+        lower_boundary_index: NONLEV_LOWER as i64,
+        higher_boundary_index: NONLEV_HIGHER as i64,
+        floor_shares: BigDecimal::from(NONLEV_FLOOR),
+        quantity: BigDecimal::from(NONLEV_QUANTITY),
+        sequence: NONLEV_SEQ as i64,
+        lower_strike: None,
+        higher_strike: None,
+        leverage: None,
+        entry_probability: None,
+        net_premium: None,
+        updated_at_ms,
+        checkpoint,
+        tx_index,
+        event_index,
+    }
+}
+
+/// Every `order_state` row, ordered by `(expiry_market_id, order_id)` so
+/// assertions are deterministic.
+async fn load_all(db: &Db) -> Vec<OrderState> {
+    use diesel::{ExpressionMethods, QueryDsl, SelectableHelper};
+    use diesel_async::RunQueryDsl;
+
+    let mut conn = db.connect().await.unwrap();
+    order_state::table
+        .order_by((
+            order_state::expiry_market_id.asc(),
+            order_state::order_id.asc(),
+        ))
+        .select(OrderState::as_select())
+        .load(&mut conn)
+        .await
+        .unwrap()
+}
+
+async fn commit(db: &Db, values: &[OrderState]) -> usize {
+    let mut conn = db.connect().await.unwrap();
+    OrderStateHandler::commit(values, &mut conn).await.unwrap()
+}
+
+#[tokio::test]
+async fn upsert_reprocess_of_identical_batch_is_unchanged() {
+    let (_temp_db, db) = temp_store().await;
+
+    // One batch holding a mint (entry facts) and a later close for order-1
+    // plus an unrelated open order-2 — the shape an at-least-once redelivery
+    // replays verbatim.
+    let mut mint = db_row(MARKET_ID, "order-1", status::OPEN, (10, 2, 3), 1_000_010);
+    mint.owner = Some(OWNER.to_string());
+    mint.net_premium = Some(BigDecimal::from(54_000_000u64));
+    let close = db_row(MARKET_ID, "order-1", status::CLOSED, (12, 0, 1), 1_000_012);
+    let other = db_row(MARKET_ID, "order-2", status::OPEN, (11, 1, 0), 1_000_011);
+    let batch = vec![mint, close, other];
+
+    // order-1 keeps the mint's write-once facts and takes the close's
+    // status/triple; order-2 lands as-is.
+    let mut expected_order1 = db_row(MARKET_ID, "order-1", status::CLOSED, (12, 0, 1), 1_000_012);
+    expected_order1.owner = Some(OWNER.to_string());
+    expected_order1.net_premium = Some(BigDecimal::from(54_000_000u64));
+    let expected = vec![
+        expected_order1,
+        db_row(MARKET_ID, "order-2", status::OPEN, (11, 1, 0), 1_000_011),
+    ];
+
+    commit(&db, &batch).await;
+    assert_eq!(load_all(&db).await, expected);
+
+    // At-least-once redelivery: the identical batch again must change nothing.
+    commit(&db, &batch).await;
+    assert_eq!(load_all(&db).await, expected);
+}
+
+#[tokio::test]
+async fn upsert_keeps_newest_triple_and_backfills_write_once_columns() {
+    let (_temp_db, db) = temp_store().await;
+
+    // Current state written at triple (20, 1, 1).
+    let mut current = db_row(MARKET_ID, "order-1", status::OPEN, (20, 1, 1), 2_000_020);
+    current.owner = Some(OWNER.to_string());
+    commit(&db, &[current]).await;
+
+    // A stale event with an OLDER triple (10, 0, 0) must not regress the
+    // mutable columns (status/updated_at_ms/triple), but its write-once
+    // payload (replacement_order_id, NULL so far) is still kept via COALESCE.
+    let mut stale = db_row(MARKET_ID, "order-1", status::CLOSED, (10, 0, 0), 1_000_010);
+    stale.replacement_order_id = Some("order-9".to_string());
+    commit(&db, &[stale]).await;
+
+    let mut expected = db_row(MARKET_ID, "order-1", status::OPEN, (20, 1, 1), 2_000_020);
+    expected.owner = Some(OWNER.to_string());
+    expected.replacement_order_id = Some("order-9".to_string());
+    assert_eq!(load_all(&db).await, vec![expected.clone()]);
+
+    // A NEWER triple (30, 0, 0) wins the mutable columns; existing write-once
+    // columns are kept (COALESCE prefers the stored non-null value).
+    let newer = db_row(
+        MARKET_ID,
+        "order-1",
+        status::LIQUIDATED,
+        (30, 0, 0),
+        3_000_030,
+    );
+    commit(&db, &[newer]).await;
+
+    expected.status = status::LIQUIDATED.to_string();
+    expected.updated_at_ms = 3_000_030;
+    (expected.checkpoint, expected.tx_index, expected.event_index) = (30, 0, 0);
+    assert_eq!(load_all(&db).await, vec![expected]);
+}
+
+#[tokio::test]
+async fn upsert_multi_row_batch_lands_every_conflict_key() {
+    const OTHER_MARKET_ID: &str =
+        "0x4444444444444444444444444444444444444444444444444444444444444444";
+    let (_temp_db, db) = temp_store().await;
+
+    // Three distinct conflict keys in ONE statement (one multi-row VALUES
+    // list), including the same order id in two markets — the conflict key is
+    // (expiry_market_id, order_id), so these are distinct rows.
+    let batch = vec![
+        db_row(MARKET_ID, "order-a", status::OPEN, (10, 0, 0), 1_000_010),
+        db_row(
+            MARKET_ID,
+            "order-b",
+            status::LIQUIDATED,
+            (10, 0, 1),
+            1_000_010,
+        ),
+        db_row(
+            OTHER_MARKET_ID,
+            "order-a",
+            status::OPEN,
+            (10, 0, 2),
+            1_000_010,
+        ),
+    ];
+
+    let affected = commit(&db, &batch).await;
+    assert_eq!(affected, 3);
+
+    // load_all orders by (expiry_market_id, order_id): 0x1111... < 0x4444...
+    let expected = vec![
+        db_row(MARKET_ID, "order-a", status::OPEN, (10, 0, 0), 1_000_010),
+        db_row(
+            MARKET_ID,
+            "order-b",
+            status::LIQUIDATED,
+            (10, 0, 1),
+            1_000_010,
+        ),
+        db_row(
+            OTHER_MARKET_ID,
+            "order-a",
+            status::OPEN,
+            (10, 0, 2),
+            1_000_010,
+        ),
+    ];
+    assert_eq!(load_all(&db).await, expected);
+}

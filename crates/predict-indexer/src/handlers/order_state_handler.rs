@@ -194,20 +194,24 @@ pub fn fold_rows(values: &[Row]) -> Vec<Row> {
         .collect()
 }
 
-/// One upsert per folded row. Write-once columns COALESCE-keep the existing
-/// value; mutable columns apply only when the incoming triple is >= the
-/// stored one (idempotent under at-least-once reprocessing, order-independent
-/// across out-of-order batch commits).
-const UPSERT_SQL: &str = r#"
+/// One multi-row upsert per chunk of folded rows. Write-once columns
+/// COALESCE-keep the existing value; mutable columns apply only when the
+/// incoming triple is >= the stored one (idempotent under at-least-once
+/// reprocessing, order-independent across out-of-order batch commits).
+///
+/// The statement is assembled as `UPSERT_PREFIX` + a generated
+/// `($1,...,$22),($23,...,$44),...` VALUES list + `UPSERT_SUFFIX`, so the
+/// column list and ON CONFLICT clause are each written exactly once.
+const UPSERT_PREFIX: &str = r#"
 INSERT INTO order_state (
     expiry_market_id, order_id, predict_manager_id, position_root_id, owner,
     status, replacement_order_id,
     opened_at_ms, lower_boundary_index, higher_boundary_index, floor_shares, quantity, sequence,
     lower_strike, higher_strike, leverage, entry_probability, net_premium,
     updated_at_ms, checkpoint, tx_index, event_index
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
-)
+) VALUES "#;
+
+const UPSERT_SUFFIX: &str = r#"
 ON CONFLICT (expiry_market_id, order_id) DO UPDATE SET
     predict_manager_id   = COALESCE(order_state.predict_manager_id, EXCLUDED.predict_manager_id),
     position_root_id     = COALESCE(order_state.position_root_id, EXCLUDED.position_root_id),
@@ -234,6 +238,33 @@ ON CONFLICT (expiry_market_id, order_id) DO UPDATE SET
                             >= (order_state.checkpoint, order_state.tx_index, order_state.event_index)
                   THEN EXCLUDED.event_index ELSE order_state.event_index END
 "#;
+
+/// Bind parameters per row tuple in the VALUES list.
+const BINDS_PER_ROW: usize = 22;
+
+/// Rows per upsert statement: 500 * 22 = 11,000 binds, far below Postgres's
+/// 65,535 bind-parameter limit.
+const UPSERT_CHUNK_ROWS: usize = 500;
+
+/// `($1,$2,...,$22),($23,...,$44),...` for `n_rows` row tuples.
+fn values_placeholders(n_rows: usize) -> String {
+    let mut sql = String::new();
+    for row in 0..n_rows {
+        if row > 0 {
+            sql.push(',');
+        }
+        sql.push('(');
+        for col in 0..BINDS_PER_ROW {
+            if col > 0 {
+                sql.push(',');
+            }
+            sql.push('$');
+            sql.push_str(&(row * BINDS_PER_ROW + col + 1).to_string());
+        }
+        sql.push(')');
+    }
+    sql
+}
 
 pub struct OrderStateHandler {
     env: PredictEnv,
@@ -298,33 +329,46 @@ impl sui_indexer_alt_framework::postgres::handler::Handler for OrderStateHandler
     ) -> anyhow::Result<usize> {
         use diesel_async::RunQueryDsl;
 
+        let rows = fold_rows(values);
         let mut affected = 0;
-        for row in fold_rows(values) {
-            affected += diesel::sql_query(UPSERT_SQL)
-                .bind::<Text, _>(&row.expiry_market_id)
-                .bind::<Text, _>(&row.order_id)
-                .bind::<Nullable<Text>, _>(&row.predict_manager_id)
-                .bind::<Nullable<Text>, _>(&row.position_root_id)
-                .bind::<Nullable<Text>, _>(&row.owner)
-                .bind::<Text, _>(&row.status)
-                .bind::<Nullable<Text>, _>(&row.replacement_order_id)
-                .bind::<BigInt, _>(row.opened_at_ms)
-                .bind::<BigInt, _>(row.lower_boundary_index)
-                .bind::<BigInt, _>(row.higher_boundary_index)
-                .bind::<Numeric, _>(&row.floor_shares)
-                .bind::<Numeric, _>(&row.quantity)
-                .bind::<BigInt, _>(row.sequence)
-                .bind::<Nullable<Numeric>, _>(&row.lower_strike)
-                .bind::<Nullable<Numeric>, _>(&row.higher_strike)
-                .bind::<Nullable<BigInt>, _>(row.leverage)
-                .bind::<Nullable<BigInt>, _>(row.entry_probability)
-                .bind::<Nullable<Numeric>, _>(&row.net_premium)
-                .bind::<BigInt, _>(row.updated_at_ms)
-                .bind::<BigInt, _>(row.checkpoint)
-                .bind::<BigInt, _>(row.tx_index)
-                .bind::<BigInt, _>(row.event_index)
-                .execute(conn)
-                .await?;
+        // Precondition for the multi-row form: `fold_rows` returns at most one
+        // row per `(expiry_market_id, order_id)` conflict key — a single
+        // INSERT ... ON CONFLICT DO UPDATE statement cannot affect the same
+        // row twice.
+        for chunk in rows.chunks(UPSERT_CHUNK_ROWS) {
+            let sql = format!(
+                "{}{}{}",
+                UPSERT_PREFIX,
+                values_placeholders(chunk.len()),
+                UPSERT_SUFFIX
+            );
+            let mut query = diesel::sql_query(sql).into_boxed();
+            for row in chunk {
+                query = query
+                    .bind::<Text, _>(&row.expiry_market_id)
+                    .bind::<Text, _>(&row.order_id)
+                    .bind::<Nullable<Text>, _>(&row.predict_manager_id)
+                    .bind::<Nullable<Text>, _>(&row.position_root_id)
+                    .bind::<Nullable<Text>, _>(&row.owner)
+                    .bind::<Text, _>(&row.status)
+                    .bind::<Nullable<Text>, _>(&row.replacement_order_id)
+                    .bind::<BigInt, _>(row.opened_at_ms)
+                    .bind::<BigInt, _>(row.lower_boundary_index)
+                    .bind::<BigInt, _>(row.higher_boundary_index)
+                    .bind::<Numeric, _>(&row.floor_shares)
+                    .bind::<Numeric, _>(&row.quantity)
+                    .bind::<BigInt, _>(row.sequence)
+                    .bind::<Nullable<Numeric>, _>(&row.lower_strike)
+                    .bind::<Nullable<Numeric>, _>(&row.higher_strike)
+                    .bind::<Nullable<BigInt>, _>(row.leverage)
+                    .bind::<Nullable<BigInt>, _>(row.entry_probability)
+                    .bind::<Nullable<Numeric>, _>(&row.net_premium)
+                    .bind::<BigInt, _>(row.updated_at_ms)
+                    .bind::<BigInt, _>(row.checkpoint)
+                    .bind::<BigInt, _>(row.tx_index)
+                    .bind::<BigInt, _>(row.event_index);
+            }
+            affected += query.execute(conn).await?;
         }
         Ok(affected)
     }

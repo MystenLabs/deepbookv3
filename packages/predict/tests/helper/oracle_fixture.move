@@ -13,9 +13,10 @@
 ///
 /// The fixture exposes the `MarketOracleWriterCap` so error-path tests can call the
 /// guarded oracle setters (`update_block_scholes_prices`, `update_svi`) directly
-/// with adversarial inputs to trigger `EZeroSpot`/`EZeroForward`/stale/future/
-/// deviation aborts. `ProtocolConfig`/`Registry` are taken per-transaction (never
-/// held), mirroring `flow_test_helpers`.
+/// with adversarial inputs to trigger the `EZeroSpot`/`EZeroForward`/
+/// future-timestamp/SVI-bounds aborts and the settled/non-active/non-advancing-
+/// source no-op skips. `ProtocolConfig`/`Registry` are taken per-transaction
+/// (never held), mirroring `flow_test_helpers`.
 #[test_only]
 module deepbook_predict::oracle_fixture;
 

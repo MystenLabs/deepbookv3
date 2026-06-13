@@ -769,13 +769,29 @@ CREATE TABLE IF NOT EXISTS order_state (
     event_index              BIGINT    NOT NULL,
     PRIMARY KEY (expiry_market_id, order_id)
 );
-CREATE INDEX IF NOT EXISTS idx_order_state_manager_status ON order_state(predict_manager_id, status);
+-- Covers the /managers/:id/positions sort (opened_at_ms DESC, sequence DESC)
+-- so the windowed page is a backward index range scan, not a fetch-and-sort.
+CREATE INDEX IF NOT EXISTS idx_order_state_manager_status_opened ON order_state(predict_manager_id, status, opened_at_ms, sequence);
 CREATE INDEX IF NOT EXISTS idx_order_state_market_status ON order_state(expiry_market_id, status);
 CREATE INDEX IF NOT EXISTS idx_order_state_position_root ON order_state(expiry_market_id, position_root_id);
 
--- Hourly per-market trading activity. 30-day trailing window keeps the
--- CONCURRENTLY refresh cost constant; history beyond the window is ClickHouse's
--- job. now() is evaluated at refresh time.
+-- BRIN timestamp indexes on every raw table feeding a windowed materialized
+-- view below. The MVs filter on bare checkpoint_timestamp_ms (no leading id),
+-- which the id-leading btree indexes cannot serve; the tables are append-only
+-- and timestamp-correlated, so a tiny BRIN turns each refresh's source scan
+-- into a window-bounded range scan instead of a full seq scan.
+CREATE INDEX IF NOT EXISTS idx_order_minted_ts_brin ON order_minted USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_live_order_redeemed_ts_brin ON live_order_redeemed USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_settled_order_redeemed_ts_brin ON settled_order_redeemed USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_order_liquidated_ts_brin ON order_liquidated USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_executed_ts_brin ON supply_executed USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_withdraw_executed_ts_brin ON withdraw_executed USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_block_scholes_prices_updated_ts_brin ON block_scholes_prices_updated USING brin (checkpoint_timestamp_ms);
+
+-- Hourly per-market trading activity. The 30-day trailing window plus the
+-- BRIN timestamp indexes above keep the CONCURRENTLY refresh cost bounded by
+-- rows-in-window rather than total history; history beyond the window is
+-- ClickHouse's job. now() is evaluated at refresh time.
 CREATE MATERIALIZED VIEW IF NOT EXISTS market_activity_1h AS
 SELECT
     expiry_market_id,

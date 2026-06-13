@@ -70,7 +70,7 @@ fun compact_with_revoked_lifecycle_cap_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = plp::ELifecycleCapNotValid)]
+#[test, expected_failure(abort_code = plp::ELifecycleCapNotFound)]
 fun revoke_unknown_lifecycle_cap_aborts() {
     let (_scenario, mut vault, admin_cap) = begin_vault_test();
     // An id that was never minted into the allowlist.
