@@ -3,7 +3,7 @@
 
 use crate::error::PredictError;
 use crate::metrics::RpcMetrics;
-use diesel::dsl::{count_star, sum};
+use diesel::dsl::count_star;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use predict_schema::models::order_status;
 use predict_schema::models::{
@@ -1127,8 +1127,8 @@ impl Reader {
             .filter(schema::order_state::status.eq(order_status::OPEN))
             .select((
                 count_star(),
-                sum(schema::order_state::quantity),
-                sum(schema::order_state::floor_shares),
+                diesel::dsl::sum(schema::order_state::quantity),
+                diesel::dsl::sum(schema::order_state::floor_shares),
             ))
             .first(&mut conn)
             .await
