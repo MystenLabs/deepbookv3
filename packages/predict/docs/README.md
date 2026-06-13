@@ -49,6 +49,9 @@ How the protocol is built:
 - **[Tick range encoding](./design/tick-range-encoding.md)** — proposed packed
   absolute-tick range representation for public APIs, order IDs, and exposure
   indexes.
+- **[Versioning and shared-object loaders](./design/versioning-and-loaders.md)**
+  — proposed central version authority and checked loader pattern for Predict
+  shared objects.
 - **[Invariants](./design/invariants.md)** — a precise, scannable reference of
   the conditions the protocol always maintains (solvency, floor, NAV,
   settlement, liquidation, rounding).
