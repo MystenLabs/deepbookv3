@@ -45,7 +45,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Floor and leverage
 
-- Predict sells one option-like contract with a time-varying floor; leverage
+- Predict sells one binary (digital) contract with a time-varying floor; leverage
   changes the deterministic floor *schedule*, not a separate debt overlay.
 - Live value = range-probability value − deterministic floor, floored at 0. A 1×
   order has zero floor.
@@ -58,7 +58,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Mint creation invariant:** `floor_shares × terminal_floor_index < quantity ×
   liquidation_ltv` — the terminal floor stays strictly below the liquidation
   point. Fees are transaction costs, not floor value.
-- `floor_shares = floor_seed_amount / open_floor_index` is the durable per-order
+- `floor_shares = financed_amount / open_floor_index` is the durable per-order
   floor accumulator.
 
 ## NAV and valuation
@@ -102,8 +102,8 @@ and contributors. For *how* each mechanism works, follow the links into
   max_ask_price]`.
 - Leverage ∈ {1×, 1.5×, 2×, 2.5×, 3×}, with price-tiered caps (below one threshold
   only 1× is allowed; below a second, ≤2×).
-- `user_contribution = entry_probability × quantity / leverage ≥
-  min_order_principal`; the pool seeds the remainder (`floor_seed_amount`).
+- `net_premium = entry_probability × quantity / leverage ≥
+  min_net_premium`; the pool seeds the remainder (`financed_amount`).
 
 ## Order encoding
 

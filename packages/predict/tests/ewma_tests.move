@@ -15,7 +15,7 @@ use std::unit_test::{assert_eq, destroy};
 use sui::{clock::{Self, Clock}, test_scenario::{begin, end, Scenario}};
 
 const QUANTITY: u64 = 1_000_000_000; // 1.0 contract unit in 1e9 scaling
-// default additional_fee is 0.1%; 0.1% of 1.0 = 0.001 = 1_000_000 base units.
+// default penalty_rate is 0.1%; 0.1% of 1.0 = 0.001 = 1_000_000 base units.
 const EXPECTED_PENALTY: u64 = 1_000_000;
 
 fun advance_with_gas(test: &mut Scenario, gas_price: u64, timestamp_advance: u64) {
@@ -29,7 +29,7 @@ fun config_with(threshold: u64, enabled: bool): EwmaConfig {
     config.set_params(
         config_constants::default_ewma_alpha!(),
         threshold,
-        config_constants::default_ewma_additional_fee!(),
+        config_constants::default_ewma_penalty_rate!(),
     );
     config.set_enabled(enabled);
     config
@@ -104,7 +104,7 @@ fun penalty_fires_once_z_score_crosses_threshold() {
     config.set_params(
         config_constants::default_ewma_alpha!(),
         config_constants::default_ewma_z_score_threshold!(),
-        config_constants::default_ewma_additional_fee!(),
+        config_constants::default_ewma_penalty_rate!(),
     );
     assert_eq!(state.penalty_fee(&config, QUANTITY, test.ctx()), 0);
 

@@ -6,7 +6,7 @@
 /// An `Order` represents the durable contract terms needed after mint: range
 /// boundary indexes, quantity, normalized floor shares, original open time, and
 /// expiry-local sequence. Mint-only inputs such as entry probability, leverage,
-/// contribution, and fee policy intentionally live outside this module. The
+/// net premium, and fee policy intentionally live outside this module. The
 /// packed ID is the single source of truth at protocol boundaries, while concrete
 /// strike grids and floor-index timing are interpreted by `StrikeExposure`.
 module deepbook_predict::order;

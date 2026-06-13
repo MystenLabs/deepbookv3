@@ -10,7 +10,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Economic model
 
 - **Leverage is a deterministic floor, not a debt overlay.** A position is one
-  option-like contract whose live value is `range-probability value − a
+  binary (digital) contract whose live value is `range-probability value − a
   deterministic, time-varying floor`, floored at 0 (1× = zero floor); the floor is
   limited-recourse to its own order. *Rejected:* a borrow-index / normalized-debt
   overlay (leverage as a separable debt) and utilization-based borrow rates — the
@@ -20,7 +20,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (quadratic ramp) toward a terminal value, independent of spot. *Rejected:*
   double-sided range leverage and spot-dependent rates — double-sided leverage is
   non-monotonic in spot, so there is no exact global liquidation index.
-- **Pure-knockout liquidation.** A leveraged order is removed without paying the
+- **Pure knock-out liquidation.** A leveraged order is removed without paying the
   holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
   persists until the holder redeems and clears it. *Rejected:* residual-paying
   liquidation.

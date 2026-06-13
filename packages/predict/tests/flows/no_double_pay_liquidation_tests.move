@@ -15,16 +15,16 @@ use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_cons
 use std::unit_test::{assert_eq, destroy};
 
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-/// 2x ATM mint of quantity 1e9 on [min_strike, +inf): exposure
+/// 2x ATM mint of quantity 1e9 on [min_strike, +inf): entry_value
 /// = floor(0.5 * 1e9) = 500_000_000 (p = Φ(0) = 0.5 exactly);
-/// contribution = floor(exposure / 2) = 250_000_000.
+/// net_premium = floor(entry_value / 2) = 250_000_000.
 const MINT_CONTRIBUTION: u64 = 250_000_000;
 /// Fee floors at min_fee (fixture base_fee = 1 makes the raw Bernoulli fee
 /// round to 0; the default max-multiplier 1.0 keeps the short-expiry ramp inert).
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// mint_deposit − contribution − fee = 1e9 − 250e6 − 5e6.
+/// mint_deposit − net_premium − fee = 1e9 − 250e6 − 5e6.
 const POST_MINT_BALANCE: u64 = 745_000_000;
-/// floor_seed = exposure − contribution = 250_000_000. Floor index at open
+/// financed_amount = entry_value − net_premium = 250_000_000. Floor index at open
 /// (clock 100_000, expiry 200_000, window 31_536_000_000 ms):
 ///   phase = floor(31_535_900_000 * 1e9 / 31_536_000_000) = 999_996_829;
 ///   phase² = floor(phase * phase / 1e9) = 999_993_658;

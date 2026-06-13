@@ -24,7 +24,7 @@ use token::deep::DEEP;
 /// short-expiry fee ramp inert).
 const MINT_PRINCIPAL: u64 = 500_000_000;
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// mint_deposit − principal − fee.
+/// mint_deposit − net_premium − fee.
 const POST_MINT_BALANCE: u64 = 495_000_000;
 /// Reserved at mint = floor(F * 0.5 default rebate rate); this is also the
 /// full amount resolved at claim (the other half of F was never escrowed and

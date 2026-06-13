@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// One `expected_failure` test per `market_oracle` guard error constant, plus
-/// the `settlement_state` unsettled-read guard, driven through the
-/// production-valid `oracle_fixture` bring-up (`registry::create_expiry_market`
-/// path).
+/// the `settlement_state` unsettled-read guard and no-op coverage for the
+/// batch-race skip paths (settled / non-active / non-advancing source), driven
+/// through the production-valid `oracle_fixture` bring-up
+/// (`registry::create_expiry_market` path).
 #[test_only]
 module deepbook_predict::market_oracle_guard_tests;
 
@@ -12,6 +13,7 @@ use deepbook_predict::{
     admin,
     constants,
     market_oracle::{Self, MarketOracle, SVIParams},
+    market_oracle_writer_cap,
     oracle_fixture::{Self, OracleFixture},
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
@@ -31,7 +33,7 @@ const SECOND_PUSH_SOURCE_TS_MS: u64 = 99_500;
 const FUTURE_SOURCE_TS_MS: u64 = 100_001;
 
 /// Equal to the oracle's initial SVI source timestamp (fields start at 0), so
-/// the strictly-greater staleness check fails.
+/// the non-advancing source check skips the update.
 const INITIAL_SOURCE_TS_MS: u64 = 0;
 
 /// 1.05 x default_live_price (100e9).
@@ -58,11 +60,11 @@ const OTHER_PYTH_FEED_ID: u32 = 2;
 
 const EUnexpectedSuccess: u64 = 999;
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun update_svi_with_unregistered_cap_aborts() {
     let (mut fx, _pyth, mut oracle, config) = setup();
     let admin_cap = admin::new(fx.scenario_mut().ctx());
-    let unregistered_cap = market_oracle::create_cap(&admin_cap, fx.scenario_mut().ctx());
+    let unregistered_cap = market_oracle_writer_cap::create(&admin_cap, fx.scenario_mut().ctx());
     oracle.update_svi(
         &config,
         &unregistered_cap,
@@ -73,14 +75,28 @@ fun update_svi_with_unregistered_cap_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = market_oracle::EMarketSettled)]
-fun price_push_on_settled_oracle_aborts() {
+#[test]
+fun price_push_on_settled_oracle_is_noop() {
     let (mut fx, mut pyth, mut oracle, config) = setup();
+    seed_live_prices(&fx, &config, &mut oracle);
     settle(&mut fx, &config, &mut oracle, &mut pyth);
-    let live = test_constants::default_live_price();
     let post_settle_ts = oracle.expiry() + POST_EXPIRY_UPDATE_OFFSET_MS;
-    push_prices(&fx, &config, &mut oracle, live, live, post_settle_ts);
-    abort EUnexpectedSuccess
+    push_prices(
+        &fx,
+        &config,
+        &mut oracle,
+        FIVE_PCT_ABOVE_LIVE_PRICE,
+        FIVE_PCT_ABOVE_LIVE_PRICE,
+        post_settle_ts,
+    );
+    assert_eq!(oracle.block_scholes_spot(), test_constants::default_live_price());
+    assert_eq!(oracle.block_scholes_forward(), test_constants::default_live_price());
+    assert_eq!(
+        oracle.block_scholes_price_source_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
 }
 
 #[test]
@@ -166,21 +182,77 @@ fun zero_forward_push_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = market_oracle::EStalePriceSourceUpdate)]
-fun price_push_with_non_advancing_source_timestamp_aborts() {
-    let (fx, _pyth, mut oracle, config) = setup();
+#[test]
+fun price_push_with_non_advancing_source_timestamp_is_noop() {
+    let (fx, pyth, mut oracle, config) = setup();
     seed_live_prices(&fx, &config, &mut oracle);
-    let live = test_constants::default_live_price();
-    // Repeat the seed's source timestamp: not strictly greater than the stored one.
-    push_prices(&fx, &config, &mut oracle, live, live, test_constants::live_source_timestamp_ms());
-    abort EUnexpectedSuccess
+    // Repeat the seed's source timestamp with different prices: skipped, stored
+    // prices unchanged.
+    push_prices(
+        &fx,
+        &config,
+        &mut oracle,
+        FIVE_PCT_ABOVE_LIVE_PRICE,
+        FIVE_PCT_ABOVE_LIVE_PRICE,
+        test_constants::live_source_timestamp_ms(),
+    );
+    assert_eq!(oracle.block_scholes_spot(), test_constants::default_live_price());
+    assert_eq!(oracle.block_scholes_forward(), test_constants::default_live_price());
+    // The skip does not poison the sequence: an advancing push still lands.
+    push_prices(
+        &fx,
+        &config,
+        &mut oracle,
+        FIVE_PCT_ABOVE_LIVE_PRICE,
+        FIVE_PCT_ABOVE_LIVE_PRICE,
+        SECOND_PUSH_SOURCE_TS_MS,
+    );
+    assert_eq!(oracle.block_scholes_spot(), FIVE_PCT_ABOVE_LIVE_PRICE);
+    assert_eq!(oracle.block_scholes_price_source_timestamp_ms(), SECOND_PUSH_SOURCE_TS_MS);
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
 }
 
-#[test, expected_failure(abort_code = market_oracle::EStaleSVISourceUpdate)]
-fun svi_update_with_non_advancing_source_timestamp_aborts() {
-    let (fx, _pyth, mut oracle, config) = setup();
+#[test]
+fun svi_update_with_non_advancing_source_timestamp_is_noop() {
+    let (fx, pyth, mut oracle, config) = setup();
+    // Repeat the initial zero source timestamp: skipped, stored SVI unchanged.
     oracle.update_svi(&config, fx.cap(), default_svi(), INITIAL_SOURCE_TS_MS, fx.clock());
-    abort EUnexpectedSuccess
+    assert_eq!(oracle.block_scholes_svi().sigma(), 0);
+    assert_eq!(oracle.block_scholes_svi_source_timestamp_ms(), INITIAL_SOURCE_TS_MS);
+    // The skip does not poison the sequence: an advancing update still lands.
+    oracle.update_svi(
+        &config,
+        fx.cap(),
+        default_svi(),
+        test_constants::live_source_timestamp_ms(),
+        fx.clock(),
+    );
+    assert_eq!(oracle.block_scholes_svi().sigma(), constants::svi_sigma_min!());
+    assert_eq!(
+        oracle.block_scholes_svi_source_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
+}
+
+#[test]
+fun svi_update_on_pending_settlement_oracle_is_noop() {
+    let (mut fx, pyth, mut oracle, config) = setup();
+    fx.set_clock_for_testing(oracle.expiry() + POST_EXPIRY_UPDATE_OFFSET_MS);
+    // Expired but unsettled: SVI is live-only, so the update is skipped.
+    oracle.update_svi(
+        &config,
+        fx.cap(),
+        default_svi(),
+        test_constants::live_source_timestamp_ms(),
+        fx.clock(),
+    );
+    assert_eq!(oracle.block_scholes_svi().sigma(), 0);
+    assert_eq!(oracle.block_scholes_svi_source_timestamp_ms(), 0);
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = market_oracle::EFuturePriceSourceUpdate)]

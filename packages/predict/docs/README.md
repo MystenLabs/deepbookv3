@@ -15,6 +15,8 @@ contain transaction recipes or a function-by-function API reference.
 
 - **[Overview](./overview.md)** — what Predict is, the core mental model, the
   market and position lifecycle, and what the protocol guarantees.
+- **[Glossary](./glossary.md)** — every term technically defined, mapped to its
+  standard options / structured-product name and to the code identifier.
 
 ## Concepts
 
@@ -24,7 +26,8 @@ How the protocol works:
   range markets, the strike grid, what an order/position is, and the lifecycle
   from mint to settlement.
 - **[Leverage and the floor](./concepts/leverage-and-floor.md)** — how leverage
-  is modelled as a deterministic, time-varying floor on the contract's payoff.
+  is modelled as embedded premium financing (a deterministic, time-varying
+  floor) plus a knock-out on the contract's payoff.
 - **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
   formed from Pyth spot and Block Scholes parameters, freshness rules, and how
   the settlement price is chosen.

@@ -45,7 +45,7 @@ const EXTRA_IDLE: u64 = 250_000_000_000;
 const MANAGER_DEPOSIT: u64 = 4_000_000_000;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// ATM digital p = Φ(0) = 0.5 exactly for both the UP and the complement DOWN
-/// range; 1x contribution = floor(0.5 * 1e9); 2x = floor(exposure / 2).
+/// range; 1x net_premium = floor(0.5 * 1e9); 2x = floor(entry_value / 2).
 const ONE_X_CONTRIBUTION: u64 = 500_000_000;
 const TWO_X_CONTRIBUTION: u64 = 250_000_000;
 /// Per-trade fee floors at min_fee (fixture base_fee = 1; default
@@ -169,7 +169,7 @@ fun settled_redeems_are_bit_equal_with_and_without_compaction() {
 
     // --- DIVERGENCE: compact path B only. Compaction is pure index
     // destruction — no cash moves, no liability change.
-    fx.compact_storage(&config, &mut market_b, &oracle_b);
+    fx.compact_storage(&config, &vault, &mut market_b, &oracle_b);
     assert_eq!(market_b.payout_liability(), TERMINAL_LIABILITY_PER_MARKET);
     assert_eq!(market_b.cash_balance(), escrow_cash);
 

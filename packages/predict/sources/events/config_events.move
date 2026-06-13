@@ -68,7 +68,7 @@ public struct EwmaConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     alpha: u64,
     z_score_threshold: u64,
-    additional_fee: u64,
+    penalty_rate: u64,
     enabled: bool,
 }
 
@@ -210,7 +210,7 @@ public(package) fun emit_ewma_config_updated(protocol_config_id: ID, config: &Ew
         protocol_config_id,
         alpha: config.alpha(),
         z_score_threshold: config.z_score_threshold(),
-        additional_fee: config.additional_fee(),
+        penalty_rate: config.penalty_rate(),
         enabled: config.enabled(),
     });
 }

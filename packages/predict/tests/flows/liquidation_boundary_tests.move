@@ -30,16 +30,16 @@ const T1_MS: u64 = 3_153_700_000;
 const T1_ATM_SOURCE_TS: u64 = 3_153_699_500;
 const T1_DROP_SOURCE_TS: u64 = 3_153_699_700;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-/// 84_000 lots, chosen so floor_shares = floor_seed / 1.05 = 200_000_000 is an
+/// 84_000 lots, chosen so floor_shares = financed_amount / 1.05 = 200_000_000 is an
 /// EXACT division (no dependence on the floor_shares rounding direction).
 const QUANTITY: u64 = 840_000_000;
-/// exposure = floor(0.5 * 840e6) = 420_000_000 (ATM digital p = 0.5 exactly);
-/// contribution = floor(exposure / 2x) = 210_000_000.
+/// entry_value = floor(0.5 * 840e6) = 420_000_000 (ATM digital p = 0.5 exactly);
+/// net_premium = floor(entry_value / 2x) = 210_000_000.
 const CONTRIBUTION: u64 = 210_000_000;
 /// Per-unit fee RATE floors at min_fee = 5e6 (fixture base_fee = 1):
 /// trade fee = floor(5e6 * 840e6 / 1e9) per mint/redeem of this quantity.
 const TRADE_FEE: u64 = 4_200_000;
-/// mint_deposit − 2 * (contribution + fee).
+/// mint_deposit − 2 * (net_premium + fee).
 const POST_MINT_BALANCE: u64 = 571_600_000;
 /// floor_at_open = floor(200_000_000 * 1.05e9 / 1e9) = 210_000_000 exact;
 /// live backing per order = quantity − floor_at_open.

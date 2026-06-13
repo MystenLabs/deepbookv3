@@ -53,8 +53,8 @@ const DEEP_ITM_LIVE_PRICE: u64 = 200_000_000_000;
 /// floor check fails (see `mint_terminal_floor_at_liquidation_ltv_aborts`).
 const LTV_JUST_ABOVE_TWO_AND_HALF_X_FLOOR_SHARE: u64 = 600_000_001;
 
-/// Quantity for the terminal-floor test. Must be even (so exposure at p = 0.5
-/// is exact), with exposure divisible by 5 (so the 2.5x split is exact) and
+/// Quantity for the terminal-floor test. Must be even (so entry_value at p = 0.5
+/// is exact), with entry_value divisible by 5 (so the 2.5x split is exact) and
 /// below 1e9 (so `quantity * ltv / 1e9` floors away the LTV's +1 unit).
 const TERMINAL_FLOOR_QUANTITY: u64 = 100_000_000;
 
@@ -281,14 +281,14 @@ fun mint_low_probability_above_one_x_aborts() {
     abort 999
 }
 
-// === EOrderPrincipalBelowMinimum (mint admission) ===
+// === ENetPremiumBelowMinimum (mint admission) ===
 
-// At entry probability exactly 0.5 and 1x leverage, the user contribution is
-// exposure = quantity / 2, so the principal boundary sits at quantity
-// = 2 * min_order_principal. One position lot below it: contribution
+// At entry probability exactly 0.5 and 1x leverage, the net premium is
+// entry_value = quantity / 2, so the minimum-premium boundary sits at quantity
+// = 2 * min_net_premium. One position lot below it: net_premium
 // = (2_000_000 - 10_000) / 2 = 995_000 < 1_000_000.
-#[test, expected_failure(abort_code = strike_exposure_config::EOrderPrincipalBelowMinimum)]
-fun mint_principal_one_lot_below_minimum_aborts() {
+#[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBelowMinimum)]
+fun mint_net_premium_one_lot_below_minimum_aborts() {
     let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, _vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
@@ -301,20 +301,20 @@ fun mint_principal_one_lot_below_minimum_aborts() {
         &pyth,
         helpers::min_strike(),
         constants::pos_inf!(),
-        2 * constants::min_order_principal!() - constants::position_lot_size!(),
+        2 * constants::min_net_premium!() - constants::position_lot_size!(),
         test_constants::leverage_one_x(),
     );
     abort 999
 }
 
 #[test]
-fun mint_principal_at_minimum_succeeds() {
+fun mint_net_premium_at_minimum_succeeds() {
     let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
 
-    // Just-inside boundary: contribution = 2_000_000 / 2 = exactly
-    // min_order_principal.
+    // Just-inside boundary: net_premium = 2_000_000 / 2 = exactly
+    // min_net_premium.
     fx.mint(
         &config,
         &mut manager,
@@ -323,7 +323,7 @@ fun mint_principal_at_minimum_succeeds() {
         &pyth,
         helpers::min_strike(),
         constants::pos_inf!(),
-        2 * constants::min_order_principal!(),
+        2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
     );
     assert_eq!(manager.expiry_position_count(expiry_id), 1);
@@ -337,9 +337,9 @@ fun mint_principal_at_minimum_succeeds() {
 // === EOrderBelowLiquidationThreshold (mint admission) ===
 
 // Unreachable at the default 0.85 LTV (a 3x order's floor seed is 2/3 of
-// exposure, and 2/3 / 0.85 < 1), so the template LTV is tuned to its 0.5
-// envelope floor before market creation. At 3x: floor_seed = 2/3 * exposure,
-// liquidation threshold = floor_seed / 0.5 = 4/3 * exposure > exposure, so
+// entry_value, and 2/3 / 0.85 < 1), so the template LTV is tuned to its 0.5
+// envelope floor before market creation. At 3x: financed_amount = 2/3 * entry_value,
+// liquidation threshold = financed_amount / 0.5 = 4/3 * entry_value > entry_value, so
 // the order opens below its own liquidation threshold and is rejected.
 #[test, expected_failure(abort_code = strike_exposure_config::EOrderBelowLiquidationThreshold)]
 fun mint_three_x_at_min_liquidation_ltv_aborts() {
@@ -372,11 +372,11 @@ fun mint_three_x_at_min_liquidation_ltv_aborts() {
 // its 2.0 envelope ceiling and the LTV is set one unit above the 2.5x
 // floor-seed share. Exact integer trace at entry probability 0.5,
 // quantity = 100_000_000:
-//   exposure          = 0.5 * 100_000_000               = 50_000_000
-//   contribution      = 50_000_000 / 2.5                = 20_000_000
-//   floor_seed        = 50_000_000 - 20_000_000         = 30_000_000
+//   entry_value          = 0.5 * 100_000_000               = 50_000_000
+//   net_premium      = 50_000_000 / 2.5                = 20_000_000
+//   financed_amount        = 50_000_000 - 20_000_000         = 30_000_000
 //   admission thresh  = 30_000_000 * 1e9 / 600_000_001  = 49_999_999 (floor)
-//     -> exposure 50_000_000 > 49_999_999: admission passes by one unit.
+//     -> entry_value 50_000_000 > 49_999_999: admission passes by one unit.
 //   open floor index  = 1.0 (mint is a full leverage-floor window pre-expiry)
 //   floor_shares      = 30_000_000 / 1.0                = 30_000_000
 //   terminal floor    = 30_000_000 * 2.0                = 60_000_000

@@ -1,6 +1,6 @@
 # Pricing and oracles
 
-Predict prices binary range contracts off two independent oracle inputs and turns them into the live probabilities and valuation curves that drive minting, redemption, and net asset value (NAV). This document describes those inputs, how a range probability is derived from them, how the `pricing` module builds a one-sided UP-price curve for live NAV, how freshness bounds are enforced, and how a market reaches terminal settlement.
+Predict prices its range digitals (binary options) off two independent oracle inputs and turns them into the live probabilities and valuation curves that drive minting, redemption, and net asset value (NAV). This document describes those inputs, how a range probability is derived from them, how the `pricing` module builds a one-sided UP-price curve for live NAV, how freshness bounds are enforced, and how a market reaches terminal settlement.
 
 ## Two oracle inputs
 
@@ -9,7 +9,7 @@ Predict separates the *spot* of the underlying asset from the *shape of the impl
 | Input | Provider | On-chain object | What it carries |
 | --- | --- | --- | --- |
 | Spot price | Pyth Lazer | `PythSource` | A single 1e9-normalized spot for one Lazer feed, with both a publisher timestamp and an on-chain landing timestamp |
-| Volatility surface + forward basis | Block Scholes (an operator holding a `MarketOracleCap`) | `MarketOracle` | SVI volatility-smile parameters, a Block Scholes spot/forward pair, and their timestamps |
+| Volatility surface + forward basis | Block Scholes (an operator holding a `MarketOracleWriterCap`) | `MarketOracle` | SVI volatility-smile parameters, a Block Scholes spot/forward pair, and their timestamps |
 
 Each input lives in its own shared object and is updated by its own transaction. The `pricing` module is a stateless read layer: it resolves both objects on demand, validates them, and computes prices. It never mutates oracle, pool, expiry, or position state.
 
@@ -44,22 +44,24 @@ Alongside the surface, `MarketOracle` stores a Block Scholes `spot` and `forward
 
 The surface and the spot/forward pair are updated through two separate write paths, each carrying its own `source_timestamp_ms` (the operator's observation time) and stamping its own `update_timestamp_ms` (on-chain landing). SVI updates and price updates therefore age independently, and each has its own freshness threshold. Updating SVI does not refresh the price timestamp, and vice versa — keeping each staleness check honest. As with Pyth, each freshness check uses the conservative `min(source, update)` timestamp.
 
-Write authorization is by `MarketOracleCap`: an oracle stores a set of authorized cap IDs, and any update must present a cap in that set. Caps are minted under the protocol `AdminCap`, can be registered or unregistered per oracle, and a cap holder can remove its own authorization. The per-oracle settlement-freshness threshold is tunable through an admin-gated path on the oracle itself, distinct from the global template config.
+Both write paths are batch-safe by design: a push against a settled market (or, for SVI, any non-active market) and a push whose `source_timestamp_ms` does not advance the stored one are clean no-ops rather than aborts, so one transaction can update many expiries without a settlement or ordering race on a single market reverting the whole batch. Malformed payloads — zero spot or forward, future-dated timestamps, out-of-bounds SVI — still abort.
+
+Write authorization is by `MarketOracleWriterCap`: an oracle stores a set of authorized writer-cap IDs — seeded at market creation from the cap IDs the creator supplies, possibly empty — and any update must present a cap in that set. Writer caps are minted under the protocol `AdminCap` and grant nothing until an oracle registers their ID; admin can register or unregister them per oracle, and a cap holder can remove its own authorization. The writer cap carries no market-lifecycle or settlement authority. The per-oracle settlement-freshness threshold is tunable through an admin-gated path on the oracle itself, distinct from the global template config.
 
 ## From SVI to a range probability
 
-A Predict range contract pays out if the asset's settlement price lands inside a strike interval. Its fair value is therefore the probability of that event, read off the distribution that the SVI surface encodes.
+A Predict range contract pays out if the asset's settlement price lands inside a strike interval. Its fair value is therefore the probability of that event, read off the distribution that the SVI surface encodes — the defining identity of an undiscounted digital, whose price per unit notional equals the risk-neutral probability of its payout event.
 
 The derivation, conceptually:
 
 1. **Forward and surface.** Take the live forward `F` and the live `SVIParams`.
 2. **Total variance at a strike.** For a strike `K`, compute log-moneyness `k = ln(K / F)`, then evaluate the SVI total-variance function `w(k)`. The implementation uses the raw-SVI form `w(k) = a + b·(rho·(k − m) + sqrt((k − m)² + sigma²))`, with the wing term `rho·(k − m) + sqrt((k − m)² + sigma²)` asserted non-negative before it is scaled by `b`. This expresses the smile as variance: how much dispersion is priced at that moneyness.
-3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))` and take the standard normal CDF `N(d2)`. This is the probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`.
+3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))` and take the standard normal CDF `N(d2)`. This is the probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`, i.e. a cash-or-nothing digital call.
 4. **Range probability by differencing.** Because the UP price is monotonically non-increasing in strike, the probability of landing in the half-open interval `(lower, higher]` is
 
        range_price = up_price(lower) − up_price(higher)
 
-   This is the value of a contract that pays out only inside the range, expressed as a 1e9-scaled probability.
+   This is the value of a contract that pays out only inside the range — a digital call spread — expressed as a 1e9-scaled probability.
 
 The endpoints carry sentinel handling so open-ended ranges work without special-casing the caller: a strike equal to `neg_inf` (the value `0`) has UP price `1.0` (the whole distribution is above it), and a strike equal to `pos_inf` (`u64::MAX`) has UP price `0`. A one-sided contract is the difference against the appropriate sentinel.
 
@@ -144,9 +146,9 @@ stateDiagram-v2
 
 ### Recording the terminal settlement price
 
-Pre-expiry Pyth settlement samples are recorded permissionlessly during the final sampling window whenever the bound Pyth source is fresh. Pre-expiry Block Scholes settlement samples are cap-gated because Block Scholes data is operator supplied. Block Scholes price pushes record the accepted Block Scholes spot when they are inside the sampling window.
+Pre-expiry Pyth settlement samples are recorded permissionlessly during the final sampling window whenever the bound Pyth source is fresh. Pre-expiry Block Scholes settlement samples are writer-cap-gated because Block Scholes data is operator supplied. Block Scholes price pushes record the accepted Block Scholes spot when they are inside the sampling window.
 
-After expiry, the oracle latches first-observed fresh post-expiry fallback prices instead of reading live oracle fields during final selection. Permissionless Pyth observation or settlement can latch the Pyth fallback; cap-gated Block Scholes price pushes latch the Block Scholes fallback.
+After expiry, the oracle latches first-observed fresh post-expiry fallback prices instead of reading live oracle fields during final selection. Permissionless Pyth observation or settlement can latch the Pyth fallback; writer-cap-gated Block Scholes price pushes latch the Block Scholes fallback.
 
 Settlement is triggered permissionlessly via `settle_with_randomness`. It is a first-writer-wins terminal transition: once recorded it never changes.
 

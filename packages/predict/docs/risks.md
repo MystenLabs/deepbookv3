@@ -9,8 +9,9 @@ For the mechanisms this page evaluates, see [pricing and oracles](./concepts/pri
 | Actor / input | What it controls | What it cannot do |
 | --- | --- | --- |
 | Pyth Lazer feed | The spot price every market and incentive valuation is built on, and the preferred settlement source | Cannot write Block Scholes data; rejected if stale, future-dated, zero, or negative |
-| Block Scholes operator (`MarketOracleCap`) | The volatility surface (SVI) and the spot/forward basis used to price ranges; the fallback settlement source, and the cap that finalizes settlement | Cannot move custody, mint/redeem, push zero/future/stale-timestamped Block Scholes data, or settle before expiry or from a stale source |
-| `AdminCap` holder | Fees, LTV, freshness thresholds, per-expiry funding caps, profit share, pause switches, market/feed/incentive creation, oracle writer caps | Cannot touch a holder's position, a manager's balance, or pool custody directly |
+| Block Scholes operator (`MarketOracleWriterCap`) | The volatility surface (SVI) and the spot/forward basis used to price ranges; the data feeding the fallback settlement source | Cannot move custody, mint/redeem, create or compact markets, push zero/future/stale-timestamped Block Scholes data, or trigger settlement with any special authority (settlement is permissionless and source-gated) |
+| Market-lifecycle operator (`MarketLifecycleCap`) | Creating future expiry markets and compacting settled ones | Cannot write prices or any oracle data, move custody, or mint/redeem; admin-revocable on the pool's allowlist |
+| `AdminCap` holder | Fees, LTV, freshness thresholds, per-expiry funding caps, profit share, pause switches, feed/incentive creation, oracle writer and market-lifecycle cap minting | Cannot touch a holder's position, a manager's balance, or pool custody directly |
 | `PauseCap` holder | Emergency one-way pauses: disable a version, pause global trading, pause one market's minting | Cannot unpause anything, change config, or move funds |
 | Liquidation keepers | Trigger permissionless, bounded liquidation passes | Cannot liquidate an order that is above its liquidation threshold |
 
@@ -22,7 +23,7 @@ Every live price in Predict is built from two inputs, and both are trusted to di
 
 **Pyth Lazer spot.** `PythSource` stores the latest normalized spot from one Pyth Lazer feed. An update is rejected if its decoded price is zero or negative, if its publisher timestamp is not strictly newer than the last accepted one, or if that timestamp is in the future relative to the on-chain clock. These checks reject stale, replayed, and future-dated updates, but they do not — and cannot — judge whether the price Pyth published is *correct*. If the underlying Lazer feed is manipulated, halted, or returns a thin/uncorroborated print, Predict consumes whatever it delivers. The protocol's only structural defence is freshness: pricing and settlement require the spot to be fresh within a configured window, and a feed that goes stale stops being usable rather than serving an old number.
 
-**Block Scholes volatility surface.** Range probabilities are not read directly from spot. They come from a pricing curve built on a forward (spot × basis) and an SVI volatility surface, both written by a trusted off-chain operator holding a `MarketOracleCap`. This is the protocol's most concentrated trust assumption: the SVI parameters and the forward shape the probability of every range, and therefore every entry price, live NAV mark, and liquidation decision. The contracts require a registered writer cap, nonzero spot and forward values, a strictly advancing source timestamp, and a source timestamp that is not future-dated. They do not constrain the `forward / spot` basis or the size of a spot/forward step between pushes. A correct-but-adversarial operator can steer prices anywhere that passes those structural checks; a compromised cap is therefore an unbounded live-pricing risk until the cap is unregistered or the protocol is paused.
+**Block Scholes volatility surface.** Range probabilities are not read directly from spot. They come from a pricing curve built on a forward (spot × basis) and an SVI volatility surface, both written by a trusted off-chain operator holding a `MarketOracleWriterCap` authorized on that oracle. This is the protocol's most concentrated trust assumption: the SVI parameters and the forward shape the probability of every range, and therefore every entry price, live NAV mark, and liquidation decision. The contracts require a registered writer cap, nonzero spot and forward values, a strictly advancing source timestamp, and a source timestamp that is not future-dated. They do not constrain the `forward / spot` basis or the size of a spot/forward step between pushes. A correct-but-adversarial operator can steer prices anywhere that passes those structural checks; a compromised cap is therefore an unbounded live-pricing risk until the cap is unregistered or the protocol is paused.
 
 **Staleness only mitigates, it does not authenticate.** Freshness windows guarantee Predict acts on recent data, not on honest data. A stale feed blocks pricing and (importantly) blocks the staleness-gated settlement source, but it cannot detect a value that is recent and wrong.
 
@@ -35,8 +36,8 @@ A market settles exactly once, from a single terminal price, and the outcome of 
 `MarketOracle` records settlement the first time a valid post-expiry source exists after the market enters pending-settlement state (the clock has passed `expiry`). It prefers the Pyth spot when that source is fresh and its source timestamp is strictly after expiry; otherwise it falls back to the Block Scholes spot under the same freshness-and-after-expiry test. Once `settlement_price` is set it is never overwritten, and the settlement source timestamp must be strictly after expiry. Consequences for users:
 
 - **A single number decides everything.** Each open range pays `quantity` if the settlement price falls inside `(lower, higher]` and `0` otherwise (minus any leverage floor). There is no averaging, TWAP, or dispute window — the first valid post-expiry print is final.
-- **The settlement source is one of two, with Pyth preferred.** Settlement can come from the trusted Block Scholes operator's spot when Pyth is unavailable. Because both paths drive the same terminal write and the privileged path is the fallback, a Pyth outage around expiry shifts the terminal price onto the operator, who is then trusted for the single number that resolves the market.
-- **Settlement is gated on the operator's cap, and cannot be forced early or from a stale source.** Settlement is only recorded by a `MarketOracleCap` holder — either explicitly (the operator finalizes once a valid source exists) or implicitly inside the operator's own price push. Nobody can settle before expiry or with a stale source, and once recorded the price is immutable.
+- **The settlement source is one of two, with Pyth preferred.** Settlement can come from the trusted Block Scholes operator's spot when Pyth is unavailable. Because both paths drive the same terminal write and the operator-supplied path is the fallback, a Pyth outage around expiry shifts the terminal price onto the operator, who is then trusted for the single number that resolves the market.
+- **Settlement is permissionless, and cannot be forced early or from a stale source.** Anyone can trigger settlement (`settle_with_randomness`) once a valid source exists — no capability gates it, and the operator's only influence is through the price data its writer cap pushes. Nobody can settle before expiry or with a stale source, and once recorded the price is immutable.
 
 ```mermaid
 stateDiagram-v2
@@ -56,9 +57,9 @@ The `AdminCap` can:
 - set the liquidation LTV and floor schedule inputs that determine when leveraged positions are liquidated;
 - set the settlement freshness threshold that gates terminal oracle sources;
 - set the maximum net DUSDC the pool may fund into any one expiry;
-- mint and revoke `PauseCap`s, enable and disable package versions, and create markets, Pyth sources, and incentive-asset bindings;
-- register and unregister Block Scholes writer caps;
-- choose which feed prices each market and incentive asset, i.e. the Pyth feed each market binds to is admin-chosen at creation.
+- mint and revoke `PauseCap`s, enable and disable package versions, and create Pyth sources and incentive-asset bindings;
+- mint Block Scholes writer caps and register/unregister them per oracle, and mint and revoke the market-lifecycle caps that gate market creation and compaction;
+- choose which feed prices each market and incentive asset, i.e. the Pyth feed a market can bind to must be admin-registered.
 
 The `AdminCap` cannot:
 

@@ -46,7 +46,7 @@ fun setup_everything_check_manager_return_market_smoke() {
 
     assert!(manager.has_position(expiry_id, order_id));
     assert_eq!(manager.expiry_position_count(expiry_id), 1);
-    // A mint charges a non-zero fee and a non-zero principal, so the free balance
+    // A mint charges a non-zero fee and a non-zero net_premium, so the free balance
     // strictly decreases.
     assert!(manager.trading_fees_paid(expiry_id) > 0);
     assert!(manager.balance() < test_constants::default_manager_deposit());

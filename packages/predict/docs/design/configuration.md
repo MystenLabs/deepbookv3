@@ -66,7 +66,7 @@ The contract-term snapshots (`StrikeExposureConfig`, `ExpiryCashConfig`) are fro
 Three config structs are read directly from `ProtocolConfig` at the moment they are needed, with no snapshot:
 
 - **`PricingConfig`** — Pyth spot freshness, Block Scholes spot/forward freshness, and Block Scholes SVI freshness thresholds. `Pricing` reads these when resolving live probabilities for mint, redeem, and valuation. Because freshness is a protocol-safety concern rather than a contract term, every flow uses the current thresholds the instant it runs; an admin tightening freshness takes effect immediately and protocol-wide.
-- **`EwmaConfig`** — the gas-price EWMA trade-penalty parameters (smoothing `alpha`, z-score threshold, per-unit additional fee) plus an `enabled` master switch. The penalty is disabled by default. The evolving per-market `EwmaState` lives on `ExpiryMarket`; only the shared knobs live here, so a parameter change applies uniformly to every market's penalty computation.
+- **`EwmaConfig`** — the gas-price EWMA trade-penalty parameters (smoothing `alpha`, z-score threshold, per-unit penalty rate) plus an `enabled` master switch. The penalty is disabled by default. The evolving per-market `EwmaState` lives on `ExpiryMarket`; only the shared knobs live here, so a parameter change applies uniformly to every market's penalty computation.
 - **`StakeConfig`** — the DEEP staking benefit curve thresholds (`lower_benefit_power`, `upper_benefit_power`). The benefit ratio rises linearly from 0 to half over `0..lower`, half to full over `lower..upper`, and caps at full above `upper`. That ratio scales the fixed maximum fee discount and applies directly as the loss-rebate share. Read live so that a benefit-curve change applies to all stakers at once.
 
 The distinction from class (A) is deliberate: live configs govern protocol-wide safety and shared economics that should move atomically for everyone, whereas the contract-term template configs govern per-contract terms that must stay fixed for the contracts already written under them.
@@ -104,7 +104,7 @@ The grouped EWMA setter still validates each field against its own
 
 Defaults are applied only in the module that constructs the config; runtime logic treats config fields as plain numbers and never reads the `default_*` seeds. Bounds (`min_*`/`max_*`) may also be read directly by runtime logic when they intentionally serve as a hard floor or ceiling, but there are no config fields or getters for the bounds themselves.
 
-Several bounds are tightened on purpose so a single bad admin call cannot quietly disable a safety mechanism: the expiry-fee max multiplier floors at 1x (the ramp can never reduce fees below base); the EWMA z-score threshold floors at one sigma and is capped so it cannot be set so high the penalty never fires; the EWMA additional fee is capped to bound how punitive the surcharge can be. For the concrete defaults and envelopes, see the source `config_constants` module; this document deliberately does not hardcode numbers that drift.
+Several bounds are tightened on purpose so a single bad admin call cannot quietly disable a safety mechanism: the expiry-fee max multiplier floors at 1x (the ramp can never reduce fees below base); the EWMA z-score threshold floors at one sigma and is capped so it cannot be set so high the penalty never fires; the EWMA penalty rate is capped to bound how punitive the surcharge can be. For the concrete defaults and envelopes, see the source `config_constants` module; this document deliberately does not hardcode numbers that drift.
 
 ## Registry tuning: tick size affects only future expiries
 
@@ -124,10 +124,11 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | --- | --- |
 | `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused`, per-expiry `mint_paused` (set and unset) |
 | `AdminCap` (on a `MarketOracle`) | Live per-oracle settlement freshness; register/unregister oracle writer caps |
-| `AdminCap` (on a `PoolVault`) | Per-expiry `max_expiry_funding` |
+| `AdminCap` (on a `PoolVault`) | Per-expiry `max_expiry_funding`; mint/revoke market-lifecycle caps on the vault allowlist |
 | `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |
 | `PauseCap` (via `Registry`) | Disable a version, force global trading pause, force per-expiry mint pause — all one-way (engage only) |
-| `MarketOracleCap` (per oracle) | Push Block Scholes spot/forward and SVI data and finalize settlement on a single `MarketOracle`. This is an oracle writer/operator capability, not a config-tuning route — per-oracle config bounds are `AdminCap`-gated above |
+| `MarketOracleWriterCap` (per oracle) | Push Block Scholes spot/forward and SVI data on a `MarketOracle` that has registered its ID. This is an oracle writer/operator capability, not a config-tuning route — per-oracle config bounds are `AdminCap`-gated above |
+| `MarketLifecycleCap` (vault allowlist) | Create expiry markets and compact settled ones. A market-lifecycle capability with no oracle-write or config authority |
 | Permissionless | `sync_*` version mirrors, and valuation and settlement-cleanup keeper flows (subject to the valuation lock, not the trading pause) |
 | Upgrade only | Everything in the `constants` module: scaling, lot size, minimum principal, leverage set and tiers, leverage floor window, oracle granularity/grid, and every `min_*`/`max_*` bound in `config_constants` |
 

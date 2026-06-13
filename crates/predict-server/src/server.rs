@@ -49,6 +49,23 @@ pub const VAULT_CASH_RECEIPTS_PATH: &str = "/vaults/:pool_vault_id/cash-receipts
 pub const MANAGER_STAKING_PATH: &str = "/managers/:predict_manager_id/staking";
 pub const MANAGER_REBATES_PATH: &str = "/managers/:predict_manager_id/rebates";
 pub const BUILDER_CODE_FEES_PATH: &str = "/builder-codes/:builder_code_id/fees";
+// Composed current-state lookups (top-1 index scans over raw tables).
+pub const MARKET_STATE_PATH: &str = "/markets/:expiry_market_id/state";
+pub const ORACLE_LATEST_PATH: &str = "/oracles/:market_oracle_id/latest";
+pub const VAULT_STATE_PATH: &str = "/vaults/:pool_vault_id/state";
+pub const MANAGER_STATE_PATH: &str = "/managers/:predict_manager_id/state";
+pub const CONFIG_PATH: &str = "/config";
+// order_state-backed position queries.
+pub const MANAGER_POSITIONS_PATH: &str = "/managers/:predict_manager_id/positions";
+pub const MARKET_OPEN_INTEREST_PATH: &str = "/markets/:expiry_market_id/open-interest";
+// Materialized-view feeds.
+pub const MARKET_ACTIVITY_PATH: &str = "/markets/:expiry_market_id/activity";
+pub const MARKET_LIQUIDATION_STATS_PATH: &str = "/markets/:expiry_market_id/liquidation-stats";
+pub const VAULT_FLOWS_PATH: &str = "/vaults/:pool_vault_id/flows";
+pub const ORACLE_PRICES_SAMPLED_PATH: &str = "/oracles/:market_oracle_id/prices/sampled";
+// Market-scoped: packed order/root ids are expiry-local, never globally unique.
+pub const POSITION_CASHFLOW_PATH: &str =
+    "/markets/:expiry_market_id/positions/:position_root_id/cashflow";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -155,7 +172,7 @@ pub async fn run_server(
     Ok(())
 }
 
-pub(crate) fn make_router(state: Arc<AppState>) -> Router {
+pub fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![
             Method::GET,
@@ -187,6 +204,18 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(MANAGER_STAKING_PATH, get(manager_staking))
         .route(MANAGER_REBATES_PATH, get(manager_rebates))
         .route(BUILDER_CODE_FEES_PATH, get(builder_code_fees))
+        .route(MARKET_STATE_PATH, get(market_state))
+        .route(ORACLE_LATEST_PATH, get(oracle_latest))
+        .route(VAULT_STATE_PATH, get(vault_state))
+        .route(MANAGER_STATE_PATH, get(manager_state))
+        .route(CONFIG_PATH, get(protocol_config))
+        .route(MANAGER_POSITIONS_PATH, get(manager_positions))
+        .route(MARKET_OPEN_INTEREST_PATH, get(market_open_interest))
+        .route(MARKET_ACTIVITY_PATH, get(market_activity))
+        .route(MARKET_LIQUIDATION_STATS_PATH, get(market_liquidation_stats))
+        .route(VAULT_FLOWS_PATH, get(vault_flows))
+        .route(ORACLE_PRICES_SAMPLED_PATH, get(oracle_prices_sampled))
+        .route(POSITION_CASHFLOW_PATH, get(position_cashflow))
         .with_state(state.clone())
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
@@ -631,4 +660,174 @@ async fn builder_code_fees(
         )
         .await?;
     Ok(Json(data))
+}
+
+/// Composed current state for one market (creation, latest config snapshot,
+/// mint-pause flag, latest oracle prices/SVI/settlement).
+async fn market_state(
+    Path(expiry_market_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(state.reader.get_market_state(expiry_market_id).await?))
+}
+
+/// Latest prices, SVI surface, and settlement for one oracle.
+async fn oracle_latest(
+    Path(market_oracle_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(
+        state.reader.get_oracle_latest(market_oracle_id).await?,
+    ))
+}
+
+/// Composed current state for one vault (current balances/supply plus the
+/// latest event of each vault table).
+async fn vault_state(
+    Path(pool_vault_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(state.reader.get_vault_state(pool_vault_id).await?))
+}
+
+/// Composed current state for one manager (creation row, latest builder code).
+async fn manager_state(
+    Path(predict_manager_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(
+        state.reader.get_manager_state(predict_manager_id).await?,
+    ))
+}
+
+/// Latest value of every protocol-config event.
+async fn protocol_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(state.reader.get_protocol_config().await?))
+}
+
+/// `order_state` rows for one manager, windowed by `opened_at_ms`
+/// (`?start_time`/`?end_time`, unix seconds). `?status` defaults to `open`;
+/// each row carries a `"root"` object with the root order's entry facts when
+/// the row is a replacement.
+async fn manager_positions(
+    Path(predict_manager_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let status = params
+        .get("status")
+        .cloned()
+        .unwrap_or_else(|| predict_schema::models::order_status::OPEN.to_string());
+    let data = state
+        .reader
+        .get_manager_positions(
+            predict_manager_id,
+            status,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// Open-interest aggregate over `order_state` for one market.
+async fn market_open_interest(
+    Path(expiry_market_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(
+        state
+            .reader
+            .get_market_open_interest(expiry_market_id)
+            .await?,
+    ))
+}
+
+/// `market_activity_1h` buckets for one market.
+async fn market_activity(
+    Path(expiry_market_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_market_activity(
+            expiry_market_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `liquidation_stats_1h` buckets for one market.
+async fn market_liquidation_stats(
+    Path(expiry_market_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_market_liquidation_stats(
+            expiry_market_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `vault_flows_1h` buckets for one vault.
+async fn vault_flows(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_flows(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `oracle_prices_1m` candles for one oracle.
+async fn oracle_prices_sampled(
+    Path(market_oracle_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_oracle_prices_sampled(
+            market_oracle_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `position_cashflow` lookup for one market-scoped position root (`null`
+/// when unknown).
+async fn position_cashflow(
+    Path((expiry_market_id, position_root_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, PredictError> {
+    Ok(Json(
+        state
+            .reader
+            .get_position_cashflow(expiry_market_id, position_root_id)
+            .await?,
+    ))
 }

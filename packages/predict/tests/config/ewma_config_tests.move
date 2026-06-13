@@ -11,7 +11,7 @@ const ALPHA_MIN: u64 = 1;
 const ALPHA_MAX: u64 = 100_000_000;
 const Z_SCORE_MIN: u64 = 1_000_000_000; // 1 sigma
 const Z_SCORE_MAX: u64 = 10_000_000_000; // 10 sigma
-const FEE_MAX: u64 = 2_000_000; // 20 bps
+const PENALTY_RATE_MAX: u64 = 2_000_000; // 20 bps
 
 // === Construction and getters ===
 
@@ -21,7 +21,7 @@ fun defaults_match_config_constants() {
 
     assert_eq!(config.alpha(), config_constants::default_ewma_alpha!());
     assert_eq!(config.z_score_threshold(), config_constants::default_ewma_z_score_threshold!());
-    assert_eq!(config.additional_fee(), config_constants::default_ewma_additional_fee!());
+    assert_eq!(config.penalty_rate(), config_constants::default_ewma_penalty_rate!());
     assert!(!config.enabled());
 
     destroy(config);
@@ -33,11 +33,11 @@ fun defaults_match_config_constants() {
 fun set_params_updates_all_values() {
     let mut config = ewma_config::new();
 
-    config.set_params(ALPHA_MAX, Z_SCORE_MAX, FEE_MAX);
+    config.set_params(ALPHA_MAX, Z_SCORE_MAX, PENALTY_RATE_MAX);
 
     assert_eq!(config.alpha(), ALPHA_MAX);
     assert_eq!(config.z_score_threshold(), Z_SCORE_MAX);
-    assert_eq!(config.additional_fee(), FEE_MAX);
+    assert_eq!(config.penalty_rate(), PENALTY_RATE_MAX);
 
     destroy(config);
 }
@@ -50,7 +50,7 @@ fun set_params_accepts_lower_boundaries() {
 
     assert_eq!(config.alpha(), ALPHA_MIN);
     assert_eq!(config.z_score_threshold(), Z_SCORE_MIN);
-    assert_eq!(config.additional_fee(), 0);
+    assert_eq!(config.penalty_rate(), 0);
 
     destroy(config);
 }
@@ -83,10 +83,10 @@ fun set_params_threshold_above_max_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidEwmaAdditionalFee)]
+#[test, expected_failure(abort_code = config_constants::EInvalidEwmaPenaltyRate)]
 fun set_params_fee_above_max_aborts() {
     let mut config = ewma_config::new();
-    config.set_params(ALPHA_MIN, Z_SCORE_MIN, FEE_MAX + 1);
+    config.set_params(ALPHA_MIN, Z_SCORE_MIN, PENALTY_RATE_MAX + 1);
     abort 999
 }
 

@@ -19,7 +19,7 @@ trading_fee     = ramped_rate * quantity
 
 fee_after_disc  = trading_fee - trading_fee * (benefit_ratio * max_fee_discount)   (staking)
 builder_fee     = min( fee_after_disc * builder_fee_multiplier , quantity * max_builder_fee_rate )
-congestion_fee  = additional_fee * quantity                    (only when gas is a high outlier)
+congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
 ```
 
 The base trading fee, the expiry ramp, and the staking discount together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of the trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
@@ -74,7 +74,7 @@ The builder fee is **not** part of the trading-fee basis used for the loss rebat
 
 ## 4. Congestion surcharge (gas-price EWMA)
 
-Predict mirrors DeepBook core's gas-price penalty: trades placed during abnormal network congestion pay an additional fee. Each `ExpiryMarket` maintains an exponentially-weighted estimate (`EwmaState`) of the on-chain gas price — a smoothed mean and variance — folding the current transaction's gas price in on every trade:
+Predict mirrors DeepBook core's gas-price penalty: trades placed during abnormal network congestion pay a surcharge. Each `ExpiryMarket` maintains an exponentially-weighted estimate (`EwmaState`) of the on-chain gas price — a smoothed mean and variance — folding the current transaction's gas price in on every trade:
 
 ```text
 mean'     = alpha * gas + (1 - alpha) * mean
@@ -85,10 +85,10 @@ The estimate updates at most once per millisecond, and the squared deviation is 
 
 ```text
 z_score = (gas - mean) / sqrt(variance)
-surcharge = additional_fee * quantity   if  enabled and z_score > z_score_threshold,  else 0
+surcharge = penalty_rate * quantity   if  enabled and z_score > z_score_threshold,  else 0
 ```
 
-The penalty is zero unless it is enabled, variance has accumulated, and the current gas price sits above the smoothed mean by more than `z_score_threshold` standard deviations. The surcharge is a flat per-unit add-on (`additional_fee · quantity`), independent of the contract's probability. The penalty is **disabled by default**; `alpha`, `z_score_threshold`, and `additional_fee` are admin-tunable and shared across markets, while each market evolves its own `EwmaState`.
+The penalty is zero unless it is enabled, variance has accumulated, and the current gas price sits above the smoothed mean by more than `z_score_threshold` standard deviations. The surcharge is a flat per-unit add-on (`penalty_rate · quantity`), independent of the contract's probability. The penalty is **disabled by default**; `alpha`, `z_score_threshold`, and `penalty_rate` are admin-tunable and shared across markets, while each market evolves its own `EwmaState`.
 
 One accepted weakness: because the first observation seeds the variance directly, a market's first post-creation trade made at an extreme gas price inflates the variance estimate and can suppress the surcharge for subsequent traders until the EWMA re-converges. The surcharge is congestion hygiene, not a solvency control, so poisoning it costs an attacker an extreme-gas transaction to save other people a fee.
 
@@ -162,7 +162,7 @@ flowchart TD
     FEE --> DISC["- staking discount (benefit_ratio x max_fee_discount)"]
     DISC --> NETFEE[fee after discount]
     NETFEE --> BUILD["builder fee = min(fee x builder_mult, quantity x max_builder_rate)"]
-    GAS[Gas-price EWMA z-score] --> CONG["congestion surcharge = additional_fee x quantity (if outlier)"]
+    GAS[Gas-price EWMA z-score] --> CONG["congestion surcharge = penalty_rate x quantity (if outlier)"]
     NETFEE --> COLLECT[fee -> expiry cash, basis += fee]
     BUILD --> BUILDER[builder fee -> builder code address]
     CONG --> SURPLUS[surcharge -> expiry cash surplus]
@@ -180,7 +180,7 @@ Cash routing at trade time:
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No | No |
 | Trading-loss rebate | funded from trading fees | back to net-losing trader | (drawn from reserve) | No |
 
-At **mint**, the trader's withdrawal is `user_contribution + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is claimed separately once every position in the expiry is closed.
+At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is claimed separately once every position in the expiry is closed.
 
 ## Related reading
 

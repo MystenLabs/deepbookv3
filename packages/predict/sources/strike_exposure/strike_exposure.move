@@ -227,7 +227,7 @@ public(package) fun close_settled_order(
 
 /// Quote and allocate a live mint order over this exposure book's strike grid.
 ///
-/// Returns `(allocated_order, entry_probability, user_contribution)`.
+/// Returns `(allocated_order, entry_probability, net_premium)`.
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
@@ -248,7 +248,7 @@ public(package) fun allocate_mint_order(
         clock,
     );
     let opened_at_ms = clock.timestamp_ms();
-    let (user_contribution, floor_seed_amount) = exposure
+    let (net_premium, financed_amount) = exposure
         .config
         .assert_mint_admission_policy(
             exposure.expiry_ms,
@@ -262,7 +262,7 @@ public(package) fun allocate_mint_order(
         .assert_mint_floor_terms(
             exposure.expiry_ms,
             opened_at_ms,
-            floor_seed_amount,
+            financed_amount,
             quantity,
         );
 
@@ -289,7 +289,7 @@ public(package) fun allocate_mint_order(
         live_backing_payout,
     );
 
-    (allocated_order, entry_probability, user_contribution)
+    (allocated_order, entry_probability, net_premium)
 }
 
 /// Close live indexed quantity and return redeem terms.

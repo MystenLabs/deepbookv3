@@ -20,7 +20,7 @@ use std::unit_test::{assert_eq, destroy};
 const MINT_MIN_FEE: u64 = 5_000_000;
 /// 1x ATM premium: the order is `[min_strike, +inf)` with live forward ==
 /// min_strike, so entry probability = Φ(0) = 0.5 and
-/// principal = floor(0.5 * 1e9 quantity) = 500_000_000.
+/// net_premium = floor(0.5 * 1e9 quantity) = 500_000_000.
 const MINT_PRINCIPAL: u64 = 500_000_000;
 /// Reserved at mint = floor(fee * default 50% trading-loss rebate rate)
 ///   = floor(5_000_000 * 0.5) = 2_500_000.

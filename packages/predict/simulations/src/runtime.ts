@@ -417,8 +417,18 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
 export function createMarketOracleCapTx(recipient: string): Transaction {
     const tx = new Transaction();
     const cap = tx.moveCall({
-        target: target("market_oracle", "create_cap"),
+        target: target("market_oracle_writer_cap", "create"),
         arguments: [tx.object(ADMIN_CAP_ID)],
+    });
+    tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
+export function mintLifecycleCapTx(recipient: string): Transaction {
+    const tx = new Transaction();
+    const cap = tx.moveCall({
+        target: target("plp", "mint_lifecycle_cap"),
+        arguments: [tx.object(POOL_VAULT_ID), tx.object(ADMIN_CAP_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
     return tx;
@@ -488,7 +498,8 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     pythSourceId: string;
-    oracleCapId: string;
+    lifecycleCapId: string;
+    writerCapId: string;
     expiry: bigint;
     spot: bigint;
 }): Promise<Transaction> {
@@ -507,7 +518,8 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
             tx.object(params.pythSourceId),
-            tx.object(params.oracleCapId),
+            tx.object(params.lifecycleCapId),
+            tx.pure.vector("id", [params.writerCapId]),
             tx.pure.u64(params.expiry),
             tx.object(CLOCK_ID),
         ],

@@ -1,6 +1,6 @@
 # Markets and positions
 
-Predict is an on-chain protocol for option-like prediction contracts on the Sui blockchain. Trading is organized into independent per-expiry markets: each market settles at one timestamp against one Pyth Lazer price feed, and every position in that market is a contract whose payout depends on where the feed's price lands at expiry relative to a chosen strike range. This document describes how a market comes into existence, the geometry it imposes on strikes, what a position is, where positions are tracked, and the lifecycle a position moves through from mint to redemption.
+Predict is an on-chain protocol for European cash-settled binary options (digitals) on the Sui blockchain. Trading is organized into independent per-expiry markets: each market settles at one timestamp against one Pyth Lazer price feed, and every position in that market is a range digital — a contract that pays a fixed notional if the feed's price lands at expiry inside a chosen strike range, and zero otherwise. This document describes how a market comes into existence, the geometry it imposes on strikes, what a position is, where positions are tracked, and the lifecycle a position moves through from mint to redemption.
 
 ## Per-expiry markets
 
@@ -18,11 +18,11 @@ The `Registry` enforces two uniqueness invariants so markets never overlap or du
 
 `create_expiry_market` performs the full setup atomically:
 
-1. **Validate inputs before mutating.** The running package version must be allowed, global trading must be enabled, and the expiry must be strictly in the future (`expiry > clock.timestamp_ms()`). The supplied `PythSource` must match the feed's registered config (same feed ID, same source object).
+1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the pool's allowlist, the running package version must be allowed, global trading must be enabled, and the expiry must be strictly in the future (`expiry > clock.timestamp_ms()`). The supplied `PythSource` must match the feed's registered config (same feed ID, same source object).
 2. **Require a fresh spot.** The current Pyth spot must pass the freshness check; a market cannot be born around a stale price.
 3. **Build the strike grid** centered on the current tick-floored spot, using the feed's configured tick size (see [Strike grid geometry](#strike-grid-geometry)).
 4. **Choose a preallocation budget.** The number of dense grid ticks to preallocate is chosen from the time remaining to expiry — shorter-dated markets preallocate fewer ticks. This is a gas/storage tradeoff that does not affect contract terms.
-5. **Create and share both objects.** The `MarketOracle` and `ExpiryMarket` are constructed (the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig` at this moment), registered with the pool vault as an active expiry, and indexed by expiry in the registry.
+5. **Create and share both objects.** The `MarketOracle` and `ExpiryMarket` are constructed (the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig` at this moment, and the `MarketOracle` seeds its authorized writer-cap set from the cap IDs supplied at creation), registered with the pool vault as an active expiry, and indexed by expiry in the registry.
 
 The new `ExpiryMarket` starts with **zero DUSDC cash**. Pool capital enters only later, through PLP rebalancing (see [../overview.md](../overview.md)). On success the protocol emits `MarketCreated` (and a config-snapshot event) carrying the expiry market, oracle, pool vault, Pyth source, feed ID, expiry, and the grid's `min_strike`/`tick_size`/`max_strike`.
 
@@ -30,7 +30,7 @@ The new `ExpiryMarket` starts with **zero DUSDC cash**. Pool capital enters only
 flowchart TD
   A["Admin: create_pyth_source(feed_id, tick_size)"] --> B["Registry: PythFeedConfig stored, PythSource shared (unique per feed)"]
   B --> C["create_expiry_market(pyth, expiry, ...)"]
-  C --> D{"checks: version allowed, trading on,<br/>expiry in future, fresh spot,<br/>expiry not already created"}
+  C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>expiry in future, fresh spot,<br/>expiry not already created"}
   D -->|pass| E["StrikeGrid::new_centered(spot, tick_size)"]
   E --> F["share MarketOracle + ExpiryMarket"]
   F --> G["PoolVault.register_expiry_market (active expiry)"]
@@ -57,7 +57,7 @@ A position's range is the half-open interval `(lower, higher]`. Boundaries are s
 - Index `total_strikes + 1` corresponds to the positive-infinity sentinel (`pos_inf`, the raw value `u64::MAX`): an open-ended higher bound.
 - A finite strike `s` maps to `finite_strike_index(s) + 1`, i.e. finite boundaries occupy the indices in between.
 
-`assert_range_boundaries` requires `lower < higher` and a non-empty range, and forbids the fully open `(−∞, +∞]` range (which would cover the entire outcome space). The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k" — without inventing artificial outer strikes. Settlement payout for a contract is determined by whether the settlement price falls inside `(lower, higher]`: `close_settled_order` pays zero when `settlement <= lower || settlement > higher`.
+`assert_range_boundaries` requires `lower < higher` and a non-empty range, and forbids the fully open `(−∞, +∞]` range (which would cover the entire outcome space). The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k", i.e. plain digital calls and puts — without inventing artificial outer strikes. Settlement payout for a contract is determined by whether the settlement price falls inside `(lower, higher]`: `close_settled_order` pays zero when `settlement <= lower || settlement > higher`.
 
 The `Order` module enforces the same shape on the packed index domain independently of any concrete grid: indices must be within the protocol-wide encodable bound (`oracle_strike_grid_ticks + 2`), `lower < higher`, and the full-span range is rejected. Leveraged orders carry an extra shape rule — see [Positions](#positions-orders) and [./leverage-and-floor.md](./leverage-and-floor.md).
 
@@ -77,13 +77,13 @@ The packed ID is the single source of truth at protocol boundaries; the bit layo
 
 Order IDs are scoped to their market: an ID alone does not carry expiry or market identity. A position is bound to a market only through the `(expiry_market_id, order_id)` key in the holder's `PredictManager`. Do not infer market facts from an order ID.
 
-What an order represents economically: Predict sells one option-like contract per position. A contract's live value is its range probability value minus its deterministic floor value, floored at zero; a 1x order is the special case with a zero floor. Leverage changes the contract's floor schedule over time rather than adding a separate debt overlay. Leverage is constrained to a discrete set — 1x, 1.5x, 2x, 2.5x, 3x (1e9-scaled) — and higher tiers are gated by entry probability at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in [./leverage-and-floor.md](./leverage-and-floor.md); pricing and oracle inputs in [./pricing-and-oracles.md](./pricing-and-oracles.md).
+What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is its range probability value minus its deterministic floor — the accreting balance of the premium financing that leverage embeds — floored at zero; a 1x order is the special case with a zero floor. Leverage changes the contract's floor schedule over time rather than adding a separate debt overlay. Leverage is constrained to a discrete set — 1x, 1.5x, 2x, 2.5x, 3x (1e9-scaled) — and higher tiers are gated by entry probability at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in [./leverage-and-floor.md](./leverage-and-floor.md); pricing and oracle inputs in [./pricing-and-oracles.md](./pricing-and-oracles.md).
 
 ### Where positions are tracked
 
 Positions live in a `PredictManager`, which wraps a DeepBook `BalanceManager` for DUSDC custody. The manager keeps a `positions` table keyed by `PositionKey { expiry_market_id, order_id }`; the stored value is the position's **root order ID** — the original mint's ID, carried forward unchanged across partial-close replacements so one economic position keeps a single stable handle even though its current order ID changes. The manager also keeps a per-expiry `ExpiryTradingSummary` (open-position count and aggregate cash flows) used for trading-loss-rebate resolution once all positions in an expiry are closed.
 
-Trading is always mediated by a `PredictManager` plus a `PredictTradeProof`: minting and live redemption require a proof, which both authorizes the trade and routes the fee/contribution deposit and withdrawal through the manager's inner balance-manager caps. The proof is generated by the manager owner or by a `PredictTradeCap` holder. The full capability model — owner-direct vs. cap-delegated authority, self-owned managers, deposit/withdraw caps — is documented in [../design/architecture.md](../design/architecture.md).
+Trading is always mediated by a `PredictManager` plus a `PredictTradeProof`: minting and live redemption require a proof, which both authorizes the trade and routes the fee/net-premium deposit and withdrawal through the manager's inner balance-manager caps. The proof is generated by the manager owner or by a `PredictTradeCap` holder. The full capability model — owner-direct vs. cap-delegated authority, self-owned managers, deposit/withdraw caps — is documented in [../design/architecture.md](../design/architecture.md).
 
 ## Position lifecycle
 
@@ -102,7 +102,7 @@ stateDiagram-v2
 
 ### Mint
 
-`mint` creates a live position. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, a valid `PredictTradeProof`, a live and fresh oracle, and enough expiry cash to back the post-mint payout liability plus rebate reserve. Leveraged mints additionally must satisfy leverage-tier policy, sit above the liquidation threshold at entry, and keep the order's terminal floor strictly below `quantity × liquidation_ltv`. The flow quotes the entry range probability, derives the user contribution and floor terms, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the live exposure and liquidation indexes, and settles payment (contribution + trading fee + optional builder fee + EWMA congestion penalty). It emits **`OrderMinted`** and returns the order ID. Mint gating (oracle freshness, mint pause, grid validity) connects to [./pricing-and-oracles.md](./pricing-and-oracles.md).
+`mint` creates a live position. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, a valid `PredictTradeProof`, a live and fresh oracle, and enough expiry cash to back the post-mint payout liability plus rebate reserve. Leveraged mints additionally must satisfy leverage-tier policy, sit above the liquidation threshold at entry, and keep the order's terminal floor strictly below `quantity × liquidation_ltv`. The flow quotes the entry range probability, derives the net premium and floor terms, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the live exposure and liquidation indexes, and settles payment (net premium + trading fee + optional builder fee + EWMA congestion penalty). It emits **`OrderMinted`** and returns the order ID. Mint gating (oracle freshness, mint pause, grid validity) connects to [./pricing-and-oracles.md](./pricing-and-oracles.md).
 
 ### Live redeem (full, or partial as cancel-and-replace)
 
@@ -127,7 +127,7 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 
 ### Compaction
 
-`compact_storage` is the final, privileged cleanup for a settled market (gated by the `MarketOracleCap` because index destruction returns storage rebates). It caches the terminal settled liability, then destroys the dense live exposure indexes. After compaction the expiry retains only the cash needed to back the remaining settled payout and rebate liability; free LP cash returns to the pool through PLP rebalancing, which also unregisters the expiry from the pool's active set. The pool tracks expiry lifecycle on its side — an expiry is **registered** (added to `active_expiry_markets`) when the market is created, **deactivated** (removed from the active set) when its settled cash is released, and effectively **compacted** once its dense state is destroyed.
+`compact_storage` is the final, privileged cleanup for a settled market (its public entrypoint lives on the pool, `plp::compact_storage`, gated by a `MarketLifecycleCap` on the pool's allowlist because index destruction returns storage rebates). It caches the terminal settled liability, then destroys the dense live exposure indexes. After compaction the expiry retains only the cash needed to back the remaining settled payout and rebate liability; free LP cash returns to the pool through PLP rebalancing, which also unregisters the expiry from the pool's active set. The pool tracks expiry lifecycle on its side — an expiry is **registered** (added to `active_expiry_markets`) when the market is created, **deactivated** (removed from the active set) when its settled cash is released, and effectively **compacted** once its dense state is destroyed.
 
 ```mermaid
 stateDiagram-v2

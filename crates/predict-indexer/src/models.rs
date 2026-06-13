@@ -23,7 +23,7 @@ pub struct OrderMinted {
     pub leverage: u64,
     pub entry_probability: u64,
     pub quantity: u64,
-    pub contribution: u64,
+    pub net_premium: u64,
     pub trading_fee: u64,
     pub builder_fee: u64,
     pub penalty_fee: u64,
@@ -273,7 +273,7 @@ pub struct EwmaConfigUpdated {
     pub protocol_config_id: ObjectID,
     pub alpha: u64,
     pub z_score_threshold: u64,
-    pub additional_fee: u64,
+    pub penalty_rate: u64,
     pub enabled: bool,
 }
 

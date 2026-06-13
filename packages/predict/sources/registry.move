@@ -17,9 +17,14 @@ use deepbook_predict::{
     config_events,
     constants,
     expiry_market::{Self, ExpiryMarket},
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_lifecycle_cap::MarketLifecycleCap,
+    market_oracle::{Self, MarketOracle},
+    pause_cap::{Self, PauseCap},
     plp::PoolVault,
-    predict_manager::{Self, PredictDepositCap, PredictManager, PredictTradeCap, PredictWithdrawCap},
+    predict_deposit_cap::PredictDepositCap,
+    predict_manager::{Self, PredictManager},
+    predict_trade_cap::PredictTradeCap,
+    predict_withdraw_cap::PredictWithdrawCap,
     pricing,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
@@ -55,13 +60,6 @@ public struct PythFeedConfig has copy, drop, store {
     pyth_source_id: ID,
     /// Admin-selected strike tick size for future expiries.
     tick_size: u64,
-}
-
-/// Capability for emergency pause operations. Admin can mint these for
-/// trusted operators; holders can disable versions, pause global trading,
-/// and pause per-market minting. Cannot unpause anything.
-public struct PauseCap has key, store {
-    id: UID,
 }
 
 /// Oracle binding for one admin-approved non-DUSDC incentive asset: the Lazer
@@ -189,21 +187,15 @@ public fun mint_pause_cap(
     _admin_cap: &AdminCap,
     ctx: &mut TxContext,
 ): PauseCap {
-    let id = object::new(ctx);
-    registry.allowed_pause_caps.insert(id.to_inner());
-    PauseCap { id }
+    let cap = pause_cap::new(ctx);
+    registry.allowed_pause_caps.insert(cap.id());
+    cap
 }
 
 /// Revoke a previously minted `PauseCap` by ID. Admin-only.
 public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, pause_cap_id: ID) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap_id), EPauseCapNotValid);
     registry.allowed_pause_caps.remove(&pause_cap_id);
-}
-
-/// Destroy a `PauseCap` the holder no longer needs.
-public fun destroy_pause_cap(cap: PauseCap) {
-    let PauseCap { id } = cap;
-    id.delete();
 }
 
 // === Emergency Pause (PauseCap) ===
@@ -344,12 +336,14 @@ public fun create_expiry_market(
     pool_vault: &mut PoolVault,
     config: &mut ProtocolConfig,
     pyth: &PythSource,
-    cap: &MarketOracleCap,
+    lifecycle_cap: &MarketLifecycleCap,
+    writer_cap_ids: vector<ID>,
     expiry: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
     registry.assert_version_allowed();
+    pool_vault.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
@@ -365,7 +359,7 @@ public fun create_expiry_market(
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
         config,
-        cap,
+        writer_cap_ids,
         expiry,
         allowed_versions,
         ctx,
@@ -466,7 +460,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
-    assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+    assert!(registry.allowed_pause_caps.contains(&pause_cap.id()), EPauseCapNotValid);
 }
 
 fun expiry_preallocated_ticks(expiry: u64, now_ms: u64): u64 {

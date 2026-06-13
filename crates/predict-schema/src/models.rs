@@ -3,13 +3,14 @@ use crate::schema::{
     builder_code_set, builder_fees_claimed, deep_staked, deep_unstaked, ewma_config_updated,
     expiry_cash_rebalanced, expiry_cash_received, expiry_cash_template_config_updated,
     expiry_market_mint_paused_updated, expiry_max_funding_updated, expiry_profit_materialized,
-    fee_config_updated, liquidated_order_redeemed, live_order_redeemed, market_config_snapshot,
-    market_created, market_oracle_config_updated, market_oracle_settled,
-    market_oracle_template_config_updated, order_liquidated, order_minted,
-    predict_deposit_cap_minted, predict_manager_created, predict_trade_cap_minted,
-    predict_withdraw_cap_minted, pricing_config_updated, pyth_source_updated, risk_config_updated,
-    settled_order_redeemed, stake_config_updated, strike_exposure_template_config_updated,
-    supply_executed, trading_loss_rebate_claimed, trading_paused_updated, withdraw_executed,
+    fee_config_updated, liquidated_order_redeemed, liquidation_stats_1h, live_order_redeemed,
+    market_activity_1h, market_config_snapshot, market_created, market_oracle_config_updated,
+    market_oracle_settled, market_oracle_template_config_updated, oracle_prices_1m,
+    order_liquidated, order_minted, order_state, position_cashflow, predict_deposit_cap_minted,
+    predict_manager_created, predict_trade_cap_minted, predict_withdraw_cap_minted,
+    pricing_config_updated, pyth_source_updated, risk_config_updated, settled_order_redeemed,
+    stake_config_updated, strike_exposure_template_config_updated, supply_executed,
+    trading_loss_rebate_claimed, trading_paused_updated, vault_flows_1h, withdraw_executed,
 };
 use bigdecimal::BigDecimal;
 use diesel::{Identifiable, Insertable, Queryable, Selectable};
@@ -37,7 +38,7 @@ pub struct OrderMinted {
     pub leverage: i64,
     pub entry_probability: i64,
     pub quantity: BigDecimal,
-    pub contribution: BigDecimal,
+    pub net_premium: BigDecimal,
     pub trading_fee: BigDecimal,
     pub builder_fee: BigDecimal,
     pub penalty_fee: BigDecimal,
@@ -338,7 +339,7 @@ pub struct EwmaConfigUpdated {
     pub protocol_config_id: String,
     pub alpha: i64,
     pub z_score_threshold: i64,
-    pub additional_fee: BigDecimal,
+    pub penalty_rate: BigDecimal,
     pub enabled: bool,
 }
 
@@ -713,4 +714,135 @@ pub struct TradingLossRebateClaimed {
     pub gross_profit: BigDecimal,
     pub eligible_rebate: BigDecimal,
     pub rebate_amount: BigDecimal,
+}
+
+/// `order_state.status` values, shared by the indexer pipeline that writes
+/// them and the server queries that filter on them.
+pub mod order_status {
+    pub const OPEN: &str = "open";
+    pub const REPLACED: &str = "replaced";
+    pub const CLOSED: &str = "closed";
+    pub const LIQUIDATED: &str = "liquidated";
+    pub const LIQUIDATED_REDEEMED: &str = "liquidated_redeemed";
+    pub const SETTLED_REDEEMED: &str = "settled_redeemed";
+}
+
+/// Maintained current-state row for one packed order id (`order_state`).
+///
+/// Keyed by `(expiry_market_id, order_id)`: packed order ids are expiry-local
+/// (sequence/opened_at_ms), so the same id can occur in two markets.
+///
+/// Unlike the raw event rows above, this row is upserted by the `order_state`
+/// pipeline (raw SQL, not diesel inserts) with write-once identity/entry
+/// columns and an LWW-guarded `(checkpoint, tx_index, event_index)` triple.
+/// `Clone`/`PartialEq` support the pipeline's in-memory fold and its unit
+/// tests.
+#[derive(Queryable, Selectable, Debug, Clone, PartialEq, FieldCount, Serialize)]
+#[diesel(table_name = order_state)]
+pub struct OrderState {
+    pub expiry_market_id: String,
+    pub order_id: String,
+    pub predict_manager_id: Option<String>,
+    pub position_root_id: Option<String>,
+    pub owner: Option<String>,
+    pub status: String,
+    pub replacement_order_id: Option<String>,
+    pub opened_at_ms: i64,
+    pub lower_boundary_index: i64,
+    pub higher_boundary_index: i64,
+    pub floor_shares: BigDecimal,
+    pub quantity: BigDecimal,
+    pub sequence: i64,
+    pub lower_strike: Option<BigDecimal>,
+    pub higher_strike: Option<BigDecimal>,
+    pub leverage: Option<i64>,
+    pub entry_probability: Option<i64>,
+    pub net_premium: Option<BigDecimal>,
+    pub updated_at_ms: i64,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+}
+
+// Read-only models over the materialized views (refreshed by the indexer's
+// materialized-view refresh service; never inserted from Rust).
+
+#[derive(Queryable, Selectable, Debug, Serialize)]
+#[diesel(table_name = market_activity_1h)]
+pub struct MarketActivity1h {
+    pub expiry_market_id: String,
+    pub bucket_ms: i64,
+    pub mint_count: i64,
+    pub mint_quantity: BigDecimal,
+    pub mint_premium: BigDecimal,
+    pub mint_fees: BigDecimal,
+    pub unique_minters: i64,
+    pub live_redeem_count: i64,
+    pub live_redeem_quantity: BigDecimal,
+    pub live_redeem_amount: BigDecimal,
+    pub live_redeem_fees: BigDecimal,
+    pub settled_redeem_count: i64,
+    pub settled_redeem_quantity: BigDecimal,
+    pub settled_redeem_payout: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Debug, Serialize)]
+#[diesel(table_name = vault_flows_1h)]
+pub struct VaultFlows1h {
+    pub pool_vault_id: String,
+    pub bucket_ms: i64,
+    pub supply_count: i64,
+    pub supply_amount: BigDecimal,
+    pub shares_minted: BigDecimal,
+    pub withdraw_count: i64,
+    pub withdraw_amount: BigDecimal,
+    pub shares_burned: BigDecimal,
+    pub withdraw_fees: BigDecimal,
+    pub total_supply_after: BigDecimal,
+    pub idle_balance_after: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Debug, Serialize)]
+#[diesel(table_name = liquidation_stats_1h)]
+pub struct LiquidationStats1h {
+    pub expiry_market_id: String,
+    pub bucket_ms: i64,
+    pub liquidated_count: i64,
+    pub liquidated_quantity: BigDecimal,
+    pub gross_value: BigDecimal,
+    pub floor_amount: BigDecimal,
+    pub surplus: BigDecimal,
+    pub gap: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Debug, Serialize)]
+#[diesel(table_name = oracle_prices_1m)]
+pub struct OraclePrices1m {
+    pub market_oracle_id: String,
+    pub bucket_ms: i64,
+    pub open: BigDecimal,
+    pub high: BigDecimal,
+    pub low: BigDecimal,
+    pub close: BigDecimal,
+    pub forward: BigDecimal,
+    pub basis: BigDecimal,
+    pub update_count: i64,
+}
+
+#[derive(Queryable, Selectable, Debug, Serialize)]
+#[diesel(table_name = position_cashflow)]
+pub struct PositionCashflow {
+    pub expiry_market_id: String,
+    pub position_root_id: String,
+    pub predict_manager_id: String,
+    pub owner: String,
+    pub minted_quantity: BigDecimal,
+    pub net_premium: BigDecimal,
+    pub mint_fees: BigDecimal,
+    pub live_redeem_amount: BigDecimal,
+    pub live_redeem_fees: BigDecimal,
+    pub live_quantity_closed: BigDecimal,
+    pub settled_payout: BigDecimal,
+    pub settled_quantity_closed: BigDecimal,
+    pub liquidated_quantity_closed: BigDecimal,
 }

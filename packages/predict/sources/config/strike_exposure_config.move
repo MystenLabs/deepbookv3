@@ -17,7 +17,7 @@ const EOrderBelowLiquidationThreshold: u64 = 1;
 const EAskPriceOutOfBounds: u64 = 2;
 const EInvalidAskBound: u64 = 3;
 const EInvalidFeeProbability: u64 = 4;
-const EOrderPrincipalBelowMinimum: u64 = 5;
+const ENetPremiumBelowMinimum: u64 = 5;
 const EInvalidLeverageTier: u64 = 6;
 const EInvalidLeverage: u64 = 7;
 
@@ -158,9 +158,9 @@ public(package) fun trading_fee(
     math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
-/// Assert mint price, leverage, and principal policy and return derived mint economics.
+/// Assert mint price, leverage, and net-premium policy and return derived mint economics.
 ///
-/// Returns `(user_contribution, floor_seed_amount)`.
+/// Returns `(net_premium, financed_amount)`.
 public(package) fun assert_mint_admission_policy(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
@@ -190,17 +190,17 @@ public(package) fun assert_mint_admission_policy(
         assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
     };
 
-    let exposure_value = math::mul(entry_probability, quantity);
-    let user_contribution = math::div(exposure_value, leverage);
-    assert!(user_contribution >= constants::min_order_principal!(), EOrderPrincipalBelowMinimum);
-    let floor_seed_amount = exposure_value - user_contribution;
+    let entry_value = math::mul(entry_probability, quantity);
+    let net_premium = math::div(entry_value, leverage);
+    assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
+    let financed_amount = entry_value - net_premium;
 
-    if (floor_seed_amount > 0) {
-        let liquidation_threshold_at_open = math::div(floor_seed_amount, config.liquidation_ltv);
-        assert!(exposure_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
+    if (financed_amount > 0) {
+        let liquidation_threshold_at_open = math::div(financed_amount, config.liquidation_ltv);
+        assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
     };
 
-    (user_contribution, floor_seed_amount)
+    (net_premium, financed_amount)
 }
 
 /// Assert mint floor policy and return `(floor_shares, terminal_payout, live_backing_payout)`.
@@ -216,11 +216,11 @@ public(package) fun assert_mint_floor_terms(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
     opened_at_ms: u64,
-    floor_seed_amount: u64,
+    financed_amount: u64,
     quantity: u64,
 ): (u64, u64, u64) {
     let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
-    let floor_shares = math::div(floor_seed_amount, open_floor_index);
+    let floor_shares = math::div(financed_amount, open_floor_index);
     let max_terminal_floor = math::mul(quantity, config.liquidation_ltv);
     assert!(
         config.terminal_floor(floor_shares) < max_terminal_floor,

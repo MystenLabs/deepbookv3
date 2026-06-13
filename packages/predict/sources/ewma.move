@@ -7,7 +7,7 @@
 ///
 /// This module owns only the evolving `(mean, variance)` estimate and the
 /// gas-price observation and penalty math. The tunable knobs (`alpha`,
-/// `z_score_threshold`, `additional_fee`, `enabled`) live in `EwmaConfig`;
+/// `z_score_threshold`, `penalty_rate`, `enabled`) live in `EwmaConfig`;
 /// `ExpiryMarket` owns the stored state and decides when to fold observations in.
 module deepbook_predict::ewma;
 
@@ -57,7 +57,7 @@ public(package) fun penalty_fee(
     let z_score = math::div(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 
-    math::mul(config.additional_fee(), quantity)
+    math::mul(config.penalty_rate(), quantity)
 }
 
 /// Fold the current transaction's gas price into the smoothed mean and variance.

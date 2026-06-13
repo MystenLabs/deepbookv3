@@ -1,12 +1,13 @@
 # Predict
 
-Predict is an on-chain prediction market protocol on Sui. Users trade **range
-contracts** on the value of an oracle feed at a fixed future **expiry**: a
-contract pays out if the settlement price lands inside the trader's chosen strike
-range. Each contract can carry **deterministic leverage**, modelled as a
-time-varying floor on the contract's own payoff rather than as a separate debt
-position. A shared **pool** of liquidity providers backs every market and earns
-the trading flow.
+Predict is an on-chain protocol for European cash-settled binary options
+(digitals) on Sui. Users trade **range digitals** on the value of an oracle feed
+at a fixed future **expiry**: a contract pays a fixed notional if the settlement
+price lands inside the trader's chosen strike range, and zero otherwise. Each
+contract can carry **deterministic leverage**, modelled as embedded premium
+financing — a time-varying floor on the contract's own payoff — plus a
+knock-out, rather than as a separate debt position. A shared **pool** of
+liquidity providers writes every contract and earns the trading flow.
 
 > **Status:** in development, not yet deployed. There are no published package
 > addresses yet, and the on-chain interface is still changing. The documentation

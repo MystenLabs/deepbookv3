@@ -24,7 +24,9 @@ use deepbook_predict::{
     admin::AdminCap,
     constants,
     expiry_market::{Self, ExpiryMarket},
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_lifecycle_cap::MarketLifecycleCap,
+    market_oracle::{Self, MarketOracle},
+    market_oracle_writer_cap::{Self, MarketOracleWriterCap},
     plp::{Self, PLP, PoolSync, PoolVault},
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
@@ -54,7 +56,8 @@ public fun min_strike(): u64 { test_constants::min_finite_strike() }
 public struct Fixture {
     scenario: Scenario,
     admin_cap: AdminCap,
-    cap: MarketOracleCap,
+    cap: MarketOracleWriterCap,
+    lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
@@ -92,7 +95,7 @@ public fun setup_market(spot: u64, tick: u64, supply: u64): Fixture {
         scenario.ctx(),
     );
     return_shared(registry);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle_writer_cap::create(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
@@ -105,6 +108,7 @@ public fun setup_market(spot: u64, tick: u64, supply: u64): Fixture {
     let mut config = scenario.take_shared<ProtocolConfig>();
     let mut vault = scenario.take_shared<PoolVault>();
     let vault_id = vault.id();
+    let lifecycle_cap = vault.mint_lifecycle_cap(&admin_cap, scenario.ctx());
     let sync = plp::start_pool_sync(&mut config, &vault);
     let initial_plp = vault.supply(
         &mut config,
@@ -125,6 +129,7 @@ public fun setup_market(spot: u64, tick: u64, supply: u64): Fixture {
         scenario,
         admin_cap,
         cap,
+        lifecycle_cap,
         clock,
         vault_id,
         pyth_id,
@@ -196,7 +201,8 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
         &mut vault,
         &mut config,
         &pyth,
-        &self.cap,
+        &self.lifecycle_cap,
+        vector[self.cap.id()],
         expiry,
         &self.clock,
         self.scenario.ctx(),
@@ -590,14 +596,16 @@ public fun liquidate_order(
     market.liquidate_order(config, oracle, pyth, order_id, &self.clock)
 }
 
-/// Compact a settled market's live exposure indexes (cap-gated production path).
+/// Compact a settled market's live exposure indexes (lifecycle-cap-gated
+/// production path).
 public fun compact_storage(
     self: &Fixture,
     config: &ProtocolConfig,
+    vault: &PoolVault,
     market: &mut ExpiryMarket,
     oracle: &MarketOracle,
 ) {
-    market.compact_storage(config, oracle, &self.cap);
+    plp::compact_storage(market, vault, config, oracle, &self.lifecycle_cap);
 }
 
 /// Claim a manager's settled trading-loss rebate and return any residual expiry
@@ -759,13 +767,15 @@ public fun finish(self: Fixture) {
         scenario,
         admin_cap,
         cap,
+        lifecycle_cap,
         clock,
         vault_id: _,
         pyth_id: _,
         initial_plp,
     } = self;
     destroy(initial_plp);
-    market_oracle::destroy_cap(cap);
+    cap.destroy();
+    lifecycle_cap.destroy();
     destroy(admin_cap);
     clock.destroy_for_testing();
     scenario.end();

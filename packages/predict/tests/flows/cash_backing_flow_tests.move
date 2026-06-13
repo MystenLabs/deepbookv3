@@ -4,7 +4,7 @@
 /// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability,
 /// rebate_reserve) triple after EVERY cash-mutating operation of a two-sided
 /// 1x book on the far expiry — mint, mint, partial live redeem, settlement,
-/// winner settled redeem, loser settled redeem. Pins that mint principal AND
+/// winner settled redeem, loser settled redeem. Pins that mint net_premium AND
 /// fee land in expiry cash, that disjoint live liability is the max settlement
 /// floor plus the default gap buffer, that settlement itself is an oracle-only
 /// transition (cash sheet bit-identical, liability getter still reports the

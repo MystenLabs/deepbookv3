@@ -16,7 +16,7 @@ use deepbook_predict::{
     ewma::{Self, EwmaState},
     ewma_config::EwmaConfig,
     expiry_cash::{Self, ExpiryCash},
-    market_oracle::{MarketOracle, MarketOracleCap},
+    market_oracle::MarketOracle,
     order::{Self, Order},
     order_events,
     predict_manager::{PredictManager, PredictTradeProof},
@@ -295,25 +295,6 @@ public fun liquidate_order(
         .liquidate_live_order(config.pricing_config(), market_oracle, pyth, &order, clock)
 }
 
-/// Cache terminal liability if needed, then destroy live exposure indexes.
-///
-/// This is cap-gated because index destruction returns storage rebates. Settled
-/// pool cash remains in the expiry until PLP rebalancing receives it.
-public fun compact_storage(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
-) {
-    market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    market.assert_market_oracle(market_oracle);
-    market_oracle.assert_authorized_cap(cap);
-    market.materialize_settled_liability(market_oracle);
-    market.strike_exposure.destroy_live_indexes();
-    market.assert_cash_backing();
-}
-
 // === Public-Package Functions ===
 
 /// Assert that a market oracle belongs to this expiry market.
@@ -522,6 +503,25 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     released_cash
 }
 
+/// Cache terminal liability if needed, then destroy live exposure indexes.
+///
+/// Lifecycle-cap gating lives in `plp::compact_storage` (the allowlist is
+/// `PoolVault` state and `expiry_market` cannot import `plp`). Index
+/// destruction returns storage rebates. Settled pool cash remains in the
+/// expiry until PLP rebalancing receives it.
+public(package) fun compact_storage(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+) {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    market.materialize_settled_liability(market_oracle);
+    market.strike_exposure.destroy_live_indexes();
+    market.assert_cash_backing();
+}
+
 // === Private Functions ===
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
@@ -696,7 +696,7 @@ fun mint_internal(
         clock,
     );
 
-    let (minted_order, entry_probability, user_contribution) = market
+    let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
         .allocate_mint_order(
             config.pricing_config(),
@@ -718,7 +718,7 @@ fun mint_internal(
         manager,
         proof,
         &minted_order,
-        user_contribution,
+        net_premium,
         fee_amount,
         penalty_amount,
         ctx,
@@ -731,7 +731,7 @@ fun mint_internal(
         higher_strike,
         leverage,
         entry_probability,
-        user_contribution,
+        net_premium,
         fee_amount,
         builder_fee_amount,
         penalty_amount,
@@ -839,7 +839,7 @@ fun redeem_settled_internal(
 
 /// Settle a mint payment and return the builder fee paid.
 ///
-/// The EWMA penalty is withdrawn alongside the contribution and fees, but rides
+/// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
 /// into expiry cash as surplus: it is not part of the rebate fee basis,
 /// earns no builder cut, and is excluded from the user's recorded gross paid.
 fun settle_mint_payment(
@@ -847,7 +847,7 @@ fun settle_mint_payment(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     order: &Order,
-    user_contribution: u64,
+    net_premium: u64,
     fee_amount: u64,
     penalty_amount: u64,
     ctx: &mut TxContext,
@@ -855,7 +855,7 @@ fun settle_mint_payment(
     let quantity = order.quantity();
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let withdraw_amount = user_contribution + fee_amount + builder_fee_amount + penalty_amount;
+    let withdraw_amount = net_premium + fee_amount + builder_fee_amount + penalty_amount;
 
     manager.add_position(market.id(), order.id(), order.id());
     let mut payment = manager.withdraw_with_proof(proof, withdraw_amount, ctx).into_balance();
@@ -863,9 +863,9 @@ fun settle_mint_payment(
     send_builder_fee(builder_code_id, builder_fee_payment);
     let fee_payment = payment.split(fee_amount);
     market.collect_trade_fee(manager, fee_payment);
-    // Remaining balance is the contribution plus the penalty surplus.
+    // Remaining balance is the net premium plus the penalty surplus.
     market.cash.receive(payment);
-    manager.record_gross_paid_to_expiry(market.id(), user_contribution);
+    manager.record_gross_paid_to_expiry(market.id(), net_premium);
 
     market.assert_cash_backing();
     builder_fee_amount

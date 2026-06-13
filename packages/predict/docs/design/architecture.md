@@ -33,11 +33,11 @@ The `Registry` is the protocol's index and governance anchor. It enforces one `P
 
 DUSDC is the protocol's settlement currency and has 6 decimals. Custody is partitioned across three layers, each owned by the module responsible for it:
 
-- **Per-trader funds** live inside each `PredictManager`'s inner `BalanceManager` (a DeepBook core object). Deposits, withdrawals, contributions, fees, and payouts all flow through this balance.
+- **Per-trader funds** live inside each `PredictManager`'s inner `BalanceManager` (a DeepBook core object). Deposits, withdrawals, net premiums, fees, and payouts all flow through this balance.
 - **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus the unresolved rebate reserve; the market re-asserts this backing invariant after every cash movement.
 - **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). The vault also custodies all staked DEEP and the LP-owned in-kind incentive balances (SUI, DEEP).
 
-Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during sync rebalancing; traders' contributions and fees flow from a `PredictManager` into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into a `PredictManager`; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. Builder fees are the one outflow that leaves this mesh entirely (see below).
+Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during sync rebalancing; traders' net premiums and fees flow from a `PredictManager` into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into a `PredictManager`; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. Builder fees are the one outflow that leaves this mesh entirely (see below).
 
 ## PredictManager and its capabilities
 
@@ -62,20 +62,23 @@ The inner `BalanceManager`'s own `DepositCap` and `WithdrawCap` are held inside 
 
 `PredictTradeProof` is a hot-potato proof (`has drop`, no `key`/`store`, so it cannot persist past the transaction). The manager owner generates one with `generate_proof_as_owner`, or a `PredictTradeCap` holder generates one with `generate_proof_as_trader`. It records the manager ID.
 
-The proof is used by `mint` (which borrows it) and consumed by the live branch of `redeem` (which takes it by value). It does two things at once: it authorizes the trade for that manager (`validate_proof` aborts unless the proof's manager ID matches), and it authorizes routing the DUSDC withdraw (mint contribution + fees) and deposit (live payout) through the manager's inner caps. Because mint fees are withdrawn via the proof, the proof is required even for owner-initiated mints. `redeem` takes the proof by value; the live branch consumes it, while the settled and already-liquidated branches drop it (the proof has `drop`). `redeem_settled` takes no proof at all — settling a resolved order credits the order's own manager and any caller may run it, so it is permissionless; it aborts if asked to close a still-live order.
+The proof is used by `mint` (which borrows it) and consumed by the live branch of `redeem` (which takes it by value). It does two things at once: it authorizes the trade for that manager (`validate_proof` aborts unless the proof's manager ID matches), and it authorizes routing the DUSDC withdraw (mint net premium + fees) and deposit (live payout) through the manager's inner caps. Because mint fees are withdrawn via the proof, the proof is required even for owner-initiated mints. `redeem` takes the proof by value; the live branch consumes it, while the settled and already-liquidated branches drop it (the proof has `drop`). `redeem_settled` takes no proof at all — settling a resolved order credits the order's own manager and any caller may run it, so it is permissionless; it aborts if asked to close a still-live order.
 
 ## Governance and attribution capabilities
 
 | Capability | Module | Authority | Lifecycle |
 | --- | --- | --- | --- |
-| `AdminCap` | `admin` | global policy: all admin-tunable config, version enable/disable, mint pause caps, oracle writer caps, per-oracle settlement freshness, incentive bindings, per-expiry funding caps | one, minted at init, transferred to deployer (multisig) |
-| `MarketOracleCap` | `market_oracle` | write Block Scholes spot/forward/SVI data, finalize settlement, trigger `compact_storage` | minted by `AdminCap`; multiple may be authorized per oracle |
+| `AdminCap` | `admin` | global policy: all admin-tunable config, version enable/disable, mint pause caps, oracle writer and market-lifecycle caps, per-oracle settlement freshness, incentive bindings, per-expiry funding caps | one, minted at init, transferred to deployer (multisig) |
+| `MarketOracleWriterCap` | `market_oracle_writer_cap` | write Block Scholes spot/forward/SVI data on oracles that have authorized its ID | minted by `AdminCap`, born inert; multiple may be authorized per oracle |
+| `MarketLifecycleCap` | `market_lifecycle_cap` | create expiry markets (`registry::create_expiry_market`) and compact settled ones (`plp::compact_storage`) | minted and revoked by `AdminCap` against the `PoolVault` allowlist |
 | `PauseCap` | `registry` | emergency kill switch: disable a version, force `trading_paused = true`, force per-market mint pause | minted/revoked by `AdminCap`; cannot unpause anything |
 | `BuilderCode` | `builder_code` | claim accumulated builder fees | derived shared object; permanent owner |
 
 **`AdminCap` is a dependency-leaf.** Modules that own admin-tunable state accept the `AdminCap` directly as a parameter rather than routing the mutation through `Registry`. `protocol_config` setters, `market_oracle` bound setters, `plp::set_max_expiry_funding`, and registry-owned flows all take `&AdminCap`. The cap is passed as an unused reference (`_admin_cap`); holding it is the authorization. `Registry` only owns flows that are genuinely registry-scoped: version management, `PauseCap` lifecycle, uniqueness-indexed creation (`create_pyth_source`, `create_expiry_market`), and incentive-asset bindings.
 
-**`MarketOracleCap` is the Block Scholes/settlement writer.** Each `MarketOracle` holds a set of authorized cap IDs; only a cap in that set can push Block Scholes spot/forward/SVI data, settle, or compact. `AdminCap` registers and unregisters caps, and a cap holder can self-unregister. The per-oracle settlement-freshness threshold is set by `AdminCap`, not by this cap. Because settlement can be finalized through this cap, the cap's freshness checks matter: settlement only finalizes from a source whose timestamp is past expiry and within the configured freshness window — see [pricing and oracles](../concepts/pricing-and-oracles.md) and [risks](../risks.md).
+**`MarketOracleWriterCap` is the Block Scholes writer.** Each `MarketOracle` holds a set of authorized writer-cap IDs, seeded at market creation from the cap IDs supplied by the creator (the set may start empty); only a cap in that set can push Block Scholes spot/forward/SVI data. A writer cap is minted by `AdminCap` and born inert — it grants nothing until an oracle authorizes its ID, and object IDs are unforgeable and never reused. `AdminCap` registers and unregisters caps per oracle, and a cap holder can self-unregister. The per-oracle settlement-freshness threshold is set by `AdminCap`, not by this cap, and settlement itself is permissionless — it is gated by source freshness, not by any capability: settlement only finalizes from a source whose timestamp is past expiry and within the configured freshness window — see [pricing and oracles](../concepts/pricing-and-oracles.md) and [risks](../risks.md).
+
+**`MarketLifecycleCap` is the market-lifecycle key.** It authorizes exactly two operations: creating an expiry market (`registry::create_expiry_market`) and compacting a settled one (`plp::compact_storage`), and grants zero oracle-write authority. The allowlist of valid lifecycle caps lives on `PoolVault`; `AdminCap` mints into it (`plp::mint_lifecycle_cap`) and revokes from it (`plp::revoke_lifecycle_cap`). The split from the writer cap narrows blast radius: a compromised lifecycle service can create future markets and compact settled ones but cannot write prices or alter oracle data, while a price-writing service holds only writer caps and cannot create or compact markets.
 
 **`PauseCap` is the emergency brake.** `AdminCap` mints `PauseCap`s into the registry's `allowed_pause_caps` set for trusted operators. A valid `PauseCap` can disable a package version, force global trading pause, or force per-market mint pause — all one-way. Unpausing always requires `AdminCap`. The pause-cap mint and the version-disable paths intentionally bypass the version gate, so the kill switch stays available even when admin has misconfigured versions.
 
@@ -98,7 +101,8 @@ graph TD
     subgraph Owned caps
         ADMIN[AdminCap]
         PAUSE[PauseCap]
-        MOC[MarketOracleCap]
+        MOWC[MarketOracleWriterCap]
+        MOLC[MarketLifecycleCap]
     end
 
     subgraph Per-trader
@@ -120,10 +124,13 @@ graph TD
 
     ADMIN --> CFG
     ADMIN --> REG
-    ADMIN --> MOC
+    ADMIN --> MOWC
+    ADMIN -->|mints into vault allowlist| MOLC
     ADMIN --> PAUSE
     ADMIN -->|sets bounds| MO
-    MOC -->|writes / settles / compacts| MO
+    MOWC -->|writes oracle data| MO
+    MOLC -->|creates markets| REG
+    MOLC -->|compacts settled markets| EM
     PAUSE -->|one-way pause| CFG
     PAUSE -->|disable version| REG
 

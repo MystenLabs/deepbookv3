@@ -345,10 +345,10 @@ public fun set_ewma_params(
     _admin_cap: &AdminCap,
     alpha: u64,
     z_score_threshold: u64,
-    additional_fee: u64,
+    penalty_rate: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.ewma_config.set_params(alpha, z_score_threshold, additional_fee);
+    config.ewma_config.set_params(alpha, z_score_threshold, penalty_rate);
     config_events::emit_ewma_config_updated(config.id(), &config.ewma_config);
 }
 
