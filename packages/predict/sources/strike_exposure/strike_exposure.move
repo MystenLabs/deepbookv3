@@ -16,7 +16,7 @@ use deepbook_predict::{
     market_oracle::MarketOracle,
     order::{Self, Order},
     order_events,
-    pricing,
+    pricing::{Self, Pricer},
     pricing_config::PricingConfig,
     pyth_source::PythSource,
     strike_exposure_config::StrikeExposureConfig,
@@ -184,23 +184,14 @@ public(package) fun close_settled_order(
 /// Returns `(allocated_order, entry_probability, net_premium)`.
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pricer: &Pricer,
     lower: u64,
     higher: u64,
     quantity: u64,
     leverage: u64,
     clock: &Clock,
 ): (Order, u64, u64) {
-    let entry_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
+    let entry_probability = pricer.range_price(lower, higher);
     let opened_at_ms = clock.timestamp_ms();
     let (net_premium, financed_amount) = exposure
         .config
@@ -247,9 +238,7 @@ public(package) fun allocate_mint_order(
 /// order that remains after a partial close.
 public(package) fun close_and_quote_live_order(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
     clock: &Clock,
@@ -276,14 +265,7 @@ public(package) fun close_and_quote_live_order(
     exposure.liquidation.remove_order(order);
 
     // calculate payout
-    let range_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
+    let range_probability = pricer.range_price(lower, higher);
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     // Live redeem outflow rounds down (user eats <=1 ulp): both terms use
     // round-down mul, and saturating_sub floors redeem_amount at 0, so the
@@ -334,14 +316,12 @@ public(package) fun liquidate_live_order(
 
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
+    let pricer = pricing::pricer(config, market, pyth, clock);
     exposure.liquidate_order_if_under_floor(
-        config,
-        market,
-        pyth,
+        &pricer,
         order,
         index_now,
         liquidation_ltv,
-        clock,
     )
 }
 
@@ -358,19 +338,17 @@ public(package) fun liquidate_live_orders(
     if (candidates.is_empty()) return 0;
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
+    let pricer = pricing::pricer(config, market, pyth, clock);
 
     let mut liquidated_count = 0;
     let mut i = 0;
     while (i < candidates.length()) {
         let order = order::from_order_id(candidates[i]);
         let liquidated = exposure.liquidate_order_if_under_floor(
-            config,
-            market,
-            pyth,
+            &pricer,
             &order,
             index_now,
             liquidation_ltv,
-            clock,
         );
         if (liquidated) {
             liquidated_count = liquidated_count + 1;
@@ -413,24 +391,14 @@ fun insert_live_index_quantity(
 
 fun liquidate_order_if_under_floor(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pricer: &Pricer,
     order: &Order,
     index_now: u64,
     liquidation_ltv: u64,
-    clock: &Clock,
 ): bool {
     let quantity = order.quantity();
     let (lower, higher) = exposure.order_boundaries(order);
-    let range_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
+    let range_probability = pricer.range_price(lower, higher);
     let floor_shares = order.floor_shares();
     let current_floor_amount = math::mul(floor_shares, index_now);
     let gross_value = math::mul(range_probability, quantity);

@@ -569,12 +569,11 @@ fun mint_internal(
         clock,
     );
 
+    let pricer = pricing::pricer(config.pricing_config(), market_oracle, pyth, clock);
     let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
         .allocate_mint_order(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
+            &pricer,
             lower_strike,
             higher_strike,
             quantity,
@@ -627,15 +626,13 @@ fun redeem_live_internal(
     // Proof is validated inside deposit_with_proof below.
     manager.update_stake(ctx);
     market.assert_pyth_feed(pyth);
-    pricing::assert_live_quote_available(config.pricing_config(), market_oracle, pyth, clock);
+    let pricer = pricing::pricer(config.pricing_config(), market_oracle, pyth, clock);
     let position_root_id = manager.remove_position(market.id(), order.id());
 
     let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
         .close_and_quote_live_order(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
+            &pricer,
             order,
             close_quantity,
             clock,

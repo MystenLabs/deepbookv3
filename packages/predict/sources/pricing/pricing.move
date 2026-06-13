@@ -17,6 +17,12 @@ use deepbook_predict::{
 use predict_math::{i64, math};
 use sui::clock::Clock;
 
+/// Value snapshot of live oracle inputs for one or more price calculations.
+public struct Pricer has copy, drop {
+    forward: u64,
+    svi: SVIParams,
+}
+
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
@@ -28,21 +34,39 @@ const EPythSpotStale: u64 = 8;
 
 // === Public-Package Functions ===
 
-/// Return the current raw probability for a live range.
-public(package) fun live_range_probability(
+/// Snapshot the current live oracle inputs for repeated quote calculations.
+public(package) fun pricer(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
-    lower: u64,
-    higher: u64,
     clock: &Clock,
-): u64 {
+): Pricer {
     let (forward, svi) = live_inputs(config, market, pyth, clock);
-    compute_range_price(&svi, forward, lower, higher)
+    Pricer { forward, svi }
 }
 
-/// Abort unless the live oracle inputs needed for a quote are currently usable.
-public(package) fun assert_live_quote_available(
+/// Return the current UP tail price for one strike.
+public(package) fun up_price(pricer: &Pricer, strike: u64): u64 {
+    compute_up_price(&pricer.svi, pricer.forward, strike)
+}
+
+/// Return the current raw probability for a live range.
+public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+}
+
+/// Abort unless the Pyth spot source is fresh.
+public(package) fun assert_pyth_spot_fresh(
+    config: &PricingConfig,
+    pyth: &PythSource,
+    clock: &Clock,
+) {
+    assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
+}
+
+// === Private Functions ===
+
+fun assert_live_quote_available(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
@@ -53,20 +77,12 @@ public(package) fun assert_live_quote_available(
     assert_live_oracle_fresh(config, market, clock);
 }
 
-public(package) fun assert_pyth_spot_fresh(
-    config: &PricingConfig,
-    pyth: &PythSource,
-    clock: &Clock,
-) {
-    assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
-}
-
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from the
 /// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
 /// fresh Block Scholes forward. SVI must be fresh either way.
-public(package) fun live_inputs(
+fun live_inputs(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
@@ -82,8 +98,6 @@ public(package) fun live_inputs(
 
     (forward, market.block_scholes_svi())
 }
-
-// === Private Functions ===
 
 fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
     assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
