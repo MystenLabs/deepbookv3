@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Live binary-pricing invariants for `pricing::live_range_probability`, driven
-/// through the minimal `oracle_fixture`.
+/// Live binary-pricing invariants for `pricing::Pricer`, driven through the
+/// minimal `oracle_fixture`.
 ///
 /// These assert EXACT structural invariants that need no precision budget:
 ///   - complementarity: P([-inf, X]) + P([X, +inf]) == 1 exactly (the shared
@@ -37,22 +37,15 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
     fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
 
-    let below = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
+    let below = pricer.range_price(
         constants::neg_inf!(),
         test_constants::default_live_price(),
-        fx.clock(),
     );
-    let above = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
+    let above = pricer.range_price(
         test_constants::default_live_price(),
         constants::pos_inf!(),
-        fx.clock(),
     );
 
     // Exact: the partition of the real line sums to probability 1.
@@ -70,14 +63,11 @@ fun whole_line_range_is_certain() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
     fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
 
-    let whole = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
+    let whole = pricer.range_price(
         constants::neg_inf!(),
         constants::pos_inf!(),
-        fx.clock(),
     );
     assert_eq!(whole, float!());
 
@@ -90,25 +80,12 @@ fun digital_above_probability_is_non_increasing_in_strike() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
     fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
 
     // P(price > X) must be non-increasing as X rises: a higher strike is less
     // likely to be exceeded.
-    let above_low = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
-        STRIKE_BELOW,
-        constants::pos_inf!(),
-        fx.clock(),
-    );
-    let above_high = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
-        STRIKE_ABOVE,
-        constants::pos_inf!(),
-        fx.clock(),
-    );
+    let above_low = pricer.range_price(STRIKE_BELOW, constants::pos_inf!());
+    let above_high = pricer.range_price(STRIKE_ABOVE, constants::pos_inf!());
     assert!(above_low >= above_high);
     // And strictly so straddling the forward with this curve.
     assert!(above_low > above_high);
@@ -118,7 +95,7 @@ fun digital_above_probability_is_non_increasing_in_strike() {
 }
 
 /// Decision-pinned: the live forward switches source exactly at the Pyth
-/// staleness boundary (`pricing::live_inputs`, fallback documented in-code).
+/// staleness boundary (`pricing::pricer`, fallback documented in-code).
 /// While Pyth is fresh — inclusive: `now − freshness_ts == max_age` — the
 /// forward is `mul(pyth_spot, basis)`; one millisecond later, with ZERO
 /// oracle-data change, it is the stored Block Scholes forward. With a +2%
@@ -144,24 +121,15 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     // AT the boundary (now − 99_000 == budget): Pyth is fresh (inclusive), so
     // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.
     fx.set_clock_for_testing(test_constants::live_source_timestamp_ms() + pyth_budget);
-    let (forward_fresh, _) = pricing::live_inputs(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
-        fx.clock(),
-    );
-    assert_eq!(forward_fresh, DIVERGED_PYTH_SPOT);
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
+    assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), float!() / 2);
 
     // ONE ms past the boundary: Pyth is stale, BS prices/SVI still fresh, so
     // the forward falls back to the stored Block Scholes forward = 100e9.
     fx.set_clock_for_testing(test_constants::live_source_timestamp_ms() + pyth_budget + 1);
-    let (forward_stale, _) = pricing::live_inputs(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
-        fx.clock(),
-    );
-    assert_eq!(forward_stale, test_constants::default_live_price());
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
+    assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
+    assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), 0);
 
     oracle_fixture::return_oracle(pyth, oracle, config);
     fx.finish();

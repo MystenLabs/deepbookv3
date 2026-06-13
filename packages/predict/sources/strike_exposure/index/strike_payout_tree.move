@@ -124,6 +124,17 @@ public(package) fun remove_range(
     );
 }
 
+#[test_only]
+public(package) fun destroy(tree: StrikePayoutTree) {
+    let StrikePayoutTree {
+        root,
+        mut nodes,
+        base: _,
+    } = tree;
+    destroy_nodes_for_testing(&mut nodes, root);
+    nodes.destroy_empty();
+}
+
 fun apply_range(
     tree: &mut StrikePayoutTree,
     grid: &StrikeGrid,
@@ -362,6 +373,15 @@ fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {
 
 fun payout_terms(quantity: u64, terminal_payout: u64, live_backing_payout: u64): PayoutTerms {
     PayoutTerms { quantity, terminal_payout, live_backing_payout }
+}
+
+#[test_only]
+fun destroy_nodes_for_testing(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>) {
+    if (root.is_none()) return;
+    let strike = *root.borrow();
+    let node = nodes.remove(strike);
+    destroy_nodes_for_testing(nodes, node.left);
+    destroy_nodes_for_testing(nodes, node.right);
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {

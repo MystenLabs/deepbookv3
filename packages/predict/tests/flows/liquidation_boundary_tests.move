@@ -66,8 +66,8 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
 
     // --- Baseline.
-    let cash_floor = constants::expiry_cash_floor!();
-    helpers::check_market_cash(&market, helpers::expected_market_cash(cash_floor, 0, 0));
+    let seeded_cash = test_constants::default_seeded_expiry_cash();
+    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
     helpers::check_manager(
         &manager,
         expiry_id,
@@ -97,7 +97,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         QUANTITY,
         LEVERAGE_TWO_X,
     );
-    let cash_after_mints = cash_floor + 2 * (CONTRIBUTION + TRADE_FEE);
+    let cash_after_mints = seeded_cash + 2 * (CONTRIBUTION + TRADE_FEE);
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(

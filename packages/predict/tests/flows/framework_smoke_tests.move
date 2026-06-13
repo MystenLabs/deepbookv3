@@ -67,13 +67,10 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     // probability of the full upper range [min_strike, +inf) is a valid
     // probability strictly inside (0, 1). (Independent bound: any probability is
     // in [0, FLOAT_SCALING]; a non-degenerate range is strictly inside.)
-    let up = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
+    let up = pricer.range_price(
         helpers::min_strike(),
         constants::pos_inf!(),
-        fx.clock(),
     );
     assert!(up > 0);
     assert!(up < test_constants::float());

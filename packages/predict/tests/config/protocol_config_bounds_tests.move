@@ -5,11 +5,10 @@
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, ask prices, terminal floor
 /// index, expiry-fee ramp, liquidation LTV, backing buffer lambda), the
-/// expiry-cash trading-loss rebate template, and the per-expiry max funding cap.
-/// Every abort test
-/// drives the real admin setter on a shared `ProtocolConfig` with a value one
-/// unit outside the envelope; pass tests assert that boundary values
-/// round-trip through setter + getter. Codes whose envelope floor is 0
+/// expiry-cash trading-loss rebate template. Every abort test drives the real
+/// admin setter on a shared `ProtocolConfig` with a value one unit outside the
+/// envelope; pass tests assert that boundary values round-trip through setter +
+/// getter. Codes whose envelope floor is 0
 /// (`EInvalidMinFee`, `EInvalidMinAskPrice`, `EInvalidMaxAskPrice`,
 /// `EInvalidTradingLossRebateRate`) have no reachable below-min case for a
 /// `u64`, so only the above-max side is exercised.
@@ -19,8 +18,7 @@ module deepbook_predict::protocol_config_bounds_tests;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     config_constants,
-    flow_test_helpers::{Self as helpers, Fixture},
-    plp::PoolVault,
+    flow_test_helpers as helpers,
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
@@ -35,17 +33,6 @@ fun new_shared_config(): (Scenario, AdminCap, ID) {
     let admin_cap = admin::new(scenario.ctx());
     scenario.next_tx(test_constants::admin());
     (scenario, admin_cap, config_id)
-}
-
-/// Bring up a funded pool with one registered expiry market (no live oracle
-/// needed: the max-funding setter only touches config + vault accounting) and
-/// an `AdminCap` for the `plp::set_max_expiry_funding` admin path.
-fun pool_with_expiry(): (Fixture, ID, AdminCap) {
-    let mut fx = helpers::setup_market_default();
-    let (expiry_id, _oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let admin_cap = admin::new(fx.scenario_mut().ctx());
-    (fx, expiry_id, admin_cap)
 }
 
 // === Strike-exposure templates: base fee ===
@@ -359,62 +346,4 @@ fun template_trading_loss_rebate_rate_accepts_boundaries() {
     return_shared(config);
     destroy(admin_cap);
     scenario.end();
-}
-
-// === Per-expiry max funding (plp::set_max_expiry_funding) ===
-
-#[test, expected_failure(abort_code = config_constants::EInvalidMaxExpiryFunding)]
-fun max_expiry_funding_below_cash_floor_aborts() {
-    let (mut fx, expiry_id, admin_cap) = pool_with_expiry();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    vault.set_max_expiry_funding(
-        &admin_cap,
-        &mut config,
-        expiry_id,
-        config_constants::min_max_expiry_funding!() - 1,
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidMaxExpiryFunding)]
-fun max_expiry_funding_above_max_aborts() {
-    let (mut fx, expiry_id, admin_cap) = pool_with_expiry();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    vault.set_max_expiry_funding(
-        &admin_cap,
-        &mut config,
-        expiry_id,
-        config_constants::max_max_expiry_funding!() + 1,
-    );
-    abort 999
-}
-
-#[test]
-fun max_expiry_funding_accepts_boundaries() {
-    let (mut fx, expiry_id, admin_cap) = pool_with_expiry();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-
-    vault.set_max_expiry_funding(
-        &admin_cap,
-        &mut config,
-        expiry_id,
-        config_constants::min_max_expiry_funding!(),
-    );
-    assert_eq!(config.expiry_max_funding(expiry_id), config_constants::min_max_expiry_funding!());
-
-    vault.set_max_expiry_funding(
-        &admin_cap,
-        &mut config,
-        expiry_id,
-        config_constants::max_max_expiry_funding!(),
-    );
-    assert_eq!(config.expiry_max_funding(expiry_id), config_constants::max_max_expiry_funding!());
-
-    return_shared(vault);
-    return_shared(config);
-    destroy(admin_cap);
-    fx.finish();
 }

@@ -43,6 +43,42 @@ fun new_tree(ctx: &mut TxContext): (StrikeGrid, StrikePayoutTree) {
     (grid, tree)
 }
 
+fun insert_range(
+    tree: &mut StrikePayoutTree,
+    grid: &StrikeGrid,
+    lower: u64,
+    higher: u64,
+    terminal_payout: u64,
+    live_backing_payout: u64,
+) {
+    tree.insert_range(
+        grid,
+        lower,
+        higher,
+        terminal_payout,
+        terminal_payout,
+        live_backing_payout,
+    );
+}
+
+fun remove_range(
+    tree: &mut StrikePayoutTree,
+    grid: &StrikeGrid,
+    lower: u64,
+    higher: u64,
+    terminal_payout: u64,
+    live_backing_payout: u64,
+) {
+    tree.remove_range(
+        grid,
+        lower,
+        higher,
+        terminal_payout,
+        terminal_payout,
+        live_backing_payout,
+    );
+}
+
 fun assert_settled_at_most_floor(
     tree: &StrikePayoutTree,
     settlement: u64,
@@ -77,7 +113,7 @@ fun insert_open_low_range_returns_backing_at_max_strike() {
     // closes it).
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, constants::neg_inf!(), strike(5), 100, 100);
+    insert_range(&mut tree, &grid, constants::neg_inf!(), strike(5), 100, 100);
 
     assert_eq!(tree.max_live_backing_payout(), 100);
     tree.destroy();
@@ -88,7 +124,7 @@ fun insert_open_high_range_returns_max_backing() {
     // (strike(5), pos_inf]: backing accrues at strike(5) and never closes.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(5), constants::pos_inf!(), 100, 100);
+    insert_range(&mut tree, &grid, strike(5), constants::pos_inf!(), 100, 100);
 
     assert_eq!(tree.max_live_backing_payout(), 100);
     tree.destroy();
@@ -99,7 +135,7 @@ fun insert_finite_range_returns_max_backing_in_range() {
     // (strike(2), strike(6)]: backing is required across the finite gain side.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
 
     assert_eq!(tree.max_live_backing_payout(), 50);
     tree.destroy();
@@ -111,8 +147,8 @@ fun two_disjoint_ranges_only_count_max_overlap() {
     // single-order backing, not the sum.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(1), strike(3), 40, 40);
-    tree.insert_range(&grid, strike(5), strike(7), 30, 30);
+    insert_range(&mut tree, &grid, strike(1), strike(3), 40, 40);
+    insert_range(&mut tree, &grid, strike(5), strike(7), 30, 30);
 
     assert_eq!(tree.max_live_backing_payout(), 40);
     tree.destroy();
@@ -124,8 +160,8 @@ fun two_overlapping_ranges_sum_backing() {
     // is the sum of both backings during the overlap window.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(1), strike(6), 40, 40);
-    tree.insert_range(&grid, strike(3), strike(7), 30, 30);
+    insert_range(&mut tree, &grid, strike(1), strike(6), 40, 40);
+    insert_range(&mut tree, &grid, strike(3), strike(7), 30, 30);
 
     assert_eq!(tree.max_live_backing_payout(), 70);
     tree.destroy();
@@ -135,9 +171,10 @@ fun two_overlapping_ranges_sum_backing() {
 fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, constants::neg_inf!(), strike(1), 200, 200);
+    insert_range(&mut tree, &grid, constants::neg_inf!(), strike(1), 200, 200);
     // Partial-close survivor terms from the C1 gap-one row.
-    tree.insert_range(
+    insert_range(
+        &mut tree,
         &grid,
         strike(1),
         strike(3),
@@ -145,7 +182,8 @@ fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
         PARTIAL_SURVIVOR_LIVE,
     );
     // Leveraged 2x UP terms from the compaction parity book.
-    tree.insert_range(
+    insert_range(
+        &mut tree,
         &grid,
         strike(2),
         constants::pos_inf!(),
@@ -184,7 +222,7 @@ fun insert_with_both_terms_zero_is_no_op() {
     // Otherwise EInvalidPayoutTerms would not even be reached.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 0, 0);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 0, 0);
 
     assert_eq!(tree.max_live_backing_payout(), 0);
     tree.destroy();
@@ -196,7 +234,7 @@ fun insert_terminal_greater_than_backing_aborts() {
     // requirement must be at least the terminal liability).
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 100, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 100, 50);
     abort 999
 }
 
@@ -204,7 +242,7 @@ fun insert_terminal_greater_than_backing_aborts() {
 fun insert_lower_equal_higher_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(5), strike(5), 10, 10);
+    insert_range(&mut tree, &grid, strike(5), strike(5), 10, 10);
     abort 999
 }
 
@@ -212,7 +250,7 @@ fun insert_lower_equal_higher_aborts() {
 fun insert_lower_above_higher_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(6), strike(4), 10, 10);
+    insert_range(&mut tree, &grid, strike(6), strike(4), 10, 10);
     abort 999
 }
 
@@ -221,7 +259,7 @@ fun insert_full_open_range_aborts() {
     // (neg_inf, pos_inf] is rejected to keep settlement liability finite.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, constants::neg_inf!(), constants::pos_inf!(), 10, 10);
+    insert_range(&mut tree, &grid, constants::neg_inf!(), constants::pos_inf!(), 10, 10);
     abort 999
 }
 
@@ -229,7 +267,7 @@ fun insert_full_open_range_aborts() {
 fun insert_finite_below_grid_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, MIN_STRIKE - TICK_SIZE, strike(5), 10, 10);
+    insert_range(&mut tree, &grid, MIN_STRIKE - TICK_SIZE, strike(5), 10, 10);
     abort 999
 }
 
@@ -237,7 +275,7 @@ fun insert_finite_below_grid_aborts() {
 fun insert_finite_above_grid_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(5), max_strike() + TICK_SIZE, 10, 10);
+    insert_range(&mut tree, &grid, strike(5), max_strike() + TICK_SIZE, 10, 10);
     abort 999
 }
 
@@ -245,7 +283,7 @@ fun insert_finite_above_grid_aborts() {
 fun insert_unaligned_strike_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(1) + TICK_SIZE / 2, strike(5), 10, 10);
+    insert_range(&mut tree, &grid, strike(1) + TICK_SIZE / 2, strike(5), 10, 10);
     abort 999
 }
 
@@ -256,11 +294,10 @@ fun insert_then_remove_restores_empty_state() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
 
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
     assert_eq!(tree.max_live_backing_payout(), 50);
-    tree.remove_range(&grid, strike(2), strike(6), 50, 50);
+    remove_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
     assert_eq!(tree.max_live_backing_payout(), 0);
-
     tree.destroy();
 }
 
@@ -269,13 +306,12 @@ fun insert_two_then_remove_one_leaves_other() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
 
-    tree.insert_range(&grid, strike(1), strike(6), 40, 40);
-    tree.insert_range(&grid, strike(3), strike(7), 30, 30);
+    insert_range(&mut tree, &grid, strike(1), strike(6), 40, 40);
+    insert_range(&mut tree, &grid, strike(3), strike(7), 30, 30);
     assert_eq!(tree.max_live_backing_payout(), 70);
 
-    tree.remove_range(&grid, strike(3), strike(7), 30, 30);
+    remove_range(&mut tree, &grid, strike(3), strike(7), 30, 30);
     assert_eq!(tree.max_live_backing_payout(), 40);
-
     tree.destroy();
 }
 
@@ -283,10 +319,10 @@ fun insert_two_then_remove_one_leaves_other() {
 fun remove_more_than_inserted_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
     // Bump both terms together so the EInvalidPayoutTerms shape check passes
     // and the failure surfaces in the boundary delta's available-terms check.
-    tree.remove_range(&grid, strike(2), strike(6), 51, 51);
+    remove_range(&mut tree, &grid, strike(2), strike(6), 51, 51);
     abort 999
 }
 
@@ -294,7 +330,7 @@ fun remove_more_than_inserted_aborts() {
 fun remove_from_empty_tree_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.remove_range(&grid, strike(2), strike(6), 1, 1);
+    remove_range(&mut tree, &grid, strike(2), strike(6), 1, 1);
     abort 999
 }
 
@@ -305,7 +341,7 @@ fun settled_liability_zero_below_winning_range() {
     // (strike(2), strike(6)] only wins for settlement > strike(2).
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
 
     assert_eq!(tree.settled_payout_liability(strike(2)), 0);
     assert_eq!(tree.settled_payout_liability(strike(1)), 0);
@@ -316,7 +352,7 @@ fun settled_liability_zero_below_winning_range() {
 fun settled_liability_owed_inside_winning_range() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
 
     // (strike(2), strike(6)] means winning for settlement in the finite interior up to strike(6).
     assert_eq!(tree.settled_payout_liability(strike(3)), 50);
@@ -330,7 +366,7 @@ fun settled_liability_zero_above_winning_range() {
     // the range out at strike+1.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
 
     assert_eq!(tree.settled_payout_liability(strike(7)), 0);
     assert_eq!(tree.settled_payout_liability(max_strike()), 0);
@@ -342,7 +378,7 @@ fun settled_liability_neg_inf_range_owed_until_close() {
     // (neg_inf, strike(5)] wins for all settlement <= strike(5).
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, constants::neg_inf!(), strike(5), 100, 100);
+    insert_range(&mut tree, &grid, constants::neg_inf!(), strike(5), 100, 100);
 
     assert_eq!(tree.settled_payout_liability(MIN_STRIKE), 100);
     assert_eq!(tree.settled_payout_liability(strike(5)), 100);
@@ -355,7 +391,7 @@ fun settled_liability_pos_inf_range_owed_from_lower() {
     // (strike(5), pos_inf] wins for all settlement > strike(5).
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(5), constants::pos_inf!(), 100, 100);
+    insert_range(&mut tree, &grid, strike(5), constants::pos_inf!(), 100, 100);
 
     assert_eq!(tree.settled_payout_liability(strike(5)), 0);
     assert_eq!(tree.settled_payout_liability(strike(6)), 100);
@@ -369,8 +405,8 @@ fun settled_liability_sums_multiple_winners() {
     // above the first range wins only the second.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 50, 50);
-    tree.insert_range(&grid, strike(4), strike(7), 30, 30);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 50, 50);
+    insert_range(&mut tree, &grid, strike(4), strike(7), 30, 30);
 
     assert_eq!(tree.settled_payout_liability(strike(5)), 80);
     assert_eq!(tree.settled_payout_liability(strike(7)), 30);
@@ -385,7 +421,7 @@ fun settled_liability_uses_terminal_not_backing() {
     // the terminal value, not the (larger) live-backing value.
     let ctx = &mut tx_context::dummy();
     let (grid, mut tree) = new_tree(ctx);
-    tree.insert_range(&grid, strike(2), strike(6), 30, 50);
+    insert_range(&mut tree, &grid, strike(2), strike(6), 30, 50);
 
     assert_eq!(tree.settled_payout_liability(strike(5)), 30);
     // Live backing peak still reflects 50.
@@ -403,7 +439,7 @@ fun destroy_after_many_inserts_succeeds() {
     // node-by-node destroy path.
     let mut i = 0;
     while (i < DESTROY_INSERT_TICKS) {
-        tree.insert_range(&grid, strike(i), strike(i + 1), 1, 1);
+        insert_range(&mut tree, &grid, strike(i), strike(i + 1), 1, 1);
         i = i + 1;
     };
     tree.destroy();

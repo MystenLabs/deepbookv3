@@ -60,9 +60,11 @@ public fun default_creation_spot(): u64 { 50_100_000_000_000 }
 /// `100e9` here.
 public fun min_finite_strike(): u64 { 100_000_000_000 }
 
-/// Initial PLP supply the default fixture bootstraps the pool with. Comfortably
-/// exceeds `expiry_cash_floor` (50_000e6) so a single expiry funds fully.
-public fun default_initial_supply(): u64 { 300_000_000_000 }
+/// Default DUSDC cash seeded into expiry markets while pool funding is absent.
+public fun default_seeded_expiry_cash(): u64 { 300_000_000_000 }
+
+/// Back-compat alias for older fixture call sites.
+public fun default_initial_supply(): u64 { default_seeded_expiry_cash() }
 
 /// Protocol-reserve profit share the default fixture sets (40% in FLOAT_SCALING).
 public fun protocol_reserve_share(): u64 { 400_000_000 }

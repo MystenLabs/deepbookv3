@@ -223,7 +223,7 @@ fun equal_pyth_samples_settle_to_exact_value() {
 
 fun record_pyth_samples(
     fx: &mut helpers::Fixture,
-    config: &ProtocolConfig,
+    _config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     count: u64,
@@ -236,7 +236,7 @@ fun record_pyth_samples(
         fx.set_clock_for_testing(timestamp_ms);
         let spot = base_spot + i * spot_step;
         pyth.set_state_for_testing(spot, timestamp_ms, timestamp_ms);
-        oracle.record_pyth_settlement_observation(config, pyth, fx.clock());
+        oracle.record_pyth_settlement_observation(pyth, fx.clock());
         i = i + 1;
     }
 }

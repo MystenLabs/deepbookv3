@@ -5,11 +5,10 @@
 /// error-path tests.
 ///
 /// Stands up a real `MarketOracle` + `PythSource` through the production
-/// `registry::create_expiry_market` path, with only the PLP idle funding required
-/// to back the expiry allocation invariant. This reaches the oracle/pricing
-/// guards more cheaply than the full `flow_test_helpers` market: no per-expiry
-/// sync or manager setup. It is the legitimate home of `set_state_for_testing`
-/// for tests that don't need a funded expiry market.
+/// `registry::create_expiry_market` path. This reaches the oracle/pricing guards
+/// more cheaply than the full `flow_test_helpers` market: no manager setup or
+/// expiry cash seeding. It is the legitimate home of `set_state_for_testing` for
+/// tests that don't need a funded expiry market.
 ///
 /// The fixture exposes the `MarketOracleWriterCap` so error-path tests can call the
 /// guarded oracle setters (`update_block_scholes_prices`, `update_svi`) directly
@@ -26,20 +25,15 @@ use deepbook_predict::{
     market_lifecycle_cap::MarketLifecycleCap,
     market_oracle::{Self, MarketOracle, SVIParams},
     market_oracle_writer_cap::{Self, MarketOracleWriterCap},
-    plp::{Self, PLP, PoolVault},
+    plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
-    pyth_source::{Self, PythSource},
+    pyth_source::PythSource,
     registry::{Self, Registry},
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use predict_math::i64;
 use std::unit_test::destroy;
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, return_shared}
-};
+use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
 
 /// Scenario-local oracle objects. `Registry`/`ProtocolConfig`/`PoolVault` are real
 /// shared objects taken per-transaction, not held here.
@@ -52,14 +46,12 @@ public struct OracleFixture {
     pyth_id: ID,
     oracle_id: ID,
     expiry_id: ID,
-    initial_plp: Coin<PLP>,
 }
 
 /// Stand up a registry + config + a registered Pyth source (spot seeded to `spot`)
 /// + a `MarketOracle`/`ExpiryMarket` for `expiry`, with grid centered on `spot`
-/// and a `tick`-sized grid. PLP is supplied only to back the registration
-/// allocation; no expiry sync runs. `spot/tick` must satisfy the `new_centered`
-/// window (the defaults do).
+/// and a `tick`-sized grid. `spot/tick` must satisfy the `new_centered` window
+/// (the defaults do).
 public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
@@ -87,24 +79,14 @@ public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(spot, live_ts, live_ts);
-    let mut vault = scenario.take_shared<PoolVault>();
+    let vault = scenario.take_shared<PoolVault>();
     let mut registry = scenario.take_shared<Registry>();
-    let mut config = scenario.take_shared<ProtocolConfig>();
-    let sync = plp::start_pool_sync(&mut config, &vault);
-    let initial_plp = vault.supply(
-        &mut config,
-        sync,
-        coin::mint_for_testing<DUSDC>(test_constants::default_initial_supply(), scenario.ctx()),
-        &pyth,
-        &pyth,
-        &clock,
-        scenario.ctx(),
-    );
-    let lifecycle_cap = vault.mint_lifecycle_cap(&admin_cap, scenario.ctx());
+    let config = scenario.take_shared<ProtocolConfig>();
+    let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
     let (expiry_id, oracle_id) = registry::create_expiry_market(
         &mut registry,
-        &mut vault,
-        &mut config,
+        &vault,
+        &config,
         &pyth,
         &lifecycle_cap,
         vector[cap.id()],
@@ -128,7 +110,6 @@ public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
         pyth_id,
         oracle_id,
         expiry_id,
-        initial_plp,
     }
 }
 
@@ -164,7 +145,7 @@ public fun return_oracle(pyth: PythSource, oracle: MarketOracle, config: Protoco
 /// forward (basis = 1.0).
 public fun prepare_live_oracle(
     self: &OracleFixture,
-    config: &ProtocolConfig,
+    _config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     live_price: u64,
@@ -172,7 +153,6 @@ public fun prepare_live_oracle(
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(live_price, live_ts, live_ts);
     oracle.update_block_scholes_prices(
-        config,
         &self.cap,
         live_price,
         live_price,
@@ -186,7 +166,7 @@ public fun prepare_live_oracle(
         i64::from_u64(test_constants::default_svi_m()),
         constants::svi_sigma_min!(),
     );
-    oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
+    oracle.update_svi(&self.cap, svi, live_ts, &self.clock);
 }
 
 /// Seed fresh live Block Scholes prices + arbitrary SVI through the production cap
@@ -196,7 +176,7 @@ public fun prepare_live_oracle(
 /// on the fixture creation spot, so callers pass real strikes valid for that grid.
 public fun prepare_real_oracle(
     self: &OracleFixture,
-    config: &ProtocolConfig,
+    _config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     spot: u64,
@@ -205,8 +185,8 @@ public fun prepare_real_oracle(
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(spot, live_ts, live_ts);
-    oracle.update_block_scholes_prices(config, &self.cap, spot, forward, live_ts, &self.clock);
-    oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
+    oracle.update_block_scholes_prices(&self.cap, spot, forward, live_ts, &self.clock);
+    oracle.update_svi(&self.cap, svi, live_ts, &self.clock);
 }
 
 /// Overwrite the Pyth spot directly (for staleness and pricing-source tests),
@@ -226,8 +206,8 @@ public fun set_pyth(
 /// directly with adversarial inputs.
 public fun cap(self: &OracleFixture): &MarketOracleWriterCap { &self.cap }
 
-/// The allow-listed lifecycle cap, for tests driving the lifecycle-gated flows
-/// (`create_expiry_market` / `plp::compact_storage`) directly.
+/// The allow-listed lifecycle cap, for tests driving lifecycle-gated market
+/// creation directly.
 public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }
 
 public fun clock(self: &OracleFixture): &Clock { &self.clock }
@@ -256,9 +236,7 @@ public fun finish(self: OracleFixture) {
         pyth_id: _,
         oracle_id: _,
         expiry_id: _,
-        initial_plp,
     } = self;
-    destroy(initial_plp);
     cap.destroy();
     lifecycle_cap.destroy();
     destroy(admin_cap);

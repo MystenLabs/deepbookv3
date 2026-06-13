@@ -48,10 +48,11 @@ fun cash_sheet_exact_after_every_flow() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
 
-    // --- Baseline: the funding sync topped the fresh expiry to the cash floor.
-    let cash_floor = constants::expiry_cash_floor!();
+    // --- Baseline: the fixture seeded the fresh expiry with cash while pool
+    // funding is absent.
+    let seeded_cash = test_constants::default_seeded_expiry_cash();
     let deposit = test_constants::default_manager_deposit();
-    helpers::check_market_cash(&market, helpers::expected_market_cash(cash_floor, 0, 0));
+    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
     helpers::check_manager(
         &manager,
         expiry_id,
@@ -75,7 +76,7 @@ fun cash_sheet_exact_after_every_flow() {
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
-            cash_floor + MINT1_PRINCIPAL + MINT1_FEE,
+            seeded_cash + MINT1_PRINCIPAL + MINT1_FEE,
             test_constants::mint_quantity(),
             REBATE_AFTER_MINT1,
         ),
@@ -106,7 +107,12 @@ fun cash_sheet_exact_after_every_flow() {
         DOWN_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    let cash_after_mints = cash_floor + MINT1_PRINCIPAL + MINT1_FEE + MINT2_PRINCIPAL + MINT2_FEE;
+    let cash_after_mints =
+        seeded_cash
+        + MINT1_PRINCIPAL
+        + MINT1_FEE
+        + MINT2_PRINCIPAL
+        + MINT2_FEE;
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(

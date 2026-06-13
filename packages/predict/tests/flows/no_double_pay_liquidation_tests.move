@@ -57,8 +57,8 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
 
     // --- Baseline.
-    let cash_floor = constants::expiry_cash_floor!();
-    helpers::check_market_cash(&market, helpers::expected_market_cash(cash_floor, 0, 0));
+    let seeded_cash = test_constants::default_seeded_expiry_cash();
+    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
     helpers::check_manager(
         &manager,
         expiry_id,
@@ -79,7 +79,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         LEVERAGE_TWO_X,
     );
     assert_eq!(order::from_order_id(order_id).floor_shares(), FLOOR_SHARES);
-    let cash_after_mint = cash_floor + MINT_CONTRIBUTION + MINT_MIN_FEE;
+    let cash_after_mint = seeded_cash + MINT_CONTRIBUTION + MINT_MIN_FEE;
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(cash_after_mint, LIVE_BACKING, MINT_REBATE),

@@ -90,12 +90,12 @@ fun setup_live_market_with_templates(
 
     let (expiry_id, oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
     let manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(
         expiry_id,
         oracle_id,
     );
     fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
-    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
+    fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.scenario_mut().next_tx(test_constants::admin());
     (fx, expiry_id, oracle_id, manager)

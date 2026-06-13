@@ -37,9 +37,9 @@ fun one_x_lifecycle_fund_mint_settle_redeem() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
 
-    // --- After the funding sync: idle pool cash rebalanced up to the per-expiry
-    // cash floor; oracle live and not settled.
-    assert_eq!(market.cash_balance(), constants::expiry_cash_floor!());
+    // --- The fixture seeded expiry cash while pool funding is absent; oracle
+    // is live and not settled.
+    assert_eq!(market.cash_balance(), test_constants::default_seeded_expiry_cash());
     assert!(!oracle.is_settled());
     assert_eq!(oracle.status(fx.clock()), market_oracle::status_active());
 

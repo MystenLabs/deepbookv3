@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Exact-value coverage for `pricing::live_range_probability` over REAL on-chain
+/// Exact-value coverage for `pricing::Pricer` range prices over REAL on-chain
 /// Block Scholes SVI scenarios.
 ///
 /// The structural tests in `pricing_tests.move` only pin invariants that
@@ -39,7 +39,7 @@ use predict_math::math;
 use std::unit_test::assert_eq;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
-/// spot/forward, and assert `live_range_probability` matches the independent
+/// spot/forward, and assert `Pricer.range_price` matches the independent
 /// true-math reference within the per-point derived budget at every reference point.
 fun run_scenario(s: u64) {
     let mut fx = oracle_fixture::setup_oracle(
@@ -56,20 +56,14 @@ fun run_scenario(s: u64) {
         ref_data::forward(s),
         ref_data::svi(s),
     );
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
 
     let points = ref_data::points(s);
     let n = points.length();
     let mut i = 0;
     while (i < n) {
         let p = &points[i];
-        let actual = pricing::live_range_probability(
-            config.pricing_config(),
-            &oracle,
-            &pyth,
-            p.lower(),
-            p.higher(),
-            fx.clock(),
-        );
+        let actual = pricer.range_price(p.lower(), p.higher());
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
         i = i + 1;
     };
@@ -97,14 +91,11 @@ fun at_the_forward_is_exactly_one_half() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
     fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
 
-    let up = pricing::live_range_probability(
-        config.pricing_config(),
-        &oracle,
-        &pyth,
+    let up = pricer.range_price(
         test_constants::default_live_price(),
         constants::pos_inf!(),
-        fx.clock(),
     );
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
     assert_eq!(up, math::float_scaling!() / 2);

@@ -14,7 +14,6 @@ use deepbook_predict::{
     expiry_market,
     flow_test_helpers as helpers,
     market_oracle::{Self, MarketOracle},
-    plp,
     protocol_config,
     pyth_source::PythSource,
     registry::{Self, Registry},
@@ -136,7 +135,6 @@ fun redeem_settled_on_live_order_aborts() {
 #[test, expected_failure(abort_code = expiry_market::EWrongMarketOracle)]
 fun redeem_with_wrong_oracle_aborts() {
     let mut fx = helpers::setup_market_default();
-    fx.add_idle_supply_before_expiries(test_constants::default_initial_supply());
     let (expiry_a, _oracle_a) = fx.create_expiry(test_constants::default_expiry_ms());
     let (_expiry_b, oracle_b_id) = fx.create_expiry(SECOND_EXPIRY_MS);
     let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
@@ -210,14 +208,14 @@ fun mint_with_wrong_pyth_source_aborts() {
 }
 
 /// Minting while this expiry's mint switch is paused must abort: `mint` checks
-/// `expiry_mint_paused` immediately after the version gate.
+/// the expiry-local mint pause immediately after the version gate.
 #[test, expected_failure(abort_code = expiry_market::EMintPaused)]
 fun mint_while_expiry_mint_paused_aborts() {
     let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, mut config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
 
-    fx.set_expiry_mint_paused(&mut config, expiry_id, true);
+    fx.set_expiry_mint_paused(&mut market, true);
     fx.mint(
         &config,
         &mut manager,
@@ -271,8 +269,7 @@ fun mint_with_current_version_disabled_aborts() {
     abort 999
 }
 
-/// Minting while global trading is paused must abort: `assert_trading_allowed`
-/// checks the pause flag before the valuation lock.
+/// Minting while global trading is paused must abort.
 #[test, expected_failure(abort_code = protocol_config::ETradingPaused)]
 fun mint_while_trading_paused_aborts() {
     let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
@@ -291,52 +288,6 @@ fun mint_while_trading_paused_aborts() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-
-    helpers::return_market(pyth, vault, market, oracle, config);
-    destroy(manager);
-    fx.finish();
-    abort 999
-}
-
-/// Minting inside an open pool-sync valuation window must abort: trading is not
-/// paused, so `assert_trading_allowed` falls through to the valuation lock. The
-/// un-consumed `PoolSync` is fine to hold since the test aborts.
-#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun mint_during_pool_sync_aborts() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, mut config) = fx.take_market(expiry_id, oracle_id);
-
-    let _sync = plp::start_pool_sync(&mut config, &vault);
-    fx.mint(
-        &config,
-        &mut manager,
-        &mut market,
-        &oracle,
-        &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-    );
-
-    helpers::return_market(pyth, vault, market, oracle, config);
-    destroy(manager);
-    fx.finish();
-    abort 999
-}
-
-/// `pool_nav` outside an open pool-sync valuation window must abort: it asserts
-/// the valuation lock right after the version gate, before any binding or
-/// pricing checks. Called directly — it is `public(package)` and this test
-/// module lives in the same package.
-#[test, expected_failure(abort_code = protocol_config::EValuationNotInProgress)]
-fun pool_nav_outside_pool_sync_aborts() {
-    let (mut fx, expiry_id, oracle_id, manager) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, market, oracle, config) = fx.take_market(expiry_id, oracle_id);
-
-    let (_free_cash, _range, _floor) = market.pool_nav(&config, &oracle, &pyth, fx.clock());
 
     helpers::return_market(pyth, vault, market, oracle, config);
     destroy(manager);

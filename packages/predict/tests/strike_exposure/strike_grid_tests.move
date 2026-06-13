@@ -24,7 +24,10 @@ fun new_centered_accepts_boundary_tick_size() {
     assert_eq!(grid.min_strike(), expected_min);
     assert_eq!(grid.tick_size(), VALID_BTC_TICK_SIZE);
     assert_eq!(grid.max_strike(), expected_max);
-    assert_eq!(grid.total_strikes(), constants::oracle_strike_grid_ticks!() + 1);
+    assert_eq!(
+        (grid.max_strike() - grid.min_strike()) / grid.tick_size() + 1,
+        constants::oracle_strike_grid_ticks!() + 1,
+    );
 }
 
 #[test, expected_failure(abort_code = strike_grid::EInvalidTickSize)]
@@ -61,15 +64,16 @@ fun new_centered_aborts_without_spot() {
 #[test]
 fun boundary_indexes_round_trip_raw_boundaries() {
     let grid = strike_grid::new_centered(BTC_SPOT, VALID_BTC_TICK_SIZE);
-    let max_boundary_index = grid.total_strikes() + 1;
+    let max_finite_boundary_index = constants::oracle_strike_grid_ticks!() + 1;
+    let max_boundary_index = constants::max_boundary_index!();
 
     assert_eq!(grid.boundary_index(constants::neg_inf!()), 0);
     assert_eq!(grid.boundary_index(CENTERED_MIN_STRIKE), 1);
-    assert_eq!(grid.boundary_index(CENTERED_MAX_STRIKE), grid.total_strikes());
+    assert_eq!(grid.boundary_index(CENTERED_MAX_STRIKE), max_finite_boundary_index);
     assert_eq!(grid.boundary_index(constants::pos_inf!()), max_boundary_index);
 
     assert_eq!(grid.boundary_at_index(0), constants::neg_inf!());
     assert_eq!(grid.boundary_at_index(1), CENTERED_MIN_STRIKE);
-    assert_eq!(grid.boundary_at_index(grid.total_strikes()), CENTERED_MAX_STRIKE);
+    assert_eq!(grid.boundary_at_index(max_finite_boundary_index), CENTERED_MAX_STRIKE);
     assert_eq!(grid.boundary_at_index(max_boundary_index), constants::pos_inf!());
 }

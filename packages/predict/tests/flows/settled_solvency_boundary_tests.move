@@ -6,8 +6,8 @@
 /// `(lower, higher]`. Pins that the settled payout reserve drains to exactly
 /// zero (no residual, no underflow), that a worthless settled survivor is
 /// still closable (a zero-payout permissionless close must not abort), and
-/// that custody conserves across the full market-cash / pool / manager sheets
-/// at every step. One parameterized runner, three boundary rows.
+/// that custody conserves across the market-cash / manager sheets at every
+/// step. One parameterized runner, three boundary rows.
 #[test_only]
 module deepbook_predict::settled_solvency_boundary_tests;
 
@@ -76,15 +76,10 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
 
-    // --- Post-funding-sync baseline: the pool topped the fresh expiry up to
-    // the cash floor out of idle; nothing owed, nothing spent.
-    let cash_floor = constants::expiry_cash_floor!();
-    let idle = test_constants::default_initial_supply() - cash_floor;
-    helpers::check_market_cash(&market, helpers::expected_market_cash(cash_floor, 0, 0));
-    helpers::check_pool(
-        &vault,
-        helpers::expected_pool_state(idle, test_constants::default_initial_supply(), 0),
-    );
+    // --- Baseline: the fixture seeded the fresh expiry with cash while pool
+    // funding is absent; nothing owed, nothing spent.
+    let seeded_cash = test_constants::default_seeded_expiry_cash();
+    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
     helpers::check_manager(
         &manager,
         expiry_id,
@@ -110,7 +105,7 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
-            cash_floor + MINT_PRINCIPAL + MINT_MIN_FEE,
+            seeded_cash + MINT_PRINCIPAL + MINT_MIN_FEE,
             test_constants::mint_quantity(),
             REBATE_AFTER_MINT,
         ),
@@ -138,7 +133,7 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
     let survivor = order::from_order_id(survivor_id);
     assert_eq!(survivor.quantity(), HALF_CLOSE);
     assert_eq!(survivor.floor_shares(), 0);
-    let cash_after_close = cash_floor + MINT_PRINCIPAL + MINT_MIN_FEE - CLOSE_NET_PAYOUT;
+    let cash_after_close = seeded_cash + MINT_PRINCIPAL + MINT_MIN_FEE - CLOSE_NET_PAYOUT;
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(cash_after_close, HALF_CLOSE, REBATE_AFTER_CLOSE),
@@ -197,12 +192,6 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
         ),
     );
     assert!(!manager.has_position(expiry_id, survivor_id));
-    // The pool sheet is untouched by the whole trade lifecycle.
-    helpers::check_pool(
-        &vault,
-        helpers::expected_pool_state(idle, test_constants::default_initial_supply(), 0),
-    );
-
     helpers::return_market(pyth, vault, market, oracle, config);
     destroy(manager);
     fx.finish();

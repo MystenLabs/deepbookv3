@@ -14,7 +14,6 @@ const THREE_HUNDRED_K: u64 = 300_000_000_000;
 const UPPER: u64 = 1_100_000_000_000; // default upper_benefit_power
 const TWO_MILLION: u64 = 2_000_000_000_000;
 const FEE_AMOUNT: u64 = 1_000_000_000;
-const ELIGIBLE_REBATE: u64 = 1_000_000_000;
 
 // === Construction and getter ===
 
@@ -97,17 +96,5 @@ fun fee_amount_after_discount_follows_two_segment_curve() {
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, THREE_HUNDRED_K), 700_000_000);
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, UPPER), 500_000_000);
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWO_MILLION), 500_000_000);
-    destroy(config);
-}
-
-#[test]
-fun rebate_amount_follows_two_segment_curve() {
-    let config = stake_config::new();
-    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, 0), 0);
-    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWENTY_K), 100_000_000);
-    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, LOWER), 500_000_000);
-    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, THREE_HUNDRED_K), 600_000_000);
-    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, UPPER), 1_000_000_000);
-    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWO_MILLION), 1_000_000_000);
     destroy(config);
 }

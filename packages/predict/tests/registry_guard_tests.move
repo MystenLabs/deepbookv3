@@ -82,14 +82,14 @@ fun create_expiry_market_with_wrong_pyth_source_object_aborts() {
 
     scenario.next_tx(test_constants::admin());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
-    let mut vault = scenario.take_shared<PoolVault>();
-    let mut config = scenario.take_shared<ProtocolConfig>();
+    let vault = scenario.take_shared<PoolVault>();
+    let config = scenario.take_shared<ProtocolConfig>();
     let rogue_pyth = scenario.take_shared_by_id<PythSource>(rogue_pyth_id);
-    let lifecycle_cap = vault.mint_lifecycle_cap(&admin_cap, scenario.ctx());
+    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
     let (_expiry_id, _oracle_id) = registry::create_expiry_market(
         &mut reg,
-        &mut vault,
-        &mut config,
+        &vault,
+        &config,
         &rogue_pyth,
         &lifecycle_cap,
         vector[oracle_cap.id()],

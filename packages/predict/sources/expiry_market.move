@@ -28,7 +28,7 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use predict_math::math;
-use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::VecSet};
 
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
@@ -834,4 +834,11 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     };
     let builder_code_id = builder_code_id.destroy_some();
     balance::send_funds(fee, builder_code_id.to_address());
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun receive_cash_for_testing(market: &mut ExpiryMarket, funds: Coin<DUSDC>) {
+    market.cash.receive(funds.into_balance());
 }

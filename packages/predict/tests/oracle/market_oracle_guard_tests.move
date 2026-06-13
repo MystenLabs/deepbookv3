@@ -62,11 +62,10 @@ const EUnexpectedSuccess: u64 = 999;
 
 #[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun update_svi_with_unregistered_cap_aborts() {
-    let (mut fx, _pyth, mut oracle, config) = setup();
+    let (mut fx, _pyth, mut oracle, _config) = setup();
     let admin_cap = admin::new(fx.scenario_mut().ctx());
     let unregistered_cap = market_oracle_writer_cap::create(&admin_cap, fx.scenario_mut().ctx());
     oracle.update_svi(
-        &config,
         &unregistered_cap,
         default_svi(),
         test_constants::live_source_timestamp_ms(),
@@ -217,12 +216,11 @@ fun price_push_with_non_advancing_source_timestamp_is_noop() {
 fun svi_update_with_non_advancing_source_timestamp_is_noop() {
     let (fx, pyth, mut oracle, config) = setup();
     // Repeat the initial zero source timestamp: skipped, stored SVI unchanged.
-    oracle.update_svi(&config, fx.cap(), default_svi(), INITIAL_SOURCE_TS_MS, fx.clock());
+    oracle.update_svi(fx.cap(), default_svi(), INITIAL_SOURCE_TS_MS, fx.clock());
     assert_eq!(oracle.block_scholes_svi().sigma(), 0);
     assert_eq!(oracle.block_scholes_svi_source_timestamp_ms(), INITIAL_SOURCE_TS_MS);
     // The skip does not poison the sequence: an advancing update still lands.
     oracle.update_svi(
-        &config,
         fx.cap(),
         default_svi(),
         test_constants::live_source_timestamp_ms(),
@@ -243,7 +241,6 @@ fun svi_update_on_pending_settlement_oracle_is_noop() {
     fx.set_clock_for_testing(oracle.expiry() + POST_EXPIRY_UPDATE_OFFSET_MS);
     // Expired but unsettled: SVI is live-only, so the update is skipped.
     oracle.update_svi(
-        &config,
         fx.cap(),
         default_svi(),
         test_constants::live_source_timestamp_ms(),
@@ -265,8 +262,8 @@ fun price_push_with_future_source_timestamp_aborts() {
 
 #[test, expected_failure(abort_code = market_oracle::EFutureSVISourceUpdate)]
 fun svi_update_with_future_source_timestamp_aborts() {
-    let (fx, _pyth, mut oracle, config) = setup();
-    oracle.update_svi(&config, fx.cap(), default_svi(), FUTURE_SOURCE_TS_MS, fx.clock());
+    let (fx, _pyth, mut oracle, _config) = setup();
+    oracle.update_svi(fx.cap(), default_svi(), FUTURE_SOURCE_TS_MS, fx.clock());
     abort EUnexpectedSuccess
 }
 
@@ -284,9 +281,9 @@ fun pyth_observation_from_unbound_source_aborts() {
     );
     return_shared(registry);
     fx.scenario_mut().next_tx(test_constants::admin());
-    let (_pyth, mut oracle, config) = fx.take_oracle();
+    let (_pyth, mut oracle, _config) = fx.take_oracle();
     let other_pyth = fx.scenario_mut().take_shared_by_id<PythSource>(other_pyth_id);
-    oracle.record_pyth_settlement_observation(&config, &other_pyth, fx.clock());
+    oracle.record_pyth_settlement_observation(&other_pyth, fx.clock());
     abort EUnexpectedSuccess
 }
 
@@ -295,12 +292,11 @@ fun update_svi_after_current_version_disabled_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let admin_cap = admin::new(fx.scenario_mut().ctx());
     let mut registry = fx.scenario_mut().take_shared<Registry>();
-    let (_pyth, mut oracle, config) = fx.take_oracle();
+    let (_pyth, mut oracle, _config) = fx.take_oracle();
     registry::enable_version(&mut registry, &admin_cap, constants::current_version!() + 1);
     registry::disable_version(&mut registry, &admin_cap, constants::current_version!());
     registry::sync_market_oracle_allowed_versions(&registry, &mut oracle);
     oracle.update_svi(
-        &config,
         fx.cap(),
         default_svi(),
         test_constants::live_source_timestamp_ms(),
@@ -328,14 +324,13 @@ fun setup(): (OracleFixture, PythSource, MarketOracle, ProtocolConfig) {
 /// Push Block Scholes prices through the fixture's authorized cap.
 fun push_prices(
     fx: &OracleFixture,
-    config: &ProtocolConfig,
+    _config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     spot: u64,
     forward: u64,
     source_timestamp_ms: u64,
 ) {
     oracle.update_block_scholes_prices(
-        config,
         fx.cap(),
         spot,
         forward,
