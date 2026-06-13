@@ -17,7 +17,7 @@ use deepbook_predict::{
     config_events,
     constants,
     expiry_market::{Self, ExpiryMarket},
-    market_lifecycle_cap::MarketLifecycleCap,
+    market_lifecycle_cap::{Self, MarketLifecycleCap},
     market_oracle::{Self, MarketOracle},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
@@ -42,6 +42,8 @@ const EVersionAlreadyEnabled: u64 = 6;
 const EVersionNotEnabled: u64 = 7;
 const ECannotDisableLastVersion: u64 = 8;
 const EPythFeedNotRegistered: u64 = 9;
+const ELifecycleCapNotValid: u64 = 10;
+const ELifecycleCapNotFound: u64 = 11;
 
 /// Registry-owned config for one Pyth Lazer feed.
 public struct PythFeedConfig has copy, drop, store {
@@ -61,6 +63,10 @@ public struct Registry has key {
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
     /// Admin mints into this set and revokes from it.
     allowed_pause_caps: VecSet<ID>,
+    /// IDs of `MarketLifecycleCap` objects currently authorized for market
+    /// lifecycle entries (market creation). Admin mints into this set and
+    /// revokes from it.
+    allowed_lifecycle_caps: VecSet<ID>,
     /// Package versions currently permitted to mutate per-pool state. Authoritative
     /// source; pool objects mirror this set and refresh via permissionless sync.
     allowed_versions: VecSet<u64>,
@@ -176,6 +182,36 @@ public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, paus
     registry.allowed_pause_caps.remove(&pause_cap_id);
 }
 
+// === MarketLifecycleCap Lifecycle (admin) ===
+
+/// Mint a new `MarketLifecycleCap`. Admin-only and version-gated (granting
+/// market-creation authority under a version freeze is the risky direction).
+public fun mint_lifecycle_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): MarketLifecycleCap {
+    registry.assert_version_allowed();
+    let cap = market_lifecycle_cap::new(ctx);
+    registry.allowed_lifecycle_caps.insert(cap.id());
+    cap
+}
+
+/// Revoke a previously minted `MarketLifecycleCap` by ID. Admin-only.
+/// Deliberately not version-gated (like pause-cap revocation): revocation is
+/// harm-reducing and must stay available even when per-object version mirrors
+/// transiently disagree with the gates on this cap's lifecycle entries.
+public fun revoke_lifecycle_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    lifecycle_cap_id: ID,
+) {
+    // Distinct from the gate code so expected_failure tests that revoke first
+    // stay pinned to the create gate under test.
+    assert!(registry.allowed_lifecycle_caps.contains(&lifecycle_cap_id), ELifecycleCapNotFound);
+    registry.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
+}
+
 // === Emergency Pause (PauseCap) ===
 
 /// Disable a package version via a valid `PauseCap`. One-way: admin must
@@ -242,8 +278,8 @@ public fun create_pyth_source(
 /// Pyth source. The market is created with zero cash.
 public fun create_expiry_market(
     registry: &mut Registry,
-    pool_vault: &mut PoolVault,
-    config: &mut ProtocolConfig,
+    pool_vault: &PoolVault,
+    config: &ProtocolConfig,
     pyth: &PythSource,
     lifecycle_cap: &MarketLifecycleCap,
     writer_cap_ids: vector<ID>,
@@ -252,7 +288,7 @@ public fun create_expiry_market(
     ctx: &mut TxContext,
 ): (ID, ID) {
     registry.assert_version_allowed();
-    pool_vault.assert_valid_lifecycle_cap(lifecycle_cap);
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
@@ -357,6 +393,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             pyth_feed_configs: table::new(ctx),
             expiry_market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
+            allowed_lifecycle_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
         },
         admin::new(ctx),
@@ -366,6 +403,12 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id()), EPauseCapNotValid);
+}
+
+/// Abort unless the supplied `MarketLifecycleCap` was minted by admin and not
+/// revoked. Called by `create_expiry_market`.
+fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
+    assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
 }
 
 /// Remove a version from the allowed set, enforcing the non-empty invariant.

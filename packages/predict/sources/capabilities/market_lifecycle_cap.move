@@ -26,7 +26,7 @@ public fun destroy(cap: MarketLifecycleCap) {
 
 // === Public-Package Functions ===
 
-/// Construct a cap. Allow-listing is `plp::mint_lifecycle_cap`'s job.
+/// Construct a cap. Allow-listing is `registry::mint_lifecycle_cap`'s job.
 public(package) fun new(ctx: &mut TxContext): MarketLifecycleCap {
     MarketLifecycleCap { id: object::new(ctx) }
 }
