@@ -196,15 +196,14 @@ public fun pause_trading_pause_cap(
 }
 
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
-/// One-way; admin's `protocol_config::set_expiry_mint_paused` is needed to unpause.
+/// One-way; admin's `expiry_market::set_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(
-    config: &mut ProtocolConfig,
+    market: &mut ExpiryMarket,
     registry: &Registry,
     pause_cap: &PauseCap,
-    expiry_market_id: ID,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
-    config.pause_expiry_mint(expiry_market_id);
+    market.pause_mint();
 }
 
 /// Create a shared Pyth source for one admin-approved Lazer feed.
@@ -282,7 +281,6 @@ public fun create_expiry_market(
         grid,
         ctx,
     );
-    config.register_expiry_runtime_config(expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     config_events::emit_market_created(

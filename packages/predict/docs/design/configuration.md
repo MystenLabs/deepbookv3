@@ -71,7 +71,7 @@ Three config structs are read directly from `ProtocolConfig` at the moment they 
 
 The distinction from class (A) is deliberate: live configs govern protocol-wide safety and shared economics that should move atomically for everyone, whereas the contract-term template configs govern per-contract terms that must stay fixed for the contracts already written under them.
 
-### (C) Global protocol knobs and per-expiry runtime controls
+### (C) Global protocol knobs and per-expiry mint pause
 
 `ProtocolConfig` also holds values that are neither snapshotted nor delegated to a sub-config struct.
 
@@ -83,12 +83,9 @@ The distinction from class (A) is deliberate: live configs govern protocol-wide 
 - `withdraw_fee_alpha` — the multiplier on the PLP withdrawal uncertainty-band fee, in 1e9 scaling. It scales the fee a withdrawing LP pays against the pool's aggregate live-valuation uncertainty band; the fee is retained in idle for remaining LPs (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
 - `valuation_liquidation_budget` and `trade_liquidation_budget` — the total liquidation-candidate budgets checked before live pool valuation and before mint/redeem flows respectively. These bound how much liquidation work a single flow performs.
 
-**Per-expiry runtime controls (`ExpiryRuntimeConfig`):** a mutable row stored in a per-expiry-market table on `ProtocolConfig`, registered when the market is created. Unlike the template snapshots, these are read live from the current row for the expiry being operated on:
+**Per-expiry mint pause:** `mint_paused` is a live `bool` field on each `ExpiryMarket`, read directly off the market object on the mint path. When true, new mints on that one expiry abort; the market's other flows (redeem, settlement) remain available. The admin sets and unsets it through `expiry_market::set_mint_paused` (version-gated), and a `PauseCap` holder can force it true one-way through `registry::pause_expiry_market_mint_pause_cap` (ungated, so the kill switch survives a version freeze).
 
-- `mint_paused` — when true, new mints on that one expiry abort; the market's other flows (redeem, valuation, settlement) remain available.
-- `max_expiry_funding` — the maximum net DUSDC the pool may have funded into that expiry, enforced as a ceiling on every funding move. Its admin setter lives on `PoolVault` (the module that coordinates pool funding) and writes this row through a package-internal `protocol_config` helper; lowering the cap below the expiry's current net funding is rejected. The cap is a risk limit only — the pool holds no idle earmark against it (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
-
-The folded design: there are no standalone `fee_config`, `risk_config`, or `expiry_runtime_config` modules. Fee and risk scalars (`protocol_reserve_profit_share`, the two liquidation budgets) live directly on `ProtocolConfig` with their defaults and bounds in `config_constants`, and per-expiry runtime controls are the embedded `ExpiryRuntimeConfig` struct on `ProtocolConfig`. Readers should not look for those modules; this is the adopted shape.
+The folded design: there are no standalone `fee_config`, `risk_config`, or `expiry_runtime_config` modules. The remaining scalar knobs live directly on `ProtocolConfig` with their defaults and bounds in `config_constants`. Readers should not look for those modules; this is the adopted shape.
 
 ## How a tunable value is validated
 
@@ -122,7 +119,8 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 
 | Authority | Can change |
 | --- | --- |
-| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused`, per-expiry `mint_paused` (set and unset) |
+| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused` |
+| `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
 | `AdminCap` (on a `MarketOracle`) | Live per-oracle settlement freshness; register/unregister oracle writer caps |
 | `AdminCap` (on a `PoolVault`) | Per-expiry `max_expiry_funding`; mint/revoke market-lifecycle caps on the vault allowlist |
 | `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |

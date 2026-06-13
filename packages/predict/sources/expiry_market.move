@@ -10,6 +10,7 @@
 module deepbook_predict::expiry_market;
 
 use deepbook_predict::{
+    admin::AdminCap,
     config_events,
     constants,
     ewma::{Self, EwmaState},
@@ -49,6 +50,10 @@ public struct ExpiryMarket has key {
     strike_exposure: StrikeExposure,
     /// Smoothed gas-price stats backing the congestion trade penalty.
     ewma: EwmaState,
+    /// When true, new mints on this expiry abort. Other flows stay available.
+    /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
+    /// true one-way through the registry (ungated kill switch).
+    mint_paused: bool,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
 }
@@ -136,8 +141,8 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 }
 
 /// Return whether minting is currently paused on this expiry market.
-public fun mint_paused(market: &ExpiryMarket, config: &ProtocolConfig): bool {
-    config.expiry_mint_paused(market.id())
+public fun mint_paused(market: &ExpiryMarket): bool {
+    market.mint_paused
 }
 
 /// Return this market's mirrored set of allowed package versions.
@@ -171,7 +176,7 @@ public fun mint(
     ctx: &mut TxContext,
 ): u256 {
     market.assert_version_allowed();
-    assert!(!config.expiry_mint_paused(market.id()), EMintPaused);
+    assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
     market.mint_internal(
         manager,
@@ -291,6 +296,15 @@ public fun liquidate_order(
         .liquidate_live_order(config.pricing_config(), market_oracle, pyth, &order, clock)
 }
 
+/// Set whether new mints are paused on this expiry market. Admin-only and
+/// version-gated. A `PauseCap` holder can force-engage the pause one-way under a
+/// version freeze via `registry::pause_expiry_market_mint_pause_cap`.
+public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, paused: bool) {
+    market.assert_version_allowed();
+    market.mint_paused = paused;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
+}
+
 // === Public-Package Functions ===
 
 /// Assert that a market oracle belongs to this expiry market.
@@ -311,6 +325,14 @@ public(package) fun assert_version_allowed(market: &ExpiryMarket) {
 /// source of truth from `Registry`.
 public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
     market.allowed_versions = allowed_versions;
+}
+
+/// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
+/// `registry::pause_expiry_market_mint_pause_cap`; cannot unpause. Deliberately
+/// not version-gated so the kill switch survives a version freeze.
+public(package) fun pause_mint(market: &mut ExpiryMarket) {
+    market.mint_paused = true;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), true);
 }
 
 /// Create and share a zero-cash expiry market for one market oracle.
@@ -350,6 +372,7 @@ public(package) fun create_and_share(
             ctx,
         ),
         ewma: ewma::new(ctx),
+        mint_paused: false,
         allowed_versions,
     };
     transfer::share_object(market);

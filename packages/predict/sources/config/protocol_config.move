@@ -19,11 +19,8 @@ use deepbook_predict::{
     stake_config::{Self, StakeConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
-use sui::table::{Self, Table};
 
 const ETradingPaused: u64 = 0;
-const EExpiryConfigAlreadyExists: u64 = 3;
-const EExpiryConfigNotFound: u64 = 4;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -38,15 +35,6 @@ public struct ProtocolConfig has key {
     ewma_config: EwmaConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
-    /// Expiry market ID -> mutable expiry-specific protocol controls.
-    per_expiry: Table<ID, ExpiryRuntimeConfig>,
-}
-
-/// Mutable per-expiry runtime controls. Not snapshotted; flows read the current
-/// row for the expiry market they operate on.
-public struct ExpiryRuntimeConfig has store {
-    /// When true, new mints abort. Other expiry flows remain available.
-    mint_paused: bool,
 }
 
 // === Public Functions ===
@@ -59,11 +47,6 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
-}
-
-/// Return whether new mints are paused for one expiry market.
-public fun expiry_mint_paused(config: &ProtocolConfig, expiry_market_id: ID): bool {
-    config.expiry_config(expiry_market_id).mint_paused
 }
 
 /// Set the base fee multiplier snapshotted by future expiry markets.
@@ -277,16 +260,6 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused_internal(paused);
 }
 
-/// Set whether new mints are paused for one expiry market.
-public fun set_expiry_mint_paused(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    expiry_market_id: ID,
-    paused: bool,
-) {
-    config.set_expiry_mint_paused_internal(expiry_market_id, paused);
-}
-
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -317,14 +290,6 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
 
-public(package) fun register_expiry_runtime_config(
-    config: &mut ProtocolConfig,
-    expiry_market_id: ID,
-) {
-    assert!(!config.per_expiry.contains(expiry_market_id), EExpiryConfigAlreadyExists);
-    config.per_expiry.add(expiry_market_id, ExpiryRuntimeConfig { mint_paused: false });
-}
-
 /// Abort unless trading mutations are currently allowed.
 ///
 /// Intentionally omits the package-version gate: per-pool mutating flows that
@@ -348,39 +313,14 @@ public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
 }
 
-/// Force `mint_paused = true` for one expiry. Reserved for `PauseCap` holders
-/// going through the registry; cannot be used to unpause.
-public(package) fun pause_expiry_mint(config: &mut ProtocolConfig, expiry_market_id: ID) {
-    config.set_expiry_mint_paused_internal(expiry_market_id, true);
-}
-
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config.trading_paused = paused;
     config_events::emit_trading_paused_updated(config.id(), paused);
 }
 
-fun set_expiry_mint_paused_internal(
-    config: &mut ProtocolConfig,
-    expiry_market_id: ID,
-    paused: bool,
-) {
-    config.expiry_config_mut(expiry_market_id).mint_paused = paused;
-    config_events::emit_expiry_market_mint_paused_updated(expiry_market_id, paused);
-}
-
 /// Abort unless trading is not paused.
 fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
-}
-
-fun expiry_config(config: &ProtocolConfig, expiry_market_id: ID): &ExpiryRuntimeConfig {
-    assert!(config.per_expiry.contains(expiry_market_id), EExpiryConfigNotFound);
-    config.per_expiry.borrow(expiry_market_id)
-}
-
-fun expiry_config_mut(config: &mut ProtocolConfig, expiry_market_id: ID): &mut ExpiryRuntimeConfig {
-    assert!(config.per_expiry.contains(expiry_market_id), EExpiryConfigNotFound);
-    config.per_expiry.borrow_mut(expiry_market_id)
 }
 
 fun new(ctx: &mut TxContext): ProtocolConfig {
@@ -394,7 +334,6 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         stake_config: stake_config::new(),
         ewma_config: ewma_config::new(),
         trading_paused: false,
-        per_expiry: table::new(ctx),
     }
 }
 
