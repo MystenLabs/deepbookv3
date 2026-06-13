@@ -7,7 +7,7 @@
 //   python3 generate_pricing_reference.py
 //
 // Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract
-// and NOT python_replay's fixed-point pricer) for pricing::live_range_probability.
+// and NOT python_replay's fixed-point pricer) for Pricer.range_price.
 // Each point's `tolerance` is the analytic worst-case fixed-point error of UP=Phi(d2),
 // propagated from math.move's documented per-primitive budgets at the TRUE values; see
 // the generator header for the full derivation. The forward priced is the fresh-Pyth
@@ -29,7 +29,7 @@ use predict_math::i64;
 
 const ENoSuchScenario: u64 = 0;
 
-/// One independent reference point: pricing::live_range_probability(lower, higher)
+/// One independent reference point: Pricer.range_price(lower, higher)
 /// must be within `tolerance` units of the true-math `reference`.
 public struct RefPoint has copy, drop {
     lower: u64,

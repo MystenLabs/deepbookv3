@@ -512,7 +512,7 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
 
 
 def live_forward(spot: int, forward: int) -> int:
-    # Mirror pricing::live_inputs fresh-spot branch: the on-chain forward used for
+    # Mirror pricing::pricer fresh-spot branch: the on-chain forward used for
     # every live quote/valuation/liquidation is NOT the pushed forward, but is
     # re-derived from the live Pyth spot and the stored Block Scholes basis as
     # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it

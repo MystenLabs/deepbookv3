@@ -165,7 +165,7 @@ class Generator:
         # The raw `forward` is written to the CSV (localnet pushes it to
         # update_block_scholes_prices), but pricing must use the value the
         # contracts actually quote with: forward re-derived from the live Pyth
-        # spot via pricing::live_inputs. Mirror that here so admission decisions
+        # spot via pricing::pricer. Mirror that here so admission decisions
         # (tier, LTV, min principal) match localnet and the replay.
         pricing_forward = replay.live_forward(snapshot["spot"], forward)
         for _ in range(MAX_ROW_ATTEMPTS):

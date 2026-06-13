@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent true-math reference for `pricing::live_range_probability`, driven
+"""Independent true-math reference for `Pricer.range_price`, driven
 from REAL on-chain Block Scholes SVI observations.
 
 Emits the committed Move module `pricing_reference_data.move`, which the exact
@@ -40,7 +40,7 @@ the identical integers (int/1e9 in float64 is exact to ~1e-16, far below the 1e-
 scale). No param is ever rounded, shortened, or re-derived from another column.
 
 The *forward the contract actually prices with* is NOT the raw pushed forward: in
-`pricing::live_inputs` the fresh-Pyth path re-derives it as
+`pricing::pricer` the fresh-Pyth path re-derives it as
     forward_live = mul(spot, div(forward, spot))            (two predict math floors)
 This is the dominant production path (Pyth spot fresh). We reproduce that floor
 round-trip below to obtain the byte-identical forward the model prices at, then
@@ -325,7 +325,7 @@ def emit_move(scenarios, scen_points, budget_units):
     w("//   python3 generate_pricing_reference.py")
     w("//")
     w("// Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract")
-    w("// and NOT python_replay's fixed-point pricer) for pricing::live_range_probability.")
+    w("// and NOT python_replay's fixed-point pricer) for Pricer.range_price.")
     w("// Each point's `tolerance` is the analytic worst-case fixed-point error of UP=Phi(d2),")
     w("// propagated from math.move's documented per-primitive budgets at the TRUE values; see")
     w("// the generator header for the full derivation. The forward priced is the fresh-Pyth")
@@ -347,7 +347,7 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("const ENoSuchScenario: u64 = 0;")
     w("")
-    w("/// One independent reference point: pricing::live_range_probability(lower, higher)")
+    w("/// One independent reference point: Pricer.range_price(lower, higher)")
     w("/// must be within `tolerance` units of the true-math `reference`.")
     w("public struct RefPoint has copy, drop {")
     w("    lower: u64,")
