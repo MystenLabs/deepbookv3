@@ -38,9 +38,8 @@ use propbook::{
 use std::unit_test::destroy;
 use sui::{clock, test_scenario::{Scenario, return_shared}};
 
-/// A Pyth source id the registry never approves; a `PythFeed` created for it
-/// is therefore not bound to any registered tick-size config.
-const UNREGISTERED_PYTH_SOURCE_ID: u32 = 777;
+/// A Propbook underlying id the registry never approves.
+const UNREGISTERED_UNDERLYING_ID: u32 = 777;
 
 // === create_expiry_market ===
 
@@ -53,7 +52,7 @@ fun create_expiry_market_with_expiry_at_now_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EExpiryMarketAlreadyCreated)]
+#[test, expected_failure(abort_code = registry::EMarketAlreadyCreated)]
 fun create_expiry_market_duplicate_expiry_aborts() {
     let mut fx = flow_test_helpers::setup_market_default();
 
@@ -62,58 +61,31 @@ fun create_expiry_market_duplicate_expiry_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EFeedIdMismatch)]
-fun create_expiry_market_with_unregistered_pyth_feed_aborts() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+#[test, expected_failure(abort_code = registry::EUnderlyingNotRegistered)]
+fun create_expiry_market_with_unregistered_underlying_aborts() {
+    let (mut scenario, reg, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
-    // Approve the canonical feed so the registry is non-empty; the market is then
-    // built against a different, unapproved feed object.
-    registry::register_pyth_source(
-        &mut reg,
-        &admin_cap,
-        test_constants::pyth_feed_id(),
-        test_constants::default_tick_size(),
-    );
     let registry_id = reg.id();
     return_shared(reg);
 
     scenario.next_tx(test_constants::admin());
-    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let rogue_pyth_id = propbook_registry::create_and_share_pyth_feed(
-        &mut oracle_registry,
-        UNREGISTERED_PYTH_SOURCE_ID,
-        scenario.ctx(),
-    );
-    let bs_id = propbook_registry::create_and_share_block_scholes_feed(
-        &mut oracle_registry,
-        UNREGISTERED_PYTH_SOURCE_ID,
-        scenario.ctx(),
-    );
-    return_shared(oracle_registry);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
-
-    scenario.next_tx(test_constants::admin());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let rogue_pyth = scenario.take_shared_by_id<PythFeed>(rogue_pyth_id);
-    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
-    // The unapproved Pyth source fails the `register_pyth_source` gate before the
-    // canonical-binding check, so the underlying id below is never reached.
     let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
         &config,
         &oracle_registry,
-        &rogue_pyth,
-        &bs,
         &lifecycle_cap,
-        test_constants::propbook_underlying_id(),
+        UNREGISTERED_UNDERLYING_ID,
         test_constants::default_expiry_ms(),
+        test_constants::default_tick_size(),
         &clock,
         scenario.ctx(),
     );
@@ -124,7 +96,7 @@ fun create_expiry_market_with_unregistered_pyth_feed_aborts() {
 fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     // Pyth source approved + feeds created, but nothing is bound to the underlying,
     // so the Pyth canonical-binding check (after the approval gate) fails first.
-    let (mut scenario, registry_id, admin_cap, pyth_id, bs_id) = setup_registered_feeds();
+    let (mut scenario, registry_id, admin_cap, _pyth_id, _bs_id) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -133,19 +105,16 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
     let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
         &config,
         &oracle_registry,
-        &pyth,
-        &bs,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_expiry_ms(),
+        test_constants::default_tick_size(),
         &clock,
         scenario.ctx(),
     );
@@ -155,7 +124,7 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
 #[test, expected_failure(abort_code = registry::EBlockScholesFeedNotBoundToUnderlying)]
 fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
     // Only the Pyth feed is bound to the underlying; the BS check then fails.
-    let (mut scenario, registry_id, admin_cap, pyth_id, bs_id) = setup_registered_feeds();
+    let (mut scenario, registry_id, admin_cap, pyth_id, _bs_id) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_only_pyth(&scenario, pyth_id);
@@ -167,36 +136,33 @@ fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
     let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
         &config,
         &oracle_registry,
-        &pyth,
-        &bs,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_expiry_ms(),
+        test_constants::default_tick_size(),
         &clock,
         scenario.ctx(),
     );
     abort 999
 }
 
-/// Init all registries, approve the canonical Pyth source + tick size, and create
+/// Init all registries, approve the canonical underlying + tick size, and create
 /// the two real propbook feeds (catalog-only, NOT yet bound to an underlying).
 /// Returns positioned for the caller to bind (or not) then create the market.
 fun setup_registered_feeds(): (Scenario, ID, AdminCap, ID, ID) {
     let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
-    registry::register_pyth_source(
+    registry::register_underlying(
         &mut reg,
         &admin_cap,
-        test_constants::pyth_feed_id(),
+        test_constants::propbook_underlying_id(),
         test_constants::default_tick_size(),
     );
     let registry_id = reg.id();

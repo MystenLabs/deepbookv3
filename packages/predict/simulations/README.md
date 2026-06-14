@@ -103,10 +103,11 @@ interface.
 3. Publishes DeepBook, DUSDC, Predict Math, upstream Wormhole, upstream Pyth
    Lazer, and Predict.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
-   vault, applies the expiry-fee template config, then seeds the `PythSource`
-   with the first Block Scholes spot and creates the expiry market in one PTB
-   so creation sees a fresh Pyth spot. A setup-only PLP sync then funds the
-   expiry to the protocol cash floor before scenario rows start.
+   vault, registers the Propbook underlying + feeds, binds the feeds, applies
+   the expiry-fee template config, seeds the Propbook Pyth/Block Scholes feeds,
+   and creates the expiry market. Market creation reads no spot; a setup-only
+   rebalance then funds the expiry to the protocol cash floor before scenario
+   rows start.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
@@ -198,22 +199,13 @@ normal localnet/Python = parity under synthetic localnet time
 long Python = real timestamp economic analysis
 ```
 
-Expiry market creation derives the oracle strike grid from the first Pyth spot
-seeded into `PythSource`. The generator, Python replay, and localnet runner all
-center the fixed 100,000-tick grid around the first Block Scholes spot from the
-scenario they are about to use. Do not restore a hardcoded min/max strike range
-unless the Move creation policy changes back to explicit grid inputs.
-
-Because the grid is centered, the first spot must land in
-`(grid_width/2, grid_width]`. With the simulation's $1 tick size and
-100,000-tick grid that band is `($50,000, $100,000]`: the spot must be high
-enough to keep `min_strike > 0` (`spot > grid_width/2`) and low enough for the
-grid to reach it (`spot <= grid_width`). A first spot outside that band aborts
-market creation identically in Move, Python replay, and localnet. To cover a
-higher spot (for example BTC above $100,000), raise the oracle tick size so the
-band scales (a $2 tick covers up to $200,000); change it in the
-`create_pyth_source` call and both replay mirrors together so the three layers
-stay on the same grid.
+Expiry market creation uses the Propbook underlying's approved minimum tick size
+and snapshots the concrete `tick_size`; it does not derive a centered grid from
+the first spot. The generator, Python replay, and localnet runner all use
+absolute ticks (`raw_strike = tick * tick_size`) and the finite tick domain
+`1..pos_inf_tick - 1`. To cover a higher spot or wider strike set, raise the
+market tick size in the underlying-registration setup and both replay mirrors
+together so the three layers stay on the same absolute tick scale.
 
 ## Outputs
 

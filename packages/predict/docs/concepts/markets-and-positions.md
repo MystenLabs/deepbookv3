@@ -107,7 +107,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement is **deferred to settlement-v2 and stubbed today**: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. No market ever reaches the SETTLED state under the current build, so the settled-redeem and settled-sweep paths below — though present in the code, gated on `is_settled()` — are unreachable until v2. When settlement-v2 lands it will record the terminal price from the propbook feeds' minute history; see [pricing and oracles](./pricing-and-oracles.md). Live pricing rejects a market whose expiry has already passed.
+Settlement is **deferred to settlement-v2 and stubbed today**: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. No market ever reaches the SETTLED state under the current build, so the settled-redeem and settled-sweep paths below — though present in the code, gated on `is_settled()` — are unreachable until v2. When settlement-v2 lands it will record the terminal price from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). Live pricing rejects a market whose expiry has already passed.
 
 ### Settled redeem (deferred)
 
@@ -123,7 +123,7 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 | --- | --- | --- | --- |
 | `Registry` | Underlying approval, minimum tick sizes, expiry uniqueness, versions, pause caps, creation entrypoints | package init | shared |
 | `PythFeed` (propbook) | One Pyth Lazer feed's global spot | `propbook` (permissionless) | shared |
-| `BlockScholesFeed` (propbook) | One underlying's per-expiry surfaces + minute history | `propbook` (permissionless) | shared |
+| `BlockScholesFeed` (propbook) | One source id's per-expiry surfaces + exact timestamp history | `propbook` (permissionless) | shared |
 | `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_expiry_market` (one per underlying and expiry) | shared |
 | `PredictManager` | DUSDC custody + positions keyed by `(expiry_market_id, order_id)` | `create_manager` / `create_self_owned_manager` | owned or shared |
 

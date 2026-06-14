@@ -43,9 +43,9 @@ const DIVERGED_PYTH_SOURCE_MS: u64 = 99_500;
 #[test]
 fun complementary_ranges_sum_to_one_at_the_forward() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, config) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
-    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
 
     let below = pricer.range_price(
         constants::neg_inf!(),
@@ -62,16 +62,16 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
     assert!(above > 0);
     assert!(above < float!());
 
-    oracle_fixture::return_oracle(pyth, bs, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }
 
 #[test]
 fun whole_line_range_is_certain() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, config) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
-    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
 
     let whole = pricer.range_price(
         constants::neg_inf!(),
@@ -79,16 +79,16 @@ fun whole_line_range_is_certain() {
     );
     assert_eq!(whole, float!());
 
-    oracle_fixture::return_oracle(pyth, bs, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }
 
 #[test]
 fun digital_above_probability_is_non_increasing_in_strike() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, config) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
-    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
 
     // P(price > X) must be non-increasing as X rises: a higher strike is less
     // likely to be exceeded.
@@ -98,12 +98,12 @@ fun digital_above_probability_is_non_increasing_in_strike() {
     // And strictly so straddling the forward with this curve.
     assert!(above_low > above_high);
 
-    oracle_fixture::return_oracle(pyth, bs, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }
 
 /// Decision-pinned: the live forward switches source exactly at the Pyth
-/// staleness boundary (`pricing::pricer`, fallback documented in-code).
+/// staleness boundary (`pricing::load_live_pricer`, fallback documented in-code).
 /// While Pyth is fresh — inclusive: `now − freshness_ts == max_age` — the
 /// forward is `mul(pyth_spot, basis)`; one millisecond later, with ZERO
 /// oracle-data change, it is the stored Block Scholes forward. With a +2%
@@ -113,7 +113,7 @@ fun digital_above_probability_is_non_increasing_in_strike() {
 #[test]
 fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, config) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     // Block Scholes spot = forward = 100e9, so basis = div(100e9, 100e9) = 1.0
     // exactly; the surface freshness timestamp is min(99_000, landed) = 99_000.
     fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
@@ -129,16 +129,16 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     // AT the boundary (now − 99_500 == budget): Pyth is fresh (inclusive), so
     // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget);
-    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
     assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), float!() / 2);
 
     // ONE ms past the boundary: Pyth is stale, the BS surface still fresh, so the
     // forward falls back to the stored Block Scholes forward = 100e9.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget + 1);
-    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
     assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
     assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), 0);
 
-    oracle_fixture::return_oracle(pyth, bs, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }

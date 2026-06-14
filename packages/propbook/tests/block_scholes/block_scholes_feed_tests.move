@@ -7,7 +7,6 @@ module propbook::block_scholes_feed_tests;
 use block_scholes_oracle::update::{Self, Update};
 use propbook::{
     block_scholes_feed::{Self, BlockScholesFeed},
-    oracle_lane,
     registry::{Self, OracleRegistry}
 };
 use std::unit_test::assert_eq;
@@ -16,19 +15,16 @@ use sui::{clock, test_scenario::{Self as test, Scenario, return_shared}};
 const ADMIN: address = @0xAD;
 const BS_SOURCE_ID: u32 = 1;
 const OTHER_BS_SOURCE_ID: u32 = 2;
-/// A numeric id used for BOTH a Pyth and a BS feed to prove kinds don't collide.
 const SHARED_SOURCE_ID: u32 = 7;
 
-const SPOT: u64 = 50_000_000_000_000; // 50_000 * 1e9
-const SPOT_LATER: u64 = 49_000_000_000_000; // 49_000 * 1e9
-
+const SPOT: u64 = 50_000_000_000_000;
+const SPOT_LATER: u64 = 49_000_000_000_000;
 const EXPIRY_A: u64 = 1_700_100_000_000;
 const EXPIRY_B: u64 = 1_700_200_000_000;
+const UNKNOWN_EXPIRY: u64 = 9_999_999_999;
 const FORWARD_A: u64 = 50_500_000_000_000;
 const FORWARD_B: u64 = 49_000_000_000_000;
 const FORWARD_A2: u64 = 50_600_000_000_000;
-const UNKNOWN_EXPIRY: u64 = 9_999_999_999;
-
 const SVI_A: u64 = 40_000_000;
 const SVI_B: u64 = 120_000_000;
 const SVI_SIGMA: u64 = 90_000_000;
@@ -37,93 +33,48 @@ const RHO_NEG: bool = true;
 const M_MAG: u64 = 25_000_000;
 const M_NEG: bool = false;
 const FLOAT_SCALING: u64 = 1_000_000_000;
-
-const PUBLISHED_MS: u64 = 420_123;
-const LANDED_MS: u64 = 420_173;
-const LANDED_HIGH: u64 = 1_000_000;
+const T_ZERO: u64 = 0;
 const T_EARLY: u64 = 100;
 const T_MID: u64 = 150;
 const T_LATE: u64 = 200;
-const T_SAME: u64 = 300;
+const T_FUTURE: u64 = 2_000_000;
+const LANDED_EARLY: u64 = 120;
+const LANDED_HIGH: u64 = 1_000_000;
 const VERSION_ZERO: u64 = 0;
 
 #[test]
-fun update_from_bs_records_source_observation_and_surface() {
+fun update_records_raw_and_normalized_latest() {
     let (mut scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(LANDED_MS);
+    clock.set_for_testing(LANDED_EARLY);
 
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, PUBLISHED_MS, SPOT, FORWARD_A),
+    feed.update(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
         &clock,
         scenario.ctx(),
     );
 
     assert_eq!(feed.bs_source_id(), BS_SOURCE_ID);
-    assert!(feed.has_observation(EXPIRY_A, PUBLISHED_MS));
+    assert_eq!(feed.version(), propbook::constants::current_version!());
 
-    let first_observed = feed.observation_at_minute(EXPIRY_A, PUBLISHED_MS);
-    assert_eq!(block_scholes_feed::observation_bs_source_id(&first_observed), BS_SOURCE_ID);
-    assert_eq!(block_scholes_feed::observation_expiry_ms(&first_observed), EXPIRY_A);
-    assert_eq!(block_scholes_feed::observation_spot(&first_observed), SPOT);
-    assert_eq!(block_scholes_feed::observation_forward(&first_observed), FORWARD_A);
-    assert_eq!(block_scholes_feed::observation_source_timestamp_ms(&first_observed), PUBLISHED_MS);
-    assert_eq!(block_scholes_feed::observation_update_timestamp_ms(&first_observed), LANDED_MS);
+    let raw_read = feed.raw_surface(EXPIRY_A);
+    assert_eq!(raw_read.read_source_timestamp_ms(), T_EARLY);
+    assert_eq!(raw_read.read_update_timestamp_ms(), LANDED_EARLY);
+    let raw = raw_read.read_value();
+    assert_eq!(block_scholes_feed::raw_bs_source_id(&raw), BS_SOURCE_ID);
+    assert_eq!(block_scholes_feed::raw_expiry_ms(&raw), EXPIRY_A);
+    assert_eq!(block_scholes_feed::raw_spot(&raw), SPOT);
+    assert_eq!(block_scholes_feed::raw_forward(&raw), FORWARD_A);
 
-    assert!(feed.has_expiry(EXPIRY_A));
-    assert_eq!(feed.spot(EXPIRY_A), SPOT);
-    assert_eq!(feed.forward(EXPIRY_A), FORWARD_A);
-    assert_eq!(feed.surface_freshness_timestamp_ms(EXPIRY_A), PUBLISHED_MS);
-
-    let svi0 = feed.svi(EXPIRY_A);
-    assert_eq!(svi0.a(), SVI_A);
-    assert_eq!(svi0.b(), SVI_B);
-    assert_eq!(svi0.sigma(), SVI_SIGMA);
-    assert_eq!(svi0.rho().magnitude(), RHO_MAG);
-    assert_eq!(svi0.rho().is_negative(), RHO_NEG);
-    assert_eq!(svi0.m().magnitude(), M_MAG);
-    assert_eq!(svi0.m().is_negative(), M_NEG);
-
-    clock.destroy_for_testing();
-    return_shared(feed);
-    scenario.end();
-}
-
-#[test]
-fun sibling_expiries_same_timestamp_both_apply() {
-    let (mut scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(LANDED_HIGH);
-
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, T_SAME, SPOT, FORWARD_A),
-        &clock,
-        scenario.ctx(),
-    );
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_B, T_SAME, SPOT, FORWARD_B),
-        &clock,
-        scenario.ctx(),
-    );
-
-    assert!(feed.has_expiry(EXPIRY_A));
-    assert!(feed.has_expiry(EXPIRY_B));
-    assert_eq!(feed.forward(EXPIRY_A), FORWARD_A);
-    assert_eq!(feed.forward(EXPIRY_B), FORWARD_B);
-    assert_eq!(
-        block_scholes_feed::observation_forward(
-            &feed.observation_at_minute(EXPIRY_A, T_SAME),
-        ),
+    assert_surface(
+        &feed.normalized_surface(EXPIRY_A).destroy_some(),
+        SPOT,
         FORWARD_A,
+        T_EARLY,
+        LANDED_EARLY,
     );
-    assert_eq!(
-        block_scholes_feed::observation_forward(
-            &feed.observation_at_minute(EXPIRY_B, T_SAME),
-        ),
-        FORWARD_B,
-    );
+    assert!(feed.normalized_surface_at(EXPIRY_A, T_EARLY).is_none());
 
     clock.destroy_for_testing();
     return_shared(feed);
@@ -131,46 +82,33 @@ fun sibling_expiries_same_timestamp_both_apply() {
 }
 
 #[test]
-fun per_expiry_latest_advances_but_first_observed_bucket_stays_first() {
+fun per_expiry_latest_advances_independently() {
     let (mut scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
-        &clock,
-        scenario.ctx(),
-    );
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_B, T_LATE, SPOT, FORWARD_B),
-        &clock,
-        scenario.ctx(),
-    );
-    feed.update_from_bs(
+    feed.update(bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A), &clock, scenario.ctx());
+    feed.update(bs_update(BS_SOURCE_ID, EXPIRY_B, T_EARLY, SPOT, FORWARD_B), &clock, scenario.ctx());
+    feed.update(
         bs_update(BS_SOURCE_ID, EXPIRY_A, T_MID, SPOT_LATER, FORWARD_A2),
         &clock,
         scenario.ctx(),
     );
 
-    assert_eq!(feed.spot(EXPIRY_A), SPOT_LATER);
-    assert_eq!(feed.forward(EXPIRY_A), FORWARD_A2);
-    assert_eq!(feed.surface_freshness_timestamp_ms(EXPIRY_A), T_MID);
-    assert_eq!(feed.spot(EXPIRY_B), SPOT);
-    assert_eq!(feed.forward(EXPIRY_B), FORWARD_B);
-    assert_eq!(feed.surface_freshness_timestamp_ms(EXPIRY_B), T_LATE);
-
-    assert_eq!(
-        block_scholes_feed::observation_spot(
-            &feed.observation_at_minute(EXPIRY_A, T_EARLY),
-        ),
-        SPOT,
+    assert_surface(
+        &feed.normalized_surface(EXPIRY_A).destroy_some(),
+        SPOT_LATER,
+        FORWARD_A2,
+        T_MID,
+        LANDED_HIGH,
     );
-    assert_eq!(
-        block_scholes_feed::observation_spot(
-            &feed.observation_at_minute(EXPIRY_B, T_LATE),
-        ),
+    assert_surface(
+        &feed.normalized_surface(EXPIRY_B).destroy_some(),
         SPOT,
+        FORWARD_B,
+        T_EARLY,
+        LANDED_HIGH,
     );
 
     clock.destroy_for_testing();
@@ -178,71 +116,176 @@ fun per_expiry_latest_advances_but_first_observed_bucket_stays_first() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = oracle_lane::EStaleSourceUpdate)]
-fun same_expiry_stale_resend_aborts() {
+#[test]
+fun insert_at_records_exact_surface_without_latest() {
     let (mut scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, T_SAME, SPOT, FORWARD_A),
-        &clock,
-        scenario.ctx(),
-    );
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, T_SAME, SPOT_LATER, FORWARD_A2),
-        &clock,
-        scenario.ctx(),
-    );
-
-    abort 999
-}
-
-#[test]
-fun has_expiry_reflects_live_observation_rows() {
-    let (mut scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(LANDED_MS);
-
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, PUBLISHED_MS, SPOT, FORWARD_A),
-        &clock,
-        scenario.ctx(),
-    );
-
-    assert!(feed.has_expiry(EXPIRY_A));
-    assert!(!feed.has_expiry(EXPIRY_B));
-    assert!(!feed.has_expiry(UNKNOWN_EXPIRY));
-
-    clock.destroy_for_testing();
-    return_shared(feed);
-    scenario.end();
-}
-
-#[test]
-fun official_settlement_records_exact_resolution_without_latest() {
-    let (mut scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(LANDED_HIGH);
-
-    feed.record_official_settlement_from_bs(
+    feed.insert_at(
         bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
         &clock,
         scenario.ctx(),
     );
 
-    assert!(!feed.has_expiry(EXPIRY_A));
-    assert!(!feed.has_observation(EXPIRY_A, T_EARLY));
-    assert!(feed.has_official_settlement(EXPIRY_A, T_EARLY));
-    assert!(!feed.has_official_settlement(EXPIRY_A, T_EARLY + 1));
+    assert!(feed.normalized_surface(EXPIRY_A).is_none());
+    assert_surface(
+        &feed.normalized_surface_at(EXPIRY_A, T_EARLY).destroy_some(),
+        SPOT,
+        FORWARD_A,
+        T_EARLY,
+        LANDED_HIGH,
+    );
+    assert!(feed.normalized_surface_at(EXPIRY_A, T_EARLY + 1).is_none());
 
-    let settlement = feed.official_observation_at_resolution(EXPIRY_A, T_EARLY);
-    assert_eq!(block_scholes_feed::observation_spot(&settlement), SPOT);
-    assert_eq!(block_scholes_feed::observation_forward(&settlement), FORWARD_A);
-    assert_eq!(block_scholes_feed::observation_source_timestamp_ms(&settlement), T_EARLY);
+    let raw_read = feed.raw_surface_at(EXPIRY_A, T_EARLY);
+    assert_eq!(raw_read.read_source_timestamp_ms(), T_EARLY);
+    assert_eq!(block_scholes_feed::raw_forward(&raw_read.read_value()), FORWARD_A);
+
+    clock.destroy_for_testing();
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun stale_future_and_zero_updates_are_no_ops() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(LANDED_HIGH);
+
+    feed.update(bs_update(BS_SOURCE_ID, EXPIRY_A, T_MID, SPOT, FORWARD_A), &clock, scenario.ctx());
+    feed.update(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_MID, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+    feed.update(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+    feed.update(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_FUTURE, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+    feed.update(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_ZERO, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert_surface(
+        &feed.normalized_surface(EXPIRY_A).destroy_some(),
+        SPOT,
+        FORWARD_A,
+        T_MID,
+        LANDED_HIGH,
+    );
+    assert!(feed.normalized_surface(EXPIRY_B).is_none());
+
+    clock.destroy_for_testing();
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun invalid_update_for_new_expiry_does_not_create_live_row() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(T_EARLY);
+
+    feed.update(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_LATE, SPOT, FORWARD_A),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(feed.normalized_surface(EXPIRY_A).is_none());
+    assert!(feed.normalized_surface_at(EXPIRY_A, T_LATE).is_none());
+
+    clock.destroy_for_testing();
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun duplicate_future_and_zero_exact_inserts_are_no_ops() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(LANDED_HIGH);
+
+    feed.insert_at(bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A), &clock, scenario.ctx());
+    feed.insert_at(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+    feed.insert_at(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_FUTURE, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+    feed.insert_at(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_ZERO, SPOT_LATER, FORWARD_A2),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert_surface(
+        &feed.normalized_surface_at(EXPIRY_A, T_EARLY).destroy_some(),
+        SPOT,
+        FORWARD_A,
+        T_EARLY,
+        LANDED_HIGH,
+    );
+    assert!(feed.normalized_surface_at(EXPIRY_A, T_FUTURE).is_none());
+    assert!(feed.normalized_surface_at(EXPIRY_A, T_ZERO).is_none());
+    assert!(feed.normalized_surface(EXPIRY_A).is_none());
+
+    clock.destroy_for_testing();
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun update_accepts_raw_surface_without_pricing_envelope_validation() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(LANDED_HIGH);
+
+    feed.update(
+        update::new_update(
+            BS_SOURCE_ID,
+            EXPIRY_A,
+            T_EARLY,
+            0,
+            0,
+            SVI_A,
+            SVI_B,
+            0,
+            FLOAT_SCALING + 1,
+            RHO_NEG,
+            FLOAT_SCALING + 2,
+            M_NEG,
+        ),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let raw = feed.raw_surface(EXPIRY_A).read_value();
+    assert_eq!(block_scholes_feed::raw_spot(&raw), 0);
+    assert_eq!(block_scholes_feed::raw_forward(&raw), 0);
+    assert!(feed.normalized_surface(EXPIRY_A).is_none());
+    let svi = block_scholes_feed::raw_svi(&raw);
+    assert_eq!(svi.sigma(), 0);
+    assert_eq!(svi.rho().magnitude(), FLOAT_SCALING + 1);
+    assert_eq!(svi.m().magnitude(), FLOAT_SCALING + 2);
 
     clock.destroy_for_testing();
     return_shared(feed);
@@ -310,24 +353,8 @@ fun update_wrong_source_aborts() {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.update_from_bs(
+    feed.update(
         bs_update(OTHER_BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
-        &clock,
-        scenario.ctx(),
-    );
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = oracle_lane::EFutureSourceUpdate)]
-fun update_future_source_aborts() {
-    let (mut scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(T_EARLY);
-
-    feed.update_from_bs(
-        bs_update(BS_SOURCE_ID, EXPIRY_A, T_LATE, SPOT, FORWARD_A),
         &clock,
         scenario.ctx(),
     );
@@ -343,7 +370,7 @@ fun update_wrong_version_aborts() {
     clock.set_for_testing(LANDED_HIGH);
 
     feed.set_version_for_testing(VERSION_ZERO);
-    feed.update_from_bs(
+    feed.update(
         bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
         &clock,
         scenario.ctx(),
@@ -362,12 +389,18 @@ fun migrate_restores_current_version_and_updates_resume() {
     feed.set_version_for_testing(VERSION_ZERO);
     feed.migrate();
     assert_eq!(feed.version(), propbook::constants::current_version!());
-    feed.update_from_bs(
+    feed.update(
         bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
         &clock,
         scenario.ctx(),
     );
-    assert_eq!(feed.spot(EXPIRY_A), SPOT);
+    assert_surface(
+        &feed.normalized_surface(EXPIRY_A).destroy_some(),
+        SPOT,
+        FORWARD_A,
+        T_EARLY,
+        LANDED_HIGH,
+    );
 
     clock.destroy_for_testing();
     return_shared(feed);
@@ -384,76 +417,55 @@ fun migrate_current_version_aborts() {
     abort 999
 }
 
-#[test]
-fun update_accepts_raw_surface_without_pricing_envelope_validation() {
+#[test, expected_failure(abort_code = block_scholes_feed::ERawSurfaceNotFound)]
+fun raw_surface_on_unknown_expiry_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+
+    feed.raw_surface(UNKNOWN_EXPIRY);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = block_scholes_feed::ERawSurfaceNotFound)]
+fun raw_surface_at_unknown_timestamp_aborts() {
     let (mut scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.update_from_bs(
-        update::new_update(
-            BS_SOURCE_ID,
-            EXPIRY_A,
-            T_EARLY,
-            0,
-            0,
-            SVI_A,
-            SVI_B,
-            0,
-            FLOAT_SCALING + 1,
-            RHO_NEG,
-            FLOAT_SCALING + 2,
-            M_NEG,
-        ),
+    feed.insert_at(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
         &clock,
         scenario.ctx(),
     );
-
-    assert!(feed.has_expiry(EXPIRY_A));
-    assert_eq!(feed.spot(EXPIRY_A), 0);
-    assert_eq!(feed.forward(EXPIRY_A), 0);
-    let svi0 = feed.svi(EXPIRY_A);
-    assert_eq!(svi0.sigma(), 0);
-    assert_eq!(svi0.rho().magnitude(), FLOAT_SCALING + 1);
-    assert_eq!(svi0.m().magnitude(), FLOAT_SCALING + 2);
-
-    clock.destroy_for_testing();
-    return_shared(feed);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = block_scholes_feed::EExpiryNotFound)]
-fun forward_on_unknown_expiry_aborts() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-
-    feed.forward(UNKNOWN_EXPIRY);
+    feed.raw_surface_at(EXPIRY_A, T_LATE);
 
     abort 999
 }
 
-#[test, expected_failure(abort_code = block_scholes_feed::EExpiryNotFound)]
-fun svi_on_unknown_expiry_aborts() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-
-    feed.svi(UNKNOWN_EXPIRY);
-
-    abort 999
+fun assert_surface(
+    read: &propbook::oracle_lane::OracleRead<block_scholes_feed::Surface>,
+    expected_spot: u64,
+    expected_forward: u64,
+    expected_source_timestamp_ms: u64,
+    expected_update_timestamp_ms: u64,
+) {
+    assert_eq!(read.read_source_timestamp_ms(), expected_source_timestamp_ms);
+    assert_eq!(read.read_update_timestamp_ms(), expected_update_timestamp_ms);
+    let surface = read.read_value();
+    assert_eq!(block_scholes_feed::surface_spot(&surface), expected_spot);
+    assert_eq!(block_scholes_feed::surface_forward(&surface), expected_forward);
+    let svi = block_scholes_feed::surface_svi(&surface);
+    assert_eq!(svi.a(), SVI_A);
+    assert_eq!(svi.b(), SVI_B);
+    assert_eq!(svi.sigma(), SVI_SIGMA);
+    assert_eq!(svi.rho().magnitude(), RHO_MAG);
+    assert_eq!(svi.rho().is_negative(), RHO_NEG);
+    assert_eq!(svi.m().magnitude(), M_MAG);
+    assert_eq!(svi.m().is_negative(), M_NEG);
 }
 
-#[test, expected_failure(abort_code = block_scholes_feed::EExpiryNotFound)]
-fun surface_freshness_on_unknown_expiry_aborts() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
-
-    feed.surface_freshness_timestamp_ms(UNKNOWN_EXPIRY);
-
-    abort 999
-}
-
-/// Build a single-expiry stub BS Update with the shared valid SVI fixture.
 fun bs_update(source_id: u32, expiry: u64, published: u64, spot: u64, forward: u64): Update {
     update::new_update(
         source_id,
@@ -471,8 +483,6 @@ fun bs_update(source_id: u32, expiry: u64, published: u64, spot: u64, forward: u
     )
 }
 
-/// Initialize the package, create+share a BS feed through the registry, and
-/// advance so the shared feed is takeable. Returns the scenario and feed id.
 fun setup_feed(): (Scenario, ID) {
     let mut scenario = test::begin(ADMIN);
     registry::init_for_testing(scenario.ctx());

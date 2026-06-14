@@ -46,18 +46,19 @@ grid, no boundary indices).
 - **`tick_size`** — the fixed raw-price-per-tick factor snapshotted per expiry,
   so `raw_strike = tick × tick_size`. Carried on `MarketCreated`; an indexer or
   SDK reconstructs raw strikes from it. Code `tick_size`.
-- **`range_key`** — the packed pair of two `u24` ticks (`lower_tick`,
-  `higher_tick`) used at public entrypoints (`mint`) and in events. The on-chain
-  handle for "which range". Code `range_key`.
+- **range (`lower_tick`, `higher_tick`)** — a position's strike interval
+  `(lower, higher]`, carried at public entrypoints (`mint`) and in events as the
+  two absolute ticks directly. There is no standalone packed range key; the only
+  packed form is inside the order ID.
 - **`pos_inf_tick`** — the sentinel higher tick (`2²⁴ − 1`) that denotes the
   open-ended top (`+∞`); a lower tick of `0` denotes the open-ended bottom
-  (`−∞`). These two sentinels are what make a `range_key` a digital call or put
+  (`−∞`). These two sentinels are what make a range a digital call or put
   rather than a bounded spread. Code `pos_inf_tick`.
-- **`range_codec`** — the module that owns the tick representation: it packs and
-  unpacks `range_key`, maps ticks to raw strikes at the pricing/settlement
-  boundary (`strikes_from_ticks`, applying the `0`/`pos_inf_tick` sentinels), and
-  computes the settlement prefix threshold `prefix_limit_tick = ceil(settlement /
-  tick_size)`. Code module `strike_exposure::range_codec`.
+- **`range_codec`** — the module that owns the tick→raw conversion: it maps ticks
+  to raw strikes at the pricing/settlement boundary (`strikes_from_ticks`,
+  applying the `0`/`pos_inf_tick` sentinels), and computes the settlement prefix
+  threshold `prefix_limit_tick = ceil(settlement / tick_size)`. Code module
+  `strike_exposure::range_codec`.
 
 ## Pricing
 
@@ -79,10 +80,10 @@ grid, no boundary indices).
 - **Forward** — the model's forecast of the underlying at expiry, the input the
   range probability is differenced off. Predict builds it as `spot × basis` when
   the Pyth spot is fresh and falls back to the Block Scholes surface forward
-  otherwise. Code: built in `pricing`, read via `bs.forward(expiry)`.
+  otherwise. Code: built in `pricing` from `normalized_surface(expiry)`.
 - **Basis** — the surface's `forward / spot` ratio for an expiry, supplied by
   the Block Scholes feed; it carries the spot to the forward when live spot is
-  applied. Code `bs.basis(expiry)`.
+  applied. Code: derived in `pricing` from `surface_forward / surface_spot`.
 
 ## Oracles (propbook feeds)
 
@@ -90,22 +91,23 @@ Live oracle data lives in the standalone, Predict-unaware `propbook` package;
 Predict reads it but does not own it.
 
 - **`PythFeed`** — one global object per Pyth Lazer feed id holding the latest
-  normalized spot and its freshness timestamp; updated permissionlessly from a
-  verified Lazer payload (`update_from_lazer`). Predict reads `spot()` and
-  `freshness_timestamp_ms()`. Code module `propbook::pyth_feed`.
-- **`BlockScholesFeed`** — one object per underlying holding a per-expiry
-  `Surface` plus a shared minute history; written by a trusted off-chain
-  operator (`update_from_bs`). Predict reads `forward(expiry)`, `basis(expiry)`,
-  `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, and
-  `has_expiry(expiry)`. Code module `propbook::block_scholes_feed`.
+  source-native spot payload plus a normalized `Option<OracleRead<u64>>` view;
+  updated permissionlessly from a verified Lazer payload (`update`). Predict
+  reads `normalized_spot()` and the read's `source_timestamp_ms`. Code module
+  `propbook::pyth_feed`.
+- **`BlockScholesFeed`** — one object per source id holding per-expiry raw
+  surfaces plus exact timestamp history; written by a trusted off-chain operator
+  (`update`). Predict reads `normalized_surface(expiry)`, the surface getters,
+  and the read's `source_timestamp_ms`. Code module
+  `propbook::block_scholes_feed`.
 - **Surface** — the per-expiry pricing snapshot a `BlockScholesFeed` stores for
   one expiry: `{spot, forward, SVI parameters, timestamps}`. Freshness is a
   single window over the whole surface (no separate price/SVI windows). Code
   `Surface`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile the surface carries; the curve range probabilities are
-  differenced off. The feed enforces SVI no-arbitrage at ingest (`|ρ| ≤ 1`, a
-  bounded sigma). Code `SVIParams`, `svi(expiry)`.
+  differenced off. Predict enforces its pricing-safe SVI envelope at read time
+  (`|rho| <= 1`, bounded inputs, bounded sigma). Code `SVIParams`.
 - **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
   (`i64`) math package both Predict and propbook depend on (formerly
   `predict_math`). Code package/address `fixed_math`.

@@ -27,7 +27,11 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math::float_scaling as float;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
+use propbook::{
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, test_scenario::return_shared};
 
@@ -52,21 +56,22 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
     let mut val = fx.start_flush(&mut config, &vault);
-    val.value_expiry(&mut vault, &mut m1, &config, &pyth, &bs, fx.clock());
-    val.value_expiry(&mut vault, &mut m2, &config, &pyth, &bs, fx.clock());
+    fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
     let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
     // Independent reference: each market's NAV is read DIRECTLY (not via the
     // potato) and summed by hand, then priced by the separately unit-tested
     // `lp_pool_value` over independently-read idle + profit basis. If the potato
     // skipped a market or threaded the wrong idle/basis, this mismatches.
-    let nav1 = m1.current_nav(&config, &pyth, &bs, fx.clock());
-    let nav2 = m2.current_nav(&config, &pyth, &bs, fx.clock());
+    let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
+    let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
     let expected = plp::lp_pool_value(
         vault.idle_balance(),
         vault.profit_basis_credits(),
@@ -83,6 +88,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     return_shared(config);
     return_shared(pyth);
     return_shared(bs);
+    return_shared(oracle_registry);
     return_shared(vault);
     return_shared(m1);
     return_shared(m2);
@@ -103,19 +109,20 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
     let mut val = fx.start_flush(&mut config, &vault);
-    val.value_expiry(&mut vault, &mut m1, &config, &pyth, &bs, fx.clock());
-    val.value_expiry(&mut vault, &mut m2, &config, &pyth, &bs, fx.clock());
+    fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
     let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
-    assert_eq!(m1.current_nav(&config, &pyth, &bs, fx.clock()), constants::expiry_cash_floor!());
-    assert_eq!(m2.current_nav(&config, &pyth, &bs, fx.clock()), constants::expiry_cash_floor!());
+    assert_eq!(fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs), constants::expiry_cash_floor!());
+    assert_eq!(fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs), constants::expiry_cash_floor!());
     assert_eq!(vault.profit_basis_debits(), 2 * constants::expiry_cash_floor!());
     assert_eq!(vault.profit_basis_credits(), 0);
     assert_eq!(pool_nav, IDLE_SEED);
@@ -123,6 +130,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     return_shared(config);
     return_shared(pyth);
     return_shared(bs);
+    return_shared(oracle_registry);
     return_shared(vault);
     return_shared(m1);
     return_shared(m2);
@@ -164,11 +172,12 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
 
     let mut val = fx.start_flush(&mut config, &vault);
-    val.value_expiry(&mut vault, &mut m1, &config, &pyth, &bs, fx.clock());
+    fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     // Snapshot held two markets; only one was valued.
     let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
@@ -185,12 +194,13 @@ fun value_expiry_aborts_on_double_value() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
 
     let mut val = fx.start_flush(&mut config, &vault);
-    val.value_expiry(&mut vault, &mut market, &config, &pyth, &bs, fx.clock());
-    val.value_expiry(&mut vault, &mut market, &config, &pyth, &bs, fx.clock());
+    fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
+    fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
 
     abort 999
 }
@@ -208,11 +218,13 @@ fun mint_during_valuation_aborts() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
 
     config.begin_valuation();
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -254,11 +266,12 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
 
     let mut val = fx.start_flush(&mut config, &vault);
-    val.value_expiry(&mut vault, &mut market, &config, &pyth, &bs, fx.clock());
+    fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
     let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
     assert_eq!(
         pool_nav,
@@ -270,6 +283,7 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     let count_before = manager.expiry_position_count(market.id());
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -284,6 +298,7 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     return_shared(config);
     return_shared(pyth);
     return_shared(bs);
+    return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
     destroy(manager);
@@ -385,20 +400,21 @@ fun new_funded_empty_market(fx: &mut helpers::Fixture, expiry_ms: u64): ID {
 /// Prepare an already-created market's oracle live and fund it to the cash floor.
 fun fund_empty_market(fx: &mut helpers::Fixture, e: ID) {
     fx.scenario_mut().next_tx(test_constants::admin());
-    let (mut pyth, mut bs, mut vault, mut market, config) = fx.take_market(e);
+    let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     vault.rebalance_expiry_cash(&mut market, &config);
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
 }
 
 /// Prepare + fund an already-created market and mint one 1x ATM up order into it.
 fun fund_market_with_order(fx: &mut helpers::Fixture, manager: &mut PredictManager, e: ID) {
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, mut vault, mut market, config) = fx.take_market(e);
+    let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     vault.rebalance_expiry_cash(&mut market, &config);
     fx.mint(
         &config,
+        &oracle_registry,
         manager,
         &mut market,
         &pyth,
@@ -408,5 +424,5 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, manager: &mut PredictManag
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
 }

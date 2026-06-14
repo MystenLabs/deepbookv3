@@ -8,27 +8,27 @@ Predict separates the *spot* of the underlying asset from the *shape of the impl
 
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |
-| Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, with both a publisher and an on-chain landing timestamp | `spot()`, `latest_observation()`, `freshness_timestamp_ms()` |
-| Volatility surface + forward | `propbook::block_scholes_feed::BlockScholesFeed` | One feed per source id, holding per-expiry `{spot, forward, SVI, timestamps}` observations plus first-observed and official-settlement history | `spot(expiry)`, `forward(expiry)`, `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, `has_expiry(expiry)` |
+| Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
+| Volatility surface + forward | `propbook::block_scholes_feed::BlockScholesFeed` | One feed per source id, holding per-expiry `{spot, forward, SVI}` raw payloads plus exact timestamp inserts | `normalized_surface(expiry)`, surface getters, and the `OracleRead` timestamp |
 
 The `pricing` module is a stateless read layer over these feeds. It resolves them on demand, checks surface freshness, computes prices, and never mutates feed, pool, expiry, or position state.
 
 ### Pyth Lazer spot (`PythFeed`)
 
-A `PythFeed` is bound to exactly one Pyth Lazer feed (identified by a `u32` feed id) and stores the latest source-native price payload for that feed — one global spot source, not a per-expiry value. Its permissionless `update_from_lazer` decodes a verified Lazer payload, finds the matching feed, reads its `(price, exponent)` pair, and stores the raw sign/magnitude fields. The source observation getters expose those raw fields; `spot()` is a positive-only convenience read that normalizes to Predict's 1e9 fixed-point scaling (`price_1e9 = magnitude × 10^(exponent + 9)`) and aborts if the source value is negative or otherwise cannot be represented as a positive Propbook spot.
+A `PythFeed` is bound to exactly one Pyth Lazer feed (identified by a `u32` feed id) and stores the latest source-native price payload for that feed — one global spot source, not a per-expiry value. Its permissionless `update` decodes a verified Lazer payload, finds the matching feed, reads its `(price, exponent)` pair, and stores the raw sign/magnitude fields. Raw getters expose those fields; `normalized_spot()` is the Propbook-normalized read that converts to Predict's 1e9 fixed-point scaling (`price_1e9 = magnitude × 10^(exponent + 9)`) and returns `none` when no latest row exists or the raw value cannot produce a positive normalized spot.
 
 Two timestamps are recorded on every accepted update, and the distinction is load-bearing:
 
 - The **publisher timestamp** — the Lazer published-at time embedded in the verified payload (converted from microseconds to milliseconds, rounding up). This is when the data was *observed off-chain*.
 - The **on-chain landing timestamp** — `clock.timestamp_ms()` captured when the update *landed on chain*.
 
-An update is accepted only if its spot is positive and its publisher timestamp strictly advances the previously stored one and is not in the future relative to the on-chain clock — a stale or replayed payload aborts. *Freshness*, by contrast, is a read-time concern: `PythFeed::freshness_timestamp_ms()` returns the *conservative* of the two timestamps, `min(publisher, landing)`, so a value is only as fresh as its weaker timestamp. This guards both against old market data (a stale publisher timestamp) and against recently-published data that has been sitting unposted (a stale landing timestamp).
+The generic Propbook lane records a latest update only when the publisher timestamp is positive, not in the future relative to the on-chain landing time, and strictly advances the previous latest row. Future, zero, stale, or duplicate source timestamps are no-ops rather than aborts. Freshness is a read-time concern: Predict compares the `source_timestamp_ms` in the returned `OracleRead` against the current clock and the configured freshness window.
 
-`PythFeed` deliberately does not decide whether Pyth is authoritative, derive a forward, or settle anything. It ingests, time-stamps, and exposes source facts plus positive-only convenience reads; freshness and feed binding are the consumer's responsibility.
+`PythFeed` deliberately does not decide whether Pyth is authoritative, derive a forward, or settle anything. It ingests, time-stamps, and exposes raw plus normalized source facts; freshness and feed binding are the consumer's responsibility.
 
 ### Block Scholes surface and forward (`BlockScholesFeed`)
 
-One `BlockScholesFeed` exists per underlying. It holds a `Table` of per-expiry `Surface` rows; each `Surface` carries that expiry's `spot`, `forward`, `SVIParams`, and the publisher/landing timestamp pair for the row. Because spot and forward are written together in one update, the per-expiry **basis** = `forward / spot` is exact and contemporaneous. The basis is what lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)).
+One `BlockScholesFeed` exists per source id. It holds a table of per-expiry Propbook lanes; each latest or exact row carries that expiry's `spot`, `forward`, `SVIParams`, and the source/landing timestamp pair in an `OracleRead`. Because spot and forward are written together in one update, the per-expiry **basis** = `forward / spot` is exact and contemporaneous. The basis is what lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)).
 
 The surface is described by five SVI (stochastic volatility inspired) parameters in `SVIParams`:
 
@@ -42,11 +42,11 @@ The surface is described by five SVI (stochastic volatility inspired) parameters
 
 `rho` and `m` are signed because the wing tilt and smile-center offset can each point either direction; `a`, `b`, and `sigma` are unsigned variance quantities. `I64` is the signed fixed-point type from the shared `fixed_math` package (the renamed `predict_math`), a magnitude-plus-sign type with normalized zero. (The "Role" column describes each parameter's place in the variance formula below; the standard raw-SVI reading — `a` baseline variance, `b` wing slope, `rho` skew, `m` horizontal shift, `sigma` curvature — is consistent with it.)
 
-A whole surface row (spot, forward, and SVI together) is written by one `update_from_bs` call carrying a single publisher timestamp, so the three age as a unit — there are no longer separate price and SVI write paths or separate staleness clocks. A push whose publisher timestamp does not advance the stored row is a clean no-op rather than an abort, so one transaction can update many expiries without an ordering race on a single expiry reverting the whole batch.
+A whole surface row (spot, forward, and SVI together) is written by one `update` call carrying a single publisher timestamp, so the three age as a unit — there are no separate price and SVI write paths or separate staleness clocks. A push whose publisher timestamp does not advance the stored row is a clean no-op rather than an abort, so one transaction can update many expiries without an ordering race on a single expiry reverting the whole batch.
 
 The feed validates source identity and records the source-native payload. It does not impose Predict's full pricing-safe envelope at ingest; Predict applies its own read-time checks before using the row for pricing.
 
-The feed also folds each accepted update's spot into a **shared minute history** — the first observation per UTC minute, keyed by real-world time and shared across all of the underlying's expiries. Predict does not read it today; it is the terminal-price substrate that settlement-v2 will sample (see [Settlement is deferred](#settlement-is-deferred)).
+The feed also exposes `insert_at` for exact timestamp history. Predict does not read exact inserts today; they are the terminal-price substrate that settlement-v2 will sample (see [Settlement is deferred](#settlement-is-deferred)).
 
 ## From SVI to a range probability
 
@@ -85,8 +85,8 @@ Every live pricing path resolves a single `(forward, SVIParams)` tuple before pr
 ```mermaid
 flowchart TD
     A[surface fresh?] -- no --> X[abort EBlockScholesSurfaceStale]
-    A -- yes --> B{Pyth spot fresh?}
-    B -- yes --> C["forward = pyth.spot x basis(expiry)<br/>basis = bs.forward / bs.spot"]
+    A -- yes --> B{normalized Pyth spot fresh?}
+    B -- yes --> C["forward = pyth_spot x basis(expiry)<br/>basis = bs.forward / bs.spot"]
     B -- no --> D["forward = bs.forward(expiry)<br/>(Block Scholes fallback)"]
     C --> E[forward + bs.svi]
     D --> E
@@ -94,12 +94,12 @@ flowchart TD
 
 The rules:
 
-- **Pyth spot is canonical for spot when fresh and usable.** When the Pyth spot is fresh, the live forward is rebuilt from it: `forward = pyth.spot() × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
-- **A stale Pyth spot is a fallback, not an abort.** If the Pyth spot is stale, pricing falls back to `bs.forward(expiry)` directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
-- **A fresh but unusable Pyth spot is not a fallback.** If Pyth is fresh but `pyth.spot()` aborts because the source-native value cannot be represented by Propbook's positive-only normalized spot helper, live pricing aborts. The fallback is specifically for stale Pyth data, not for a fresh canonical source producing invalid spot data.
+- **Pyth spot is canonical for spot when fresh and usable.** When `normalized_spot()` returns a positive spot and its source timestamp is fresh, the live forward is rebuilt from it: `forward = pyth_spot × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
+- **Missing, stale, or unusable Pyth spot falls back to Block Scholes.** If Pyth has no normalized latest spot, the normalized spot is non-positive/unrepresentable, or its source timestamp is stale, pricing falls back to `bs.forward(expiry)` directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
+- **Oversized normalized Pyth spot is still rejected.** A normalized Pyth spot above Predict's pricing envelope aborts with `EPythSpotInvalid`; this is a consumer-side fixed-point safety bound, not a Propbook validity rule.
 - **The surface has no fallback.** The Block Scholes surface (spot + forward + SVI, one row) must be fresh either way; a stale surface blocks live pricing entirely.
 
-Note the asymmetry: the volatility surface is mandatory and gated by a hard abort, while the Pyth spot is an optimization that degrades to the Block Scholes forward only when stale.
+Note the asymmetry: the volatility surface is mandatory and gated by a hard abort, while the Pyth spot is an optimization that degrades to the Block Scholes forward when absent, stale, or not positively normalizable.
 
 ## Ownership: market binding/liveness vs. pricing freshness
 
@@ -114,7 +114,7 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 `pricing` reads feed state on demand and validates it at read time rather than trusting a writer kept it fresh. The relevant bounds:
 
-**Read-time freshness (`PricingConfig`, global).** Two admin-tunable maximum ages gate live pricing, each compared against the conservative `min(publisher, landing)` timestamp of its input:
+**Read-time freshness (`PricingConfig`, global).** Two admin-tunable maximum ages gate live pricing, each compared against the `source_timestamp_ms` of its normalized `OracleRead`:
 
 - **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward.
 - **Block Scholes surface freshness** (`block_scholes_surface_freshness_ms`) — how recent the one surface row (spot + forward + SVI, written together) must be. This is a single collapsed window; the old separate price and SVI windows are gone, because the three values now age as one row.
@@ -131,6 +131,6 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 Settlement is **stubbed** and deferred to settlement-v2. A market never settles today: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. The settled-redeem and settled-sweep paths remain in the code, gated on `is_settled()`, but are unreachable under the stub and kept for v2.
 
-When settlement-v2 lands, it will read the terminal price from the propbook feeds' shared minute history — the per-minute spot snapshots both feeds already record — rather than from a Predict-side sampling buffer. Until then, the operator must not let an active market cross its expiry across a pool flush, because an unsettled past-expiry market can no longer be valued; this flush-liveness precondition is documented in [liquidity and NAV](./liquidity-and-nav.md).
+When settlement-v2 lands, it will read the terminal price from Propbook exact timestamp inserts rather than from a Predict-side sampling buffer. Until then, the operator must not let an active market cross its expiry across a pool flush, because an unsettled past-expiry market can no longer be valued; this flush-liveness precondition is documented in [liquidity and NAV](./liquidity-and-nav.md).
 
 For the trust assumptions behind each feed and the privileged flush operator, see [risks](../risks.md).

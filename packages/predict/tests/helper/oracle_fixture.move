@@ -8,9 +8,9 @@
 /// `BlockScholesFeed` (per-expiry surface) — and an `ExpiryMarket` for one expiry
 /// through the production `registry::create_expiry_market` path. This reaches the
 /// pricing/freshness guards more cheaply than the full `flow_test_helpers` market:
-/// no manager setup or expiry-cash seeding. The Pyth spot is seeded through the one
-/// irreducible `store_observation_for_testing` seam (a real `pyth_lazer::Update` has no
-/// Move constructor); the BS surface through the stub verifier's public
+/// no manager setup or expiry-cash seeding. The Pyth spot is seeded through
+/// `pyth_feed::record_raw_for_testing` because a real `pyth_lazer::Update` has no
+/// public Move constructor; the BS surface uses the stub verifier's public
 /// `update::new_update`. `ProtocolConfig`/`Registry`/`OracleRegistry` are taken
 /// per-transaction (never held), mirroring `flow_test_helpers`.
 #[test_only]
@@ -21,13 +21,15 @@ use deepbook_predict::{
     admin::AdminCap,
     market_lifecycle_cap::MarketLifecycleCap,
     plp::{Self, PoolVault},
+    pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
-    test_constants
+    test_constants,
+    test_helpers
 };
 use propbook::{
     block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
+    pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry}
 };
 use std::unit_test::destroy;
@@ -57,11 +59,16 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     registry::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
 
-    // tx1: register the feed tick size and create the two feeds.
+    // tx1: register the underlying and create the two feeds.
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
-    registry::register_pyth_source(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
+    registry::register_underlying(
+        &mut registry,
+        &admin_cap,
+        test_constants::propbook_underlying_id(),
+        tick,
+    );
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth_id = propbook_registry::create_and_share_pyth_feed(
@@ -78,30 +85,33 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
-    // tx2: create the expiry market on the unfunded vault through the registry.
+    // tx2: bind both feeds to the canonical underlying.
     scenario.next_tx(test_constants::admin());
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
+    test_helpers::bind_feeds_to_underlying(&scenario, pyth_id, bs_id);
+
+    // tx3: create the expiry market on the unfunded vault through the registry.
+    scenario.next_tx(test_constants::admin());
     let mut vault = scenario.take_shared<PoolVault>();
     let mut registry = scenario.take_shared<Registry>();
+    let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
     let expiry_id = registry::create_expiry_market(
         &mut registry,
         &mut vault,
         &config,
-        &pyth,
-        &bs,
+        &oracle_registry,
         &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
         expiry,
+        tick,
         &clock,
         scenario.ctx(),
     );
     return_shared(config);
+    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
-    return_shared(bs);
-    return_shared(pyth);
 
     scenario.next_tx(test_constants::admin());
 
@@ -119,19 +129,46 @@ public fun setup_oracle_default(): OracleFixture {
 
 /// Take the two feeds + the protocol config for a pricing test. Pair with
 /// `return_oracle`.
-public fun take_oracle(self: &mut OracleFixture): (PythFeed, BlockScholesFeed, ProtocolConfig) {
+public fun take_oracle(
+    self: &mut OracleFixture,
+): (PythFeed, BlockScholesFeed, OracleRegistry, ProtocolConfig) {
     (
         self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
         self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id),
+        self.scenario.take_shared<OracleRegistry>(),
         self.scenario.take_shared<ProtocolConfig>(),
     )
 }
 
 /// Return the three shared objects taken by `take_oracle`.
-public fun return_oracle(pyth: PythFeed, bs: BlockScholesFeed, config: ProtocolConfig) {
+public fun return_oracle(
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
+    oracle_registry: OracleRegistry,
+    config: ProtocolConfig,
+) {
     return_shared(bs);
     return_shared(pyth);
+    return_shared(oracle_registry);
     return_shared(config);
+}
+
+public fun load_pricer(
+    self: &OracleFixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+): Pricer {
+    pricing::load_live_pricer(
+        config.pricing_config(),
+        oracle_registry,
+        test_constants::propbook_underlying_id(),
+        pyth,
+        bs,
+        self.expiry,
+        &self.clock,
+    )
 }
 
 /// Seed a fresh live Pyth spot + Block Scholes surface so quotes are available, at
@@ -191,7 +228,7 @@ public fun prepare_real_oracle(
         svi_m_magnitude,
         svi_m_is_negative,
     );
-    bs.update_from_bs(bs_update, &self.clock, self.scenario.ctx());
+    bs.update(bs_update, &self.clock, self.scenario.ctx());
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
@@ -250,12 +287,14 @@ fun store_pyth_spot(
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 ) {
-    pyth.store_observation_for_testing(
+    pyth_feed::record_raw_for_testing(
+        pyth,
         spot,
         false,
         PYTH_EXPONENT_NEG_9,
         true,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
+        false,
     );
 }

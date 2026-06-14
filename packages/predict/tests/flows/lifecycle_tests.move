@@ -30,7 +30,7 @@ fun one_x_lifecycle_fund_mint() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- The fixture seeded expiry cash while pool funding is absent; the market
     // is live and not settled (settlement deferred to settlement-v2).
@@ -44,6 +44,7 @@ fun one_x_lifecycle_fund_mint() {
     // --- Mint one 1x in-range order.
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -57,7 +58,7 @@ fun one_x_lifecycle_fund_mint() {
     expected = helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0);
     helpers::check_manager(&manager, expiry_id, expected);
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }

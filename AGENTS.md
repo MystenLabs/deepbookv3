@@ -105,7 +105,7 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 **Still out of scope (follow-up work):**
 - The Rust `crates/predict-{schema,indexer,server}` need rewiring for the changed events: the new async-LP events (`SupplyRequested`/`WithdrawRequested`/`SupplyFilled`/`WithdrawFilled`/`SupplyRefunded`/`WithdrawRefunded`/`RequestCancelled`/`PoolValued`/`FlushExecuted`), M1 `ExpiryCashRebalanced`, `OrderMinted` gaining `range_key`, `MarketCreated` dropping `market_oracle_id`/min/max strike/source oracle ids and carrying `propbook_underlying_id` + `tick_size`, the collapsed `PricingConfigUpdated`, and the deleted oracle events — plus indexing the propbook feeds.
 - The simulation harness (`packages/predict/simulations`) is structurally rewired (tsc/py_compile/`bash -n` clean) but its economic parity + the `run.sh` localnet publish flow need a localnet `run.sh` run — see `packages/predict/simulations/SIM_STATUS.md`.
-- Settlement-v2 (the deferred settlement path off the propbook minute history).
+- Settlement-v2 (the deferred settlement path off Propbook exact timestamp history).
 
 ## Code Review Norms
 

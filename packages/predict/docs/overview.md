@@ -20,11 +20,11 @@ Because the tick domain is absolute and fixed in advance, **market creation read
 
 ### Prices come from external feeds
 
-Live prices come from two standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global normalized spot per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload. A `BlockScholesFeed` holds, per underlying, a per-expiry **surface** of `{spot, forward, SVI volatility, timestamps}` written by a trusted off-chain operator. Predict builds a forward and differences each range's probability off the SVI surface: when the Pyth spot is fresh it uses `forward = spot × basis(expiry)`; when the Pyth spot is stale it falls back to the surface's own forward (Pyth-stale is a fallback, not an error). Either way the **surface must be fresh** — a stale surface is the one hard pricing abort. The propbook feeds validate universal math at ingest (positive spot/forward, SVI no-arbitrage), so the data Predict reads is always well-formed.
+Live prices come from two standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global source-native spot payload per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload and exposed through a normalized spot read. A `BlockScholesFeed` holds, per source id and expiry, a **surface** of `{spot, forward, SVI volatility, timestamps}` written by a trusted off-chain operator. Predict builds a forward and differences each range's probability off the SVI surface: when the normalized Pyth spot is fresh and usable it uses `forward = spot × basis(expiry)`; when the Pyth spot is absent, unusable, or stale it falls back to the surface's own forward. Either way the **surface must be fresh** — a stale surface is the one hard pricing abort. Propbook stores source facts; Predict validates the pricing-safe envelope at read time.
 
 ### Settlement is deferred to settlement-v2
 
-Terminal settlement is **not yet implemented**. A market never reports itself settled today; the settled-redeem and settled-sweep code paths are present but unreachable, kept for the v2 work that will read the terminal price from the propbook feeds' minute history. Until then markets run live-only, and the operator is responsible for not letting an active market cross its expiry (see [risks](./risks.md)).
+Terminal settlement is **not yet implemented**. A market never reports itself settled today; the settled-redeem and settled-sweep code paths are present but unreachable, kept for the v2 work that will read the terminal price from Propbook exact timestamp history. Until then markets run live-only, and the operator is responsible for not letting an active market cross its expiry (see [risks](./risks.md)).
 
 The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability plus its trading-loss rebate reserve.
 
@@ -41,7 +41,7 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 
 Oracle data is **not** a Predict object: the `PythFeed` and `BlockScholesFeed` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed feed objects against Propbook's current canonical bindings for that underlying.
 
-Capabilities are owned objects: `AdminCap` (global policy, also starts the pool flush), `MarketLifecycleCap` (market creation, post-settlement compaction, and starting the pool flush as a deployer), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
+Capabilities are owned objects: `AdminCap` (global policy, also starts the pool flush), `MarketLifecycleCap` (market creation and starting the pool flush as a deployer), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
 
 ## Market and position lifecycle
 

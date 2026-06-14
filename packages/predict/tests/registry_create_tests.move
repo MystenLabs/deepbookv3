@@ -8,37 +8,36 @@ use deepbook_predict::{config_constants, constants, registry, test_constants, te
 use std::unit_test::destroy;
 use sui::test_scenario::{Self as test, return_shared};
 
-const PYTH_SOURCE_BTC: u32 = 100;
-const PYTH_SOURCE_ETH: u32 = 200;
+const UNDERLYING_BTC: u32 = 100;
+const UNDERLYING_ETH: u32 = 200;
 const BTC_TICK_SIZE: u64 = 1_000_000_000; // $1.00 in 1e9 price scaling
-const WIDER_BTC_TICK_SIZE: u64 = 10_000_000_000; // $10.00 in 1e9 price scaling
 const ETH_TICK_SIZE: u64 = 100_000_000; // $0.10 in 1e9 price scaling
 const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
 
-// === register_pyth_source ===
+// === register_underlying ===
 
 #[test]
-fun register_pyth_source_records_tick_size() {
+fun register_underlying_records_min_tick_size() {
     let (scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
-    let tick_size = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_BTC, BTC_TICK_SIZE);
+    let tick_size = registry::underlying_min_tick_size(&reg, UNDERLYING_BTC);
     assert!(tick_size.is_some());
     assert!(*tick_size.borrow() == BTC_TICK_SIZE);
-    assert!(registry::pyth_source_tick_size(&reg, PYTH_SOURCE_ETH).is_none());
+    assert!(registry::underlying_min_tick_size(&reg, UNDERLYING_ETH).is_none());
 
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
 
 #[test]
-fun register_pyth_source_distinct_sources_store_distinct_tick_sizes() {
+fun register_underlying_distinct_underlyings_store_distinct_min_tick_sizes() {
     let (scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_ETH, ETH_TICK_SIZE);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_BTC, BTC_TICK_SIZE);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_ETH, ETH_TICK_SIZE);
 
-    let btc_tick = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC);
-    let eth_tick = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_ETH);
+    let btc_tick = registry::underlying_min_tick_size(&reg, UNDERLYING_BTC);
+    let eth_tick = registry::underlying_min_tick_size(&reg, UNDERLYING_ETH);
     assert!(*btc_tick.borrow() == BTC_TICK_SIZE);
     assert!(*eth_tick.borrow() == ETH_TICK_SIZE);
     assert!(*btc_tick.borrow() != *eth_tick.borrow());
@@ -46,71 +45,42 @@ fun register_pyth_source_distinct_sources_store_distinct_tick_sizes() {
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
 
-#[test, expected_failure(abort_code = registry::EPythSourceAlreadyRegistered)]
-fun register_pyth_source_duplicate_aborts() {
+#[test, expected_failure(abort_code = registry::EUnderlyingAlreadyRegistered)]
+fun register_underlying_duplicate_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_BTC, BTC_TICK_SIZE);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_BTC, BTC_TICK_SIZE);
     abort 999
 }
 
 #[test, expected_failure(abort_code = registry::EPackageVersionDisabled)]
-fun register_pyth_source_with_current_version_disabled_aborts() {
+fun register_underlying_with_current_version_disabled_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
     let current = constants::current_version!();
     let next = current + 1;
     registry::enable_version(&mut reg, &admin_cap, next);
     registry::disable_version(&mut reg, &admin_cap, current);
 
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_BTC, BTC_TICK_SIZE);
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidOracleTickSize)]
-fun register_pyth_source_unaligned_tick_size_aborts() {
+#[test, expected_failure(abort_code = config_constants::EInvalidMarketTickSize)]
+fun register_underlying_unaligned_tick_size_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, INVALID_TICK_SIZE);
+    registry::register_underlying(&mut reg, &admin_cap, UNDERLYING_BTC, INVALID_TICK_SIZE);
     abort 999
 }
 
 #[test]
-fun pyth_source_tick_size_returns_none_for_unmapped_source() {
+fun underlying_min_tick_size_returns_none_for_unmapped_underlying() {
     let (scenario, reg, admin_cap) = test_helpers::begin_registry_test();
 
-    assert!(registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC).is_none());
+    assert!(registry::underlying_min_tick_size(&reg, UNDERLYING_BTC).is_none());
 
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
-}
-
-// === pyth source tick size admin setter ===
-
-#[test]
-fun set_pyth_source_tick_size_updates_registered_source() {
-    let (scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
-
-    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
-    registry::set_pyth_source_tick_size(
-        &mut reg,
-        &admin_cap,
-        PYTH_SOURCE_BTC,
-        WIDER_BTC_TICK_SIZE,
-    );
-
-    let tick_size = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC);
-    assert!(tick_size.is_some());
-    assert!(*tick_size.borrow() == WIDER_BTC_TICK_SIZE);
-
-    test_helpers::finish_registry_test(scenario, reg, admin_cap);
-}
-
-#[test, expected_failure(abort_code = registry::EPythSourceNotRegistered)]
-fun set_pyth_source_tick_size_unknown_source_aborts() {
-    let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
-
-    registry::set_pyth_source_tick_size(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
-    abort 999
 }
 
 // === create_manager / create_and_share_manager ===

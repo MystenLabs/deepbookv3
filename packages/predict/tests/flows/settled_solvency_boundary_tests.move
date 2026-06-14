@@ -52,7 +52,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent; nothing owed, nothing spent.
@@ -70,6 +70,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     // for a zero-floor 1x order is its full quantity.
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -99,6 +100,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     // residual (cancel-and-replace), so liability drops to the surviving half.
     let (_closed, replacement) = fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -123,7 +125,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     assert!(!manager.has_position(expiry_id, order_id));
     assert!(manager.has_position(expiry_id, survivor_id));
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }

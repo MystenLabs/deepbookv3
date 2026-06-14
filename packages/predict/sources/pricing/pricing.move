@@ -13,7 +13,7 @@ module deepbook_predict::pricing;
 use deepbook_predict::{constants, pricing_config::PricingConfig};
 use fixed_math::{i64, math};
 use propbook::{
-    block_scholes_feed::{BlockScholesFeed, SVIParams},
+    block_scholes_feed::{Self as block_scholes_feed, BlockScholesFeed, SVIParams},
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -103,11 +103,10 @@ fun assert_current_oracles(
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from this
-/// expiry's Block Scholes basis. If Pyth is stale, pricing falls back to the
-/// Block Scholes forward. If Pyth is fresh but its positive-only normalized spot
-/// read aborts, pricing aborts instead of falling back; fallback is only for
-/// staleness. The Block Scholes surface (basis + forward + SVI) must be fresh and
-/// inside Predict's pricing-safe envelope either way.
+/// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
+/// spot, pricing falls back to the Block Scholes forward. The Block Scholes
+/// surface (basis + forward + SVI) must be fresh and inside Predict's
+/// pricing-safe envelope either way.
 fun live_inputs(
     config: &PricingConfig,
     pyth: &PythFeed,
@@ -115,14 +114,33 @@ fun live_inputs(
     expiry: u64,
     clock: &Clock,
 ): (u64, SVIParams) {
-    assert!(block_scholes_surface_is_fresh(config, bs, expiry, clock), EBlockScholesSurfaceStale);
-    let bs_spot = bs.spot(expiry);
-    let bs_forward = bs.forward(expiry);
-    let svi = bs.svi(expiry);
+    let surface_read = bs.normalized_surface(expiry);
+    assert!(surface_read.is_some(), EBlockScholesSurfaceStale);
+    let surface_read = surface_read.destroy_some();
+    assert!(
+        timestamp_is_fresh(
+            surface_read.read_source_timestamp_ms(),
+            config.block_scholes_surface_freshness_ms(),
+            clock,
+        ),
+        EBlockScholesSurfaceStale,
+    );
+    let surface = surface_read.read_value();
+    let bs_spot = block_scholes_feed::surface_spot(&surface);
+    let bs_forward = block_scholes_feed::surface_forward(&surface);
+    let svi = block_scholes_feed::surface_svi(&surface);
     assert_surface_pricing_safe(bs_spot, bs_forward, &svi);
 
-    let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
-        let spot = pyth.spot();
+    let pyth_spot = pyth.normalized_spot();
+    let forward = if (
+        pyth_spot.is_some()
+            && timestamp_is_fresh(
+                pyth_spot.borrow().read_source_timestamp_ms(),
+                config.pyth_spot_freshness_ms(),
+                clock,
+            )
+    ) {
+        let spot = pyth_spot.destroy_some().read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
         math::mul(spot, math::div(bs_forward, bs_spot))
     } else {
@@ -130,27 +148,6 @@ fun live_inputs(
     };
 
     (forward, svi)
-}
-
-/// A surface is usable only if a row exists for `expiry` and it is fresh; the
-/// presence check short-circuits so the freshness read never aborts on a missing
-/// row (a missing surface is treated as stale, not a hard error).
-fun block_scholes_surface_is_fresh(
-    config: &PricingConfig,
-    bs: &BlockScholesFeed,
-    expiry: u64,
-    clock: &Clock,
-): bool {
-    bs.has_expiry(expiry) &&
-        timestamp_is_fresh(
-            bs.surface_freshness_timestamp_ms(expiry),
-            config.block_scholes_surface_freshness_ms(),
-            clock,
-        )
-}
-
-fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythFeed, clock: &Clock): bool {
-    timestamp_is_fresh(pyth.freshness_timestamp_ms(), config.pyth_spot_freshness_ms(), clock)
 }
 
 fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {

@@ -3,10 +3,10 @@
 
 /// Registry, versioning, and creation entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects, stores admin-approved Pyth feed
-/// configs and the expiry uniqueness index, and exposes registry-owned governance
-/// entrypoints. Runtime pool accounting, expiry risk, oracle feeds, and user
-/// positions stay in their owning modules.
+/// This module creates shared setup objects, stores admin-approved Propbook
+/// underlying configs and the expiry uniqueness index, and exposes
+/// registry-owned governance entrypoints. Runtime pool accounting, expiry risk,
+/// oracle feeds, and user positions stay in their owning modules.
 module deepbook_predict::registry;
 
 use deepbook::registry::Registry as DeepbookRegistry;
@@ -25,37 +25,45 @@ use deepbook_predict::{
     predict_withdraw_cap::PredictWithdrawCap,
     protocol_config::{Self, ProtocolConfig}
 };
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
+use propbook::registry::OracleRegistry;
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
-const EFeedIdMismatch: u64 = 0;
-const EPythSourceAlreadyRegistered: u64 = 1;
+const EUnderlyingNotRegistered: u64 = 0;
+const EUnderlyingAlreadyRegistered: u64 = 1;
 const EInvalidExpiry: u64 = 2;
-const EExpiryMarketAlreadyCreated: u64 = 3;
+const EMarketAlreadyCreated: u64 = 3;
 const EPauseCapNotValid: u64 = 4;
 const EPackageVersionDisabled: u64 = 5;
 const EVersionAlreadyEnabled: u64 = 6;
 const EVersionNotEnabled: u64 = 7;
 const ECannotDisableLastVersion: u64 = 8;
-const EPythSourceNotRegistered: u64 = 9;
+const EInvalidMarketTickSize: u64 = 9;
 const ELifecycleCapNotValid: u64 = 10;
 const ELifecycleCapNotFound: u64 = 11;
+const EPythFeedNotBoundToUnderlying: u64 = 12;
+const EBlockScholesFeedNotBoundToUnderlying: u64 = 13;
 
-/// Registry-owned config for one admin-approved Pyth source id. Admin approval
-/// of a source id is recorded by inserting this row; the propbook `PythFeed` /
-/// `BlockScholesFeed` objects themselves are created permissionlessly in propbook.
-public struct PythSourceConfig has copy, drop, store {
-    /// Admin-selected strike tick size for future expiries.
-    tick_size: u64,
+/// Registry-owned config for one admin-approved Propbook underlying.
+public struct UnderlyingConfig has copy, drop, store {
+    /// Minimum tick size for markets on this underlying. A market may choose this
+    /// value or a 10x multiple above it.
+    min_tick_size: u64,
 }
 
-/// Shared registry for source and expiry uniqueness.
+/// Market uniqueness key. Predict permits one market per Propbook underlying and
+/// expiry; the market's chosen tick size is committed by the first creation.
+public struct MarketKey has copy, drop, store {
+    propbook_underlying_id: u32,
+    expiry: u64,
+}
+
+/// Shared registry for underlying admission and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Pyth source ID -> admin-approved tick-size config.
-    pyth_source_configs: Table<u32, PythSourceConfig>,
-    /// Created expiry markets keyed by expiry timestamp.
-    expiry_market_ids: Table<u64, ID>,
+    /// Propbook underlying ID -> admin-approved minimum market tick size.
+    underlying_configs: Table<u32, UnderlyingConfig>,
+    /// Created markets keyed by `(propbook_underlying_id, expiry)`.
+    market_ids: Table<MarketKey, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
     /// Admin mints into this set and revokes from it.
     allowed_pause_caps: VecSet<ID>,
@@ -81,25 +89,29 @@ public fun allowed_versions(registry: &Registry): VecSet<u64> {
     registry.allowed_versions
 }
 
-/// Return the configured strike tick size for a Pyth source id, if registered.
-public fun pyth_source_tick_size(registry: &Registry, pyth_source_id: u32): Option<u64> {
-    if (registry.pyth_source_configs.contains(pyth_source_id)) {
-        option::some(registry.pyth_source_configs.borrow(pyth_source_id).tick_size)
+/// Return the configured minimum tick size for a Propbook underlying, if
+/// registered.
+public fun underlying_min_tick_size(registry: &Registry, propbook_underlying_id: u32): Option<u64> {
+    if (registry.underlying_configs.contains(propbook_underlying_id)) {
+        option::some(registry.underlying_configs.borrow(propbook_underlying_id).min_tick_size)
     } else {
         option::none()
     }
 }
 
-/// Set the strike tick size used by future expiry markets for one Pyth feed.
-public fun set_pyth_source_tick_size(
-    registry: &mut Registry,
-    _admin_cap: &AdminCap,
-    pyth_source_id: u32,
-    tick_size: u64,
-) {
-    assert!(registry.pyth_source_configs.contains(pyth_source_id), EPythSourceNotRegistered);
-    config_constants::assert_oracle_tick_size(tick_size);
-    registry.pyth_source_configs.borrow_mut(pyth_source_id).tick_size = tick_size;
+/// Return the expiry market ID for `(propbook_underlying_id, expiry)`, if one
+/// has been created.
+public fun expiry_market_id(
+    registry: &Registry,
+    propbook_underlying_id: u32,
+    expiry: u64,
+): Option<ID> {
+    let key = MarketKey { propbook_underlying_id, expiry };
+    if (registry.market_ids.contains(key)) {
+        option::some(*registry.market_ids.borrow(key))
+    } else {
+        option::none()
+    }
 }
 
 // === Version Management (admin) ===
@@ -219,40 +231,45 @@ public fun pause_expiry_market_mint_pause_cap(
     market.pause_mint();
 }
 
-/// Record admin approval of one Pyth source id and the strike tick size its
-/// future expiry markets use. The propbook `PythFeed` and `BlockScholesFeed`
-/// objects are created permissionlessly in propbook; this row only gates which
-/// Pyth source ids Predict will build markets on. The registry enforces one row
-/// per source id.
-public fun register_pyth_source(
+/// Record admin approval of one Propbook underlying and its minimum market tick
+/// size. Source IDs and canonical oracle object IDs remain owned by Propbook;
+/// this row only gates which underlyings Predict will build markets on and the
+/// smallest tick size those markets may choose.
+public fun register_underlying(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
-    pyth_source_id: u32,
-    tick_size: u64,
+    propbook_underlying_id: u32,
+    min_tick_size: u64,
 ) {
     registry.assert_version_allowed();
-    assert!(!registry.pyth_source_configs.contains(pyth_source_id), EPythSourceAlreadyRegistered);
-    config_constants::assert_oracle_tick_size(tick_size);
-    registry.pyth_source_configs.add(pyth_source_id, PythSourceConfig { tick_size });
+    assert!(
+        !registry.underlying_configs.contains(propbook_underlying_id),
+        EUnderlyingAlreadyRegistered,
+    );
+    config_constants::assert_market_tick_size_bounds(min_tick_size);
+    registry.underlying_configs.add(propbook_underlying_id, UnderlyingConfig { min_tick_size });
 }
 
-/// Create the ExpiryMarket for one future expiry, bound to its propbook Pyth spot
-/// feed and Block Scholes surface feed.
+/// Create the ExpiryMarket for one future expiry on a Propbook underlying.
 ///
-/// The registry enforces one market per expiry and that the Pyth feed is admin
-/// approved (`register_pyth_source`). Pairing the Pyth and Block Scholes feeds to
-/// one underlying is a creation-time trust: the market-deployer cap holder passes
-/// both feed objects, and that cap is trusted. The market is created with zero
-/// cash and registered with the pool vault as an accounting row only; it is not
-/// mintable until `plp::rebalance_expiry_cash` funds it.
+/// The registry enforces one market per `(propbook_underlying_id, expiry)`, that
+/// the underlying is admin-approved for Predict, that the chosen tick size is a
+/// valid 10x multiple of the underlying's minimum, and — via Propbook's
+/// admin-gated canonical binding — that both required oracle kinds are currently
+/// bound for the underlying. The market snapshots only the underlying and its
+/// tick size; priced flows resolve the current canonical oracle object IDs from
+/// Propbook so a Propbook rebind affects existing markets. The market is created
+/// with zero cash and registered with the pool vault as an accounting row only;
+/// it is not mintable until `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    propbook_registry: &OracleRegistry,
     lifecycle_cap: &MarketLifecycleCap,
+    propbook_underlying_id: u32,
     expiry: u64,
+    tick_size: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
@@ -260,24 +277,32 @@ public fun create_expiry_market(
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
-    let pyth_source_id = pyth.pyth_source_id();
-    assert!(registry.pyth_source_configs.contains(pyth_source_id), EFeedIdMismatch);
-    let tick_size = registry.pyth_source_configs.borrow(pyth_source_id).tick_size;
-    assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
+    let market_key = MarketKey { propbook_underlying_id, expiry };
+    let min_tick_size = registry.assert_underlying_registered(propbook_underlying_id);
+    assert_market_tick_size(min_tick_size, tick_size);
+    assert!(
+        propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
+        EPythFeedNotBoundToUnderlying,
+    );
+    assert!(
+        propbook_registry
+            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+            .is_some(),
+        EBlockScholesFeedNotBoundToUnderlying,
+    );
+    assert!(!registry.market_ids.contains(market_key), EMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let expiry_market_id = expiry_market::create_and_share(
         config,
         allowed_versions,
-        pyth.id(),
-        bs.id(),
+        propbook_underlying_id,
         pool_vault.id(),
-        pyth_source_id,
         expiry,
         tick_size,
         ctx,
     );
     pool_vault.register_expiry(expiry_market_id);
-    registry.expiry_market_ids.add(expiry, expiry_market_id);
+    registry.market_ids.add(market_key, expiry_market_id);
 
     expiry_market_id
 }
@@ -340,8 +365,8 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
-            pyth_source_configs: table::new(ctx),
-            expiry_market_ids: table::new(ctx),
+            underlying_configs: table::new(ctx),
+            market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_lifecycle_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
@@ -359,6 +384,21 @@ fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
 /// revoked. Called by `create_expiry_market`.
 fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
+}
+
+fun assert_underlying_registered(registry: &Registry, propbook_underlying_id: u32): u64 {
+    assert!(registry.underlying_configs.contains(propbook_underlying_id), EUnderlyingNotRegistered);
+    registry.underlying_configs.borrow(propbook_underlying_id).min_tick_size
+}
+
+fun assert_market_tick_size(min_tick_size: u64, tick_size: u64) {
+    config_constants::assert_market_tick_size_bounds(tick_size);
+    assert!(tick_size >= min_tick_size, EInvalidMarketTickSize);
+    let mut allowed = min_tick_size;
+    while (allowed < tick_size) {
+        allowed = allowed * 10;
+    };
+    assert!(allowed == tick_size, EInvalidMarketTickSize);
 }
 
 /// Remove a version from the allowed set, enforcing the non-empty invariant.

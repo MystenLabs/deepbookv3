@@ -36,15 +36,18 @@ Layer 1  test_helpers.move        — domain-free leaf utils: destroy_2/3/4 macr
                                      begin_registry_test / finish_registry_test registry base,
                                      and the rule-10 math carve-out assert_within /
                                      assert_within_relative (principled bounds only).
-Layer 2  oracle_fixture.move      — lightweight production-valid registry+config+cap+PythSource+
-                                     MarketOracle bring-up for oracle/pricing/pyth error paths
-                                     that don't need a funded market. Sanctioned home of
-                                     set_state_for_testing. take_oracle/return_oracle pairing.
+Layer 2  oracle_fixture.move      — lightweight production-valid registry+config+cap+
+                                     Propbook PythFeed+BlockScholesFeed+ExpiryMarket bring-up
+                                     for pricing/oracle error paths that don't need a funded
+                                     market. Pyth uses the irreducible
+                                     pyth_feed::record_raw_for_testing seam; BS uses the
+                                     stub verifier's public update constructor.
+                                     take_oracle/return_oracle pairing includes OracleRegistry.
          flow_test_helpers.move   — the tradeable market Fixture: production create path plus
                                      explicit test-only expiry cash seeding while pool funding is
-                                     absent; parameterized setup_market(spot, tick, legacy_supply) +
+                                     absent; parameterized setup_market(tick) +
                                      setup_market_default(); lifecycle advancers (create_expiry /
-                                     prepare_live_oracle / settle_oracle); composites
+                                     prepare_live_oracle); composites
                                      (setup_live_market, setup_everything → past create+live+
                                      seeded-cash+funded-manager); flow wrappers (mint / redeem /
                                      redeem_settled / liquidation); take_market +
@@ -68,7 +71,6 @@ Layer 4  reference/               — committed generators + reference data, NOT
 packages/predict/tests/
   helper/    test_constants · test_helpers · oracle_fixture · flow_test_helpers · reference/
   config/    one *_tests.move per config module
-  oracle/    market_oracle_tests · market_oracle_settlement_tests (+ pyth_source_tests NEW)
   pricing/   pricing_tests · pricing_exact_tests · pricing_reference_data (generated)
   pool/      pruned with synchronous funding/NAV/incentive tests; add fresh files when new LP APIs land
   order/     order_tests
@@ -95,8 +97,9 @@ packages/fixed_math/tests/
   **only** for fundamental fixed-point error with a principled/documented bound — never a bound
   measured from contract output (rule 10).
 - **Production-valid fixtures** (rule 12): markets/oracles always through real
-  `create_expiry_market`/`create_pyth_source`; config nudges through real admin setters; the
-  only state seam is the irreducible Pyth one.
+  `register_underlying`, Propbook feed creation/binding, and `create_expiry_market`;
+  config nudges through real admin setters; the only state seam is the irreducible
+  Pyth raw-update one.
 
 ## Bug-finding discipline (inverted TDD — non-negotiable)
 
@@ -124,8 +127,9 @@ is suspect.
 2. **Lifecycle advancers** beyond settle: pause/version-disable toggles, second-expiry +
    second-manager builders and leveraged-order builders — added as coverage work demands them
    (no speculative helpers).
-3. **`pyth_source` error-path fixture support** in `oracle_fixture` (stale/future/zero-spot
-   update guards via the real `update_from_lazer` path where reachable, else documented).
+3. **Pyth edge-case fixture support** in `oracle_fixture` and Propbook tests
+   (stale/future/zero-normalized spot behavior through `update` where reachable,
+   else the documented `pyth_feed::record_raw_for_testing` seam).
 
 ## Provenance warnings
 

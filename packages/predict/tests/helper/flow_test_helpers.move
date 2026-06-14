@@ -13,11 +13,10 @@
 /// boundary, so each method takes the config/registry it needs as a local and
 /// returns it before the next transaction. The market reads two standalone propbook
 /// feeds — a `PythFeed` (global spot) and a `BlockScholesFeed` (per-expiry
-/// surface) — both seeded through their real ingest paths (the Pyth spot via the
-/// one irreducible `store_observation_for_testing` seam, since a real `pyth_lazer::Update`
-/// has no Move constructor; the BS surface via the stub verifier's public
-/// `update::new_update`). Settlement is deferred to settlement-v2, so there is no
-/// settle helper here.
+/// surface). The Pyth spot is seeded through `pyth_feed::record_raw_for_testing`
+/// because a real `pyth_lazer::Update` has no public Move constructor; the BS
+/// surface uses the stub verifier's public `update::new_update`. Settlement is
+/// deferred to settlement-v2, so there is no settle helper here.
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
@@ -27,6 +26,7 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
     plp::{Self, PoolVault, PoolValuation},
+    pricing,
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
@@ -36,7 +36,7 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use propbook::{
     block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
+    pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry}
 };
 use std::unit_test::{assert_eq, destroy};
@@ -58,6 +58,7 @@ public struct Fixture {
     vault_id: ID,
     pyth_id: ID,
     bs_id: ID,
+    tick_size: u64,
 }
 
 /// Stand up a registry + protocol config + an empty PLP vault + the two propbook
@@ -71,7 +72,7 @@ public fun setup_market(tick: u64): Fixture {
     registry::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
 
-    // tx1: configure protocol params, register the feed tick size, create feeds.
+    // tx1: configure protocol params, register the underlying, create feeds.
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
@@ -79,7 +80,12 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_min_ask_price(&admin_cap, 0);
     return_shared(config);
     let mut registry = scenario.take_shared<Registry>();
-    registry::register_pyth_source(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
+    registry::register_underlying(
+        &mut registry,
+        &admin_cap,
+        test_constants::propbook_underlying_id(),
+        tick,
+    );
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth_id = propbook_registry::create_and_share_pyth_feed(
@@ -99,7 +105,7 @@ public fun setup_market(tick: u64): Fixture {
     // tx2: bind both feeds to the canonical underlying, mint the lifecycle cap,
     // and capture the vault id.
     scenario.next_tx(test_constants::admin());
-    test_helpers::bind_feeds_to_underlying(&mut scenario, pyth_id, bs_id);
+    test_helpers::bind_feeds_to_underlying(&scenario, pyth_id, bs_id);
     let mut registry = scenario.take_shared<Registry>();
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
     return_shared(registry);
@@ -109,7 +115,7 @@ public fun setup_market(tick: u64): Fixture {
 
     scenario.next_tx(test_constants::admin());
 
-    Fixture { scenario, admin_cap, lifecycle_cap, clock, vault_id, pyth_id, bs_id }
+    Fixture { scenario, admin_cap, lifecycle_cap, clock, vault_id, pyth_id, bs_id, tick_size: tick }
 }
 
 /// `setup_market` with the default tick size.
@@ -147,10 +153,10 @@ fun setup_funded_live_market(
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
     let manager = fx.create_funded_manager(deposit);
-    let (mut pyth, mut bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, live_price);
     fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
-    return_market(pyth, bs, vault, market, config);
+    return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.scenario.next_tx(test_constants::admin());
     (fx, expiry_id, manager)
 }
@@ -158,8 +164,6 @@ fun setup_funded_live_market(
 /// Create the market for `expiry` through the production path, returning its id.
 public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     self.scenario.next_tx(test_constants::admin());
-    let pyth = self.scenario.take_shared_by_id<PythFeed>(self.pyth_id);
-    let bs = self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id);
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
@@ -169,11 +173,10 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
         &mut vault,
         &config,
         &oracle_registry,
-        &pyth,
-        &bs,
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         expiry,
+        self.tick_size,
         &self.clock,
         self.scenario.ctx(),
     );
@@ -181,8 +184,6 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
-    return_shared(bs);
-    return_shared(pyth);
     self.scenario.next_tx(test_constants::admin());
     expiry_id
 }
@@ -223,10 +224,11 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
 public fun take_market(
     self: &mut Fixture,
     expiry_id: ID,
-): (PythFeed, BlockScholesFeed, PoolVault, ExpiryMarket, ProtocolConfig) {
+): (PythFeed, BlockScholesFeed, OracleRegistry, PoolVault, ExpiryMarket, ProtocolConfig) {
     (
         self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
         self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id),
+        self.scenario.take_shared<OracleRegistry>(),
         self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
         self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id),
         self.scenario.take_shared<ProtocolConfig>(),
@@ -237,6 +239,7 @@ public fun take_market(
 public fun return_market(
     pyth: PythFeed,
     bs: BlockScholesFeed,
+    oracle_registry: OracleRegistry,
     vault: PoolVault,
     market: ExpiryMarket,
     config: ProtocolConfig,
@@ -245,6 +248,7 @@ public fun return_market(
     return_shared(vault);
     return_shared(bs);
     return_shared(pyth);
+    return_shared(oracle_registry);
     return_shared(config);
 }
 
@@ -308,8 +312,9 @@ public fun prepare_live_oracle_at(
     // market) must use a strictly-newer timestamp. Bump past the current Pyth row
     // when the requested timestamp would not advance; the freshness window is wide
     // enough to absorb the handful of re-seeds a test performs.
-    let ts = if (pyth.has_latest()) {
-        source_timestamp_ms.max(pyth.source_timestamp_ms() + 1)
+    let latest = pyth.normalized_spot();
+    let ts = if (latest.is_some()) {
+        source_timestamp_ms.max(latest.borrow().read_source_timestamp_ms() + 1)
     } else {
         source_timestamp_ms
     };
@@ -352,7 +357,7 @@ public fun seed_bs_surface(
         test_constants::default_svi_m(),
         false,
     );
-    bs.update_from_bs(bs_update, &self.clock, self.scenario.ctx());
+    bs.update(bs_update, &self.clock, self.scenario.ctx());
 }
 
 /// Mint one order for `manager` over the tick range `(lower_tick, higher_tick]` and
@@ -360,6 +365,7 @@ public fun seed_bs_surface(
 public fun mint(
     self: &mut Fixture,
     config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
@@ -370,10 +376,11 @@ public fun mint(
     leverage: u64,
 ): u256 {
     let proof = manager.generate_proof_as_owner(self.scenario.ctx());
-    market.mint(
+    let order_id = market.mint(
         manager,
         &proof,
         config,
+        oracle_registry,
         pyth,
         bs,
         lower_tick,
@@ -382,13 +389,15 @@ public fun mint(
         leverage,
         &self.clock,
         self.scenario.ctx(),
-    )
+    );
+    order_id
 }
 
 /// Close (or partially close) a live order. Returns `(closed_id, replacement_id)`.
 public fun redeem(
     self: &mut Fixture,
     config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
@@ -397,17 +406,19 @@ public fun redeem(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     let proof = manager.generate_proof_as_owner(self.scenario.ctx());
-    market.redeem(
+    let (closed_id, replacement_id) = market.redeem(
         manager,
         proof,
         config,
+        oracle_registry,
         pyth,
         bs,
         order_id,
         close_quantity,
         &self.clock,
         self.scenario.ctx(),
-    )
+    );
+    (closed_id, replacement_id)
 }
 
 /// Permissionless redeem (no proof): clears an already-liquidated order. (Settled
@@ -415,6 +426,7 @@ public fun redeem(
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
@@ -422,16 +434,18 @@ public fun redeem_settled(
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
-    market.redeem_settled(
+    let (closed_id, replacement_id) = market.redeem_settled(
         manager,
         config,
+        oracle_registry,
         pyth,
         bs,
         order_id,
         close_quantity,
         &self.clock,
         self.scenario.ctx(),
-    )
+    );
+    (closed_id, replacement_id)
 }
 
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
@@ -439,12 +453,13 @@ public fun redeem_settled(
 public fun liquidate(
     self: &Fixture,
     config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     budget: u64,
 ): u64 {
-    market.liquidate(config, pyth, bs, budget, &self.clock)
+    market.liquidate(config, oracle_registry, pyth, bs, budget, &self.clock)
 }
 
 /// Try to liquidate one active leveraged order by ID. Returns whether it was
@@ -452,12 +467,56 @@ public fun liquidate(
 public fun liquidate_order(
     self: &Fixture,
     config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     order_id: u256,
 ): bool {
-    market.liquidate_order(config, pyth, bs, order_id, &self.clock)
+    market.liquidate_order(config, oracle_registry, pyth, bs, order_id, &self.clock)
+}
+
+public fun value_expiry(
+    self: &Fixture,
+    valuation: &mut PoolValuation,
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+) {
+    valuation.value_expiry(vault, market, config, oracle_registry, pyth, bs, &self.clock);
+}
+
+public fun current_nav(
+    self: &Fixture,
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+): u64 {
+    market.current_nav(config, oracle_registry, pyth, bs, &self.clock)
+}
+
+public fun load_pricer(
+    self: &Fixture,
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+): pricing::Pricer {
+    pricing::load_live_pricer(
+        config.pricing_config(),
+        oracle_registry,
+        market.propbook_underlying_id(),
+        pyth,
+        bs,
+        market.expiry(),
+        &self.clock,
+    )
 }
 
 /// Start a privileged pool-NAV flush as the operator `AdminCap`. The returned hot
@@ -579,6 +638,7 @@ public fun finish(self: Fixture) {
         vault_id: _,
         pyth_id: _,
         bs_id: _,
+        tick_size: _,
     } = self;
     lifecycle_cap.destroy();
     destroy(admin_cap);
@@ -592,12 +652,14 @@ fun store_pyth_spot(
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 ) {
-    pyth.store_observation_for_testing(
+    pyth_feed::record_raw_for_testing(
+        pyth,
         spot,
         false,
         PYTH_EXPONENT_NEG_9,
         true,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
+        false,
     );
 }

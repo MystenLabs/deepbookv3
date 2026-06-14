@@ -6,7 +6,6 @@ module propbook::pyth_feed_tests;
 
 use propbook::{
     constants,
-    oracle_lane,
     pyth_feed::{Self, PythFeed},
     registry::{Self, OracleRegistry}
 };
@@ -17,12 +16,45 @@ const ADMIN: address = @0xAD;
 const BTC_SOURCE_ID: u32 = 1;
 const UNKNOWN_SOURCE_ID: u32 = 999;
 const SPOT_65K: u64 = 65_000_000_000_000;
+const BTC_PYTH_MAGNITUDE: u64 = 6_500_012_345_678;
+const BTC_NORMALIZED_SPOT: u64 = 65_000_123_456_780;
+const IDENTITY_MAGNITUDE: u64 = 123_456_789;
+const DIVIDE_MAGNITUDE: u64 = 12_345_678_901;
+const DIVIDE_NORMALIZED_SPOT: u64 = 12_345_678;
+const SUB_UNIT_MAGNITUDE: u64 = 5;
+const ZERO_MAGNITUDE: u64 = 0;
+const ONE_MAGNITUDE: u64 = 1;
+const THREE_MAGNITUDE: u64 = 3;
+const ONE_1E9_SPOT: u64 = 1_000_000_000;
+const THREE_E11_SPOT: u64 = 300_000_000_000;
+const EXPONENT_NEG_8: u16 = 8;
 const EXPONENT_NEG_9: u16 = 9;
-const SOURCE_TS_US_NON_EXACT_MS: u64 = 1_001;
-const SOURCE_TS_MS_CEIL: u64 = 2;
+const EXPONENT_NEG_12: u16 = 12;
+const EXPONENT_ZERO: u16 = 0;
+const EXPONENT_POS_2: u16 = 2;
+const EXPONENT_UNSAFE_POS: u16 = 19;
+const SOURCE_TS_ZERO_US: u64 = 0;
+const SOURCE_TS_ZERO_MS: u64 = 0;
+const SOURCE_TS_1_US: u64 = 1_000;
+const SOURCE_TS_1_MS: u64 = 1;
+const SOURCE_TS_NON_EXACT_US: u64 = 1_001;
+const SOURCE_TS_NON_EXACT_MS: u64 = 2;
+const SOURCE_TS_2_US: u64 = 2_000;
+const SOURCE_TS_2_MS: u64 = 2;
+const SOURCE_TS_3_US: u64 = 3_000;
+const SOURCE_TS_3_MS: u64 = 3;
+const SOURCE_TS_4_US: u64 = 4_000;
+const SOURCE_TS_4_MS: u64 = 4;
+const SOURCE_TS_5_US: u64 = 5_000;
+const SOURCE_TS_5_MS: u64 = 5;
+const SOURCE_TS_FUTURE_US: u64 = 100_000;
+const SOURCE_TS_FUTURE_MS: u64 = 100;
+const UPDATE_1_MS: u64 = 10;
+const UPDATE_2_MS: u64 = 20;
+const UPDATE_3_MS: u64 = 30;
+const UPDATE_4_MS: u64 = 40;
+const UPDATE_5_MS: u64 = 50;
 const VERSION_ZERO: u64 = 0;
-
-// === Registry / permissionless creation tests ===
 
 #[test]
 fun registry_records_created_pyth_source() {
@@ -48,114 +80,309 @@ fun create_duplicate_pyth_source_aborts() {
     abort 999
 }
 
-// === Integration: a source observation flows into the generic lane ===
-
 #[test]
-fun empty_feed_has_no_latest_and_zero_freshness() {
+fun empty_feed_normalized_spot_is_none() {
     let (scenario, feed_obj_id) = setup_feed();
     let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
-    assert!(!feed.has_latest());
-    assert_eq!(feed.freshness_timestamp_ms(), 0);
+    assert!(feed.normalized_spot().is_none());
+    assert!(feed.normalized_spot_at(SOURCE_TS_1_MS).is_none());
 
     return_shared(feed);
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = pyth_feed::ENoLatest)]
-fun latest_observation_on_empty_feed_aborts() {
+#[test, expected_failure(abort_code = pyth_feed::ERawSpotNotFound)]
+fun raw_spot_on_empty_feed_aborts() {
     let (scenario, feed_obj_id) = setup_feed();
     let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
-    feed.latest_observation();
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = pyth_feed::ENoLatest)]
-fun spot_on_empty_feed_aborts() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
-
-    feed.spot();
+    feed.raw_spot();
 
     abort 999
 }
 
 #[test]
-fun store_observation_flows_into_lane() {
+fun update_flows_into_raw_and_normalized_latest_getters() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
-    let source_ts = 7 * constants::minute_ms!() + 123;
-    let update_ts = source_ts + 50;
-    assert!(!feed.has_latest());
-    store_spot(&mut feed, SPOT_65K, source_ts, update_ts);
-
-    assert!(feed.has_latest());
-    assert_eq!(feed.pyth_source_id(), BTC_SOURCE_ID);
-    assert_eq!(feed.spot(), SPOT_65K);
-    assert_eq!(feed.source_timestamp_us(), source_ts * 1000);
-    assert_eq!(feed.source_timestamp_ms(), source_ts);
-    assert_eq!(feed.update_timestamp_ms(), update_ts);
-    assert_eq!(feed.freshness_timestamp_ms(), source_ts);
-    assert_eq!(feed.version(), constants::current_version!());
-
-    assert!(feed.has_observation(7 * constants::minute_ms!()));
-    let observation = feed.observation_at_minute(7 * constants::minute_ms!());
-    assert_eq!(pyth_feed::normalized_spot_1e9(&observation), SPOT_65K);
-    assert_eq!(pyth_feed::observation_source_timestamp_us(&observation), source_ts * 1000);
-    assert_eq!(pyth_feed::observation_source_timestamp_ms(&observation), source_ts);
-    assert_eq!(pyth_feed::observation_update_timestamp_ms(&observation), update_ts);
-
-    return_shared(feed);
-    scenario.end();
-}
-
-#[test]
-fun official_settlement_for_testing_ceil_rounds_source_us_without_latest() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
-
-    feed.record_official_settlement_for_testing(
+    store_raw(
+        &mut feed,
         SPOT_65K,
         false,
         EXPONENT_NEG_9,
         true,
-        SOURCE_TS_US_NON_EXACT_MS,
-        SOURCE_TS_MS_CEIL,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
     );
 
-    assert!(!feed.has_latest());
-    assert!(feed.has_official_settlement(SOURCE_TS_MS_CEIL));
-    assert!(!feed.has_official_settlement(SOURCE_TS_MS_CEIL - 1));
-    let settlement = feed.official_observation_at_resolution(SOURCE_TS_MS_CEIL);
-    assert_eq!(pyth_feed::observation_source_timestamp_us(&settlement), SOURCE_TS_US_NON_EXACT_MS);
-    assert_eq!(pyth_feed::observation_source_timestamp_ms(&settlement), SOURCE_TS_MS_CEIL);
-    assert_eq!(pyth_feed::normalized_spot_1e9(&settlement), SPOT_65K);
+    assert_eq!(feed.pyth_source_id(), BTC_SOURCE_ID);
+    assert_eq!(feed.version(), constants::current_version!());
+
+    let raw_read = feed.raw_spot();
+    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
+    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    let raw = raw_read.read_value();
+    assert_eq!(pyth_feed::raw_pyth_source_id(&raw), BTC_SOURCE_ID);
+    assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
+    assert!(!pyth_feed::raw_price_is_negative(&raw));
+    assert_eq!(pyth_feed::raw_exponent_magnitude(&raw), EXPONENT_NEG_9);
+    assert!(pyth_feed::raw_exponent_is_negative(&raw));
+    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), SOURCE_TS_1_US);
+
+    assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_1_MS, UPDATE_1_MS);
+    assert!(feed.normalized_spot_at(SOURCE_TS_1_MS).is_none());
 
     return_shared(feed);
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = oracle_lane::EStaleSourceUpdate)]
-fun store_observation_stale_source_aborts() {
+#[test]
+fun normalized_spot_scales_every_exponent_branch_through_feed_getter() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
-    store_spot(&mut feed, SPOT_65K, 5_000, 5_000);
-    store_spot(&mut feed, SPOT_65K, 5_000, 9_000);
+    // BTC-style: 65_000.12345678 USD as (6_500_012_345_678, -8).
+    // Target shift = 9 - 8 = 1, so normalized = magnitude * 10.
+    store_raw(
+        &mut feed,
+        BTC_PYTH_MAGNITUDE,
+        false,
+        EXPONENT_NEG_8,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    assert_latest_normalized(&feed, BTC_NORMALIZED_SPOT, SOURCE_TS_1_MS, UPDATE_1_MS);
 
-    abort 999
+    // Exponent = -9: target shift is zero, so magnitude passes through.
+    store_raw(
+        &mut feed,
+        IDENTITY_MAGNITUDE,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_2_US,
+        UPDATE_2_MS,
+    );
+    assert_latest_normalized(&feed, IDENTITY_MAGNITUDE, SOURCE_TS_2_MS, UPDATE_2_MS);
+
+    // Exponent = -12: target shift = -3, so integer division floors.
+    store_raw(
+        &mut feed,
+        DIVIDE_MAGNITUDE,
+        false,
+        EXPONENT_NEG_12,
+        true,
+        SOURCE_TS_3_US,
+        UPDATE_3_MS,
+    );
+    assert_latest_normalized(&feed, DIVIDE_NORMALIZED_SPOT, SOURCE_TS_3_MS, UPDATE_3_MS);
+
+    // Exponent = 0: target shift = 9, so 1 becomes 1e9.
+    store_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        false,
+        EXPONENT_ZERO,
+        false,
+        SOURCE_TS_4_US,
+        UPDATE_4_MS,
+    );
+    assert_latest_normalized(&feed, ONE_1E9_SPOT, SOURCE_TS_4_MS, UPDATE_4_MS);
+
+    // Exponent = +2: target shift = 11, so 3 becomes 300e9.
+    store_raw(
+        &mut feed,
+        THREE_MAGNITUDE,
+        false,
+        EXPONENT_POS_2,
+        false,
+        SOURCE_TS_5_US,
+        UPDATE_5_MS,
+    );
+    assert_latest_normalized(&feed, THREE_E11_SPOT, SOURCE_TS_5_MS, UPDATE_5_MS);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun normalized_spot_returns_none_for_non_positive_or_unsafe_shapes() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(
+        &mut feed,
+        SUB_UNIT_MAGNITUDE,
+        false,
+        EXPONENT_NEG_12,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    assert!(feed.normalized_spot().is_none());
+
+    store_raw(
+        &mut feed,
+        ZERO_MAGNITUDE,
+        false,
+        EXPONENT_NEG_8,
+        true,
+        SOURCE_TS_2_US,
+        UPDATE_2_MS,
+    );
+    assert!(feed.normalized_spot().is_none());
+
+    store_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        true,
+        EXPONENT_ZERO,
+        false,
+        SOURCE_TS_3_US,
+        UPDATE_3_MS,
+    );
+    assert!(feed.normalized_spot().is_none());
+
+    store_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        false,
+        EXPONENT_UNSAFE_POS,
+        false,
+        SOURCE_TS_4_US,
+        UPDATE_4_MS,
+    );
+    assert!(feed.normalized_spot().is_none());
+
+    store_raw(
+        &mut feed,
+        std::u64::max_value!(),
+        false,
+        EXPONENT_NEG_8,
+        true,
+        SOURCE_TS_5_US,
+        UPDATE_5_MS,
+    );
+    assert!(feed.normalized_spot().is_none());
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun insert_at_records_exact_read_without_latest_and_ceil_rounds_source_us() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    insert_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_NON_EXACT_US,
+        UPDATE_1_MS,
+    );
+
+    assert!(feed.normalized_spot().is_none());
+    assert!(feed.normalized_spot_at(SOURCE_TS_NON_EXACT_MS - 1).is_none());
+
+    let raw_read = feed.raw_spot_at(SOURCE_TS_NON_EXACT_MS);
+    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_NON_EXACT_MS);
+    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    let raw = raw_read.read_value();
+    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), SOURCE_TS_NON_EXACT_US);
+    assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
+
+    let normalized = feed.normalized_spot_at(SOURCE_TS_NON_EXACT_MS).destroy_some();
+    assert_eq!(normalized.read_source_timestamp_ms(), SOURCE_TS_NON_EXACT_MS);
+    assert_eq!(normalized.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(normalized.read_value(), SPOT_65K);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun stale_future_and_zero_updates_are_no_ops() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_3_US, UPDATE_3_MS);
+    store_raw(&mut feed, ONE_MAGNITUDE, false, EXPONENT_ZERO, false, SOURCE_TS_3_US, UPDATE_5_MS);
+    store_raw(&mut feed, ONE_MAGNITUDE, false, EXPONENT_ZERO, false, SOURCE_TS_2_US, UPDATE_5_MS);
+    store_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        false,
+        EXPONENT_ZERO,
+        false,
+        SOURCE_TS_FUTURE_US,
+        UPDATE_5_MS,
+    );
+    store_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        false,
+        EXPONENT_ZERO,
+        false,
+        SOURCE_TS_ZERO_US,
+        UPDATE_5_MS,
+    );
+
+    assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_3_MS, UPDATE_3_MS);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun duplicate_future_and_zero_exact_inserts_are_no_ops() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    insert_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
+    insert_raw(&mut feed, ONE_MAGNITUDE, false, EXPONENT_ZERO, false, SOURCE_TS_1_US, UPDATE_5_MS);
+    insert_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        false,
+        EXPONENT_ZERO,
+        false,
+        SOURCE_TS_FUTURE_US,
+        UPDATE_5_MS,
+    );
+    insert_raw(
+        &mut feed,
+        ONE_MAGNITUDE,
+        false,
+        EXPONENT_ZERO,
+        false,
+        SOURCE_TS_ZERO_US,
+        UPDATE_5_MS,
+    );
+
+    let exact = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
+    assert_eq!(exact.read_value(), SPOT_65K);
+    assert_eq!(exact.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert!(feed.normalized_spot_at(SOURCE_TS_FUTURE_MS).is_none());
+    assert!(feed.normalized_spot_at(SOURCE_TS_ZERO_MS).is_none());
+    assert!(feed.normalized_spot().is_none());
+
+    return_shared(feed);
+    scenario.end();
 }
 
 #[test, expected_failure(abort_code = pyth_feed::EWrongVersion)]
-fun store_observation_wrong_version_aborts() {
+fun update_raw_wrong_version_aborts() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
     feed.set_version_for_testing(VERSION_ZERO);
-    store_spot(&mut feed, SPOT_65K, 5_000, 5_000);
+    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
 
     abort 999
 }
@@ -168,8 +395,8 @@ fun migrate_restores_current_version_and_updates_resume() {
     feed.set_version_for_testing(VERSION_ZERO);
     feed.migrate();
     assert_eq!(feed.version(), constants::current_version!());
-    store_spot(&mut feed, SPOT_65K, 5_000, 5_000);
-    assert_eq!(feed.spot(), SPOT_65K);
+    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
+    assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_1_MS, UPDATE_1_MS);
 
     return_shared(feed);
     scenario.end();
@@ -185,19 +412,60 @@ fun migrate_current_version_aborts() {
     abort 999
 }
 
-fun store_spot(feed: &mut PythFeed, spot: u64, source_timestamp_ms: u64, update_timestamp_ms: u64) {
-    feed.store_observation_for_testing(
-        spot,
-        false,
-        EXPONENT_NEG_9,
-        true,
-        source_timestamp_ms * 1000,
+fun store_raw(
+    feed: &mut PythFeed,
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+    source_timestamp_us: u64,
+    update_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        feed,
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        source_timestamp_us,
         update_timestamp_ms,
+        false,
     );
 }
 
-/// Initialize the package, create+share a feed through the registry, and advance
-/// so the shared feed is takeable. Returns the scenario and the feed object ID.
+fun insert_raw(
+    feed: &mut PythFeed,
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+    source_timestamp_us: u64,
+    update_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        feed,
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        source_timestamp_us,
+        update_timestamp_ms,
+        true,
+    );
+}
+
+fun assert_latest_normalized(
+    feed: &PythFeed,
+    expected_spot: u64,
+    expected_source_timestamp_ms: u64,
+    expected_update_timestamp_ms: u64,
+) {
+    let normalized = feed.normalized_spot().destroy_some();
+    assert_eq!(normalized.read_source_timestamp_ms(), expected_source_timestamp_ms);
+    assert_eq!(normalized.read_update_timestamp_ms(), expected_update_timestamp_ms);
+    assert_eq!(normalized.read_value(), expected_spot);
+}
+
 fun setup_feed(): (Scenario, ID) {
     let mut scenario = test::begin(ADMIN);
     registry::init_for_testing(scenario.ctx());

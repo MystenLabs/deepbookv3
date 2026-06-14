@@ -13,10 +13,11 @@ use deepbook_predict::{constants, flow_test_helpers as helpers, strike_exposure,
 fun redeem_above_order_quantity_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, _vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
 
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -28,6 +29,7 @@ fun redeem_above_order_quantity_aborts() {
     );
     fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,

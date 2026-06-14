@@ -15,6 +15,7 @@ import {
     LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS,
     LOCAL_PYTH_SIGNER_PRIVATE_KEY,
     LOCAL_PYTH_SIGNER_PUBLIC_KEY,
+    ORACLE_REGISTRY_ADMIN_CAP_ID,
     ORACLE_REGISTRY_ID,
     PACKAGE_ID,
     POOL_VAULT_ID,
@@ -53,15 +54,19 @@ export interface ExecutionReceipt {
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
-// Pyth Lazer feed id (the propbook spot feed key) AND the Block Scholes feed
-// `underlying` id. The harness binds one market to one Pyth feed + one BS feed
-// of the same underlying, so a single id serves both.
+// Pyth Lazer feed id (the propbook spot feed key) and the Propbook underlying id.
+// The harness binds one market to one Pyth feed + one BS feed for that underlying,
+// so a single id serves both.
 const PYTH_FEED_ID = 1;
 const BS_UNDERLYING_ID = PYTH_FEED_ID;
+// Quote-asset id recorded in propbook's canonical binding metadata. Predict's
+// binding check ignores it; only needs to be stable for the harness.
+const QUOTE_ASSET_ID = 0;
 // Strike range encoding (range_codec / constants.move): two u24 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
-// side). The harness tick size is $1 (1e9-scaled), mirroring the registered feed.
+// side). The harness tick size is $1 (1e9-scaled), mirroring the registered market
+// tick size for this Propbook underlying.
 const TICK_BITS = 24n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 const ORACLE_TICK_SIZE = 1_000_000_000n;
@@ -140,7 +145,7 @@ function propbookTarget(module: string, fn: string): `${string}::${string}::${st
 }
 
 // `block_scholes_oracle` is the STUB BS signed-data verifier that mints the
-// verified `Update` consumed by `block_scholes_feed::update_from_bs`.
+// verified `Update` consumed by `block_scholes_feed::update`.
 function bsOracleTarget(module: string, fn: string): `${string}::${string}::${string}` {
     return `${BLOCK_SCHOLES_ORACLE_PACKAGE_ID}::${module}::${fn}`;
 }
@@ -247,11 +252,15 @@ export interface FlushParams {
     bsFeedId: string;
 }
 
-// Convert a raw binary-range strike to the packed `range_key`. An UP order is
-// `(strike, +inf)` -> lower_tick = strike/tick_size, higher_tick = POS_INF_TICK; a
-// DOWN order is `(-inf, strike)` -> lower_tick = 0 (neg-inf), higher_tick =
-// strike/tick_size. Mirrors `range_codec::pack` + `strikes_from_ticks`.
-function packRangeKeyForStrike(strike: bigint, isUp: boolean): bigint {
+// Convert a raw binary-range strike to the `(lower_tick, higher_tick)` pair the
+// `mint` entrypoint now takes directly (there is no standalone packed range key).
+// An UP order is `(strike, +inf)` -> lower_tick = strike/tick_size, higher_tick =
+// POS_INF_TICK; a DOWN order is `(-inf, strike)` -> lower_tick = 0 (neg-inf),
+// higher_tick = strike/tick_size.
+function binaryRangeTicks(
+    strike: bigint,
+    isUp: boolean,
+): { lowerTick: bigint; higherTick: bigint } {
     const tick = strike / ORACLE_TICK_SIZE;
     if (tick * ORACLE_TICK_SIZE !== strike) {
         throw new Error(`strike ${strike} is not a whole tick multiple of ${ORACLE_TICK_SIZE}`);
@@ -259,9 +268,10 @@ function packRangeKeyForStrike(strike: bigint, isUp: boolean): bigint {
     if (tick <= 0n || tick >= POS_INF_TICK) {
         throw new Error(`strike tick ${tick} outside the finite tick domain (1..POS_INF_TICK-1)`);
     }
-    const lowerTick = isUp ? tick : 0n;
-    const higherTick = isUp ? POS_INF_TICK : tick;
-    return lowerTick | (higherTick << TICK_BITS);
+    return {
+        lowerTick: isUp ? tick : 0n,
+        higherTick: isUp ? POS_INF_TICK : tick,
+    };
 }
 
 async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
@@ -293,7 +303,7 @@ function addPythFeedUpdate(
         ],
     });
     tx.moveCall({
-        target: propbookTarget("pyth_feed", "update_from_lazer"),
+        target: propbookTarget("pyth_feed", "update"),
         arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
     });
 }
@@ -325,7 +335,7 @@ function addBlockScholesSurfaceUpdate(
         ],
     });
     tx.moveCall({
-        target: propbookTarget("block_scholes_feed", "update_from_bs"),
+        target: propbookTarget("block_scholes_feed", "update"),
         arguments: [tx.object(params.bsFeedId), update, tx.object(CLOCK_ID)],
     });
 }
@@ -373,7 +383,7 @@ function addFlush(tx: Transaction, params: FlushParams): void {
 }
 
 function addMint(tx: Transaction, params: MintParams): void {
-    const rangeKey = packRangeKeyForStrike(params.strike, params.isUp);
+    const { lowerTick, higherTick } = binaryRangeTicks(params.strike, params.isUp);
     const proof = tx.moveCall({
         target: target("predict_manager", "generate_proof_as_owner"),
         arguments: [tx.object(params.managerId)],
@@ -387,7 +397,8 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.object(params.protocolConfigId),
             tx.object(params.pythFeedId),
             tx.object(params.bsFeedId),
-            tx.pure.u64(rangeKey),
+            tx.pure.u64(lowerTick),
+            tx.pure.u64(higherTick),
             tx.pure.u64(params.quantity),
             tx.pure.u64(params.leverage),
             tx.object(CLOCK_ID),
@@ -441,28 +452,61 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
     return tx;
 }
 
-// Admin-approve one Pyth Lazer feed (records the strike tick size future markets
-// use) AND permissionlessly create the two propbook feeds the market binds to: the
-// global Pyth spot feed and the per-underlying Block Scholes surface feed. Both
-// `create_and_share` calls register into the shared propbook `OracleRegistry`.
-export function registerPythFeedAndCreateFeedsTx(feedId: number, tickSize: bigint): Transaction {
+// Admin-approve one Propbook underlying for Predict (recording the minimum market
+// tick size) AND permissionlessly create the two propbook feeds the market binds
+// to: the global Pyth spot feed and the per-underlying Block Scholes surface feed.
+// Both create calls register into the shared propbook `OracleRegistry`.
+export function registerUnderlyingAndCreateFeedsTx(feedId: number, tickSize: bigint): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "register_pyth_feed"),
+        target: target("registry", "register_underlying"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(ADMIN_CAP_ID),
-            tx.pure.u32(feedId),
+            tx.pure.u32(BS_UNDERLYING_ID),
             tx.pure.u64(tickSize),
         ],
     });
     tx.moveCall({
-        target: propbookTarget("pyth_feed", "create_and_share"),
+        target: propbookTarget("registry", "create_and_share_pyth_feed"),
         arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(feedId)],
     });
     tx.moveCall({
-        target: propbookTarget("block_scholes_feed", "create_and_share"),
+        target: propbookTarget("registry", "create_and_share_block_scholes_feed"),
         arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
+    });
+    return tx;
+}
+
+// Admin-bind the Pyth spot feed and the Block Scholes surface feed to one canonical
+// propbook underlying, so `create_expiry_market` accepts the pair. Must run AFTER
+// the feeds are shared (separate tx from creation) and BEFORE market creation. Uses
+// the propbook `RegistryAdminCap`. The Pyth source id doubles as the underlying id
+// in this single-underlying harness (see `BS_UNDERLYING_ID`).
+export function bindFeedsToUnderlyingTx(params: {
+    pythFeedId: string;
+    bsFeedId: string;
+}): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: propbookTarget("registry", "bind_pyth_to_underlying"),
+        arguments: [
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
+            tx.object(params.pythFeedId),
+            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(QUOTE_ASSET_ID),
+        ],
+    });
+    tx.moveCall({
+        target: propbookTarget("registry", "bind_block_scholes_to_underlying"),
+        arguments: [
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
+            tx.object(params.bsFeedId),
+            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(QUOTE_ASSET_ID),
+        ],
     });
     return tx;
 }
@@ -528,17 +572,18 @@ export async function seedOracleTx(params: {
     return tx;
 }
 
-// Create the expiry market bound to its propbook Pyth + Block Scholes feeds.
-// No spot is read at creation; the registered feed `tick_size` defines the grid.
-// `create_expiry_market` returns one ID and registers the market with the vault as
-// a zero-cash accounting row (not mintable until `rebalance_expiry_cash` funds it).
+// Create the expiry market for one Propbook underlying. No spot is read at
+// creation. The registry validates, against propbook's canonical binding, that
+// Pyth + Block Scholes feeds are bound to `BS_UNDERLYING_ID` (run
+// `bindFeedsToUnderlyingTx` first). `create_expiry_market` returns one ID and
+// registers the market with the vault as a zero-cash accounting row (not mintable
+// until `rebalance_expiry_cash` funds it).
 export function createExpiryMarketTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
-    pythFeedId: string;
-    bsFeedId: string;
     lifecycleCapId: string;
     expiry: bigint;
+    tickSize: bigint;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -547,10 +592,11 @@ export function createExpiryMarketTx(params: {
             tx.object(REGISTRY_ID),
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.object(params.pythFeedId),
-            tx.object(params.bsFeedId),
+            tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.lifecycleCapId),
+            tx.pure.u32(BS_UNDERLYING_ID),
             tx.pure.u64(params.expiry),
+            tx.pure.u64(params.tickSize),
             tx.object(CLOCK_ID),
         ],
     });

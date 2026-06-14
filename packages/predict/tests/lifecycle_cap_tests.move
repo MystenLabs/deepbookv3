@@ -18,7 +18,7 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
+use propbook::registry::OracleRegistry;
 use std::unit_test::destroy;
 use sui::{clock, test_scenario::return_shared};
 
@@ -92,33 +92,30 @@ fun revoke_lifecycle_cap(fx: &mut OracleFixture, admin_cap: &AdminCap, lifecycle
 /// Create a second expiry market (the fixture already created one at the default
 /// expiry) through the production registry path, with a caller-chosen lifecycle cap.
 fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycleCap): ID {
-    let pyth_id = fx.pyth_id();
-    let bs_id = fx.bs_id();
     let scenario = fx.scenario_mut();
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
     let mut registry = scenario.take_shared<Registry>();
     let mut vault = scenario.take_shared<PoolVault>();
+    let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
     let expiry_id = registry::create_expiry_market(
         &mut registry,
         &mut vault,
         &config,
-        &pyth,
-        &bs,
+        &oracle_registry,
         lifecycle_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_expiry_ms() + SECOND_EXPIRY_OFFSET_MS,
+        test_constants::default_tick_size(),
         &clock,
         scenario.ctx(),
     );
     clock.destroy_for_testing();
     return_shared(config);
+    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
-    return_shared(bs);
-    return_shared(pyth);
     scenario.next_tx(test_constants::admin());
     expiry_id
 }

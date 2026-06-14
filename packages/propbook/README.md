@@ -10,59 +10,64 @@ Every live source stream is stored through an `oracle_lane::OracleLane<Payload>`
 A lane owns:
 
 - `latest`: the most recent accepted source observation.
-- `first_observed_minutes`: the first accepted on-chain observation for each
-  rounded source minute.
-- `official_settlements`: exact-timestamp official settlement observations.
-- Generic observation and official-settlement events.
+- `exact_reads`: insert-only observations keyed by exact source timestamp.
+- Generic latest-update and exact-insert events.
 
-An `OracleObservation<Payload>` wraps source-native payload data with two
-Propbook timestamps:
+An `OracleRead<Value>` wraps a value with two Propbook timestamps:
 
 - `source_timestamp_ms`: source/publisher time, converted to milliseconds.
 - `update_timestamp_ms`: Sui clock time when the update landed on chain.
 
-Normal live updates are strictly advancing by `source_timestamp_ms`. A stale or
-same-timestamp update aborts. Consumers should use `freshness_timestamp_ms()`,
-which is the latest source timestamp, when they need a liveness reference. Live
-updates reject source timestamps that are ahead of the on-chain landing time, so
-freshness is source time under that invariant.
+There are two write shapes:
+
+- `update`: latest-state update. It records the read only when
+  `source_timestamp_ms` is positive, not ahead of `update_timestamp_ms`, and
+  strictly newer than the current latest read. Future, zero, stale, or duplicate
+  reads are no-ops.
+- `insert_at`: exact timestamp insert. It records the read only when the
+  timestamp is valid and no read already exists at that exact source timestamp.
+  It does not mutate `latest`; invalid or duplicate inserts are no-ops.
+
+Consumers should use the `source_timestamp_ms` returned on raw or normalized
+`OracleRead` values when they need a liveness reference.
 
 ## Canonical Propbook Reads And Raw Source Reads
 
 Propbook stores source-native fields and also exposes canonical Propbook
-convenience reads for consumers that want normalized values instead of raw source
-payloads.
+normalized reads for consumers that want normalized values instead of raw source
+payloads. Every source module follows the same read pattern:
+
+- `raw_*`: returns `OracleRead<Raw*>` and aborts when the requested raw
+  observation does not exist.
+- `normalized_*`: returns `Option<OracleRead<*>>`; `none` means the requested
+  observation is absent or cannot produce a usable normalized Propbook value.
 
 For Pyth, the raw payload keeps the source price magnitude/sign, exponent
-magnitude/sign, and microsecond source timestamp. The canonical `spot()` /
-`normalized_spot_1e9()` read derives a positive-only 1e9-scaled Propbook spot
-from those fields. Negative source prices, overflow, or unsupported exponent
-shapes abort during that convenience normalization. Consumers that want to own
-that policy themselves should use the raw payload getters instead.
+magnitude/sign, and microsecond source timestamp. `normalized_spot()` and the
+exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
+from those fields. Missing data, negative source prices, zero normalized spots,
+overflow, or unsupported exponent shapes return `none`.
 
-Read getters are not all total. Pyth `latest_observation()` and `spot()` abort
-until `has_latest()` is true. BS surface reads abort until `has_expiry(expiry)`
-is true. Settlement reads abort unless the exact official settlement timestamp
-was recorded. Integrators should call the relevant `has_*` function first when
-they need non-aborting control flow.
+For Block Scholes, raw surface reads expose the source spot, forward, and SVI
+payload. Normalized surface reads return `none` when the requested observation is
+absent or the surface has zero spot or zero forward.
 
-## Settlement Observations
+## Exact Timestamp Inserts
 
-Official settlement writes do not take a caller-supplied resolution timestamp.
-The resolution key is derived from the update itself:
+Propbook does not have a separate settlement or minute-bucket write mode. Feeds
+can insert source-native observations into `exact_reads`, keyed by the exact
+source timestamp derived from the update:
 
 - Pyth uses the Lazer source timestamp in microseconds, rounded up to
   milliseconds.
 - Block Scholes uses the update's published millisecond timestamp directly.
 
-The official settlement table is exact-timestamp and write-once. A read for
-`resolution_timestamp_ms` succeeds only if official data was recorded at exactly
-that timestamp. It does not fall back to first-observed minute data.
-
-First-observed history is separate. It is keyed by
-`(source_timestamp_ms / 60_000) * 60_000`, and the first accepted transaction for
-that source minute wins. Later updates in the same minute never backfill or
-replace the bucket.
+A read for `timestamp_ms` succeeds only if a source observation was inserted or
+latest-updated at exactly that timestamp and exposed by the source module's
+`*_at` getter. There is no first-transaction-after-minute fallback and no
+Propbook-specific "official resolution" policy. Consumers that need a terminal
+price should define which exact timestamp they are sampling and read the exact
+Propbook value at that timestamp.
 
 ## Pyth Feed
 
@@ -73,9 +78,9 @@ the source-native price fields from the Lazer update:
 - exponent magnitude and sign
 - native source timestamp in microseconds
 
-The 1e9-normalized spot getter is derived from those stored fields. This keeps
+The 1e9-normalized spot reads are derived from those stored fields. This keeps
 the stored oracle data close to what Pyth actually supplied, while still exposing
-a positive-only convenience read for consumers.
+a non-aborting normalized view for consumers.
 
 Pyth Lazer `Update` values are produced by the Pyth verifier package, so the Move
 type system provides provenance for normal Pyth ingestion.
@@ -84,8 +89,8 @@ type system provides provenance for normal Pyth ingestion.
 
 `block_scholes_feed::BlockScholesFeed` is one shared object for one Block Scholes
 source id. It stores a table of per-expiry lanes. At the individual expiry level,
-BS and Pyth use the same mutation pattern: latest, first-observed history,
-official settlement history, and generic events all come from `OracleLane`.
+BS and Pyth use the same mutation pattern: latest update, exact timestamp insert,
+and generic events all come from `OracleLane`.
 
 The BS payload stores raw source fields:
 
@@ -101,8 +106,8 @@ SVI bounds, and liveness before using the surface in pricing math.
 
 Important caveat: `block_scholes_oracle::update` is currently a stub verifier.
 Its `Update` values are forgeable until the real BS signature verifier replaces
-the stub. Permissionless BS live updates and official settlement writes are not
-production-safe while this is true.
+the stub. Permissionless BS live updates and exact inserts are not production-safe
+while this is true.
 
 Throughput caveat: one BS shared object stores all expiries for a source, so all
 BS writes for that source serialize on that object. The intended high-frequency
@@ -156,24 +161,22 @@ equivalent BS lookup is
 
 Propbook emits generic oracle events:
 
-- `ObservationRecorded<OracleObservation<Payload>>`
-- `OfficialSettlementRecorded<OracleObservation<Payload>>`
+- `ObservationRecorded<OracleRead<Payload>>`
+- `ObservationInserted<OracleRead<Payload>>`
 
 For BS, the payload includes the expiry, so the generic event is enough to index
-per-expiry writes. Official settlement events include the exact
-`resolution_timestamp_ms` derived from the source update.
+per-expiry writes. Exact-insert events include the source timestamp in the
+`OracleRead` envelope.
 
 High-frequency cost caveats:
 
 - `ObservationRecorded` emits for every accepted live update.
-- `first_observed_minutes` and `official_settlements` are unbounded dynamic-field
-  tables. Storage growth is paid by writers; a permissionless prune flow can be
-  added later if long-run retention needs it.
+- `exact_reads` are unbounded tables. Storage growth is paid by writers; a
+  permissionless prune flow can be added later if long-run retention needs it.
 - Pyth source timestamps are ceil-rounded from microseconds to milliseconds, so
   two source updates inside the same millisecond collide at the Propbook freshness
-  key and the second live update aborts as stale. The expected source cadence is
-  below 1 kHz per feed. Theoretical 1 ms future-source aborts from ceil rounding
-  are not expected on Sui because block latency is far above 1 ms.
+  key and the second live update is a no-op. The expected source cadence is below
+  1 kHz per feed.
 
 ## Consumer Responsibilities
 

@@ -31,9 +31,10 @@ fun setup_everything_check_manager_return_market_smoke() {
     // the current sender after `create_funded_manager`, but `setup_everything`
     // left the sender at admin — re-establish alice for the owner proof.
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -51,7 +52,7 @@ fun setup_everything_check_manager_return_market_smoke() {
     assert!(manager.trading_fees_paid(expiry_id) > 0);
     assert!(manager.balance() < test_constants::default_manager_deposit());
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }
@@ -59,7 +60,7 @@ fun setup_everything_check_manager_return_market_smoke() {
 #[test]
 fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, config) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
 
     fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
 
@@ -67,7 +68,7 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     // probability of the full upper range [min_finite_strike, +inf) is a valid
     // probability strictly inside (0, 1). (Independent bound: any probability is
     // in [0, FLOAT_SCALING]; a non-degenerate range is strictly inside.)
-    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
     let up = pricer.range_price(
         test_constants::min_finite_strike(),
         constants::pos_inf!(),
@@ -75,6 +76,6 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     assert!(up > 0);
     assert!(up < test_constants::float());
 
-    oracle_fixture::return_oracle(pyth, bs, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }

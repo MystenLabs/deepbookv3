@@ -38,6 +38,15 @@ public fun dusdc_unit(): u64 { 10u64.pow(constants::dusdc_decimals!()) }
 /// Pyth source id the default fixture registers.
 public fun pyth_feed_id(): u32 { 1 }
 
+/// Canonical propbook underlying id the fixture binds both feeds to. Distinct
+/// from `pyth_feed_id` (a source id) on purpose — they live in different
+/// namespaces and must not be conflated.
+public fun propbook_underlying_id(): u32 { 42 }
+
+/// Quote-asset id recorded in the propbook canonical binding. Predict's binding
+/// check ignores it; the value only has to be stable for the fixture.
+public fun quote_asset_id(): u32 { 840 }
+
 /// Wall-clock the fixture's `Clock` starts at.
 public fun now_ms(): u64 { 100_000 }
 
@@ -45,7 +54,7 @@ public fun now_ms(): u64 { 100_000 }
 /// staleness so updates are accepted).
 public fun live_source_timestamp_ms(): u64 { 99_000 }
 
-/// Default oracle tick size. Must be a multiple of `oracle_tick_size_unit`
+/// Default market tick size. Must be a multiple of `market_tick_size_unit`
 /// (10_000) and small enough that `pos_inf_tick * tick_size` fits in u64; 1e9 is.
 /// Strikes are absolute ticks: `raw_strike = tick * tick_size`.
 public fun default_tick_size(): u64 { 1_000_000_000 }

@@ -14,7 +14,6 @@ from typing import Any
 from python_indexes.liquidation_book import (
     LiquidationBook,
     encode_order_id,
-    tick_for_order_side,
 )
 from python_indexes.strike_payout_tree import StrikePayoutTree
 
@@ -320,9 +319,12 @@ def binary_range_ticks(strike: int, is_up: bool) -> tuple[int, int]:
     return 0, tick
 
 
-def range_key_for(lower_tick: int, higher_tick: int) -> int:
-    # Pack two u24 ticks: lower | (higher << TICK_BITS). Mirrors range_codec::pack.
-    return lower_tick | (higher_tick << TICK_BITS)
+def strikes_from_ticks(lower_tick: int, higher_tick: int) -> tuple[int, int]:
+    # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strikes_from_ticks):
+    # lower_tick 0 -> NEG_INF_STRIKE; higher_tick POS_INF_TICK -> POS_INF_STRIKE.
+    lower = NEG_INF_STRIKE if lower_tick == 0 else lower_tick * ORACLE_TICK_SIZE
+    higher = POS_INF_STRIKE if higher_tick == POS_INF_TICK else higher_tick * ORACLE_TICK_SIZE
+    return lower, higher
 
 
 def parse_mint_quantity(quantity: int, line_number: int, field: str = "quantity") -> int:
@@ -501,7 +503,7 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
 
 
 def live_forward(spot: int, forward: int) -> int:
-    # Mirror pricing::pricer fresh-spot branch: the on-chain forward used for
+    # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
     # every live quote/valuation/liquidation is NOT the pushed forward, but is
     # re-derived from the live Pyth spot and the stored Block Scholes basis as
     # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
@@ -923,16 +925,6 @@ def build_curve(svi: dict[str, Any], forward: int, min_strike: int, max_strike: 
         mid = align_strike_to_tick((lo["strike"] + hi["strike"]) // 2)
         points.insert(best_idx + 1, {"strike": mid, "up_price": compute_up_price(svi, forward, mid)})
     return points
-
-
-def order_tick(strike: int) -> int:
-    return tick_for_order_side(
-        strike,
-        tick_size=ORACLE_TICK_SIZE,
-        pos_inf_tick=POS_INF_TICK,
-        neg_inf=NEG_INF_STRIKE,
-        pos_inf=POS_INF_STRIKE,
-    )
 
 
 def order_id_for_terms(order: dict[str, Any]) -> int:
@@ -1449,13 +1441,12 @@ def svi_input(row: dict[str, Any]) -> dict[str, str]:
 
 
 def mint_input(row: dict[str, Any]) -> dict[str, str]:
-    # Mirror sim.ts mintInput: the canonical mint input is the packed range_key
-    # (two u24 ticks); lower_tick/higher_tick are the display form.
+    # Mirror sim.ts mintInput: the canonical mint input is the (lower_tick,
+    # higher_tick) pair the entrypoint takes directly (no standalone range key).
     strike = align_strike_to_tick(row["strike"])
     lower_tick, higher_tick = binary_range_ticks(strike, row["isUp"])
     return {
         "order_ref": row["orderRef"],
-        "range_key": str(range_key_for(lower_tick, higher_tick)),
         "lower_tick": str(lower_tick),
         "higher_tick": str(higher_tick),
         "quantity": str(row["quantity"]),
@@ -1493,8 +1484,9 @@ def oracle_refresh_input(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# propbook PythFeedUpdated: the global Pyth spot tick. Mirrors the TS normalizer;
-# timestamps are localnet-clock-derived and excluded from the parity diff.
+# Propbook Pyth oracle_lane::ObservationRecorded normalized view: the global Pyth
+# spot tick. Mirrors the TS normalizer; timestamps are localnet-clock-derived and
+# excluded from the parity diff.
 def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
     return {
         "type": "pyth_feed_updated",
@@ -1502,9 +1494,9 @@ def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
     }
 
 
-# propbook BlockScholesSurfaceUpdated: this expiry's surface (spot + forward + SVI),
-# replacing the old in-package BlockScholesPricesUpdated + BlockScholesSVIUpdated
-# pair. `basis` is no longer an event field (derived as forward/spot).
+# Propbook Block Scholes oracle_lane::ObservationRecorded normalized view: this
+# expiry's surface (spot + forward + SVI). `basis` is no longer an event field
+# (derived as forward/spot).
 def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
     return {
         "type": "block_scholes_surface_updated",
@@ -1540,11 +1532,10 @@ def order_minted_update(
         "type": "order_minted",
         "order_ref": mint["orderRef"],
         "order_sequence": str(sequence),
-        # Canonical packed range; lower/higher_strike are the derived raw display
-        # (tick*tick_size; pos-inf higher = u64::MAX), matching the OrderMinted event.
-        "range_key": str(range_key_for(lower_tick, higher_tick)),
-        "lower_strike": str(lower),
-        "higher_strike": str(higher),
+        # Canonical strike range as absolute ticks, matching the OrderMinted event
+        # (raw `lower`/`higher` are kept locally only for pricing, not emitted).
+        "lower_tick": str(lower_tick),
+        "higher_tick": str(higher_tick),
         "leverage": str(mint["leverage"]),
         "entry_probability": str(entry_probability),
         "quantity": str(mint["quantity"]),
@@ -1753,11 +1744,16 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         model_fee_time_to_expiry_ms(model, opened_at_ms),
     )
     terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
+    lower_tick = int(update["lower_tick"])
+    higher_tick = int(update["higher_tick"])
+    lower, higher = strikes_from_ticks(lower_tick, higher_tick)
     order = {
         "ref": row["orderRef"],
         "sequence": model["next_sequence"],
-        "lower": int(update["lower_strike"]),
-        "higher": int(update["higher_strike"]),
+        "lower": lower,
+        "higher": higher,
+        "lower_tick": lower_tick,
+        "higher_tick": higher_tick,
         "leverage": row["leverage"],
         "entry_probability": int(update["entry_probability"]),
         "quantity": row["quantity"],
@@ -1768,8 +1764,6 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         "status": "active",
     }
     order["floor_shares"] = order_floor_shares(order)
-    order["lower_tick"] = order_tick(order["lower"])
-    order["higher_tick"] = order_tick(order["higher"])
     order["order_id"] = order_id_for_terms(order)
     model["orders"][row["orderRef"]] = order
     model["next_sequence"] += 1
@@ -2181,13 +2175,14 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         terms = compute_mint_terms(int(update["entry_probability"]), int(update["quantity"]), leverage)
         floor_seed_amount = terms["floor_seed_amount"]
         floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, borrow_index_open)
+        lower, higher = strikes_from_ticks(int(update["lower_tick"]), int(update["higher_tick"]))
         analytics_insert_order(
             analytics,
             {
                 "ref": update["order_ref"],
                 "sequence": int(update["order_sequence"]),
-                "lower": int(update["lower_strike"]),
-                "higher": int(update["higher_strike"]),
+                "lower": lower,
+                "higher": higher,
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),

@@ -349,12 +349,15 @@ def apply_order_updates(
             leverage = int(update["leverage"])
             if leverage == LEVERAGE_ONE_X:
                 continue
+            lower, higher = replay.strikes_from_ticks(
+                int(update["lower_tick"]), int(update["higher_tick"])
+            )
             active_orders[update["order_ref"]] = enrich_order({
                 "sequence": int(update["order_sequence"]),
-                "lower": int(update["lower_strike"]),
-                "higher": int(update["higher_strike"]),
-                "lower_boundary_index": replay.order_boundary_index(int(update["lower_strike"])),
-                "higher_boundary_index": replay.order_boundary_index(int(update["higher_strike"])),
+                "lower": lower,
+                "higher": higher,
+                "lower_boundary_index": replay.order_boundary_index(lower),
+                "higher_boundary_index": replay.order_boundary_index(higher),
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),

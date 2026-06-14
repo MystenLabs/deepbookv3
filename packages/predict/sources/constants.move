@@ -115,8 +115,8 @@ public(package) macro fun tick_bits(): u8 { 24 }
 /// as the lower tick. Read by `order` (shape validation) and the range/tick codec.
 public(package) macro fun pos_inf_tick(): u64 { (1u64 << tick_bits!()) - 1 }
 
-/// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
-public macro fun oracle_tick_size_unit(): u64 { 10_000 }
+/// Granularity unit for market tick sizes; every tick_size must be a multiple of this value.
+public macro fun market_tick_size_unit(): u64 { 10_000 }
 
 /// Sentinel lower strike for ranges open to negative infinity.
 public macro fun neg_inf(): u64 { 0 }

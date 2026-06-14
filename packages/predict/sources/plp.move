@@ -185,7 +185,7 @@ public fun start_pool_valuation(
 /// Begin a full-pool flush as a market deployer (`MarketLifecycleCap`). This is a
 /// PRIVILEGED start, not a permissionless one: the flush prices the pool NAV off the
 /// live oracle and `finish_flush` drains the LP queues at that mark, and Pyth updates
-/// (`update_from_lazer`) are permissionless — so a flush-capable cap-holder who
+/// (`pyth_feed::update`) are permissionless — so a flush-capable cap-holder who
 /// manipulates the live oracle in a preceding tx, then flushes, could fill their own
 /// queued supply/withdraw request at a mark they chose (the keeper's "refresh to true
 /// price before flushing" mitigation only protects the honest-keeper flush). The start

@@ -1,3 +1,10 @@
+---
+paths:
+  - "crates/predict-server/**"
+  - "crates/predict-indexer/**"
+  - "crates/predict-schema/**"
+---
+
 # Predict Indexer / Server Rules
 
 Read this when editing `crates/predict-schema/**`, `crates/predict-indexer/**`, or `crates/predict-server/**`. These crates index the Predict package's on-chain events into Postgres and serve them over HTTP. They **mirror** the core DeepBook crates (`crates/{schema,indexer,server}`) but are independent and intentionally improve on a few core patterns. When a rule here conflicts with what core does, this file wins **for Predict crates only** — do not change core to match, and do not copy core's known weaknesses forward.

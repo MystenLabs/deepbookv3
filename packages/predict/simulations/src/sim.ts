@@ -28,6 +28,7 @@ import {
     POOL_VAULT_ID,
     PROTOCOL_CONFIG_ID,
     address,
+    bindFeedsToUnderlyingTx,
     createExpiryMarketTx,
     createManagerTx,
     depositToManagerTx,
@@ -40,7 +41,7 @@ import {
     refreshOracleAndFlushTx,
     refreshOracleAndMintTx,
     refreshOracleAndRedeemTx,
-    registerPythFeedAndCreateFeedsTx,
+    registerUnderlyingAndCreateFeedsTx,
     requestSupplyTx,
     requestWithdrawTx,
     seedOracleTx,
@@ -253,15 +254,14 @@ function sviInput(row: MintRow | OracleRefreshData) {
     };
 }
 
-// The canonical mint input now mirrors the packed range key (two u24 ticks) the
-// contract takes at the entrypoint. `lower_tick`/`higher_tick` are the display
-// form; `range_key` is the source of truth (lower | higher << TICK_BITS).
+// The canonical mint input is the `(lower_tick, higher_tick)` pair the contract
+// takes at the entrypoint directly (there is no standalone packed range key; only
+// the order ID packs the ticks).
 function mintInput(row: MintRow): Record<string, string> {
     const strike = alignStrikeToTick(row.strike);
     const { lowerTick, higherTick } = binaryRangeTicks(strike, row.isUp);
     return {
         order_ref: row.orderRef,
-        range_key: (lowerTick | (higherTick << TICK_BITS)).toString(),
         lower_tick: lowerTick.toString(),
         higher_tick: higherTick.toString(),
         quantity: row.quantity.toString(),
@@ -310,31 +310,56 @@ function oracleRefreshInput(row: ScenarioRow): Record<string, unknown> {
     };
 }
 
-// propbook `pyth_feed::PythFeedUpdated`: the global Pyth spot tick. Timestamps are
-// localnet-clock-derived, so they are intentionally excluded from the parity diff.
-function normalizePythFeedUpdated(event: any): Record<string, unknown> {
+function eventObservationValue(event: any): any {
     const json = event.parsedJson ?? {};
+    const observation = json.observation?.fields ?? json.observation ?? {};
+    return observation.value?.fields ?? observation.value ?? {};
+}
+
+function pow10(exp: bigint): bigint {
+    return 10n ** exp;
+}
+
+function normalizedPythSpot(raw: any): string {
+    if (booleanField(raw.price_is_negative ?? raw.priceIsNegative ?? false)) {
+        throw new Error("simulation Pyth spot event was negative");
+    }
+    const magnitude = BigInt(decimal(raw.price_magnitude ?? raw.priceMagnitude));
+    const exponentMagnitude = BigInt(decimal(raw.exponent_magnitude ?? raw.exponentMagnitude));
+    const exponentIsNegative = booleanField(
+        raw.exponent_is_negative ?? raw.exponentIsNegative ?? false,
+    );
+    if (!exponentIsNegative) return (magnitude * pow10(exponentMagnitude + 9n)).toString();
+    if (exponentMagnitude > 9n) return (magnitude / pow10(exponentMagnitude - 9n)).toString();
+    return (magnitude * pow10(9n - exponentMagnitude)).toString();
+}
+
+// propbook `ObservationRecorded<OracleRead<RawSpot>>`: the global Pyth spot.
+// Timestamps are localnet-clock-derived, so they are intentionally excluded from
+// the parity diff.
+function normalizePythObservation(event: any): Record<string, unknown> {
+    const raw = eventObservationValue(event);
     return {
         type: "pyth_feed_updated",
-        spot: decimal(json.spot),
+        spot: normalizedPythSpot(raw),
     };
 }
 
-// propbook `block_scholes_feed::BlockScholesSurfaceUpdated`: this expiry's surface
-// (spot + forward + SVI). Replaces the old in-package BlockScholesPricesUpdated +
-// BlockScholesSVIUpdated pair. `basis` is no longer an event field; consumers
-// derive it as forward/spot. Timestamps are localnet-clock-derived → not diffed.
-function normalizeBlockScholesSurfaceUpdated(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
+// propbook `ObservationRecorded<OracleRead<RawSurface>>`: this expiry's surface
+// (spot + forward + SVI). `basis` is not an event field; consumers derive it as
+// forward/spot. Timestamps are localnet-clock-derived -> not diffed.
+function normalizeBlockScholesObservation(event: any): Record<string, unknown> {
+    const raw = eventObservationValue(event);
+    const svi = raw.svi?.fields ?? raw.svi ?? {};
     return {
         type: "block_scholes_surface_updated",
-        spot: decimal(json.spot),
-        forward: decimal(json.forward),
-        a: decimal(json.svi_a),
-        b: decimal(json.svi_b),
-        rho: signedI64(json.svi_rho),
-        m: signedI64(json.svi_m),
-        sigma: decimal(json.svi_sigma),
+        spot: decimal(raw.spot),
+        forward: decimal(raw.forward),
+        a: decimal(svi.a),
+        b: decimal(svi.b),
+        rho: signedI64(svi.rho),
+        m: signedI64(svi.m),
+        sigma: decimal(svi.sigma),
     };
 }
 
@@ -345,9 +370,8 @@ function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unkn
         type: "order_minted",
         order_ref: orderRef,
         order_sequence: orderSequence(decimal(json.order_id)),
-        range_key: decimal(json.range_key),
-        lower_strike: decimal(json.lower_strike),
-        higher_strike: decimal(json.higher_strike),
+        lower_tick: decimal(json.lower_tick),
+        higher_tick: decimal(json.higher_tick),
         leverage: decimal(json.leverage),
         entry_probability: decimal(json.entry_probability),
         quantity: decimal(json.quantity),
@@ -552,10 +576,18 @@ function normalizeUpdates(
 ): Record<string, unknown>[] {
     const updates: Record<string, unknown>[] = [];
     for (const event of receipt.events) {
+        const fullType = String(event.type ?? "");
         const name = eventName(event);
-        if (name === "PythFeedUpdated") updates.push(normalizePythFeedUpdated(event));
-        else if (name === "BlockScholesSurfaceUpdated")
-            updates.push(normalizeBlockScholesSurfaceUpdated(event));
+        if (
+            fullType.includes("::oracle_lane::ObservationRecorded") &&
+            fullType.includes("::pyth_feed::RawSpot")
+        )
+            updates.push(normalizePythObservation(event));
+        else if (
+            fullType.includes("::oracle_lane::ObservationRecorded") &&
+            fullType.includes("::block_scholes_feed::RawSurface")
+        )
+            updates.push(normalizeBlockScholesObservation(event));
         else if (name === "OrderLiquidated") updates.push(normalizeOrderLiquidated(event, aliases));
         else if (name === "OrderMinted") updates.push(normalizeOrderMinted(event, row));
         else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
@@ -885,11 +917,12 @@ async function setupSimulation(
     const lifecycleCapId: string = lifecycleCapChange.objectId;
     console.log(`[${ts()}]   LifecycleCap: ${lifecycleCapId}`);
 
-    // Admin-approve the Pyth feed AND create the two propbook feeds (Pyth spot +
-    // Block Scholes surface). Both feed objects are shared; capture their IDs.
+    // Admin-approve the Propbook underlying AND create the two propbook feeds
+    // (Pyth spot + Block Scholes surface). Both feed objects are shared; capture
+    // their IDs.
     result = await executeAndWait(
-        registerPythFeedAndCreateFeedsTx(1, ORACLE_TICK_SIZE),
-        "register_pyth_feed_and_create_feeds",
+        registerUnderlyingAndCreateFeedsTx(1, ORACLE_TICK_SIZE),
+        "register_underlying_and_create_feeds",
     );
     const pythFeedChange = result.objectChanges.find(
         (change: any) => change.type === "created" && change.objectType.includes("pyth_feed::PythFeed"),
@@ -903,6 +936,14 @@ async function setupSimulation(
     const bsFeedId: string = bsFeedChange.objectId;
     console.log(`[${ts()}]   PythFeed: ${pythFeedId}`);
     console.log(`[${ts()}]   BlockScholesFeed: ${bsFeedId}`);
+
+    // Admin-bind both feeds to the canonical underlying so `create_expiry_market`
+    // accepts the pair (separate tx: the feeds must already be shared).
+    await executeAndWait(
+        bindFeedsToUnderlyingTx({ pythFeedId, bsFeedId }),
+        "bind_feeds_to_underlying",
+    );
+    console.log(`[${ts()}]   Feeds bound to underlying`);
 
     await executeAndWait(
         setTemplateExpiryFeeConfigTx(protocolConfigId, expiryFeeWindowMs, expiryFeeMaxMultiplier),
@@ -938,10 +979,9 @@ async function setupSimulation(
         createExpiryMarketTx({
             poolVaultId,
             protocolConfigId,
-            pythFeedId,
-            bsFeedId,
             lifecycleCapId,
             expiry: EXPIRY_MS,
+            tickSize: ORACLE_TICK_SIZE,
         }),
         "create_expiry_market",
     );

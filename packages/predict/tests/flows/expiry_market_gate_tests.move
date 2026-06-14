@@ -13,6 +13,7 @@ use deepbook_predict::{
     constants,
     expiry_market,
     flow_test_helpers as helpers,
+    pricing,
     protocol_config,
     registry::{Self, Registry},
     test_constants
@@ -28,19 +29,19 @@ use std::unit_test::destroy;
 // unrelated second feed that the wrong-feed binding tests pass.
 const SECOND_SOURCE_ID: u32 = 2;
 
-/// Mint after the market has expired (clock == expiry) must be rejected:
-/// `run_liquidation_pass` inside `mint_internal` calls `assert_active`, and the
-/// instant `clock == expiry` is the first non-active instant.
-#[test, expected_failure(abort_code = expiry_market::EMarketNotActive)]
+/// Mint after the market has expired (clock == expiry) must be rejected by the
+/// live-pricing boundary before any trade mutation.
+#[test, expected_failure(abort_code = pricing::ELivePricingExpired)]
 fun mint_after_expiry_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     // Advance to expiry: the market flips active -> not active.
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -51,7 +52,7 @@ fun mint_after_expiry_aborts() {
         test_constants::leverage_one_x(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
     abort 999
@@ -64,10 +65,11 @@ fun mint_after_expiry_aborts() {
 fun redeem_settled_on_live_order_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -80,6 +82,7 @@ fun redeem_settled_on_live_order_aborts() {
     // Full close, but no proof and the order is live.
     fx.redeem_settled(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -88,16 +91,16 @@ fun redeem_settled_on_live_order_aborts() {
         test_constants::mint_quantity(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
     abort 999
 }
 
-/// Redeeming with the WRONG Pyth feed must abort. `assert_feeds` fires before order
-/// parsing, so this needs no real order — only a second, unrelated `PythFeed`
-/// created through the real propbook path.
-#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
+/// Redeeming with the WRONG Pyth feed must abort at the live-pricing binding
+/// check. `redeem` decodes the order before loading the pricer, so the test mints
+/// a valid order first and then passes a second, unrelated `PythFeed`.
+#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
 fun redeem_with_wrong_pyth_feed_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
 
@@ -111,23 +114,35 @@ fun redeem_with_wrong_pyth_feed_aborts() {
     sui::test_scenario::return_shared(oracle_registry);
 
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
-    // Redeem on the real market but pass an unrelated Pyth feed: assert_feeds aborts
-    // before the (here irrelevant) order id is parsed.
-    let dummy_order_id = 0;
+    let order_id = fx.mint(
+        &config,
+        &oracle_registry,
+        &mut manager,
+        &mut market,
+        &pyth,
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    // Redeem on the real market but pass an unrelated Pyth feed: the live-pricing
+    // binding check rejects it after decoding the valid order id.
     fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &wrong_pyth,
         &bs,
-        dummy_order_id,
+        order_id,
         test_constants::mint_quantity(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     sui::test_scenario::return_shared(wrong_pyth);
     destroy(manager);
     fx.finish();
@@ -135,9 +150,9 @@ fun redeem_with_wrong_pyth_feed_aborts() {
 }
 
 /// Minting with the CORRECT Pyth feed but the WRONG Block Scholes feed must abort:
-/// `assert_feeds` checks the Pyth binding first, then the BS binding, so a correct
-/// Pyth + unrelated BS feed reaches the second assert.
-#[test, expected_failure(abort_code = expiry_market::EWrongBlockScholesFeed)]
+/// the pricing boundary checks the Pyth binding first, then the BS binding, so a
+/// correct Pyth + unrelated BS feed reaches the second assert.
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesFeed)]
 fun mint_with_wrong_block_scholes_feed_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
 
@@ -151,11 +166,12 @@ fun mint_with_wrong_block_scholes_feed_aborts() {
     sui::test_scenario::return_shared(oracle_registry);
 
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let wrong_bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(wrong_bs_id);
 
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -166,7 +182,7 @@ fun mint_with_wrong_block_scholes_feed_aborts() {
         test_constants::leverage_one_x(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     sui::test_scenario::return_shared(wrong_bs);
     destroy(manager);
     fx.finish();
@@ -179,11 +195,12 @@ fun mint_with_wrong_block_scholes_feed_aborts() {
 fun mint_while_expiry_mint_paused_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     fx.set_expiry_mint_paused(&mut market, true);
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -194,7 +211,7 @@ fun mint_while_expiry_mint_paused_aborts() {
         test_constants::leverage_one_x(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
     abort 999
@@ -207,7 +224,7 @@ fun mint_while_expiry_mint_paused_aborts() {
 fun mint_with_current_version_disabled_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     let admin_cap = admin::new(fx.scenario_mut().ctx());
     let mut registry = fx.scenario_mut().take_shared<Registry>();
@@ -218,6 +235,7 @@ fun mint_with_current_version_disabled_aborts() {
 
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -228,7 +246,7 @@ fun mint_with_current_version_disabled_aborts() {
         test_constants::leverage_one_x(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(admin_cap);
     destroy(manager);
     fx.finish();
@@ -240,11 +258,12 @@ fun mint_with_current_version_disabled_aborts() {
 fun mint_while_trading_paused_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, mut config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, mut config) = fx.take_market(expiry_id);
 
     fx.set_trading_paused(&mut config, true);
     fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -255,7 +274,7 @@ fun mint_while_trading_paused_aborts() {
         test_constants::leverage_one_x(),
     );
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
     abort 999

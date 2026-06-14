@@ -137,13 +137,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Oracle extraction (recent)
 
 - **The oracle moved out of Predict into the standalone `propbook` package.** The
-  in-package `MarketOracle`, `PythSource`, `settlement_state`,
-  `market_oracle_config`, `market_oracle_writer_cap`, and `oracle_events` modules
-  were deleted. Live data now comes from two Predict-unaware feeds —
-  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed) and
-  `propbook::block_scholes_feed::BlockScholesFeed` (one per underlying, a
-  per-expiry surface plus a shared minute history) — each updated permissionlessly
-  from a self-authenticating verified `Update`, so there is no writer capability.
+	  in-package `MarketOracle`, `PythSource`, `settlement_state`,
+	  `market_oracle_config`, `market_oracle_writer_cap`, and `oracle_events` modules
+	  were deleted. Live data now comes from two Predict-unaware feeds —
+	  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed) and
+	  `propbook::block_scholes_feed::BlockScholesFeed` (one per source id, with
+	  per-expiry surfaces plus exact timestamp history) — each updated permissionlessly
+	  from a self-authenticating verified `Update`, so there is no writer capability.
   *Rationale:* the oracle suite is reusable by the wider ecosystem and has a clean,
   Predict-agnostic boundary; possessing a verified `Update` is the only proof
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
@@ -157,15 +157,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   return a value-typed `Pricer`. *Rationale:* Propbook owns source identity and
   canonical binding; Predict pricing owns the only conversion from Propbook objects
   into business logic.
-- **Pyth-stale is a fallback, not an abort.** Live forward is
-  `pyth.spot() * bs.basis(expiry)` when Pyth is fresh, else `bs.forward(expiry)`;
-  the Block Scholes *surface* must be fresh either way (`EBlockScholesSurfaceStale`).
-  *Rationale:* the surface alone carries a usable forward, so a momentarily stale
-  spot should not block trading. A fresh but unusable positive-only Pyth spot aborts
-  instead of falling back, so provenance only changes on staleness. The freshness
-  windows for Pyth spot and the BS surface collapsed to one window each — the surface
-  row writes spot + forward + SVI together, so the former separate price and SVI
-  windows became one.
+- **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
+  `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
+  fresh, else the normalized Block Scholes `forward`;
+	  the Block Scholes *surface* must be fresh either way (`EBlockScholesSurfaceStale`).
+	  *Rationale:* the surface alone carries a usable forward, so a momentarily stale
+	  or non-positive/unrepresentable spot should not block trading. An oversized
+	  normalized Pyth spot still aborts under Predict's pricing envelope. The freshness
+	  windows for Pyth spot and the BS surface collapsed to one window each — the surface
+	  row writes spot + forward + SVI together, so the former separate price and SVI
+	  windows became one.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
@@ -254,9 +255,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Settlement is stubbed until settlement-v2.** `is_settled()` returns `false` and
   `settlement_price()` aborts `ENotImplemented`; the settled-redeem and settled-sweep
   paths stay in the code, gated on `is_settled()`, unreachable under the stub.
-  *Rationale:* the old settlement engine read a rolling sample buffer the extraction
-  deleted; settlement-v2 will read the terminal price from the propbook feeds' minute
-  history (BS-resistant, Pyth-bounded). This makes the current source a non-landable
+	  *Rationale:* the old settlement engine read a rolling sample buffer the extraction
+	  deleted; settlement-v2 will read the terminal price from Propbook exact timestamp
+	  history. This makes the current source a non-landable
   pre-deploy intermediate; settlement-v2 is a hard pre-deploy prerequisite.
 - **Accepted consequence: a deferred flush-liveness precondition.** Because no market
   ever settles, a market that crosses its expiry is never swept off the active set,

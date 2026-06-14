@@ -52,10 +52,10 @@ How the protocol is built:
   what capital, the capability and authorization model, and version gating.
 - **[Configuration](./design/configuration.md)** — what is tunable, the
   defaults, how config is snapshotted per expiry, and who can change it.
-- **[Tick range encoding](./design/tick-range-encoding.md)** — the packed
-  absolute-tick range representation (`range_key`) behind public APIs, order
-  IDs, and exposure indexes. (This design note predates the change landing; the
-  encoding it describes is now the shipped one.)
+- **[Tick range encoding](./design/tick-range-encoding.md)** — the
+  absolute-tick range representation behind public APIs, order IDs, and exposure
+  indexes (entrypoints and events carry the `(lower_tick, higher_tick)` pair; only
+  the order ID packs the ticks).
 - **[Versioning and shared-object loaders](./design/versioning-and-loaders.md)**
   — the central version authority and checked loader pattern for Predict shared
   objects.

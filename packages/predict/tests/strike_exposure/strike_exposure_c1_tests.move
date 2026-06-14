@@ -36,7 +36,11 @@ use deepbook_predict::{
     test_constants
 };
 use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
+use propbook::{
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use std::unit_test::{assert_eq, destroy};
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
@@ -76,10 +80,11 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -105,6 +110,7 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
     while (i < closes.length()) {
         let (_closed, replacement) = fx.redeem(
             &config,
+            &oracle_registry,
             &mut manager,
             &mut market,
             &pyth,
@@ -122,7 +128,7 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
     // settlement is stubbed; pin that the settled branch is currently off.
     assert!(!market.is_settled());
 
-    cleanup(fx, pyth, bs, vault, market, config, manager);
+    cleanup(fx, pyth, bs, oracle_registry, vault, market, config, manager);
 }
 
 /// Confirm a single close hits the +1 floor-share sub-additivity gap that
@@ -144,12 +150,13 @@ fun cleanup(
     fx: helpers::Fixture,
     pyth: PythFeed,
     bs: BlockScholesFeed,
+    oracle_registry: OracleRegistry,
     vault: PoolVault,
     market: ExpiryMarket,
     config: ProtocolConfig,
     manager: PredictManager,
 ) {
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }

@@ -5,10 +5,6 @@
 // Source data: packages/predict/simulations/data/scenario_dataset.csv (real on-chain
 // Block Scholes SVI, one market, 2026-05-27). DO NOT EDIT BY HAND — regenerate with
 //   python3 generate_pricing_reference.py
-// NOTE: the SVI accessors were migrated by hand from a single `svi(s): SVIParams`
-// (deleted `market_oracle::SVIParams`) to raw per-field getters feeding
-// `oracle_fixture::prepare_real_oracle`; the generator must be updated to emit this
-// shape before the next regeneration. The numeric reference values are unchanged.
 //
 // Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract
 // and NOT python_replay's fixed-point pricer) for Pricer.range_price.
@@ -59,10 +55,10 @@ public fun scenario_count(): u64 { 3 }
 /// Worst-case per-endpoint precision budget (units @1e9) over all scenarios/strikes.
 public fun worst_case_budget(): u64 { 2_401 }
 
-/// Oracle creation spot (grid is centered on this); equals the scenario spot.
+/// Scenario spot seeded into the Propbook fixtures.
 public fun creation_spot(s: u64): u64 { spot(s) }
 
-/// Oracle tick size used by every scenario grid.
+/// Market tick size used by every scenario.
 public fun tick_size(_s: u64): u64 { 1_000_000_000 }
 
 /// Real Block Scholes spot (1e9 fixed-point) seeded into the oracle.

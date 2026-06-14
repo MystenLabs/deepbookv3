@@ -8,12 +8,16 @@ by a full `run.sh` localnet parity run.
 
 ## Done + lightweight-verified (no localnet needed)
 - **`src/runtime.ts` / `src/sim.ts` / `src/env.ts` / `src/shared.ts`** rewired to the
-  propbook flow: `register_pyth_feed` + `pyth_feed::create_and_share` +
-  `block_scholes_feed::create_and_share`; spot via `pyth_feed::update_from_lazer`;
+  propbook flow: Predict `register_underlying` +
+  Propbook `create_and_share_pyth_feed` / `create_and_share_block_scholes_feed`
+  + admin `bind_pyth_to_underlying` / `bind_block_scholes_to_underlying`; spot
+  via `pyth_feed::update`;
   surface via `block_scholes_oracle::update::new_update` → `block_scholes_feed::
-  update_from_bs` (no writer cap); `create_expiry_market` taking the two feeds + the
-  lifecycle cap (no spot, no writer-cap ids, one returned id); `mint`/`redeem` taking
-  a packed `range_key`; the privileged flush start (`start_pool_valuation` + AdminCap);
+  update` (no writer cap); `create_expiry_market` taking the propbook
+  `OracleRegistry` + the canonical underlying id + tick size + the lifecycle cap
+  (binding-validated, no spot, one returned id); `mint` taking the
+  `(lower_tick, higher_tick)` tick pair (no packed range key); the privileged flush
+  start (`start_pool_valuation` + AdminCap);
   event normalizers swapped to the propbook + async-LP events. **`npx tsc --noEmit`
   is clean.**
 - **`python_indexes/strike_nav_matrix.py` DELETED** (the dense NAV matrix is gone);
@@ -50,8 +54,11 @@ Flagged in-code with `TODO(sim-parity)`:
    pyth_lazer/wormhole dep-replacement linking as predict); capture the shared
    `OracleRegistry` id from propbook's init; rewrite the predict `Move.toml`
    dep-injection to inject `fixed_math`/`propbook`/`block_scholes_oracle`; and emit the
-   four new env vars (`FIXED_MATH_PACKAGE_ID`, `PROPBOOK_PACKAGE_ID`,
-   `BLOCK_SCHOLES_ORACLE_PACKAGE_ID`, `ORACLE_REGISTRY_ID`) that `env.ts` now requires.
+   new env vars (`FIXED_MATH_PACKAGE_ID`, `PROPBOOK_PACKAGE_ID`,
+   `BLOCK_SCHOLES_ORACLE_PACKAGE_ID`, `ORACLE_REGISTRY_ID`, and
+   `ORACLE_REGISTRY_ADMIN_CAP_ID` — the propbook `RegistryAdminCap` owned by the
+   publisher, now needed for the `bindFeedsToUnderlyingTx` setup step that
+   canonical-binds both feeds before `create_expiry_market`) that `env.ts` now requires.
 
 **Bottom line:** the oracle/creation/mint/redeem/NAV/tick rewire is done and
 mechanically verified; the async-LP flush economics and the run.sh localnet publish

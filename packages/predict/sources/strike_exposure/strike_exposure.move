@@ -18,13 +18,11 @@ use deepbook_predict::{
     order::{Self, Order},
     order_events,
     pricing::{Self, Pricer},
-    pricing_config::PricingConfig,
     range_codec,
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 1;
@@ -335,9 +333,7 @@ public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order:
 /// Try to liquidate one active leveraged order using exact live pricing.
 public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    pricer: &Pricer,
     order: &Order,
     clock: &Clock,
 ): bool {
@@ -345,9 +341,8 @@ public(package) fun liquidate_live_order(
 
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    let pricer = pricing::pricer(config, pyth, bs, exposure.expiry_ms, clock);
     exposure.liquidate_order_if_under_floor(
-        &pricer,
+        pricer,
         order,
         index_now,
         liquidation_ltv,
@@ -357,9 +352,7 @@ public(package) fun liquidate_live_order(
 /// Run one bounded liquidation pass using exact per-candidate pricing.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    pricer: &Pricer,
     budget: u64,
     clock: &Clock,
 ): u64 {
@@ -367,14 +360,13 @@ public(package) fun liquidate_live_orders(
     if (candidates.is_empty()) return 0;
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    let pricer = pricing::pricer(config, pyth, bs, exposure.expiry_ms, clock);
 
     let mut liquidated_count = 0;
     let mut i = 0;
     while (i < candidates.length()) {
         let order = order::from_order_id(candidates[i]);
         let liquidated = exposure.liquidate_order_if_under_floor(
-            &pricer,
+            pricer,
             &order,
             index_now,
             liquidation_ltv,

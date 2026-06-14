@@ -21,22 +21,37 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 ## Context Routing
 
-Use these routing rules for repo context. Path-scoped rules are normally selected based on files being edited; manual-trigger rules must be read explicitly when the request matches the trigger.
+**These rule files are NOT auto-loaded.** The `paths:` frontmatter on each rule file is a machine-readable map for a `UserPromptSubmit` hook — but unless that hook is configured in `.claude/settings.json`, nothing loads these for you. **Before editing a file under one of these globs, open and read the matching rule file yourself.** Manual-trigger rules must likewise be read when the request matches.
 
-### Path-Scoped Rules
+### Path-Scoped Rules — read before editing files under the glob
 
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
-- **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) → `.claude/rules/indexer.md`
-- **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
-- **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
+- **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
+- **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md`
+- **Predict indexer** (`crates/predict-{server,schema,indexer}/**`) → `.claude/rules/predict-indexer.md` *(also read `indexer.md` for shared operational gotchas)*
+- **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 
-### Manual-Trigger Rules
+### Manual-Trigger Rules — read when the request matches
 
-- **Code review requests** → `.claude/rules/code-review.md`
+- **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict protocol review it routes you on to the `.claude/predict-review/` lenses + `rule-auditor.md`)
 - **Wrap-up requests** → `.claude/rules/wrap-up.md`
 
 When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`.
+
+## Predict Design State
+
+Predict (`packages/predict/**`) is the most design-heavy surface, and most decisions here are already settled. **Before proposing or changing any Predict economics** (NAV/backing, rounding, oracle trust, liquidation, order-id/tick encoding, floor/leverage, supply/withdraw):
+
+- **grep `.claude/predict-design/DECISION_JOURNAL.md` and `HISTORY.md`** for prior rulings first. Never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met.
+- The **landed** state + the current settled-decision list live in `AGENTS.md` ("Predict Rework — LANDED" + "Settled design decisions") — read that block, since Claude does not auto-load `AGENTS.md`. The async NAV/LP + tick re-encode + oracle-extraction rework has shipped on this branch, so `DECISION_JOURNAL.md`'s pre-rework LP/NAV/backing entries (e.g. D024/D030 Σ/λ backing) are **superseded** by the landed exact-`current_nav` design — treat them as history. `.redesign/ASYNC_NAV_REDESIGN.md` is the design rationale for that landed system.
+- Design docs are **leads to verify against current HEAD**, not ground truth. Ground truth = Move source + git + `sui move test`.
+
+@.claude/predict-design/ROUNDING_POLICY.md
+
+## Predict Build & Verify
+
+A hard guardrail (documented in DECISION_JOURNAL D004): run every `sui move build` / `sui move test` **in the main loop, never inside a subagent** — long tests trip the 600s watchdog and the run is lost. Check the **real** exit code via `${PIPESTATUS[0]}` or by grepping the output for `error` / `Test result:`; **never pipe build/test through `tail`** (it reports tail's exit code, masking a build failure). Build Predict with `sui move build --path packages/predict --warnings-are-errors`.
 
 **Important:** Update rule files when discovering new insights during sessions, including:
 - Bug fixes and their root causes

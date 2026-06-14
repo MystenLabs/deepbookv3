@@ -47,6 +47,9 @@ export const FIXED_MATH_PACKAGE_ID = requireEnv("FIXED_MATH_PACKAGE_ID");
 // created and shared at propbook publish (package init).
 export const PROPBOOK_PACKAGE_ID = requireEnv("PROPBOOK_PACKAGE_ID");
 export const ORACLE_REGISTRY_ID = requireEnv("ORACLE_REGISTRY_ID");
+// propbook `RegistryAdminCap`, minted to the publisher at propbook init. Needed to
+// admin-bind the Pyth + BS feeds to a canonical underlying before market creation.
+export const ORACLE_REGISTRY_ADMIN_CAP_ID = requireEnv("ORACLE_REGISTRY_ADMIN_CAP_ID");
 // STUB Block Scholes signed-data verifier package (mints the verified `Update`).
 export const BLOCK_SCHOLES_ORACLE_PACKAGE_ID = requireEnv("BLOCK_SCHOLES_ORACLE_PACKAGE_ID");
 export const DUSDC_PACKAGE_ID = requireEnv("DUSDC_PACKAGE_ID");

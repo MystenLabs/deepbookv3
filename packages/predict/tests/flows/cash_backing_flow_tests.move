@@ -41,7 +41,7 @@ const REBATE_AFTER_CLOSE: u64 = 8_750_000;
 fun cash_sheet_exact_after_every_flow() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent.
@@ -59,6 +59,7 @@ fun cash_sheet_exact_after_every_flow() {
     // its full quantity.
     let order1 = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -93,6 +94,7 @@ fun cash_sheet_exact_after_every_flow() {
     // gap = 1e9, default buffer = 250e6, reserve = 2.25e9.
     let order2 = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -136,6 +138,7 @@ fun cash_sheet_exact_after_every_flow() {
     // replacement keeps the position count at 2.
     let (_closed_id, replacement) = fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
         &pyth,
@@ -169,7 +172,7 @@ fun cash_sheet_exact_after_every_flow() {
     assert!(manager.has_position(expiry_id, order1b));
     assert!(manager.has_position(expiry_id, order2));
 
-    helpers::return_market(pyth, bs, vault, market, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }

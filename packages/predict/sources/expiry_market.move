@@ -336,7 +336,7 @@ public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, pau
 // === Public-Package Functions ===
 
 /// Whether terminal settlement has been recorded. Settlement is deferred to
-/// settlement-v2 (off the propbook minute history), so this is always false today;
+/// settlement-v2 (off Propbook exact timestamp history), so this is always false today;
 /// the settled-redeem and settled-sweep paths stay in place, gated on it.
 public(package) fun is_settled(_market: &ExpiryMarket): bool {
     false
