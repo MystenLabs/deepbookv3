@@ -32,7 +32,7 @@ use deepbook_predict::{
     pyth_source::PythSource,
     test_constants
 };
-use predict_math::math;
+use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 
 /// Settlement strictly above the order's lower strike => in the money.

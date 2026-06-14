@@ -27,7 +27,7 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use predict_math::math::float_scaling as float;
+use fixed_math::math::float_scaling as float;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 

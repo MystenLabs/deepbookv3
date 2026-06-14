@@ -9,7 +9,7 @@
 module deepbook_predict::test_constants;
 
 use deepbook_predict::constants;
-use predict_math::math;
+use fixed_math::math;
 
 // === Test Addresses ===
 const ADMIN: address = @0x0;
@@ -46,18 +46,18 @@ public fun now_ms(): u64 { 100_000 }
 public fun live_source_timestamp_ms(): u64 { 99_000 }
 
 /// Default oracle tick size. Must be a multiple of `oracle_tick_size_unit`
-/// (10_000); 1e9 is. Combined with the 100_000-tick grid this gives a
-/// `min_finite_strike` of 100e9 (see below).
+/// (10_000) and small enough that `pos_inf_tick * tick_size` fits in u64; 1e9 is.
+/// Strikes are absolute ticks: `raw_strike = tick * tick_size`.
 public fun default_tick_size(): u64 { 1_000_000_000 }
 
-/// Grid-centering creation spot: `spot/tick = 50_100` lies in
-/// `(ticks/2, ticks] = (50_000, 100_000]` for the 100_000-tick grid, so
-/// `new_centered` accepts it.
-public fun default_creation_spot(): u64 { 50_100_000_000_000 }
+/// The canonical finite strike tick the flow tests mint against. With the default
+/// 1e9 tick size it maps to the raw strike `100e9` (`default_strike_tick *
+/// default_tick_size`), the strike of `default_live_price` (≈50% for a
+/// `(strike_tick, +inf)` UP range).
+public fun default_strike_tick(): u64 { 100 }
 
-/// The grid's minimum finite strike for the default tick/grid (a valid lower
-/// boundary): the centered 100_000-tick grid places the lowest finite strike at
-/// `100e9` here.
+/// A representative finite raw strike (`default_strike_tick * default_tick_size =
+/// 100e9`), used by the direct-pricing tests that take raw strikes.
 public fun min_finite_strike(): u64 { 100_000_000_000 }
 
 /// Default DUSDC cash seeded into expiry markets while pool funding is absent.
@@ -92,6 +92,10 @@ public fun default_svi_rho_magnitude(): u64 { math::float_scaling!() }
 /// Default SVI `m` for live oracle test fixtures: far enough right to keep the
 /// wing contribution rounded to zero for default-grid strikes.
 public fun default_svi_m(): u64 { 10 * math::float_scaling!() }
+
+/// Default SVI `sigma` for live oracle test fixtures: 1e-3 in 1e9 fixed point, the
+/// lower edge of propbook's accepted vol-of-vol band.
+public fun default_svi_sigma(): u64 { 1_000_000 }
 
 /// Default trader-manager deposit in the composite bring-up; large enough to fund
 /// several leveraged mints plus fees.

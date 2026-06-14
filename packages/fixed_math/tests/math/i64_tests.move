@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module predict_math::i64_tests;
+module fixed_math::i64_tests;
 
-use predict_math::{i64, math::float_scaling as float};
+use fixed_math::{i64, math::float_scaling as float};
 use std::unit_test::assert_eq;
 
 // === Constructors and getters ===

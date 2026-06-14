@@ -31,7 +31,7 @@ use deepbook_predict::{
     pyth_source::PythSource,
     test_constants
 };
-use predict_math::math::{Self, float_scaling as float};
+use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::{assert_eq, destroy};
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.

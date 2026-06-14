@@ -14,7 +14,7 @@
 module deepbook_predict::cash_backing_flow_tests;
 
 use deepbook_predict::{config_constants, constants, flow_test_helpers as helpers, test_constants};
-use predict_math::math;
+use fixed_math::math;
 use std::unit_test::destroy;
 
 /// Both mints quote the exact ATM digital: forward == min_strike, so

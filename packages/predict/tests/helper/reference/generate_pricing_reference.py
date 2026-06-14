@@ -343,7 +343,7 @@ def emit_move(scenarios, scen_points, budget_units):
     w("module deepbook_predict::pricing_reference_data;")
     w("")
     w("use deepbook_predict::{constants, market_oracle::{Self, SVIParams}};")
-    w("use predict_math::i64;")
+    w("use fixed_math::i64;")
     w("")
     w("const ENoSuchScenario: u64 = 0;")
     w("")

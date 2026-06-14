@@ -7,73 +7,69 @@
 /// test-only expiry cash seeding while pool funding is absent, and exposes thin
 /// wrappers for the trade flows.
 ///
-/// The `Registry` and `ProtocolConfig` are real shared objects (created via
-/// `registry::init_for_testing`, which mirrors the production `init`). They are
-/// NOT held as `Fixture` fields: a `take_shared` object cannot cross a `next_tx`
+/// The `Registry`, `ProtocolConfig`, and propbook `OracleRegistry` are real shared
+/// objects (created via the production-mirroring `init_for_testing`s). They are NOT
+/// held as `Fixture` fields: a `take_shared` object cannot cross a `next_tx`
 /// boundary, so each method takes the config/registry it needs as a local and
-/// returns it before the next transaction (setup-phase methods), or the flow
-/// test takes the config once via `take_market` and threads it as a `&`/`&mut`
-/// parameter (flow-phase methods). This keeps every take/return non-nested and
-/// avoids owned config/registry fields entirely. Oracle spot is seeded via the
-/// test-only `set_state_for_testing` because a real `pyth_lazer::Update` has no
-/// Move-side test constructor.
+/// returns it before the next transaction. The market reads two standalone propbook
+/// feeds — a `PythFeed` (global spot) and a `BlockScholesFeed` (per-expiry
+/// surface) — both seeded through their real ingest paths (the Pyth spot via the
+/// one irreducible `store_tick_for_testing` seam, since a real `pyth_lazer::Update`
+/// has no Move constructor; the BS surface via the stub verifier's public
+/// `update::new_update`). Settlement is deferred to settlement-v2, so there is no
+/// settle helper here.
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
+use block_scholes_oracle::update;
 use deepbook_predict::{
     admin::AdminCap,
-    constants,
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
-    market_oracle::{Self, MarketOracle},
-    market_oracle_writer_cap::{Self, MarketOracleWriterCap},
     plp::{Self, PoolVault},
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
-    pyth_source::PythSource,
+    range_codec,
     registry::{Self, Registry},
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use predict_math::i64;
-use std::unit_test::{assert_eq, destroy};
-use sui::{
-    clock::{Self, Clock},
-    coin,
-    random,
-    test_scenario::{Self as test, Scenario, return_shared}
+use propbook::{
+    block_scholes_feed::{Self, BlockScholesFeed},
+    pyth_feed::{Self, PythFeed},
+    registry::{Self as propbook_registry, OracleRegistry}
 };
+use std::unit_test::{assert_eq, destroy};
+use sui::{clock::{Self, Clock}, coin, test_scenario::{Self as test, Scenario, return_shared}};
 
-/// The grid's minimum finite strike for the default tick/grid (a valid lower
-/// boundary). Re-exported from `test_constants` so existing `helpers::min_strike()`
-/// callers keep working through the one source of truth.
-public fun min_strike(): u64 { test_constants::min_finite_strike() }
+/// A representative finite strike tick the flow tests mint against. Re-exported
+/// from `test_constants` so existing call sites keep one source of truth.
+public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
-/// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`
-/// are real shared objects taken per-transaction, not held here (see module doc).
+/// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`/
+/// `OracleRegistry` are real shared objects taken per-transaction, not held here.
 public struct Fixture {
     scenario: Scenario,
     admin_cap: AdminCap,
-    cap: MarketOracleWriterCap,
     lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
+    bs_id: ID,
 }
 
-/// Stand up a registry + protocol config (via the production-mirroring
-/// `init_for_testing`) + a registered Pyth source + an empty PLP vault, with the
-/// oracle grid centered on `spot` and a `tick`-sized strike grid. base_fee is
-/// floored to 1 and min_ask to 0 so small test quantities are admissible.
-///
-/// `spot/tick` must land in `(grid_ticks/2, grid_ticks]` for `new_centered` to
-/// accept it (the defaults satisfy this — see `test_constants`).
-public fun setup_market(spot: u64, tick: u64, _legacy_supply: u64): Fixture {
+/// Stand up a registry + protocol config + an empty PLP vault + the two propbook
+/// feeds (a `PythFeed` and a `BlockScholesFeed`) for the admin-approved `tick`
+/// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
+/// admissible. Creation reads no spot (strikes are absolute ticks), so no spot is
+/// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
+public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
     registry::init_for_testing(scenario.ctx());
+    propbook_registry::init_for_testing(scenario.ctx());
 
-    // tx1: configure protocol params + register the real Pyth source.
+    // tx1: configure protocol params, register the feed tick size, create feeds.
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
@@ -81,72 +77,57 @@ public fun setup_market(spot: u64, tick: u64, _legacy_supply: u64): Fixture {
     config.set_template_min_ask_price(&admin_cap, 0);
     return_shared(config);
     let mut registry = scenario.take_shared<Registry>();
-    let pyth_id = registry::create_pyth_source(
-        &mut registry,
-        &admin_cap,
+    registry::register_pyth_feed(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
+    return_shared(registry);
+    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
+    let pyth_id = pyth_feed::create_and_share(
+        &mut oracle_registry,
         test_constants::pyth_feed_id(),
-        tick,
         scenario.ctx(),
     );
-    return_shared(registry);
-    let cap = market_oracle_writer_cap::create(&admin_cap, scenario.ctx());
+    let bs_id = block_scholes_feed::create_and_share(
+        &mut oracle_registry,
+        test_constants::pyth_feed_id(),
+        scenario.ctx(),
+    );
+    return_shared(oracle_registry);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
-    // tx2: seed Pyth spot and mint the lifecycle cap through the registry.
+    // tx2: mint the lifecycle cap and capture the vault id.
     scenario.next_tx(test_constants::admin());
-    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
-    let live_ts = test_constants::live_source_timestamp_ms();
-    pyth.set_state_for_testing(spot, live_ts, live_ts);
-    let config = scenario.take_shared<ProtocolConfig>();
-    let vault = scenario.take_shared<PoolVault>();
-    let vault_id = vault.id();
     let mut registry = scenario.take_shared<Registry>();
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
     return_shared(registry);
+    let vault = scenario.take_shared<PoolVault>();
+    let vault_id = vault.id();
     return_shared(vault);
-    return_shared(config);
-    return_shared(pyth);
 
     scenario.next_tx(test_constants::admin());
 
-    Fixture {
-        scenario,
-        admin_cap,
-        cap,
-        lifecycle_cap,
-        clock,
-        vault_id,
-        pyth_id,
-    }
+    Fixture { scenario, admin_cap, lifecycle_cap, clock, vault_id, pyth_id, bs_id }
 }
 
-/// `setup_market` with the default creation spot / tick / initial supply.
+/// `setup_market` with the default tick size.
 public fun setup_market_default(): Fixture {
-    setup_market(
-        test_constants::default_creation_spot(),
-        test_constants::default_tick_size(),
-        test_constants::default_initial_supply(),
-    )
+    setup_market(test_constants::default_tick_size())
 }
 
-/// Back-compat alias for the default bring-up (the pre-parameterization name used
-/// across the existing suite).
+/// Back-compat alias for the default bring-up.
 public fun setup_pool_with_pyth(): Fixture { setup_market_default() }
 
 /// One-shot composite bring-up over `(expiry_ms, live_price)`: a default market
 /// already past `create_expiry` + `prepare_live_oracle` + test-only cash seeding,
-/// plus a funded alice manager (`mint_deposit`), so a flow test starts at the
-/// first interesting line. The market objects are returned to the shared pool;
-/// the caller `take_market`s them. Returns
-/// `(fixture, expiry_id, oracle_id, manager)`.
-public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, ID, PredictManager) {
+/// plus a funded alice manager, so a flow test starts at the first interesting
+/// line. The market objects are returned to the shared pool; the caller
+/// `take_market`s them. Returns `(fixture, expiry_id, manager)`.
+public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, PredictManager) {
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
 /// default manager deposit (used by the smoke + gate tests).
-public fun setup_everything(): (Fixture, ID, ID, PredictManager) {
+public fun setup_everything(): (Fixture, ID, PredictManager) {
     setup_funded_live_market(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
@@ -158,35 +139,33 @@ fun setup_funded_live_market(
     expiry_ms: u64,
     live_price: u64,
     deposit: u64,
-): (Fixture, ID, ID, PredictManager) {
+): (Fixture, ID, PredictManager) {
     let mut fx = setup_market_default();
-    let (expiry_id, oracle_id) = fx.create_expiry(expiry_ms);
+    let expiry_id = fx.create_expiry(expiry_ms);
     let manager = fx.create_funded_manager(deposit);
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(
-        expiry_id,
-        oracle_id,
-    );
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, live_price);
+    let (mut pyth, mut bs, vault, mut market, config) = fx.take_market(expiry_id);
+    fx.prepare_live_oracle(&market, &mut pyth, &mut bs, live_price);
     fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
-    return_market(pyth, vault, market, oracle, config);
+    return_market(pyth, bs, vault, market, config);
     fx.scenario.next_tx(test_constants::admin());
-    (fx, expiry_id, oracle_id, manager)
+    (fx, expiry_id, manager)
 }
 
-/// Create the market + oracle for `expiry` through the production path.
-public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
+/// Create the market for `expiry` through the production path, returning its id.
+public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     self.scenario.next_tx(test_constants::admin());
-    let pyth = self.scenario.take_shared_by_id<PythSource>(self.pyth_id);
+    let pyth = self.scenario.take_shared_by_id<PythFeed>(self.pyth_id);
+    let bs = self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id);
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let (expiry_id, oracle_id) = registry::create_expiry_market(
+    let expiry_id = registry::create_expiry_market(
         &mut registry,
         &mut vault,
         &config,
         &pyth,
+        &bs,
         &self.lifecycle_cap,
-        vector[self.cap.id()],
         expiry,
         &self.clock,
         self.scenario.ctx(),
@@ -194,9 +173,10 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
     return_shared(config);
     return_shared(registry);
     return_shared(vault);
+    return_shared(bs);
     return_shared(pyth);
     self.scenario.next_tx(test_constants::admin());
-    (expiry_id, oracle_id)
+    expiry_id
 }
 
 public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolConfig, budget: u64) {
@@ -229,35 +209,33 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
-/// Take the four shared market objects + the protocol config a flow test
-/// mutates. The config is threaded into the flow-phase methods as a parameter
-/// (it cannot be a `Fixture` field — see module doc) and returned by the test.
+/// Take the four shared market objects + the protocol config a flow test mutates.
+/// The config is threaded into the flow-phase methods as a parameter (it cannot be
+/// a `Fixture` field — see module doc) and returned by the test.
 public fun take_market(
     self: &mut Fixture,
     expiry_id: ID,
-    oracle_id: ID,
-): (PythSource, PoolVault, ExpiryMarket, MarketOracle, ProtocolConfig) {
+): (PythFeed, BlockScholesFeed, PoolVault, ExpiryMarket, ProtocolConfig) {
     (
-        self.scenario.take_shared_by_id<PythSource>(self.pyth_id),
+        self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id),
         self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
         self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id),
-        self.scenario.take_shared_by_id<MarketOracle>(oracle_id),
         self.scenario.take_shared<ProtocolConfig>(),
     )
 }
 
-/// Return the five shared objects taken by `take_market` (pairs 1:1 with it so
-/// flow tests don't hand-roll five `return_shared` calls).
+/// Return the five shared objects taken by `take_market` (pairs 1:1 with it).
 public fun return_market(
-    pyth: PythSource,
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
     vault: PoolVault,
     market: ExpiryMarket,
-    oracle: MarketOracle,
     config: ProtocolConfig,
 ) {
-    return_shared(oracle);
     return_shared(market);
     return_shared(vault);
+    return_shared(bs);
     return_shared(pyth);
     return_shared(config);
 }
@@ -269,9 +247,7 @@ public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManag
     self.create_funded_manager_as(test_constants::alice(), deposit)
 }
 
-/// `create_funded_manager` for an arbitrary owner, for multi-trader flows. The
-/// scenario sender is left as `owner` so the caller's next mint/redeem generates
-/// a valid owner proof.
+/// `create_funded_manager` for an arbitrary owner, for multi-trader flows.
 public fun create_funded_manager_as(
     self: &mut Fixture,
     owner: address,
@@ -292,102 +268,86 @@ public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amoun
     market.receive_cash_for_testing(coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx()));
 }
 
-/// Seed fresh live Block Scholes prices + SVI so quotes are available.
-/// `live_price` is used as both spot and forward (basis = 1.0).
+/// Seed a fresh live Pyth spot + Block Scholes surface for `market`'s expiry so
+/// quotes are available. `live_price` is used as spot and forward (basis = 1.0).
 public fun prepare_live_oracle(
     self: &Fixture,
-    config: &ProtocolConfig,
-    oracle: &mut MarketOracle,
-    pyth: &mut PythSource,
+    market: &ExpiryMarket,
+    pyth: &mut PythFeed,
+    bs: &mut BlockScholesFeed,
     live_price: u64,
 ) {
-    let live_ts = test_constants::live_source_timestamp_ms();
-    pyth.set_state_for_testing(live_price, live_ts, live_ts);
-    oracle.update_block_scholes_prices(
-        &self.cap,
-        config,
+    self.prepare_live_oracle_at(
+        market,
+        pyth,
+        bs,
         live_price,
-        live_price,
-        live_ts,
-        &self.clock,
+        test_constants::live_source_timestamp_ms(),
     );
-    let svi = market_oracle::new_svi_params(
-        test_constants::default_svi_a(),
-        test_constants::default_svi_b(),
-        i64::from_u64(test_constants::default_svi_rho_magnitude()),
-        i64::from_u64(test_constants::default_svi_m()),
-        constants::svi_sigma_min!(),
-    );
-    oracle.update_svi(&self.cap, config, svi, live_ts, &self.clock);
 }
 
+/// `prepare_live_oracle` at an explicit source timestamp (for staleness tests).
 public fun prepare_live_oracle_at(
     self: &Fixture,
-    config: &ProtocolConfig,
-    oracle: &mut MarketOracle,
-    pyth: &mut PythSource,
+    market: &ExpiryMarket,
+    pyth: &mut PythFeed,
+    bs: &mut BlockScholesFeed,
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
-    pyth.set_state_for_testing(live_price, source_timestamp_ms, source_timestamp_ms);
-    oracle.update_block_scholes_prices(
-        &self.cap,
-        config,
-        live_price,
-        live_price,
-        source_timestamp_ms,
-        &self.clock,
-    );
-    let svi = market_oracle::new_svi_params(
-        test_constants::default_svi_a(),
-        test_constants::default_svi_b(),
-        i64::from_u64(test_constants::default_svi_rho_magnitude()),
-        i64::from_u64(test_constants::default_svi_m()),
-        constants::svi_sigma_min!(),
-    );
-    oracle.update_svi(&self.cap, config, svi, source_timestamp_ms, &self.clock);
+    pyth.store_tick_for_testing(live_price, source_timestamp_ms, source_timestamp_ms);
+    self.seed_bs_surface(market, bs, live_price, live_price, source_timestamp_ms);
 }
 
+/// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
+/// the fixture clock as the on-chain landing timestamp.
 public fun set_pyth_price_for_testing(
     self: &Fixture,
-    pyth: &mut PythSource,
+    pyth: &mut PythFeed,
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
-    pyth.set_state_for_testing(live_price, source_timestamp_ms, self.clock.timestamp_ms());
+    pyth.store_tick_for_testing(live_price, source_timestamp_ms, self.clock.timestamp_ms());
 }
 
-/// Settle the oracle via the test-only generator wrapper using a fresh
-/// post-expiry Pyth spot and an insufficient sample buffer, so settlement latches
-/// and takes the single-spot fallback at `settlement_price`. Advances the clock
-/// past expiry.
-public fun settle_oracle(
-    self: &mut Fixture,
-    config: &ProtocolConfig,
-    oracle: &mut MarketOracle,
-    pyth: &mut PythSource,
-    settlement_price: u64,
+/// Write a Block Scholes surface row for `market`'s expiry through the real ingest
+/// path (`spot`/`forward` give the basis; default SVI), at `source_timestamp_ms`.
+public fun seed_bs_surface(
+    self: &Fixture,
+    market: &ExpiryMarket,
+    bs: &mut BlockScholesFeed,
+    spot: u64,
+    forward: u64,
+    source_timestamp_ms: u64,
 ) {
-    let expiry = oracle.expiry();
-    let source_timestamp_ms = expiry + 1_000;
-    let update_timestamp_ms = expiry + 2_000;
-    self.clock.set_for_testing(update_timestamp_ms);
-    pyth.set_state_for_testing(settlement_price, source_timestamp_ms, update_timestamp_ms);
-    let mut generator = random::new_generator_for_testing();
-    oracle.settle_with_generator_for_testing(config, pyth, &mut generator, &self.clock);
-    assert!(oracle.is_settled());
+    let bs_update = update::new_update(
+        test_constants::pyth_feed_id(),
+        market.expiry(),
+        source_timestamp_ms,
+        spot,
+        forward,
+        test_constants::default_svi_a(),
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+    );
+    bs.update_from_bs(bs_update, &self.clock);
 }
 
-/// Mint one order for `manager` and return its packed order id.
+/// Mint one order for `manager` over the tick range `(lower_tick, higher_tick]` and
+/// return its packed order id.
 public fun mint(
     self: &mut Fixture,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
-    lower: u64,
-    higher: u64,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
     quantity: u64,
     leverage: u64,
 ): u256 {
@@ -396,10 +356,9 @@ public fun mint(
         manager,
         &proof,
         config,
-        oracle,
         pyth,
-        lower,
-        higher,
+        bs,
+        range_codec::pack(lower_tick, higher_tick),
         quantity,
         leverage,
         &self.clock,
@@ -413,8 +372,8 @@ public fun redeem(
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
@@ -423,8 +382,8 @@ public fun redeem(
         manager,
         proof,
         config,
-        oracle,
         pyth,
+        bs,
         order_id,
         close_quantity,
         &self.clock,
@@ -432,22 +391,23 @@ public fun redeem(
     )
 }
 
-/// Permissionless settled redeem (no proof). Requires a full close.
+/// Permissionless redeem (no proof): clears an already-liquidated order. (Settled
+/// redeem returns with settlement-v2; under the stub the settled branch is dead.)
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
     market.redeem_settled(
         manager,
         config,
-        oracle,
         pyth,
+        bs,
         order_id,
         close_quantity,
         &self.clock,
@@ -461,11 +421,11 @@ public fun liquidate(
     self: &Fixture,
     config: &ProtocolConfig,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     budget: u64,
 ): u64 {
-    market.liquidate(config, oracle, pyth, budget, &self.clock)
+    market.liquidate(config, pyth, bs, budget, &self.clock)
 }
 
 /// Try to liquidate one active leveraged order by ID. Returns whether it was
@@ -474,24 +434,24 @@ public fun liquidate_order(
     self: &Fixture,
     config: &ProtocolConfig,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
 ): bool {
-    market.liquidate_order(config, oracle, pyth, order_id, &self.clock)
+    market.liquidate_order(config, pyth, bs, order_id, &self.clock)
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
-/// liability plus the unresolved rebate reserve. Assert after every
-/// cash-mutating flow (mint / redeem / liquidate / sync / rebate / compact).
+/// liability plus the unresolved rebate reserve. Assert after every cash-mutating
+/// flow (mint / redeem / liquidate / sync / rebate).
 public fun assert_market_backed(market: &ExpiryMarket) {
     assert!(market.cash_balance() >= market.payout_liability() + market.rebate_reserve());
 }
 
-/// Expected snapshot of one expiry market's cash-side accounting, asserted in
-/// one call by `check_market_cash`.
+/// Expected snapshot of one expiry market's cash-side accounting, asserted in one
+/// call by `check_market_cash`.
 public struct ExpectedMarketCash has copy, drop {
     /// DUSDC held by the expiry (`market.cash_balance()`).
     cash_balance: u64,
@@ -509,8 +469,8 @@ public fun expected_market_cash(
     ExpectedMarketCash { cash_balance, payout_liability, rebate_reserve }
 }
 
-/// Assert an expiry market's full cash sheet. Each field is an exact
-/// `assert_eq!`, and the S1 backing inequality is checked on top.
+/// Assert an expiry market's full cash sheet. Each field is an exact `assert_eq!`,
+/// and the S1 backing inequality is checked on top.
 public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash) {
     assert_eq!(market.cash_balance(), expected.cash_balance);
     assert_eq!(market.payout_liability(), expected.payout_liability);
@@ -518,12 +478,10 @@ public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash
     assert_market_backed(market);
 }
 
-// === Manager state-sheet assertions (ExpectedBalances analog) ===
+// === Manager state-sheet assertions ===
 
 /// A full expected snapshot of one manager's scalar state plus its per-expiry
-/// trading state, asserted in one call by `check_manager`. Mirrors deepbook
-/// core's `ExpectedBalances` pattern so flow tests read as state sheets rather
-/// than scattered getter assertions.
+/// trading state, asserted in one call by `check_manager`.
 public struct ExpectedManagerState has copy, drop {
     /// Free DUSDC balance (`manager.balance()`).
     balance: u64,
@@ -547,9 +505,7 @@ public fun expected_manager_state(
     ExpectedManagerState { balance, fees_paid, position_count, active_stake, inactive_stake }
 }
 
-/// Assert a manager's full state sheet against `expected` for `expiry_id`. Each
-/// field is an exact `assert_eq!`, so a single wrong field fails the test with
-/// both values printed.
+/// Assert a manager's full state sheet against `expected` for `expiry_id`.
 public fun check_manager(manager: &PredictManager, expiry_id: ID, expected: ExpectedManagerState) {
     assert_eq!(manager.balance(), expected.balance);
     assert_eq!(manager.trading_fees_paid(expiry_id), expected.fees_paid);
@@ -568,41 +524,24 @@ public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
     self.clock.set_for_testing(timestamp_ms);
 }
 
-public fun update_block_scholes_prices_for_testing(
-    self: &Fixture,
-    config: &ProtocolConfig,
-    oracle: &mut MarketOracle,
-    spot: u64,
-    forward: u64,
-    source_timestamp_ms: u64,
-) {
-    oracle.update_block_scholes_prices(
-        &self.cap,
-        config,
-        spot,
-        forward,
-        source_timestamp_ms,
-        &self.clock,
-    );
-}
-
 public fun vault_id(self: &Fixture): ID { self.vault_id }
 
 public fun pyth_id(self: &Fixture): ID { self.pyth_id }
 
-/// Tear down the fixture and all owned objects. The shared Registry/ProtocolConfig
-/// are returned by the flow test (via `return_shared`) and reclaimed by `end`.
+public fun bs_id(self: &Fixture): ID { self.bs_id }
+
+/// Tear down the fixture and all owned objects. The shared Registry/ProtocolConfig/
+/// OracleRegistry are returned by the flow test and reclaimed by `end`.
 public fun finish(self: Fixture) {
     let Fixture {
         scenario,
         admin_cap,
-        cap,
         lifecycle_cap,
         clock,
         vault_id: _,
         pyth_id: _,
+        bs_id: _,
     } = self;
-    cap.destroy();
     lifecycle_cap.destroy();
     destroy(admin_cap);
     clock.destroy_for_testing();

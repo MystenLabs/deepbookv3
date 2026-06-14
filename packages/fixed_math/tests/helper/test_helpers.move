@@ -3,7 +3,7 @@
 
 /// Shared assertion helpers for Predict math tests.
 #[test_only]
-module predict_math::test_helpers;
+module fixed_math::test_helpers;
 
 /// Assert `actual` is within `max_abs_diff` of an independently-derived
 /// `reference`.

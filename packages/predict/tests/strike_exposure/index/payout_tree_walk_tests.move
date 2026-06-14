@@ -31,7 +31,7 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use predict_math::{i64, math};
+use fixed_math::{i64, math};
 use std::unit_test::assert_eq;
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes

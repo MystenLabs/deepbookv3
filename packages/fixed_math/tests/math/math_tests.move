@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module predict_math::math_tests;
+module fixed_math::math_tests;
 
-use predict_math::{i64, math::{Self, float_scaling as float}, test_helpers};
+use fixed_math::{i64, math::{Self, float_scaling as float}, test_helpers};
 use std::unit_test::assert_eq;
 
 // Independent reference values: round(f_true(x) * 1e9), produced by

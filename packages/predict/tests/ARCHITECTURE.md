@@ -2,7 +2,7 @@
 
 > The reusable layering that makes a new flow- or error-path test a few lines, not a bespoke
 > setup. Modeled on deepbook core's test framework and improving on it where core is weak.
-> Authoritative for `packages/predict/tests/**` and `packages/predict_math/tests/**`.
+> Authoritative for `packages/predict/tests/**` and `packages/fixed_math/tests/**`.
 > Companion: `.claude/rules/unit-tests.md` (the 18 cardinal rules). The build-out
 > worklists (coverage matrix, bug ledger, reachability recipes) were consumed and
 > deleted when the suite reached full error-constant coverage; create a fresh
@@ -14,8 +14,8 @@
   subset restored. Tests for removed sync supply/withdraw, pool NAV, incentives,
   compaction, per-expiry funding, and old rebate-claim surfaces were deleted with those
   APIs.
-- Two packages: `packages/predict` (`deepbook_predict::*`) and `packages/predict_math`
-  (`predict_math::{math,i64}` — extracted from predict; predict depends on it).
+- Two packages: `packages/predict` (`deepbook_predict::*`) and `packages/fixed_math`
+  (`fixed_math::{math,i64}` — extracted from predict; predict depends on it).
 
 ## Hard constraints
 
@@ -56,7 +56,7 @@ Layer 3  invariants               — invariant-level one-call assertions (rule 
                                      tracked expectations.
 Layer 4  reference/               — committed generators + reference data, NOT in CI path:
                                      tests/helper/reference/generate_constants.py →
-                                     math_reference.csv (predict_math), and
+                                     math_reference.csv (fixed_math), and
                                      generate_pricing_reference.py →
                                      tests/pricing/pricing_reference_data.move (predict).
                                      Executable independence (rule 16).
@@ -75,7 +75,7 @@ packages/predict/tests/
   strike_exposure/  strike_grid · strike_payout_tree · c1 flow · liquidation_book · guard tests
   flows/     framework_smoke · lifecycle · expiry_market_gate (+ invariant passes NEW)
   (root)     predict_manager_tests · registry_create_tests · expiry_cash_tests · ewma_tests
-packages/predict_math/tests/
+packages/fixed_math/tests/
   helper/    test_helpers (assert_within twins)
   math/      math_tests · i64_tests
 ```

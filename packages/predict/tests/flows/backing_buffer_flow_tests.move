@@ -22,7 +22,7 @@ use deepbook_predict::{
     pyth_source::PythSource,
     test_constants
 };
-use predict_math::math::{Self, float_scaling as float};
+use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::{assert_eq, destroy};
 
 const QUANTITY: u64 = 1_000_000_000;

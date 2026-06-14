@@ -35,7 +35,7 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use predict_math::math;
+use fixed_math::math;
 use std::unit_test::assert_eq;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +

@@ -27,7 +27,7 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use predict_math::math::float_scaling as float;
+use fixed_math::math::float_scaling as float;
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, test_scenario::return_shared};
 
