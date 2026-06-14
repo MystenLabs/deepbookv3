@@ -35,7 +35,7 @@ public fun dusdc_unit(): u64 { 10u64.pow(constants::dusdc_decimals!()) }
 
 // === Default market bring-up (test-fixture choices) ===
 
-/// Pyth feed id the default fixture registers.
+/// Pyth source id the default fixture registers.
 public fun pyth_feed_id(): u32 { 1 }
 
 /// Wall-clock the fixture's `Clock` starts at.

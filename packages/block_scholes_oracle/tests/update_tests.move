@@ -8,7 +8,7 @@ use block_scholes_oracle::update;
 use std::unit_test::assert_eq;
 
 // Independent fixture values (1e9-scaled where they represent prices/params).
-const UNDERLYING: u32 = 1;
+const SOURCE_ID: u32 = 1;
 const EXPIRY_MS: u64 = 1_700_100_000_000;
 const PUBLISHED_AT_MS: u64 = 1_700_000_000_000;
 const SPOT: u64 = 65_000_000_000_000;
@@ -24,7 +24,7 @@ const M_NEG: bool = false;
 #[test]
 fun update_getters_round_trip_inputs() {
     let upd = update::new_update(
-        UNDERLYING,
+        SOURCE_ID,
         EXPIRY_MS,
         PUBLISHED_AT_MS,
         SPOT,
@@ -38,7 +38,7 @@ fun update_getters_round_trip_inputs() {
         M_NEG,
     );
 
-    assert_eq!(upd.underlying(), UNDERLYING);
+    assert_eq!(upd.source_id(), SOURCE_ID);
     assert_eq!(upd.expiry_ms(), EXPIRY_MS);
     assert_eq!(upd.published_at_ms(), PUBLISHED_AT_MS);
     assert_eq!(upd.spot(), SPOT);

@@ -25,7 +25,6 @@ use deepbook_predict::{
     pricing,
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
-    range_codec,
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
@@ -46,9 +45,9 @@ const ENotImplemented: u64 = 7;
 public struct ExpiryMarket has key {
     id: UID,
     /// propbook Pyth spot feed bound at creation; revalidated on every priced flow.
-    pyth_feed_id: ID,
+    propbook_pyth_id: ID,
     /// propbook Block Scholes surface feed bound at creation.
-    bs_feed_id: ID,
+    propbook_block_scholes_id: ID,
     expiry: u64,
     /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
     cash: ExpiryCash,
@@ -72,13 +71,13 @@ public fun id(market: &ExpiryMarket): ID {
 }
 
 /// Return the propbook Pyth spot feed this market is bound to.
-public fun pyth_feed_id(market: &ExpiryMarket): ID {
-    market.pyth_feed_id
+public fun propbook_pyth_id(market: &ExpiryMarket): ID {
+    market.propbook_pyth_id
 }
 
 /// Return the propbook Block Scholes surface feed this market is bound to.
-public fun bs_feed_id(market: &ExpiryMarket): ID {
-    market.bs_feed_id
+public fun propbook_block_scholes_id(market: &ExpiryMarket): ID {
+    market.propbook_block_scholes_id
 }
 
 /// Return the expiry timestamp in milliseconds.
@@ -194,7 +193,8 @@ public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
 /// policy and be above the current liquidation threshold at entry. Mint fees are
 /// paid by routing a withdraw through the manager's trade proof, so the proof is
 /// required even for owner-initiated mints. The position's strike range is the
-/// packed `range_key` (two u24 ticks); the SDK converts raw strikes to ticks.
+/// tick pair `(lower_tick, higher_tick]` (`lower_tick = 0` is `-inf`,
+/// `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw strikes to ticks.
 /// Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,
@@ -203,7 +203,8 @@ public fun mint(
     config: &ProtocolConfig,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
-    range_key: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     quantity: u64,
     leverage: u64,
     clock: &Clock,
@@ -219,7 +220,8 @@ public fun mint(
         config,
         pyth,
         bs,
-        range_key,
+        lower_tick,
+        higher_tick,
         quantity,
         leverage,
         clock,
@@ -344,8 +346,8 @@ public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, pau
 /// is bound to. This module composes the two feeds for trading, so it owns the
 /// binding check (pricing trusts the feeds it is handed).
 public(package) fun assert_feeds(market: &ExpiryMarket, pyth: &PythFeed, bs: &BlockScholesFeed) {
-    assert!(market.pyth_feed_id == pyth.id(), EWrongPythFeed);
-    assert!(market.bs_feed_id == bs.id(), EWrongBlockScholesFeed);
+    assert!(market.propbook_pyth_id == pyth.id(), EWrongPythFeed);
+    assert!(market.propbook_block_scholes_id == bs.id(), EWrongBlockScholesFeed);
 }
 
 /// Abort unless this market is live (its expiry has not passed). Owns market
@@ -434,10 +436,10 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     allowed_versions: VecSet<u64>,
-    pyth_feed_id: ID,
-    bs_feed_id: ID,
+    propbook_pyth_id: ID,
+    propbook_block_scholes_id: ID,
     pool_vault_id: ID,
-    pyth_lazer_feed_id: u32,
+    pyth_source_id: u32,
     expiry: u64,
     tick_size: u64,
     ctx: &mut TxContext,
@@ -453,8 +455,8 @@ public(package) fun create_and_share(
     );
     let market = ExpiryMarket {
         id,
-        pyth_feed_id,
-        bs_feed_id,
+        propbook_pyth_id,
+        propbook_block_scholes_id,
         expiry,
         cash: expiry_cash::new(cash_config),
         strike_exposure: strike_exposure::new(
@@ -471,9 +473,9 @@ public(package) fun create_and_share(
     config_events::emit_market_created(
         expiry_market_id,
         pool_vault_id,
-        pyth_feed_id,
-        bs_feed_id,
-        pyth_lazer_feed_id,
+        propbook_pyth_id,
+        propbook_block_scholes_id,
+        pyth_source_id,
         expiry,
         market.tick_size(),
     );
@@ -630,7 +632,8 @@ fun mint_internal(
     config: &ProtocolConfig,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
-    range_key: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     quantity: u64,
     leverage: u64,
     clock: &Clock,
@@ -647,13 +650,6 @@ fun mint_internal(
         clock,
     );
 
-    let (lower_tick, higher_tick) = range_codec::unpack(range_key);
-    // Raw strikes are for the event display only; the range key is canonical.
-    let (lower_strike, higher_strike) = range_codec::strikes_from_ticks(
-        lower_tick,
-        higher_tick,
-        market.tick_size(),
-    );
     let pricer = pricing::pricer(config.pricing_config(), pyth, bs, market.expiry, clock);
     let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
@@ -684,9 +680,6 @@ fun mint_internal(
         market.id(),
         manager,
         &minted_order,
-        range_key,
-        lower_strike,
-        higher_strike,
         leverage,
         entry_probability,
         net_premium,

@@ -14,7 +14,7 @@
 /// returns it before the next transaction. The market reads two standalone propbook
 /// feeds — a `PythFeed` (global spot) and a `BlockScholesFeed` (per-expiry
 /// surface) — both seeded through their real ingest paths (the Pyth spot via the
-/// one irreducible `store_tick_for_testing` seam, since a real `pyth_lazer::Update`
+/// one irreducible `store_observation_for_testing` seam, since a real `pyth_lazer::Update`
 /// has no Move constructor; the BS surface via the stub verifier's public
 /// `update::new_update`). Settlement is deferred to settlement-v2, so there is no
 /// settle helper here.
@@ -29,18 +29,19 @@ use deepbook_predict::{
     plp::{Self, PoolVault, PoolValuation},
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
-    range_codec,
     registry::{Self, Registry},
     test_constants
 };
 use dusdc::dusdc::DUSDC;
 use propbook::{
-    block_scholes_feed::{Self, BlockScholesFeed},
-    pyth_feed::{Self, PythFeed},
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::{clock::{Self, Clock}, coin, test_scenario::{Self as test, Scenario, return_shared}};
+
+const PYTH_EXPONENT_NEG_9: u16 = 9;
 
 /// A representative finite strike tick the flow tests mint against. Re-exported
 /// from `test_constants` so existing call sites keep one source of truth.
@@ -77,15 +78,15 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_min_ask_price(&admin_cap, 0);
     return_shared(config);
     let mut registry = scenario.take_shared<Registry>();
-    registry::register_pyth_feed(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
+    registry::register_pyth_source(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth_id = pyth_feed::create_and_share(
+    let pyth_id = propbook_registry::create_and_share_pyth_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
-    let bs_id = block_scholes_feed::create_and_share(
+    let bs_id = propbook_registry::create_and_share_block_scholes_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
         scenario.ctx(),
@@ -271,7 +272,7 @@ public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amoun
 /// Seed a fresh live Pyth spot + Block Scholes surface for `market`'s expiry so
 /// quotes are available. `live_price` is used as spot and forward (basis = 1.0).
 public fun prepare_live_oracle(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &ExpiryMarket,
     pyth: &mut PythFeed,
     bs: &mut BlockScholesFeed,
@@ -288,7 +289,7 @@ public fun prepare_live_oracle(
 
 /// `prepare_live_oracle` at an explicit source timestamp (for staleness tests).
 public fun prepare_live_oracle_at(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &ExpiryMarket,
     pyth: &mut PythFeed,
     bs: &mut BlockScholesFeed,
@@ -301,7 +302,7 @@ public fun prepare_live_oracle_at(
     // when the requested timestamp would not advance; the freshness window is wide
     // enough to absorb the handful of re-seeds a test performs.
     let ts = source_timestamp_ms.max(pyth.source_timestamp_ms() + 1);
-    pyth.store_tick_for_testing(live_price, ts, ts);
+    store_pyth_spot(pyth, live_price, ts, ts);
     self.seed_bs_surface(market, bs, live_price, live_price, ts);
 }
 
@@ -313,13 +314,13 @@ public fun set_pyth_price_for_testing(
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
-    pyth.store_tick_for_testing(live_price, source_timestamp_ms, self.clock.timestamp_ms());
+    store_pyth_spot(pyth, live_price, source_timestamp_ms, self.clock.timestamp_ms());
 }
 
 /// Write a Block Scholes surface row for `market`'s expiry through the real ingest
 /// path (`spot`/`forward` give the basis; default SVI), at `source_timestamp_ms`.
 public fun seed_bs_surface(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &ExpiryMarket,
     bs: &mut BlockScholesFeed,
     spot: u64,
@@ -340,7 +341,7 @@ public fun seed_bs_surface(
         test_constants::default_svi_m(),
         false,
     );
-    bs.update_from_bs(bs_update, &self.clock);
+    bs.update_from_bs(bs_update, &self.clock, self.scenario.ctx());
 }
 
 /// Mint one order for `manager` over the tick range `(lower_tick, higher_tick]` and
@@ -364,7 +365,8 @@ public fun mint(
         config,
         pyth,
         bs,
-        range_codec::pack(lower_tick, higher_tick),
+        lower_tick,
+        higher_tick,
         quantity,
         leverage,
         &self.clock,
@@ -571,4 +573,20 @@ public fun finish(self: Fixture) {
     destroy(admin_cap);
     clock.destroy_for_testing();
     scenario.end();
+}
+
+fun store_pyth_spot(
+    pyth: &mut PythFeed,
+    spot: u64,
+    source_timestamp_ms: u64,
+    update_timestamp_ms: u64,
+) {
+    pyth.store_observation_for_testing(
+        spot,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        source_timestamp_ms * 1000,
+        update_timestamp_ms,
+    );
 }

@@ -1,42 +1,27 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Block Scholes volatility-surface oracle: a per-underlying shared object holding
-/// a package-version gate, one shared minute-bucket history (the settlement
-/// substrate), and a per-expiry `Table<u64, Surface>` of spot + forward + SVI.
-/// Each expiry carries its *own* spot, so `basis(expiry) = forward / spot` is exact
-/// (the spot and forward are contemporaneous within one expiry's `Update`).
-///
-/// Unlike `pyth_feed`, this feed has no single global spot (spot is per-expiry), so
-/// it does not embed `FeedCore`; it holds the version gate and minute history
-/// directly and feeds the minute history from every expiry update (first-wins per
-/// minute — all expiries of one underlying carry the same spot at a given instant).
+/// Block Scholes volatility-surface oracle: a per-source-id shared object holding
+/// a package-version gate and a table of per-expiry Propbook oracle lanes. Each
+/// expiry lane behaves the same way as a Pyth feed lane; the BS feed only routes
+/// source-native BS payloads to the lane keyed by `expiry_ms`.
 ///
 /// The verified `Update` is its own provenance proof (today via the
-/// `block_scholes_oracle` stub verifier). Predict-unaware: it owns no settlement,
-/// valuation lock, or expiry-validity policy; callers own which expiries are real
-/// markets.
+/// `block_scholes_oracle` stub verifier). Predict-unaware: it owns no
+/// market-settlement valuation, valuation lock, expiry-validity policy, or
+/// consumer-specific pricing envelope; callers own which expiries are real markets
+/// and whether a stored surface is safe for their math.
 module propbook::block_scholes_feed;
 
 use block_scholes_oracle::update::Update;
-use fixed_math::{i64::{Self, I64}, math};
-use propbook::{
-    block_scholes_feed_events as bs_events,
-    constants,
-    minute_history::{Self, MinuteHistory, DataPoint},
-    registry::{Self, OracleRegistry}
-};
+use fixed_math::i64::{Self, I64};
+use propbook::{constants, oracle_lane::{Self, OracleLane, OracleObservation}};
 use sui::{clock::Clock, table::{Self, Table}};
 
-const EWrongUnderlying: u64 = 0;
+const EWrongSource: u64 = 0;
 const EExpiryNotFound: u64 = 1;
-const EZeroSpot: u64 = 2;
-const EFutureSourceUpdate: u64 = 3;
-const EWrongVersion: u64 = 4;
-const ENotNewerVersion: u64 = 5;
-const EZeroForward: u64 = 6;
-const EInvalidSviRho: u64 = 7;
-const EInvalidSviSigma: u64 = 8;
+const EWrongVersion: u64 = 2;
+const ENotNewerVersion: u64 = 3;
 
 /// SVI smile parameters; `rho` and `m` are signed (`fixed_math::i64`).
 public struct SVIParams has copy, drop, store {
@@ -47,29 +32,25 @@ public struct SVIParams has copy, drop, store {
     sigma: u64,
 }
 
-/// One expiry's spot + forward + SVI row, with the timestamps that wrote it. Spot
-/// is per-expiry (contemporaneous with this row's forward), making `basis` exact.
-public struct Surface has store {
+/// One source-native Block Scholes payload for an expiry. The generic oracle
+/// lane stores Propbook's canonical millisecond timestamps around this payload.
+public struct BlockScholesSourcePayload has copy, drop, store {
+    bs_source_id: u32,
+    expiry_ms: u64,
     /// Underlying spot for this expiry's snapshot, in 1e9 price scaling.
     spot: u64,
     forward: u64,
     svi: SVIParams,
-    /// Publisher snapshot timestamp for this expiry's row, in milliseconds.
-    source_timestamp_ms: u64,
-    /// On-chain landing timestamp.
-    update_timestamp_ms: u64,
 }
 
-/// One Block Scholes feed: a per-underlying shared object holding the version gate,
-/// the shared minute history, and the per-expiry surface table.
+/// One Block Scholes feed: version gate plus one generic oracle lane per expiry.
 public struct BlockScholesFeed has key {
     id: UID,
-    underlying: u32,
+    bs_source_id: u32,
     /// Package version this feed runs at; updates require an exact match and
     /// `migrate` advances it forward-only after a package upgrade.
     version: u64,
-    minutes: MinuteHistory,
-    expiries: Table<u64, Surface>,
+    expiries: Table<u64, OracleLane<BlockScholesSourcePayload>>,
 }
 
 // === Read Functions ===
@@ -79,9 +60,9 @@ public fun id(feed: &BlockScholesFeed): ID {
     feed.id.to_inner()
 }
 
-/// Return the underlying this feed is bound to.
-public fun underlying(feed: &BlockScholesFeed): u32 {
-    feed.underlying
+/// Return the Block Scholes source id this feed is bound to.
+public fun bs_source_id(feed: &BlockScholesFeed): u32 {
+    feed.bs_source_id
 }
 
 /// Return the package version this feed runs at.
@@ -89,52 +70,86 @@ public fun version(feed: &BlockScholesFeed): u64 {
     feed.version
 }
 
-/// Data point recorded for `minute_ms`'s spot bucket. Aborts if the minute was
-/// never recorded; use `has_minute` to check first.
-public fun price_at_minute(feed: &BlockScholesFeed, minute_ms: u64): DataPoint {
-    feed.minutes.price_at_minute(minute_ms)
+/// First-observed update recorded for `minute_ms`'s spot bucket for `expiry`.
+/// Aborts if the expiry or minute was never recorded; use `has_observation` to
+/// check first.
+public fun observation_at_minute(
+    feed: &BlockScholesFeed,
+    expiry: u64,
+    minute_ms: u64,
+): OracleObservation<BlockScholesSourcePayload> {
+    assert!(feed.expiries.contains(expiry), EExpiryNotFound);
+    feed.expiries.borrow(expiry).observation_at_minute(minute_ms)
 }
 
-/// Whether a spot tick was recorded for `minute_ms`'s bucket.
-public fun has_minute(feed: &BlockScholesFeed, minute_ms: u64): bool {
-    feed.minutes.has_minute(minute_ms)
+/// Whether this feed has a first-observed update for `minute_ms`'s bucket for
+/// `expiry`.
+public fun has_observation(feed: &BlockScholesFeed, expiry: u64, minute_ms: u64): bool {
+    feed.expiries.contains(expiry)
+        && feed.expiries.borrow(expiry).has_observation(minute_ms)
 }
 
-/// Whether a surface row exists for `expiry`.
+/// Official settlement observation recorded for exact `resolution_timestamp_ms`
+/// for `expiry`. Aborts if the expiry or official settlement timestamp was never
+/// recorded.
+public fun official_observation_at_resolution(
+    feed: &BlockScholesFeed,
+    expiry: u64,
+    resolution_timestamp_ms: u64,
+): OracleObservation<BlockScholesSourcePayload> {
+    assert!(feed.expiries.contains(expiry), EExpiryNotFound);
+    feed.expiries.borrow(expiry).official_observation_at_resolution(resolution_timestamp_ms)
+}
+
+/// Whether this feed has official settlement data for exact
+/// `resolution_timestamp_ms` for `expiry`.
+public fun has_official_settlement(
+    feed: &BlockScholesFeed,
+    expiry: u64,
+    resolution_timestamp_ms: u64,
+): bool {
+    feed.expiries.contains(expiry)
+        && feed.expiries.borrow(expiry).has_official_settlement(resolution_timestamp_ms)
+}
+
+/// Whether a live observation exists for `expiry`.
 public fun has_expiry(feed: &BlockScholesFeed, expiry: u64): bool {
     feed.expiries.contains(expiry)
+        && feed.expiries.borrow(expiry).has_latest()
+}
+
+/// Return the source-native observation for `expiry`.
+public fun source_observation(
+    feed: &BlockScholesFeed,
+    expiry: u64,
+): OracleObservation<BlockScholesSourcePayload> {
+    assert!(feed.has_expiry(expiry), EExpiryNotFound);
+    feed.expiries.borrow(expiry).latest()
 }
 
 /// The underlying spot for `expiry`, 1e9-scaled. Aborts `EExpiryNotFound` if no row.
 public fun spot(feed: &BlockScholesFeed, expiry: u64): u64 {
-    assert!(feed.expiries.contains(expiry), EExpiryNotFound);
-    feed.expiries.borrow(expiry).spot
+    let observation = feed.source_observation(expiry);
+    observation_spot(&observation)
 }
 
 /// The forward for `expiry`, 1e9-scaled. Aborts `EExpiryNotFound` if no row.
 public fun forward(feed: &BlockScholesFeed, expiry: u64): u64 {
-    assert!(feed.expiries.contains(expiry), EExpiryNotFound);
-    feed.expiries.borrow(expiry).forward
+    let observation = feed.source_observation(expiry);
+    observation_forward(&observation)
 }
 
 /// The SVI params for `expiry`. Aborts `EExpiryNotFound` if no row.
 public fun svi(feed: &BlockScholesFeed, expiry: u64): SVIParams {
-    assert!(feed.expiries.contains(expiry), EExpiryNotFound);
-    feed.expiries.borrow(expiry).svi
-}
-
-/// Basis = forward / spot for `expiry`, 1e9-scaled (exact: both legs are this
-/// expiry's contemporaneous values). Aborts `EExpiryNotFound` if no row.
-public fun basis(feed: &BlockScholesFeed, expiry: u64): u64 {
-    math::div(feed.forward(expiry), feed.spot(expiry))
+    let observation = feed.source_observation(expiry);
+    observation_svi(&observation)
 }
 
 /// Freshness reference for this expiry's surface row: the older of its publisher
 /// and on-chain landing timestamps. Aborts `EExpiryNotFound` if no row.
 public fun surface_freshness_timestamp_ms(feed: &BlockScholesFeed, expiry: u64): u64 {
-    assert!(feed.expiries.contains(expiry), EExpiryNotFound);
-    let surface = feed.expiries.borrow(expiry);
-    surface.source_timestamp_ms.min(surface.update_timestamp_ms)
+    assert!(feed.has_expiry(expiry), EExpiryNotFound);
+    feed.expiries.borrow(expiry).freshness_timestamp_ms()
 }
 
 public fun a(params: &SVIParams): u64 {
@@ -157,82 +172,84 @@ public fun sigma(params: &SVIParams): u64 {
     params.sigma
 }
 
-// === Write Functions ===
-
-/// Create and share a BS feed for `underlying`, recording it in the registry
-/// under the block_scholes kind so each underlying has exactly one shared feed.
-/// Permissionless and safe: identical reasoning to `pyth_feed::create_and_share`.
-public fun create_and_share(
-    registry: &mut OracleRegistry,
-    underlying: u32,
-    ctx: &mut TxContext,
-): ID {
-    let feed = BlockScholesFeed {
-        id: object::new(ctx),
-        underlying,
-        version: constants::current_version!(),
-        minutes: minute_history::new(ctx),
-        expiries: table::new(ctx),
-    };
-    let id = feed.id();
-    // Aborts EFeedAlreadyExists on a duplicate; the tx is atomic, so a dup
-    // reverts the object creation above — no orphaned feed.
-    registry.record(registry::kind_block_scholes!(), underlying, id);
-    transfer::share_object(feed);
-    bs_events::emit_block_scholes_feed_created(underlying, id);
-    id
+public fun observation_bs_source_id(
+    observation: &OracleObservation<BlockScholesSourcePayload>,
+): u32 {
+    observation.payload().bs_source_id
 }
 
-/// Ingest a verified BS snapshot for one expiry: validate the version gate and the
-/// underlying binding, offer the spot to the shared minute history (first-wins per
-/// UTC minute), then write this expiry's surface if the update is newer than the
-/// expiry's current row.
-///
-/// No-op-on-stale (no abort) for the surface: a resend older than this expiry's row
-/// leaves it untouched. The version gate, the underlying binding, a zero spot, or a
-/// future publisher timestamp abort up front. A surface that is fresh enough to be
-/// written must also be math-valid — a zero forward, `|rho| > 1` (the SVI
-/// no-arbitrage bound), or `sigma` outside its validity band abort — so the stored
-/// `Surface` stays well-defined for any consumer's variance/d2 math (a stale resend
-/// of bad data is still a clean no-op, never an abort). The minute bucket is offered
-/// on every valid update regardless of surface staleness, since it is the
-/// spot-at-minute settlement substrate (a lagging expiry can still fill an empty
-/// minute).
-public fun update_from_bs(feed: &mut BlockScholesFeed, update: Update, clock: &Clock) {
+public fun observation_expiry_ms(observation: &OracleObservation<BlockScholesSourcePayload>): u64 {
+    observation.payload().expiry_ms
+}
+
+public fun observation_spot(observation: &OracleObservation<BlockScholesSourcePayload>): u64 {
+    observation.payload().spot
+}
+
+public fun observation_forward(observation: &OracleObservation<BlockScholesSourcePayload>): u64 {
+    observation.payload().forward
+}
+
+public fun observation_svi(observation: &OracleObservation<BlockScholesSourcePayload>): SVIParams {
+    observation.payload().svi
+}
+
+public fun observation_source_timestamp_ms(
+    observation: &OracleObservation<BlockScholesSourcePayload>,
+): u64 {
+    observation.source_timestamp_ms()
+}
+
+public fun observation_update_timestamp_ms(
+    observation: &OracleObservation<BlockScholesSourcePayload>,
+): u64 {
+    observation.update_timestamp_ms()
+}
+
+// === Write Functions ===
+
+/// Ingest a verified BS snapshot for one expiry. The feed validates only source
+/// binding and routes the source-native payload to that expiry's generic oracle
+/// lane; the lane owns freshness, history, and event emission.
+public fun update_from_bs(
+    feed: &mut BlockScholesFeed,
+    update: Update,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
-    assert!(update.underlying() == feed.underlying, EWrongUnderlying);
+    assert!(update.source_id() == feed.bs_source_id, EWrongSource);
 
-    let spot = update.spot();
-    let published = update.published_at_ms();
-    let landed = clock.timestamp_ms();
-    assert!(spot > 0, EZeroSpot);
-    assert!(published <= landed, EFutureSourceUpdate);
+    let observation = new_observation(feed.bs_source_id, &update, clock.timestamp_ms());
+    let expiry = observation_expiry_ms(&observation);
+    feed.add_empty_expiry_if_absent(expiry, ctx);
+    let id = feed.id();
+    feed.expiries.borrow_mut(expiry).record_observation_if_fresh(id, observation);
+}
 
-    feed.minutes.record(minute_history::new_data_point(spot, published, landed));
+/// Record an official settlement observation using a BS update. This does not
+/// mutate the live per-expiry latest observation or first-observed minute data;
+/// official settlement is a separate write-once lane keyed by the update-derived
+/// millisecond source timestamp.
+///
+/// Permissionless by interface: the Update is supposed to be its own provenance
+/// proof. CURRENT STUB WARNING: `block_scholes_oracle::update` does not verify
+/// signatures yet, so permissionless official BS settlement writes are not
+/// production-safe until the real verifier replaces the stub.
+public fun record_official_settlement_from_bs(
+    feed: &mut BlockScholesFeed,
+    update: Update,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    assert!(update.source_id() == feed.bs_source_id, EWrongSource);
 
-    let expiry = update.expiry_ms();
-    let fresh_surface =
-        !feed.expiries.contains(expiry) || published > feed.expiries.borrow(expiry).source_timestamp_ms;
-    if (fresh_surface) {
-        let forward = update.forward();
-        let sigma = update.svi_sigma();
-        assert!(forward > 0, EZeroForward);
-        // |rho| <= 1: the SVI no-arbitrage bound consumers rely on for a convex,
-        // well-defined total-variance smile.
-        assert!(update.svi_rho_magnitude() <= math::float_scaling!(), EInvalidSviRho);
-        assert!(
-            sigma >= constants::svi_sigma_min!() && sigma <= constants::svi_sigma_max!(),
-            EInvalidSviSigma,
-        );
-        let svi = SVIParams {
-            a: update.svi_a(),
-            b: update.svi_b(),
-            rho: i64::from_parts(update.svi_rho_magnitude(), update.svi_rho_is_negative()),
-            m: i64::from_parts(update.svi_m_magnitude(), update.svi_m_is_negative()),
-            sigma,
-        };
-        feed.upsert_surface(expiry, spot, forward, svi, published, landed);
-    };
+    let observation = new_observation(feed.bs_source_id, &update, clock.timestamp_ms());
+    let expiry = observation_expiry_ms(&observation);
+    feed.add_empty_expiry_if_absent(expiry, ctx);
+    let id = feed.id();
+    feed.expiries.borrow_mut(expiry).record_official_settlement(id, observation);
 }
 
 /// Migrate this feed to the running package version. Forward-only:
@@ -244,46 +261,68 @@ public fun migrate(feed: &mut BlockScholesFeed) {
     feed.version = constants::current_version!();
 }
 
+// === Public-Package Functions ===
+
+/// Create and share a BS feed for `bs_source_id`. Package-only: `registry` owns
+/// source-catalog uniqueness and calls this helper after checking duplicates.
+public(package) fun create_and_share(bs_source_id: u32, ctx: &mut TxContext): ID {
+    let feed = BlockScholesFeed {
+        id: object::new(ctx),
+        bs_source_id,
+        version: constants::current_version!(),
+        expiries: table::new(ctx),
+    };
+    let id = feed.id();
+    transfer::share_object(feed);
+    id
+}
+
 // === Private Functions ===
 
-/// Create the surface row for `expiry_ms` if absent, else overwrite it in place,
-/// then emit the surface-updated event. In-place field assignment avoids needing
-/// `drop` on `Surface`.
-fun upsert_surface(
-    feed: &mut BlockScholesFeed,
-    expiry_ms: u64,
-    spot: u64,
-    forward: u64,
-    svi: SVIParams,
-    source_timestamp_ms: u64,
+fun new_observation(
+    bs_source_id: u32,
+    update: &Update,
     update_timestamp_ms: u64,
-) {
-    if (feed.expiries.contains(expiry_ms)) {
-        let surface = feed.expiries.borrow_mut(expiry_ms);
-        surface.spot = spot;
-        surface.forward = forward;
-        surface.svi = svi;
-        surface.source_timestamp_ms = source_timestamp_ms;
-        surface.update_timestamp_ms = update_timestamp_ms;
-    } else {
+): OracleObservation<BlockScholesSourcePayload> {
+    oracle_lane::new_observation(
+        BlockScholesSourcePayload {
+            bs_source_id,
+            expiry_ms: update.expiry_ms(),
+            spot: update.spot(),
+            forward: update.forward(),
+            svi: SVIParams {
+                a: update.svi_a(),
+                b: update.svi_b(),
+                rho: i64::from_parts(update.svi_rho_magnitude(), update.svi_rho_is_negative()),
+                m: i64::from_parts(update.svi_m_magnitude(), update.svi_m_is_negative()),
+                sigma: update.svi_sigma(),
+            },
+        },
+        update.published_at_ms(),
+        update_timestamp_ms,
+    )
+}
+
+fun add_empty_expiry_if_absent(feed: &mut BlockScholesFeed, expiry_ms: u64, ctx: &mut TxContext) {
+    if (!feed.expiries.contains(expiry_ms)) {
         feed
             .expiries
-            .add(
-                expiry_ms,
-                Surface { spot, forward, svi, source_timestamp_ms, update_timestamp_ms },
-            );
+            .add(expiry_ms, oracle_lane::new(empty_payload(feed.bs_source_id, expiry_ms), ctx));
     };
-    bs_events::emit_block_scholes_surface_updated(
-        feed.id(),
+}
+
+fun empty_payload(bs_source_id: u32, expiry_ms: u64): BlockScholesSourcePayload {
+    BlockScholesSourcePayload {
+        bs_source_id,
         expiry_ms,
-        spot,
-        forward,
-        svi.a,
-        svi.b,
-        svi.rho,
-        svi.m,
-        svi.sigma,
-        source_timestamp_ms,
-        update_timestamp_ms,
-    );
+        spot: 0,
+        forward: 0,
+        svi: SVIParams {
+            a: 0,
+            b: 0,
+            rho: i64::from_parts(0, false),
+            m: i64::from_parts(0, false),
+            sigma: 0,
+        },
+    }
 }

@@ -26,6 +26,16 @@ const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesSurfaceStale: u64 = 5;
+const EBlockScholesSurfaceInvalid: u64 = 6;
+const EPythSpotInvalid: u64 = 7;
+
+/// Predict's private pricing envelope for raw propbook surfaces. These are not
+/// oracle-source validity rules; they only bound the SVI inputs tightly enough
+/// that Predict's fixed-point pricing math remains live and meaningful.
+macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
+macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+macro fun min_svi_sigma(): u64 { 1_000_000 }
+macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public-Package Functions ===
 
@@ -60,7 +70,7 @@ public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
 /// Fresh Pyth spot is canonical for spot; forward is then derived from this
 /// expiry's Block Scholes basis. If Pyth is stale, pricing falls back to the
 /// Block Scholes forward. The Block Scholes surface (basis + forward + SVI) must
-/// be fresh either way.
+/// be fresh and inside Predict's pricing-safe envelope either way.
 fun live_inputs(
     config: &PricingConfig,
     pyth: &PythFeed,
@@ -69,14 +79,20 @@ fun live_inputs(
     clock: &Clock,
 ): (u64, SVIParams) {
     assert!(block_scholes_surface_is_fresh(config, bs, expiry, clock), EBlockScholesSurfaceStale);
+    let bs_spot = bs.spot(expiry);
+    let bs_forward = bs.forward(expiry);
+    let svi = bs.svi(expiry);
+    assert_surface_pricing_safe(bs_spot, bs_forward, &svi);
 
     let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
-        math::mul(pyth.spot(), bs.basis(expiry))
+        let spot = pyth.spot();
+        assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
+        math::mul(spot, math::div(bs_forward, bs_spot))
     } else {
-        bs.forward(expiry)
+        bs_forward
     };
 
-    (forward, bs.svi(expiry))
+    (forward, svi)
 }
 
 /// A surface is usable only if a row exists for `expiry` and it is fresh; the
@@ -103,6 +119,24 @@ fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythFeed, clock: &Clock): 
 fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
+}
+
+fun assert_surface_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
+    assert!(spot > 0 && forward > 0, EBlockScholesSurfaceInvalid);
+    assert!(forward <= max_pricing_spot!(), EBlockScholesSurfaceInvalid);
+    assert!(
+        ((forward as u128) * (math::float_scaling!() as u128)) / (spot as u128)
+            <= (max_pricing_basis!() as u128),
+        EBlockScholesSurfaceInvalid,
+    );
+    assert!(svi.a() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.b() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(
+        svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
+        EBlockScholesSurfaceInvalid,
+    );
 }
 
 /// Compute the fair price for the range `(lower, higher]`.

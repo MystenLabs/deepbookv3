@@ -6,13 +6,17 @@
 /// validation. Pure primitives, no dependencies; the real verifier will validate
 /// signatures before producing an `Update`. One `Update` carries one expiry's
 /// snapshot; a multi-expiry push is several Updates.
+///
+/// WARNING: while this package is a stub, `Update` values are forgeable. Any
+/// downstream permissionless flow that treats an `Update` as verified source
+/// data is not production-safe until the real verifier lands.
 module block_scholes_oracle::update;
 
-/// A verified BS snapshot for one underlying at one expiry. SVI `rho`/`m` are
+/// A verified BS snapshot for one source id at one expiry. SVI `rho`/`m` are
 /// signed, carried as magnitude + sign primitives so this package stays
 /// dependency-free.
 public struct Update has copy, drop {
-    underlying: u32,
+    source_id: u32,
     expiry_ms: u64,
     /// Publisher snapshot timestamp, in milliseconds.
     published_at_ms: u64,
@@ -30,7 +34,7 @@ public struct Update has copy, drop {
 
 // STUB: the production verifier validates BS signatures; this does not.
 public fun new_update(
-    underlying: u32,
+    source_id: u32,
     expiry_ms: u64,
     published_at_ms: u64,
     spot: u64,
@@ -44,7 +48,7 @@ public fun new_update(
     svi_m_is_negative: bool,
 ): Update {
     Update {
-        underlying,
+        source_id,
         expiry_ms,
         published_at_ms,
         spot,
@@ -61,8 +65,8 @@ public fun new_update(
 
 // === Getters ===
 
-public fun underlying(update: &Update): u32 {
-    update.underlying
+public fun source_id(update: &Update): u32 {
+    update.source_id
 }
 
 public fun expiry_ms(update: &Update): u64 {

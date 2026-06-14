@@ -9,7 +9,7 @@
 /// through the production `registry::create_expiry_market` path. This reaches the
 /// pricing/freshness guards more cheaply than the full `flow_test_helpers` market:
 /// no manager setup or expiry-cash seeding. The Pyth spot is seeded through the one
-/// irreducible `store_tick_for_testing` seam (a real `pyth_lazer::Update` has no
+/// irreducible `store_observation_for_testing` seam (a real `pyth_lazer::Update` has no
 /// Move constructor); the BS surface through the stub verifier's public
 /// `update::new_update`. `ProtocolConfig`/`Registry`/`OracleRegistry` are taken
 /// per-transaction (never held), mirroring `flow_test_helpers`.
@@ -26,12 +26,14 @@ use deepbook_predict::{
     test_constants
 };
 use propbook::{
-    block_scholes_feed::{Self, BlockScholesFeed},
-    pyth_feed::{Self, PythFeed},
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
 use std::unit_test::destroy;
 use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
+
+const PYTH_EXPONENT_NEG_9: u16 = 9;
 
 /// Scenario-local fixture objects. `Registry`/`ProtocolConfig`/`OracleRegistry` are
 /// real shared objects taken per-transaction, not held here.
@@ -59,15 +61,15 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
-    registry::register_pyth_feed(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
+    registry::register_pyth_source(&mut registry, &admin_cap, test_constants::pyth_feed_id(), tick);
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth_id = pyth_feed::create_and_share(
+    let pyth_id = propbook_registry::create_and_share_pyth_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
-    let bs_id = block_scholes_feed::create_and_share(
+    let bs_id = propbook_registry::create_and_share_block_scholes_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
         scenario.ctx(),
@@ -136,7 +138,7 @@ public fun return_oracle(pyth: PythFeed, bs: BlockScholesFeed, config: ProtocolC
 /// the fixture's default live source timestamp. `live_price` is used as both spot
 /// and forward (basis = 1.0).
 public fun prepare_live_oracle(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     pyth: &mut PythFeed,
     live_price: u64,
@@ -160,7 +162,7 @@ public fun prepare_live_oracle(
 /// SVI) for exact-pricing tests over real on-chain scenarios. On the fresh-Pyth
 /// path pricing derives the live forward as `mul(spot, forward/spot)`.
 public fun prepare_real_oracle(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     pyth: &mut PythFeed,
     spot: u64,
@@ -174,7 +176,7 @@ public fun prepare_real_oracle(
     svi_m_is_negative: bool,
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
-    pyth.store_tick_for_testing(spot, live_ts, live_ts);
+    store_pyth_spot(pyth, spot, live_ts, live_ts);
     let bs_update = update::new_update(
         test_constants::pyth_feed_id(),
         self.expiry,
@@ -189,7 +191,7 @@ public fun prepare_real_oracle(
         svi_m_magnitude,
         svi_m_is_negative,
     );
-    bs.update_from_bs(bs_update, &self.clock);
+    bs.update_from_bs(bs_update, &self.clock, self.scenario.ctx());
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
@@ -200,7 +202,7 @@ public fun set_pyth(
     price: u64,
     source_timestamp_ms: u64,
 ) {
-    pyth.store_tick_for_testing(price, source_timestamp_ms, self.clock.timestamp_ms());
+    store_pyth_spot(pyth, price, source_timestamp_ms, self.clock.timestamp_ms());
 }
 
 // === Accessors ===
@@ -240,4 +242,20 @@ public fun finish(self: OracleFixture) {
     destroy(admin_cap);
     clock.destroy_for_testing();
     scenario.end();
+}
+
+fun store_pyth_spot(
+    pyth: &mut PythFeed,
+    spot: u64,
+    source_timestamp_ms: u64,
+    update_timestamp_ms: u64,
+) {
+    pyth.store_observation_for_testing(
+        spot,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        source_timestamp_ms * 1000,
+        update_timestamp_ms,
+    );
 }

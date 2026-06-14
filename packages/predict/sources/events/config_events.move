@@ -74,11 +74,11 @@ public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
     pool_vault_id: ID,
     /// propbook Pyth spot feed and Block Scholes surface feed bound to this market,
-    /// plus the Lazer feed id, so propbook feed-update history (keyed by these) can
-    /// be fanned into the market.
-    pyth_feed_id: ID,
-    bs_feed_id: ID,
-    pyth_lazer_feed_id: u32,
+    /// plus the Pyth source id, so propbook feed-update history (keyed by
+    /// these) can be fanned into the market.
+    propbook_pyth_id: ID,
+    propbook_block_scholes_id: ID,
+    pyth_source_id: u32,
     expiry: u64,
     /// Raw-price-per-tick factor; indexers/SDKs derive raw strikes as `tick * tick_size`.
     tick_size: u64,
@@ -184,18 +184,18 @@ public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: 
 public(package) fun emit_market_created(
     expiry_market_id: ID,
     pool_vault_id: ID,
-    pyth_feed_id: ID,
-    bs_feed_id: ID,
-    pyth_lazer_feed_id: u32,
+    propbook_pyth_id: ID,
+    propbook_block_scholes_id: ID,
+    pyth_source_id: u32,
     expiry: u64,
     tick_size: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
         pool_vault_id,
-        pyth_feed_id,
-        bs_feed_id,
-        pyth_lazer_feed_id,
+        propbook_pyth_id,
+        propbook_block_scholes_id,
+        pyth_source_id,
         expiry,
         tick_size,
     });

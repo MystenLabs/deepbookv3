@@ -8,37 +8,37 @@ use deepbook_predict::{config_constants, constants, registry, test_constants, te
 use std::unit_test::destroy;
 use sui::test_scenario::{Self as test, return_shared};
 
-const PYTH_FEED_BTC: u32 = 100;
-const PYTH_FEED_ETH: u32 = 200;
+const PYTH_SOURCE_BTC: u32 = 100;
+const PYTH_SOURCE_ETH: u32 = 200;
 const BTC_TICK_SIZE: u64 = 1_000_000_000; // $1.00 in 1e9 price scaling
 const WIDER_BTC_TICK_SIZE: u64 = 10_000_000_000; // $10.00 in 1e9 price scaling
 const ETH_TICK_SIZE: u64 = 100_000_000; // $0.10 in 1e9 price scaling
 const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
 
-// === register_pyth_feed ===
+// === register_pyth_source ===
 
 #[test]
-fun register_pyth_feed_records_tick_size() {
+fun register_pyth_source_records_tick_size() {
     let (scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
-    let tick_size = registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
+    let tick_size = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC);
     assert!(tick_size.is_some());
     assert!(*tick_size.borrow() == BTC_TICK_SIZE);
-    assert!(registry::pyth_feed_tick_size(&reg, PYTH_FEED_ETH).is_none());
+    assert!(registry::pyth_source_tick_size(&reg, PYTH_SOURCE_ETH).is_none());
 
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
 
 #[test]
-fun register_pyth_feed_distinct_feeds_store_distinct_tick_sizes() {
+fun register_pyth_source_distinct_sources_store_distinct_tick_sizes() {
     let (scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_ETH, ETH_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_ETH, ETH_TICK_SIZE);
 
-    let btc_tick = registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC);
-    let eth_tick = registry::pyth_feed_tick_size(&reg, PYTH_FEED_ETH);
+    let btc_tick = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC);
+    let eth_tick = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_ETH);
     assert!(*btc_tick.borrow() == BTC_TICK_SIZE);
     assert!(*eth_tick.borrow() == ETH_TICK_SIZE);
     assert!(*btc_tick.borrow() != *eth_tick.borrow());
@@ -46,65 +46,70 @@ fun register_pyth_feed_distinct_feeds_store_distinct_tick_sizes() {
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
 
-#[test, expected_failure(abort_code = registry::EPythFeedAlreadyRegistered)]
-fun register_pyth_feed_duplicate_aborts() {
+#[test, expected_failure(abort_code = registry::EPythSourceAlreadyRegistered)]
+fun register_pyth_source_duplicate_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
     abort 999
 }
 
 #[test, expected_failure(abort_code = registry::EPackageVersionDisabled)]
-fun register_pyth_feed_with_current_version_disabled_aborts() {
+fun register_pyth_source_with_current_version_disabled_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
     let current = constants::current_version!();
     let next = current + 1;
     registry::enable_version(&mut reg, &admin_cap, next);
     registry::disable_version(&mut reg, &admin_cap, current);
 
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidOracleTickSize)]
-fun register_pyth_feed_unaligned_tick_size_aborts() {
+fun register_pyth_source_unaligned_tick_size_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, INVALID_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, INVALID_TICK_SIZE);
     abort 999
 }
 
 #[test]
-fun pyth_feed_tick_size_returns_none_for_unmapped_feed() {
+fun pyth_source_tick_size_returns_none_for_unmapped_source() {
     let (scenario, reg, admin_cap) = test_helpers::begin_registry_test();
 
-    assert!(registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC).is_none());
+    assert!(registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC).is_none());
 
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
 
-// === pyth feed tick size admin setter ===
+// === pyth source tick size admin setter ===
 
 #[test]
-fun set_pyth_feed_tick_size_updates_registered_feed() {
+fun set_pyth_source_tick_size_updates_registered_source() {
     let (scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::register_pyth_feed(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
-    registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, WIDER_BTC_TICK_SIZE);
+    registry::register_pyth_source(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
+    registry::set_pyth_source_tick_size(
+        &mut reg,
+        &admin_cap,
+        PYTH_SOURCE_BTC,
+        WIDER_BTC_TICK_SIZE,
+    );
 
-    let tick_size = registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC);
+    let tick_size = registry::pyth_source_tick_size(&reg, PYTH_SOURCE_BTC);
     assert!(tick_size.is_some());
     assert!(*tick_size.borrow() == WIDER_BTC_TICK_SIZE);
 
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
 
-#[test, expected_failure(abort_code = registry::EPythFeedNotRegistered)]
-fun set_pyth_feed_tick_size_unknown_feed_aborts() {
+#[test, expected_failure(abort_code = registry::EPythSourceNotRegistered)]
+fun set_pyth_source_tick_size_unknown_source_aborts() {
     let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
 
-    registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
+    registry::set_pyth_source_tick_size(&mut reg, &admin_cap, PYTH_SOURCE_BTC, BTC_TICK_SIZE);
     abort 999
 }
 

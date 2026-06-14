@@ -30,15 +30,15 @@ use deepbook_predict::{
     test_helpers
 };
 use propbook::{
-    block_scholes_feed::{Self, BlockScholesFeed},
-    pyth_feed::{Self, PythFeed},
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
 use sui::{clock, test_scenario::return_shared};
 
-/// A Pyth Lazer feed id the registry never approves; a `PythFeed` created for it
+/// A Pyth source id the registry never approves; a `PythFeed` created for it
 /// is therefore not bound to any registered tick-size config.
-const UNREGISTERED_PYTH_FEED_ID: u32 = 777;
+const UNREGISTERED_PYTH_SOURCE_ID: u32 = 777;
 
 // === create_expiry_market ===
 
@@ -67,7 +67,7 @@ fun create_expiry_market_with_unregistered_pyth_feed_aborts() {
     propbook_registry::init_for_testing(scenario.ctx());
     // Approve the canonical feed so the registry is non-empty; the market is then
     // built against a different, unapproved feed object.
-    registry::register_pyth_feed(
+    registry::register_pyth_source(
         &mut reg,
         &admin_cap,
         test_constants::pyth_feed_id(),
@@ -78,14 +78,14 @@ fun create_expiry_market_with_unregistered_pyth_feed_aborts() {
 
     scenario.next_tx(test_constants::admin());
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let rogue_pyth_id = pyth_feed::create_and_share(
+    let rogue_pyth_id = propbook_registry::create_and_share_pyth_feed(
         &mut oracle_registry,
-        UNREGISTERED_PYTH_FEED_ID,
+        UNREGISTERED_PYTH_SOURCE_ID,
         scenario.ctx(),
     );
-    let bs_id = block_scholes_feed::create_and_share(
+    let bs_id = propbook_registry::create_and_share_block_scholes_feed(
         &mut oracle_registry,
-        UNREGISTERED_PYTH_FEED_ID,
+        UNREGISTERED_PYTH_SOURCE_ID,
         scenario.ctx(),
     );
     return_shared(oracle_registry);

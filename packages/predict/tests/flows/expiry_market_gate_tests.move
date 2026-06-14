@@ -18,15 +18,15 @@ use deepbook_predict::{
     test_constants
 };
 use propbook::{
-    block_scholes_feed::{Self, BlockScholesFeed},
-    pyth_feed::{Self, PythFeed},
-    registry::OracleRegistry
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
+    registry::{Self as propbook_registry, OracleRegistry}
 };
 use std::unit_test::destroy;
 
-// A propbook feed id / underlying distinct from `test_constants::pyth_feed_id()` (= 1),
-// for the unrelated second feed that the wrong-feed binding tests pass.
-const SECOND_FEED_ID: u32 = 2;
+// A source id distinct from `test_constants::pyth_feed_id()` (= 1), for the
+// unrelated second feed that the wrong-feed binding tests pass.
+const SECOND_SOURCE_ID: u32 = 2;
 
 /// Mint after the market has expired (clock == expiry) must be rejected:
 /// `run_liquidation_pass` inside `mint_internal` calls `assert_active`, and the
@@ -103,9 +103,9 @@ fun redeem_with_wrong_pyth_feed_aborts() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_pyth_id = pyth_feed::create_and_share(
+    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
         &mut oracle_registry,
-        SECOND_FEED_ID,
+        SECOND_SOURCE_ID,
         fx.scenario_mut().ctx(),
     );
     sui::test_scenario::return_shared(oracle_registry);
@@ -143,9 +143,9 @@ fun mint_with_wrong_block_scholes_feed_aborts() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_bs_id = block_scholes_feed::create_and_share(
+    let wrong_bs_id = propbook_registry::create_and_share_block_scholes_feed(
         &mut oracle_registry,
-        SECOND_FEED_ID,
+        SECOND_SOURCE_ID,
         fx.scenario_mut().ctx(),
     );
     sui::test_scenario::return_shared(oracle_registry);

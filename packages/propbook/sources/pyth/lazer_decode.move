@@ -1,10 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pure Pyth Lazer payload decoding for `pyth_feed`: pull a feed's spot out of a
-/// verified `Update` and normalize the `(price, exponent)` pair to 1e9 scaling.
-/// Side-effect-free — no object state, just decode and fixed-point math — so the
-/// feed module can keep validation and storage as its single chokepoint.
+/// Pure Pyth Lazer payload decoding for `pyth_feed`: pull one feed's source-native
+/// `(price, exponent)` fields out of a verified `Update`, and provide a derived
+/// 1e9-normalization helper for Propbook reads.
 module propbook::lazer_decode;
 
 use fixed_math::math;
@@ -18,20 +17,42 @@ const ELazerNegativePrice: u64 = 2;
 
 // === Public-Package Functions ===
 
-/// Decode `feed_id`'s spot out of a verified Lazer `Update`. Returns
-/// `(spot_1e9, lazer_published_at_us)`. Aborts if the feed is missing, the
-/// price/exponent is unavailable, or the price is negative.
-public(package) fun extract_spot(update: &LazerUpdate, feed_id: u32): (u64, u64) {
+/// Decode `pyth_source_id`'s source-native price fields out of a verified
+/// Lazer `Update`. Returns `(price_magnitude, price_is_negative,
+/// exponent_magnitude, exponent_is_negative, lazer_published_at_us)`. Aborts if
+/// the feed is missing or the price/exponent is unavailable.
+public(package) fun extract_source_price(
+    update: &LazerUpdate,
+    pyth_source_id: u32,
+): (u64, bool, u16, bool, u64) {
     let lazer_published_at_us = update.timestamp();
     let feeds = update.feeds_ref();
-    let idx_opt = feeds.find_index!(|f| f.feed_id() == feed_id);
+    let idx_opt = feeds.find_index!(|f| f.feed_id() == pyth_source_id);
     assert_lazer_feed_found(idx_opt.is_some());
     let feed = &feeds[idx_opt.destroy_some()];
 
     let price = extract_lazer_price(feed.price());
     let exponent = extract_lazer_exponent(feed.exponent());
+    let price_is_negative = price.get_is_negative();
+    let price_magnitude = if (price_is_negative) {
+        price.get_magnitude_if_negative()
+    } else {
+        price.get_magnitude_if_positive()
+    };
+    let exponent_is_negative = exponent.get_is_negative();
+    let exponent_magnitude = if (exponent_is_negative) {
+        exponent.get_magnitude_if_negative()
+    } else {
+        exponent.get_magnitude_if_positive()
+    };
 
-    (normalize_pyth_price(price, exponent), lazer_published_at_us)
+    (
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        lazer_published_at_us,
+    )
 }
 
 /// Ceil-rounding collapses sub-millisecond publisher timestamps onto the same
@@ -61,31 +82,28 @@ public(package) fun extract_lazer_exponent(exp_outer: Option<LazerI16>): LazerI1
     *exp_outer.borrow()
 }
 
-/// Convert a Pyth Lazer `(price, exponent)` pair to a 1e9-scaled u64:
-/// `price_1e9 = magnitude * 10^(exponent + 9)`. Aborts on a negative price
-/// (crypto spot is always positive). Shift bounds are enforced inside
-/// `math::pow10` (real feeds use exponents in [-12, -4]).
-public(package) fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
-    assert!(!price.get_is_negative(), ELazerNegativePrice);
-    let magnitude = price.get_magnitude_if_positive();
-
-    let exp_is_neg = exponent.get_is_negative();
-    let exp_mag = if (exp_is_neg) {
-        exponent.get_magnitude_if_negative() as u64
-    } else {
-        exponent.get_magnitude_if_positive() as u64
-    };
+/// Derived 1e9 normalization from source-native fields stored by `PythFeed`.
+/// Aborts on negative prices; Propbook stores source facts, and consumers decide
+/// whether the derived value is usable.
+public(package) fun normalize_pyth_price_parts(
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+): u64 {
+    assert!(!price_is_negative, ELazerNegativePrice);
 
     let target = constants::float_scaling_decimals!();
+    let exp_mag = exponent_magnitude as u64;
 
-    if (exp_is_neg) {
+    if (exponent_is_negative) {
         if (exp_mag <= target) {
-            scale_up(magnitude, target - exp_mag)
+            scale_up(price_magnitude, target - exp_mag)
         } else {
-            magnitude / math::pow10(exp_mag - target)
+            price_magnitude / math::pow10(exp_mag - target)
         }
     } else {
-        scale_up(magnitude, target + exp_mag)
+        scale_up(price_magnitude, target + exp_mag)
     }
 }
 
