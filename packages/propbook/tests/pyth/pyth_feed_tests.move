@@ -273,7 +273,64 @@ fun normalized_spot_returns_none_for_non_positive_or_unsafe_shapes() {
 }
 
 #[test]
-fun insert_at_records_exact_read_without_latest_and_ceil_rounds_source_us() {
+fun update_ceil_rounds_non_exact_source_us_without_exact_insert() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_NON_EXACT_US,
+        UPDATE_1_MS,
+    );
+
+    assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_NON_EXACT_MS, UPDATE_1_MS);
+    assert!(feed.normalized_spot_at(SOURCE_TS_NON_EXACT_MS - 1).is_none());
+    assert!(feed.normalized_spot_at(SOURCE_TS_NON_EXACT_MS).is_none());
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun insert_at_records_exact_read_without_latest() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    insert_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+
+    assert!(feed.normalized_spot().is_none());
+    assert!(feed.normalized_spot_at(SOURCE_TS_2_MS).is_none());
+
+    let raw_read = feed.raw_spot_at(SOURCE_TS_1_MS);
+    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
+    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    let raw = raw_read.read_value();
+    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), SOURCE_TS_1_US);
+    assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
+
+    let normalized = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
+    assert_eq!(normalized.read_source_timestamp_ms(), SOURCE_TS_1_MS);
+    assert_eq!(normalized.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(normalized.read_value(), SPOT_65K);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EInsertTimestampNotExactMillisecond)]
+fun insert_at_non_exact_source_us_aborts() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
@@ -287,23 +344,7 @@ fun insert_at_records_exact_read_without_latest_and_ceil_rounds_source_us() {
         UPDATE_1_MS,
     );
 
-    assert!(feed.normalized_spot().is_none());
-    assert!(feed.normalized_spot_at(SOURCE_TS_NON_EXACT_MS - 1).is_none());
-
-    let raw_read = feed.raw_spot_at(SOURCE_TS_NON_EXACT_MS);
-    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_NON_EXACT_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
-    let raw = raw_read.read_value();
-    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), SOURCE_TS_NON_EXACT_US);
-    assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
-
-    let normalized = feed.normalized_spot_at(SOURCE_TS_NON_EXACT_MS).destroy_some();
-    assert_eq!(normalized.read_source_timestamp_ms(), SOURCE_TS_NON_EXACT_MS);
-    assert_eq!(normalized.read_update_timestamp_ms(), UPDATE_1_MS);
-    assert_eq!(normalized.read_value(), SPOT_65K);
-
-    return_shared(feed);
-    scenario.end();
+    abort 999
 }
 
 #[test]

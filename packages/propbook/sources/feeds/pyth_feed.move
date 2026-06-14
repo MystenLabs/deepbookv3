@@ -22,6 +22,7 @@ const ENotNewerVersion: u64 = 1;
 const ERawSpotNotFound: u64 = 2;
 const ELazerFeedNotFound: u64 = 3;
 const ELazerPriceUnavailable: u64 = 4;
+const EInsertTimestampNotExactMillisecond: u64 = 5;
 
 /// Source-native Pyth Lazer spot fields for this feed. The generic oracle lane
 /// stores Propbook's canonical millisecond timestamps around this payload;
@@ -125,11 +126,11 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     feed.lane.update(id, read);
 }
 
-/// Insert an exact Pyth Lazer spot observation keyed by the update-derived
-/// millisecond source timestamp. This does not mutate `latest`.
+/// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
+/// source timestamp. This does not mutate `latest`.
 public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
-    let read = feed.new_read(&update, clock.timestamp_ms());
+    let read = feed.new_insert_read(&update, clock.timestamp_ms());
     let id = feed.id();
     feed.lane.insert_at(id, read);
 }
@@ -161,6 +162,15 @@ public(package) fun create_and_share(pyth_source_id: u32, ctx: &mut TxContext): 
 fun new_read(feed: &PythFeed, update: &LazerUpdate, update_timestamp_ms: u64): OracleRead<RawSpot> {
     let raw = raw_spot_from_update(update, feed.pyth_source_id);
     new_raw_read(raw, update_timestamp_ms)
+}
+
+fun new_insert_read(
+    feed: &PythFeed,
+    update: &LazerUpdate,
+    update_timestamp_ms: u64,
+): OracleRead<RawSpot> {
+    let raw = raw_spot_from_update(update, feed.pyth_source_id);
+    new_raw_insert_read(raw, update_timestamp_ms)
 }
 
 fun raw_spot_from_update(update: &LazerUpdate, pyth_source_id: u32): RawSpot {
@@ -216,6 +226,15 @@ fun new_raw_spot(
 fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
     let source_timestamp_us = raw.source_timestamp_us;
     oracle_lane::new_read(us_to_ms_ceil(source_timestamp_us), update_timestamp_ms, raw)
+}
+
+fun new_raw_insert_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
+    let source_timestamp_us = raw.source_timestamp_us;
+    assert!(
+        source_timestamp_us % 1000 == 0,
+        EInsertTimestampNotExactMillisecond,
+    );
+    oracle_lane::new_read(source_timestamp_us / 1000, update_timestamp_ms, raw)
 }
 
 fun assert_lazer_feed_found(feed_found: bool) {
@@ -321,7 +340,11 @@ public fun record_raw_for_testing(
         exponent_is_negative,
         source_timestamp_us,
     );
-    let read = new_raw_read(raw, update_timestamp_ms);
+    let read = if (insert_at) {
+        new_raw_insert_read(raw, update_timestamp_ms)
+    } else {
+        new_raw_read(raw, update_timestamp_ms)
+    };
     let id = feed.id();
     if (insert_at) {
         feed.lane.insert_at(id, read);
