@@ -9,8 +9,8 @@
 /// the exactly-once completeness proof fires on a missed / double-valued market,
 /// the valuation lock blocks NAV-changing ops between start and finish, and the
 /// `lp_pool_value` pricing primitive excludes the protocol profit share and floors
-/// at zero. The settled-market sweep legs are deferred to settlement-v2 (settlement
-/// is stubbed: `is_settled()` is always false), so no market is ever deactivated here.
+/// at zero. Passive settled-market sweep coverage lives in
+/// `settlement_flow_tests`.
 #[test_only]
 module deepbook_predict::pool_valuation_flow_tests;
 
@@ -246,11 +246,13 @@ fun rebalance_during_valuation_aborts() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
 
     config.begin_valuation();
-    vault.rebalance_expiry_cash(&mut market, &config);
+    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
 
     abort 999
 }
@@ -402,7 +404,7 @@ fun fund_empty_market(fx: &mut helpers::Fixture, e: ID) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-    vault.rebalance_expiry_cash(&mut market, &config);
+    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
 }
 
@@ -411,7 +413,7 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, manager: &mut PredictManag
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-    vault.rebalance_expiry_cash(&mut market, &config);
+    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
     fx.mint(
         &config,
         &oracle_registry,

@@ -210,13 +210,10 @@ public fun start_pool_valuation_as_deployer(
 /// market is rebalanced to target and valued on its current cash. The flush uses
 /// the lock-free inner, so it does not self-abort under the valuation lock.
 ///
-/// FLUSH-LIVENESS PRECONDITION (settlement-v2): the live branch calls
-/// `current_nav`, which asserts the market is pre-expiry. With settlement stubbed
-/// (`is_settled()` always false), a past-expiry market is never swept off the
-/// active set, so once any active market crosses its expiry `value_expiry` aborts
-/// `ELivePricingExpired` and bricks the whole flush. Until settlement-v2 lands, the
-/// operator MUST settle / avoid letting an active market cross its expiry. See
-/// `expiry_market::current_nav` for why no solvency-safe substitute mark exists.
+/// Before branching, this passively records terminal settlement from Propbook's
+/// exact Pyth timestamp if available. If no exact spot exists for a past-expiry
+/// market, the live branch still aborts through `current_nav`; there is no
+/// solvency-safe substitute mark for an unsettled expired market.
 public fun value_expiry(
     valuation: &mut PoolValuation,
     vault: &mut PoolVault,
@@ -230,8 +227,8 @@ public fun value_expiry(
     config.assert_valuation_in_progress();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    vault.rebalance_expiry_cash_inner(market, config);
-    let nav = if (market.is_settled()) {
+    let settled = vault.rebalance_expiry_cash_inner(market, config, propbook_registry, pyth, clock);
+    let nav = if (settled) {
         0
     } else {
         market.current_nav(config, propbook_registry, pyth, bs, clock)
@@ -352,9 +349,12 @@ public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
 ) {
     config.assert_not_valuation_in_progress();
-    vault.rebalance_expiry_cash_inner(market, config);
+    vault.rebalance_expiry_cash_inner(market, config, propbook_registry, pyth, clock);
 }
 
 /// Queue a supply request: escrow `payment` DUSDC and record the requesting manager
@@ -484,15 +484,18 @@ public(package) fun rebalance_expiry_cash_inner(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-) {
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+): bool {
     vault.assert_version_allowed();
     market.assert_version_allowed();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
 
-    if (market.is_settled()) {
+    if (market.ensure_settled(propbook_registry, pyth, clock)) {
         vault.unregister_settled_expiry(market, config);
-        return
+        return true
     };
 
     let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
@@ -522,6 +525,7 @@ public(package) fun rebalance_expiry_cash_inner(
             target_cash,
         );
     };
+    false
 }
 
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
@@ -617,14 +621,14 @@ fun unregister_settled_expiry(
 ) {
     let expiry_market_id = market.id();
     let deactivated = vault.expiry_accounting.deactivate_expiry_if_present(expiry_market_id);
-    let returned_cash = market.release_settled_pool_cash();
+    let (returned_cash, settlement_price) = market.release_settled_pool_cash();
     let returned_cash_amount = vault
         .expiry_accounting
         .receive_expiry_cash(expiry_market_id, returned_cash);
     vault.materialize_expiry_profit(config, expiry_market_id);
 
     if (deactivated || returned_cash_amount > 0) {
-        vault.emit_expiry_cash_received(market, returned_cash_amount);
+        vault.emit_expiry_cash_received(market, returned_cash_amount, settlement_price);
     };
 }
 
@@ -656,7 +660,12 @@ fun materialize_expiry_profit(
     );
 }
 
-fun emit_expiry_cash_received(vault: &PoolVault, market: &ExpiryMarket, amount: u64) {
+fun emit_expiry_cash_received(
+    vault: &PoolVault,
+    market: &ExpiryMarket,
+    amount: u64,
+    settlement_price: u64,
+) {
     let expiry_market_id = market.id();
     let (sent_to_expiry_after, received_from_expiry_after) = vault
         .expiry_accounting
@@ -664,7 +673,7 @@ fun emit_expiry_cash_received(vault: &PoolVault, market: &ExpiryMarket, amount: 
     vault_events::emit_expiry_cash_received(
         vault.id(),
         expiry_market_id,
-        market.settlement_price(),
+        settlement_price,
         amount,
         vault.expiry_accounting.idle_balance(),
         sent_to_expiry_after,

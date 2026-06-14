@@ -3,9 +3,8 @@
 
 /// One-flow-many-assertions lifecycle test for the 1x (un-leveraged) live happy
 /// path: one order is walked fund -> mint with a full state-sheet
-/// (`check_manager`) re-asserted after each action. The settled-redeem leg is
-/// deferred to settlement-v2 (settlement is stubbed: `is_settled()` is always
-/// false, `settlement_price()` aborts), so this covers only the live mint here.
+/// (`check_manager`) re-asserted after each action. Terminal settlement coverage
+/// lives in `settlement_flow_tests`.
 #[test_only]
 module deepbook_predict::lifecycle_tests;
 
@@ -32,10 +31,8 @@ fun one_x_lifecycle_fund_mint() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
-    // --- The fixture seeded expiry cash while pool funding is absent; the market
-    // is live and not settled (settlement deferred to settlement-v2).
+    // --- The fixture seeded expiry cash while pool funding is absent.
     assert_eq!(market.cash_balance(), test_constants::default_seeded_expiry_cash());
-    assert!(!market.is_settled());
 
     // Pre-trade state sheet: only the deposit has moved.
     let mut expected = helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0);

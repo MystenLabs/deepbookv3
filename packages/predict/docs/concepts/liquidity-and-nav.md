@@ -115,11 +115,11 @@ Subtracting `correction_value` is the leveraged contracts' floor offset, applied
 
 > This replaces the old approximate NAV entirely. There is no longer a verified/unscanned bucket split, no aggregate uncertainty band, and no uncertainty-band withdrawal fee — those belonged to the approximate-NAV world and are gone. NAV is now the exact per-order walk, and supply/withdraw share one exact mark.
 
-### The flush-liveness precondition (settlement-v2)
+### Past-expiry settlement liveness
 
-`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Because settlement is stubbed (`is_settled()` is always false, so the settled sweep that would drop an expired market from the active set never runs), a past-expiry market stays in the active set forever, and `value_expiry → current_nav → pricing::load_live_pricer` then bricks `finish_flush` pool-wide.
+`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Before `value_expiry` chooses the live branch, it passively calls `ensure_settled`: if Propbook has an exact normalized Pyth spot at the expiry timestamp, the market records settlement, is swept off the active set, and contributes `0` to that flush's active NAV.
 
-This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the (settlement-dependent, here undefined) true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals. Until settlement-v2 restores the sweep, the operator must **not let an active market cross its expiry across a flush** — create only far-dated markets and (under v2) settle before expiry. See [pricing and oracles](./pricing-and-oracles.md) for the settlement stub.
+If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
 
 ## Pool ↔ expiry cash flow
 
@@ -134,7 +134,7 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle DUSDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
-- **Settled sweep:** a settled expiry is deactivated, its free cash returned, and its terminal profit materialized (deferred to settlement-v2; see [Profit materialization](#profit-materialization-at-settlement)).
+- **Settled sweep:** a settled expiry is deactivated, its free cash returned, and its terminal profit materialized (see [Profit materialization](#profit-materialization-at-settlement)).
 
 Funding room is bounded by a **per-expiry funding cap** (`expiry_max_funding`). The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
 
@@ -156,7 +156,7 @@ For a live market, `payout_liability` is a **settlement floor plus a liquidity b
 payout_liability = max_live_backing + backing_buffer_lambda × (Σ live_backing − max_live_backing)
 ```
 
-The floor is `max_live_backing` — the maximum summed payout at any *single* settlement price (the payout tree's O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum live payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A `backing_buffer_lambda` of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. After settlement (v2), `payout_liability` becomes the exact terminal payout at the settlement price, which is always at or below the floor.
+The floor is `max_live_backing` — the maximum summed payout at any *single* settlement price (the payout tree's O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum live payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A `backing_buffer_lambda` of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. After settlement, `payout_liability` becomes the exact terminal payout at the settlement price, which is always at or below the floor.
 
 - **Receiving cash** joins the funds without re-checking backing (receiving cash can only improve it).
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
@@ -165,8 +165,6 @@ The floor is `max_live_backing` — the maximum summed payout at any *single* se
 The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and its owed rebates. No flow lets cash drop below this line.
 
 ## Profit materialization at settlement
-
-> Settlement is deferred to settlement-v2 (stubbed). The materialization path below stays in the code and runs only when a market actually settles, which does not happen under the current build.
 
 Profit is recognized only when it is **cash-backed and irreversible** — when an expiry settles and cash actually flows back to the pool — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the pending-profit exclusion until terminal materialization.
 

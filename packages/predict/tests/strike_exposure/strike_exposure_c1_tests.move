@@ -13,15 +13,11 @@
 /// when the gap was 1, stranding the payout. The fix removes the order's full
 /// terms and reinserts the survivor's exact terms, so `R == P` by construction.
 ///
-/// TODO(settlement-v2): re-derive — settlement is stubbed (`is_settled()` returns false,
-/// `settlement_price()` aborts), so the original settled-redeem drain assertions
-/// (settle ITM, marginal settled redeem pays the exact hand-derived payout, reserve
-/// drains to exactly 0) test deleted behavior and were removed. They must be
-/// restored at settlement-v2 with re-derived expected payouts. What remains here is
-/// the settlement-INDEPENDENT root-cause proof (the +1 floor-share sub-additivity
-/// gap is real for these mint params) plus the live partial-close survivor
-/// reinsertion staying solvent — both reachable today. The exact live-close cash /
-/// payout numbers live in `flows/backing_buffer_flow_tests.move`.
+/// The settlement-independent root-cause proof is the +1 floor-share
+/// sub-additivity gap for these mint params, plus the live partial-close survivor
+/// reinsertion staying solvent. Passive terminal settlement coverage lives in
+/// `flows/settlement_flow_tests.move`; exact live-close cash / payout numbers live
+/// in `flows/backing_buffer_flow_tests.move`.
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
@@ -123,10 +119,6 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
         helpers::assert_market_backed(&market);
         i = i + 1;
     };
-
-    // The settled-redeem drain (the original C1 payoff) is unreachable while
-    // settlement is stubbed; pin that the settled branch is currently off.
-    assert!(!market.is_settled());
 
     cleanup(fx, pyth, bs, oracle_registry, vault, market, config, manager);
 }

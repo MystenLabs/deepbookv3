@@ -34,7 +34,7 @@ const EPackageVersionDisabled: u64 = 3;
 const EMintPaused: u64 = 4;
 const EFullCloseRequired: u64 = 5;
 const EProofRequiredForLiveRedeem: u64 = 6;
-const ENotImplemented: u64 = 7;
+const EWrongPythFeed: u64 = 7;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -42,6 +42,8 @@ public struct ExpiryMarket has key {
     /// Propbook underlying this market was created for.
     propbook_underlying_id: u32,
     expiry: u64,
+    /// Terminal settlement price once exact Propbook expiry data has been recorded.
+    settlement_price: Option<u64>,
     /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
     cash: ExpiryCash,
     /// Exposure lifecycle state for this expiry's strike ticks.
@@ -136,17 +138,12 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 /// market's current Propbook registry mapping, rejects a past-expiry market, and
 /// gates surface freshness.
 ///
-/// FLUSH-LIVENESS PRECONDITION (settlement-v2): `pricing::load_live_pricer`
-/// makes pre-expiry liveness a hard precondition for the pool flush. A
-/// past-expiry market that has not settled aborts here, and because settlement is
-/// stubbed (`is_settled()` is always false, so the settled-sweep that would drop
-/// it from the active set is dead), `value_expiry` -> `current_nav` then bricks
-/// `finish_flush` pool-wide. There is no solvency-safe NAV for an unsettled
-/// past-expiry market: the flush uses one mark for both supply and withdraw, so
-/// the mark must equal the (settlement-dependent, here undefined) true value.
-/// Until settlement-v2 restores the sweep, the operator MUST NOT let an active
-/// market cross its expiry across a flush — create only far-dated markets and
-/// settle before expiry.
+/// A past-expiry market that has not settled aborts here. There is no solvency-safe
+/// NAV for an unsettled past-expiry market: the flush uses one mark for both supply
+/// and withdraw, so the mark must equal the settlement-dependent true value. Flows
+/// that branch on settlement call `ensure_settled` first, using Propbook's exact
+/// Pyth timestamp at expiry; if no exact spot exists yet, the live-pricing liveness
+/// abort remains the correct failure mode.
 public fun current_nav(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -335,26 +332,38 @@ public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, pau
 
 // === Public-Package Functions ===
 
-/// Whether terminal settlement has been recorded. Settlement is deferred to
-/// settlement-v2 (off Propbook exact timestamp history), so this is always false today;
-/// the settled-redeem and settled-sweep paths stay in place, gated on it.
-public(package) fun is_settled(_market: &ExpiryMarket): bool {
-    false
-}
-
-/// The terminal settlement price. Aborts `ENotImplemented` until settlement-v2 —
-/// only reachable through `is_settled`-gated paths, which are unreachable under the
-/// stub, so this abort never fires in practice.
-public(package) fun settlement_price(_market: &ExpiryMarket): u64 {
-    abort ENotImplemented
-}
-
 /// Abort if the running package version is not allowed for this market.
 public(package) fun assert_version_allowed(market: &ExpiryMarket) {
     assert!(
         market.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
+}
+
+/// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
+/// at this market's expiry timestamp. Returns whether the market is settled after
+/// the attempt. This is the canonical passive settlement gate used immediately
+/// before settlement-dependent branching.
+public(package) fun ensure_settled(
+    market: &mut ExpiryMarket,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+): bool {
+    market.assert_version_allowed();
+    if (market.is_settled()) return true;
+    if (clock.timestamp_ms() < market.expiry) return false;
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(market.propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
+    );
+
+    let read = pyth.normalized_spot_at(market.expiry);
+    if (read.is_none()) return false;
+    market.settlement_price = option::some(read.destroy_some().read_value());
+    true
 }
 
 /// Overwrite this market's mirrored `allowed_versions`. The only authorized
@@ -394,14 +403,17 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Materialize this expiry's settled payout liability and release every unit of
 /// cash above it back to the pool. Used by the settled-market sweep, which then
 /// deactivates the expiry and materializes its profit.
-public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
+/// Returns the released cash and the terminal settlement price used for event
+/// emission by the pool.
+public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
     market.assert_version_allowed();
+    let settlement_price = market.settlement_price();
     let settled_liability = market.materialize_settled_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
-    market.release_pool_cash(returned_cash_amount)
+    (market.release_pool_cash(returned_cash_amount), settlement_price)
 }
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
@@ -434,6 +446,7 @@ public(package) fun create_and_share(
         id,
         propbook_underlying_id,
         expiry,
+        settlement_price: option::none(),
         cash: expiry_cash::new(cash_config),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
@@ -458,6 +471,14 @@ public(package) fun create_and_share(
 }
 
 // === Private Functions ===
+
+fun is_settled(market: &ExpiryMarket): bool {
+    market.settlement_price.is_some()
+}
+
+fun settlement_price(market: &ExpiryMarket): u64 {
+    market.settlement_price.destroy_some()
+}
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
 fun materialize_settled_liability(market: &mut ExpiryMarket): u64 {
@@ -535,7 +556,7 @@ fun redeem_internal(
     if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
         return (redeemed_order.id(), option::none());
 
-    if (market.is_settled()) {
+    if (market.ensure_settled(propbook_registry, pyth, clock)) {
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
         market.redeem_settled_internal(manager, &redeemed_order, ctx);
         (redeemed_order.id(), option::none())

@@ -6,8 +6,8 @@
 /// These tests use production mint/redeem flows and hand-derived reserve values:
 /// disjoint one-lot books have M = 1e9, Σ = 2e9, gap = 1e9, so the default
 /// reserve is 1.25e9; overlapping books have gap = 0, so reserve = M = Σ. The
-/// settled-redeem legs are deferred to settlement-v2 (settlement is stubbed:
-/// `is_settled()` is always false), so only the live reserve boundary is exercised.
+/// settled-redeem legs are covered in `settlement_flow_tests`, so this file keeps
+/// the live reserve boundary focused.
 #[test_only]
 module deepbook_predict::backing_buffer_flow_tests;
 

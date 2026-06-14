@@ -59,8 +59,7 @@ fun mint_after_expiry_aborts() {
 }
 
 /// A permissionless `redeem_settled` against a still-LIVE order must abort: closing
-/// live risk requires a proof. (Settlement is stubbed — `is_settled()` is always
-/// false — so every order is on the live branch.)
+/// live risk requires a proof.
 #[test, expected_failure(abort_code = expiry_market::EProofRequiredForLiveRedeem)]
 fun redeem_settled_on_live_order_aborts() {
     let (mut fx, expiry_id, mut manager) = helpers::setup_everything();

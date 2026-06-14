@@ -8,10 +8,8 @@
 /// half, that the survivor carries zero floor (a 1x order), and that custody
 /// conserves across the market-cash / manager sheets with S1 backing intact.
 ///
-/// The settled-redeem boundary legs (payout at / below / above each half-open
-/// boundary, reserve drain to zero) are deferred to settlement-v2: settlement is
-/// stubbed (`is_settled()` is always false, `settlement_price()` aborts), so there
-/// is no settle helper and the settled branch is unreachable.
+/// The settled-redeem boundary legs are covered by the passive settlement flow
+/// tests; this file keeps the live cancel-and-replace solvency boundary focused.
 #[test_only]
 module deepbook_predict::settled_solvency_boundary_tests;
 
@@ -63,8 +61,6 @@ fun finite_range_partial_close_preserves_live_solvency() {
         expiry_id,
         helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
     );
-    assert!(!market.is_settled());
-
     // --- Mint one 1x order on the finite range (min_strike, min_strike + tick],
     // exactly at the money. Principal + fee land in expiry cash; live backing
     // for a zero-floor 1x order is its full quantity.

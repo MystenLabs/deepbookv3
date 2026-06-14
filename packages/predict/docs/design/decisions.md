@@ -250,22 +250,19 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
 
-## Settlement deferred to settlement-v2 (recent)
+## Passive exact-timestamp settlement (recent)
 
-- **Settlement is stubbed until settlement-v2.** `is_settled()` returns `false` and
-  `settlement_price()` aborts `ENotImplemented`; the settled-redeem and settled-sweep
-  paths stay in the code, gated on `is_settled()`, unreachable under the stub.
-	  *Rationale:* the old settlement engine read a rolling sample buffer the extraction
-	  deleted; settlement-v2 will read the terminal price from Propbook exact timestamp
-	  history. This makes the current source a non-landable
-  pre-deploy intermediate; settlement-v2 is a hard pre-deploy prerequisite.
-- **Accepted consequence: a deferred flush-liveness precondition.** Because no market
-  ever settles, a market that crosses its expiry is never swept off the active set,
-  and `value_expiry → current_nav → pricing::load_live_pricer` then aborts, bricking the flush
-  pool-wide. Until settlement-v2, the operator must not let an active market cross its
-  expiry across a flush (create only far-dated markets). *Rationale:* there is no
-  solvency-safe NAV for a past-expiry-but-unsettled market — the single flush mark
-  needs a true value that is settlement-dependent and here undefined, and substituting
-  contribute-0 dilutes incumbents on supply while free-cash over-pays withdrawals.
-  Documented as a known deferred precondition, not a bug; settlement-v2 restores the
-  sweep. *Rejected:* an approximate substitute mark for the unsettled market.
+- **Settlement is passive, not a public operator action.** Normal flows that branch
+  on settlement call `expiry_market::ensure_settled` first. It validates the supplied
+  Pyth feed against Propbook's canonical binding for the market's underlying and
+  records `pyth.normalized_spot_at(expiry)` when present. *Rationale:* terminal
+  settlement should use Propbook exact timestamp history, and users/keepers should
+  continue through ordinary redeem or pool-maintenance flows rather than calling a
+  separate settle-only API. *Rejected:* a public `settle_if_possible` entrypoint.
+- **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
+  missing after expiry, the market remains unsettled and live valuation aborts.
+  *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —
+  the single flush mark needs a true value that is settlement-dependent and undefined
+  until the exact timestamp spot exists. Substituting contribute-0 dilutes incumbents
+  on supply while free-cash over-pays withdrawals. *Rejected:* an approximate
+  substitute mark for the unsettled market.

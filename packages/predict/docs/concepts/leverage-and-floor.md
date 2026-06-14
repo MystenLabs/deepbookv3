@@ -181,7 +181,7 @@ Predict stores only the atomic values each index needs. The active contracts of 
 
 - **NAV linear term.** `walk_linear` walks the whole tree, prices each distinct boundary tick once through the resolved pricer, and returns `Σ_orders quantity × P(strike)` — the **exact** range-probability value of every open contract. There is no piecewise-linear curve or sampling band; the tree's per-boundary quantity prefixes make one walk cost work proportional to the number of distinct boundaries, not the number of orders.
 - **Live cash backing.** `live_backing_payout` = `quantity − floor_at(opened_at)` is a conservative upper bound on an order's future live payout, and `max_live_backing_payout` gives an instant O(1) cash-backing requirement (the maximum summed payout at any single settlement price) without scanning the tree or reading a clock. It deliberately does **not** reuse the terminal floor: before expiry the live floor is lower than the terminal floor, so terminal payout would *understate* live backing. Using the open-index floor (the smallest floor the order ever has) makes the backing term at least as large as any future live payout for that order.
-- **Settled liability.** `terminal_payout` = `quantity − terminal_floor` is the exact settled liability; once the settlement price is known (settlement-v2), the tree sums the terminal-payout prefix that the price activates.
+- **Settled liability.** `terminal_payout` = `quantity − terminal_floor` is the exact settled liability; once the settlement price is passively recorded, the tree sums the terminal-payout prefix that the price activates.
 
 ### Liquidation book (NAV floor correction, liquidation priority)
 

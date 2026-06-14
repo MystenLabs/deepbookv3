@@ -5,9 +5,8 @@
 /// rebate_reserve) triple after EVERY cash-mutating LIVE operation of a two-sided
 /// 1x book on the far expiry — mint, mint, partial live redeem. Pins that mint
 /// net_premium AND fee land in expiry cash, and that disjoint live liability is
-/// the max settlement floor plus the default gap buffer. The settle + settled
-/// redeem legs are deferred to settlement-v2 (settlement is stubbed:
-/// `is_settled()` is always false), so they are not exercised here.
+/// the max settlement floor plus the default gap buffer. Terminal settlement
+/// coverage lives in `settlement_flow_tests`.
 #[test_only]
 module deepbook_predict::cash_backing_flow_tests;
 

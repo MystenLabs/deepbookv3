@@ -79,7 +79,7 @@ Trading is always mediated by a `PredictManager` plus a `PredictTradeProof`: min
 
 ## Position lifecycle
 
-A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement-driven closure is deferred to settlement-v2 (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
+A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement is recorded passively by normal settled-branch flows (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +87,7 @@ stateDiagram-v2
   Live --> Live: partial live redeem<br/>cancel + replace (LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
   Live --> Liquidated: liquidate (OrderLiquidated)
-  Live --> Settled: market settles (settlement-v2)
+  Live --> Settled: exact expiry spot recorded
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
   Liquidated --> [*]: clear liquidated (LiquidatedOrderRedeemed)
 ```
@@ -107,11 +107,11 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement is **deferred to settlement-v2 and stubbed today**: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. No market ever reaches the SETTLED state under the current build, so the settled-redeem and settled-sweep paths below — though present in the code, gated on `is_settled()` — are unreachable until v2. When settlement-v2 lands it will record the terminal price from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). Live pricing rejects a market whose expiry has already passed.
+Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). There is no public settle-only entrypoint. `redeem`, `redeem_settled`, pool rebalance, and pool valuation passively try to settle immediately before choosing settled vs live behavior. If the exact expiry spot is missing, the market remains unsettled and live pricing rejects the past-expiry market.
 
-### Settled redeem (deferred)
+### Settled redeem
 
-After settlement (v2), a position is closed for its terminal payout. `redeem_settled` is permissionless — any keeper can sweep settled positions — and requires a full close. Payout is `quantity − floor(floor_shares × terminal_floor_index)` (rounded down), credited to the order's manager and zero when the settlement price lies outside `(lower, higher]`. It emits **`SettledOrderRedeemed`** with the settlement price and payout. Closing live (unsettled) risk through this path aborts, since that requires a proof.
+After settlement, a position is closed for its terminal payout. `redeem_settled` is permissionless — any keeper can sweep settled positions — and requires a full close. Payout is `quantity − floor(floor_shares × terminal_floor_index)` (rounded down), credited to the order's manager and zero when the settlement price lies outside `(lower, higher]`. It emits **`SettledOrderRedeemed`** with the settlement price and payout. Closing live (unsettled) risk through this path aborts, since that requires a proof.
 
 ### Liquidation
 

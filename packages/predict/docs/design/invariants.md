@@ -92,10 +92,10 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Settlement
 
-> Settlement is stubbed pending settlement-v2 (`is_settled()` is always `false`,
-> `settlement_price()` aborts `ENotImplemented`); these are the invariants the
-> settled-redeem and settled-sweep paths hold once v2 re-enables them.
-
+- **Passive exact settlement.** Normal flows that branch on settlement call
+  `expiry_market::ensure_settled` first. It records the exact normalized Pyth spot
+  at the market's expiry timestamp from Propbook if present; otherwise the market
+  remains unsettled. There is no public settle-only entrypoint.
 - A settled order pays `quantity − terminal_floor` if the settlement price is in
   `(lower, higher]`, else 0 (`close_settled_order`), with `terminal_floor =
   floor_shares × terminal_floor_index`.
@@ -167,8 +167,8 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Lifecycle
 
-- Two orthogonal axes — market status (active → past-expiry; settled is deferred to
-  settlement-v2) and pool registration (registered → deactivated) — plus three
+- Two orthogonal axes — market status (active → past-expiry → settled) and pool
+  registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
 - Trading pause blocks new risk creation; exits, settled-market cleanup, and
@@ -178,11 +178,11 @@ and contributors. For *how* each mechanism works, follow the links into
   there is no expiry-only path that can strand capital. (The standalone compaction
   step was deleted with the dense NAV matrix; the payout tree is full-lifecycle, so
   the sweep alone suffices.)
-- **Flush-liveness precondition (deferred).** With settlement stubbed, a market that
-  crosses its expiry is never swept off the active set, so `value_expiry →
-  current_nav → pricing::load_live_pricer` aborts and bricks the flush pool-wide. Until
-  settlement-v2 restores the sweep, the operator must not let an active market cross
-  its expiry across a flush. This is a known deferred precondition, not a bug.
+- **Past-expiry exact-data liveness.** A market that crosses its expiry but lacks
+  an exact Propbook Pyth spot cannot be live-valued: `value_expiry` tries passive
+  settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
+  market remains unsettled. This preserves the single exact mark for PLP supply and
+  withdraw; no approximate substitute mark is allowed.
 
 ## Configuration
 

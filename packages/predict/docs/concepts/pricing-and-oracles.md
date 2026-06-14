@@ -46,7 +46,7 @@ A whole surface row (spot, forward, and SVI together) is written by one `update`
 
 The feed validates source identity and records the source-native payload. It does not impose Predict's full pricing-safe envelope at ingest; Predict applies its own read-time checks before using the row for pricing.
 
-The feed also exposes `insert_at` for exact timestamp history. Predict does not read exact inserts today; they are the terminal-price substrate that settlement-v2 will sample (see [Settlement is deferred](#settlement-is-deferred)).
+The feed also exposes `insert_at` for exact timestamp history. Predict reads that history for terminal settlement through `normalized_spot_at(expiry)` (see [Settlement](#settlement)).
 
 ## From SVI to a range probability
 
@@ -127,10 +127,10 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 **Min/max ask price bounds.** A raw probability near `0` or `1` must not translate into a degenerate tradeable price. These bounds live in `StrikeExposureConfig` (snapshotted per expiry from a global template), not in the pricing config: pricing produces the probability, and the mint-admission flow enforces the tradeable-price envelope. At mint, the order's all-in execution price (entry probability plus its fee) must lie within `[min_ask_price, max_ask_price]`. See [configuration](../design/configuration.md) for the bound values.
 
-## Settlement is deferred
+## Settlement
 
-Settlement is **stubbed** and deferred to settlement-v2. A market never settles today: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. The settled-redeem and settled-sweep paths remain in the code, gated on `is_settled()`, but are unreachable under the stub and kept for v2.
+Terminal settlement uses Propbook's exact Pyth timestamp history, not a Predict-side sampling buffer. The market stores no settlement sample itself before expiry; when a normal flow reaches a settlement-dependent branch, `expiry_market::ensure_settled` validates the supplied Pyth feed against Propbook's current canonical binding for the market's underlying and reads `pyth.normalized_spot_at(expiry)`.
 
-When settlement-v2 lands, it will read the terminal price from Propbook exact timestamp inserts rather than from a Predict-side sampling buffer. Until then, the operator must not let an active market cross its expiry across a pool flush, because an unsettled past-expiry market can no longer be valued; this flush-liveness precondition is documented in [liquidity and NAV](./liquidity-and-nav.md).
+If that exact normalized spot exists, the market records it and the settled-redeem / settled-sweep paths continue. If it does not, the market remains unsettled; a past-expiry live valuation aborts rather than substituting an approximate mark. That liveness boundary is documented in [liquidity and NAV](./liquidity-and-nav.md).
 
 For the trust assumptions behind each feed and the privileged flush operator, see [risks](../risks.md).

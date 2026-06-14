@@ -144,7 +144,7 @@ rebate_amount    = eligible_rebate * benefit_ratio(active_stake)
 
 The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Resolution conceptually happens once **all** of a manager's positions in the expiry are closed.
 
-Because resolution is off-chain, the reserved DUSDC is not paid out on-chain. When an expiry settles (deferred to settlement-v2; see [./liquidity-and-nav.md](./liquidity-and-nav.md)), its cash above `payout_liability + rebate_reserve` is swept back to the pool, and the still-reserved rebate cash returns to the pool as terminal profit — split between the protocol reserve and LP idle by the protocol profit share. Distribution of the off-chain-resolved rebates to losing traders is handled separately, outside the contract.
+Because resolution is off-chain, the reserved DUSDC is not paid out on-chain. When an expiry settles (see [./liquidity-and-nav.md](./liquidity-and-nav.md)), its cash above `payout_liability + rebate_reserve` is swept back to the pool, and the still-reserved rebate cash returns to the pool as terminal profit — split between the protocol reserve and LP idle by the protocol profit share. Distribution of the off-chain-resolved rebates to losing traders is handled separately, outside the contract.
 
 ## How the components combine
 
@@ -176,7 +176,7 @@ Cash routing at trade time:
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No | No |
 | Trading-loss rebate | funded from trading fees | reserved on-chain; resolved/paid off-chain | (drawn from reserve) | No |
 
-At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem** (deferred to settlement-v2), the winning payout is paid in full with no per-trade fee; the trading-loss rebate is resolved off-chain rather than claimed on-chain.
+At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is resolved off-chain rather than claimed on-chain.
 
 ## Related reading
 

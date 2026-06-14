@@ -22,9 +22,9 @@ Because the tick domain is absolute and fixed in advance, **market creation read
 
 Live prices come from two standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global source-native spot payload per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload and exposed through a normalized spot read. A `BlockScholesFeed` holds, per source id and expiry, a **surface** of `{spot, forward, SVI volatility, timestamps}` written by a trusted off-chain operator. Predict builds a forward and differences each range's probability off the SVI surface: when the normalized Pyth spot is fresh and usable it uses `forward = spot × basis(expiry)`; when the Pyth spot is absent, unusable, or stale it falls back to the surface's own forward. Either way the **surface must be fresh** — a stale surface is the one hard pricing abort. Propbook stores source facts; Predict validates the pricing-safe envelope at read time.
 
-### Settlement is deferred to settlement-v2
+### Settlement is passive
 
-Terminal settlement is **not yet implemented**. A market never reports itself settled today; the settled-redeem and settled-sweep code paths are present but unreachable, kept for the v2 work that will read the terminal price from Propbook exact timestamp history. Until then markets run live-only, and the operator is responsible for not letting an active market cross its expiry (see [risks](./risks.md)).
+Terminal settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history. There is no standalone public settle entrypoint: normal flows that branch on settlement — settled redeem and pool cash rebalance / flush valuation — first try to record settlement passively. If the exact expiry spot is not present yet, the market remains unsettled and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
 
 The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability plus its trading-loss rebate reserve.
 
@@ -45,7 +45,7 @@ Capabilities are owned objects: `AdminCap` (global policy, also starts the pool 
 
 ## Market and position lifecycle
 
-An admin registers a Propbook underlying, and a lifecycle-cap holder creates one `ExpiryMarket` per underlying and expiry. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and either knock-out (liquidation) or — once settlement-v2 ships — terminal settlement. Each transition emits one order-domain event.
+An admin registers a Propbook underlying, and a lifecycle-cap holder creates one `ExpiryMarket` per underlying and expiry. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and either knock-out (liquidation) or terminal settlement. Each transition emits one order-domain event.
 
 ```mermaid
 stateDiagram-v2
@@ -55,15 +55,15 @@ stateDiagram-v2
   Live --> [*]: full live redeem (LiveOrderRedeemed)
   Live --> Liquidated: leveraged order falls to/below floor (OrderLiquidated)
   Liquidated --> [*]: holder/keeper clears tombstone (LiquidatedOrderRedeemed, zero payout)
-  Live --> Settled: settlement-v2 (deferred — no market settles today)
+  Live --> Settled: passive settlement records exact expiry spot
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 
 - **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and leverage floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the tick pair `(lower_tick, higher_tick)`. Leveraged mints must satisfy price-tiered leverage caps, sit above the liquidation threshold at entry, and keep their terminal floor below `quantity × liquidation_ltv`.
 - **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability, net of the floor on the closed slice. A partial close is handled as cancel-and-replace: the full order is removed from the live indexes and the survivor re-inserted with the same open time and a proportional remainder of the floor.
 - **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero rebate that touches no manager and leaves a tombstone the holder later clears for zero payout.
-- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − terminal_floor` and zero otherwise — and are **deferred to settlement-v2**: no market settles today, so these paths are present but unreachable.
-- **Compaction** destroys a settled market's dense indexes and returns free LP cash to the pool; it too becomes reachable only once settlement-v2 lets a market settle.
+- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − terminal_floor` and zero otherwise. Settlement is passive: the first normal flow that needs a settled branch records the exact Propbook Pyth spot at expiry if it is available.
+- **Settled sweep** deactivates a settled market from the pool's active set, returns free LP cash to idle, and materializes terminal profit.
 
 ## Liquidity is asynchronous
 
@@ -98,4 +98,4 @@ These properties are designed in and hold by construction; their boundaries are 
 
 **Risks:**
 
-- [Risks and limitations](./risks.md) — the privileged-flush trust assumption, the settlement-v2 deferral, propbook feed trust, LP risk, rounding, bounded-liquidation keeper dependence, and pre-deployment maturity caveats.
+- [Risks and limitations](./risks.md) — the privileged-flush trust assumption, exact timestamp settlement liveness, propbook feed trust, LP risk, rounding, bounded-liquidation keeper dependence, and pre-deployment maturity caveats.

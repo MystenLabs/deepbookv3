@@ -15,8 +15,9 @@
 /// feeds — a `PythFeed` (global spot) and a `BlockScholesFeed` (per-expiry
 /// surface). The Pyth spot is seeded through `pyth_feed::record_raw_for_testing`
 /// because a real `pyth_lazer::Update` has no public Move constructor; the BS
-/// surface uses the stub verifier's public `update::new_update`. Settlement is
-/// deferred to settlement-v2, so there is no settle helper here.
+/// surface uses the stub verifier's public `update::new_update`. Exact settlement
+/// spots are inserted through the same Pyth testing seam; production settlement is
+/// passive inside the normal redeem and pool-rebalance flows.
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
@@ -421,8 +422,8 @@ public fun redeem(
     (closed_id, replacement_id)
 }
 
-/// Permissionless redeem (no proof): clears an already-liquidated order. (Settled
-/// redeem returns with settlement-v2; under the stub the settled branch is dead.)
+/// Permissionless redeem (no proof): clears an already-liquidated order or a
+/// passively settled order.
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -487,6 +488,17 @@ public fun value_expiry(
     bs: &BlockScholesFeed,
 ) {
     valuation.value_expiry(vault, market, config, oracle_registry, pyth, bs, &self.clock);
+}
+
+public fun rebalance_expiry_cash(
+    self: &Fixture,
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+) {
+    vault.rebalance_expiry_cash(market, config, oracle_registry, pyth, &self.clock);
 }
 
 public fun current_nav(
@@ -619,6 +631,24 @@ public fun clock(self: &Fixture): &Clock { &self.clock }
 
 public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
     self.clock.set_for_testing(timestamp_ms);
+}
+
+public fun insert_exact_settlement_spot(
+    self: &Fixture,
+    pyth: &mut PythFeed,
+    expiry_ms: u64,
+    spot: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        pyth,
+        spot,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        expiry_ms * 1000,
+        self.clock.timestamp_ms(),
+        true,
+    );
 }
 
 public fun vault_id(self: &Fixture): ID { self.vault_id }
