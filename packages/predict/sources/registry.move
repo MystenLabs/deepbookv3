@@ -16,7 +16,7 @@ use deepbook_predict::{
     config_constants,
     constants,
     expiry_market::{Self, ExpiryMarket},
-    market_lifecycle_cap::{Self, MarketLifecycleCap},
+    market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
     predict_deposit_cap::PredictDepositCap,
@@ -201,6 +201,17 @@ public fun revoke_lifecycle_cap(
     registry.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
 }
 
+/// Generate a transaction-local proof that `lifecycle_cap` is currently
+/// allowlisted. Consumers take the proof by value so a revoked lifecycle cap
+/// cannot authorize cross-module lifecycle actions.
+public fun generate_lifecycle_proof(
+    registry: &Registry,
+    lifecycle_cap: &MarketLifecycleCap,
+): MarketLifecycleProof {
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
+    lifecycle_cap.new_proof()
+}
+
 // === Emergency Pause (PauseCap) ===
 
 /// Disable a package version via a valid `PauseCap`. One-way: admin must
@@ -381,7 +392,7 @@ fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
 }
 
 /// Abort unless the supplied `MarketLifecycleCap` was minted by admin and not
-/// revoked. Called by `create_expiry_market`.
+/// revoked.
 fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
 }

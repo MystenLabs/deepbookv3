@@ -31,7 +31,8 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp::{Self, PoolVault, PLP},
     predict_manager::PredictManager,
-    protocol_config::ProtocolConfig,
+    protocol_config::{Self, ProtocolConfig},
+    registry::Registry,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -47,9 +48,10 @@ fun request_supply_below_min_aborts() {
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);
     fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let payment = coin::mint_for_testing<DUSDC>(min_supply!() - 1, fx.scenario_mut().ctx());
-    vault.request_supply(&manager, payment);
+    vault.request_supply(&manager, &config, payment);
     abort 999
 }
 
@@ -58,9 +60,10 @@ fun request_withdraw_below_min_aborts() {
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);
     fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let lp = coin::mint_for_testing<PLP>(min_withdraw!() - 1, fx.scenario_mut().ctx());
-    vault.request_withdraw(&manager, lp);
+    vault.request_withdraw(&manager, &config, lp);
     abort 999
 }
 
@@ -73,8 +76,9 @@ fun cancel_supply_refunds_dusdc_into_manager() {
     let index = enqueue_supply(&mut fx, &manager, min_supply!());
 
     fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    vault.cancel_supply_request(&mut manager, index, fx.scenario_mut().ctx());
+    vault.cancel_supply_request(&mut manager, &config, index, fx.scenario_mut().ctx());
 
     // Escrow returned straight to the manager's internal DUSDC custody; the queue is
     // empty again and holds no escrow.
@@ -82,6 +86,7 @@ fun cancel_supply_refunds_dusdc_into_manager() {
     assert_eq!(vault.supply_requests_pending(), 0);
     assert_eq!(vault.supply_queue().escrow_value(), 0);
 
+    return_shared(config);
     return_shared(vault);
     destroy(manager);
     fx.finish();
@@ -94,13 +99,15 @@ fun cancel_withdraw_refunds_plp_into_manager() {
     let index = enqueue_withdraw(&mut fx, &manager, min_withdraw!());
 
     fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    vault.cancel_withdraw_request(&mut manager, index, fx.scenario_mut().ctx());
+    vault.cancel_withdraw_request(&mut manager, &config, index, fx.scenario_mut().ctx());
 
     assert_eq!(manager.internal_balance<PLP>(), min_withdraw!());
     assert_eq!(vault.withdraw_requests_pending(), 0);
     assert_eq!(vault.withdraw_queue().escrow_value(), 0);
 
+    return_shared(config);
     return_shared(vault);
     destroy(manager);
     fx.finish();
@@ -116,8 +123,75 @@ fun cancel_with_non_recipient_manager_aborts() {
 
     // ...so Bob's manager (a different recipient) cannot cancel it.
     fx.scenario_mut().next_tx(BOB);
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    vault.cancel_supply_request(&mut manager_b, index, fx.scenario_mut().ctx());
+    vault.cancel_supply_request(&mut manager_b, &config, index, fx.scenario_mut().ctx());
+    abort 999
+}
+
+// === Valuation lock ===
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun request_supply_during_valuation_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let manager = fx.create_funded_manager(0);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), fx.scenario_mut().ctx());
+
+    config.begin_valuation();
+    vault.request_supply(&manager, &config, payment);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun request_withdraw_during_valuation_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let manager = fx.create_funded_manager(0);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let lp = coin::mint_for_testing<PLP>(min_withdraw!(), fx.scenario_mut().ctx());
+
+    config.begin_valuation();
+    vault.request_withdraw(&manager, &config, lp);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun cancel_supply_during_valuation_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let mut manager = fx.create_funded_manager(0);
+    let index = enqueue_supply(&mut fx, &manager, min_supply!());
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+
+    config.begin_valuation();
+    vault.cancel_supply_request(&mut manager, &config, index, fx.scenario_mut().ctx());
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun cancel_withdraw_during_valuation_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let mut manager = fx.create_funded_manager(0);
+    let index = enqueue_withdraw(&mut fx, &manager, min_withdraw!());
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+
+    config.begin_valuation();
+    vault.cancel_withdraw_request(&mut manager, &config, index, fx.scenario_mut().ctx());
+
     abort 999
 }
 
@@ -299,13 +373,15 @@ fun flush_caps_at_max_requests_and_carries_rest() {
     // 101 bootstrap supplies (empty pool, total_supply 0 -> all mint 1:1).
     let total = 101u64;
     fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut i = 0;
     while (i < total) {
         let coin = coin::mint_for_testing<DUSDC>(min_supply!(), fx.scenario_mut().ctx());
-        vault.request_supply(&manager, coin);
+        vault.request_supply(&manager, &config, coin);
         i = i + 1;
     };
+    return_shared(config);
     return_shared(vault);
 
     flush(&mut fx);
@@ -400,8 +476,10 @@ fun seed_idle(fx: &mut helpers::Fixture, amount: u64) {
 fun enqueue_supply(fx: &mut helpers::Fixture, manager: &PredictManager, amount: u64): u64 {
     fx.scenario_mut().next_tx(manager.owner());
     let coin = coin::mint_for_testing<DUSDC>(amount, fx.scenario_mut().ctx());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let index = vault.request_supply(manager, coin);
+    let index = vault.request_supply(manager, &config, coin);
+    return_shared(config);
     return_shared(vault);
     index
 }
@@ -412,8 +490,10 @@ fun enqueue_supply(fx: &mut helpers::Fixture, manager: &PredictManager, amount: 
 fun enqueue_withdraw(fx: &mut helpers::Fixture, manager: &PredictManager, amount: u64): u64 {
     fx.scenario_mut().next_tx(manager.owner());
     let lp = coin::mint_for_testing<PLP>(amount, fx.scenario_mut().ctx());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let index = vault.request_withdraw(manager, lp);
+    let index = vault.request_withdraw(manager, &config, lp);
+    return_shared(config);
     return_shared(vault);
     index
 }
@@ -433,9 +513,11 @@ fun flush(fx: &mut helpers::Fixture) {
 fun flush_as_deployer(fx: &mut helpers::Fixture) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let registry = fx.scenario_mut().take_shared<Registry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let val = fx.start_flush_as_deployer(&mut config, &vault);
+    let val = fx.start_flush_as_deployer(&registry, &mut config, &vault);
     let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
     return_shared(config);
+    return_shared(registry);
     return_shared(vault);
 }

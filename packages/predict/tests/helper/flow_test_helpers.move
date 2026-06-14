@@ -27,8 +27,8 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
     plp::{Self, PoolVault, PoolValuation},
-    pricing,
     predict_manager::PredictManager,
+    pricing,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
     test_constants,
@@ -544,10 +544,12 @@ public fun start_flush(
 /// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`).
 public fun start_flush_as_deployer(
     self: &Fixture,
+    registry: &Registry,
     config: &mut ProtocolConfig,
     vault: &PoolVault,
 ): PoolValuation {
-    plp::start_pool_valuation_as_deployer(config, vault, &self.lifecycle_cap)
+    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    plp::start_pool_valuation_as_deployer(config, vault, proof)
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===

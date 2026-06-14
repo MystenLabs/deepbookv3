@@ -40,6 +40,21 @@ fun create_with_revoked_lifecycle_cap_aborts() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = registry::ELifecycleCapNotValid)]
+fun generate_proof_with_revoked_lifecycle_cap_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let admin_cap = admin::new(fx.scenario_mut().ctx());
+    let revoked_cap = mint_lifecycle_cap(&mut fx, &admin_cap);
+    revoke_lifecycle_cap(&mut fx, &admin_cap, revoked_cap.id());
+
+    let scenario = fx.scenario_mut();
+    let registry = scenario.take_shared<Registry>();
+    let proof = registry.generate_lifecycle_proof(&revoked_cap);
+    proof.destroy_proof();
+
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = registry::ELifecycleCapNotFound)]
 fun revoke_unknown_lifecycle_cap_aborts() {
     let (_scenario, mut registry, admin_cap) = test_helpers::begin_registry_test();

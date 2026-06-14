@@ -20,7 +20,7 @@ use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     lp_request_queue::{Self, RequestQueue},
-    market_lifecycle_cap::MarketLifecycleCap,
+    market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
@@ -182,24 +182,20 @@ public fun start_pool_valuation(
     start_pool_valuation_internal(config, vault)
 }
 
-/// Begin a full-pool flush as a market deployer (`MarketLifecycleCap`). This is a
-/// PRIVILEGED start, not a permissionless one: the flush prices the pool NAV off the
-/// live oracle and `finish_flush` drains the LP queues at that mark, and Pyth updates
-/// (`pyth_feed::update`) are permissionless — so a flush-capable cap-holder who
-/// manipulates the live oracle in a preceding tx, then flushes, could fill their own
-/// queued supply/withdraw request at a mark they chose (the keeper's "refresh to true
-/// price before flushing" mitigation only protects the honest-keeper flush). The start
-/// is therefore gated on trust: every flush-capable cap-holder — the operator
-/// `AdminCap` (via `start_pool_valuation`) and the market-deployer `MarketLifecycleCap`
-/// (here), both tightly held — is relied on NOT to manipulate the live oracle. `plp`
-/// cannot registry-validate the lifecycle cap here anyway (import cycle: `registry`
-/// depends on `plp::PoolVault`), and registry validation would only reject a *revoked*
-/// cap, not an active malicious holder — so trust, not allowlisting, is the control.
+/// Begin a full-pool flush as a market deployer using a registry-generated
+/// `MarketLifecycleProof`. This is a PRIVILEGED start, not a permissionless one:
+/// the flush prices the pool NAV off the live oracle and `finish_flush` drains the
+/// LP queues at that mark, and Pyth updates (`pyth_feed::update`) are permissionless
+/// — so a flush-capable cap-holder who manipulates the live oracle in a preceding
+/// tx, then flushes, could fill their own queued supply/withdraw request at a mark
+/// they chose. The start is therefore gated on both current registry allowlisting
+/// and trust in every flush-capable holder not to manipulate the live oracle.
 public fun start_pool_valuation_as_deployer(
     config: &mut ProtocolConfig,
     vault: &PoolVault,
-    _lifecycle_cap: &MarketLifecycleCap,
+    lifecycle_proof: MarketLifecycleProof,
 ): PoolValuation {
+    lifecycle_proof.destroy_proof();
     start_pool_valuation_internal(config, vault)
 }
 
@@ -364,9 +360,11 @@ public fun rebalance_expiry_cash(
 public fun request_supply(
     vault: &mut PoolVault,
     manager: &PredictManager,
+    config: &ProtocolConfig,
     payment: Coin<DUSDC>,
 ): u64 {
     vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
     let recipient = manager.id().to_address();
     let amount = payment.value();
@@ -377,8 +375,14 @@ public fun request_supply(
 
 /// Queue a withdraw request: escrow `lp` PLP shares and record the requesting manager
 /// as the fill recipient. Returns the queue index used to cancel before the flush.
-public fun request_withdraw(vault: &mut PoolVault, manager: &PredictManager, lp: Coin<PLP>): u64 {
+public fun request_withdraw(
+    vault: &mut PoolVault,
+    manager: &PredictManager,
+    config: &ProtocolConfig,
+    lp: Coin<PLP>,
+): u64 {
     vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
     let recipient = manager.id().to_address();
     let amount = lp.value();
@@ -393,10 +397,12 @@ public fun request_withdraw(vault: &mut PoolVault, manager: &PredictManager, lp:
 public fun cancel_supply_request(
     vault: &mut PoolVault,
     manager: &mut PredictManager,
+    config: &ProtocolConfig,
     index: u64,
     ctx: &mut TxContext,
 ) {
     vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     let recipient = manager.id().to_address();
     assert!(vault.supply_queue.borrow(index).recipient() == recipient, ENotRequestOwner);
     manager.assert_owner(ctx);
@@ -412,10 +418,12 @@ public fun cancel_supply_request(
 public fun cancel_withdraw_request(
     vault: &mut PoolVault,
     manager: &mut PredictManager,
+    config: &ProtocolConfig,
     index: u64,
     ctx: &mut TxContext,
 ) {
     vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     let recipient = manager.id().to_address();
     assert!(vault.withdraw_queue.borrow(index).recipient() == recipient, ENotRequestOwner);
     manager.assert_owner(ctx);
