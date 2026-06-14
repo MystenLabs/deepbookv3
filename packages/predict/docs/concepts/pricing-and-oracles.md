@@ -74,7 +74,7 @@ Because strikes are absolute integer ticks against a forward that can drift far 
 
 Reaching either tail requires the forward to leave the entire encodable strike domain by orders of magnitude; saturating there keeps NAV, redeem, and liquidation reads live instead of bricking the whole market on an extreme price. The range-price differencing is likewise saturating, so a thin or far-OTM range with ~0 true probability and a 1-ulp fixed-point inversion prices `0` rather than aborting a legitimate trade.
 
-The math runs in 1e9 fixed point throughout, using the `fixed_math` `I64` signed type for the intermediate signed quantities (`k`, `k − m`, `d2`) and guarding the real preconditions: positive forward, non-negative SVI wing term, and positive total variance.
+The math runs in 1e9 fixed point throughout, using the `fixed_math` `I64` signed type for the intermediate signed quantities (`k`, `k − m`, `d2`) and guarding the real preconditions: positive forward, non-negative SVI wing term, and positive total variance. The `min_svi_sigma` floor on `sigma` closes the non-negative-wing precondition (`ECannotBeNegative`); positive total variance (`EZeroVariance`) is a separate guard reachable with valid data only in the final moments before expiry, where total variance (σ²·T) rounds to zero in 1e9 fixed point — a recoverable liveness stop (the affected live-redeem / liquidation / NAV read succeeds once the market crosses into settlement), never a mispricing.
 
 > The full closed-form SVI and normal-CDF implementation, including the fixed-point `ln`, `sqrt`, and `normal_cdf` helpers, lives in the `pricing` and `fixed_math` modules. The formulas above are the model, not a reproduction of every rounding step.
 
