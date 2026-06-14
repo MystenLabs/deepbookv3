@@ -5,11 +5,10 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns trade
 /// execution, strike exposure state, and an embedded expiry-cash custody
-/// component. It also owns, for every priced flow, the binding of the market to
-/// its propbook Pyth + Block Scholes feeds (`assert_feeds`) and market liveness
-/// (`assert_active`) — `pricing` is handed already-bound, already-live feeds and
-/// trusts them — and exposes the exact per-expiry `current_nav` read. Pool-wide
-/// PLP accounting and profit accounting remain outside this module.
+/// component. Live oracle validation is delegated to `pricing::load_live_pricer`;
+/// this module owns market flow policy and then passes loaded `Pricer` snapshots
+/// into exposure business logic. Pool-wide PLP accounting and profit accounting
+/// remain outside this module.
 module deepbook_predict::expiry_market;
 
 use deepbook_predict::{
@@ -23,18 +22,14 @@ use deepbook_predict::{
     order_events,
     predict_manager::{PredictManager, PredictTradeProof},
     pricing,
-    pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::VecSet};
 
-const EWrongPythFeed: u64 = 0;
-const EWrongBlockScholesFeed: u64 = 1;
-const EMarketNotActive: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EMintPaused: u64 = 4;
 const EFullCloseRequired: u64 = 5;
@@ -44,10 +39,8 @@ const ENotImplemented: u64 = 7;
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
     id: UID,
-    /// propbook Pyth spot feed bound at creation; revalidated on every priced flow.
-    propbook_pyth_id: ID,
-    /// propbook Block Scholes surface feed bound at creation.
-    propbook_block_scholes_id: ID,
+    /// Propbook underlying this market was created for.
+    propbook_underlying_id: u32,
     expiry: u64,
     /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
     cash: ExpiryCash,
@@ -70,14 +63,9 @@ public fun id(market: &ExpiryMarket): ID {
     market.id.to_inner()
 }
 
-/// Return the propbook Pyth spot feed this market is bound to.
-public fun propbook_pyth_id(market: &ExpiryMarket): ID {
-    market.propbook_pyth_id
-}
-
-/// Return the propbook Block Scholes surface feed this market is bound to.
-public fun propbook_block_scholes_id(market: &ExpiryMarket): ID {
-    market.propbook_block_scholes_id
+/// Return the Propbook underlying this market was created for.
+public fun propbook_underlying_id(market: &ExpiryMarket): u32 {
+    market.propbook_underlying_id
 }
 
 /// Return the expiry timestamp in milliseconds.
@@ -144,31 +132,30 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 /// A pure read with no backing assert: backing is owned by the payout-tree reserve
 /// and proven on every trade, and the `max(0, ·)` cash floor marks a degenerate
 /// (underwater) market at 0 — the correct per-market limited-recourse value, never
-/// negative. `assert_feeds` binds the passed propbook feeds to this market and
-/// `assert_active` rejects a past-expiry market; the pricer then gates surface
-/// freshness.
+/// negative. `pricing::load_live_pricer` binds the passed propbook feeds to this
+/// market's current Propbook registry mapping, rejects a past-expiry market, and
+/// gates surface freshness.
 ///
-/// FLUSH-LIVENESS PRECONDITION (settlement-v2): `assert_active` makes this a hard
-/// precondition for the pool flush. A past-expiry market that has not settled
-/// aborts `EMarketNotActive` here, and because settlement is stubbed
-/// (`is_settled()` is always false, so the settled-sweep that would drop it from
-/// the active set is dead), `value_expiry` -> `current_nav` then bricks
+/// FLUSH-LIVENESS PRECONDITION (settlement-v2): `pricing::load_live_pricer`
+/// makes pre-expiry liveness a hard precondition for the pool flush. A
+/// past-expiry market that has not settled aborts here, and because settlement is
+/// stubbed (`is_settled()` is always false, so the settled-sweep that would drop
+/// it from the active set is dead), `value_expiry` -> `current_nav` then bricks
 /// `finish_flush` pool-wide. There is no solvency-safe NAV for an unsettled
-/// past-expiry market: the flush uses one mark for both supply and withdraw, so the
-/// mark must equal the (settlement-dependent, here undefined) true value. Until
-/// settlement-v2 restores the sweep, the operator MUST NOT let an active market
-/// cross its expiry across a flush — create only far-dated markets and settle
-/// before expiry.
+/// past-expiry market: the flush uses one mark for both supply and withdraw, so
+/// the mark must equal the (settlement-dependent, here undefined) true value.
+/// Until settlement-v2 restores the sweep, the operator MUST NOT let an active
+/// market cross its expiry across a flush — create only far-dated markets and
+/// settle before expiry.
 public fun current_nav(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     clock: &Clock,
 ): u64 {
-    market.assert_feeds(pyth, bs);
-    market.assert_active(clock);
-    let pricer = pricing::pricer(config.pricing_config(), pyth, bs, market.expiry, clock);
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     let liability = market.strike_exposure.exact_live_liability(&pricer, clock);
     market.cash.free_cash().saturating_sub(liability)
 }
@@ -201,6 +188,7 @@ public fun mint(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     lower_tick: u64,
@@ -218,6 +206,7 @@ public fun mint(
         manager,
         proof,
         config,
+        propbook_registry,
         pyth,
         bs,
         lower_tick,
@@ -240,6 +229,7 @@ public fun redeem(
     manager: &mut PredictManager,
     proof: PredictTradeProof,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     order_id: u256,
@@ -251,6 +241,7 @@ public fun redeem(
         manager,
         option::some(proof),
         config,
+        propbook_registry,
         pyth,
         bs,
         order_id,
@@ -269,6 +260,7 @@ public fun redeem_settled(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     order_id: u256,
@@ -280,6 +272,7 @@ public fun redeem_settled(
         manager,
         option::none(),
         config,
+        propbook_registry,
         pyth,
         bs,
         order_id,
@@ -297,6 +290,7 @@ public fun redeem_settled(
 public fun liquidate(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     budget: u64,
@@ -304,10 +298,9 @@ public fun liquidate(
 ): u64 {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     market.run_liquidation_pass(
-        config.pricing_config(),
-        pyth,
-        bs,
+        &pricer,
         budget,
         clock,
     )
@@ -317,6 +310,7 @@ public fun liquidate(
 public fun liquidate_order(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     order_id: u256,
@@ -324,11 +318,10 @@ public fun liquidate_order(
 ): bool {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    market.assert_feeds(pyth, bs);
-    market.assert_active(clock);
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
 
     let order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_order(config.pricing_config(), pyth, bs, &order, clock)
+    market.strike_exposure.liquidate_live_order(&pricer, &order, clock)
 }
 
 /// Set whether new mints are paused on this expiry market. Admin-only and
@@ -341,20 +334,6 @@ public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, pau
 }
 
 // === Public-Package Functions ===
-
-/// Assert the passed propbook feeds are the Pyth + Block Scholes feeds this market
-/// is bound to. This module composes the two feeds for trading, so it owns the
-/// binding check (pricing trusts the feeds it is handed).
-public(package) fun assert_feeds(market: &ExpiryMarket, pyth: &PythFeed, bs: &BlockScholesFeed) {
-    assert!(market.propbook_pyth_id == pyth.id(), EWrongPythFeed);
-    assert!(market.propbook_block_scholes_id == bs.id(), EWrongBlockScholesFeed);
-}
-
-/// Abort unless this market is live (its expiry has not passed). Owns market
-/// liveness for every priced flow now that the oracle no longer carries it.
-public(package) fun assert_active(market: &ExpiryMarket, clock: &Clock) {
-    assert!(clock.timestamp_ms() < market.expiry, EMarketNotActive);
-}
 
 /// Whether terminal settlement has been recorded. Settlement is deferred to
 /// settlement-v2 (off the propbook minute history), so this is always false today;
@@ -425,21 +404,19 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
     market.release_pool_cash(returned_cash_amount)
 }
 
-/// Create and share a zero-cash expiry market bound to its propbook Pyth and
-/// Block Scholes feeds.
+/// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the feed `tick_size` and per-market config and starts with
-/// zero expiry cash; it needs no live spot at creation (strikes are absolute ticks,
-/// so there is no grid to center). The `MarketCreated` event is emitted here rather
-/// than in `registry`: the market owns the snapshotted `tick_size`, and the registry
-/// holds no reference after `share_object`.
+/// The market snapshots the underlying, tick size, and per-market config and
+/// starts with zero expiry cash; it needs no live spot at creation (strikes are
+/// absolute ticks, so there is no grid to center). Current oracle object IDs stay
+/// in Propbook and are resolved on every priced flow. The `MarketCreated` event
+/// is emitted here rather than in `registry`: the market owns the snapshotted
+/// `tick_size`, and the registry holds no reference after `share_object`.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     allowed_versions: VecSet<u64>,
-    propbook_pyth_id: ID,
-    propbook_block_scholes_id: ID,
+    propbook_underlying_id: u32,
     pool_vault_id: ID,
-    pyth_source_id: u32,
     expiry: u64,
     tick_size: u64,
     ctx: &mut TxContext,
@@ -455,8 +432,7 @@ public(package) fun create_and_share(
     );
     let market = ExpiryMarket {
         id,
-        propbook_pyth_id,
-        propbook_block_scholes_id,
+        propbook_underlying_id,
         expiry,
         cash: expiry_cash::new(cash_config),
         strike_exposure: strike_exposure::new(
@@ -473,9 +449,7 @@ public(package) fun create_and_share(
     config_events::emit_market_created(
         expiry_market_id,
         pool_vault_id,
-        propbook_pyth_id,
-        propbook_block_scholes_id,
-        pyth_source_id,
+        propbook_underlying_id,
         expiry,
         market.tick_size(),
     );
@@ -491,25 +465,38 @@ fun materialize_settled_liability(market: &mut ExpiryMarket): u64 {
     market.strike_exposure.materialize_settled_liability(settlement)
 }
 
-/// Run one expiry-local liquidation pass with the caller-selected budget.
-/// Version gating lives on the public entrypoints (`mint`, `redeem`,
-/// `liquidate`) that reach this helper.
-fun run_liquidation_pass(
-    market: &mut ExpiryMarket,
-    pricing_config: &PricingConfig,
+fun load_live_pricer(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
+    clock: &Clock,
+): pricing::Pricer {
+    pricing::load_live_pricer(
+        config.pricing_config(),
+        propbook_registry,
+        market.propbook_underlying_id,
+        pyth,
+        bs,
+        market.expiry,
+        clock,
+    )
+}
+
+/// Run one expiry-local liquidation pass with the caller-selected budget and
+/// already-loaded live pricer. Version gating lives on the public entrypoints
+/// (`mint`, `redeem`, `liquidate`) that reach this helper.
+fun run_liquidation_pass(
+    market: &mut ExpiryMarket,
+    pricer: &pricing::Pricer,
     budget: u64,
     clock: &Clock,
 ): u64 {
-    market.assert_feeds(pyth, bs);
-    market.assert_active(clock);
     market
         .strike_exposure
         .liquidate_live_orders(
-            pricing_config,
-            pyth,
-            bs,
+            pricer,
             budget,
             clock,
         )
@@ -534,6 +521,7 @@ fun redeem_internal(
     manager: &mut PredictManager,
     proof: Option<PredictTradeProof>,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     order_id: u256,
@@ -543,7 +531,6 @@ fun redeem_internal(
 ): (u256, Option<u256>) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    market.assert_feeds(pyth, bs);
     let redeemed_order = order::from_order_id(order_id);
     if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
         return (redeemed_order.id(), option::none());
@@ -553,10 +540,9 @@ fun redeem_internal(
         market.redeem_settled_internal(manager, &redeemed_order, ctx);
         (redeemed_order.id(), option::none())
     } else {
+        let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
         market.run_liquidation_pass(
-            config.pricing_config(),
-            pyth,
-            bs,
+            &pricer,
             config.trade_liquidation_budget(),
             clock,
         );
@@ -568,8 +554,7 @@ fun redeem_internal(
             manager,
             &live_proof,
             config,
-            pyth,
-            bs,
+            &pricer,
             &redeemed_order,
             close_quantity,
             clock,
@@ -630,6 +615,7 @@ fun mint_internal(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     lower_tick: u64,
@@ -639,18 +625,16 @@ fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    // Proof is validated inside withdraw_with_proof below. Feed binding + liveness
-    // are asserted by the liquidation pass on the next line, before any feed read.
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    // Proof is validated inside withdraw_with_proof below. Live oracle validation
+    // and liveness are resolved into `pricer` before any trade mutation.
     manager.update_stake(ctx);
     market.run_liquidation_pass(
-        config.pricing_config(),
-        pyth,
-        bs,
+        &pricer,
         config.trade_liquidation_budget(),
         clock,
     );
 
-    let pricer = pricing::pricer(config.pricing_config(), pyth, bs, market.expiry, clock);
     let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
         .allocate_mint_order(
@@ -695,23 +679,21 @@ fun redeem_live_internal(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     config: &ProtocolConfig,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    pricer: &pricing::Pricer,
     order: &Order,
     close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    // Proof is validated inside deposit_with_proof below. Feed binding + liveness
-    // were already asserted by the redeem_internal entry and the liquidation pass.
+    // Proof is validated inside deposit_with_proof below. Live oracle validation
+    // and liveness are resolved into `pricer` before the live branch mutates.
     manager.update_stake(ctx);
-    let pricer = pricing::pricer(config.pricing_config(), pyth, bs, market.expiry, clock);
     let position_root_id = manager.remove_position(market.id(), order.id());
 
     let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
         .close_and_quote_live_order(
-            &pricer,
+            pricer,
             order,
             close_quantity,
             clock,

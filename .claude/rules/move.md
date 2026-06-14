@@ -177,8 +177,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - `public(package) assert_can_*` helpers are only for cross-module business preconditions that the caller must know before sequencing multiple objects. Do not expose another module's internal arithmetic, counter, balance-overflow, or storage-capacity invariants as package API.
 - Avoid defensive duplicates. If the caller and callee both check the same fact, either remove the caller check or document why failing before a different object is mutated is a real business requirement.
 - `ProtocolConfig` owns global gates such as trading pause and valuation lock. Flow modules decide which gates apply to each flow.
-- `ExpiryMarket` owns market lifecycle facts now that the oracle is external: feed binding (`assert_feeds`, to its bound propbook `PythFeed`/`BlockScholesFeed`) and liveness (`assert_active`, from its own expiry). Settlement (`is_settled`/`settlement_price`) is stubbed pending settlement-v2.
-- `Pricing` owns price construction, Block Scholes surface freshness, and price-specific bounds; it is handed already-bound, already-live feeds and trusts them (it owns neither feed binding nor market liveness).
+- `ExpiryMarket` owns per-expiry market state and stores the Propbook underlying ID plus tick size. It does not snapshot Propbook oracle object IDs; priced flows pass feed objects through to `pricing::load_live_pricer`.
+- `Pricing` owns the live pricing boundary: current Propbook canonical binding for the market's underlying, the pre-expiry live-pricing check, feed freshness, Predict's pricing-safe surface envelope, and SVI price construction. Settlement (`is_settled`/`settlement_price`) is stubbed pending settlement-v2.
 - `ExpiryMarket` owns trade-flow validation and expiry-local invariants for mint, live redeem, settled redeem, valuation, and allocation.
 - Trading pause blocks new risk creation, but exits, settlement cleanup, and valuation should only be blocked by the valuation lock unless the protocol intentionally changes pause semantics.
 

@@ -28,7 +28,7 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::{
     balance::{Self, Balance},
     clock::Clock,
@@ -214,7 +214,7 @@ public fun start_pool_valuation_as_deployer(
 /// `current_nav`, which asserts the market is pre-expiry. With settlement stubbed
 /// (`is_settled()` always false), a past-expiry market is never swept off the
 /// active set, so once any active market crosses its expiry `value_expiry` aborts
-/// `EMarketNotActive` and bricks the whole flush. Until settlement-v2 lands, the
+/// `ELivePricingExpired` and bricks the whole flush. Until settlement-v2 lands, the
 /// operator MUST settle / avoid letting an active market cross its expiry. See
 /// `expiry_market::current_nav` for why no solvency-safe substitute mark exists.
 public fun value_expiry(
@@ -222,6 +222,7 @@ public fun value_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     clock: &Clock,
@@ -233,7 +234,7 @@ public fun value_expiry(
     let nav = if (market.is_settled()) {
         0
     } else {
-        market.current_nav(config, pyth, bs, clock)
+        market.current_nav(config, propbook_registry, pyth, bs, clock)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;

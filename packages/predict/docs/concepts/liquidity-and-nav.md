@@ -117,7 +117,7 @@ Subtracting `correction_value` is the leveraged contracts' floor offset, applied
 
 ### The flush-liveness precondition (settlement-v2)
 
-`current_nav` calls `assert_active`, so it **aborts** for a market that has crossed its expiry. Because settlement is stubbed (`is_settled()` is always false, so the settled sweep that would drop an expired market from the active set never runs), a past-expiry market stays in the active set forever, and `value_expiry → current_nav → assert_active` then bricks `finish_flush` pool-wide.
+`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Because settlement is stubbed (`is_settled()` is always false, so the settled sweep that would drop an expired market from the active set never runs), a past-expiry market stays in the active set forever, and `value_expiry → current_nav → pricing::load_live_pricer` then bricks `finish_flush` pool-wide.
 
 This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the (settlement-dependent, here undefined) true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals. Until settlement-v2 restores the sweep, the operator must **not let an active market cross its expiry across a flush** — create only far-dated markets and (under v2) settle before expiry. See [pricing and oracles](./pricing-and-oracles.md) for the settlement stub.
 

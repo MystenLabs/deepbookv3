@@ -18,7 +18,7 @@ Some structural constants are real and stable enough to state directly:
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
 - **The discrete leverage set** is exactly {1x, 1.5x, 2x, 2.5x, 3x}, expressed as 1e9-scaled multipliers. The leverage *tiers* (which probabilities permit which leverage) and the leverage floor window are upgrade-required constants, not config fields.
 - **The per-expiry funding cap** (`expiry_max_funding`) and the **maximum active expiry count** are upgrade-required constants, not admin-tunable config. The per-flow funding cap that the pool sync enforces against is read directly from the constant.
-- **Oracle tick sizes** must be positive multiples of a fixed granularity unit, and are additionally bounded so the maximum finite strike (`pos_inf_tick * tick_size`) cannot overflow `u64`. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain. See [tick range encoding](./tick-range-encoding.md).
+- **Market tick sizes** must be positive, within the protocol's overflow-safe bounds, and equal to the underlying's configured minimum tick size or a 10x multiple above it. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain. See [tick range encoding](./tick-range-encoding.md).
 
 ## Three classes of configuration
 
@@ -92,11 +92,11 @@ Defaults are applied only in the module that constructs the config; runtime logi
 
 Several bounds are tightened on purpose so a single bad admin call cannot quietly disable a safety mechanism: the expiry-fee max multiplier floors at 1x (the ramp can never reduce fees below base); the EWMA z-score threshold floors at one sigma and is capped so it cannot be set so high the penalty never fires; the EWMA penalty rate is capped to bound how punitive the surcharge can be. For the concrete defaults and envelopes, see the source `config_constants` module; this document deliberately does not hardcode numbers that drift.
 
-## Registry tuning: tick size affects only future expiries
+## Registry tuning: underlying minimum tick size
 
-The `Registry` records admin-approved Pyth feeds and a per-feed admin-selected strike `tick_size`. `set_pyth_feed_tick_size` (and the initial `register_pyth_feed`) are `AdminCap`-gated and validated by `assert_oracle_tick_size`, which checks two things: the tick size is a positive multiple of the granularity unit, and it is small enough that the maximum finite strike `pos_inf_tick * tick_size` cannot overflow `u64`. Like the contract-term template configs, this is a future-only knob: changing a feed's tick size affects expiry markets *created afterward* for that feed. Markets already created keep the tick size snapshotted at creation, and there is no on-chain check that a tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded). See [tick range encoding](./tick-range-encoding.md).
+The `Registry` records admin-approved Propbook underlyings and a per-underlying minimum market `tick_size`. `register_underlying` is `AdminCap`-gated and validates the minimum against the same protocol tick-size bounds used at market creation. A market chooses its concrete `tick_size` at creation, and that value is committed to the `ExpiryMarket`; it must equal the underlying's minimum or a 10x multiple above it. There is no on-chain check that a tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded). See [tick range encoding](./tick-range-encoding.md).
 
-The `Registry` also owns the protocol's version set (below) and the `PauseCap` / `MarketLifecycleCap` allowlists. The oracle/feed objects themselves are external (`propbook`); the registry only records *which* Pyth feeds are approved and at what tick size.
+The `Registry` also owns the protocol's version set (below) and the `PauseCap` / `MarketLifecycleCap` allowlists. The oracle/feed objects themselves are external (`propbook`); the registry only records which Propbook underlyings Predict may create markets for and the minimum tick size each underlying permits.
 
 ## Versioning and pause governance
 
@@ -110,14 +110,14 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | --- | --- |
 | `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, the `trade_liquidation_budget`, global `trading_paused` |
 | `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
-| `AdminCap` (on `Registry`) | Approve a Pyth feed and its `tick_size`, change a feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
+| `AdminCap` (on `Registry`) | Register a Propbook underlying and its minimum `tick_size`, version enable/disable, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
 | `AdminCap` (on `PoolVault`) | Start the privileged pool flush (`start_pool_valuation`) |
 | `PauseCap` (via `Registry`) | Disable a version, force global trading pause, force per-expiry mint pause — all one-way (engage only) |
 | `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also start the privileged pool flush (`start_pool_valuation_as_deployer`). No oracle-write or config authority |
 | Permissionless | `sync_*` version mirrors; cash rebalance, settled-market sweep, and liquidation keeper flows (subject to the valuation lock, not the trading pause); LP supply/withdraw requests and their cancellation |
-| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the per-expiry funding cap and max active expiry count, oracle granularity, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
+| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the per-expiry funding cap and max active expiry count, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
 
-All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (versions, pause caps, lifecycle caps, uniqueness, feed approval/tick size) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
+All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (versions, pause caps, lifecycle caps, uniqueness, underlying admission/minimum tick size) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
 
 ## Related reading
 

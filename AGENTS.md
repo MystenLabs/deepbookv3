@@ -21,19 +21,21 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 ## Context Routing
 
-These are the context files to consult. Path-scoped files are normally loaded by the agent runtime based on touched files; manual-trigger files must be read when the request matches the trigger.
+**These rule files are NOT auto-loaded for you.** Codex auto-loads this `AGENTS.md`, but nothing loads `.claude/rules/*.md` by path — the `paths:` frontmatter on each is a map for a future hook, not a live mechanism. **Before editing a file under one of these globs, open and read the matching rule file.** Read manual-trigger files when the request matches.
 
-### Path-Scoped Rules
+### Path-Scoped Rules — read before editing files under the glob
 
 - `.claude/rules/move.md` for `packages/**/*.move`
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
-- `.claude/rules/indexer.md` for `crates/server/**`, `crates/indexer/**`, `crates/schema/**`
-- `.claude/rules/scripts.md` for `scripts/**`
 - `.claude/rules/predict-simulations.md` for `packages/predict/simulations/**`
+- `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**`
+- `.claude/rules/predict-indexer.md` for the PREDICT crates `crates/predict-{server,indexer,schema}/**` (also read `indexer.md` for shared operational gotchas)
+- `.claude/rules/scripts.md` for `scripts/**`
 
-### Manual-Trigger Rules
+### Manual-Trigger Rules — read when the request matches
 
-- `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes.
+- `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes (for a deep Predict protocol review it routes on to the `.claude/predict-review/` lenses + `rule-auditor.md`).
+- Before proposing/changing any **Predict economics** (NAV/backing, rounding, oracle trust, liquidation, tick/order-id encoding, floor/leverage, supply/withdraw): grep `.claude/predict-design/DECISION_JOURNAL.md` + `HISTORY.md` for prior rulings; never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met. (The current settled list is also inlined below.)
 - `.claude/rules/wrap-up.md` when the user says "wrap up".
 
 ## Common Commands
@@ -93,15 +95,15 @@ are current. The earlier build-phase directives (source-only / defer-tests / def
 are **retired** — the normal norms (tests + docs land with code) apply again.
 
 **Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit + the finalize audit):**
-- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + `BlockScholesFeed` (per-expiry surface). `expiry_market` owns feed binding (`assert_feeds`) + liveness (`assert_active`); `pricing` owns surface freshness + SVI math. Propbook stores raw BS source fields; the pricing-safe envelope (`forward>0`, basis, `|rho|<=1`, sigma band) is enforced by the consumer in `predict::pricing`.
+- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + `BlockScholesFeed` (per-expiry surface). `expiry_market` stores the Propbook underlying and tick size; `pricing::load_live_pricer` owns the live pricing boundary: current Propbook canonical binding, pre-expiry live-pricing check, feed freshness, and SVI math. Propbook stores raw BS source fields; the pricing-safe envelope (`forward>0`, basis, `|rho|<=1`, sigma band) is enforced by the consumer in `predict::pricing`.
 - **One canonical strike interpretation = absolute integer ticks, protocol-wide** (`raw = tick * tick_size`). `range_codec` owns packing/conversion/the settlement prefix; no centered grid, no boundary indices. No-spot market creation; price-tail saturation.
 - **The flush is PRIVILEGED, cron-driven** — operator `AdminCap` or market-deployer `MarketLifecycleCap`, NOT permissionless. Closes the NAV-manipulation gate (audit L8).
 - **L10 supply mark = the EXACT `current_nav`** (tree walk − leveraged correction), one mark for supply AND withdraw, **no conservative band** (landed; the band belonged to the deleted approximate-NAV world).
 - **Gas (L7), pending-settlement liveness (L6), rebate reclaim (L9) are OFF-CHAIN** (cron retries; operator throttles deploys near the flush window). Assume ≤10 markets + the 100-request drain fit one tx.
-- **Settlement is deferred to settlement-v2** (`is_settled()` always false, `settlement_price()` aborts; settled paths kept gated). **Flush-liveness precondition:** because no market settles, an expired market is never swept off the active set, so `value_expiry` → `current_nav` → `assert_active` bricks the whole flush once any active market crosses its expiry. There is no solvency-safe substitute mark (the single flush mark prices both supply and withdraw, so it must equal the settlement-dependent true value — contribute-0 dilutes incumbents, free-cash over-drains them). Until settlement-v2, the operator MUST NOT let an active market cross its expiry across a flush. Documented on `expiry_market::current_nav` / `plp::value_expiry`.
+- **Settlement is deferred to settlement-v2** (`is_settled()` always false, `settlement_price()` aborts; settled paths kept gated). **Flush-liveness precondition:** because no market settles, an expired market is never swept off the active set, so `value_expiry` → `current_nav` → `pricing::load_live_pricer` bricks the whole flush once any active market crosses its expiry. There is no solvency-safe substitute mark (the single flush mark prices both supply and withdraw, so it must equal the settlement-dependent true value — contribute-0 dilutes incumbents, free-cash over-drains them). Until settlement-v2, the operator MUST NOT let an active market cross its expiry across a flush. Documented on `expiry_market::current_nav` / `plp::value_expiry`.
 
 **Still out of scope (follow-up work):**
-- The Rust `crates/predict-{schema,indexer,server}` need rewiring for the changed events: the new async-LP events (`SupplyRequested`/`WithdrawRequested`/`SupplyFilled`/`WithdrawFilled`/`SupplyRefunded`/`WithdrawRefunded`/`RequestCancelled`/`PoolValued`/`FlushExecuted`), M1 `ExpiryCashRebalanced`, `OrderMinted` gaining `range_key`, `MarketCreated` dropping `market_oracle_id`/min/max strike and gaining `pyth_feed_id`/`bs_feed_id`, the collapsed `PricingConfigUpdated`, and the deleted oracle events — plus indexing the propbook feeds.
+- The Rust `crates/predict-{schema,indexer,server}` need rewiring for the changed events: the new async-LP events (`SupplyRequested`/`WithdrawRequested`/`SupplyFilled`/`WithdrawFilled`/`SupplyRefunded`/`WithdrawRefunded`/`RequestCancelled`/`PoolValued`/`FlushExecuted`), M1 `ExpiryCashRebalanced`, `OrderMinted` gaining `range_key`, `MarketCreated` dropping `market_oracle_id`/min/max strike/source oracle ids and carrying `propbook_underlying_id` + `tick_size`, the collapsed `PricingConfigUpdated`, and the deleted oracle events — plus indexing the propbook feeds.
 - The simulation harness (`packages/predict/simulations`) is structurally rewired (tsc/py_compile/`bash -n` clean) but its economic parity + the `run.sh` localnet publish flow need a localnet `run.sh` run — see `packages/predict/simulations/SIM_STATUS.md`.
 - Settlement-v2 (the deferred settlement path off the propbook minute history).
 
@@ -109,6 +111,7 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 
 - When the user asks for a review, read `.claude/rules/code-review.md` before producing findings and review the relevant diff in a code-review stance.
 - For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`.
+- For a deep Predict pre-merge / pre-testnet protocol review, read `.claude/predict-review/00-primer.md` and the relevant lens (01-invariants, 02-audit, 03-oracle, 04-access-control, 05-surface-area, 06-assertions, 07-lifecycle). For a full rule audit of `packages/predict`, follow `rule-auditor.md` (12 read-only rule-family agents).
 
 ## When Updating Repo Guidance
 

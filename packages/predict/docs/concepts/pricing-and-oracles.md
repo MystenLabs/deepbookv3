@@ -1,6 +1,6 @@
 # Pricing and oracles
 
-Predict prices its range digitals (binary options) off two independent oracle feeds and turns them into the live probabilities that drive minting, redemption, liquidation, and net asset value (NAV). The oracle feeds are **not** part of the Predict package: they live in a separate, Predict-unaware `propbook` package and are consumed read-only. This document describes those feeds, how Predict resolves a live forward from them, how a range probability is derived from the volatility surface, where freshness is enforced, and how ownership of those checks is split between Predict's market and pricing modules.
+Predict prices its range digitals (binary options) off two independent oracle feeds and turns them into the live probabilities that drive minting, redemption, liquidation, and net asset value (NAV). The oracle feeds are **not** part of the Predict package: they live in a separate, Predict-unaware `propbook` package and are consumed read-only. This document describes those feeds, how Predict resolves a live forward from them, how a range probability is derived from the volatility surface, where live binding and freshness are enforced, and how ownership of those checks is split between Predict's market and pricing modules.
 
 ## Two standalone propbook feeds
 
@@ -8,14 +8,14 @@ Predict separates the *spot* of the underlying asset from the *shape of the impl
 
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |
-| Spot price | `propbook::pyth_feed::PythFeed` | One global 1e9-normalized spot per Pyth Lazer feed id, with both a publisher and an on-chain landing timestamp | `spot()`, `freshness_timestamp_ms()` |
-| Volatility surface + forward | `propbook::block_scholes_feed::BlockScholesFeed` | One feed per underlying, holding a per-expiry `Surface` of `{spot, forward, SVI, timestamps}` plus a shared minute price history | `forward(expiry)`, `basis(expiry)`, `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, `has_expiry(expiry)` |
+| Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, with both a publisher and an on-chain landing timestamp | `spot()`, `latest_observation()`, `freshness_timestamp_ms()` |
+| Volatility surface + forward | `propbook::block_scholes_feed::BlockScholesFeed` | One feed per source id, holding per-expiry `{spot, forward, SVI, timestamps}` observations plus first-observed and official-settlement history | `spot(expiry)`, `forward(expiry)`, `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, `has_expiry(expiry)` |
 
 The `pricing` module is a stateless read layer over these feeds. It resolves them on demand, checks surface freshness, computes prices, and never mutates feed, pool, expiry, or position state.
 
 ### Pyth Lazer spot (`PythFeed`)
 
-A `PythFeed` is bound to exactly one Pyth Lazer feed (identified by a `u32` feed id) and stores the latest normalized spot for that feed — one global spot, not a per-expiry value. Its permissionless `update_from_lazer` decodes a verified Lazer payload, finds the matching feed, reads its `(price, exponent)` pair, converts it to Predict's 1e9 fixed-point scaling (`price_1e9 = magnitude × 10^(exponent + 9)`), and stores it. The decode rejects a missing feed, an unavailable price (Lazer returns no value when too few publishers contribute), and a negative price, since crypto spot is always positive.
+A `PythFeed` is bound to exactly one Pyth Lazer feed (identified by a `u32` feed id) and stores the latest source-native price payload for that feed — one global spot source, not a per-expiry value. Its permissionless `update_from_lazer` decodes a verified Lazer payload, finds the matching feed, reads its `(price, exponent)` pair, and stores the raw sign/magnitude fields. The source observation getters expose those raw fields; `spot()` is a positive-only convenience read that normalizes to Predict's 1e9 fixed-point scaling (`price_1e9 = magnitude × 10^(exponent + 9)`) and aborts if the source value is negative or otherwise cannot be represented as a positive Propbook spot.
 
 Two timestamps are recorded on every accepted update, and the distinction is load-bearing:
 
@@ -24,7 +24,7 @@ Two timestamps are recorded on every accepted update, and the distinction is loa
 
 An update is accepted only if its spot is positive and its publisher timestamp strictly advances the previously stored one and is not in the future relative to the on-chain clock — a stale or replayed payload aborts. *Freshness*, by contrast, is a read-time concern: `PythFeed::freshness_timestamp_ms()` returns the *conservative* of the two timestamps, `min(publisher, landing)`, so a value is only as fresh as its weaker timestamp. This guards both against old market data (a stale publisher timestamp) and against recently-published data that has been sitting unposted (a stale landing timestamp).
 
-`PythFeed` deliberately does not decide whether Pyth is authoritative, derive a forward, or settle anything. It ingests, time-stamps, and exposes the raw spot; freshness and feed binding are the consumer's responsibility.
+`PythFeed` deliberately does not decide whether Pyth is authoritative, derive a forward, or settle anything. It ingests, time-stamps, and exposes source facts plus positive-only convenience reads; freshness and feed binding are the consumer's responsibility.
 
 ### Block Scholes surface and forward (`BlockScholesFeed`)
 
@@ -44,7 +44,7 @@ The surface is described by five SVI (stochastic volatility inspired) parameters
 
 A whole surface row (spot, forward, and SVI together) is written by one `update_from_bs` call carrying a single publisher timestamp, so the three age as a unit — there are no longer separate price and SVI write paths or separate staleness clocks. A push whose publisher timestamp does not advance the stored row is a clean no-op rather than an abort, so one transaction can update many expiries without an ordering race on a single expiry reverting the whole batch.
 
-The feed enforces **universal math validity** at ingest, independent of any consumer: every accepted row asserts `spot > 0`, `forward > 0`, `|rho| ≤ 1` (the SVI no-arbitrage bound), and `sigma` inside a configured band. A malformed row aborts; it never reaches a consumer.
+The feed validates source identity and records the source-native payload. It does not impose Predict's full pricing-safe envelope at ingest; Predict applies its own read-time checks before using the row for pricing.
 
 The feed also folds each accepted update's spot into a **shared minute history** — the first observation per UTC minute, keyed by real-world time and shared across all of the underlying's expiries. Predict does not read it today; it is the terminal-price substrate that settlement-v2 will sample (see [Settlement is deferred](#settlement-is-deferred)).
 
@@ -94,20 +94,21 @@ flowchart TD
 
 The rules:
 
-- **Pyth spot is canonical for spot.** When the Pyth spot is fresh, the live forward is rebuilt from it: `forward = pyth.spot() × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
+- **Pyth spot is canonical for spot when fresh and usable.** When the Pyth spot is fresh, the live forward is rebuilt from it: `forward = pyth.spot() × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
 - **A stale Pyth spot is a fallback, not an abort.** If the Pyth spot is stale, pricing falls back to `bs.forward(expiry)` directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
+- **A fresh but unusable Pyth spot is not a fallback.** If Pyth is fresh but `pyth.spot()` aborts because the source-native value cannot be represented by Propbook's positive-only normalized spot helper, live pricing aborts. The fallback is specifically for stale Pyth data, not for a fresh canonical source producing invalid spot data.
 - **The surface has no fallback.** The Block Scholes surface (spot + forward + SVI, one row) must be fresh either way; a stale surface blocks live pricing entirely.
 
-Note the asymmetry: the volatility surface is mandatory and gated by a hard abort, while the Pyth spot is an optimization that degrades to the Block Scholes forward when stale.
+Note the asymmetry: the volatility surface is mandatory and gated by a hard abort, while the Pyth spot is an optimization that degrades to the Block Scholes forward only when stale.
 
 ## Ownership: market binding/liveness vs. pricing freshness
 
-Resolving a price touches three facts — *are these the right feeds for this market*, *is this market still live*, and *is the surface fresh* — and they are owned by different modules:
+Resolving a price touches three facts — *are these the current canonical Propbook feeds for this market's underlying*, *is this market still live for live pricing*, and *is the surface fresh* — and they are owned by different modules:
 
-- **`expiry_market` owns feed binding and market liveness.** Before any priced flow, the market asserts the passed feeds are the ones it is bound to (`assert_feeds`, matching the feed object ids it stored at creation) and that the market has not crossed its expiry (`assert_active`, derived from the market's own expiry, since the feeds no longer carry market lifecycle). `pricing` is then handed already-bound, already-live feeds and trusts them.
-- **`pricing` owns surface freshness and the SVI math.** It checks `block_scholes_surface_freshness_ms` against the surface's conservative timestamp (and the Pyth-spot freshness window for the fallback branch), then runs the binary-pricing math. It does not re-check binding or liveness.
+- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing::load_live_pricer` for a `Pricer` before any live pricing-dependent mutation.
+- **`pricing` owns the live pricing boundary.** It checks the passed `PythFeed` and `BlockScholesFeed` against Propbook's current canonical binding for the market's `propbook_underlying_id`, rejects a past-expiry live price, checks `block_scholes_surface_freshness_ms` against the surface timestamp (and the Pyth-spot freshness window for the fallback branch), applies Predict's pricing-safe surface envelope, and then runs the binary-pricing math.
 
-This split keeps each guard with the module whose contract depends on it: the market composes the objects, so it owns whether they belong together; pricing produces the number, so it owns whether the inputs are fresh enough to produce it.
+This split keeps each guard with the module whose contract depends on it: the market owns the flow and market facts, while pricing is the only path from Propbook oracle objects into Predict business logic.
 
 ## Freshness and price bounds
 
@@ -120,7 +121,7 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 
-**Ingest-time validity (propbook, not Predict).** The math-validity bounds — `spot > 0`, `forward > 0`, `|rho| ≤ 1`, the sigma band — are enforced inside `BlockScholesFeed::update_from_bs` at ingest, so a malformed row never reaches Predict. These are universal SVI/Black-Scholes validity, not Predict policy, which is why they live in the Predict-unaware feed.
+**Read-time pricing envelope (Predict, not Propbook).** Propbook stores source facts. Predict's `pricing` module decides whether a surface is safe for Predict's fixed-point pricing math: `spot > 0`, `forward > 0`, bounded basis, bounded SVI inputs, `|rho| <= 1`, and sigma within Predict's accepted range.
 
 **No writes during pool valuation.** The full-pool flush computes NAV against a frozen snapshot, so Predict's valuation lock blocks Predict trading and admin changes mid-valuation; see [liquidity and NAV](./liquidity-and-nav.md). The propbook feeds are independent objects and are not part of that lock — but the flush is privileged and the flush operator is trusted not to push the oracle mid-flush, which is the model that makes the single frozen mark sound (see the audit-L8 note in [liquidity and NAV](./liquidity-and-nav.md)).
 

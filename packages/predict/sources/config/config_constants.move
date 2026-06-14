@@ -23,7 +23,7 @@ const EInvalidUpperBenefitPower: u64 = 19;
 const EInvalidBenefitPowers: u64 = 20;
 const EInvalidTradeLiquidationBudget: u64 = 22;
 const EInvalidLiquidationLtv: u64 = 23;
-const EInvalidOracleTickSize: u64 = 24;
+const EInvalidMarketTickSize: u64 = 24;
 const EInvalidEwmaAlpha: u64 = 26;
 const EInvalidEwmaZScoreThreshold: u64 = 27;
 const EInvalidEwmaPenaltyRate: u64 = 28;
@@ -121,7 +121,7 @@ public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
 }
 
-/// Window before expiry over which trade fees ramp up to the per-feed max
+/// Window before expiry over which trade fees ramp up to the per-expiry max
 /// multiplier. Five minutes is the shortest admin-tunable window.
 public(package) macro fun default_expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
 public(package) macro fun min_expiry_fee_window_ms(): u64 { 5 * 60 * 1000 }
@@ -155,17 +155,17 @@ public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
     );
 }
 
-public(package) fun assert_oracle_tick_size(value: u64) {
+public(package) fun assert_market_tick_size_bounds(value: u64) {
     assert!(
-        value > 0 && value % deepbook_predict::constants::oracle_tick_size_unit!() == 0,
-        EInvalidOracleTickSize,
+        value > 0 && value % deepbook_predict::constants::market_tick_size_unit!() == 0,
+        EInvalidMarketTickSize,
     );
     // Prevent raw-strike multiplication overflow: the maximum finite strike is
-    // `pos_inf_tick * tick_size`, which must fit in `u64`. Pure config bound;
+    // `pos_inf_tick * tick_size`, which must fit in `u64`. Pure market bound;
     // normal market tick sizes are far below it.
     assert!(
         value <= std::u64::max_value!() / deepbook_predict::constants::pos_inf_tick!(),
-        EInvalidOracleTickSize,
+        EInvalidMarketTickSize,
     );
 }
 

@@ -14,7 +14,7 @@ This is *limited-recourse* financing. A leveraged order's floor can only ever co
 
 ### Strikes are absolute integer ticks
 
-There is **one canonical strike representation across the whole protocol — absolute integer ticks**. A strike is an integer `tick`, and its raw price is always `raw_strike = tick × tick_size`, where `tick_size` is fixed per expiry. There is no second representation: no centered grid and no boundary indices. The public API, order IDs, the payout tree, the liquidation book, and the exposure index all operate over ticks; raw strikes are reconstructed only at the pricing/settlement boundary. A range is the packed pair `range_key` of two `u24` ticks; the open-ended ends are the two sentinel ticks (`lower_tick = 0` is `−∞`, `higher_tick = pos_inf_tick` is `+∞`).
+There is **one canonical strike representation across the whole protocol — absolute integer ticks**. A strike is an integer `tick`, and its raw price is always `raw_strike = tick × tick_size`, where `tick_size` is fixed per expiry. There is no second representation: no centered grid and no boundary indices. The public API, order IDs, the payout tree, the liquidation book, and the exposure index all operate over ticks; raw strikes are reconstructed only at the pricing/settlement boundary. A range is the tick pair `(lower_tick, higher_tick)`, carried directly at public entrypoints and events; the open-ended ends are the two sentinel ticks (`lower_tick = 0` is `−∞`, `higher_tick = pos_inf_tick` is `+∞`). Only the durable order ID packs the two ticks into one integer.
 
 Because the tick domain is absolute and fixed in advance, **market creation reads no live spot** — a new expiry market just records its `tick_size` (the `MarketCreated` event carries `tick_size`, not a min/max strike). The pricing math saturates instead of aborting in the deep tails: a strike far below the forward prices to ~1.0 and far above to 0, so no live quote ever fails on an extreme strike.
 
@@ -34,22 +34,22 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 | --- | --- | --- |
 | `Registry` | Feed/expiry uniqueness, version set, pause + lifecycle caps, creation entrypoints | shared |
 | `ProtocolConfig` | Admin-tunable config, `trading_paused`, the valuation lock, per-expiry runtime controls | shared |
-| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, staked-DEEP custody, incentives, expiry ledger, the LP supply/withdraw queues | shared |
+| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, staked-DEEP custody, expiry ledger, the LP supply/withdraw queues | shared |
 | `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` DUSDC, exact `current_nav`, cleanup | shared, one per expiry |
 | `PredictManager` | Per-trader DUSDC custody + positions, staking mirror, builder attribution | owned or shared |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
-Oracle data is **not** a Predict object: the `PythFeed` (one per Lazer feed) and `BlockScholesFeed` (one per underlying) are shared objects owned by the separate `propbook` package, bound to each market by ID at creation.
+Oracle data is **not** a Predict object: the `PythFeed` and `BlockScholesFeed` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed feed objects against Propbook's current canonical bindings for that underlying.
 
-Capabilities are owned objects: `AdminCap` (global policy, also starts the pool flush), `MarketLifecycleCap` (market creation, post-settlement compaction, and starting the pool flush as a deployer), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. The Block Scholes writer cap that authorizes surface updates lives in propbook, not Predict. Detail in [architecture](./design/architecture.md).
+Capabilities are owned objects: `AdminCap` (global policy, also starts the pool flush), `MarketLifecycleCap` (market creation, post-settlement compaction, and starting the pool flush as a deployer), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
 
 ## Market and position lifecycle
 
-An admin registers a feed, and a lifecycle-cap holder creates one `ExpiryMarket` per expiry, binding it to a propbook `PythFeed` and `BlockScholesFeed` by ID. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and either knock-out (liquidation) or — once settlement-v2 ships — terminal settlement. Each transition emits one order-domain event.
+An admin registers a Propbook underlying, and a lifecycle-cap holder creates one `ExpiryMarket` per underlying and expiry. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and either knock-out (liquidation) or — once settlement-v2 ships — terminal settlement. Each transition emits one order-domain event.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket (bound to propbook feeds, no live spot read)
+  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket (Propbook underlying, no live spot read)
   MarketCreated --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
@@ -59,7 +59,7 @@ stateDiagram-v2
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 
-- **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and leverage floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the packed `range_key`. Leveraged mints must satisfy price-tiered leverage caps, sit above the liquidation threshold at entry, and keep their terminal floor below `quantity × liquidation_ltv`.
+- **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and leverage floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the tick pair `(lower_tick, higher_tick)`. Leveraged mints must satisfy price-tiered leverage caps, sit above the liquidation threshold at entry, and keep their terminal floor below `quantity × liquidation_ltv`.
 - **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability, net of the floor on the closed slice. A partial close is handled as cancel-and-replace: the full order is removed from the live indexes and the survivor re-inserted with the same open time and a proportional remainder of the floor.
 - **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero rebate that touches no manager and leaves a tombstone the holder later clears for zero payout.
 - **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − terminal_floor` and zero otherwise — and are **deferred to settlement-v2**: no market settles today, so these paths are present but unreachable.
@@ -89,7 +89,7 @@ These properties are designed in and hold by construction; their boundaries are 
 - [Pricing and oracles](./concepts/pricing-and-oracles.md) — the propbook Pyth and Block Scholes feeds, range-probability derivation, freshness, and the forward fallback.
 - [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, staking discount, and loss rebate.
 - [Liquidation](./concepts/liquidation.md) — the trigger condition, the priority-encoded liquidation book, bounded scan budgets, and what they imply for LPs.
-- [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, profit materialization, and incentives.
+- [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, profit materialization, and DEEP staking custody.
 
 **Design — how the protocol is built:**
 

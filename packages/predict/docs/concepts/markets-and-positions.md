@@ -4,31 +4,31 @@ Predict is an on-chain protocol for European cash-settled binary options (digita
 
 ## Per-expiry markets
 
-The protocol does not run a single continuous market. Instead, the `Registry` mints a fresh `ExpiryMarket` for each expiry timestamp. An `ExpiryMarket` is the hot shared object that owns trade execution for that expiry — its strike-exposure index, payout backing, DUSDC cash custody, and live NAV production. It does not own oracle data: it is *bound* to two standalone `propbook` feed objects (a `PythFeed` for spot and a `BlockScholesFeed` for the volatility surface), reading them on demand (see [pricing and oracles](./pricing-and-oracles.md)).
+The protocol does not run a single continuous market. Instead, the `Registry` mints a fresh `ExpiryMarket` for each Propbook underlying and expiry timestamp. An `ExpiryMarket` is the hot shared object that owns trade execution for that expiry — its strike-exposure index, payout backing, DUSDC cash custody, and live NAV production. It does not own oracle data or snapshot oracle object IDs: it stores the `propbook_underlying_id`, and priced flows read the current canonical `propbook` feeds for that underlying on demand (see [pricing and oracles](./pricing-and-oracles.md)).
 
 The `Registry` enforces uniqueness and admin approval:
 
-- A Pyth Lazer feed must be **admin-approved** before any market can reference it: `register_pyth_feed` records a `PythFeedConfig` carrying the admin-selected strike `tick_size`. The `propbook` feed objects themselves are created permissionlessly in `propbook`; the registry row only gates which feeds Predict will build markets on.
-- **One `ExpiryMarket` per expiry timestamp.** `create_expiry_market` aborts if the registry already holds a market for that expiry.
+- A Propbook underlying must be **admin-approved** before Predict can build markets on it: `register_underlying` records the minimum allowed market tick size for that `propbook_underlying_id`. The `propbook` feed objects themselves are created permissionlessly in `propbook`; Propbook owns source IDs and canonical source-to-underlying bindings.
+- **One `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair.** `create_expiry_market` aborts if the registry already holds a market for that underlying and expiry.
 
 ### How a market is created
 
 `create_expiry_market` performs the full setup atomically:
 
-1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the registry's allowlist, the running package version must be allowed, global trading must be enabled, and the expiry must be strictly in the future (`expiry > clock.timestamp_ms()`). The supplied Pyth feed must be admin-approved (its feed id has a registered `PythFeedConfig`).
-2. **Pair the feeds.** The market is bound to the passed `PythFeed` and `BlockScholesFeed` by storing their object ids. Pairing the two feeds to one underlying is a creation-time trust: the deployer-cap holder passes both objects, and that cap is trusted.
-3. **Snapshot config and tick size.** The `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, and snapshots the feed's `tick_size`. It needs **no live spot** at creation — strikes are absolute ticks, so there is no grid to center on a price.
+1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the registry's allowlist, the running package version must be allowed, global trading must be enabled, the expiry must be strictly in the future (`expiry > clock.timestamp_ms()`), the underlying must be registered in Predict, and the chosen `tick_size` must be the configured minimum tick size or a 10x multiple above it.
+2. **Require current Propbook coverage.** The caller also passes Propbook's `OracleRegistry`; the registry asserts that Propbook currently has canonical Pyth and Block Scholes bindings for the supplied `propbook_underlying_id`. The market does **not** store those oracle object IDs, so a later Propbook rebind affects existing markets.
+3. **Snapshot config and tick size.** The `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, stores `propbook_underlying_id`, and snapshots the chosen `tick_size`. It needs **no live spot** at creation — strikes are absolute ticks, so there is no grid to center on a price.
 4. **Create, share, and register.** The `ExpiryMarket` is shared, registered with the pool vault as an active-expiry accounting row, and indexed by expiry in the registry.
 
-The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, the bound Pyth and Block Scholes feed ids, the Pyth Lazer feed id, the expiry, and the `tick_size`. The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`.
+The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, and `tick_size`. The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`.
 
 ```mermaid
 flowchart TD
-  A["Admin: register_pyth_feed(feed_id, tick_size)"] --> B["Registry: PythFeedConfig stored"]
-  B --> C["create_expiry_market(pyth, bs, expiry, ...)"]
-  C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>expiry in future, feed approved,<br/>expiry not already created"}
-  D -->|pass| E["snapshot config + feed tick_size<br/>(no live spot read)"]
-  E --> F["share ExpiryMarket, bind PythFeed + BlockScholesFeed ids"]
+  A["Admin: register_underlying(underlying, min_tick_size)"] --> B["Registry: UnderlyingConfig stored"]
+  B --> C["create_expiry_market(propbook_registry, underlying, expiry, tick_size, ...)"]
+  C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>expiry in future, underlying registered,<br/>tick size valid, Propbook bindings exist,<br/>market not already created"}
+  D -->|pass| E["snapshot config + tick_size<br/>(no live spot read)"]
+  E --> F["share ExpiryMarket with propbook_underlying_id"]
   F --> G["PoolVault.register_expiry (accounting row)"]
   G --> H["emit MarketCreated (carries tick_size)"]
 ```
@@ -39,9 +39,9 @@ Predict has **one canonical strike interpretation across the entire protocol: an
 
 This single interpretation is what lets the same tick mean the same price everywhere — at the public entrypoint, in the events, in the payout tree, in the liquidation book, and at settlement — without a per-market origin to translate against.
 
-### Ticks, the range key, and the ±infinity sentinels
+### Ticks and the ±infinity sentinels
 
-A position's range is the half-open interval `(lower, higher]`, expressed as two strike **ticks**. At public entrypoints and in events the pair travels as a single packed `range_key` of two 24-bit ticks (`lower_tick` in the low bits, `higher_tick` in the high bits); `range_codec::pack`/`unpack` move between the pair and the packed key, and an SDK converts raw strikes to ticks before packing.
+A position's range is the half-open interval `(lower, higher]`, expressed as two strike **ticks**. At public entrypoints and in events the pair travels directly as two 24-bit ticks, `lower_tick` and `higher_tick`; an SDK converts raw strikes to ticks before submitting them. The only place the two ticks are packed into one integer is the durable order ID.
 
 The sentinels live at the ends of the 24-bit tick domain:
 
@@ -51,7 +51,7 @@ The sentinels live at the ends of the 24-bit tick domain:
 
 Raw strikes are recovered from ticks only at the pricing and settlement boundary, through `range_codec::strikes_from_ticks`, which applies the sentinel mapping and the `tick × tick_size` multiplication. The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k", i.e. plain digital calls and puts — without inventing artificial outer strikes. Settlement payout is determined by whether the settlement price falls inside `(lower, higher]`: an order pays zero when `settlement ≤ lower || settlement > higher`.
 
-`tick_size` is validated at feed-approval time to be a positive multiple of the protocol tick-size unit, which also bounds the raw-strike multiplication (`tick × tick_size`) against overflow given the 24-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span; leveraged orders carry an extra one-sidedness rule) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
+`tick_size` is validated at market creation to be positive, inside the protocol tick-size bounds, and equal to the underlying's minimum tick size or a 10x multiple above it. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 24-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span; leveraged orders carry an extra one-sidedness rule) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
 
 ## Positions (orders)
 
@@ -94,7 +94,7 @@ stateDiagram-v2
 
 ### Mint
 
-`mint` creates a live position. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, no pool valuation in progress, a valid `PredictTradeProof`, bound-and-live feeds with a fresh surface, and enough expiry cash to back the post-mint payout liability plus rebate reserve. Leveraged mints additionally must satisfy leverage-tier policy, sit above the liquidation threshold at entry, and keep the order's terminal floor strictly below `quantity × liquidation_ltv`. The flow takes the packed `range_key`, quotes the entry range probability, derives the net premium and floor terms, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the strike-exposure and liquidation indexes, and settles payment (net premium + trading fee + optional builder fee + EWMA congestion penalty). It emits **`OrderMinted`** and returns the order ID. Mint gating (surface freshness, mint pause, range validity) connects to [pricing and oracles](./pricing-and-oracles.md).
+`mint` creates a live position. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, no pool valuation in progress, a valid `PredictTradeProof`, current canonical Propbook feeds with a fresh surface, and enough expiry cash to back the post-mint payout liability plus rebate reserve. Leveraged mints additionally must satisfy leverage-tier policy, sit above the liquidation threshold at entry, and keep the order's terminal floor strictly below `quantity × liquidation_ltv`. The flow takes the `(lower_tick, higher_tick)` pair, quotes the entry range probability, derives the net premium and floor terms, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the strike-exposure and liquidation indexes, and settles payment (net premium + trading fee + optional builder fee + EWMA congestion penalty). It emits **`OrderMinted`** and returns the order ID. Mint gating (surface freshness, mint pause, range validity) connects to [pricing and oracles](./pricing-and-oracles.md).
 
 ### Live redeem (full, or partial as cancel-and-replace)
 
@@ -107,7 +107,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement is **deferred to settlement-v2 and stubbed today**: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. No market ever reaches the SETTLED state under the current build, so the settled-redeem and settled-sweep paths below — though present in the code, gated on `is_settled()` — are unreachable until v2. When settlement-v2 lands it will record the terminal price from the propbook feeds' minute history; see [pricing and oracles](./pricing-and-oracles.md). Liveness is derived purely from the clock against the market's own expiry (`assert_active`), since the feeds no longer carry market lifecycle.
+Settlement is **deferred to settlement-v2 and stubbed today**: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. No market ever reaches the SETTLED state under the current build, so the settled-redeem and settled-sweep paths below — though present in the code, gated on `is_settled()` — are unreachable until v2. When settlement-v2 lands it will record the terminal price from the propbook feeds' minute history; see [pricing and oracles](./pricing-and-oracles.md). Live pricing rejects a market whose expiry has already passed.
 
 ### Settled redeem (deferred)
 
@@ -115,16 +115,16 @@ After settlement (v2), a position is closed for its terminal payout. `redeem_set
 
 ### Liquidation
 
-While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the bound `PythFeed` and `BlockScholesFeed`. Liquidation is permissionless, removes the order from live indexes, and **does not touch any `PredictManager`** — it emits **`OrderLiquidated`** (with no owner/manager fields, since they are unknown to the pass) and leaves a tombstone. The holder later clears the liquidated position through `redeem`/`redeem_settled`, which removes the manager position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in [leverage and the floor](./leverage-and-floor.md), [liquidation](./liquidation.md), and [risks](../risks.md).
+While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the current Propbook `PythFeed` and `BlockScholesFeed` objects, which `pricing::load_live_pricer` validates against Propbook's canonical binding for the market's underlying. Liquidation is permissionless, removes the order from live indexes, and **does not touch any `PredictManager`** — it emits **`OrderLiquidated`** (with no owner/manager fields, since they are unknown to the pass) and leaves a tombstone. The holder later clears the liquidated position through `redeem`/`redeem_settled`, which removes the manager position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in [leverage and the floor](./leverage-and-floor.md), [liquidation](./liquidation.md), and [risks](../risks.md).
 
 ## Object relationships at a glance
 
 | Object | Owns | Created by | Sharing |
 | --- | --- | --- | --- |
-| `Registry` | Feed approval/expiry uniqueness, versions, pause caps, creation entrypoints | package init | shared |
+| `Registry` | Underlying approval, minimum tick sizes, expiry uniqueness, versions, pause caps, creation entrypoints | package init | shared |
 | `PythFeed` (propbook) | One Pyth Lazer feed's global spot | `propbook` (permissionless) | shared |
 | `BlockScholesFeed` (propbook) | One underlying's per-expiry surfaces + minute history | `propbook` (permissionless) | shared |
-| `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; feed binding | `create_expiry_market` (one per expiry) | shared |
+| `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_expiry_market` (one per underlying and expiry) | shared |
 | `PredictManager` | DUSDC custody + positions keyed by `(expiry_market_id, order_id)` | `create_manager` / `create_self_owned_manager` | owned or shared |
 
 For the capability model and trade authority, see [architecture](../design/architecture.md). For tunable parameters (tick size, leverage tiers, liquidation LTV, fee policy), see [configuration](../design/configuration.md).

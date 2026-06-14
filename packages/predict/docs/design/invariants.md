@@ -145,8 +145,8 @@ and contributors. For *how* each mechanism works, follow the links into
   sentinel.
 - **Lossless tick round-trip.** Every atom the canonical evaluator reads —
   quantity, floor shares, opened-at, and both ticks — round-trips through the packed
-  id with no loss. The two `u24` tick fields encode the *same* absolute ticks used in
-  the `range_key`, the payout tree, and the liquidation book, so an order's strike
+  id with no loss. The two `u24` tick fields encode the *same* absolute ticks used at
+  the entrypoints, the payout tree, and the liquidation book, so an order's strike
   range is bit-identical whether read from the id, the tree, or the event. A lossy
   repack would be an accounting bug, not a precision nit.
 - Mint-admission policy (leverage tiers, price thresholds) is **not** part of
@@ -180,7 +180,7 @@ and contributors. For *how* each mechanism works, follow the links into
   the sweep alone suffices.)
 - **Flush-liveness precondition (deferred).** With settlement stubbed, a market that
   crosses its expiry is never swept off the active set, so `value_expiry →
-  current_nav → assert_active` aborts and bricks the flush pool-wide. Until
+  current_nav → pricing::load_live_pricer` aborts and bricks the flush pool-wide. Until
   settlement-v2 restores the sweep, the operator must not let an active market cross
   its expiry across a flush. This is a known deferred precondition, not a bug.
 
@@ -195,11 +195,11 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Cross-object binding
 
-- `ExpiryMarket` validates that the two propbook feeds passed to a priced flow are
-  the Pyth and Block Scholes feeds it was bound to at creation (`assert_feeds`), and
-  that the market is live (`assert_active`), before composing them for trading. The
-  registry records one admin-approved config row per Pyth Lazer feed. Predict does
-  not version-gate the external feeds.
+- `ExpiryMarket` stores the Propbook underlying ID; `pricing::load_live_pricer`
+  validates that the two propbook feeds passed to a priced flow match Propbook's
+  current canonical binding for that underlying and that the market is still
+  pre-expiry for live pricing. The registry records one admin-approved config row
+  per Propbook underlying. Predict does not version-gate the external feeds.
 
 ## Producer facts and single clamp
 

@@ -149,20 +149,23 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
-- **Ownership split: the market owns binding + liveness, `pricing` owns freshness +
-  math.** `ExpiryMarket` stores its two feed IDs and re-asserts the binding
-  (`assert_feeds`) and its own liveness (`assert_active`, from its `expiry`) on
-  every priced flow; `pricing` is handed already-bound, already-live feeds and owns
-  only surface freshness and the SVI binary-pricing math. *Rationale:* the module
-  that composes the objects owns the cross-object check; the leaf owns its local
-  precondition.
+- **Ownership split: the market owns flow state, `pricing` owns the live oracle
+  boundary.** `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the
+  current oracle object IDs. Every priced flow asks `pricing::load_live_pricer` to
+  validate the passed feeds against Propbook's current canonical binding, reject a
+  past-expiry live price, apply freshness and Predict's pricing-safe envelope, and
+  return a value-typed `Pricer`. *Rationale:* Propbook owns source identity and
+  canonical binding; Predict pricing owns the only conversion from Propbook objects
+  into business logic.
 - **Pyth-stale is a fallback, not an abort.** Live forward is
   `pyth.spot() * bs.basis(expiry)` when Pyth is fresh, else `bs.forward(expiry)`;
   the Block Scholes *surface* must be fresh either way (`EBlockScholesSurfaceStale`).
   *Rationale:* the surface alone carries a usable forward, so a momentarily stale
-  spot should not block trading. The freshness windows for Pyth spot and the BS
-  surface collapsed to one window each — the surface row writes spot + forward + SVI
-  together, so the former separate price and SVI windows became one.
+  spot should not block trading. A fresh but unusable positive-only Pyth spot aborts
+  instead of falling back, so provenance only changes on staleness. The freshness
+  windows for Pyth spot and the BS surface collapsed to one window each — the surface
+  row writes spot + forward + SVI together, so the former separate price and SVI
+  windows became one.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
@@ -175,9 +178,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **There is exactly one strike interpretation protocol-wide: an absolute integer
   tick from zero, `raw_strike = tick * tick_size`.** `strike_grid` (the market-local
   centered grid) was deleted and `strike_exposure/range_codec` is its replacement:
-  it owns the packed two-`u24`-tick `range_key` used at public entrypoints and
-  events, the tick→raw conversion at the pricing/settlement boundary, and the
-  settlement prefix threshold. Order IDs, the payout tree, and the liquidation book
+  it owns the tick→raw conversion at the pricing/settlement boundary and the
+  settlement prefix threshold. Public entrypoints and events carry the
+  `(lower_tick, higher_tick)` pair directly, and only the order ID packs the ticks.
+  Order IDs, the payout tree, and the liquidation book
   all key on ticks; raw strikes are recovered only at the pricing/settlement
   boundary. *Rationale:* the centered origin existed only to page the deleted dense
   NAV matrix; once that was gone it just forced every order decode through
@@ -187,7 +191,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   fit), and an opaque id with a separate order table. See
   [tick range encoding](./tick-range-encoding.md).
 - **No-spot market creation.** Because the tick domain is absolute, market creation
-  reads no live spot — it snapshots the feed `tick_size` and starts with zero cash.
+  reads no live spot — it snapshots the caller-chosen market `tick_size` and starts with zero cash.
   `MarketCreated` carries `tick_size`, not min/max strike. *Rationale:* the only
   reason creation needed a fresh spot was to center the deleted grid; a market simply
   cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
@@ -256,7 +260,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   pre-deploy intermediate; settlement-v2 is a hard pre-deploy prerequisite.
 - **Accepted consequence: a deferred flush-liveness precondition.** Because no market
   ever settles, a market that crosses its expiry is never swept off the active set,
-  and `value_expiry → current_nav → assert_active` then aborts, bricking the flush
+  and `value_expiry → current_nav → pricing::load_live_pricer` then aborts, bricking the flush
   pool-wide. Until settlement-v2, the operator must not let an active market cross its
   expiry across a flush (create only far-dated markets). *Rationale:* there is no
   solvency-safe NAV for a past-expiry-but-unsettled market — the single flush mark

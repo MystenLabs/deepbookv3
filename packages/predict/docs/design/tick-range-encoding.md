@@ -10,11 +10,12 @@ and the one principle the whole protocol reads strikes by.
 from zero, with `raw_strike = tick * tick_size`.** There is no second strike
 representation anywhere in Predict — no market-local centered grid, no
 boundary-relative indices, no two competing forms carried side by side. Public
-entrypoints and events take a packed two-tick `range_key`; order IDs, the payout
-tree, and the liquidation book all key on ticks; raw `u64` strikes are recovered
-only at the pricing/settlement boundary. The `strike_exposure/range_codec` module
-is the single owner of the tick↔raw conversion and the settlement prefix
-threshold.
+entrypoints and events carry the tick pair `(lower_tick, higher_tick)` directly;
+order IDs, the payout tree, and the liquidation book all key on ticks; raw `u64`
+strikes are recovered only at the pricing/settlement boundary. The one and only
+place ticks are packed into a single integer is the durable order ID. The
+`strike_exposure/range_codec` module is the single owner of the tick↔raw
+conversion and the settlement prefix threshold.
 
 Predict positions are range digitals: each order pays if the settlement price
 lands in `(lower, higher]`. Before this design the protocol carried three strike
@@ -49,14 +50,9 @@ positive-infinity sentinel. Finite tick `0` is deliberately not a strike — Pre
 prices positive strikes only, and a lower bound open to zero is the `-inf`
 sentinel.
 
-The packed `range_key` carries the pair:
-
-```text
-range_key: u64
-bits 0..23    lower_tick
-bits 24..47   higher_tick
-bits 48..63   reserved, must be zero
-```
+Entrypoints and events carry the pair as two `u64` values, `lower_tick` and
+`higher_tick`. There is no standalone packed range key; the only packed form is
+inside the durable order ID (below).
 
 Valid range shapes:
 
@@ -70,20 +66,15 @@ Invalid shapes (rejected by `order::assert_valid_order_shape` when the ticks bec
 an order ID): `lower_tick >= higher_tick`; the full outcome space
 `lower_tick == 0 && higher_tick == pos_inf_tick`; and, for a leveraged order, any
 two-sided range — a leveraged order must have `lower_tick == 0` or
-`higher_tick == pos_inf_tick`. `range_codec` itself only checks the reserved high
-bits and the per-tick domain bound on pack; range-shape validity is the order's
-concern (the ticks are validated once, where they become a durable id), so the
-codec does not re-check it.
+`higher_tick == pos_inf_tick`. All shape and per-tick-domain validity is `order`'s
+concern — the ticks are validated once, in `order::new`, where they become a
+durable id. `range_codec` is purely a converter and re-checks none of it.
 
 ## The `range_codec` module
 
 `range_codec` is **stateless** — every conversion takes the owning market's
-`tick_size`. It owns four things:
+`tick_size`. It owns two things:
 
-- `unpack(range_key) -> (lower_tick, higher_tick)` — asserts the reserved high bits
-  are zero, masks out the two `u24` ticks.
-- `pack(lower_tick, higher_tick) -> range_key` — for PTB builders; asserts each tick
-  fits the 24-bit domain.
 - `strikes_from_ticks(lower_tick, higher_tick, tick_size) -> (lower, higher)` — the
   tick→raw conversion at the pricing/settlement boundary, mapping the sentinels
   (`lower_tick == 0 ⇒ neg_inf`, `higher_tick == pos_inf_tick ⇒ pos_inf`).
@@ -114,9 +105,10 @@ owning market's `tick_size`. Mint-admission policy (leverage tiers, price
 thresholds) stays out of the ID — it is structural contract terms only, so a future
 policy change can never invalidate an existing packed id.
 
-The two `u24` tick fields encode the *same* absolute ticks as the `range_key`, the
-payout-tree keys, and the `OrderMinted` event, so an order's strike range is
-bit-identical wherever it is read — a lossless round-trip, not a re-derivation.
+The two `u24` tick fields encode the *same* absolute ticks as the entrypoint
+arguments, the payout-tree keys, and the `OrderMinted` event, so an order's strike
+range is bit-identical wherever it is read — a lossless round-trip, not a
+re-derivation.
 
 ## Internal indexes
 
@@ -142,16 +134,17 @@ The sparse exposure indexes key on ticks internally:
 ## Market creation and `tick_size`
 
 Because the tick domain is absolute, market creation needs no live spot — there is
-no grid to center. `create_expiry_market` snapshots the feed's approved `tick_size`
-and creates the market with zero cash; `MarketCreated` emits `tick_size`, not
+no grid to center. `create_expiry_market` snapshots the caller-chosen market
+`tick_size` and creates the market with zero cash; `MarketCreated` emits `tick_size`, not
 min/max strike. A market cannot admit risk until the normal live-pricing freshness
 gates pass, so a market created against an unwarmed feed is simply unmintable, not
 malformed.
 
-`Registry` owns the per-feed `tick_size`; a change affects future markets only.
-`assert_oracle_tick_size` validates two things: the tick size is a positive multiple
-of the granularity unit, and it is small enough that the maximum finite strike
-cannot overflow `u64`:
+`Registry` owns each Propbook underlying's minimum tick size; the concrete market
+tick size is fixed when the market is created and must be that minimum or a 10x
+multiple above it. Market creation validates that the tick size is positive, inside
+the protocol bounds, and small enough that the maximum finite strike cannot overflow
+`u64`:
 
 ```text
 max_finite_strike = (pos_inf_tick - 1) * tick_size      // must fit in u64
@@ -162,8 +155,8 @@ There is deliberately **no** on-chain check that `tick_size` matches the asset's
 price scale — such a check would need a creation-time spot read, the exact coupling
 this design removes. Sizing `tick_size` to the feed's price scale is an operational
 responsibility, and a mismatch fails loud at the first mint: a too-small tick pushes
-at-the-money strikes outside the 24-bit domain, so `range_key` construction rejects
-them; a too-large tick only coarsens granularity.
+at-the-money strikes outside the 24-bit domain, so order-ID construction
+(`order::new`) rejects them; a too-large tick only coarsens granularity.
 
 The tick size trades resolution for range. Some reference points:
 
@@ -177,10 +170,9 @@ The tick size trades resolution for range. Some reference points:
 Choose `tick_size` so the cap clears any strike to be listed. The 24-bit domain
 (~16.78M ticks) is effectively a permanent commitment: the order ID has no spare
 bits adjacent to the two `u24` tick slots, so widening ticks later would mean
-repacking the ID (an order-format change). The `range_key`'s reserved high bits do
-*not* relax this — they are forward-compat for the standalone key only. Confirm 24
-bits gives enough simultaneous resolution-and-range for the most volatile intended
-feed before the deploy freeze.
+repacking the ID (an order-format change). Confirm 24 bits gives enough
+simultaneous resolution-and-range for the most volatile intended feed before the
+deploy freeze.
 
 ## Pricing tail behavior
 
@@ -216,19 +208,21 @@ redundant on mint and absent on the no-band re-pricing paths.
 
 ## Events and SDKs
 
-`OrderMinted` carries `range_key` **permanently as the canonical strike field**, not
-as a transition aid. Its value is decoupling: the indexer reads the range without
-depending on the packed-order-ID bit layout. Raw `lower_strike` / `higher_strike`
-are emitted too, but only as derived display values (`tick * tick_size`); they are
-never an independent representation. Later order events rely on `order_id` (the range
-key is embedded in the ID, and replacement IDs preserve it). `MarketCreated` emits
+`OrderMinted` carries the strike range as the two absolute ticks `lower_tick` /
+`higher_tick` — the canonical form, not a transition aid. The indexer reads the
+range directly, without depending on the packed-order-ID bit layout and without
+re-deriving raw strikes. No raw `lower_strike` / `higher_strike` are emitted: those
+are pure display (`tick * tick_size`) an indexer derives from `MarketCreated`'s
+`tick_size`, and the open-ended ends would otherwise re-introduce the raw `u64`
+sentinels into the event. Later order events rely on `order_id` (the ticks are
+embedded in the ID, and replacement IDs preserve them). `MarketCreated` emits
 `tick_size` and no strike bounds.
 
 SDKs own the user-facing routing: load the market or feed `tick_size`, convert raw
 strike inputs to finite ticks (rejecting unaligned values by default — a silent
-floor/ceiling changes the economics of `(lower, higher]`), build `up`, `down`, or
-finite `range_key` values, and submit the packed range. On-chain `range_codec::pack`
-exists for PTB builders so integrators do not hand-roll bit shifts.
+floor/ceiling changes the economics of `(lower, higher]`), and submit the `up`,
+`down`, or finite range as the `(lower_tick, higher_tick)` pair. On-chain
+entrypoints take the two ticks directly, so there is no packed range key to build.
 
 ## What this design does not own
 
@@ -237,6 +231,6 @@ is **not** part of this design. Tick-range needs only the tail saturation and th
 tick↔raw conversion at the boundary; the shipped `pricing.move` remains a
 read + gate + math module that constructs a value-typed `Pricer` from the live feeds
 (it reads the propbook feeds, gates surface freshness, and exposes
-`up_price` / `range_price`). The forward-selection and freshness policy live there;
-feed binding and market liveness are the market's. See
+`up_price` / `range_price`). Current Propbook binding, pre-expiry live-pricing
+liveness, forward-selection, freshness, and the pricing-safe envelope live there. See
 [architecture](./architecture.md) and [pricing and oracles](../concepts/pricing-and-oracles.md).

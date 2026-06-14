@@ -1,13 +1,13 @@
 # Architecture
 
-Predict is a per-expiry, range-based options protocol on Sui. Its on-chain state is split across a small set of long-lived shared objects, a per-trader account object with delegated capabilities, and a handful of governance and attribution capabilities. This document describes those objects, who owns which capital, the capability and authorization model, how version gating works, and the binding mesh that ties markets to their oracle feeds. It documents how the system is structured, not how to call it; for the economics, see the [concepts](../concepts/) docs, and for tunable values see [configuration](./configuration.md).
+Predict is a per-expiry, range-based options protocol on Sui. Its on-chain state is split across a small set of long-lived shared objects, a per-trader account object with delegated capabilities, and a handful of governance and attribution capabilities. This document describes those objects, who owns which capital, the capability and authorization model, how version gating works, and the binding mesh that ties markets to Propbook underlyings and oracle feeds. It documents how the system is structured, not how to call it; for the economics, see the [concepts](../concepts/) docs, and for tunable values see [configuration](./configuration.md).
 
 ## Two principles to read this document by
 
 Two design commitments shape everything below; both are stated once here and assumed throughout.
 
-- **One canonical strike interpretation — absolute integer ticks.** Protocol-wide, a strike is an absolute tick from zero, with `raw_strike = tick * tick_size`. There is no second strike representation anywhere: no market-local centered grid, no boundary-relative indices. Public entrypoints and events carry a packed two-tick `range_key`; order IDs, the payout tree, and the liquidation book all key on ticks; raw strikes are recovered only at the pricing/settlement boundary. The `strike_exposure/range_codec` module is the single owner of the tick↔raw conversion. See [tick range encoding](./tick-range-encoding.md).
-- **Oracle data lives outside Predict.** The live spot and volatility surface come from two standalone, Predict-unaware feeds in the separate `propbook` package. Predict holds no oracle object, no writer capability, and no price-ingest path; it reads the feeds and validates that the ones passed to a flow are the feeds its market is bound to.
+- **One canonical strike interpretation — absolute integer ticks.** Protocol-wide, a strike is an absolute tick from zero, with `raw_strike = tick * tick_size`. There is no second strike representation anywhere: no market-local centered grid, no boundary-relative indices. Public entrypoints and events carry the tick pair `(lower_tick, higher_tick)` directly; order IDs, the payout tree, and the liquidation book all key on ticks (the order ID is the only packed form); raw strikes are recovered only at the pricing/settlement boundary. The `strike_exposure/range_codec` module is the single owner of the tick↔raw conversion. See [tick range encoding](./tick-range-encoding.md).
+- **Oracle data lives outside Predict.** The live spot and volatility surface come from two standalone, Predict-unaware feeds in the separate `propbook` package. Predict holds no oracle object, no writer capability, and no price-ingest path; it stores a Propbook underlying ID and validates passed feeds against Propbook's current canonical binding when live pricing runs.
 
 ## Object taxonomy
 
@@ -23,16 +23,16 @@ The protocol is constructed at package publish: the `registry` module's `init` c
 
 | Object | Module | Owns / holds | Created |
 | --- | --- | --- | --- |
-| `Registry` | `registry` | Admin-approved Pyth-feed configs (per-feed strike tick size), expiry uniqueness index, the authoritative `allowed_versions` set, allowed `PauseCap` and `MarketLifecycleCap` IDs | package init |
+| `Registry` | `registry` | Admin-approved Propbook underlying configs (minimum tick size), expiry uniqueness index, the authoritative `allowed_versions` set, allowed `PauseCap` and `MarketLifecycleCap` IDs | package init |
 | `ProtocolConfig` | `protocol_config` | All admin-tunable config structs, the `trading_paused` flag, the transaction-local valuation lock | package init |
 | `PoolVault` | `plp` | Idle LP-owned DUSDC, protocol-reserve DUSDC, custody of staked DEEP, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply DUSDC escrow, withdraw PLP escrow) | package init |
-| `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree + liquidation book), embedded `ExpiryCash` DUSDC custody, EWMA gas-price stats, the binding to its two propbook feeds | per expiry |
+| `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree + liquidation book), embedded `ExpiryCash` DUSDC custody, EWMA gas-price stats, Propbook underlying ID, tick size | per underlying and expiry |
 
-The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Pyth Lazer feed ID, one `ExpiryMarket` per expiry timestamp, and holds the single authoritative `allowed_versions` set that the gated objects mirror. It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in `PredictManager`. It records *which* Pyth feeds Predict will build markets on (admin approval), but the feed objects themselves live in `propbook`.
+The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Propbook underlying ID, one `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair, and holds the single authoritative `allowed_versions` set that the gated objects mirror. It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in `PredictManager`. It records which Propbook underlyings Predict will build markets on and the minimum tick size each may use; source IDs and canonical oracle object IDs live in `propbook`.
 
 `ProtocolConfig` is a separate shared object from `Registry`. It owns the global flow gates — `trading_paused` (blocks new risk creation) and `valuation_in_progress` (a transaction-local lock held while a full-pool NAV valuation is assembled) — and the admin-tunable config structs. Two of those are *template* configs (`StrikeExposureConfig`, `ExpiryCashConfig`): their current values are snapshotted into each new `ExpiryMarket` at creation, so changing a template affects only future expiries, not live ones. See [configuration](./configuration.md).
 
-`ExpiryMarket` is the hot object for one expiry. It embeds `ExpiryCash` (a `store`-only component, not its own object) which holds that expiry's working DUSDC and tracks the unresolved trading-fee basis used to reserve cash for loss rebates. The market never reaches into the pool directly; cash enters only via pool-driven rebalancing and leaves only via release back to the pool or as payouts/rebates to managers. Because the oracle was extracted, this market now *also* owns the binding of itself to its propbook Pyth and Block Scholes feeds (`assert_feeds`) and its own liveness (`assert_active`, derived from its `expiry` and the clock); it stores the two feed IDs and revalidates them on every priced flow.
+`ExpiryMarket` is the hot object for one expiry. It embeds `ExpiryCash` (a `store`-only component, not its own object) which holds that expiry's working DUSDC and tracks the unresolved trading-fee basis used to reserve cash for loss rebates. The market never reaches into the pool directly; cash enters only via pool-driven rebalancing and leaves only via release back to the pool or as payouts/rebates to managers. Because the oracle was extracted, the market stores only the Propbook underlying ID; `pricing::load_live_pricer` validates the passed feed objects against Propbook's current canonical binding before a live price reaches exposure logic.
 
 ## DUSDC custody
 
@@ -73,12 +73,12 @@ The proof is used by `mint` (which borrows it) and consumed by the live branch o
 
 | Capability | Module | Authority | Lifecycle |
 | --- | --- | --- | --- |
-| `AdminCap` | `admin` | global policy: all admin-tunable config, version enable/disable, mint pause/unpause, market-lifecycle caps, pause caps, per-feed strike tick size; also starts the privileged pool flush | one, minted at init, transferred to deployer (multisig) |
+| `AdminCap` | `admin` | global policy: all admin-tunable config, version enable/disable, mint pause/unpause, market-lifecycle caps, pause caps, underlying minimum tick sizes; also starts the privileged pool flush | one, minted at init, transferred to deployer (multisig) |
 | `MarketLifecycleCap` | `market_lifecycle_cap` | create expiry markets (`registry::create_expiry_market`); also a second, trusted way to start the privileged pool flush (`plp::start_pool_valuation_as_deployer`) | minted and revoked by `AdminCap` against the `Registry` allowlist |
 | `PauseCap` | `registry` | emergency kill switch: disable a version, force `trading_paused = true`, force per-market mint pause | minted/revoked by `AdminCap`; cannot unpause anything |
 | `BuilderCode` | `builder_code` | claim accumulated builder fees | derived shared object; permanent owner |
 
-**`AdminCap` is a dependency-leaf.** Modules that own admin-tunable state accept the `AdminCap` directly as a parameter rather than routing the mutation through `Registry`. `protocol_config` setters, `expiry_market::set_mint_paused`, and registry-owned flows all take `&AdminCap`. The cap is passed as an unused reference (`_admin_cap`); holding it is the authorization. `Registry` only owns flows that are genuinely registry-scoped: version management, `PauseCap` and `MarketLifecycleCap` lifecycle, uniqueness-indexed creation (`create_expiry_market`), per-feed tick size, and Pyth-feed approval.
+**`AdminCap` is a dependency-leaf.** Modules that own admin-tunable state accept the `AdminCap` directly as a parameter rather than routing the mutation through `Registry`. `protocol_config` setters, `expiry_market::set_mint_paused`, and registry-owned flows all take `&AdminCap`. The cap is passed as an unused reference (`_admin_cap`); holding it is the authorization. `Registry` only owns flows that are genuinely registry-scoped: version management, `PauseCap` and `MarketLifecycleCap` lifecycle, uniqueness-indexed creation (`create_expiry_market`), and Propbook underlying admission/minimum tick size.
 
 **`MarketLifecycleCap` is the market-lifecycle key.** Its primary authority is creating an expiry market (`registry::create_expiry_market`); it also serves as the second, trusted holder permitted to start the pool flush (`plp::start_pool_valuation_as_deployer`). It grants no other authority. The allowlist of valid lifecycle caps lives on `Registry` — its only creation call site — where `AdminCap` mints into it (`registry::mint_lifecycle_cap`) and revokes from it (`registry::revoke_lifecycle_cap`). There is no oracle-writer capability in Predict at all: Block Scholes data is written permissionlessly into the external `propbook` feed by anyone holding a verified `Update`, so Predict mints and holds no price-writing authority.
 
@@ -99,6 +99,7 @@ graph TD
     end
 
     subgraph propbook (external oracle package)
+        OR[OracleRegistry<br/>canonical bindings]
         PF[PythFeed<br/>global spot]
         BSF[BlockScholesFeed<br/>per-expiry surface]
     end
@@ -120,10 +121,11 @@ graph TD
     REG -. derives .-> BC
     REG -->|one market per expiry| EM
 
-    EM -->|bound to| PF
-    EM -->|bound to| BSF
-    EM -.->|reads spot / surface| PF
-    EM -.->|reads forward / svi| BSF
+    OR -->|canonical Pyth| PF
+    OR -->|canonical BS| BSF
+    EM -.->|stores underlying id| OR
+    EM -.->|live pricing reads| PF
+    EM -.->|live pricing reads| BSF
 
     ADMIN --> CFG
     ADMIN --> REG
@@ -147,24 +149,25 @@ graph TD
 
 ## The binding mesh
 
-A trade composes four objects — an `ExpiryMarket`, its two propbook feeds (`PythFeed`, `BlockScholesFeed`), and a `PredictManager` — and the protocol must guarantee they belong together. The bindings are anchored at creation and re-checked at every use:
+A trade composes five objects — an `ExpiryMarket`, Propbook's `OracleRegistry`, the two propbook feeds (`PythFeed`, `BlockScholesFeed`), and a `PredictManager` — and the protocol must guarantee they belong together:
 
-- **Feed approval.** `Registry.pyth_feed_configs` records each admin-approved Pyth Lazer feed ID together with the strike tick size its future markets will use. This row only gates *which* feeds Predict will build markets on; the propbook feed objects are created independently and permissionlessly in `propbook`.
-- **Market → feeds.** `create_expiry_market` takes the two feed *objects* (`&PythFeed`, `&BlockScholesFeed`), reads the Pyth feed's ID off the object, checks it is approved, and stores both feed object IDs on the new `ExpiryMarket`. Pairing a Pyth spot feed and a Block Scholes surface feed to the same underlying is a creation-time trust held by the market-deployer cap. Every priced flow (`mint`, live `redeem`, `liquidate`, `current_nav`) calls `assert_feeds`, which checks the passed feed objects' IDs equal the stored pair. `pricing` is handed already-bound feeds and trusts them.
-- **Market liveness.** The market owns its own liveness now that the oracle no longer carries lifecycle: `assert_active` rejects a market whose `expiry` has passed (using the clock). Settlement is stubbed (see below), so a past-expiry market is "pending settlement, unsettleable."
+- **Underlying approval.** Predict `Registry.underlying_configs` records each admin-approved Propbook underlying ID together with the minimum tick size its markets may use. This row gates which underlyings Predict will build markets on; Propbook owns source IDs, source-object discovery, and canonical source-to-underlying binding.
+- **Creation-time coverage.** `create_expiry_market` takes Propbook's `&OracleRegistry` and a `propbook_underlying_id`, then asserts that Propbook currently has both canonical Pyth and Block Scholes bindings for that underlying. It snapshots only the underlying ID and tick size. Pairing spot and surface to one underlying is therefore a Propbook registry claim, not a market-deployer claim.
+- **Live priced-flow binding.** Every priced flow passes the current Propbook registry plus feed objects to `pricing::load_live_pricer`, which checks the feed object IDs against Propbook's current canonical binding for the market's underlying. A Propbook rebind affects existing markets on the next priced flow.
+- **Live pricing liveness.** `pricing::load_live_pricer` rejects a live price for a market whose expiry has passed. Settlement is stubbed (see below), so a past-expiry market is "pending settlement, unsettleable."
 - **Market → pool.** `create_expiry_market` registers the new expiry in `PoolVault`'s active-expiry ledger as a zero-cash accounting row. The market is not mintable until `plp::rebalance_expiry_cash` funds it from idle; the expiry never pulls from the pool itself.
 - **Manager → market.** Positions are keyed by `(expiry_market_id, order_id)` inside `PredictManager`, so an order minted by one expiry can only be redeemed against that same expiry's market and is authorized by a proof bound to that manager.
 
-`ExpiryMarket` is the module that composes these objects, so it owns the cross-object binding checks (`assert_feeds`) and market liveness (`assert_active`); the leaf modules own only their local preconditions — `pricing` owns surface freshness and the SVI math, the propbook feeds own their own data validity and version. This division — flow gates and bindings at the composing module, local invariants at the leaf — is the protocol's general validation rule.
+`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the live oracle-read boundary that turns Propbook objects into a value-typed `Pricer`; the propbook feeds own their source payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
 
 ## Oracle feeds (external, in `propbook`)
 
 The live oracle data is fully outside Predict, in two standalone, Predict-unaware shared objects in the `propbook` package. Predict reads them; it owns no oracle object, writer capability, or ingest path.
 
-- **`propbook::pyth_feed::PythFeed`** — one global normalized spot per Pyth Lazer feed ID. Updated permissionlessly by anyone holding a verified `pyth_lazer::Update` (`update_from_lazer`); the verified update is its own provenance proof, so there is no writer cap. Predict reads `spot()` and `freshness_timestamp_ms()`.
-- **`propbook::block_scholes_feed::BlockScholesFeed`** — one per underlying, holding a per-expiry `Table<expiry, Surface>` of `{spot, forward, SVI, timestamps}` plus a shared minute-bucket history. Because each expiry carries its own contemporaneous spot, `basis(expiry) = forward / spot` is exact. Updated permissionlessly from a verified `Update`; the feed enforces math validity at ingest (`spot > 0`, `forward > 0`, `|rho| ≤ 1` for SVI no-arbitrage, a sigma band). Predict reads `forward(expiry)`, `basis(expiry)`, `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, and `has_expiry(expiry)`.
+- **`propbook::pyth_feed::PythFeed`** — one global source-native Pyth payload per Pyth Lazer feed ID. Updated permissionlessly by anyone holding a verified `pyth_lazer::Update` (`update_from_lazer`); the verified update is its own provenance proof, so there is no writer cap. Predict reads `spot()` and `freshness_timestamp_ms()`, while raw source fields remain available through observation getters.
+- **`propbook::block_scholes_feed::BlockScholesFeed`** — one per source ID, holding per-expiry `{spot, forward, SVI, timestamps}` observations plus first-observed and official-settlement history. Because each expiry carries its own contemporaneous spot, `basis = forward / spot` is exact when Predict computes it. Updated permissionlessly from a verified `Update`; the feed stores source-native facts and Predict applies its pricing-safe envelope at read time. Predict reads `spot(expiry)`, `forward(expiry)`, `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, and `has_expiry(expiry)`.
 
-`pricing.move` resolves the live forward from these two feeds: if Pyth spot is fresh, `forward = pyth.spot() * bs.basis(expiry)`; otherwise it falls back to `bs.forward(expiry)`. A stale Pyth spot is a *fallback*, not an abort. The Block Scholes surface (basis + forward + SVI, written together as one row) must be fresh either way — a stale surface is the hard abort `EBlockScholesSurfaceStale`. `pricing` owns only surface freshness and the SVI binary-pricing math; feed binding and market liveness are the market's, as above. The feeds carry their own package version and a forward-only `migrate`; Predict does **not** gate them under its version set. See [pricing and oracles](../concepts/pricing-and-oracles.md).
+`pricing.move` resolves the live forward from these two feeds: if Pyth spot is fresh, `forward = pyth.spot() * (bs.forward / bs.spot)`; otherwise it falls back to `bs.forward(expiry)`. A stale Pyth spot is a fallback; a fresh but unusable positive-only Pyth spot aborts rather than silently changing provenance. The Block Scholes surface (spot + forward + SVI, written together as one row) must be fresh either way — a stale surface is the hard abort `EBlockScholesSurfaceStale`. `pricing` owns current Propbook binding, pre-expiry live-pricing liveness, surface freshness, the pricing-safe envelope, and the SVI binary-pricing math. The feeds carry their own package version and a forward-only `migrate`; Predict does **not** gate them under its version set. See [pricing and oracles](../concepts/pricing-and-oracles.md).
 
 ## The pool, NAV, and the async LP layer
 
@@ -184,7 +187,7 @@ The flush is **privileged**, not permissionless: the hot potato can only be crea
 
 Settlement is currently **stubbed**: `expiry_market::is_settled()` always returns `false` and `settlement_price()` aborts `ENotImplemented`. The settled-redeem and settled-sweep paths remain in the code, gated on `is_settled()`, and are therefore unreachable under the stub; they are kept for settlement-v2, which will read the terminal price from the propbook feeds' minute history.
 
-A consequence to know: because no market ever settles, a market that crosses its expiry is never swept off the active set, and `value_expiry → current_nav → assert_active` then aborts, bricking the flush pool-wide. Until settlement-v2, the operator must not let an active market cross its expiry across a flush — create only far-dated markets. This is a documented, deferred flush-liveness precondition, not a bug; settlement-v2 restores the sweep that drops settled markets. See [decisions](./decisions.md) and [invariants](./invariants.md).
+A consequence to know: because no market ever settles, a market that crosses its expiry is never swept off the active set, and `value_expiry → current_nav → pricing::load_live_pricer` then aborts, bricking the flush pool-wide. Until settlement-v2, the operator must not let an active market cross its expiry across a flush — create only far-dated markets. This is a documented, deferred flush-liveness precondition, not a bug; settlement-v2 restores the sweep that drops settled markets. See [decisions](./decisions.md) and [invariants](./invariants.md).
 
 ## Version gating
 

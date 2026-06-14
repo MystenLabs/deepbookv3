@@ -6,13 +6,17 @@
 /// This module is the app-facing read layer for oracle data. It reads the
 /// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
 /// range prices. It does not mutate feed, pool, expiry, or position state, and it
-/// does not own feed binding or market liveness — `expiry_market` validates the
-/// passed feeds belong to the market and that the market is active before pricing.
+/// owns the live pricing boundary: current Propbook feed binding, pre-expiry
+/// market liveness, feed freshness, and Predict's pricing-safe surface envelope.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig};
 use fixed_math::{i64, math};
-use propbook::{block_scholes_feed::{BlockScholesFeed, SVIParams}, pyth_feed::PythFeed};
+use propbook::{
+    block_scholes_feed::{BlockScholesFeed, SVIParams},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use sui::clock::Clock;
 
 /// Value snapshot of live oracle inputs for one or more price calculations.
@@ -28,6 +32,9 @@ const EInvalidRange: u64 = 3;
 const EBlockScholesSurfaceStale: u64 = 5;
 const EBlockScholesSurfaceInvalid: u64 = 6;
 const EPythSpotInvalid: u64 = 7;
+const EWrongPythFeed: u64 = 8;
+const EWrongBlockScholesFeed: u64 = 9;
+const ELivePricingExpired: u64 = 10;
 
 /// Predict's private pricing envelope for raw propbook surfaces. These are not
 /// oracle-source validity rules; they only bound the SVI inputs tightly enough
@@ -39,16 +46,24 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public-Package Functions ===
 
-/// Snapshot the current live oracle inputs for `expiry`'s repeated quote
-/// calculations. Reads the Pyth spot feed and the Block Scholes surface for this
-/// expiry; the caller owns feed binding and market liveness.
-public(package) fun pricer(
+/// Validate the current live pricing boundary and snapshot oracle inputs for
+/// `expiry`'s repeated quote calculations.
+///
+/// This is the only path from raw Propbook oracle objects into Predict business
+/// logic. It first checks that `pyth` and `bs` are the current canonical Propbook
+/// oracles for `propbook_underlying_id`, then rejects past-expiry markets, then
+/// reads live oracle inputs under Predict's freshness and pricing-safe envelope.
+public(package) fun load_live_pricer(
     config: &PricingConfig,
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     expiry: u64,
     clock: &Clock,
 ): Pricer {
+    assert_current_oracles(propbook_registry, propbook_underlying_id, pyth, bs);
+    assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
     let (forward, svi) = live_inputs(config, pyth, bs, expiry, clock);
     Pricer { forward, svi }
 }
@@ -65,12 +80,34 @@ public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
 
 // === Private Functions ===
 
+fun assert_current_oracles(
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+) {
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
+    );
+    assert!(
+        propbook_registry
+            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+            .contains(&bs.id()),
+        EWrongBlockScholesFeed,
+    );
+}
+
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from this
 /// expiry's Block Scholes basis. If Pyth is stale, pricing falls back to the
-/// Block Scholes forward. The Block Scholes surface (basis + forward + SVI) must
-/// be fresh and inside Predict's pricing-safe envelope either way.
+/// Block Scholes forward. If Pyth is fresh but its positive-only normalized spot
+/// read aborts, pricing aborts instead of falling back; fallback is only for
+/// staleness. The Block Scholes surface (basis + forward + SVI) must be fresh and
+/// inside Predict's pricing-safe envelope either way.
 fun live_inputs(
     config: &PricingConfig,
     pyth: &PythFeed,

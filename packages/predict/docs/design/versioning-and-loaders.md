@@ -19,8 +19,8 @@ oracle/Pyth-source mirror or sync.
 
 Predict currently repeats the same first-line checks across many public
 entrypoints: load the shared object, assert the package version is allowed, then
-perform the real flow gates such as pause checks, valuation-lock checks, feed
-binding, liveness, freshness, owner/cap authorization, and accounting
+perform the real flow gates such as pause checks, valuation-lock checks, live oracle
+pricing, owner/cap authorization, and accounting
 preconditions. The version check itself is mechanical. The other assertions are
 flow-specific and are easier to reason about when they are named by the flow
 that needs them.
@@ -61,11 +61,11 @@ Predict shared objects fall into different versioning categories:
 
 | Category | Objects | Version policy |
 | --- | --- | --- |
-| Version authority | `Registry` | **Shipped:** owns the authoritative `allowed_versions` set; the two gated objects mirror it. Also owns expiry uniqueness, feed approval, cap allowlists, and derived-object creation. Version-management and emergency pause/revocation paths bypass the gate. (The proposal below moves the *runtime* version set to `ProtocolConfig`; that has not shipped.) |
+| Version authority | `Registry` | **Shipped:** owns the authoritative `allowed_versions` set; the two gated objects mirror it. Also owns underlying admission, expiry uniqueness, cap allowlists, and derived-object creation. Version-management and emergency pause/revocation paths bypass the gate. (The proposal below moves the *runtime* version set to `ProtocolConfig`; that has not shipped.) |
 | Global flow gates | `ProtocolConfig` | Owns trading pause, the valuation lock, and admin-tunable config. Does not own the version set today. |
 | Version-gated protocol state | `ExpiryMarket`, `PoolVault` | The only two version-gated objects. Each mirrors `Registry.allowed_versions` and asserts it on every mutating flow; raw getters stay ungated. |
 | User and attribution objects | `PredictManager`, `BuilderCode` | Not package-version gated. They own user custody, caps, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
-| External oracle package | `PythFeed`, `BlockScholesFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict checks only feed binding (`assert_feeds`) and freshness through their public APIs, never their version. There is no Predict-side oracle mirror or sync. |
+| External oracle package | `PythFeed`, `BlockScholesFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict validates current Propbook binding and freshness through `pricing::load_live_pricer`, never through feed version checks. There is no Predict-side oracle mirror or sync. |
 
 The oracle extraction is complete: there is no in-package `MarketOracle` or
 `PythSource` to keep a version check on. The only mirrors Predict carries are
@@ -178,19 +178,19 @@ The generic loaders should check only shared facts that are truly universal for
 that object category. Flow-specific facts belong in named loaders or first-phase
 helpers.
 
-Parameter shapes below use the shipped feed signatures (`&PythFeed`,
-`&BlockScholesFeed`) and the shipped ownership split — feed *binding* and market
-*liveness* are the `ExpiryMarket`'s (`assert_feeds`, `assert_active`), and surface
-freshness is constructed inside `pricing::pricer`, so a market loader does **not**
-duplicate the freshness check or carry a `clock` for it.
+Parameter shapes below predate the current `load_live_pricer` shape, but the
+ownership split is current: `ExpiryMarket` owns market flow state, while
+`pricing::load_live_pricer` owns current Propbook binding, pre-expiry live-pricing
+liveness, surface freshness, and the pricing-safe envelope. A market loader should
+not duplicate those pricing checks.
 
 | Flow loader | Shared validation |
 | --- | --- |
 | `expiry_market::load_inner(config)` | package version allowed for semantic reads |
 | `expiry_market::load_inner_mut(config)` | package version allowed for normal market mutation |
-| `expiry_market::load_mint_market_mut(config, pyth, bs)` | market version, mint not paused, trading not paused, no valuation lock, feed binding, active market |
-| `expiry_market::load_redeem_market_mut(config, pyth, bs)` | market version, no valuation lock, feed binding; live-vs-settled branch checks remain outside |
-| `expiry_market::load_liquidation_market_mut(config, pyth, bs, clock)` | market version, no valuation lock, feed binding, active market |
+| `expiry_market::load_mint_market_mut(config)` | market version, mint not paused, trading not paused, no valuation lock |
+| `expiry_market::load_redeem_market_mut(config)` | market version, no valuation lock; live-vs-settled branch checks remain outside |
+| `expiry_market::load_liquidation_market_mut(config)` | market version, no valuation lock |
 | `plp::load_vault_inner(config)` | package version allowed for semantic reads that value or account for the vault |
 | `plp::load_vault_inner_mut(config)` | package version allowed for normal vault mutation |
 | `plp::load_registered_market_mut(config, market)` | vault version, market version, expiry registered to the vault |
@@ -202,9 +202,7 @@ Do not put these facts into one generic `load_inner_mut()`:
 - valuation lock state,
 - mint pause,
 - manager owner/proof/cap authority,
-- feed object binding (`assert_feeds`),
-- market liveness (`assert_active`),
-- surface freshness (owned by `pricing::pricer`),
+- current Propbook binding, live-pricing liveness, surface freshness, and pricing-safe envelope (owned by `pricing::load_live_pricer`),
 - cash backing,
 - position ownership.
 
@@ -360,9 +358,9 @@ preconditions. The generic loader checks package-version eligibility. The flow
 loader checks the rest of the facts that are common to that specific flow.
 
 Exclude `PredictManager` and `BuilderCode` from the package-version freeze by
-default. Exclude external oracle objects entirely; Predict should validate that
-the supplied oracle/feed objects match the market and are fresh enough, while
-the oracle package validates its own version.
+default. Exclude external oracle objects entirely; Predict should validate live
+oracle usability through `pricing::load_live_pricer`, while the oracle package
+validates its own version.
 
 ## Implementation notes
 
@@ -504,27 +502,23 @@ how the code already nests checks (`value_expiry` defers the version+binding to
 `rebalance_expiry_cash_inner` at `plp.move:458-459`).
 
 **The one real over-reach is `load_mint_market_mut`'s "fresh pricing inputs."**
-Freshness is owned by `Pricing` and is asserted *as a side effect of constructing the
-`Pricer`* (`pricing::pricer` → `live_inputs` → `assert_live_quote_available`). The
-repo rules are explicit: "`Pricing` owns live oracle freshness"; "do not preflight
-another module's local leaf preconditions just to avoid a later abort"; "avoid
-defensive duplicates." A market loader that also asserts freshness must either (i)
-duplicate the Pricing check (then `mint_internal` builds the pricer and re-asserts —
-the exact duplicate the rules forbid), or (ii) build and return the `Pricer` from the
-loader — which the doc's own Non-goal forbids ("do not hide pricing … inside a generic
-loader"). **Resolution: drop "fresh pricing inputs" from the mint/liquidation loaders.**
-Let them assert only what the *flow* owns — version, mint-pause, trading-pause,
-valuation-lock, and the `ExpiryMarket`-owned feed bindings (`assert_feeds`) — and
-return `&mut ExpiryMarket`; freshness stays where it already lives, in pricer
-construction. This also means the loaders do **not** need a `clock` just to check
-freshness, shrinking their signatures. (This is already how the shipped code is
-structured after the oracle extraction: `pricing::pricer` builds the value-typed
-`Pricer` and gates surface freshness; the market owns `assert_feeds` + `assert_active`.)
+Freshness, current Propbook binding, pre-expiry live-pricing liveness, and the
+pricing-safe envelope are owned by `Pricing` and asserted while constructing the
+`Pricer` (`pricing::load_live_pricer`). The repo rules are explicit: do not preflight
+another module's local preconditions just to avoid a later abort, and avoid defensive
+duplicates. A market loader that also asserts those facts must either duplicate the
+Pricing check or build and return the `Pricer` from the loader — which the doc's own
+Non-goal forbids ("do not hide pricing … inside a generic loader"). **Resolution:
+drop "fresh pricing inputs" from the mint/liquidation loaders.** Let them assert only
+what the *flow* owns — version, mint-pause, trading-pause, and valuation-lock — and
+return `&mut ExpiryMarket`; live oracle checks stay in pricer construction. This also
+means the loaders do **not** need a `clock` just to check freshness, shrinking their
+signatures.
 
 `load_redeem_market_mut` correctly notes "live-vs-settled branch checks remain
 outside" — that respects the branch-policy ownership rule and is the model the mint
-loader should follow. "Active market" is fine to keep (it calls the `ExpiryMarket`'s
-own `assert_active`, the owner's exposed assertion, not a reconstruction).
+loader should follow. Live-market checks belong with `pricing::load_live_pricer`, not
+with a generic market loader.
 
 **Naming caveat tied to (C):** the name `load_inner` presupposes there *is* an inner
 to load. Without (C) there is no `*Inner` struct, so the generic pair should be a
