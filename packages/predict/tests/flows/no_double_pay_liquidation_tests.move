@@ -39,9 +39,9 @@ const FLOOR_SHARES: u64 = 208_333_553;
 const LIVE_BACKING: u64 = 750_000_001;
 /// floor(5e6 fee basis * 0.5 default rebate rate).
 const MINT_REBATE: u64 = 2_500_000;
-/// 1% spot drop — inside the 2% write-time deviation breaker, but with the
-/// default near-zero SVI variance the digital collapses to ~0, far below the
-/// liquidation threshold floor(249_999_999 * 1e9 / 0.85e9) = 294_117_645.
+/// 1% spot drop: with the default near-zero SVI variance the digital collapses to
+/// ~0, far below the liquidation threshold floor(249_999_999 * 1e9 / 0.85e9) =
+/// 294_117_645.
 const DROPPED_SPOT: u64 = 99_000_000_000;
 /// Strictly after the setup's 99_000 source timestamp and <= clock 100_000;
 /// the clock itself never advances, so the floor index stays at index_open.

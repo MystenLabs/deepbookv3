@@ -13,7 +13,7 @@
 /// when the gap was 1, stranding the payout. The fix removes the order's full
 /// terms and reinserts the survivor's exact terms, so `R == P` by construction.
 ///
-/// LEAD: re-derive — settlement is stubbed (`is_settled()` returns false,
+/// TODO(settlement-v2): re-derive — settlement is stubbed (`is_settled()` returns false,
 /// `settlement_price()` aborts), so the original settled-redeem drain assertions
 /// (settle ITM, marginal settled redeem pays the exact hand-derived payout, reserve
 /// drains to exactly 0) test deleted behavior and were removed. They must be
