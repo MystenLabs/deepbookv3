@@ -370,7 +370,7 @@ fun flush(fx: &mut helpers::Fixture) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let val = plp::start_pool_valuation(&mut config, &vault);
+    let val = fx.start_flush(&mut config, &vault);
     let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
     return_shared(config);
     return_shared(vault);

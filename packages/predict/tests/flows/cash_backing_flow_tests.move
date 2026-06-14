@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability,
-/// rebate_reserve) triple after EVERY cash-mutating operation of a two-sided
-/// 1x book on the far expiry — mint, mint, partial live redeem, settlement,
-/// winner settled redeem, loser settled redeem. Pins that mint net_premium AND
-/// fee land in expiry cash, that disjoint live liability is the max settlement
-/// floor plus the default gap buffer, that settlement itself is an oracle-only
-/// transition (cash sheet bit-identical, liability getter still reports the
-/// lazy un-materialized live reserve), and that the materialized terminal
-/// reserve drains to exactly zero with the loser paying nothing.
+/// rebate_reserve) triple after EVERY cash-mutating LIVE operation of a two-sided
+/// 1x book on the far expiry — mint, mint, partial live redeem. Pins that mint
+/// net_premium AND fee land in expiry cash, and that disjoint live liability is
+/// the max settlement floor plus the default gap buffer. The settle + settled
+/// redeem legs are deferred to settlement-v2 (settlement is stubbed:
+/// `is_settled()` is always false), so they are not exercised here.
 #[test_only]
 module deepbook_predict::cash_backing_flow_tests;
 
@@ -38,15 +36,12 @@ const CLOSE_NET_PAYOUT: u64 = 247_500_000;
 const REBATE_AFTER_MINT1: u64 = 2_500_000;
 const REBATE_AFTER_MINT2: u64 = 7_500_000;
 const REBATE_AFTER_CLOSE: u64 = 8_750_000;
-/// ITM for order 1's range (110e9 > lower 100e9), OTM for order 2
-/// (110e9 > higher 100e9 pays zero).
-const SETTLEMENT_ITM: u64 = 110_000_000_000;
 
 #[test]
 fun cash_sheet_exact_after_every_flow() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent.
@@ -66,10 +61,10 @@ fun cash_sheet_exact_after_every_flow() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -100,10 +95,10 @@ fun cash_sheet_exact_after_every_flow() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         constants::neg_inf!(),
-        helpers::min_strike(),
+        helpers::strike_tick(),
         DOWN_QUANTITY,
         test_constants::leverage_one_x(),
     );
@@ -143,8 +138,8 @@ fun cash_sheet_exact_after_every_flow() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order1,
         HALF_CLOSE,
     );
@@ -172,72 +167,9 @@ fun cash_sheet_exact_after_every_flow() {
         ),
     );
     assert!(manager.has_position(expiry_id, order1b));
+    assert!(manager.has_position(expiry_id, order2));
 
-    // --- Settle ITM for order 1, OTM for order 2. Settlement is an
-    // oracle-domain write (settle_oracle takes no market argument): the expiry
-    // cash sheet must be bit-identical, and the liability getter still reports
-    // the lazy un-materialized live reserve.
-    fx.settle_oracle(&config, &mut oracle, &mut pyth, SETTLEMENT_ITM);
-    helpers::check_market_cash(
-        &market,
-        helpers::expected_market_cash(
-            cash_after_close,
-            liability_after_close,
-            REBATE_AFTER_CLOSE,
-        ),
-    );
-
-    // --- Winner settled redeem: the first settled redeem materializes the
-    // exact terminal liability for the whole book (only the surviving half of
-    // order 1 wins), then pays the survivor its full notional with no fee —
-    // the reserve drains to exactly zero.
-    fx.redeem_settled(&config, &mut manager, &mut market, &oracle, &pyth, order1b, HALF_CLOSE);
-    helpers::check_market_cash(
-        &market,
-        helpers::expected_market_cash(
-            cash_after_close - HALF_CLOSE,
-            0,
-            REBATE_AFTER_CLOSE,
-        ),
-    );
-    helpers::check_manager(
-        &manager,
-        expiry_id,
-        helpers::expected_manager_state(
-            balance_after_close + HALF_CLOSE,
-            MINT1_FEE + MINT2_FEE + CLOSE_FEE,
-            1,
-            0,
-            0,
-        ),
-    );
-    assert!(!manager.has_position(expiry_id, order1b));
-
-    // --- Loser settled redeem: pays zero, cash sheet bit-identical, position
-    // cleared (a permissionless zero-payout close must not abort). The
-    // trader's lost premium stays in expiry cash as LP-side surplus.
-    fx.redeem_settled(&config, &mut manager, &mut market, &oracle, &pyth, order2, DOWN_QUANTITY);
-    helpers::check_market_cash(
-        &market,
-        helpers::expected_market_cash(
-            cash_after_close - HALF_CLOSE,
-            0,
-            REBATE_AFTER_CLOSE,
-        ),
-    );
-    helpers::check_manager(
-        &manager,
-        expiry_id,
-        helpers::expected_manager_state(
-            balance_after_close + HALF_CLOSE,
-            MINT1_FEE + MINT2_FEE + CLOSE_FEE,
-            0,
-            0,
-            0,
-        ),
-    );
-
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     destroy(manager);
     fx.finish();
 }

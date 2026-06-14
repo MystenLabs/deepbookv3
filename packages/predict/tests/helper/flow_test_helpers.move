@@ -26,7 +26,7 @@ use deepbook_predict::{
     admin::AdminCap,
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
-    plp::{Self, PoolVault},
+    plp::{Self, PoolVault, PoolValuation},
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
     range_codec,
@@ -439,6 +439,25 @@ public fun liquidate_order(
     order_id: u256,
 ): bool {
     market.liquidate_order(config, pyth, bs, order_id, &self.clock)
+}
+
+/// Start a privileged pool-NAV flush as the operator `AdminCap`. The returned hot
+/// potato is threaded through `plp::value_expiry` × N then `plp::finish_flush`.
+public fun start_flush(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    vault: &PoolVault,
+): PoolValuation {
+    plp::start_pool_valuation(config, vault, &self.admin_cap)
+}
+
+/// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`).
+public fun start_flush_as_deployer(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    vault: &PoolVault,
+): PoolValuation {
+    plp::start_pool_valuation_as_deployer(config, vault, &self.lifecycle_cap)
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===

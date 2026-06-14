@@ -5,7 +5,9 @@
 ///
 /// These tests use production mint/redeem flows and hand-derived reserve values:
 /// disjoint one-lot books have M = 1e9, Σ = 2e9, gap = 1e9, so the default
-/// reserve is 1.25e9; overlapping books have gap = 0, so reserve = M = Σ.
+/// reserve is 1.25e9; overlapping books have gap = 0, so reserve = M = Σ. The
+/// settled-redeem legs are deferred to settlement-v2 (settlement is stubbed:
+/// `is_settled()` is always false), so only the live reserve boundary is exercised.
 #[test_only]
 module deepbook_predict::backing_buffer_flow_tests;
 
@@ -15,14 +17,13 @@ use deepbook_predict::{
     expiry_cash,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
-    market_oracle::MarketOracle,
     plp::PoolVault,
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
-    pyth_source::PythSource,
     test_constants
 };
 use fixed_math::math::{Self, float_scaling as float};
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
 use std::unit_test::{assert_eq, destroy};
 
 const QUANTITY: u64 = 1_000_000_000;
@@ -47,7 +48,6 @@ const LEVERAGED_SUMMED_REQUIRED_CASH: u64 =
 const LEVERAGED_PARTIAL_REDEEM: u64 = 250_000_000;
 const LEVERAGED_PARTIAL_NET_PAYOUT: u64 = LEVERAGED_PARTIAL_REDEEM - LEVERAGED_REDEEM_FEE;
 const LEVERAGED_PARTIAL_RESERVE: u64 = QUANTITY + 187_500_000;
-const LEVERAGED_SURVIVOR_SETTLED_PAYOUT: u64 = 700_000_000;
 
 const FIRST_ORDER_REQUIRED_CASH: u64 = QUANTITY + REBATE_AFTER_ONE_MINT;
 const CAPITAL_EFFICIENT_POST_MINT_CASH: u64 = 1_800_000_000;
@@ -63,12 +63,12 @@ const EXACT_RESERVE_INITIAL_CASH: u64 =
 
 #[test]
 fun disjoint_range_book_uses_default_gap_buffer() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
-    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
-    let _up = mint_up(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
+    let _up = mint_up(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
 
     // M = 1e9, Σ = 2e9, λ(default) * gap = 250e6, reserve = 1.25e9.
     assert_eq!(
@@ -77,57 +77,57 @@ fun disjoint_range_book_uses_default_gap_buffer() {
     );
     assert_eq!(market.payout_liability(), disjoint_buffered_reserve());
 
-    cleanup(fx, pyth, vault, market, oracle, config, manager);
+    cleanup(fx, pyth, bs, vault, market, config, manager);
 }
 
 #[test]
 fun overlapping_range_book_has_zero_gap() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
-    let _first = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
-    let _second = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _first = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
+    let _second = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
 
     // Both orders win at the same settlement points: M = Σ = 2e9, gap = 0.
     assert_eq!(math::mul(config_constants::default_backing_buffer_lambda!(), 0), 0);
     assert_eq!(market.payout_liability(), OVERLAPPING_RESERVE);
 
-    cleanup(fx, pyth, vault, market, oracle, config, manager);
+    cleanup(fx, pyth, bs, vault, market, config, manager);
 }
 
 #[test]
 fun lambda_one_is_summed_backing_identity() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = setup_live_market_with_cash(
+    let (mut fx, expiry_id, mut manager) = setup_live_market_with_cash(
         test_constants::default_seeded_expiry_cash(),
         option::some(float!()),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
-    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
-    let _up = mint_up(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
+    let _up = mint_up(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
 
     // λ = 1e9 makes mul(λ, gap) exactly gap under the fixed-point identity.
     assert_eq!(market.backing_buffer_lambda(), float!());
     assert_eq!(math::mul(float!(), DISJOINT_GAP), DISJOINT_GAP);
     assert_eq!(market.payout_liability(), 2 * QUANTITY);
 
-    cleanup(fx, pyth, vault, market, oracle, config, manager);
+    cleanup(fx, pyth, bs, vault, market, config, manager);
 }
 
 #[test]
 fun mint_succeeds_when_cash_between_buffered_reserve_and_old_sum() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = setup_live_market_with_cash(
+    let (mut fx, expiry_id, mut manager) = setup_live_market_with_cash(
         CAPITAL_EFFICIENT_INITIAL_CASH,
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
-    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
     assert_eq!(market.cash_balance(), CAPITAL_EFFICIENT_PRE_SECOND_MINT_CASH);
-    let _up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
 
     // Cash is 1.8e9: above new required cash 1.7575e9, below old Σ
     // requirement 2.5075e9. The second mint would have failed under the old
@@ -137,38 +137,38 @@ fun mint_succeeds_when_cash_between_buffered_reserve_and_old_sum() {
     assert!(market.cash_balance() >= LEVERAGED_REQUIRED_CASH);
     assert!(market.cash_balance() < LEVERAGED_SUMMED_REQUIRED_CASH);
 
-    cleanup(fx, pyth, vault, market, oracle, config, manager);
+    cleanup(fx, pyth, bs, vault, market, config, manager);
 }
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun mint_below_buffered_reserve_aborts() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = setup_live_market_with_cash(
+    let (mut fx, expiry_id, mut manager) = setup_live_market_with_cash(
         BELOW_BUFFER_INITIAL_CASH,
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, _vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, _vault, mut market, config) = fx.take_market(expiry_id);
 
-    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
     assert_eq!(market.cash_balance(), FIRST_ORDER_REQUIRED_CASH);
 
     // The 2x UP mint adds 510e6 cash, leaving 1.5125e9 cash against the
     // 1.7575e9 buffered required cash for the disjoint live orders.
-    let _up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
     abort 999
 }
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun exact_reserve_full_close_hits_single_number_wall() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = setup_live_market_with_cash(
+    let (mut fx, expiry_id, mut manager) = setup_live_market_with_cash(
         EXACT_RESERVE_INITIAL_CASH,
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, _vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, _vault, mut market, config) = fx.take_market(expiry_id);
 
-    let down = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
-    let _up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let down = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
+    let _up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
     assert_eq!(market.cash_balance(), LEVERAGED_REQUIRED_CASH);
 
     // Closing the DOWN side would pay 495e6 net, but the remaining leveraged
@@ -177,8 +177,8 @@ fun exact_reserve_full_close_hits_single_number_wall() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         down,
         QUANTITY,
     );
@@ -186,16 +186,16 @@ fun exact_reserve_full_close_hits_single_number_wall() {
 }
 
 #[test]
-fun exact_reserve_partial_close_preserves_settlement_floor() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = setup_live_market_with_cash(
+fun exact_reserve_partial_close_preserves_live_floor() {
+    let (mut fx, expiry_id, mut manager) = setup_live_market_with_cash(
         EXACT_RESERVE_INITIAL_CASH,
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
-    let down = mint_down(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
-    let up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &oracle, &pyth);
+    let _down = mint_down(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
+    let up = mint_leveraged_up(&mut fx, &config, &mut manager, &mut market, &pyth, &bs);
     assert_eq!(market.cash_balance(), LEVERAGED_REQUIRED_CASH);
 
     // Closing half of the leveraged UP side pays 250e6 gross, with 5e6 retained
@@ -205,8 +205,8 @@ fun exact_reserve_partial_close_preserves_settlement_floor() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         up,
         QUANTITY,
     );
@@ -214,32 +214,9 @@ fun exact_reserve_partial_close_preserves_settlement_floor() {
     assert_eq!(manager.balance() - balance_before_close, LEVERAGED_PARTIAL_NET_PAYOUT);
     assert_eq!(market.cash_balance(), LEVERAGED_REQUIRED_CASH - LEVERAGED_PARTIAL_NET_PAYOUT);
     assert_eq!(market.payout_liability(), LEVERAGED_PARTIAL_RESERVE);
+    assert!(manager.has_position(expiry_id, up_survivor));
 
-    fx.settle_oracle(&config, &mut oracle, &mut pyth, helpers::min_strike() + 1);
-    let before_down_redeem = manager.balance();
-    fx.redeem_settled(&config, &mut manager, &mut market, &oracle, &pyth, down, QUANTITY);
-    assert_eq!(manager.balance() - before_down_redeem, 0);
-
-    let before_up_redeem = manager.balance();
-    fx.redeem_settled(
-        &config,
-        &mut manager,
-        &mut market,
-        &oracle,
-        &pyth,
-        up_survivor,
-        QUANTITY,
-    );
-    assert_eq!(manager.balance() - before_up_redeem, LEVERAGED_SURVIVOR_SETTLED_PAYOUT);
-    assert_eq!(market.payout_liability(), 0);
-    assert_eq!(
-        market.cash_balance(),
-        LEVERAGED_REQUIRED_CASH
-            - LEVERAGED_PARTIAL_NET_PAYOUT
-            - LEVERAGED_SURVIVOR_SETTLED_PAYOUT,
-    );
-
-    cleanup(fx, pyth, vault, market, oracle, config, manager);
+    cleanup(fx, pyth, bs, vault, market, config, manager);
 }
 
 fun mint_down(
@@ -247,17 +224,17 @@ fun mint_down(
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
 ): u256 {
     fx.mint(
         config,
         manager,
         market,
-        oracle,
         pyth,
+        bs,
         constants::neg_inf!(),
-        helpers::min_strike(),
+        helpers::strike_tick(),
         QUANTITY,
         test_constants::leverage_one_x(),
     )
@@ -268,17 +245,17 @@ fun mint_up(
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
 ): u256 {
     fx.mint(
         config,
         manager,
         market,
-        oracle,
         pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         QUANTITY,
         test_constants::leverage_one_x(),
     )
@@ -289,17 +266,17 @@ fun mint_leveraged_up(
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
-    oracle: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
 ): u256 {
     fx.mint(
         config,
         manager,
         market,
-        oracle,
         pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         LEVERAGED_QUANTITY,
         LEVERAGE_TWO_X,
     )
@@ -316,29 +293,29 @@ fun disjoint_buffered_reserve(): u64 {
 fun setup_live_market_with_cash(
     seed_cash: u64,
     backing_buffer_lambda: Option<u64>,
-): (helpers::Fixture, ID, ID, PredictManager) {
+): (helpers::Fixture, ID, PredictManager) {
     let mut fx = helpers::setup_market_default();
     backing_buffer_lambda.do!(|value| fx.set_template_backing_buffer_lambda(value));
-    let (expiry_id, oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     let manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    let (mut pyth, mut bs, vault, mut market, config) = fx.take_market(expiry_id);
+    fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     fx.seed_market_cash(&mut market, seed_cash);
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     fx.scenario_mut().next_tx(test_constants::admin());
-    (fx, expiry_id, oracle_id, manager)
+    (fx, expiry_id, manager)
 }
 
 fun cleanup(
     fx: helpers::Fixture,
-    pyth: PythSource,
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
     vault: PoolVault,
     market: ExpiryMarket,
-    oracle: MarketOracle,
     config: ProtocolConfig,
     manager: PredictManager,
 ) {
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     destroy(manager);
     fx.finish();
 }

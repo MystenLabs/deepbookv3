@@ -5,6 +5,10 @@
 // Source data: packages/predict/simulations/data/scenario_dataset.csv (real on-chain
 // Block Scholes SVI, one market, 2026-05-27). DO NOT EDIT BY HAND — regenerate with
 //   python3 generate_pricing_reference.py
+// NOTE: the SVI accessors were migrated by hand from a single `svi(s): SVIParams`
+// (deleted `market_oracle::SVIParams`) to raw per-field getters feeding
+// `oracle_fixture::prepare_real_oracle`; the generator must be updated to emit this
+// shape before the next regeneration. The numeric reference values are unchanged.
 //
 // Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract
 // and NOT python_replay's fixed-point pricer) for Pricer.range_price.
@@ -24,8 +28,7 @@
 #[test_only]
 module deepbook_predict::pricing_reference_data;
 
-use deepbook_predict::{constants, market_oracle::{Self, SVIParams}};
-use fixed_math::i64;
+use deepbook_predict::constants;
 
 const ENoSuchScenario: u64 = 0;
 
@@ -88,32 +91,92 @@ public fun forward(s: u64): u64 {
     }
 }
 
-/// Real SVI params (exact 1e9 integers + sign flags) seeded through the cap path.
-public fun svi(s: u64): SVIParams {
+/// Real SVI `a` (1e9) seeded through the Block Scholes surface update.
+public fun svi_a(s: u64): u64 {
     if (s == 0) {
-        market_oracle::new_svi_params(
-            171_736,
-            7_449_196,
-            i64::from_parts(243_059_022, true),
-            i64::from_parts(1_133_202, false),
-            15_731_214,
-        )
+        171_736
     } else if (s == 1) {
-        market_oracle::new_svi_params(
-            99_272,
-            3_466_091,
-            i64::from_parts(475_372_427, true),
-            i64::from_parts(3_647_706, true),
-            6_351_738,
-        )
+        99_272
     } else if (s == 2) {
-        market_oracle::new_svi_params(
-            54_831,
-            2_366_211,
-            i64::from_parts(298_114_517, true),
-            i64::from_parts(2_324_961, false),
-            5_354_101,
-        )
+        54_831
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `b` (1e9) seeded through the Block Scholes surface update.
+public fun svi_b(s: u64): u64 {
+    if (s == 0) {
+        7_449_196
+    } else if (s == 1) {
+        3_466_091
+    } else if (s == 2) {
+        2_366_211
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `sigma` (1e9) seeded through the Block Scholes surface update.
+public fun svi_sigma(s: u64): u64 {
+    if (s == 0) {
+        15_731_214
+    } else if (s == 1) {
+        6_351_738
+    } else if (s == 2) {
+        5_354_101
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `rho` magnitude (1e9) seeded through the Block Scholes surface update.
+public fun svi_rho_magnitude(s: u64): u64 {
+    if (s == 0) {
+        243_059_022
+    } else if (s == 1) {
+        475_372_427
+    } else if (s == 2) {
+        298_114_517
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Sign flag for real SVI `rho` (true == negative).
+public fun svi_rho_is_negative(s: u64): bool {
+    if (s == 0) {
+        true
+    } else if (s == 1) {
+        true
+    } else if (s == 2) {
+        true
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `m` magnitude (1e9) seeded through the Block Scholes surface update.
+public fun svi_m_magnitude(s: u64): u64 {
+    if (s == 0) {
+        1_133_202
+    } else if (s == 1) {
+        3_647_706
+    } else if (s == 2) {
+        2_324_961
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Sign flag for real SVI `m` (true == negative).
+public fun svi_m_is_negative(s: u64): bool {
+    if (s == 0) {
+        false
+    } else if (s == 1) {
+        true
+    } else if (s == 2) {
+        false
     } else {
         abort ENoSuchScenario
     }

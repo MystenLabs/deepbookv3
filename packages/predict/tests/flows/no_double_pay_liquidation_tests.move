@@ -49,12 +49,12 @@ const DROPPED_SOURCE_TS: u64 = 99_500;
 
 #[test]
 fun liquidated_order_pays_zero_once_and_only_once() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut bs, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- Baseline.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
@@ -71,10 +71,10 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
     );
@@ -94,8 +94,8 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     // --- Drop the spot 1% and liquidate. The knockout removes the order's
     // full live terms (liability → 0 exactly), moves no cash, and leaves the
     // holder's manager untouched (tombstone persists until the holder redeems).
-    fx.prepare_live_oracle_at(&config, &mut oracle, &mut pyth, DROPPED_SPOT, DROPPED_SOURCE_TS);
-    let liquidated = fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_id);
+    fx.prepare_live_oracle_at(&market, &mut pyth, &mut bs, DROPPED_SPOT, DROPPED_SOURCE_TS);
+    let liquidated = fx.liquidate_order(&config, &mut market, &pyth, &bs, order_id);
     assert!(liquidated);
     helpers::check_market_cash(
         &market,
@@ -110,7 +110,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
 
     // --- A second liquidation attempt on the same id returns false: the
     // tombstoned order is no longer in the active candidate set.
-    assert!(!fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_id));
+    assert!(!fx.liquidate_order(&config, &mut market, &pyth, &bs, order_id));
 
     // --- The holder clears the tombstone with a full close: exactly zero
     // payout, zero fee, position removed, market sheet bit-identical.
@@ -119,8 +119,8 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order_id,
         test_constants::mint_quantity(),
     );
@@ -139,9 +139,9 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     );
     // After the tombstone is cleared the id is gone from the liquidation
     // index entirely — still false, still no state change.
-    assert!(!fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_id));
+    assert!(!fx.liquidate_order(&config, &mut market, &pyth, &bs, order_id));
 
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     destroy(manager);
     fx.finish();
 }

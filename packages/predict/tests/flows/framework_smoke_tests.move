@@ -18,7 +18,7 @@ use std::unit_test::{assert_eq, destroy};
 
 #[test]
 fun setup_everything_check_manager_return_market_smoke() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
 
     // Fully-known pre-trade state sheet: only the deposit has moved.
     helpers::check_manager(
@@ -31,15 +31,15 @@ fun setup_everything_check_manager_return_market_smoke() {
     // the current sender after `create_funded_manager`, but `setup_everything`
     // left the sender at admin — re-establish alice for the owner proof.
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
     let order_id = fx.mint(
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -51,7 +51,7 @@ fun setup_everything_check_manager_return_market_smoke() {
     assert!(manager.trading_fees_paid(expiry_id) > 0);
     assert!(manager.balance() < test_constants::default_manager_deposit());
 
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     destroy(manager);
     fx.finish();
 }
@@ -59,22 +59,22 @@ fun setup_everything_check_manager_return_market_smoke() {
 #[test]
 fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut oracle, config) = fx.take_oracle();
+    let (mut pyth, mut bs, config) = fx.take_oracle();
 
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
 
     // The unfunded oracle bring-up produces a working quote surface: the
-    // probability of the full upper range [min_strike, +inf) is a valid
+    // probability of the full upper range [min_finite_strike, +inf) is a valid
     // probability strictly inside (0, 1). (Independent bound: any probability is
     // in [0, FLOAT_SCALING]; a non-degenerate range is strictly inside.)
-    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
+    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
     let up = pricer.range_price(
-        helpers::min_strike(),
+        test_constants::min_finite_strike(),
         constants::pos_inf!(),
     );
     assert!(up > 0);
     assert!(up < test_constants::float());
 
-    oracle_fixture::return_oracle(pyth, oracle, config);
+    oracle_fixture::return_oracle(pyth, bs, config);
     fx.finish();
 }

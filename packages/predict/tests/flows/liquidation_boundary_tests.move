@@ -58,12 +58,12 @@ const DROPPED_SPOT: u64 = 99_000_000_000;
 
 #[test]
 fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
         EXPIRY_MS,
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut bs, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- Baseline.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
@@ -79,10 +79,10 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         QUANTITY,
         LEVERAGE_TWO_X,
     );
@@ -90,10 +90,10 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         QUANTITY,
         LEVERAGE_TWO_X,
     );
@@ -117,14 +117,14 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // failed liquidation attempt must be a pure no-op.
     fx.set_clock_for_testing(T1_MS);
     fx.prepare_live_oracle_at(
-        &config,
-        &mut oracle,
+        &market,
         &mut pyth,
+        &mut bs,
         test_constants::default_live_price(),
         T1_ATM_SOURCE_TS,
     );
-    assert!(!fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_a));
-    assert!(!fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_b));
+    assert!(!fx.liquidate_order(&config, &mut market, &pyth, &bs, order_a));
+    assert!(!fx.liquidate_order(&config, &mut market, &pyth, &bs, order_b));
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
@@ -146,8 +146,8 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order_a,
         QUANTITY,
     );
@@ -178,7 +178,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // basis stays 1.0). order_b is now liquidatable, but a budget-0 budgeted
     // pass selects zero candidates and must change nothing.
     fx.set_pyth_price_for_testing(&mut pyth, DROPPED_SPOT, T1_DROP_SOURCE_TS);
-    assert_eq!(fx.liquidate(&config, &mut market, &oracle, &pyth, 0), 0);
+    assert_eq!(fx.liquidate(&config, &mut market, &pyth, &bs, 0), 0);
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
@@ -201,7 +201,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
 
     // --- Targeted liquidation below the threshold: the knockout removes the
     // order's full backing, moves no cash, and never touches the manager.
-    assert!(fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_b));
+    assert!(fx.liquidate_order(&config, &mut market, &pyth, &bs, order_b));
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(cash_after_redeem, 0, REBATE_AFTER_REDEEM),
@@ -224,8 +224,8 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order_b,
         QUANTITY,
     );
@@ -247,7 +247,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     );
     assert!(!manager.has_position(expiry_id, order_b));
 
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     destroy(manager);
     fx.finish();
 }

@@ -8,10 +8,10 @@
 /// algebraically cancel the actual digital probability (complementarity,
 /// whole-line, monotonicity), so the real `Phi(d2)` VALUE is untested there. This
 /// file pins that value: per scenario it stands up a production-valid oracle, seeds
-/// the real SVI + spot/forward through the cap path, and asserts each live range
-/// price matches an INDEPENDENT true-math reference (Python stdlib `erf`, NOT the
-/// contract and NOT `python_replay`'s fixed-point pricer) within a per-point,
-/// analytically-derived precision budget. Inputs, references, budgets, and
+/// the real SVI + spot/forward through the Block Scholes surface update, and asserts
+/// each live range price matches an INDEPENDENT true-math reference (Python stdlib
+/// `erf`, NOT the contract and NOT `python_replay`'s fixed-point pricer) within a
+/// per-point, analytically-derived precision budget. Inputs, references, budgets, and
 /// provenance live in the committed, generated `pricing_reference_data` module
 /// (regenerate with `tests/helper/reference/generate_pricing_reference.py`).
 ///
@@ -47,16 +47,21 @@ fun run_scenario(s: u64) {
         ref_data::tick_size(s),
         test_constants::default_expiry_ms(),
     );
-    let (mut pyth, mut oracle, config) = fx.take_oracle();
+    let (mut pyth, mut bs, config) = fx.take_oracle();
     fx.prepare_real_oracle(
-        &config,
-        &mut oracle,
+        &mut bs,
         &mut pyth,
         ref_data::spot(s),
         ref_data::forward(s),
-        ref_data::svi(s),
+        ref_data::svi_a(s),
+        ref_data::svi_b(s),
+        ref_data::svi_sigma(s),
+        ref_data::svi_rho_magnitude(s),
+        ref_data::svi_rho_is_negative(s),
+        ref_data::svi_m_magnitude(s),
+        ref_data::svi_m_is_negative(s),
     );
-    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
+    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
 
     let points = ref_data::points(s);
     let n = points.length();
@@ -68,7 +73,7 @@ fun run_scenario(s: u64) {
         i = i + 1;
     };
 
-    oracle_fixture::return_oracle(pyth, oracle, config);
+    oracle_fixture::return_oracle(pyth, bs, config);
     fx.finish();
 }
 
@@ -89,9 +94,9 @@ fun real_scenario_small_variance() { run_scenario(2); }
 #[test]
 fun at_the_forward_is_exactly_one_half() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut oracle, config) = fx.take_oracle();
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
-    let pricer = pricing::pricer(config.pricing_config(), &oracle, &pyth, fx.clock());
+    let (mut pyth, mut bs, config) = fx.take_oracle();
+    fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
+    let pricer = pricing::pricer(config.pricing_config(), &pyth, &bs, fx.expiry(), fx.clock());
 
     let up = pricer.range_price(
         test_constants::default_live_price(),
@@ -100,6 +105,6 @@ fun at_the_forward_is_exactly_one_half() {
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
     assert_eq!(up, math::float_scaling!() / 2);
 
-    oracle_fixture::return_oracle(pyth, oracle, config);
+    oracle_fixture::return_oracle(pyth, bs, config);
     fx.finish();
 }

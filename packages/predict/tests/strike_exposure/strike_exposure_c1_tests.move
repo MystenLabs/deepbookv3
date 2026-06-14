@@ -13,10 +13,15 @@
 /// when the gap was 1, stranding the payout. The fix removes the order's full
 /// terms and reinserts the survivor's exact terms, so `R == P` by construction.
 ///
-/// One parameterized test walks the shared 2x-mint prologue and drives three
-/// close-schedule rows; each row asserts its exact hand-derived survivor payout,
-/// `payout_liability == 0`, and the cleared position. The gap==1 row (the
-/// fund-stranding trigger) additionally asserts the +1 sub-additivity gap.
+/// LEAD: re-derive — settlement is stubbed (`is_settled()` returns false,
+/// `settlement_price()` aborts), so the original settled-redeem drain assertions
+/// (settle ITM, marginal settled redeem pays the exact hand-derived payout, reserve
+/// drains to exactly 0) test deleted behavior and were removed. They must be
+/// restored at settlement-v2 with re-derived expected payouts. What remains here is
+/// the settlement-INDEPENDENT root-cause proof (the +1 floor-share sub-additivity
+/// gap is real for these mint params) plus the live partial-close survivor
+/// reinsertion staying solvent — both reachable today. The exact live-close cash /
+/// payout numbers live in `flows/backing_buffer_flow_tests.move`.
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
@@ -24,19 +29,16 @@ use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
-    market_oracle::MarketOracle,
     order,
     plp::PoolVault,
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
-    pyth_source::PythSource,
     test_constants
 };
 use fixed_math::math;
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
 use std::unit_test::{assert_eq, destroy};
 
-/// Settlement strictly above the order's lower strike => in the money.
-const SETTLEMENT_ITM: u64 = 110_000_000_000;
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// Default terminal_floor_index (1.2x); unchanged by the test setup.
@@ -44,119 +46,83 @@ const TERMINAL_FLOOR_INDEX: u64 = 1_200_000_000;
 
 /// gap==1 row: tuned so the close/remaining floor-share split loses exactly 1 unit
 /// to round-down `mul` (old_floor_shares = 208_333_553, remove lands at ...504,
-/// mod 5 = 4 > old mod 5 = 3). Independent (hand) survivor payout:
-///   remaining_q  = 1_000_000_000 - 400_010_000 = 599_990_000
-///   remaining_fs = 208_333_553 - 83_335_504    = 124_998_049
-///   floor(remaining_fs * 1.2)                  = 149_997_658
-///   P = remaining_q - floor                    = 449_992_342
+/// mod 5 = 4 > old mod 5 = 3).
 const CLOSE_GAP_ONE: u64 = 400_010_000;
-const EXPECTED_GAP_ONE_PAYOUT: u64 = 449_992_342;
 
-/// gap==0 control: a close whose split loses nothing to rounding.
-///   remaining_q = 599_980_000, remaining_fs = 124_995_966,
-///   floor(124_995_966 * 1.2) = 149_995_159, P = 449_984_841.
-const CLOSE_GAP_ZERO: u64 = 400_020_000;
-const EXPECTED_GAP_ZERO_PAYOUT: u64 = 449_984_841;
-
-/// Double close: 300M then 200M of the 700M survivor; final 500M survivor payout
-///   remaining_fs = 104_166_778, floor(* 1.2) = 125_000_133, P = 374_999_867.
+/// Double close: 300M then 200M of the 700M survivor exercise sequential survivor
+/// reinsertion (the second close must remove terms the tree actually holds).
 const FIRST_CLOSE: u64 = 300_000_000;
 const SECOND_CLOSE: u64 = 200_000_000;
-const EXPECTED_DOUBLE_CLOSE_PAYOUT: u64 = 374_999_867;
 
-// One parameterized flow (`run_close_schedule`) driven by three close-schedule
-// rows. These stay as three `#[test]`s rather than one because each row needs the
-// identical short expiry (200_000) on a FRESH pool — `test_scenario` leaks shared
-// objects across multiple `begin`/`end` cycles in one test fn, and the same expiry
-// can't coexist twice in one registry (and the clock advances past it after each
-// settle). The fragmentation that mattered — the copy-pasted bring-up + close +
-// settle + assert body — is gone; the rows are now data.
-
-/// Row 1: single close hitting the +1 sub-additivity gap — the C1 fund-stranding
-/// regression (the reserve must still drain to exactly zero).
+/// The single close hitting the +1 sub-additivity gap drives the C1 root cause: the
+/// reserve must still cover the survivor after a live partial close.
 #[test]
-fun partial_close_gap_one_settled_redeem_drains_reserve_exactly() {
-    run_close_schedule(vector[CLOSE_GAP_ONE], EXPECTED_GAP_ONE_PAYOUT, true);
+fun partial_close_gap_one_survivor_stays_backed() {
+    run_live_close_schedule(vector[CLOSE_GAP_ONE], true);
 }
 
-/// Row 2: single close with no rounding gap (the common case must not regress).
+/// Two sequential closes: the survivor is reinserted each time, so the second close
+/// removes terms the tree actually holds and the market stays solvent throughout.
 #[test]
-fun partial_close_gap_zero_settled_redeem_is_exact() {
-    run_close_schedule(vector[CLOSE_GAP_ZERO], EXPECTED_GAP_ZERO_PAYOUT, false);
+fun double_partial_close_survivor_reinsertion_stays_backed() {
+    run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE], false);
 }
 
-/// Row 3: two sequential closes — the survivor must be reinserted each time so the
-/// second close removes terms the tree actually holds.
-#[test]
-fun double_partial_close_settled_redeem_is_exact() {
-    run_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE], EXPECTED_DOUBLE_CLOSE_PAYOUT, false);
-}
-
-/// Shared 2x-mint prologue + a row's close schedule + the settled-redeem
-/// assertions. Each row is a self-contained fixture lifecycle.
-fun run_close_schedule(closes: vector<u64>, expected_payout: u64, check_gap_one: bool) {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_live_market(
+/// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /
+/// position assertions. Each row is a self-contained fixture lifecycle.
+fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
+    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, vault, mut market, config) = fx.take_market(expiry_id);
 
     let order_id = fx.mint(
         &config,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
     );
 
     if (check_gap_one) {
+        // Root-cause proof: the floor-share split loses exactly 1 unit to round-down
+        // `mul`, the sub-additivity gap the C1 reinsertion fix neutralizes. The
+        // expected value is the independently-known integer 1, not a contract output.
         assert_gap_is_one(order_id, closes[0]);
     };
 
-    // Run the close schedule, threading the survivor id through each partial close.
+    // Run the live close schedule, threading the survivor id through each partial
+    // close. After every close the survivor position must exist and the market must
+    // stay backed (cash >= payout liability + rebate reserve).
     let mut survivor_id = order_id;
-    let mut total_closed = 0;
     let mut i = 0;
     while (i < closes.length()) {
         let (_closed, replacement) = fx.redeem(
             &config,
             &mut manager,
             &mut market,
-            &oracle,
             &pyth,
+            &bs,
             survivor_id,
             closes[i],
         );
         survivor_id = replacement.destroy_some();
-        total_closed = total_closed + closes[i];
+        assert!(manager.has_position(expiry_id, survivor_id));
+        helpers::assert_market_backed(&market);
         i = i + 1;
     };
 
-    fx.settle_oracle(&config, &mut oracle, &mut pyth, SETTLEMENT_ITM);
+    // The settled-redeem drain (the original C1 payoff) is unreachable while
+    // settlement is stubbed; pin that the settled branch is currently off.
+    assert!(!market.is_settled());
 
-    // Marginal settled redeem of the survivor: pays the winner exactly the
-    // hand-derived payout, the reserve drains to zero (R == P), position cleared.
-    let balance_before = manager.balance();
-    fx.redeem_settled(
-        &config,
-        &mut manager,
-        &mut market,
-        &oracle,
-        &pyth,
-        survivor_id,
-        test_constants::mint_quantity() - total_closed,
-    );
-
-    assert_eq!(manager.balance() - balance_before, expected_payout);
-    assert_eq!(market.payout_liability(), 0);
-    assert!(!manager.has_position(expiry_id, survivor_id));
-
-    cleanup(fx, pyth, vault, market, oracle, config, manager);
+    cleanup(fx, pyth, bs, vault, market, config, manager);
 }
 
 /// Confirm a single close hits the +1 floor-share sub-additivity gap that
@@ -176,14 +142,14 @@ fun assert_gap_is_one(order_id: u256, close_quantity: u64) {
 
 fun cleanup(
     fx: helpers::Fixture,
-    pyth: PythSource,
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
     vault: PoolVault,
     market: ExpiryMarket,
-    oracle: MarketOracle,
     config: ProtocolConfig,
     manager: PredictManager,
 ) {
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, vault, market, config);
     destroy(manager);
     fx.finish();
 }
