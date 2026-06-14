@@ -52,7 +52,7 @@ public struct PythFeedConfig has copy, drop, store {
 /// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Pyth Lazer feed ID -> admin-approved oracle-grid config (tick size).
+    /// Pyth Lazer feed ID -> admin-approved tick-size config.
     pyth_feed_configs: Table<u32, PythFeedConfig>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,

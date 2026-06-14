@@ -23,3 +23,14 @@ public(package) macro fun float_scaling_decimals(): u64 {
 public(package) macro fun minute_ms(): u64 {
     60_000
 }
+
+/// SVI `sigma` (vol-of-vol) validity bounds in 1e9 fixed point: 1e-3 to 100.0.
+/// A stored surface must keep `sigma` strictly positive and bounded so any
+/// consumer's variance/d2 math stays well-defined; enforced at ingest.
+public(package) macro fun svi_sigma_min(): u64 {
+    1_000_000
+}
+
+public(package) macro fun svi_sigma_max(): u64 {
+    100_000_000_000
+}

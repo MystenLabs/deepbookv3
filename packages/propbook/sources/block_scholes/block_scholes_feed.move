@@ -34,6 +34,9 @@ const EZeroSpot: u64 = 2;
 const EFutureSourceUpdate: u64 = 3;
 const EWrongVersion: u64 = 4;
 const ENotNewerVersion: u64 = 5;
+const EZeroForward: u64 = 6;
+const EInvalidSviRho: u64 = 7;
+const EInvalidSviSigma: u64 = 8;
 
 /// SVI smile parameters; `rho` and `m` are signed (`fixed_math::i64`).
 public struct SVIParams has copy, drop, store {
@@ -186,10 +189,15 @@ public fun create_and_share(
 /// expiry's current row.
 ///
 /// No-op-on-stale (no abort) for the surface: a resend older than this expiry's row
-/// leaves it untouched. Only the version gate, the underlying binding, a zero spot,
-/// or a future publisher timestamp abort. The minute bucket is offered on every
-/// valid update regardless of surface staleness, since it is the spot-at-minute
-/// settlement substrate (a lagging expiry can still fill an empty minute).
+/// leaves it untouched. The version gate, the underlying binding, a zero spot, or a
+/// future publisher timestamp abort up front. A surface that is fresh enough to be
+/// written must also be math-valid — a zero forward, `|rho| > 1` (the SVI
+/// no-arbitrage bound), or `sigma` outside its validity band abort — so the stored
+/// `Surface` stays well-defined for any consumer's variance/d2 math (a stale resend
+/// of bad data is still a clean no-op, never an abort). The minute bucket is offered
+/// on every valid update regardless of surface staleness, since it is the
+/// spot-at-minute settlement substrate (a lagging expiry can still fill an empty
+/// minute).
 public fun update_from_bs(feed: &mut BlockScholesFeed, update: Update, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.underlying() == feed.underlying, EWrongUnderlying);
@@ -206,14 +214,24 @@ public fun update_from_bs(feed: &mut BlockScholesFeed, update: Update, clock: &C
     let fresh_surface =
         !feed.expiries.contains(expiry) || published > feed.expiries.borrow(expiry).source_timestamp_ms;
     if (fresh_surface) {
+        let forward = update.forward();
+        let sigma = update.svi_sigma();
+        assert!(forward > 0, EZeroForward);
+        // |rho| <= 1: the SVI no-arbitrage bound consumers rely on for a convex,
+        // well-defined total-variance smile.
+        assert!(update.svi_rho_magnitude() <= math::float_scaling!(), EInvalidSviRho);
+        assert!(
+            sigma >= constants::svi_sigma_min!() && sigma <= constants::svi_sigma_max!(),
+            EInvalidSviSigma,
+        );
         let svi = SVIParams {
             a: update.svi_a(),
             b: update.svi_b(),
             rho: i64::from_parts(update.svi_rho_magnitude(), update.svi_rho_is_negative()),
             m: i64::from_parts(update.svi_m_magnitude(), update.svi_m_is_negative()),
-            sigma: update.svi_sigma(),
+            sigma,
         };
-        feed.upsert_surface(expiry, spot, update.forward(), svi, published, landed);
+        feed.upsert_surface(expiry, spot, forward, svi, published, landed);
     };
 }
 

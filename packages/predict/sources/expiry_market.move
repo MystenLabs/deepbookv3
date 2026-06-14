@@ -5,8 +5,11 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns trade
 /// execution, strike exposure state, and an embedded expiry-cash custody
-/// component. Pool-wide PLP accounting and profit accounting remain outside
-/// this module.
+/// component. It also owns, for every priced flow, the binding of the market to
+/// its propbook Pyth + Block Scholes feeds (`assert_feeds`) and market liveness
+/// (`assert_active`) — `pricing` is handed already-bound, already-live feeds and
+/// trusts them — and exposes the exact per-expiry `current_nav` read. Pool-wide
+/// PLP accounting and profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
 
 use deepbook_predict::{
@@ -49,7 +52,7 @@ public struct ExpiryMarket has key {
     expiry: u64,
     /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
     cash: ExpiryCash,
-    /// Exposure lifecycle state for this expiry's oracle grid.
+    /// Exposure lifecycle state for this expiry's strike ticks.
     strike_exposure: StrikeExposure,
     /// Smoothed gas-price stats backing the congestion trade penalty.
     ewma: EwmaState,
@@ -145,6 +148,18 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 /// negative. `assert_feeds` binds the passed propbook feeds to this market and
 /// `assert_active` rejects a past-expiry market; the pricer then gates surface
 /// freshness.
+///
+/// FLUSH-LIVENESS PRECONDITION (settlement-v2): `assert_active` makes this a hard
+/// precondition for the pool flush. A past-expiry market that has not settled
+/// aborts `EMarketNotActive` here, and because settlement is stubbed
+/// (`is_settled()` is always false, so the settled-sweep that would drop it from
+/// the active set is dead), `value_expiry` -> `current_nav` then bricks
+/// `finish_flush` pool-wide. There is no solvency-safe NAV for an unsettled
+/// past-expiry market: the flush uses one mark for both supply and withdraw, so the
+/// mark must equal the (settlement-dependent, here undefined) true value. Until
+/// settlement-v2 restores the sweep, the operator MUST NOT let an active market
+/// cross its expiry across a flush — create only far-dated markets and settle
+/// before expiry.
 public fun current_nav(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -621,9 +636,9 @@ fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    // Proof is validated inside withdraw_with_proof below.
+    // Proof is validated inside withdraw_with_proof below. Feed binding + liveness
+    // are asserted by the liquidation pass on the next line, before any feed read.
     manager.update_stake(ctx);
-    market.assert_feeds(pyth, bs);
     market.run_liquidation_pass(
         config.pricing_config(),
         pyth,

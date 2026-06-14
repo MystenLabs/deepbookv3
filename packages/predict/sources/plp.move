@@ -209,6 +209,14 @@ public fun start_pool_valuation_as_deployer(
 /// (deactivated, cash returned, profit materialized) and contributes 0; a live
 /// market is rebalanced to target and valued on its current cash. The flush uses
 /// the lock-free inner, so it does not self-abort under the valuation lock.
+///
+/// FLUSH-LIVENESS PRECONDITION (settlement-v2): the live branch calls
+/// `current_nav`, which asserts the market is pre-expiry. With settlement stubbed
+/// (`is_settled()` always false), a past-expiry market is never swept off the
+/// active set, so once any active market crosses its expiry `value_expiry` aborts
+/// `EMarketNotActive` and bricks the whole flush. Until settlement-v2 lands, the
+/// operator MUST settle / avoid letting an active market cross its expiry. See
+/// `expiry_market::current_nav` for why no solvency-safe substitute mark exists.
 public fun value_expiry(
     valuation: &mut PoolValuation,
     vault: &mut PoolVault,
