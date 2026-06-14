@@ -82,20 +82,28 @@ These are the context files to consult. Path-scoped files are normally loaded by
 - If you change Predict pricing, pool/vault accounting, oracle math, or public protocol flows, rerun the full Predict suite:
   - `sui move test --path packages/predict --gas-limit 100000000000`
 
-## Predict Async-NAV/LP Rework — Current Directives (temporary; remove when the rework lands)
+## Predict Rework — LANDED (oracle extraction + tick re-encode + async NAV/LP)
 
-The Predict pool / NAV / LP layer is mid-rebuild. Living state: the `predict-async-nav-redesign` memory + `.redesign/ASYNC_NAV_REDESIGN.md` (the uncommitted authority). Until the core on-chain work is in a good place, these **OVERRIDE the general norms above for rework tasks**:
+The three reworks are **consolidated on `at/predict-prune-supply-withdraw`**: the oracle
+extracted to the standalone `propbook` feeds (`predict_math`→`fixed_math`), strikes
+re-encoded as absolute integer ticks, and the pool/NAV/LP layer rebuilt async with a
+privileged flush + exact `current_nav` mark. Source builds `--warnings-are-errors`
+green; `sui move test --path packages/predict --gas-limit 100000000000` is green; docs
+are current. The earlier build-phase directives (source-only / defer-tests / defer-docs)
+are **retired** — the normal norms (tests + docs land with code) apply again.
 
-- **Every agent task = DIRECT SOURCE smart-contract changes only.** No test writing/updating inside a task (this overrides "add or update unit tests in the package you touched"). Verify agent work with `sui move build --path packages/predict --warnings-are-errors`, not the test suite.
-- **Test rewiring/updates are batched at the END**, once all core SC designs are in — one consolidated pass, not per-task.
-- **On-chain only — NO indexer / server / off-chain rewiring yet** (the `predict-{schema,indexer,server}` crates + event/feed wiring land after the on-chain design settles).
-- Write all handoff prompts to follow the three rules above.
+**Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit + the finalize audit):**
+- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + `BlockScholesFeed` (per-expiry surface). `expiry_market` owns feed binding (`assert_feeds`) + liveness (`assert_active`); `pricing` owns surface freshness + SVI math. Ingest validity (`forward>0`, `|rho|<=1`, sigma band) is enforced at the propbook chokepoint.
+- **One canonical strike interpretation = absolute integer ticks, protocol-wide** (`raw = tick * tick_size`). `range_codec` owns packing/conversion/the settlement prefix; no centered grid, no boundary indices. No-spot market creation; price-tail saturation.
+- **The flush is PRIVILEGED, cron-driven** — operator `AdminCap` or market-deployer `MarketLifecycleCap`, NOT permissionless. Closes the NAV-manipulation gate (audit L8).
+- **L10 supply mark = the EXACT `current_nav`** (tree walk − leveraged correction), one mark for supply AND withdraw, **no conservative band** (landed; the band belonged to the deleted approximate-NAV world).
+- **Gas (L7), pending-settlement liveness (L6), rebate reclaim (L9) are OFF-CHAIN** (cron retries; operator throttles deploys near the flush window). Assume ≤10 markets + the 100-request drain fit one tx.
+- **Settlement is deferred to settlement-v2** (`is_settled()` always false, `settlement_price()` aborts; settled paths kept gated). **Flush-liveness precondition:** because no market settles, an expired market is never swept off the active set, so `value_expiry` → `current_nav` → `assert_active` bricks the whole flush once any active market crosses its expiry. There is no solvency-safe substitute mark (the single flush mark prices both supply and withdraw, so it must equal the settlement-dependent true value — contribute-0 dilutes incumbents, free-cash over-drains them). Until settlement-v2, the operator MUST NOT let an active market cross its expiry across a flush. Documented on `expiry_market::current_nav` / `plp::value_expiry`.
 
-**Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit):**
-- **The daily flush is a PRIVILEGED, cron-driven action** — callable by the operator `AdminCap` and the market-deployer cap (`MarketLifecycleCap`), **NOT permissionless**. This closes the NAV-manipulation gate (audit L8) without a manipulation-resistant mark and without lock-gating oracle writes.
-- **Gas budget (L7), pending-settlement liveness (L6), and rebate reclaim (L9) are handled OFF-CHAIN** (the cron retries; the operator throttles market deploys near the flush window). NO on-chain per-market order cap and NO on-chain pending-settlement path — assume ≤10 markets' exact NAV + the 100-request drain fit one tx, and validate by test.
-- **Supply-mark exact-vs-conservative (L10)** is deferred to a holistic simplification/refactor pass after the core SC changes land.
-- **Flush liveness depends on settlement-v2 (hard operator precondition).** With settlement stubbed (`is_settled()` always false after the oracle swap), the settled-sweep that drops an expired market from the active set is dead, so `value_expiry` → `current_nav` → `assert_active` bricks the *entire* flush once any active market crosses its expiry. There is no solvency-safe substitute mark (one flush mark prices both supply and withdraw, so it must equal the settlement-dependent true value — undefined for an unsettled past-expiry market; contribute-0 dilutes incumbents, free-cash over-drains them). Until settlement-v2 restores `unregister_settled_expiry`, the operator MUST NOT let an active market cross its expiry across a flush — create only far-dated markets and settle before expiry. Documented on `expiry_market::current_nav` / `plp::value_expiry`.
+**Still out of scope (follow-up work):**
+- The Rust `crates/predict-{schema,indexer,server}` need rewiring for the changed events: the new async-LP events (`SupplyRequested`/`WithdrawRequested`/`SupplyFilled`/`WithdrawFilled`/`SupplyRefunded`/`WithdrawRefunded`/`RequestCancelled`/`PoolValued`/`FlushExecuted`), M1 `ExpiryCashRebalanced`, `OrderMinted` gaining `range_key`, `MarketCreated` dropping `market_oracle_id`/min/max strike and gaining `pyth_feed_id`/`bs_feed_id`, the collapsed `PricingConfigUpdated`, and the deleted oracle events — plus indexing the propbook feeds.
+- The simulation harness (`packages/predict/simulations`) is structurally rewired (tsc/py_compile/`bash -n` clean) but its economic parity + the `run.sh` localnet publish flow need a localnet `run.sh` run — see `packages/predict/simulations/SIM_STATUS.md`.
+- Settlement-v2 (the deferred settlement path off the propbook minute history).
 
 ## Code Review Norms
 
