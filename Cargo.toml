@@ -8,6 +8,8 @@ members = [
     "crates/predict-schema",
     "crates/predict-indexer",
     "crates/predict-server",
+    "crates/oracle-indexer",
+    "crates/oracle-server",
 ]
 
 [workspace.dependencies]

@@ -5851,6 +5851,72 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-indexer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bcs",
+ "bigdecimal",
+ "clap",
+ "diesel",
+ "diesel-async",
+ "move-core-types",
+ "predict-schema",
+ "prometheus",
+ "serde",
+ "serde_json",
+ "sui-futures",
+ "sui-indexer-alt-framework",
+ "sui-indexer-alt-metrics",
+ "sui-pg-db",
+ "sui-sdk-types 0.0.7",
+ "sui-transaction-builder 0.0.7",
+ "sui-types",
+ "telemetry-subscribers",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "oracle-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "bcs",
+ "bigdecimal",
+ "chrono",
+ "clap",
+ "diesel",
+ "diesel-async",
+ "futures",
+ "governor",
+ "http-body-util",
+ "predict-schema",
+ "prometheus",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "subtle",
+ "sui-futures",
+ "sui-indexer-alt-metrics",
+ "sui-json-rpc-types",
+ "sui-pg-db",
+ "sui-sdk",
+ "sui-types",
+ "telemetry-subscribers",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util 0.7.18",
+ "tower 0.5.3",
+ "tower-http 0.5.2",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "ouroboros"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
