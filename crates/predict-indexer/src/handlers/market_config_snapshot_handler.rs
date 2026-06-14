@@ -14,7 +14,6 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
         expiry_market_id: ev.expiry_market_id.to_string(),
-        market_oracle_id: ev.market_oracle_id.to_string(),
         // 1e9-scaled index, bounded.
         terminal_floor_index: ev.terminal_floor_index as i64,
         // 1e9-scaled ratio, <= ~1e9.

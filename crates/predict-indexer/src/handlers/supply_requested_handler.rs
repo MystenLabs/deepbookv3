@@ -1,7 +1,7 @@
 use crate::meta::PredictEventMeta;
-use crate::models::ExpiryMaxFundingUpdated as Ev;
+use crate::models::SupplyRequested as Ev;
 use bigdecimal::BigDecimal;
-use predict_schema::models::ExpiryMaxFundingUpdated as Row;
+use predict_schema::models::SupplyRequested as Row;
 
 pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
     Row {
@@ -14,17 +14,19 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
         pool_vault_id: ev.pool_vault_id.to_string(),
-        expiry_market_id: ev.expiry_market_id.to_string(),
-        max_expiry_funding: BigDecimal::from(ev.max_expiry_funding),
-        net_funding: BigDecimal::from(ev.net_funding),
+        predict_manager_id: ev.predict_manager_id.to_string(),
+        recipient: ev.recipient.to_string(),
+        // Monotone supply-queue handle, bounded.
+        request_index: ev.index as i64,
+        amount: BigDecimal::from(ev.amount),
     }
 }
 
 crate::define_predict_handler! {
-    name: ExpiryMaxFundingUpdatedHandler,
-    processor_name: "expiry_max_funding_updated",
-    event_type: crate::models::ExpiryMaxFundingUpdated,
-    db_model: predict_schema::models::ExpiryMaxFundingUpdated,
-    table: expiry_max_funding_updated,
+    name: SupplyRequestedHandler,
+    processor_name: "supply_requested",
+    event_type: crate::models::SupplyRequested,
+    db_model: predict_schema::models::SupplyRequested,
+    table: supply_requested,
     map_event: |event, meta| map(&event, &meta)
 }

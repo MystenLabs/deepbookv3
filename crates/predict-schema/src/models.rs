@@ -1,16 +1,15 @@
 use crate::schema::{
-    block_scholes_prices_updated, block_scholes_svi_updated, builder_code_created,
-    builder_code_set, builder_fees_claimed, deep_staked, deep_unstaked, ewma_config_updated,
-    expiry_cash_rebalanced, expiry_cash_received, expiry_cash_template_config_updated,
-    expiry_market_mint_paused_updated, expiry_max_funding_updated, expiry_profit_materialized,
-    fee_config_updated, liquidated_order_redeemed, liquidation_stats_1h, live_order_redeemed,
-    market_activity_1h, market_config_snapshot, market_created, market_oracle_config_updated,
-    market_oracle_settled, market_oracle_template_config_updated, oracle_prices_1m,
-    order_liquidated, order_minted, order_state, position_cashflow, predict_deposit_cap_minted,
-    predict_manager_created, predict_trade_cap_minted, predict_withdraw_cap_minted,
-    pricing_config_updated, pyth_source_updated, risk_config_updated, settled_order_redeemed,
-    stake_config_updated, strike_exposure_template_config_updated, supply_executed,
-    trading_loss_rebate_claimed, trading_paused_updated, vault_flows_1h, withdraw_executed,
+    builder_code_created, builder_code_set, builder_fees_claimed, deep_staked, deep_unstaked,
+    ewma_config_updated, expiry_cash_rebalanced, expiry_cash_received,
+    expiry_cash_template_config_updated, expiry_market_mint_paused_updated,
+    expiry_profit_materialized, flush_executed, liquidated_order_redeemed, liquidation_stats_1h,
+    live_order_redeemed, lp_request_state, market_activity_1h, market_config_snapshot,
+    market_created, market_settled, order_liquidated, order_minted, order_state, position_cashflow,
+    predict_deposit_cap_minted, predict_manager_created, predict_trade_cap_minted,
+    predict_withdraw_cap_minted, pricing_config_updated, request_cancelled, risk_config_updated,
+    settled_order_redeemed, stake_config_updated, strike_exposure_template_config_updated,
+    supply_filled, supply_requested, trading_paused_updated, vault_flows_1h, withdraw_filled,
+    withdraw_requested,
 };
 use bigdecimal::BigDecimal;
 use diesel::{Identifiable, Insertable, Queryable, Selectable};
@@ -33,8 +32,8 @@ pub struct OrderMinted {
     pub order_id: String,
     pub position_root_id: String,
     pub owner: String,
-    pub lower_strike: BigDecimal,
-    pub higher_strike: BigDecimal,
+    pub lower_tick: i64,
+    pub higher_tick: i64,
     pub leverage: i64,
     pub entry_probability: i64,
     pub quantity: BigDecimal,
@@ -236,24 +235,7 @@ pub struct PricingConfigUpdated {
     pub package: String,
     pub protocol_config_id: String,
     pub pyth_spot_freshness_ms: i64,
-    pub block_scholes_prices_freshness_ms: i64,
-    pub block_scholes_svi_freshness_ms: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = fee_config_updated, primary_key(event_digest))]
-pub struct FeeConfigUpdated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub protocol_config_id: String,
-    pub protocol_reserve_profit_share: i64,
-    pub withdraw_fee_alpha: i64,
+    pub block_scholes_surface_freshness_ms: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -268,8 +250,8 @@ pub struct RiskConfigUpdated {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub protocol_config_id: String,
-    pub valuation_liquidation_budget: i64,
     pub trade_liquidation_budget: i64,
+    pub protocol_reserve_profit_share: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -308,21 +290,6 @@ pub struct StrikeExposureTemplateConfigUpdated {
     pub max_ask_price: BigDecimal,
     pub expiry_fee_window_ms: i64,
     pub expiry_fee_max_multiplier: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = market_oracle_template_config_updated, primary_key(event_digest))]
-pub struct MarketOracleTemplateConfigUpdated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub protocol_config_id: String,
-    pub settlement_freshness_ms: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -386,14 +353,10 @@ pub struct MarketCreated {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub expiry_market_id: String,
-    pub market_oracle_id: String,
     pub pool_vault_id: String,
-    pub pyth_source_id: String,
-    pub pyth_lazer_feed_id: i64,
+    pub propbook_underlying_id: i64,
     pub expiry: i64,
-    pub min_strike: BigDecimal,
     pub tick_size: BigDecimal,
-    pub max_strike: BigDecimal,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -408,7 +371,6 @@ pub struct MarketConfigSnapshot {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub expiry_market_id: String,
-    pub market_oracle_id: String,
     pub terminal_floor_index: i64,
     pub liquidation_ltv: i64,
     pub backing_buffer_lambda: i64,
@@ -419,21 +381,6 @@ pub struct MarketConfigSnapshot {
     pub expiry_fee_window_ms: i64,
     pub expiry_fee_max_multiplier: i64,
     pub trading_loss_rebate_rate: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = market_oracle_config_updated, primary_key(event_digest))]
-pub struct MarketOracleConfigUpdated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub market_oracle_id: String,
-    pub settlement_freshness_ms: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -452,8 +399,8 @@ pub struct ExpiryMarketMintPausedUpdated {
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = block_scholes_prices_updated, primary_key(event_digest))]
-pub struct BlockScholesPricesUpdated {
+#[diesel(table_name = market_settled, primary_key(event_digest))]
+pub struct MarketSettled {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
@@ -462,110 +409,11 @@ pub struct BlockScholesPricesUpdated {
     pub event_index: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
-    pub market_oracle_id: String,
-    pub spot: BigDecimal,
-    pub forward: BigDecimal,
-    pub basis: BigDecimal,
-    pub source_timestamp_ms: i64,
-    pub update_timestamp_ms: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = block_scholes_svi_updated, primary_key(event_digest))]
-pub struct BlockScholesSVIUpdated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub market_oracle_id: String,
-    pub a: BigDecimal,
-    pub b: BigDecimal,
-    pub rho: BigDecimal,
-    pub m: BigDecimal,
-    pub sigma: BigDecimal,
-    pub source_timestamp_ms: i64,
-    pub update_timestamp_ms: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = pyth_source_updated, primary_key(event_digest))]
-pub struct PythSourceUpdated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub pyth_source_id: String,
-    pub feed_id: i64,
-    pub spot: BigDecimal,
-    pub source_timestamp_ms: i64,
-    pub update_timestamp_ms: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = market_oracle_settled, primary_key(event_digest))]
-pub struct MarketOracleSettled {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub market_oracle_id: String,
+    pub expiry_market_id: String,
+    pub propbook_underlying_id: i64,
     pub expiry: i64,
     pub settlement_price: BigDecimal,
-    pub spot_source: i16,
-    pub source_timestamp_ms: i64,
-    pub update_timestamp_ms: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = supply_executed, primary_key(event_digest))]
-pub struct SupplyExecuted {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub pool_vault_id: String,
-    pub payment: BigDecimal,
-    pub shares_minted: BigDecimal,
-    pub pool_value_before: BigDecimal,
-    pub incentive_value: BigDecimal,
-    pub total_supply_after: BigDecimal,
-    pub idle_balance_after: BigDecimal,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = withdraw_executed, primary_key(event_digest))]
-pub struct WithdrawExecuted {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub pool_vault_id: String,
-    pub shares_burned: BigDecimal,
-    pub payout: BigDecimal,
-    pub withdraw_fee: BigDecimal,
-    pub pool_value_before: BigDecimal,
-    pub total_supply_after: BigDecimal,
-    pub idle_balance_after: BigDecimal,
+    pub settled_at_ms: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -588,23 +436,6 @@ pub struct ExpiryCashRebalanced {
     pub idle_balance_after: BigDecimal,
     pub sent_to_expiry_after: BigDecimal,
     pub received_from_expiry_after: BigDecimal,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = expiry_max_funding_updated, primary_key(event_digest))]
-pub struct ExpiryMaxFundingUpdated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub pool_vault_id: String,
-    pub expiry_market_id: String,
-    pub max_expiry_funding: BigDecimal,
-    pub net_funding: BigDecimal,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -698,8 +529,8 @@ pub struct BuilderFeesClaimed {
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = trading_loss_rebate_claimed, primary_key(event_digest))]
-pub struct TradingLossRebateClaimed {
+#[diesel(table_name = supply_requested, primary_key(event_digest))]
+pub struct SupplyRequested {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
@@ -708,12 +539,110 @@ pub struct TradingLossRebateClaimed {
     pub event_index: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
-    pub expiry_market_id: String,
+    pub pool_vault_id: String,
     pub predict_manager_id: String,
-    pub trading_fees_paid: BigDecimal,
-    pub gross_profit: BigDecimal,
-    pub eligible_rebate: BigDecimal,
-    pub rebate_amount: BigDecimal,
+    pub recipient: String,
+    pub request_index: i64,
+    pub amount: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = withdraw_requested, primary_key(event_digest))]
+pub struct WithdrawRequested {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_vault_id: String,
+    pub predict_manager_id: String,
+    pub recipient: String,
+    pub request_index: i64,
+    pub amount: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = request_cancelled, primary_key(event_digest))]
+pub struct RequestCancelled {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_vault_id: String,
+    pub predict_manager_id: String,
+    pub recipient: String,
+    pub request_index: i64,
+    pub amount: BigDecimal,
+    pub is_supply: bool,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = supply_filled, primary_key(event_digest))]
+pub struct SupplyFilled {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_vault_id: String,
+    pub predict_manager_id: String,
+    pub recipient: String,
+    pub request_index: i64,
+    pub dusdc_amount: BigDecimal,
+    pub shares_minted: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = withdraw_filled, primary_key(event_digest))]
+pub struct WithdrawFilled {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_vault_id: String,
+    pub predict_manager_id: String,
+    pub recipient: String,
+    pub request_index: i64,
+    pub shares_burned: BigDecimal,
+    pub dusdc_amount: BigDecimal,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = flush_executed, primary_key(event_digest))]
+pub struct FlushExecuted {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_vault_id: String,
+    pub epoch: i64,
+    pub pool_value: BigDecimal,
+    pub total_supply: BigDecimal,
+    pub active_market_nav: BigDecimal,
+    pub market_count: i64,
+    pub idle_balance_before: BigDecimal,
+    pub supplies_filled: i64,
+    pub withdrawals_filled: i64,
+    pub requests_processed: i64,
+    pub idle_balance_after: BigDecimal,
 }
 
 /// `order_state.status` values, shared by the indexer pipeline that writes
@@ -725,6 +654,14 @@ pub mod order_status {
     pub const LIQUIDATED: &str = "liquidated";
     pub const LIQUIDATED_REDEEMED: &str = "liquidated_redeemed";
     pub const SETTLED_REDEEMED: &str = "settled_redeemed";
+}
+
+/// `lp_request_state.status` values, shared by the indexer pipeline that writes
+/// them and the server queries that filter on them.
+pub mod lp_request_status {
+    pub const OPEN: &str = "open";
+    pub const CANCELLED: &str = "cancelled";
+    pub const FILLED: &str = "filled";
 }
 
 /// Maintained current-state row for one packed order id (`order_state`).
@@ -753,11 +690,36 @@ pub struct OrderState {
     pub floor_shares: BigDecimal,
     pub quantity: BigDecimal,
     pub sequence: i64,
-    pub lower_strike: Option<BigDecimal>,
-    pub higher_strike: Option<BigDecimal>,
     pub leverage: Option<i64>,
     pub entry_probability: Option<i64>,
     pub net_premium: Option<BigDecimal>,
+    pub updated_at_ms: i64,
+    pub checkpoint: i64,
+    pub tx_index: i64,
+    pub event_index: i64,
+}
+
+/// Maintained current-state row for one async LP request (`lp_request_state`).
+///
+/// Keyed by `(pool_vault_id, is_supply, request_index)`: the queue handle is
+/// unique only within (vault, is_supply). Upserted by the `lp_request_state`
+/// pipeline (raw SQL) with write-once identity/amount columns (from the
+/// Requested event, since fills carry no manager id) and an LWW-guarded
+/// `(checkpoint, tx_index, event_index)` triple. `Clone`/`PartialEq` support
+/// the pipeline's in-memory fold and its unit tests.
+#[derive(Queryable, Selectable, Debug, Clone, PartialEq, FieldCount, Serialize)]
+#[diesel(table_name = lp_request_state)]
+pub struct LpRequestState {
+    pub pool_vault_id: String,
+    pub is_supply: bool,
+    pub request_index: i64,
+    pub predict_manager_id: Option<String>,
+    pub recipient: Option<String>,
+    pub requested_amount: Option<BigDecimal>,
+    pub status: String,
+    pub filled_dusdc: Option<BigDecimal>,
+    pub filled_shares: Option<BigDecimal>,
+    pub opened_at_ms: i64,
     pub updated_at_ms: i64,
     pub checkpoint: i64,
     pub tx_index: i64,
@@ -797,7 +759,6 @@ pub struct VaultFlows1h {
     pub withdraw_count: i64,
     pub withdraw_amount: BigDecimal,
     pub shares_burned: BigDecimal,
-    pub withdraw_fees: BigDecimal,
     pub total_supply_after: BigDecimal,
     pub idle_balance_after: BigDecimal,
 }
@@ -813,20 +774,6 @@ pub struct LiquidationStats1h {
     pub floor_amount: BigDecimal,
     pub surplus: BigDecimal,
     pub gap: BigDecimal,
-}
-
-#[derive(Queryable, Selectable, Debug, Serialize)]
-#[diesel(table_name = oracle_prices_1m)]
-pub struct OraclePrices1m {
-    pub market_oracle_id: String,
-    pub bucket_ms: i64,
-    pub open: BigDecimal,
-    pub high: BigDecimal,
-    pub low: BigDecimal,
-    pub close: BigDecimal,
-    pub forward: BigDecimal,
-    pub basis: BigDecimal,
-    pub update_count: i64,
 }
 
 #[derive(Queryable, Selectable, Debug, Serialize)]

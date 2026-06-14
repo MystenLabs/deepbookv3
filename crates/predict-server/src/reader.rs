@@ -7,16 +7,15 @@ use diesel::dsl::count_star;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use predict_schema::models::order_status;
 use predict_schema::models::{
-    BlockScholesPricesUpdated, BlockScholesSVIUpdated, BuilderCodeSet, BuilderFeesClaimed,
-    DeepStaked, DeepUnstaked, EwmaConfigUpdated, ExpiryCashRebalanced, ExpiryCashReceived,
-    ExpiryCashTemplateConfigUpdated, ExpiryMarketMintPausedUpdated, ExpiryMaxFundingUpdated,
-    ExpiryProfitMaterialized, FeeConfigUpdated, LiquidatedOrderRedeemed, LiquidationStats1h,
-    LiveOrderRedeemed, MarketActivity1h, MarketConfigSnapshot, MarketCreated, MarketOracleSettled,
-    MarketOracleTemplateConfigUpdated, OraclePrices1m, OrderLiquidated, OrderMinted, OrderState,
-    PositionCashflow, PredictManagerCreated, PricingConfigUpdated, PythSourceUpdated,
+    BuilderCodeSet, BuilderFeesClaimed, DeepStaked, DeepUnstaked, EwmaConfigUpdated,
+    ExpiryCashRebalanced, ExpiryCashReceived, ExpiryCashTemplateConfigUpdated,
+    ExpiryMarketMintPausedUpdated, ExpiryProfitMaterialized, FlushExecuted,
+    LiquidatedOrderRedeemed, LiquidationStats1h, LiveOrderRedeemed, LpRequestState,
+    MarketActivity1h, MarketConfigSnapshot, MarketCreated, MarketSettled, OrderLiquidated,
+    OrderMinted, OrderState, PositionCashflow, PredictManagerCreated, PricingConfigUpdated,
     RiskConfigUpdated, SettledOrderRedeemed, StakeConfigUpdated,
-    StrikeExposureTemplateConfigUpdated, SupplyExecuted, TradingLossRebateClaimed,
-    TradingPausedUpdated, VaultFlows1h, WithdrawExecuted,
+    StrikeExposureTemplateConfigUpdated, SupplyFilled, SupplyRequested, TradingPausedUpdated,
+    VaultFlows1h, WithdrawFilled, WithdrawRequested,
 };
 use predict_schema::schema;
 use serde_json::{json, Value};
@@ -441,96 +440,8 @@ impl Reader {
         )
     }
 
-    /// `block_scholes_prices_updated` feed for one oracle, newest-first.
-    pub async fn get_oracle_prices(
-        &self,
-        market_oracle_id: String,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        single_feed!(
-            conn,
-            block_scholes_prices_updated,
-            BlockScholesPricesUpdated,
-            market_oracle_id,
-            market_oracle_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
-    }
-
-    /// `block_scholes_svi_updated` feed for one oracle, newest-first.
-    pub async fn get_oracle_svi(
-        &self,
-        market_oracle_id: String,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        single_feed!(
-            conn,
-            block_scholes_svi_updated,
-            BlockScholesSVIUpdated,
-            market_oracle_id,
-            market_oracle_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
-    }
-
-    /// `pyth_source_updated` feed for one pyth source, newest-first.
-    pub async fn get_pyth_source_updates(
-        &self,
-        pyth_source_id: String,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        single_feed!(
-            conn,
-            pyth_source_updated,
-            PythSourceUpdated,
-            pyth_source_id,
-            pyth_source_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
-    }
-
-    /// `market_oracle_settled` feed for one oracle, newest-first.
-    pub async fn get_oracle_settlements(
-        &self,
-        market_oracle_id: String,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        single_feed!(
-            conn,
-            market_oracle_settled,
-            MarketOracleSettled,
-            market_oracle_id,
-            market_oracle_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
-    }
-
-    /// `supply_executed` feed for one vault, newest-first.
-    pub async fn get_vault_supplies(
+    /// `supply_requested` feed for one vault, newest-first.
+    pub async fn get_vault_supply_requests(
         &self,
         pool_vault_id: String,
         start_time_ms: i64,
@@ -541,8 +452,8 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
         single_feed!(
             conn,
-            supply_executed,
-            SupplyExecuted,
+            supply_requested,
+            SupplyRequested,
             pool_vault_id,
             pool_vault_id.clone(),
             start_time_ms,
@@ -551,8 +462,8 @@ impl Reader {
         )
     }
 
-    /// `withdraw_executed` feed for one vault, newest-first.
-    pub async fn get_vault_withdrawals(
+    /// `withdraw_requested` feed for one vault, newest-first.
+    pub async fn get_vault_withdraw_requests(
         &self,
         pool_vault_id: String,
         start_time_ms: i64,
@@ -563,8 +474,74 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
         single_feed!(
             conn,
-            withdraw_executed,
-            WithdrawExecuted,
+            withdraw_requested,
+            WithdrawRequested,
+            pool_vault_id,
+            pool_vault_id.clone(),
+            start_time_ms,
+            end_time_ms,
+            limit
+        )
+    }
+
+    /// `supply_filled` feed for one vault, newest-first.
+    pub async fn get_vault_supply_fills(
+        &self,
+        pool_vault_id: String,
+        start_time_ms: i64,
+        end_time_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>, PredictError> {
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+        single_feed!(
+            conn,
+            supply_filled,
+            SupplyFilled,
+            pool_vault_id,
+            pool_vault_id.clone(),
+            start_time_ms,
+            end_time_ms,
+            limit
+        )
+    }
+
+    /// `withdraw_filled` feed for one vault, newest-first.
+    pub async fn get_vault_withdraw_fills(
+        &self,
+        pool_vault_id: String,
+        start_time_ms: i64,
+        end_time_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>, PredictError> {
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+        single_feed!(
+            conn,
+            withdraw_filled,
+            WithdrawFilled,
+            pool_vault_id,
+            pool_vault_id.clone(),
+            start_time_ms,
+            end_time_ms,
+            limit
+        )
+    }
+
+    /// `flush_executed` feed for one vault, newest-first.
+    pub async fn get_vault_flushes(
+        &self,
+        pool_vault_id: String,
+        start_time_ms: i64,
+        end_time_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>, PredictError> {
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+        single_feed!(
+            conn,
+            flush_executed,
+            FlushExecuted,
             pool_vault_id,
             pool_vault_id.clone(),
             start_time_ms,
@@ -595,26 +572,34 @@ impl Reader {
         )
     }
 
-    /// `expiry_max_funding_updated` feed for one vault, newest-first.
-    pub async fn get_vault_funding(
+    /// `lp_request_state` rows for one manager filtered by status, windowed by
+    /// `opened_at_ms` (the request time, the `LEAST` of all the handle's event
+    /// timestamps), newest-opened first. Mirrors `get_manager_positions`.
+    pub async fn get_manager_lp_requests(
         &self,
-        pool_vault_id: String,
+        predict_manager_id: String,
+        status: String,
         start_time_ms: i64,
         end_time_ms: i64,
         limit: i64,
     ) -> Result<Vec<Value>, PredictError> {
         let mut conn = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
-        single_feed!(
-            conn,
-            expiry_max_funding_updated,
-            ExpiryMaxFundingUpdated,
-            pool_vault_id,
-            pool_vault_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
+
+        let rows: Vec<LpRequestState> = schema::lp_request_state::table
+            .filter(schema::lp_request_state::predict_manager_id.eq(predict_manager_id))
+            .filter(schema::lp_request_state::status.eq(status))
+            .filter(schema::lp_request_state::opened_at_ms.between(start_time_ms, end_time_ms))
+            .order_by((
+                schema::lp_request_state::opened_at_ms.desc(),
+                schema::lp_request_state::request_index.desc(),
+            ))
+            .limit(limit)
+            .select(LpRequestState::as_select())
+            .load(&mut conn)
+            .await
+            .map_err(|e| PredictError::database(e.to_string()))?;
+        project_rows(rows, "lp_request_state")
     }
 
     /// `expiry_cash_rebalanced` feed for one vault, newest-first.
@@ -698,28 +683,6 @@ impl Reader {
         Ok(merge_feed(merged, limit))
     }
 
-    /// `trading_loss_rebate_claimed` feed for one manager, newest-first.
-    pub async fn get_manager_rebates(
-        &self,
-        predict_manager_id: String,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        single_feed!(
-            conn,
-            trading_loss_rebate_claimed,
-            TradingLossRebateClaimed,
-            predict_manager_id,
-            predict_manager_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
-    }
-
     /// `builder_fees_claimed` feed for one builder code, newest-first.
     pub async fn get_builder_code_fees(
         &self,
@@ -743,9 +706,11 @@ impl Reader {
     }
 
     /// Composed current state for one market: the creation row, the latest
-    /// config snapshot, the latest mint-pause flag, and (through the market's
-    /// oracle) the latest prices/SVI/settlement. Every component is a top-1
-    /// index scan; missing components are `null`.
+    /// config snapshot, the latest mint-pause flag, and the terminal settlement
+    /// (`market_settled`, present once the market has settled). Every component
+    /// is a top-1 index scan; missing components are `null`. Live oracle
+    /// prices/surface live in the separate oracle service (keyed by
+    /// `propbook_oracle_id`, resolved from `propbook_underlying_id`).
     pub async fn get_market_state(&self, expiry_market_id: String) -> Result<Value, PredictError> {
         let mut conn = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
@@ -771,106 +736,32 @@ impl Reader {
             expiry_market_id,
             expiry_market_id.clone()
         );
-
-        let market_oracle_id = market
-            .as_ref()
-            .and_then(|m| m["market_oracle_id"].as_str())
-            .map(str::to_string);
-        let (oracle_prices, oracle_svi, settlement) = match market_oracle_id {
-            Some(oracle_id) => (
-                latest_row!(
-                    conn,
-                    block_scholes_prices_updated,
-                    BlockScholesPricesUpdated,
-                    market_oracle_id,
-                    oracle_id.clone()
-                ),
-                latest_row!(
-                    conn,
-                    block_scholes_svi_updated,
-                    BlockScholesSVIUpdated,
-                    market_oracle_id,
-                    oracle_id.clone()
-                ),
-                latest_row!(
-                    conn,
-                    market_oracle_settled,
-                    MarketOracleSettled,
-                    market_oracle_id,
-                    oracle_id
-                ),
-            ),
-            None => (None, None, None),
-        };
+        let settlement = latest_row!(
+            conn,
+            market_settled,
+            MarketSettled,
+            expiry_market_id,
+            expiry_market_id.clone()
+        );
 
         Ok(json!({
             "expiry_market_id": expiry_market_id,
             "market": market,
             "config": config,
             "mint_paused": mint_paused,
-            "oracle_prices": oracle_prices,
-            "oracle_svi": oracle_svi,
             "settlement": settlement,
         }))
     }
 
-    /// Latest prices, SVI surface, and settlement for one oracle.
-    pub async fn get_oracle_latest(&self, market_oracle_id: String) -> Result<Value, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-
-        let prices = latest_row!(
-            conn,
-            block_scholes_prices_updated,
-            BlockScholesPricesUpdated,
-            market_oracle_id,
-            market_oracle_id.clone()
-        );
-        let svi = latest_row!(
-            conn,
-            block_scholes_svi_updated,
-            BlockScholesSVIUpdated,
-            market_oracle_id,
-            market_oracle_id.clone()
-        );
-        let settlement = latest_row!(
-            conn,
-            market_oracle_settled,
-            MarketOracleSettled,
-            market_oracle_id,
-            market_oracle_id.clone()
-        );
-
-        Ok(json!({
-            "market_oracle_id": market_oracle_id,
-            "prices": prices,
-            "svi": svi,
-            "settlement": settlement,
-        }))
-    }
-
-    /// Composed current state for one vault. The vault events all carry
-    /// `*_after` snapshot fields, so "current" is the newest event — by the
-    /// typed `(checkpoint, tx_index, event_index)` triple, compared before
-    /// projecting to JSON — among the tables that carry each field.
+    /// Composed current state for one vault. The vault events carry `*_after`
+    /// snapshot fields, so "current" is the newest event — by the typed
+    /// `(checkpoint, tx_index, event_index)` triple — among the tables that
+    /// carry each field. `total_supply` / `pool_value` / `active_market_nav`
+    /// come from the latest flush (the only event that carries them).
     pub async fn get_vault_state(&self, pool_vault_id: String) -> Result<Value, PredictError> {
         let mut conn = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        let supply: Option<SupplyExecuted> = latest_row_typed!(
-            conn,
-            supply_executed,
-            SupplyExecuted,
-            pool_vault_id,
-            pool_vault_id.clone()
-        );
-        let withdraw: Option<WithdrawExecuted> = latest_row_typed!(
-            conn,
-            withdraw_executed,
-            WithdrawExecuted,
-            pool_vault_id,
-            pool_vault_id.clone()
-        );
         let rebalance: Option<ExpiryCashRebalanced> = latest_row_typed!(
             conn,
             expiry_cash_rebalanced,
@@ -889,6 +780,27 @@ impl Reader {
             conn,
             expiry_profit_materialized,
             ExpiryProfitMaterialized,
+            pool_vault_id,
+            pool_vault_id.clone()
+        );
+        let flush: Option<FlushExecuted> = latest_row_typed!(
+            conn,
+            flush_executed,
+            FlushExecuted,
+            pool_vault_id,
+            pool_vault_id.clone()
+        );
+        let supply_fill: Option<SupplyFilled> = latest_row_typed!(
+            conn,
+            supply_filled,
+            SupplyFilled,
+            pool_vault_id,
+            pool_vault_id.clone()
+        );
+        let withdraw_fill: Option<WithdrawFilled> = latest_row_typed!(
+            conn,
+            withdraw_filled,
+            WithdrawFilled,
             pool_vault_id,
             pool_vault_id.clone()
         );
@@ -911,22 +823,19 @@ impl Reader {
                 .map(|(_, v)| v)
         }
 
-        // idle_balance_after is carried by all five tables; total_supply_after
-        // only by supply/withdraw; reserve/profit-basis only by profit.
+        // idle_balance_after is carried by rebalance/receipt/profit/flush.
         let idle = newest([
-            keyed!(supply, idle_balance_after),
-            keyed!(withdraw, idle_balance_after),
             keyed!(rebalance, idle_balance_after),
             keyed!(receipt, idle_balance_after),
             keyed!(profit, idle_balance_after),
-        ]);
-        let total_supply = newest([
-            keyed!(supply, total_supply_after),
-            keyed!(withdraw, total_supply_after),
+            keyed!(flush, idle_balance_after),
         ]);
         let current = json!({
             "idle_balance_after": idle,
-            "total_supply_after": total_supply,
+            // total_supply / pool NAV come from the latest flush (the valuation).
+            "total_supply": flush.as_ref().map(|r| r.total_supply.clone()),
+            "pool_value": flush.as_ref().map(|r| r.pool_value.clone()),
+            "active_market_nav": flush.as_ref().map(|r| r.active_market_nav.clone()),
             "protocol_reserve_balance_after":
                 profit.as_ref().map(|r| r.protocol_reserve_balance_after.clone()),
             "profit_basis_after": profit.as_ref().map(|r| r.profit_basis_after.clone()),
@@ -935,8 +844,11 @@ impl Reader {
         Ok(json!({
             "pool_vault_id": pool_vault_id,
             "current": current,
-            "latest_supply": supply.map(|r| project_row(r, "supply_executed")).transpose()?,
-            "latest_withdrawal": withdraw.map(|r| project_row(r, "withdraw_executed")).transpose()?,
+            "latest_flush": flush.map(|r| project_row(r, "flush_executed")).transpose()?,
+            "latest_supply_fill":
+                supply_fill.map(|r| project_row(r, "supply_filled")).transpose()?,
+            "latest_withdraw_fill":
+                withdraw_fill.map(|r| project_row(r, "withdraw_filled")).transpose()?,
             "latest_cash_rebalance":
                 rebalance.map(|r| project_row(r, "expiry_cash_rebalanced")).transpose()?,
             "latest_cash_receipt":
@@ -954,7 +866,6 @@ impl Reader {
 
         Ok(json!({
             "pricing": latest_row!(conn, pricing_config_updated, PricingConfigUpdated),
-            "fee": latest_row!(conn, fee_config_updated, FeeConfigUpdated),
             "risk": latest_row!(conn, risk_config_updated, RiskConfigUpdated),
             "expiry_cash_template": latest_row!(
                 conn,
@@ -965,11 +876,6 @@ impl Reader {
                 conn,
                 strike_exposure_template_config_updated,
                 StrikeExposureTemplateConfigUpdated
-            ),
-            "market_oracle_template": latest_row!(
-                conn,
-                market_oracle_template_config_updated,
-                MarketOracleTemplateConfigUpdated
             ),
             "ewma": latest_row!(conn, ewma_config_updated, EwmaConfigUpdated),
             "stake": latest_row!(conn, stake_config_updated, StakeConfigUpdated),
@@ -1077,8 +983,6 @@ impl Reader {
                     (root.expiry_market_id.clone(), root.order_id.clone()),
                     json!({
                         "order_id": root.order_id,
-                        "lower_strike": root.lower_strike,
-                        "higher_strike": root.higher_strike,
                         "leverage": root.leverage,
                         "entry_probability": root.entry_probability,
                         "net_premium": root.net_premium,
@@ -1202,28 +1106,6 @@ impl Reader {
             VaultFlows1h,
             pool_vault_id,
             pool_vault_id.clone(),
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
-    }
-
-    /// `oracle_prices_1m` candles for one oracle, newest bucket first.
-    pub async fn get_oracle_prices_sampled(
-        &self,
-        market_oracle_id: String,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        bucket_feed!(
-            conn,
-            oracle_prices_1m,
-            OraclePrices1m,
-            market_oracle_id,
-            market_oracle_id.clone(),
             start_time_ms,
             end_time_ms,
             limit

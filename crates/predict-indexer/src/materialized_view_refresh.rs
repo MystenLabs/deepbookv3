@@ -21,7 +21,6 @@ const MATERIALIZED_VIEWS_TO_REFRESH: &[&str] = &[
     "market_activity_1h",
     "vault_flows_1h",
     "liquidation_stats_1h",
-    "oracle_prices_1m",
     "position_cashflow",
 ];
 const REFRESH_DURATION_SEC_BUCKETS: &[f64] = &[

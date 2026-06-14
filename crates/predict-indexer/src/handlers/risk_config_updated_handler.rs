@@ -14,9 +14,9 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         package: meta.package(),
         protocol_config_id: ev.protocol_config_id.to_string(),
         // Candidate-count budget, bounded.
-        valuation_liquidation_budget: ev.valuation_liquidation_budget as i64,
-        // Candidate-count budget, bounded.
         trade_liquidation_budget: ev.trade_liquidation_budget as i64,
+        // 1e9-scaled reserve share of profit, bounded.
+        protocol_reserve_profit_share: ev.protocol_reserve_profit_share as i64,
     }
 }
 

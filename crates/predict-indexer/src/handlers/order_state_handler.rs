@@ -55,8 +55,6 @@ fn base_row(order_id: U256, expiry_market_id: String, st: &str, meta: &PredictEv
         floor_shares: BigDecimal::from(decoded.floor_shares),
         quantity: BigDecimal::from(decoded.quantity),
         sequence: decoded.sequence as i64,
-        lower_strike: None,
-        higher_strike: None,
         leverage: None,
         entry_probability: None,
         net_premium: None,
@@ -77,8 +75,6 @@ pub fn map_minted(ev: &OrderMinted, meta: &PredictEventMeta) -> Row {
     row.predict_manager_id = Some(ev.predict_manager_id.to_string());
     row.position_root_id = Some(ev.position_root_id.to_string());
     row.owner = Some(ev.owner.to_string());
-    row.lower_strike = Some(BigDecimal::from(ev.lower_strike));
-    row.higher_strike = Some(BigDecimal::from(ev.higher_strike));
     row.leverage = Some(ev.leverage as i64);
     row.entry_probability = Some(ev.entry_probability as i64);
     row.net_premium = Some(BigDecimal::from(ev.net_premium));
@@ -162,8 +158,6 @@ pub fn merge_rows(earlier: Row, later: Row) -> Row {
         position_root_id: earlier.position_root_id.or(later.position_root_id),
         owner: earlier.owner.or(later.owner),
         replacement_order_id: earlier.replacement_order_id.or(later.replacement_order_id),
-        lower_strike: earlier.lower_strike.or(later.lower_strike),
-        higher_strike: earlier.higher_strike.or(later.higher_strike),
         leverage: earlier.leverage.or(later.leverage),
         entry_probability: earlier.entry_probability.or(later.entry_probability),
         net_premium: earlier.net_premium.or(later.net_premium),
@@ -200,14 +194,14 @@ pub fn fold_rows(values: &[Row]) -> Vec<Row> {
 /// reprocessing, order-independent across out-of-order batch commits).
 ///
 /// The statement is assembled as `UPSERT_PREFIX` + a generated
-/// `($1,...,$22),($23,...,$44),...` VALUES list + `UPSERT_SUFFIX`, so the
+/// `($1,...,$20),($21,...,$40),...` VALUES list + `UPSERT_SUFFIX`, so the
 /// column list and ON CONFLICT clause are each written exactly once.
 const UPSERT_PREFIX: &str = r#"
 INSERT INTO order_state (
     expiry_market_id, order_id, predict_manager_id, position_root_id, owner,
     status, replacement_order_id,
     opened_at_ms, lower_boundary_index, higher_boundary_index, floor_shares, quantity, sequence,
-    lower_strike, higher_strike, leverage, entry_probability, net_premium,
+    leverage, entry_probability, net_premium,
     updated_at_ms, checkpoint, tx_index, event_index
 ) VALUES "#;
 
@@ -217,8 +211,6 @@ ON CONFLICT (expiry_market_id, order_id) DO UPDATE SET
     position_root_id     = COALESCE(order_state.position_root_id, EXCLUDED.position_root_id),
     owner                = COALESCE(order_state.owner, EXCLUDED.owner),
     replacement_order_id = COALESCE(order_state.replacement_order_id, EXCLUDED.replacement_order_id),
-    lower_strike         = COALESCE(order_state.lower_strike, EXCLUDED.lower_strike),
-    higher_strike        = COALESCE(order_state.higher_strike, EXCLUDED.higher_strike),
     leverage             = COALESCE(order_state.leverage, EXCLUDED.leverage),
     entry_probability    = COALESCE(order_state.entry_probability, EXCLUDED.entry_probability),
     net_premium          = COALESCE(order_state.net_premium, EXCLUDED.net_premium),
@@ -240,9 +232,9 @@ ON CONFLICT (expiry_market_id, order_id) DO UPDATE SET
 "#;
 
 /// Bind parameters per row tuple in the VALUES list.
-const BINDS_PER_ROW: usize = 22;
+const BINDS_PER_ROW: usize = 20;
 
-/// Rows per upsert statement: 500 * 22 = 11,000 binds, far below Postgres's
+/// Rows per upsert statement: 500 * 20 = 10,000 binds, far below Postgres's
 /// 65,535 bind-parameter limit.
 const UPSERT_CHUNK_ROWS: usize = 500;
 
@@ -358,8 +350,6 @@ impl sui_indexer_alt_framework::postgres::handler::Handler for OrderStateHandler
                     .bind::<Numeric, _>(&row.floor_shares)
                     .bind::<Numeric, _>(&row.quantity)
                     .bind::<BigInt, _>(row.sequence)
-                    .bind::<Nullable<Numeric>, _>(&row.lower_strike)
-                    .bind::<Nullable<Numeric>, _>(&row.higher_strike)
                     .bind::<Nullable<BigInt>, _>(row.leverage)
                     .bind::<Nullable<BigInt>, _>(row.entry_probability)
                     .bind::<Nullable<Numeric>, _>(&row.net_premium)

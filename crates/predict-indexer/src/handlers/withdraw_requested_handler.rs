@@ -1,7 +1,7 @@
 use crate::meta::PredictEventMeta;
-use crate::models::MarketCreated as Ev;
+use crate::models::WithdrawRequested as Ev;
 use bigdecimal::BigDecimal;
-use predict_schema::models::MarketCreated as Row;
+use predict_schema::models::WithdrawRequested as Row;
 
 pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
     Row {
@@ -13,21 +13,20 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         event_index: meta.event_index(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
-        expiry_market_id: ev.expiry_market_id.to_string(),
         pool_vault_id: ev.pool_vault_id.to_string(),
-        // u32 Propbook underlying id, fits in i64.
-        propbook_underlying_id: ev.propbook_underlying_id as i64,
-        // Unix ms timestamp.
-        expiry: ev.expiry as i64,
-        tick_size: BigDecimal::from(ev.tick_size),
+        predict_manager_id: ev.predict_manager_id.to_string(),
+        recipient: ev.recipient.to_string(),
+        // Monotone withdraw-queue handle, bounded.
+        request_index: ev.index as i64,
+        amount: BigDecimal::from(ev.amount),
     }
 }
 
 crate::define_predict_handler! {
-    name: MarketCreatedHandler,
-    processor_name: "market_created",
-    event_type: crate::models::MarketCreated,
-    db_model: predict_schema::models::MarketCreated,
-    table: market_created,
+    name: WithdrawRequestedHandler,
+    processor_name: "withdraw_requested",
+    event_type: crate::models::WithdrawRequested,
+    db_model: predict_schema::models::WithdrawRequested,
+    table: withdraw_requested,
     map_event: |event, meta| map(&event, &meta)
 }

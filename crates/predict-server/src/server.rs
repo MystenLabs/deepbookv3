@@ -36,22 +36,21 @@ pub const MARKET_ORDERS_PATH: &str = "/markets/:expiry_market_id/orders";
 pub const MANAGER_ORDERS_PATH: &str = "/managers/:predict_manager_id/orders";
 pub const MANAGERS_PATH: &str = "/managers";
 pub const MARKETS_PATH: &str = "/markets";
-pub const ORACLE_PRICES_PATH: &str = "/oracles/:market_oracle_id/prices";
-pub const ORACLE_SVI_PATH: &str = "/oracles/:market_oracle_id/svi";
-pub const ORACLE_SETTLEMENTS_PATH: &str = "/oracles/:market_oracle_id/settlements";
-pub const PYTH_SOURCE_UPDATES_PATH: &str = "/pyth-sources/:pyth_source_id/updates";
-pub const VAULT_SUPPLIES_PATH: &str = "/vaults/:pool_vault_id/supplies";
-pub const VAULT_WITHDRAWALS_PATH: &str = "/vaults/:pool_vault_id/withdrawals";
+// Async-LP request/fill/flush feeds. Oracle feeds (prices/SVI/sources) live in
+// the separate oracle service, keyed by propbook_oracle_id.
+pub const VAULT_SUPPLY_REQUESTS_PATH: &str = "/vaults/:pool_vault_id/supply-requests";
+pub const VAULT_WITHDRAW_REQUESTS_PATH: &str = "/vaults/:pool_vault_id/withdraw-requests";
+pub const VAULT_SUPPLY_FILLS_PATH: &str = "/vaults/:pool_vault_id/supply-fills";
+pub const VAULT_WITHDRAW_FILLS_PATH: &str = "/vaults/:pool_vault_id/withdraw-fills";
+pub const VAULT_FLUSHES_PATH: &str = "/vaults/:pool_vault_id/flushes";
 pub const VAULT_PROFIT_PATH: &str = "/vaults/:pool_vault_id/profit";
-pub const VAULT_FUNDING_PATH: &str = "/vaults/:pool_vault_id/funding";
 pub const VAULT_CASH_REBALANCES_PATH: &str = "/vaults/:pool_vault_id/cash-rebalances";
 pub const VAULT_CASH_RECEIPTS_PATH: &str = "/vaults/:pool_vault_id/cash-receipts";
 pub const MANAGER_STAKING_PATH: &str = "/managers/:predict_manager_id/staking";
-pub const MANAGER_REBATES_PATH: &str = "/managers/:predict_manager_id/rebates";
+pub const MANAGER_LP_REQUESTS_PATH: &str = "/managers/:predict_manager_id/lp-requests";
 pub const BUILDER_CODE_FEES_PATH: &str = "/builder-codes/:builder_code_id/fees";
 // Composed current-state lookups (top-1 index scans over raw tables).
 pub const MARKET_STATE_PATH: &str = "/markets/:expiry_market_id/state";
-pub const ORACLE_LATEST_PATH: &str = "/oracles/:market_oracle_id/latest";
 pub const VAULT_STATE_PATH: &str = "/vaults/:pool_vault_id/state";
 pub const MANAGER_STATE_PATH: &str = "/managers/:predict_manager_id/state";
 pub const CONFIG_PATH: &str = "/config";
@@ -62,7 +61,6 @@ pub const MARKET_OPEN_INTEREST_PATH: &str = "/markets/:expiry_market_id/open-int
 pub const MARKET_ACTIVITY_PATH: &str = "/markets/:expiry_market_id/activity";
 pub const MARKET_LIQUIDATION_STATS_PATH: &str = "/markets/:expiry_market_id/liquidation-stats";
 pub const VAULT_FLOWS_PATH: &str = "/vaults/:pool_vault_id/flows";
-pub const ORACLE_PRICES_SAMPLED_PATH: &str = "/oracles/:market_oracle_id/prices/sampled";
 // Market-scoped: packed order/root ids are expiry-local, never globally unique.
 pub const POSITION_CASHFLOW_PATH: &str =
     "/markets/:expiry_market_id/positions/:position_root_id/cashflow";
@@ -191,21 +189,18 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route(MANAGER_ORDERS_PATH, get(manager_orders))
         .route(MANAGERS_PATH, get(managers))
         .route(MARKETS_PATH, get(markets))
-        .route(ORACLE_PRICES_PATH, get(oracle_prices))
-        .route(ORACLE_SVI_PATH, get(oracle_svi))
-        .route(ORACLE_SETTLEMENTS_PATH, get(oracle_settlements))
-        .route(PYTH_SOURCE_UPDATES_PATH, get(pyth_source_updates))
-        .route(VAULT_SUPPLIES_PATH, get(vault_supplies))
-        .route(VAULT_WITHDRAWALS_PATH, get(vault_withdrawals))
+        .route(VAULT_SUPPLY_REQUESTS_PATH, get(vault_supply_requests))
+        .route(VAULT_WITHDRAW_REQUESTS_PATH, get(vault_withdraw_requests))
+        .route(VAULT_SUPPLY_FILLS_PATH, get(vault_supply_fills))
+        .route(VAULT_WITHDRAW_FILLS_PATH, get(vault_withdraw_fills))
+        .route(VAULT_FLUSHES_PATH, get(vault_flushes))
         .route(VAULT_PROFIT_PATH, get(vault_profit))
-        .route(VAULT_FUNDING_PATH, get(vault_funding))
         .route(VAULT_CASH_REBALANCES_PATH, get(vault_cash_rebalances))
         .route(VAULT_CASH_RECEIPTS_PATH, get(vault_cash_receipts))
         .route(MANAGER_STAKING_PATH, get(manager_staking))
-        .route(MANAGER_REBATES_PATH, get(manager_rebates))
+        .route(MANAGER_LP_REQUESTS_PATH, get(manager_lp_requests))
         .route(BUILDER_CODE_FEES_PATH, get(builder_code_fees))
         .route(MARKET_STATE_PATH, get(market_state))
-        .route(ORACLE_LATEST_PATH, get(oracle_latest))
         .route(VAULT_STATE_PATH, get(vault_state))
         .route(MANAGER_STATE_PATH, get(manager_state))
         .route(CONFIG_PATH, get(protocol_config))
@@ -214,7 +209,6 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route(MARKET_ACTIVITY_PATH, get(market_activity))
         .route(MARKET_LIQUIDATION_STATS_PATH, get(market_liquidation_stats))
         .route(VAULT_FLOWS_PATH, get(vault_flows))
-        .route(ORACLE_PRICES_SAMPLED_PATH, get(oracle_prices_sampled))
         .route(POSITION_CASHFLOW_PATH, get(position_cashflow))
         .with_state(state.clone())
         .layer(cors)
@@ -427,87 +421,15 @@ async fn markets(
     Ok(Json(data))
 }
 
-/// `block_scholes_prices_updated` feed for one oracle.
-async fn oracle_prices(
-    Path(market_oracle_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_oracle_prices(
-            market_oracle_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
-/// `block_scholes_svi_updated` feed for one oracle.
-async fn oracle_svi(
-    Path(market_oracle_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_oracle_svi(
-            market_oracle_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
-/// `market_oracle_settled` feed for one oracle.
-async fn oracle_settlements(
-    Path(market_oracle_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_oracle_settlements(
-            market_oracle_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
-/// `pyth_source_updated` feed for one pyth source.
-async fn pyth_source_updates(
-    Path(pyth_source_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_pyth_source_updates(
-            pyth_source_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
-/// `supply_executed` feed for one vault.
-async fn vault_supplies(
+/// `supply_requested` feed for one vault.
+async fn vault_supply_requests(
     Path(pool_vault_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
     let data = state
         .reader
-        .get_vault_supplies(
+        .get_vault_supply_requests(
             pool_vault_id,
             params.start_time_ms(),
             params.end_time_ms(),
@@ -517,15 +439,69 @@ async fn vault_supplies(
     Ok(Json(data))
 }
 
-/// `withdraw_executed` feed for one vault.
-async fn vault_withdrawals(
+/// `withdraw_requested` feed for one vault.
+async fn vault_withdraw_requests(
     Path(pool_vault_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
     let data = state
         .reader
-        .get_vault_withdrawals(
+        .get_vault_withdraw_requests(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `supply_filled` feed for one vault.
+async fn vault_supply_fills(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_supply_fills(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `withdraw_filled` feed for one vault.
+async fn vault_withdraw_fills(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_withdraw_fills(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `flush_executed` feed for one vault.
+async fn vault_flushes(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_flushes(
             pool_vault_id,
             params.start_time_ms(),
             params.end_time_ms(),
@@ -553,16 +529,22 @@ async fn vault_profit(
     Ok(Json(data))
 }
 
-/// `expiry_max_funding_updated` feed for one vault.
-async fn vault_funding(
-    Path(pool_vault_id): Path<String>,
+/// `lp_request_state` rows for one manager, windowed by `opened_at_ms`
+/// (`?start_time`/`?end_time`, unix seconds). `?status` defaults to `open`.
+async fn manager_lp_requests(
+    Path(predict_manager_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let status = params
+        .get("status")
+        .cloned()
+        .unwrap_or_else(|| predict_schema::models::lp_request_status::OPEN.to_string());
     let data = state
         .reader
-        .get_vault_funding(
-            pool_vault_id,
+        .get_manager_lp_requests(
+            predict_manager_id,
+            status,
             params.start_time_ms(),
             params.end_time_ms(),
             params.limit(),
@@ -626,24 +608,6 @@ async fn manager_staking(
     Ok(Json(data))
 }
 
-/// `trading_loss_rebate_claimed` feed for one manager.
-async fn manager_rebates(
-    Path(predict_manager_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_manager_rebates(
-            predict_manager_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
 /// `builder_fees_claimed` feed for one builder code.
 async fn builder_code_fees(
     Path(builder_code_id): Path<String>,
@@ -663,22 +627,12 @@ async fn builder_code_fees(
 }
 
 /// Composed current state for one market (creation, latest config snapshot,
-/// mint-pause flag, latest oracle prices/SVI/settlement).
+/// mint-pause flag, terminal settlement).
 async fn market_state(
     Path(expiry_market_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, PredictError> {
     Ok(Json(state.reader.get_market_state(expiry_market_id).await?))
-}
-
-/// Latest prices, SVI surface, and settlement for one oracle.
-async fn oracle_latest(
-    Path(market_oracle_id): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
-    Ok(Json(
-        state.reader.get_oracle_latest(market_oracle_id).await?,
-    ))
 }
 
 /// Composed current state for one vault (current balances/supply plus the
@@ -792,24 +746,6 @@ async fn vault_flows(
         .reader
         .get_vault_flows(
             pool_vault_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
-/// `oracle_prices_1m` candles for one oracle.
-async fn oracle_prices_sampled(
-    Path(market_oracle_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_oracle_prices_sampled(
-            market_oracle_id,
             params.start_time_ms(),
             params.end_time_ms(),
             params.limit(),
