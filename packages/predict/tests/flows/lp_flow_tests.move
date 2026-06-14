@@ -172,6 +172,26 @@ fun supply_round_trip_delivers_minted_plp_to_manager() {
     fx.finish();
 }
 
+#[test]
+fun deployer_cap_can_start_the_privileged_flush() {
+    // The two-entrypoint privileged flush: a market deployer (MarketLifecycleCap)
+    // starts the flush identically to the operator AdminCap path.
+    let mut fx = helpers::setup_market_default();
+    let manager = fx.create_funded_manager(0);
+    enqueue_supply(&mut fx, &manager, min_supply!());
+
+    flush_as_deployer(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.plp_total_supply(), min_supply!()); // bootstrap minted via the deployer flush
+    assert_eq!(vault.idle_balance(), min_supply!());
+    return_shared(vault);
+
+    destroy(manager);
+    fx.finish();
+}
+
 #[test, expected_failure(abort_code = plp::EBootstrapNavNotEmpty)]
 fun bootstrap_supply_with_nonempty_nav_aborts() {
     let mut fx = helpers::setup_market_default();
@@ -404,6 +424,17 @@ fun flush(fx: &mut helpers::Fixture) {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let val = fx.start_flush(&mut config, &vault);
+    let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    return_shared(config);
+    return_shared(vault);
+}
+
+/// Run one flush started through the market-deployer cap entrypoint.
+fun flush_as_deployer(fx: &mut helpers::Fixture) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let val = fx.start_flush_as_deployer(&mut config, &vault);
     let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
     return_shared(config);
     return_shared(vault);
