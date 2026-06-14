@@ -12,7 +12,19 @@ Leverage transforms that same contract with two modifications: embedded premium 
 
 This is *limited-recourse* financing. A leveraged order's floor can only ever consume that one order's own value or payout, capped at it. There is no margin call against the holder's other assets and no shared debt pool. An order that falls to or below its floor is simply worth zero to its holder and is knocked out (liquidated); it never produces a negative balance the protocol must chase.
 
-Prices come from two oracles. A Pyth Lazer feed supplies the canonical spot; a Block Scholes operator supplies an SVI volatility surface and a forward basis. The protocol builds a forward (spot times basis) and derives each range's probability by differencing a one-sided UP-price curve off the SVI surface. Every live price is validated for freshness at read time. A market settles from the first valid post-expiry price — Pyth preferred, Block Scholes as fallback — and that single number is final.
+### Strikes are absolute integer ticks
+
+There is **one canonical strike representation across the whole protocol — absolute integer ticks**. A strike is an integer `tick`, and its raw price is always `raw_strike = tick × tick_size`, where `tick_size` is fixed per expiry. There is no second representation: no centered grid and no boundary indices. The public API, order IDs, the payout tree, the liquidation book, and the exposure index all operate over ticks; raw strikes are reconstructed only at the pricing/settlement boundary. A range is the packed pair `range_key` of two `u24` ticks; the open-ended ends are the two sentinel ticks (`lower_tick = 0` is `−∞`, `higher_tick = pos_inf_tick` is `+∞`).
+
+Because the tick domain is absolute and fixed in advance, **market creation reads no live spot** — a new expiry market just records its `tick_size` (the `MarketCreated` event carries `tick_size`, not a min/max strike). The pricing math saturates instead of aborting in the deep tails: a strike far below the forward prices to ~1.0 and far above to 0, so no live quote ever fails on an extreme strike.
+
+### Prices come from external feeds
+
+Live prices come from two standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global normalized spot per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload. A `BlockScholesFeed` holds, per underlying, a per-expiry **surface** of `{spot, forward, SVI volatility, timestamps}` written by a trusted off-chain operator. Predict builds a forward and differences each range's probability off the SVI surface: when the Pyth spot is fresh it uses `forward = spot × basis(expiry)`; when the Pyth spot is stale it falls back to the surface's own forward (Pyth-stale is a fallback, not an error). Either way the **surface must be fresh** — a stale surface is the one hard pricing abort. The propbook feeds validate universal math at ingest (positive spot/forward, SVI no-arbitrage), so the data Predict reads is always well-formed.
+
+### Settlement is deferred to settlement-v2
+
+Terminal settlement is **not yet implemented**. A market never reports itself settled today; the settled-redeem and settled-sweep code paths are present but unreachable, kept for the v2 work that will read the terminal price from the propbook feeds' minute history. Until then markets run live-only, and the operator is responsible for not letting an active market cross its expiry (see [risks](./risks.md)).
 
 The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability plus its trading-loss rebate reserve.
 
@@ -20,61 +32,64 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 
 | Object | Role | Sharing |
 | --- | --- | --- |
-| `Registry` | Feed/expiry uniqueness, version set, pause caps, creation entrypoints | shared |
+| `Registry` | Feed/expiry uniqueness, version set, pause + lifecycle caps, creation entrypoints | shared |
 | `ProtocolConfig` | Admin-tunable config, `trading_paused`, the valuation lock, per-expiry runtime controls | shared |
-| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, staked-DEEP custody, incentives, expiry ledger | shared |
-| `ExpiryMarket` | One expiry's strike grid, exposure book, embedded `ExpiryCash` DUSDC, NAV, cleanup | shared, one per expiry |
-| `MarketOracle` | One expiry's Block Scholes SVI/forward data and terminal settlement | shared, one per expiry |
-| `PythSource` | One Lazer feed's latest normalized spot and timestamps | shared, one per feed |
+| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, staked-DEEP custody, incentives, expiry ledger, the LP supply/withdraw queues | shared |
+| `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` DUSDC, exact `current_nav`, cleanup | shared, one per expiry |
 | `PredictManager` | Per-trader DUSDC custody + positions, staking mirror, builder attribution | owned or shared |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
-Capabilities are owned objects: `AdminCap` (global policy), `MarketOracleWriterCap` (per-oracle Block Scholes writer), `MarketLifecycleCap` (market creation and post-settlement compaction), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Detail in [architecture](./design/architecture.md).
+Oracle data is **not** a Predict object: the `PythFeed` (one per Lazer feed) and `BlockScholesFeed` (one per underlying) are shared objects owned by the separate `propbook` package, bound to each market by ID at creation.
+
+Capabilities are owned objects: `AdminCap` (global policy, also starts the pool flush), `MarketLifecycleCap` (market creation, post-settlement compaction, and starting the pool flush as a deployer), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. The Block Scholes writer cap that authorizes surface updates lives in propbook, not Predict. Detail in [architecture](./design/architecture.md).
 
 ## Market and position lifecycle
 
-An admin registers a feed, and a lifecycle-cap holder creates one `ExpiryMarket` + `MarketOracle` per expiry. The market opens with zero cash; pool capital enters only later through PLP rebalancing. A position moves through mint, optional live redeem, settlement, and a terminal redeem or liquidation. Each transition emits one order-domain event.
+An admin registers a feed, and a lifecycle-cap holder creates one `ExpiryMarket` per expiry, binding it to a propbook `PythFeed` and `BlockScholesFeed` by ID. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and either knock-out (liquidation) or — once settlement-v2 ships — terminal settlement. Each transition emits one order-domain event.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket + MarketOracle
+  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket (bound to propbook feeds, no live spot read)
   MarketCreated --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
   Live --> Liquidated: leveraged order falls to/below floor (OrderLiquidated)
-  Live --> Settled: clock reaches expiry, terminal price recorded
-  Settled --> [*]: settled redeem (SettledOrderRedeemed)
   Liquidated --> [*]: holder/keeper clears tombstone (LiquidatedOrderRedeemed, zero payout)
+  Live --> Settled: settlement-v2 (deferred — no market settles today)
+  Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 
-- **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and leverage floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). Leveraged mints must satisfy price-tiered leverage caps, sit above the liquidation threshold at entry, and keep their terminal floor below `quantity × liquidation_ltv`.
+- **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and leverage floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the packed `range_key`. Leveraged mints must satisfy price-tiered leverage caps, sit above the liquidation threshold at entry, and keep their terminal floor below `quantity × liquidation_ltv`.
 - **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability, net of the floor on the closed slice. A partial close is handled as cancel-and-replace: the full order is removed from the live indexes and the survivor re-inserted with the same open time and a proportional remainder of the floor.
-- **Settlement** is the terminal, irreversible transition: once a valid post-expiry price is recorded it is never overwritten. Settled markets accept no new live risk.
-- **Settled redeem** is cash settlement: it pays a winning (in-range) position `quantity − terminal_floor` (zero outside the range), is permissionless, and requires a full close.
 - **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero rebate that touches no manager and leaves a tombstone the holder later clears for zero payout.
-- **Compaction** destroys a settled market's dense indexes and returns free LP cash to the pool.
+- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − terminal_floor` and zero otherwise — and are **deferred to settlement-v2**: no market settles today, so these paths are present but unreachable.
+- **Compaction** destroys a settled market's dense indexes and returns free LP cash to the pool; it too becomes reachable only once settlement-v2 lets a market settle.
+
+## Liquidity is asynchronous
+
+Liquidity providers do not transact against a live pool price. They **queue** requests: `request_supply` escrows DUSDC and `request_withdraw` escrows PLP, each routed through the LP's manager and cancellable until it is filled. A periodic **flush** then values the whole pool once and settles every queued request at that single frozen mark. The flush is a transaction-local hot potato — `start_pool_valuation` → one `value_expiry` per active market → `finish_flush` — and it is **privileged**: only the operator `AdminCap` or a market deployer may start one, so the mark cannot be timed by an adversary against a manipulated oracle. The mark itself, `pool_nav = idle + Σ current_nav`, is **exact** (each `current_nav` is the true per-expiry recoverable value, with no approximation band), so the one mark that prices both supplies and withdrawals equals true NAV in both directions. Fills are delivered to each manager through the balance accumulator and absorbed lazily on the manager's next capital op. See [liquidity and NAV](./concepts/liquidity-and-nav.md).
 
 ## Guarantees in plain language
 
 These properties are designed in and hold by construction; their boundaries are detailed in [risks](./risks.md).
 
 - **Cash always backs payouts and rebates.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its unresolved trading-loss rebate reserve. Surplus above that line is the only cash the pool may sweep. An expiry can always pay both its winners and its owed rebates.
-- **A market settles once.** Settlement records a single terminal price the first time a valid post-expiry source exists, from Pyth if fresh and otherwise from Block Scholes. It is first-writer-wins and immutable — no averaging, TWAP, or dispute window, and no admin path overwrites it.
 - **Leverage floors are limited-recourse.** A floor offsets only its own order's value or payout, capped at it. There is no shared debt and no recourse to a holder's other assets; a leveraged order that breaches its floor is worth zero, never negative.
-- **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the aggregate NAV floor all round down, so sub-unit dust accrues to the protocol rather than against its solvency. Reserved backing is recomputed with the same round-down formulas at mint, partial close, and settlement, so a payout can never exceed the cash reserved to back it.
-- **Live valuation is conditional on a healthy book.** Pool NAV subtracts one aggregate floor from one aggregate range value, which is sound only when every leveraged order is individually above its floor. The bounded liquidation passes that run before each valuation maintain that precondition; this is a policy guarantee, not an exhaustive per-valuation proof. See [liquidation](./concepts/liquidation.md) and [risks](./risks.md).
+- **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the per-expiry backing reserve all round down, so sub-unit dust accrues to the protocol rather than against its solvency. Reserved backing is recomputed with the same round-down formulas at mint and partial close, so a payout can never exceed the cash reserved to back it.
+- **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, and only a privileged operator can start a flush. A supplier can never over-mint and dilute incumbents, and the mark cannot be timed against a manipulated oracle.
+- **Live valuation is conditional on a healthy book.** Each market's `current_nav` subtracts the leveraged book's exact floor correction from the range value, which is sound only when every leveraged order is individually above its floor. The bounded liquidation pass that runs before each market is valued maintains that precondition; this is a policy guarantee, not an exhaustive per-valuation proof. See [liquidation](./concepts/liquidation.md) and [risks](./risks.md).
 
 ## Where to go next
 
 **Concepts — how the protocol works:**
 
 - [Glossary](./glossary.md) — every term technically defined and mapped to its standard options / structured-product name and code identifier.
-- [Markets and positions](./concepts/markets-and-positions.md) — per-expiry markets, the strike grid and ±infinity sentinels, what an order is, and the full lifecycle.
+- [Markets and positions](./concepts/markets-and-positions.md) — per-expiry markets, the absolute tick grid and ±infinity sentinels, what an order is, and the full lifecycle.
 - [Leverage and the floor](./concepts/leverage-and-floor.md) — the financing-plus-knock-out structure, the floor index and floor shares, mint admission, and settlement payout.
-- [Pricing and oracles](./concepts/pricing-and-oracles.md) — Pyth spot, the Block Scholes SVI surface, range-probability derivation, freshness, and settlement.
+- [Pricing and oracles](./concepts/pricing-and-oracles.md) — the propbook Pyth and Block Scholes feeds, range-probability derivation, freshness, and the forward fallback.
 - [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, staking discount, and loss rebate.
 - [Liquidation](./concepts/liquidation.md) — the trigger condition, the priority-encoded liquidation book, bounded scan budgets, and what they imply for LPs.
-- [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, PLP supply/withdraw, full-pool NAV, pool↔expiry cash flow, profit materialization, and incentives.
+- [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, profit materialization, and incentives.
 
 **Design — how the protocol is built:**
 
@@ -83,4 +98,4 @@ These properties are designed in and hold by construction; their boundaries are 
 
 **Risks:**
 
-- [Risks and limitations](./risks.md) — oracle and admin trust, settlement and leverage risk, LP risk, rounding, bounded-liquidation keeper dependence, and pre-deployment maturity caveats.
+- [Risks and limitations](./risks.md) — the privileged-flush trust assumption, the settlement-v2 deferral, propbook feed trust, LP risk, rounding, bounded-liquidation keeper dependence, and pre-deployment maturity caveats.

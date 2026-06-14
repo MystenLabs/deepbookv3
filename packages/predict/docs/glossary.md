@@ -30,7 +30,34 @@ here.
   every Predict contract and fully collateralizes its written payouts (code:
   `payout_liability`, `live_backing_payout`).
 - **Expiry market** — all contracts sharing one `(feed, expiry)` pair; code
-  `ExpiryMarket`. Its strike grid is the expiry's option chain.
+  `ExpiryMarket`. Its tick grid is the expiry's option chain.
+
+## Strikes and ticks
+
+There is **one canonical strike representation across the whole protocol —
+absolute integer ticks** — and a raw strike is always recovered the same way,
+`raw_strike = tick × tick_size`. There is no second representation (no centered
+grid, no boundary indices).
+
+- **Tick** — an integer strike index. The public API, order IDs, the payout
+  tree, the liquidation book, and the exposure index all carry ticks; raw
+  strikes are reconstructed only at the pricing/settlement boundary. Code
+  `lower_tick`, `higher_tick` (two `u24`s per order).
+- **`tick_size`** — the fixed raw-price-per-tick factor snapshotted per expiry,
+  so `raw_strike = tick × tick_size`. Carried on `MarketCreated`; an indexer or
+  SDK reconstructs raw strikes from it. Code `tick_size`.
+- **`range_key`** — the packed pair of two `u24` ticks (`lower_tick`,
+  `higher_tick`) used at public entrypoints (`mint`) and in events. The on-chain
+  handle for "which range". Code `range_key`.
+- **`pos_inf_tick`** — the sentinel higher tick (`2²⁴ − 1`) that denotes the
+  open-ended top (`+∞`); a lower tick of `0` denotes the open-ended bottom
+  (`−∞`). These two sentinels are what make a `range_key` a digital call or put
+  rather than a bounded spread. Code `pos_inf_tick`.
+- **`range_codec`** — the module that owns the tick representation: it packs and
+  unpacks `range_key`, maps ticks to raw strikes at the pricing/settlement
+  boundary (`strikes_from_ticks`, applying the `0`/`pos_inf_tick` sentinels), and
+  computes the settlement prefix threshold `prefix_limit_tick = ceil(settlement /
+  tick_size)`. Code module `strike_exposure::range_codec`.
 
 ## Pricing
 
@@ -49,6 +76,39 @@ here.
   these docs always means this mark-to-model value, not a traded price. The
   pre-floor product `quantity × range_probability` is the **gross value**
   (code `gross_value`) — the collateral value securing the financing.
+- **Forward** — the model's forecast of the underlying at expiry, the input the
+  range probability is differenced off. Predict builds it as `spot × basis` when
+  the Pyth spot is fresh and falls back to the Block Scholes surface forward
+  otherwise. Code: built in `pricing`, read via `bs.forward(expiry)`.
+- **Basis** — the surface's `forward / spot` ratio for an expiry, supplied by
+  the Block Scholes feed; it carries the spot to the forward when live spot is
+  applied. Code `bs.basis(expiry)`.
+
+## Oracles (propbook feeds)
+
+Live oracle data lives in the standalone, Predict-unaware `propbook` package;
+Predict reads it but does not own it.
+
+- **`PythFeed`** — one global object per Pyth Lazer feed id holding the latest
+  normalized spot and its freshness timestamp; updated permissionlessly from a
+  verified Lazer payload (`update_from_lazer`). Predict reads `spot()` and
+  `freshness_timestamp_ms()`. Code module `propbook::pyth_feed`.
+- **`BlockScholesFeed`** — one object per underlying holding a per-expiry
+  `Surface` plus a shared minute history; written by a trusted off-chain
+  operator (`update_from_bs`). Predict reads `forward(expiry)`, `basis(expiry)`,
+  `svi(expiry)`, `surface_freshness_timestamp_ms(expiry)`, and
+  `has_expiry(expiry)`. Code module `propbook::block_scholes_feed`.
+- **Surface** — the per-expiry pricing snapshot a `BlockScholesFeed` stores for
+  one expiry: `{spot, forward, SVI parameters, timestamps}`. Freshness is a
+  single window over the whole surface (no separate price/SVI windows). Code
+  `Surface`.
+- **SVI** — the stochastic-volatility-inspired parameterization of the implied
+  volatility smile the surface carries; the curve range probabilities are
+  differenced off. The feed enforces SVI no-arbitrage at ingest (`|ρ| ≤ 1`, a
+  bounded sigma). Code `SVIParams`, `svi(expiry)`.
+- **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
+  (`i64`) math package both Predict and propbook depend on (formerly
+  `predict_math`). Code package/address `fixed_math`.
 
 ## Leverage and financing
 
@@ -119,11 +179,47 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
   to a net-losing trader once all their positions in an expiry are closed; code
   `trading_loss_rebate_rate`, backed by the expiry's `rebate_reserve`.
 
+## Liquidity, NAV, and the flush
+
+The LP layer is **asynchronous**: liquidity providers queue requests and a
+privileged periodic **flush** prices them all at one frozen pool mark. See
+[liquidity and NAV](./concepts/liquidity-and-nav.md).
+
+- **PLP** — the pool's liquidity-provider share token (`Coin<PLP>`), minted on a
+  filled supply and burned on a filled withdraw; its value tracks pool NAV. The
+  fungible claim on `PoolVault`. Code `PLP`.
+- **`current_nav`** — an `ExpiryMarket`'s **exact** live NAV: free cash minus the
+  exact per-order live liability (payout-tree `walk_linear` minus the leveraged
+  book's `correction_value`), floored at zero. There is no approximation or
+  uncertainty band — it is the true per-expiry recoverable value at the
+  valuation instant. Code `current_nav`.
+- **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush
+  prices PLP at: `idle + Σ active-market current_nav`, net of the
+  pending-protocol-profit exclusion. Computed once per flush and used for both
+  supply and withdraw. Code `pool_nav` (event `PoolValued`).
+- **Supply / withdraw queue** — the two FIFO request queues on `PoolVault`
+  (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP
+  enqueues with `request_supply` / `request_withdraw` (routed through its
+  manager, returning a cancellable index) and the flush drains them. Code
+  `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
+- **The flush** — the transaction-local valuation-and-drain cycle that marks the
+  whole pool once and settles the queues at that mark. It is a **hot potato**:
+  `start_pool_valuation` opens it (engaging the valuation lock), `value_expiry`
+  is called once per active market to accumulate `Σ current_nav`, and
+  `finish_flush` computes `pool_nav`, then `drain_lp_requests` mints/burns PLP
+  and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
+  ≤100 requests per flush, per-request dust refunds). Fills are delivered to each
+  manager through the balance accumulator (`send_funds`); the manager absorbs
+  them lazily on its next capital op. The flush is **privileged** — only the
+  operator `AdminCap` (`start_pool_valuation`) or a market deployer
+  (`start_pool_valuation_as_deployer`) may start one. Code `PoolValuation` (the
+  hot-potato struct), event `FlushExecuted`.
+
 ## Trade lifecycle verbs
 
 | Code verb | Options term | Meaning |
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem` (live) | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
-| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − terminal floor`; an out-of-range contract settles at zero. |
+| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − terminal floor`; an out-of-range contract settles at zero. **Deferred to settlement-v2** — unreachable today. |
 | `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero rebate. |

@@ -6,10 +6,15 @@ designed, and what its risks are. It is written for a technically literate reade
 understand the mechanism. It is **not** an integration or SDK guide — it does not
 contain transaction recipes or a function-by-function API reference.
 
-> **Status:** the protocol is in development and not yet deployed. Where a
-> behaviour is still changing, the docs describe it at the conceptual level and
-> point to the configuration that governs it rather than to specific values that
-> may drift.
+> **Status:** in development, not yet deployed. Current shipped state: live
+> oracle data is read from the standalone **propbook** Pyth and Block Scholes
+> feeds (no in-package oracle); strikes are **absolute integer ticks**
+> (`raw_strike = tick × tick_size`); the LP layer is **asynchronous** — supply
+> and withdraw are queued and settled by a **privileged periodic flush** that
+> marks the whole pool at one **exact** NAV; and **terminal settlement is
+> deferred to settlement-v2** (no market settles today). Where a behaviour is
+> still changing, the docs describe it at the conceptual level and point to the
+> configuration that governs it rather than to specific values that may drift.
 
 ## Start here
 
@@ -23,20 +28,21 @@ contain transaction recipes or a function-by-function API reference.
 How the protocol works:
 
 - **[Markets and positions](./concepts/markets-and-positions.md)** — per-expiry
-  range markets, the strike grid, what an order/position is, and the lifecycle
-  from mint to settlement.
+  range markets, the absolute tick grid, what an order/position is, and the
+  lifecycle from mint through live redeem and liquidation.
 - **[Leverage and the floor](./concepts/leverage-and-floor.md)** — how leverage
   is modelled as embedded premium financing (a deterministic, time-varying
   floor) plus a knock-out on the contract's payoff.
 - **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
-  formed from Pyth spot and Block Scholes parameters, freshness rules, and how
-  the settlement price is chosen.
+  formed from the propbook Pyth spot and Block Scholes surface, the forward
+  fallback, and freshness rules.
 - **[Fees and rebates](./concepts/fees-and-rebates.md)** — the fee components a
   trader pays, the staking discount, and the trading-loss rebate.
 - **[Liquidation](./concepts/liquidation.md)** — when and why a leveraged
   position is liquidated, and what the holder receives.
 - **[Liquidity and NAV](./concepts/liquidity-and-nav.md)** — the pool, PLP
-  shares, how net asset value is computed, and supply/withdraw.
+  shares, the async supply/withdraw queues, the privileged flush, and how the
+  exact pool NAV is computed.
 
 ## Design
 
@@ -46,12 +52,13 @@ How the protocol is built:
   what capital, the capability and authorization model, and version gating.
 - **[Configuration](./design/configuration.md)** — what is tunable, the
   defaults, how config is snapshotted per expiry, and who can change it.
-- **[Tick range encoding](./design/tick-range-encoding.md)** — proposed packed
-  absolute-tick range representation for public APIs, order IDs, and exposure
-  indexes.
+- **[Tick range encoding](./design/tick-range-encoding.md)** — the packed
+  absolute-tick range representation (`range_key`) behind public APIs, order
+  IDs, and exposure indexes. (This design note predates the change landing; the
+  encoding it describes is now the shipped one.)
 - **[Versioning and shared-object loaders](./design/versioning-and-loaders.md)**
-  — proposed central version authority and checked loader pattern for Predict
-  shared objects.
+  — the central version authority and checked loader pattern for Predict shared
+  objects.
 - **[Invariants](./design/invariants.md)** — a precise, scannable reference of
   the conditions the protocol always maintains (solvency, floor, NAV,
   settlement, liquidation, rounding).

@@ -13,7 +13,7 @@ live_value   = quantity × probability(range)
 settled_value = quantity   if settlement is inside the range, else 0
 ```
 
-`quantity` is the contract's notional — the digital's fixed cash payout — denominated in 6-decimal DUSDC quote units and a multiple of the lot size. `probability(range)` is the live range probability quoted from the pricing curve (see [pricing and oracles](./pricing-and-oracles.md)), expressed in Predict's 1e9 fixed-point scale where `1_000_000_000` is probability 1. For an undiscounted digital, the premium per unit notional and the risk-neutral probability of the event are the same number, so Predict quotes and stores the probability directly. At settlement the range probability collapses to 0 or 1, so the contract is worth either the full `quantity` or nothing.
+`quantity` is the contract's notional — the digital's fixed cash payout — denominated in 6-decimal DUSDC quote units and a multiple of the lot size. `probability(range)` is the live range probability quoted from the SVI surface (see [pricing and oracles](./pricing-and-oracles.md)), expressed in Predict's 1e9 fixed-point scale where `1_000_000_000` is probability 1. For an undiscounted digital, the premium per unit notional and the risk-neutral probability of the event are the same number, so Predict quotes and stores the probability directly. At settlement the range probability collapses to 0 or 1, so the contract is worth either the full `quantity` or nothing.
 
 ![Contract value versus probability](../assets/leverage-contract-value.svg)
 
@@ -92,12 +92,12 @@ terminal_floor = floor_shares × terminal_floor_index
 | quantity (in lots) | order size; on-chain quantity is `quantity_lots × lot_size` |
 | floor_shares | normalized floor measure; `0` for a 1x order |
 | opened_at | open timestamp, in milliseconds, anchoring `floor_index(opened_at)` |
-| lower / higher boundary index | grid indices for the strike range `(lower, higher]` |
+| lower / higher tick | absolute strike ticks for the range `(lower, higher]` (`0` = `neg_inf`, `pos_inf_tick` = `pos_inf`) |
 | sequence | expiry-local tiebreaker assigned at mint |
 
 `is_leveraged()` is exactly `floor_shares > 0`: leverage is detectable from the stored floor alone. Mint-only inputs — entry probability, the chosen leverage multiplier, the net premium, and fee policy — are **not** stored in the order. They are inputs to mint admission and to deriving `floor_shares`, but they do not survive in the packed ID. This keeps mint-admission policy out of structural order validation, so a future change to leverage tiers or price thresholds can never retroactively invalidate an already-packed order.
 
-`StrikeExposure` interprets an `Order` against one expiry's strike grid and floor-index schedule to derive the decoded strike bounds, the current floor amount, the terminal floor, the terminal payout, and the conservative max-live backing payout. The split keeps packed order identity at the boundary while internal flows operate on validated values.
+`StrikeExposure` interprets an `Order` against the floor-index schedule to derive the current floor amount, the terminal floor, the terminal payout, and the conservative max-live backing payout, recovering raw strike bounds from the order's ticks (through the market's `tick_size`) only at the pricing/settlement boundary (see [markets and positions](./markets-and-positions.md)). The split keeps packed order identity at the boundary while internal flows operate on validated values.
 
 The packed layout is also reused as a deterministic liquidation priority key; see [Liquidation priority](#liquidation-priority).
 
@@ -171,28 +171,28 @@ winning order: payout = quantity − terminal_floor
 
 A losing order (settlement outside its range) pays nothing. A winning order pays its quantity net of its terminal floor; the terminal floor is computed with round-down multiplication, so the winner absorbs at most one unit of rounding. The terminal-floor gate at mint guarantees this difference is positive. Because the outcome is binary, the expiry can materialize its total final payout liability once from the payout index, then redeem each settled order against that cached liability — the reserve seeded for an order is exactly the payout it later claims, so the running liability can never underflow.
 
-## Two indexed views: NAV versus payout backing
+## Two indexes: the payout tree and the liquidation book
 
-Predict stores only the atomic values each index needs, and keeps two views of the same active contracts because live valuation and cash backing answer different questions.
+Predict stores only the atomic values each index needs. The active contracts of an expiry live in two indexes — a payout tree keyed by strike tick, and a liquidation book sorted by packed order ID — and live NAV is read by combining them.
 
-### NAV matrix (live valuation)
+### Payout tree (NAV linear term, cash backing, settled liability)
 
-`StrikeNavMatrix` tracks per-strike quantity (and strike-weighted quantity) plus one aggregate `floor_shares` total. Live NAV is:
+`StrikePayoutTree` keys finite interval boundaries by absolute tick and tracks, per order interval, atomic terms that answer three questions:
+
+- **NAV linear term.** `walk_linear` walks the whole tree, prices each distinct boundary tick once through the resolved pricer, and returns `Σ_orders quantity × P(strike)` — the **exact** range-probability value of every open contract. There is no piecewise-linear curve or sampling band; the tree's per-boundary quantity prefixes make one walk cost work proportional to the number of distinct boundaries, not the number of orders.
+- **Live cash backing.** `live_backing_payout` = `quantity − floor_at(opened_at)` is a conservative upper bound on an order's future live payout, and `max_live_backing_payout` gives an instant O(1) cash-backing requirement (the maximum summed payout at any single settlement price) without scanning the tree or reading a clock. It deliberately does **not** reuse the terminal floor: before expiry the live floor is lower than the terminal floor, so terminal payout would *understate* live backing. Using the open-index floor (the smallest floor the order ever has) makes the backing term at least as large as any future live payout for that order.
+- **Settled liability.** `terminal_payout` = `quantity − terminal_floor` is the exact settled liability; once the settlement price is known (settlement-v2), the tree sums the terminal-payout prefix that the price activates.
+
+### Liquidation book (NAV floor correction, liquidation priority)
+
+`LiquidationBook` holds the expiry's active **leveraged** orders, sorted by packed order ID. Beyond selecting liquidation candidates (see [Liquidation priority](#liquidation-priority)), it supplies the floor offset that turns the tree's linear term into NAV. The exact live liability is
 
 ```text
-NAV = aggregate range value − (aggregate_floor_shares × floor_index(now))
+exact_live_liability = walk_linear − correction_value,  floored at 0
+correction_value     = Σ_(active leveraged) min(quantity × range_price, floor_shares × floor_index(now))
 ```
 
-The aggregate floor product rounds down so a single unit of fixed-point dust cannot make valuation abort. Subtracting an *aggregate* floor is only valid when every active floor-bearing order is individually above its own current floor — otherwise an exhausted order's unconsumed floor would wrongly offset another order's value. Maintaining that precondition is the job of the health/liquidation flow, which removes under-floor orders before aggregate valuation relies on the assumption. NAV valuation aborts rather than return a negative if the aggregate floor ever exceeds aggregate range value. See [liquidity and NAV](./liquidity-and-nav.md).
-
-### Payout tree (cash backing and settled liability)
-
-`StrikePayoutTree` tracks two atomic terms per order interval:
-
-- `terminal_payout` = `quantity − terminal_floor` — the exact settled liability at a given terminal settlement price.
-- `live_backing_payout` = `quantity − floor_at(opened_at)` — a conservative upper bound on the order's future live payout.
-
-`max_live_backing_payout` gives an instant, conservative cash-backing requirement without scanning the tree or reading a clock at runtime. It deliberately does **not** reuse the terminal floor: before expiry the live floor is lower than the terminal floor, so terminal payout would *understate* live backing. Using the open-index floor (the smallest floor the order ever has) makes the backing term at least as large as any future live payout for that order. Settled liability, by contrast, uses exact terminal-payout prefixes once the settlement price is known.
+The correction is the per-order floor offset, scanned exactly over the active leveraged set: each order's floor offsets only its own range value, capped at it (`min(...)`). Capping per order is what makes the subtraction **limited-recourse** — an exhausted order's unconsumed floor can never offset another order's value. Each `min` rounds within fixed point; the final liability is `saturating_sub`-floored so a degenerate underwater book values at zero rather than aborting. The expiry's `current_nav` is then `free_cash − exact_live_liability`; see [liquidity and NAV](./liquidity-and-nav.md).
 
 ## Liquidation priority
 
@@ -207,8 +207,8 @@ Quantity-first (rather than leverage-first) ordering was chosen because off-chai
 
 - Model leverage as part of the contract payoff (a deterministic floor), not as an external debt overlay. 1x is the zero-floor case of the same payoff.
 - Keep contract floors limited-recourse: a floor offsets only its own order's value or payout, capped at it.
-- Store only atomic terms that cannot be cheaply derived (quantity, floor shares, open time, strike indices, sequence); derive everything else at the leaf that needs it.
+- Store only atomic terms that cannot be cheaply derived (quantity, floor shares, open time, strike ticks, sequence); derive everything else at the leaf that needs it.
 - Keep mint-only policy (entry probability, leverage, net premium) out of the packed order and out of structural validation, so policy changes never invalidate existing orders.
 - Use the packed `order_id` only at entry, exit, and storage boundaries; use the typed `Order` internally.
 - Keep settlement payout exact and live backing conservative. Do not let terminal-floor math drive live backing, because before expiry the live floor is smaller and terminal payout understates live liability.
-- Use aggregate NAV floor subtraction only under the precondition that every active leveraged order is above its current floor; rely on the health flow to maintain it.
+- Keep the NAV floor offset per-order and limited-recourse: subtract each order's floor against only its own range value, capped at it, so an exhausted order can never offset another's value.

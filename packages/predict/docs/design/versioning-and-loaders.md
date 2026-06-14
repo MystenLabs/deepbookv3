@@ -1,13 +1,25 @@
 # Versioning and shared-object loaders
 
-> **Status:** proposed pre-deploy design. This document records the intended
-> cleanup for Predict's shared-object version checks and flow-level validation.
-> It assumes the market oracle / Pyth oracle objects are moving to their own
-> package and should not be controlled by Predict's package-version gate.
+> **Status:** proposed pre-deploy cleanup, *not yet implemented*, recorded here as
+> the intended direction. What **has** shipped is the oracle extraction: the market
+> oracle and Pyth oracle objects moved to the external `propbook` package and are
+> **no longer controlled by Predict's package-version gate at all**. The "shipped
+> today" notes below describe the current version surface; the rest is the proposed
+> loader/centralization cleanup, which can land on its own merits later.
+
+**Shipped today.** `Registry.allowed_versions` is the authoritative set. Exactly two
+Predict objects are version-gated and mirror it — `ExpiryMarket` and `PoolVault` —
+each refreshing its `VecSet<u64>` mirror through one permissionless registry sync
+(`sync_expiry_market_allowed_versions`, `sync_pool_vault_allowed_versions`). Each
+gated flow open-codes `self.assert_version_allowed()` (a plain `VecSet::contains`
+read) plus its own flow gates. There are no `Versioned` inner structs and no named
+flow loaders yet; the cleanup below proposes both. The external propbook feeds carry
+their own version and a forward-only `migrate`, so there is **no** Predict-side
+oracle/Pyth-source mirror or sync.
 
 Predict currently repeats the same first-line checks across many public
 entrypoints: load the shared object, assert the package version is allowed, then
-perform the real flow gates such as pause checks, valuation-lock checks, oracle
+perform the real flow gates such as pause checks, valuation-lock checks, feed
 binding, liveness, freshness, owner/cap authorization, and accounting
 preconditions. The version check itself is mechanical. The other assertions are
 flow-specific and are easier to reason about when they are named by the flow
@@ -29,7 +41,8 @@ is disabled.
   pattern.
 - Keep emergency, recovery, and harm-reducing paths callable even when the
   active version is disabled.
-- Keep Predict independent of the extracted oracle package's versioning.
+- Keep Predict independent of the extracted oracle package's versioning (already
+  the case — see status).
 
 ## Non-goals
 
@@ -40,7 +53,7 @@ is disabled.
 - Do not version-gate user account utility flows such as DUSDC withdrawal,
   cap revocation, or builder-fee claiming by default.
 - Do not make Predict assert the package version of external oracle objects.
-  The oracle package should own its own version and migration policy.
+  The oracle package owns its own version and migration policy (shipped).
 
 ## Object categories
 
@@ -48,15 +61,15 @@ Predict shared objects fall into different versioning categories:
 
 | Category | Objects | Version policy |
 | --- | --- | --- |
-| Version authority and global flow gates | `ProtocolConfig` | Owns the authoritative `allowed_versions` set, trading pause, valuation lock, and admin-tunable config. Version-management recovery paths must bypass the version gate. |
-| Registry and factories | `Registry` | Owns feed/expiry uniqueness, cap allowlists, and derived-object creation. Only version-sensitive factory/grant flows need a version check. Emergency pause and revocation paths bypass it. |
-| Version-gated protocol state | `ExpiryMarket`, `PoolVault` | Normal protocol mutations use checked loaders. Raw getters may stay ungated. |
-| User and attribution objects | `PredictManager`, `BuilderCode` | Not package-version gated by default. They own user custody, caps, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
-| External oracle package | `MarketOracle`, Pyth feed/source objects, Block Scholes feed objects | Not gated by Predict. Predict checks object binding, status, and freshness through the oracle package's public APIs. |
+| Version authority | `Registry` | **Shipped:** owns the authoritative `allowed_versions` set; the two gated objects mirror it. Also owns expiry uniqueness, feed approval, cap allowlists, and derived-object creation. Version-management and emergency pause/revocation paths bypass the gate. (The proposal below moves the *runtime* version set to `ProtocolConfig`; that has not shipped.) |
+| Global flow gates | `ProtocolConfig` | Owns trading pause, the valuation lock, and admin-tunable config. Does not own the version set today. |
+| Version-gated protocol state | `ExpiryMarket`, `PoolVault` | The only two version-gated objects. Each mirrors `Registry.allowed_versions` and asserts it on every mutating flow; raw getters stay ungated. |
+| User and attribution objects | `PredictManager`, `BuilderCode` | Not package-version gated. They own user custody, caps, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
+| External oracle package | `PythFeed`, `BlockScholesFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict checks only feed binding (`assert_feeds`) and freshness through their public APIs, never their version. There is no Predict-side oracle mirror or sync. |
 
-If the oracle extraction is not complete when this cleanup starts, the existing
-in-package `MarketOracle` and `PythSource` can keep their current version checks
-temporarily. They should not drive the long-term Predict pattern.
+The oracle extraction is complete: there is no in-package `MarketOracle` or
+`PythSource` to keep a version check on. The only mirrors Predict carries are
+`ExpiryMarket` and `PoolVault`.
 
 ## Central version authority
 
@@ -165,17 +178,23 @@ The generic loaders should check only shared facts that are truly universal for
 that object category. Flow-specific facts belong in named loaders or first-phase
 helpers.
 
+Parameter shapes below use the shipped feed signatures (`&PythFeed`,
+`&BlockScholesFeed`) and the shipped ownership split — feed *binding* and market
+*liveness* are the `ExpiryMarket`'s (`assert_feeds`, `assert_active`), and surface
+freshness is constructed inside `pricing::pricer`, so a market loader does **not**
+duplicate the freshness check or carry a `clock` for it.
+
 | Flow loader | Shared validation |
 | --- | --- |
 | `expiry_market::load_inner(config)` | package version allowed for semantic reads |
 | `expiry_market::load_inner_mut(config)` | package version allowed for normal market mutation |
-| `expiry_market::load_mint_market_mut(config, market_oracle, pyth, clock)` | market version, mint not paused, trading not paused, no valuation lock, market-oracle binding, Pyth/feed binding, active oracle, fresh pricing inputs |
-| `expiry_market::load_redeem_market_mut(config, market_oracle)` | market version, no valuation lock, market-oracle binding; live-vs-settled branch checks remain outside |
-| `expiry_market::load_liquidation_market_mut(config, market_oracle, pyth, clock)` | market version, no valuation lock, market-oracle binding, Pyth/feed binding, active oracle |
+| `expiry_market::load_mint_market_mut(config, pyth, bs)` | market version, mint not paused, trading not paused, no valuation lock, feed binding, active market |
+| `expiry_market::load_redeem_market_mut(config, pyth, bs)` | market version, no valuation lock, feed binding; live-vs-settled branch checks remain outside |
+| `expiry_market::load_liquidation_market_mut(config, pyth, bs, clock)` | market version, no valuation lock, feed binding, active market |
 | `plp::load_vault_inner(config)` | package version allowed for semantic reads that value or account for the vault |
 | `plp::load_vault_inner_mut(config)` | package version allowed for normal vault mutation |
-| `plp::load_registered_market_mut(config, market, market_oracle)` | vault version, market version, market-oracle binding, expiry registered to the vault |
-| `plp::load_valuation_step_mut(config, valuation, market, market_oracle)` | valuation lock active, valuation belongs to vault, market is in the snapshot and not yet valued, plus registered-market checks |
+| `plp::load_registered_market_mut(config, market)` | vault version, market version, expiry registered to the vault |
+| `plp::load_valuation_step_mut(config, valuation, market)` | valuation lock active, valuation belongs to vault, market is in the snapshot and not yet valued, plus registered-market checks |
 
 Do not put these facts into one generic `load_inner_mut()`:
 
@@ -183,12 +202,11 @@ Do not put these facts into one generic `load_inner_mut()`:
 - valuation lock state,
 - mint pause,
 - manager owner/proof/cap authority,
-- oracle/Pyth object binding,
-- active/pending/settled oracle lifecycle,
-- oracle freshness,
+- feed object binding (`assert_feeds`),
+- market liveness (`assert_active`),
+- surface freshness (owned by `pricing::pricer`),
 - cash backing,
-- position ownership,
-- settlement materialization.
+- position ownership.
 
 Those are not universal. Keeping them in named flow loaders makes each
 entrypoint read as "load the object for this flow, then do the flow."
@@ -227,12 +245,13 @@ The registry proves the pause cap is valid. The config mutates the version set.
 Removing per-object mirrors means some currently version-gated functions need
 `&ProtocolConfig` if they do not already have it.
 
-Likely additions:
+Likely additions (there is no `create_pyth_source` — Predict no longer creates
+oracle objects; feeds are created in `propbook`):
 
-- `registry::create_pyth_source(..., config: &ProtocolConfig, ...)`, if this
-  factory remains Predict-owned after oracle extraction.
 - `registry::mint_lifecycle_cap(..., config: &ProtocolConfig, ...)`, if granting
   lifecycle authority stays version-gated.
+- `registry::create_expiry_market(..., config: &ProtocolConfig, ...)` — it already
+  takes `&ProtocolConfig`, so no change.
 - `expiry_market::set_mint_paused(market, config, admin_cap, paused)`, unless
   admin unpause is intentionally allowed during a version freeze.
 - `plp::stake_deep(vault, manager, config, deep, ctx)`, if staking new DEEP
@@ -402,10 +421,11 @@ obviously safe and isolates the one real architectural decision.
 The doc reads as one cleanup, but the code touches three independent things:
 
 1. **Where the package allowed-versions set lives.** Today `Registry` is the source
-   of truth (`registry.move:70`) and `ExpiryMarket`/`PoolVault`/`MarketOracle`/
-   `PythSource` each hold a `VecSet<u64>` *mirror* refreshed by four permissionless
-   `sync_*_allowed_versions` entrypoints (`registry.move:143-161`). (A) moves the set
-   to `ProtocolConfig` and deletes the mirrors + sync.
+   of truth and `ExpiryMarket` / `PoolVault` each hold a `VecSet<u64>` *mirror*
+   refreshed by two permissionless `sync_*_allowed_versions` entrypoints. (The
+   former `MarketOracle` / `PythSource` mirrors and their syncs are gone — those
+   objects left for `propbook`, which versions itself.) (A) moves the set to
+   `ProtocolConfig` and deletes the remaining two mirrors + syncs.
 2. **How the repeated gates are expressed.** Today each entrypoint open-codes
    `self.assert_version_allowed()` + flow gates (`expiry_market.move:201-204`,
    `plp.move:173`,`224`,…). (B) replaces the version line with a central assertion and
@@ -494,15 +514,17 @@ the exact duplicate the rules forbid), or (ii) build and return the `Pricer` fro
 loader — which the doc's own Non-goal forbids ("do not hide pricing … inside a generic
 loader"). **Resolution: drop "fresh pricing inputs" from the mint/liquidation loaders.**
 Let them assert only what the *flow* owns — version, mint-pause, trading-pause,
-valuation-lock, and the `ExpiryMarket`-owned market-oracle/Pyth bindings — and return
-`&mut ExpiryMarket`; freshness stays where it already lives, in pricer construction.
-This also means the loaders do **not** need a `clock` just to check freshness, shrinking
-their signatures.
+valuation-lock, and the `ExpiryMarket`-owned feed bindings (`assert_feeds`) — and
+return `&mut ExpiryMarket`; freshness stays where it already lives, in pricer
+construction. This also means the loaders do **not** need a `clock` just to check
+freshness, shrinking their signatures. (This is already how the shipped code is
+structured after the oracle extraction: `pricing::pricer` builds the value-typed
+`Pricer` and gates surface freshness; the market owns `assert_feeds` + `assert_active`.)
 
 `load_redeem_market_mut` correctly notes "live-vs-settled branch checks remain
 outside" — that respects the branch-policy ownership rule and is the model the mint
-loader should follow. "Active oracle" is fine to keep (it calls `MarketOracle`'s own
-`assert_active`, the owner's exposed assertion, not a reconstruction).
+loader should follow. "Active market" is fine to keep (it calls the `ExpiryMarket`'s
+own `assert_active`, the owner's exposed assertion, not a reconstruction).
 
 **Naming caveat tied to (C):** the name `load_inner` presupposes there *is* an inner
 to load. Without (C) there is no `*Inner` struct, so the generic pair should be a
@@ -566,15 +588,12 @@ like part of the dedup, then discovering the dedup never needed it.
   stale-mirror window), but it means "core does it this way" is *not* cover for the
   centralization — only for the `load_inner` mechanism. Lean on core for (C)'s
   mechanics, not for (A)'s topology.
-- **Oracle-extraction ordering is a hard dependency, not a footnote.** The doc's
-  premise ("oracle objects are moving to their own package") is only *partly* true
-  today — the Pyth feed is extracted/reviewed, the Block-Scholes feed and settlement
-  are not. `MarketOracle`/`PythSource` still carry in-package mirrors + sync
-  (`market_oracle.move:56`, `pyth_source.move:36`). Doing this cleanup *before*
-  extraction means touching version code on objects that are about to leave; doing it
-  *after* means one pass. Sequence it after (or jointly with) the extraction, and in
-  the interim keep those two objects on their current per-object checks exactly as the
-  doc's transition clause allows — just don't let them shape the long-term pattern.
+- **Oracle-extraction ordering — now resolved.** This blindspot was about sequencing
+  the version cleanup against an in-flight oracle extraction. The extraction has since
+  *fully* shipped: there is no in-package `MarketOracle` / `PythSource` left to carry a
+  mirror, the two feeds live in `propbook` and version themselves, and Predict's only
+  mirrors are `ExpiryMarket` + `PoolVault`. So the version cleanup (A)+(B)+(C) is now a
+  single clean pass over exactly two objects, with no oracle objects about to leave.
 - **Raw getters are already ungated — this is preservation, not a change.** None of
   the `ExpiryMarket`/`PoolVault` getters call `assert_version_allowed` today, so
   "keep getters readable under a freeze" is only a *constraint on (C)*: if state moves
@@ -596,8 +615,8 @@ like part of the dedup, then discovering the dedup never needed it.
   (`:305-312`) — (A) is precisely deleting that seam. ✓
 - **No new hot-path objects.** Every flow the version gate guards already borrows
   `&ProtocolConfig` (mint/redeem/liquidate/valuation/rebalance); the "likely additions"
-  list (`stake_deep`, `mint_lifecycle_cap`, `create_pyth_source`, `set_mint_paused`) is
-  the complete set that gains a `config` param, and all are cold paths. ✓
+  list (`stake_deep`, `mint_lifecycle_cap`, `set_mint_paused`) is the complete set that
+  gains a `config` param, and all are cold paths. ✓
 - **Pause-cap version disable correctly needs both objects.** Proving the cap is a
   `Registry` allowlist fact; mutating the set is a `ProtocolConfig` fact — so the
   proposed `disable_version_pause_cap(registry, config, pause_cap, version)` two-object
@@ -618,5 +637,6 @@ like part of the dedup, then discovering the dedup never needed it.
 3. **Decide (C) separately, with the upgrade strategy in view.** Yes → adopt `Versioned`
    deliberately as upgradability infrastructure before the deploy freeze. Not yet →
    keep plain structs; (A)+(B) lose nothing.
-4. **Sequence around oracle extraction** (§6) and **add valuation finish/abort to the
-   version bypass list** (§6).
+4. **No oracle-extraction sequencing remains** (§6 — the extraction shipped; only
+   `ExpiryMarket` + `PoolVault` are gated). Still **add valuation finish/abort to the
+   version bypass list** (§6) when (A)+(B) land.

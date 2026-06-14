@@ -15,9 +15,10 @@ Some structural constants are real and stable enough to state directly:
 
 - **1e9 fixed-point scaling** (`float_scaling`): `500_000_000` is 50%, `1_000_000_000` is 100%. Prices, probabilities, fee rates, ratios, and benefit fractions all use this scale.
 - **DUSDC settlement asset has 6 decimals**; contract quantities are 6-decimal quote units, so `1_000_000` is one contract.
-- **Position lot size** and **minimum mint-time user principal** are fixed constants, not admin-tunable.
+- **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
 - **The discrete leverage set** is exactly {1x, 1.5x, 2x, 2.5x, 3x}, expressed as 1e9-scaled multipliers. The leverage *tiers* (which probabilities permit which leverage) and the leverage floor window are upgrade-required constants, not config fields.
-- **Oracle tick sizes** must be positive multiples of a fixed granularity unit; the strike grid tick count per oracle is a constant.
+- **The per-expiry funding cap** (`expiry_max_funding`) and the **maximum active expiry count** are upgrade-required constants, not admin-tunable config. The per-flow funding cap that the pool sync enforces against is read directly from the constant.
+- **Oracle tick sizes** must be positive multiples of a fixed granularity unit, and are additionally bounded so the maximum finite strike (`pos_inf_tick * tick_size`) cannot overflow `u64`. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain. See [tick range encoding](./tick-range-encoding.md).
 
 ## Three classes of configuration
 
@@ -25,47 +26,36 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 
 ### (A) Template configs — snapshotted into per-expiry objects at creation
 
-`ProtocolConfig` owns the current global *template* for three config structs:
+`ProtocolConfig` owns the current global *template* for two config structs:
 
 | Template (on `ProtocolConfig`) | Snapshotted into | Governs |
 | --- | --- | --- |
 | `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Terminal floor index, liquidation LTV, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
-| `MarketOracleConfig` | `MarketOracle` (per expiry) | Settlement-source freshness |
 
 When `create_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
 
-For the two **contract-term** templates — `StrikeExposureConfig` and `ExpiryCashConfig` — this is the full story: those snapshots have no per-object admin setter, so once a market is created its fee schedule, floor curve, liquidation LTV, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The contract-term template setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site.
-
-`MarketOracleConfig` is the deliberate exception. The template seeds the
-settlement-freshness value future oracles start from via
-`set_market_oracle_template_settlement_freshness_ms`, but the live copy on an
-existing `MarketOracle` **remains admin-tunable** after creation through the
-`AdminCap`-gated per-oracle setter `set_settlement_freshness_ms`. Settlement
-freshness is a protocol-safety parameter, not a contract term, so it is allowed
-to move on a live oracle.
+Both templates are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, floor curve, liquidation LTV, backing-buffer lambda, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
 
 ```mermaid
 flowchart LR
     subgraph PC[ProtocolConfig template]
       SEC[StrikeExposureConfig]
       ECC[ExpiryCashConfig]
-      MOC[MarketOracleConfig]
     end
     PC -- snapshot at create_expiry_market --> M1[Expiry market #1 objects]
     PC -- snapshot at create_expiry_market --> M2[Expiry market #2 objects]
     admin[AdminCap set_template_*] -. future markets only .-> PC
     admin -. contract terms frozen .-x M1
-    admin -- AdminCap per-oracle setters retune MarketOracle --> M1
 ```
 
-The contract-term snapshots (`StrikeExposureConfig`, `ExpiryCashConfig`) are frozen by design: there is intentionally no admin path to re-template their economics on an existing market. Per-oracle settlement freshness is the only template-class value an admin can still move on a live market.
+The contract-term snapshots are frozen by design: there is intentionally no admin path to re-template their economics on an existing market.
 
 ### (B) Live configs — read by their consumer at use time
 
 Three config structs are read directly from `ProtocolConfig` at the moment they are needed, with no snapshot:
 
-- **`PricingConfig`** — Pyth spot freshness, Block Scholes spot/forward freshness, and Block Scholes SVI freshness thresholds. `Pricing` reads these when resolving live probabilities for mint, redeem, and valuation. Because freshness is a protocol-safety concern rather than a contract term, every flow uses the current thresholds the instant it runs; an admin tightening freshness takes effect immediately and protocol-wide.
+- **`PricingConfig`** — two freshness thresholds: Pyth spot freshness and Block Scholes *surface* freshness. The surface threshold is a single window covering the whole Block Scholes row (spot + forward + SVI are written together per update), collapsing what used to be separate price and SVI windows. `Pricing` reads these when resolving live probabilities for mint, redeem, liquidation, and the NAV flush; Pyth-stale falls back to the Block Scholes forward, while a stale surface is a hard abort. Because freshness is a protocol-safety concern rather than a contract term, every flow uses the current thresholds the instant it runs; an admin tightening freshness takes effect immediately and protocol-wide.
 - **`EwmaConfig`** — the gas-price EWMA trade-penalty parameters (smoothing `alpha`, z-score threshold, per-unit penalty rate) plus an `enabled` master switch. The penalty is disabled by default. The evolving per-market `EwmaState` lives on `ExpiryMarket`; only the shared knobs live here, so a parameter change applies uniformly to every market's penalty computation.
 - **`StakeConfig`** — the DEEP staking benefit curve thresholds (`lower_benefit_power`, `upper_benefit_power`). The benefit ratio rises linearly from 0 to half over `0..lower`, half to full over `lower..upper`, and caps at full above `upper`. That ratio scales the fixed maximum fee discount and applies directly as the loss-rebate share. Read live so that a benefit-curve change applies to all stakers at once.
 
@@ -80,10 +70,9 @@ The distinction from class (A) is deliberate: live configs govern protocol-wide 
 - `trading_paused` — when true, blocks *new risk creation*. Exits, settlement cleanup, and valuation are intentionally not blocked by the trading pause; they are gated only by the valuation lock. `assert_trading_allowed` combines the not-paused check with the valuation lock.
 - `valuation_in_progress` — a transaction-local lock held while a full-pool valuation is assembled. `begin_valuation`/`end_valuation` open and close it; while held, config mutations and new-risk flows abort. Most admin setters first assert the valuation lock is *not* in progress so that policy cannot shift mid-valuation.
 - `protocol_reserve_profit_share` — the merged protocol-and-insurance reserve share used when aggregate expiry profit is materialized, in 1e9 scaling.
-- `withdraw_fee_alpha` — the multiplier on the PLP withdrawal uncertainty-band fee, in 1e9 scaling. It scales the fee a withdrawing LP pays against the pool's aggregate live-valuation uncertainty band; the fee is retained in idle for remaining LPs (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
-- `valuation_liquidation_budget` and `trade_liquidation_budget` — the total liquidation-candidate budgets checked before live pool valuation and before mint/redeem flows respectively. These bound how much liquidation work a single flow performs.
+- `trade_liquidation_budget` — the total liquidation-candidate budget checked before mint and redeem flows. It bounds how much liquidation work a single trade flow performs. (There is no separate valuation-time budget: the NAV flush values each market exactly with no liquidation pass, so the former `valuation_liquidation_budget` is gone. The uncertainty-band withdraw fee and its `withdraw_fee_alpha` multiplier are likewise gone — the exact single-mark NAV has no uncertainty band to price.)
 
-**Per-expiry mint pause:** `mint_paused` is a live `bool` field on each `ExpiryMarket`, read directly off the market object on the mint path. When true, new mints on that one expiry abort; the market's other flows (redeem, settlement) remain available. The admin sets and unsets it through `expiry_market::set_mint_paused` (version-gated), and a `PauseCap` holder can force it true one-way through `registry::pause_expiry_market_mint_pause_cap` (ungated, so the kill switch survives a version freeze).
+**Per-expiry mint pause:** `mint_paused` is a live `bool` field on each `ExpiryMarket`, read directly off the market object on the mint path. When true, new mints on that one expiry abort; the market's other flows (redeem) remain available. The admin sets and unsets it through `expiry_market::set_mint_paused` (version-gated), and a `PauseCap` holder can force it true one-way through `registry::pause_expiry_market_mint_pause_cap` (ungated, so the kill switch survives a version freeze).
 
 The folded design: there are no standalone `fee_config`, `risk_config`, or `expiry_runtime_config` modules. The remaining scalar knobs live directly on `ProtocolConfig` with their defaults and bounds in `config_constants`. Readers should not look for those modules; this is the adopted shape.
 
@@ -105,13 +94,13 @@ Several bounds are tightened on purpose so a single bad admin call cannot quietl
 
 ## Registry tuning: tick size affects only future expiries
 
-The `Registry` owns oracle/feed bindings and a per-feed admin-selected strike `tick_size`. `set_pyth_feed_tick_size` is `AdminCap`-gated and validated against the oracle-tick-size granularity. Like the contract-term template configs, this is a future-only knob: changing a feed's tick size affects the strike grid of expiry markets *created afterward* for that feed. Markets already created keep the tick size that was read into their grid at creation. Tick sizes can therefore be retuned per feed without disturbing live markets.
+The `Registry` records admin-approved Pyth feeds and a per-feed admin-selected strike `tick_size`. `set_pyth_feed_tick_size` (and the initial `register_pyth_feed`) are `AdminCap`-gated and validated by `assert_oracle_tick_size`, which checks two things: the tick size is a positive multiple of the granularity unit, and it is small enough that the maximum finite strike `pos_inf_tick * tick_size` cannot overflow `u64`. Like the contract-term template configs, this is a future-only knob: changing a feed's tick size affects expiry markets *created afterward* for that feed. Markets already created keep the tick size snapshotted at creation, and there is no on-chain check that a tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded). See [tick range encoding](./tick-range-encoding.md).
 
-The `Registry` is also where trading feeds and incentive-asset oracle bindings live together, and it owns the protocol's version set (below).
+The `Registry` also owns the protocol's version set (below) and the `PauseCap` / `MarketLifecycleCap` allowlists. The oracle/feed objects themselves are external (`propbook`); the registry only records *which* Pyth feeds are approved and at what tick size.
 
 ## Versioning and pause governance
 
-`Registry.allowed_versions` is the authoritative set of package versions permitted to mutate per-pool state. Per-pool objects (`ExpiryMarket`, `PoolVault`, `MarketOracle`, `PythSource`) each mirror this set and refresh it through permissionless `sync_*` entrypoints that copy the registry's current set into the target. The package-internal setters that write a mirror are not callable from outside the package, so a user-supplied version set can never reach a mirror by any other path. Version management entrypoints (`enable_version`, `disable_version`) are intentionally *not* version-gated, so an admin can recover from a fully disabled state; the set may never be left empty.
+`Registry.allowed_versions` is the authoritative set of package versions permitted to mutate per-pool state. The two gated Predict objects (`ExpiryMarket`, `PoolVault`) each mirror this set and refresh it through permissionless `sync_*` entrypoints that copy the registry's current set into the target. The package-internal setters that write a mirror are not callable from outside the package, so a user-supplied version set can never reach a mirror by any other path. Version management entrypoints (`enable_version`, `disable_version`) are intentionally *not* version-gated, so an admin can recover from a fully disabled state; the set may never be left empty. The external propbook feeds version themselves and are not part of this set, so there is no oracle/Pyth-source sync.
 
 A `PauseCap` is a revocable emergency capability the admin mints into `Registry.allowed_pause_caps`. Its holders can disable a package version, force global `trading_paused = true`, and force `mint_paused = true` on a single expiry — all one-way. PauseCap operations bypass the version gate so the kill switch survives a version misconfiguration, but they can only *engage* protections; unpausing and re-enabling a version require the `AdminCap`.
 
@@ -119,21 +108,21 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 
 | Authority | Can change |
 | --- | --- |
-| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused` |
+| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, the `trade_liquidation_budget`, global `trading_paused` |
 | `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
-| `AdminCap` (on a `MarketOracle`) | Live per-oracle settlement freshness; register/unregister oracle writer caps |
-| `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, market-lifecycle-cap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |
+| `AdminCap` (on `Registry`) | Approve a Pyth feed and its `tick_size`, change a feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
+| `AdminCap` (on `PoolVault`) | Start the privileged pool flush (`start_pool_valuation`) |
 | `PauseCap` (via `Registry`) | Disable a version, force global trading pause, force per-expiry mint pause — all one-way (engage only) |
-| `MarketOracleWriterCap` (per oracle) | Push Block Scholes spot/forward and SVI data on a `MarketOracle` that has registered its ID. This is an oracle writer/operator capability, not a config-tuning route — per-oracle config bounds are `AdminCap`-gated above |
-| `MarketLifecycleCap` (Registry allowlist) | Create expiry markets. A market-lifecycle capability with no oracle-write or config authority |
-| Permissionless | `sync_*` version mirrors, and valuation and settlement-cleanup keeper flows (subject to the valuation lock, not the trading pause) |
-| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum principal, leverage set and tiers, leverage floor window, oracle granularity/grid, and every `min_*`/`max_*` bound in `config_constants` |
+| `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also start the privileged pool flush (`start_pool_valuation_as_deployer`). No oracle-write or config authority |
+| Permissionless | `sync_*` version mirrors; cash rebalance, settled-market sweep, and liquidation keeper flows (subject to the valuation lock, not the trading pause); LP supply/withdraw requests and their cancellation |
+| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the per-expiry funding cap and max active expiry count, oracle granularity, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
 
-All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (versions, pause caps, uniqueness, feed tick size, incentive bindings, multi-object creation) through `registry`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
+All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (versions, pause caps, lifecycle caps, uniqueness, feed approval/tick size) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
 
 ## Related reading
 
-- [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how `PricingConfig` freshness thresholds and per-oracle settlement freshness enter live probability resolution and settlement.
+- [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how the `PricingConfig` freshness thresholds enter live probability resolution from the propbook feeds.
 - [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the terminal floor index, liquidation LTV, and leverage tiers that `StrikeExposureConfig` governs.
+- [./architecture.md](./architecture.md) — object model, the oracle extraction, and the async NAV/LP layer.
+- [./tick-range-encoding.md](./tick-range-encoding.md) — the tick domain, `tick_size`, and the overflow bound.
 - [../risks.md](../risks.md) — operational and governance risk, including pause/version handling.
-- [../overview.md](../overview.md) — object model and lifecycle of expiry markets, oracles, and the pool vault.
