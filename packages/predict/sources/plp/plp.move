@@ -260,17 +260,12 @@ public fun finish_flush(
     );
     let total_supply = vault.lp.total_supply();
     assert_plp_price_in_bounds(pool_nav, total_supply);
-
-    vault_events::emit_pool_valued(
-        vault.id(),
-        pool_nav,
-        idle,
-        total_nav,
-        valued_expiry_markets.length(),
-    );
+    let market_count = valued_expiry_markets.length();
 
     // Snapshot the share price once (frozen pair), drain both queues against it, then
-    // release the valuation lock at the very end.
+    // release the valuation lock at the very end. The flush IS the full-pool
+    // valuation, so the single FlushExecuted event carries the priced mark and its
+    // idle + active-NAV breakdown.
     let vault_id = vault.id();
     let (supplies_filled, withdrawals_filled, requests_processed) = vault
         .lp
@@ -281,6 +276,9 @@ public fun finish_flush(
         ctx.epoch(),
         pool_nav,
         total_supply,
+        total_nav,
+        market_count,
+        idle,
         supplies_filled,
         withdrawals_filled,
         requests_processed,

@@ -36,6 +36,9 @@ public struct LpBook<phantom LP> has store {
 
 public struct RequestEntry has copy, drop, store {
     index: u64,
+    /// Owning manager, carried so a fill can attribute to the manager directly
+    /// rather than only the derived `recipient` address (address is not invertible).
+    manager_id: ID,
     recipient: address,
     amount: u64,
 }
@@ -92,7 +95,7 @@ public(package) fun request_supply<LP>(
     assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
     let recipient = manager.id().to_address();
     let amount = payment.value();
-    let index = book.supply_queue.enqueue(recipient, payment.into_balance());
+    let index = book.supply_queue.enqueue(manager.id(), recipient, payment.into_balance());
     vault_events::emit_supply_requested(pool_vault_id, manager.id(), recipient, index, amount);
     index
 }
@@ -106,7 +109,7 @@ public(package) fun request_withdraw<LP>(
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
     let recipient = manager.id().to_address();
     let amount = lp.value();
-    let index = book.withdraw_queue.enqueue(recipient, lp.into_balance());
+    let index = book.withdraw_queue.enqueue(manager.id(), recipient, lp.into_balance());
     vault_events::emit_withdraw_requested(pool_vault_id, manager.id(), recipient, index, amount);
     index
 }
@@ -179,6 +182,7 @@ public(package) fun drain<LP>(
         balance::send_funds(shares_minted, request.recipient);
         vault_events::emit_supply_filled(
             pool_vault_id,
+            request.manager_id,
             request.recipient,
             request.index,
             request.amount,
@@ -203,6 +207,7 @@ public(package) fun drain<LP>(
             balance::send_funds(payout_cash, request.recipient);
             vault_events::emit_withdraw_filled(
                 pool_vault_id,
+                request.manager_id,
                 request.recipient,
                 request.index,
                 request.amount,
@@ -233,12 +238,21 @@ fun is_empty<T>(queue: &RequestQueue<T>): bool {
     queue.pending == 0
 }
 
-fun enqueue<T>(queue: &mut RequestQueue<T>, recipient: address, escrow: Balance<T>): u64 {
+fun enqueue<T>(
+    queue: &mut RequestQueue<T>,
+    manager_id: ID,
+    recipient: address,
+    escrow: Balance<T>,
+): u64 {
     let index = queue.next_index;
     queue.next_index = index + 1;
     let page_id = queue.ensure_tail_page_for_index(index);
     let amount = escrow.value();
-    queue.pages.borrow_mut(page_id).entries.push_back(RequestEntry { index, recipient, amount });
+    queue
+        .pages
+        .borrow_mut(page_id)
+        .entries
+        .push_back(RequestEntry { index, manager_id, recipient, amount });
     queue.escrow.join(escrow);
     queue.pending = queue.pending + 1;
     index

@@ -20,10 +20,14 @@ public struct PricingConfigUpdated has copy, drop, store {
     block_scholes_surface_freshness_ms: u64,
 }
 
-/// Emitted when liquidation-budget policy changes.
+/// Emitted when protocol-scalar risk/reserve policy changes: the per-flow
+/// liquidation candidate budget or the protocol+insurance reserve cut of
+/// materialized terminal profit.
 public struct RiskConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     trade_liquidation_budget: u64,
+    /// Protocol+insurance reserve share of materialized terminal profit, FLOAT_SCALING.
+    protocol_reserve_profit_share: u64,
 }
 
 /// Emitted when future expiry-cash template policy changes.
@@ -104,6 +108,21 @@ public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
     paused: bool,
 }
 
+/// Emitted once when a market crosses into terminal settlement: `ensure_settled`
+/// records the terminal `settlement_price` from Propbook's exact-expiry Pyth spot.
+/// This is the canonical per-market settlement signal — settlement is otherwise
+/// passive, so a consumer cannot observe the moment without it. Fires exactly once
+/// per market (guarded by the settled short-circuit) regardless of which flow
+/// (user redeem or keeper sweep) triggers the recording.
+public struct MarketSettled has copy, drop, store {
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    settlement_price: u64,
+    /// On-chain landing time of the settlement, `clock.timestamp_ms()`.
+    settled_at_ms: u64,
+}
+
 // === Public-Package Functions ===
 
 public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: &PricingConfig) {
@@ -117,10 +136,12 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
 public(package) fun emit_risk_config_updated(
     protocol_config_id: ID,
     trade_liquidation_budget: u64,
+    protocol_reserve_profit_share: u64,
 ) {
     event::emit(RiskConfigUpdated {
         protocol_config_id,
         trade_liquidation_budget,
+        protocol_reserve_profit_share,
     });
 }
 
@@ -217,5 +238,21 @@ public(package) fun emit_expiry_market_mint_paused_updated(expiry_market_id: ID,
     event::emit(ExpiryMarketMintPausedUpdated {
         expiry_market_id,
         paused,
+    });
+}
+
+public(package) fun emit_market_settled(
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    settlement_price: u64,
+    settled_at_ms: u64,
+) {
+    event::emit(MarketSettled {
+        expiry_market_id,
+        propbook_underlying_id,
+        expiry,
+        settlement_price,
+        settled_at_ms,
     });
 }

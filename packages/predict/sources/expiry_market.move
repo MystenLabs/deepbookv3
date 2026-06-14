@@ -362,7 +362,15 @@ public(package) fun ensure_settled(
 
     let read = pyth.normalized_spot_at(market.expiry);
     if (read.is_none()) return false;
-    market.settlement_price = option::some(read.destroy_some().read_value());
+    let settlement_price = read.destroy_some().read_value();
+    market.settlement_price = option::some(settlement_price);
+    config_events::emit_market_settled(
+        market.id(),
+        market.propbook_underlying_id,
+        market.expiry,
+        settlement_price,
+        clock.timestamp_ms(),
+    );
     true
 }
 

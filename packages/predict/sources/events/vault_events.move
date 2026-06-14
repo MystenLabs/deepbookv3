@@ -1,8 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault events for Predict: DEEP staking, full-pool valuation, expiry
-/// cash/profit, and the async LP supply/withdraw request → flush lifecycle.
+/// Pool-vault events for Predict: DEEP staking, expiry cash/profit, and the async
+/// LP supply/withdraw request → flush lifecycle (the flush event carries the
+/// full-pool valuation it priced fills at).
 module deepbook_predict::vault_events;
 
 use sui::event;
@@ -44,21 +45,6 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
-}
-
-/// Emitted when a full-pool NAV valuation completes: the LP-attributable pool-wide
-/// DUSDC NAV, aggregated from idle balance plus every active market's exact NAV,
-/// net of the pending-protocol-profit exclusion priced from the profit basis.
-public struct PoolValued has copy, drop, store {
-    pool_vault_id: ID,
-    /// LP-attributable pool NAV: `lp_pool_value(idle, credits, debits, share, active)`.
-    pool_nav: u64,
-    /// Idle DUSDC held by the pool at valuation time.
-    idle_balance: u64,
-    /// Σ of each active market's exact NAV (settled markets contribute 0).
-    active_market_nav: u64,
-    /// Number of markets valued (the active set at snapshot time).
-    market_count: u64,
 }
 
 /// Emitted when a manager stakes DEEP for trading benefits.
@@ -113,9 +99,12 @@ public struct RequestCancelled has copy, drop, store {
 }
 
 /// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
-/// `shares_minted` PLP were delivered to `recipient`.
+/// `shares_minted` PLP were delivered to `recipient`. `predict_manager_id` is the
+/// owning manager (carried from the queued request so the fill is self-contained;
+/// `recipient` is its derived address).
 public struct SupplyFilled has copy, drop, store {
     pool_vault_id: ID,
+    predict_manager_id: ID,
     recipient: address,
     index: u64,
     dusdc_amount: u64,
@@ -123,23 +112,36 @@ public struct SupplyFilled has copy, drop, store {
 }
 
 /// Emitted when a withdraw request fills: `shares_burned` PLP were burned and
-/// `dusdc_amount` was delivered to `recipient` from pool idle.
+/// `dusdc_amount` was delivered to `recipient` from pool idle. `predict_manager_id`
+/// is the owning manager (carried from the queued request).
 public struct WithdrawFilled has copy, drop, store {
     pool_vault_id: ID,
+    predict_manager_id: ID,
     recipient: address,
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
 }
 
-/// Emitted once per flush after both queues drain: the frozen mark every fill was
-/// priced at (`pool_value` over `total_supply`), how many of each kind filled, and
-/// the total live requests processed against the per-flush cap.
+/// Emitted once per flush after both queues drain. The flush IS the full-pool
+/// valuation, so this single event carries the frozen mark every fill was priced at
+/// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
+/// plus `active_market_nav` over `market_count` active markets), how many of each
+/// kind filled, the total live requests processed against the per-flush cap, and the
+/// idle balance after the drain.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
+    /// LP-attributable pool NAV every fill was priced at: `lp_pool_value(idle,
+    /// credits, debits, reserve_share, active_market_nav)`.
     pool_value: u64,
     total_supply: u64,
+    /// Σ of each active market's exact NAV at valuation (settled markets contribute 0).
+    active_market_nav: u64,
+    /// Number of active markets valued for this flush.
+    market_count: u64,
+    /// Idle DUSDC held by the pool at valuation time, before the drain.
+    idle_balance_before: u64,
     supplies_filled: u64,
     withdrawals_filled: u64,
     requests_processed: u64,
@@ -209,22 +211,6 @@ public(package) fun emit_expiry_profit_materialized(
         idle_balance_after,
         protocol_reserve_balance_after,
         profit_basis_after,
-    });
-}
-
-public(package) fun emit_pool_valued(
-    pool_vault_id: ID,
-    pool_nav: u64,
-    idle_balance: u64,
-    active_market_nav: u64,
-    market_count: u64,
-) {
-    event::emit(PoolValued {
-        pool_vault_id,
-        pool_nav,
-        idle_balance,
-        active_market_nav,
-        market_count,
     });
 }
 
@@ -304,6 +290,7 @@ public(package) fun emit_request_cancelled(
 
 public(package) fun emit_supply_filled(
     pool_vault_id: ID,
+    predict_manager_id: ID,
     recipient: address,
     index: u64,
     dusdc_amount: u64,
@@ -311,6 +298,7 @@ public(package) fun emit_supply_filled(
 ) {
     event::emit(SupplyFilled {
         pool_vault_id,
+        predict_manager_id,
         recipient,
         index,
         dusdc_amount,
@@ -320,6 +308,7 @@ public(package) fun emit_supply_filled(
 
 public(package) fun emit_withdraw_filled(
     pool_vault_id: ID,
+    predict_manager_id: ID,
     recipient: address,
     index: u64,
     shares_burned: u64,
@@ -327,6 +316,7 @@ public(package) fun emit_withdraw_filled(
 ) {
     event::emit(WithdrawFilled {
         pool_vault_id,
+        predict_manager_id,
         recipient,
         index,
         shares_burned,
@@ -339,6 +329,9 @@ public(package) fun emit_flush_executed(
     epoch: u64,
     pool_value: u64,
     total_supply: u64,
+    active_market_nav: u64,
+    market_count: u64,
+    idle_balance_before: u64,
     supplies_filled: u64,
     withdrawals_filled: u64,
     requests_processed: u64,
@@ -349,6 +342,9 @@ public(package) fun emit_flush_executed(
         epoch,
         pool_value,
         total_supply,
+        active_market_nav,
+        market_count,
+        idle_balance_before,
         supplies_filled,
         withdrawals_filled,
         requests_processed,

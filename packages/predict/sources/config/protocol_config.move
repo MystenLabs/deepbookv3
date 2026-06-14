@@ -217,7 +217,11 @@ public fun set_trade_liquidation_budget(
 ) {
     config_constants::assert_trade_liquidation_budget(budget);
     config.trade_liquidation_budget = budget;
-    config_events::emit_risk_config_updated(config.id(), config.trade_liquidation_budget);
+    config_events::emit_risk_config_updated(
+        config.id(),
+        config.trade_liquidation_budget,
+        config.protocol_reserve_profit_share,
+    );
 }
 
 /// Set the EWMA gas-price penalty parameters.
@@ -316,6 +320,11 @@ public fun set_protocol_reserve_profit_share(
     config.assert_not_valuation_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
+    config_events::emit_risk_config_updated(
+        config.id(),
+        config.trade_liquidation_budget,
+        config.protocol_reserve_profit_share,
+    );
 }
 
 /// Begin a transaction-local full-pool valuation lock.
