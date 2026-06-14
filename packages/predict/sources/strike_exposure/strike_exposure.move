@@ -1,10 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Expiry-local exposure book for one oracle grid.
+/// Expiry-local exposure book for one expiry market.
 ///
-/// This module interprets `Order` terms against the expiry's strike grid and
-/// floor-index schedule. It owns the payout-liability view of the active
+/// This module interprets `Order` terms against the expiry's `tick_size` and
+/// floor-index schedule, recovering raw strikes from order ticks only at the
+/// pricing/settlement boundary. It owns the payout-liability view of the active
 /// contracts used for cash backing. It stores the parent market identity so
 /// market-scoped liquidation events can be emitted atomically with exposure
 /// removal. Expiry-market cash custody, rebate accounting, manager positions,
@@ -18,8 +19,8 @@ use deepbook_predict::{
     order_events,
     pricing::{Self, Pricer},
     pricing_config::PricingConfig,
+    range_codec,
     strike_exposure_config::StrikeExposureConfig,
-    strike_grid::{Self, StrikeGrid},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use fixed_math::math;
@@ -28,13 +29,14 @@ use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 1;
 
-/// Exposure lifecycle state for one oracle grid.
+/// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
     /// Expiry market that owns this exposure book.
     expiry_market_id: ID,
     /// Terminal timestamp used by floor-index and order floor math.
     expiry_ms: u64,
-    grid: StrikeGrid,
+    /// Raw-price-per-tick conversion factor; `raw_strike = tick * tick_size`.
+    tick_size: u64,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
     next_order_sequence: u64,
@@ -92,9 +94,9 @@ public(package) fun exact_live_liability(
     let linear = exposure
         .live
         .payout
-        .walk_linear(pricer, constants::nav_interpolation_price_tolerance!());
+        .walk_linear(pricer, exposure.tick_size, constants::nav_interpolation_price_tolerance!());
     // Correction term: the floor-capped scan over this book's active leveraged set.
-    let correction = exposure.liquidation.correction_value(pricer, &exposure.grid, index_now);
+    let correction = exposure.liquidation.correction_value(pricer, exposure.tick_size, index_now);
     linear.saturating_sub(correction)
 }
 
@@ -121,16 +123,8 @@ public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
     exposure.config.expiry_fee_max_multiplier()
 }
 
-public(package) fun min_strike(exposure: &StrikeExposure): u64 {
-    exposure.grid.min_strike()
-}
-
 public(package) fun tick_size(exposure: &StrikeExposure): u64 {
-    exposure.grid.tick_size()
-}
-
-public(package) fun max_strike(exposure: &StrikeExposure): u64 {
-    exposure.grid.max_strike()
+    exposure.tick_size
 }
 
 /// Return the raw per-trade fee for a live price and quantity.
@@ -158,11 +152,10 @@ public(package) fun is_liquidated_order(exposure: &StrikeExposure, order: &Order
     exposure.liquidation.is_liquidated(order)
 }
 
-/// Create a strike exposure book for the oracle grid.
+/// Create a strike exposure book for one expiry market.
 public(package) fun new(
     expiry_market_id: ID,
     expiry_ms: u64,
-    spot: u64,
     tick_size: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
@@ -170,7 +163,7 @@ public(package) fun new(
     StrikeExposure {
         expiry_market_id,
         expiry_ms,
-        grid: strike_grid::new_centered(spot, tick_size),
+        tick_size,
         config,
         next_order_sequence: 0,
         settled_payout_liability: 0,
@@ -207,18 +200,23 @@ public(package) fun close_settled_order(
     payout
 }
 
-/// Quote and allocate a live mint order over this exposure book's strike grid.
+/// Quote and allocate a live mint order for the tick range `(lower_tick, higher_tick]`.
 ///
 /// Returns `(allocated_order, entry_probability, net_premium)`.
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
-    lower: u64,
-    higher: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     quantity: u64,
     leverage: u64,
     clock: &Clock,
 ): (Order, u64, u64) {
+    let (lower, higher) = range_codec::strikes_from_ticks(
+        lower_tick,
+        higher_tick,
+        exposure.tick_size,
+    );
     let entry_probability = pricer.range_price(lower, higher);
     let opened_at_ms = clock.timestamp_ms();
     let (net_premium, financed_amount) = exposure
@@ -239,13 +237,12 @@ public(package) fun allocate_mint_order(
             quantity,
         );
 
-    let (lower_boundary_index, higher_boundary_index) = exposure.boundary_indices(lower, higher);
     let sequence = exposure.next_order_sequence;
 
-    let allocated_order = order::new_from_boundary_indices(
+    let allocated_order = order::new_from_ticks(
         opened_at_ms,
-        lower_boundary_index,
-        higher_boundary_index,
+        lower_tick,
+        higher_tick,
         floor_shares,
         quantity,
         sequence,
@@ -254,8 +251,8 @@ public(package) fun allocate_mint_order(
 
     exposure.liquidation.insert_order(&allocated_order);
     exposure.insert_live_index_quantity(
-        lower,
-        higher,
+        lower_tick,
+        higher_tick,
         quantity,
         terminal_payout,
         live_backing_payout,
@@ -295,7 +292,7 @@ public(package) fun close_and_quote_live_order(
     // `close_settled_order` recomputes at settlement (round-down `mul` is
     // sub-additive over the floor-share split: `mul(old_fs,T) >=
     // mul(remove_fs,T) + mul(remaining_fs,T)`), underflowing the settled redeem.
-    exposure.remove_live_index_quantity(order, lower, higher, old_quantity, old_floor_shares);
+    exposure.remove_live_index_quantity(order, old_quantity, old_floor_shares);
     exposure.liquidation.remove_order(order);
 
     // calculate payout
@@ -322,8 +319,6 @@ public(package) fun close_and_quote_live_order(
     exposure.liquidation.insert_order(&replacement_order);
     exposure.reinsert_live_index_quantity(
         &replacement_order,
-        lower,
-        higher,
         remaining_quantity,
         remaining_floor_shares,
     );
@@ -404,7 +399,10 @@ public(package) fun materialize_settled_liability(
         return exposure.settled_payout_liability
     };
 
-    let settled_liability = exposure.live.payout.settled_payout_liability(settlement);
+    let settled_liability = exposure
+        .live
+        .payout
+        .settled_payout_liability(settlement, exposure.tick_size);
     exposure.settled_payout_liability = settled_liability;
     exposure.settled_liability_materialized = true;
     settled_liability
@@ -412,15 +410,16 @@ public(package) fun materialize_settled_liability(
 
 fun insert_live_index_quantity(
     exposure: &mut StrikeExposure,
-    lower: u64,
-    higher: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     quantity: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
-    let grid = exposure.grid;
     let live = &mut exposure.live;
-    live.payout.insert_range(&grid, lower, higher, quantity, terminal_payout, live_backing_payout);
+    live
+        .payout
+        .insert_range(lower_tick, higher_tick, quantity, terminal_payout, live_backing_payout);
     live.live_backing_liability = live.live_backing_liability + live_backing_payout;
 }
 
@@ -442,7 +441,7 @@ fun liquidate_order_if_under_floor(
     if (!can_liquidate) return false;
 
     exposure.liquidation.mark_liquidated(order);
-    exposure.remove_live_index_quantity(order, lower, higher, quantity, floor_shares);
+    exposure.remove_live_index_quantity(order, quantity, floor_shares);
 
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
@@ -459,8 +458,6 @@ fun liquidate_order_if_under_floor(
 fun remove_live_index_quantity(
     exposure: &mut StrikeExposure,
     order: &Order,
-    lower: u64,
-    higher: u64,
     quantity: u64,
     floor_shares: u64,
 ) {
@@ -472,14 +469,17 @@ fun remove_live_index_quantity(
             quantity,
             floor_shares,
         );
-    let grid = exposure.grid;
-    {
-        let live = &mut exposure.live;
-        live
-            .payout
-            .remove_range(&grid, lower, higher, quantity, terminal_payout, live_backing_payout);
-        live.live_backing_liability = live.live_backing_liability - live_backing_payout;
-    };
+    let live = &mut exposure.live;
+    live
+        .payout
+        .remove_range(
+            order.lower_tick(),
+            order.higher_tick(),
+            quantity,
+            terminal_payout,
+            live_backing_payout,
+        );
+    live.live_backing_liability = live.live_backing_liability - live_backing_payout;
 }
 
 /// Reinsert a partial-close survivor's exact live-index terms, mirroring the
@@ -488,8 +488,6 @@ fun remove_live_index_quantity(
 fun reinsert_live_index_quantity(
     exposure: &mut StrikeExposure,
     order: &Order,
-    lower: u64,
-    higher: u64,
     quantity: u64,
     floor_shares: u64,
 ) {
@@ -502,24 +500,16 @@ fun reinsert_live_index_quantity(
             floor_shares,
         );
     exposure.insert_live_index_quantity(
-        lower,
-        higher,
+        order.lower_tick(),
+        order.higher_tick(),
         quantity,
         terminal_payout,
         live_backing_payout,
     );
 }
 
-/// Convert raw order boundaries into boundary indexes for this grid.
-fun boundary_indices(exposure: &StrikeExposure, lower: u64, higher: u64): (u64, u64) {
-    exposure.grid.assert_range_boundaries(lower, higher);
-    (exposure.grid.boundary_index(lower), exposure.grid.boundary_index(higher))
-}
-
-/// Decode an order into `(lower, higher)` raw boundaries for this grid.
+/// Decode an order into `(lower, higher)` raw strike boundaries for pricing and
+/// settlement comparison, mapping the open-ended sentinels.
 fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
-    (
-        exposure.grid.boundary_at_index(order.lower_boundary_index()),
-        exposure.grid.boundary_at_index(order.higher_boundary_index()),
-    )
+    range_codec::strikes_from_ticks(order.lower_tick(), order.higher_tick(), exposure.tick_size)
 }

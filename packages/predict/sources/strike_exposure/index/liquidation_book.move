@@ -8,13 +8,13 @@
 /// orders that should be checked first. Beyond serving liquidation candidates, the
 /// book owns exactly one valuation read: `correction_value` walks its active
 /// leveraged set to value the NAV floor-correction term — the only place this
-/// module touches pricing/grid/floor math, and it does so through a caller-supplied
+/// module touches pricing/tick/floor math, and it does so through a caller-supplied
 /// `Pricer`, never owning the pricing model itself. It does not own payout backing,
 /// cash, or manager positions. Liquidated tombstones persist until the holder
 /// redeems the worthless order and clears their manager position.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, strike_grid::StrikeGrid};
+use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, range_codec};
 use fixed_math::math;
 use sui::table::{Self, Table};
 
@@ -78,12 +78,12 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
 /// eval. The `min` is the order's limited-recourse floor: an underwater order's
 /// range value is capped at its floor and nets to zero against the linear term, so
 /// NAV needs no liquidation pass. All terms are non-negative — a plain `u64` sum.
-/// The caller (which owns the model) supplies the live `pricer`, the expiry `grid`
-/// for boundary-index decoding, and the current floor `index_now`.
+/// The caller (which owns the model) supplies the live `pricer`, the market
+/// `tick_size` for raw-strike decoding, and the current floor `index_now`.
 public(package) fun correction_value(
     book: &LiquidationBook,
     pricer: &Pricer,
-    grid: &StrikeGrid,
+    tick_size: u64,
     index_now: u64,
 ): u64 {
     let mut correction = 0;
@@ -91,8 +91,11 @@ public(package) fun correction_value(
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
-        let lower = grid.boundary_at_index(order.lower_boundary_index());
-        let higher = grid.boundary_at_index(order.higher_boundary_index());
+        let (lower, higher) = range_codec::strikes_from_ticks(
+            order.lower_tick(),
+            order.higher_tick(),
+            tick_size,
+        );
         let range_value = math::mul(pricer.range_price(lower, higher), order.quantity());
         let floor_value = math::mul(order.floor_shares(), index_now);
         correction = correction + range_value.min(floor_value);

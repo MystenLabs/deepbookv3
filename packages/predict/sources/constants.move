@@ -104,16 +104,16 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
-// === Oracle Strike Grid ===
+// === Strike Tick Domain ===
 
-/// Fixed number of strike ticks each oracle must cover.
-public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
+/// Bit width of each strike tick field in the packed range key and order ID.
+public(package) macro fun tick_bits(): u8 { 24 }
 
-/// Highest boundary index in the shared order-ID / strike-grid boundary domain.
-/// Index 0 is the −inf sentinel, 1..=ticks+1 are the finite strikes, and ticks+2
-/// is the +inf sentinel. Read by both `order` (packed-ID encoding bound) and
-/// `strike_grid` (the +inf boundary index).
-public(package) macro fun max_boundary_index(): u64 { oracle_strike_grid_ticks!() + 2 }
+/// Positive-infinity sentinel tick, maximum finite-tick bound, and u24 mask for
+/// unpacking a tick. As the higher tick it is the open upper bound; finite ticks
+/// occupy `1..pos_inf_tick - 1`, and tick `0` is the negative-infinity sentinel
+/// as the lower tick. Read by `order` (shape validation) and the range/tick codec.
+public(package) macro fun pos_inf_tick(): u64 { (1u64 << tick_bits!()) - 1 }
 
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }

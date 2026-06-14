@@ -26,8 +26,6 @@ const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesSurfaceStale: u64 = 5;
-const EInvalidStrikeRatio: u64 = 7;
-const EPythSpotStale: u64 = 8;
 
 // === Public-Package Functions ===
 
@@ -53,11 +51,6 @@ public(package) fun up_price(pricer: &Pricer, strike: u64): u64 {
 /// Return the current raw probability for a live range.
 public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
-}
-
-/// Abort unless the Pyth spot source is fresh.
-public(package) fun assert_pyth_spot_fresh(config: &PricingConfig, pyth: &PythFeed, clock: &Clock) {
-    assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
 }
 
 // === Private Functions ===
@@ -142,8 +135,18 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    let strike_ratio = math::div(strike, forward);
-    assert!(strike_ratio > 0, EInvalidStrikeRatio);
+    // strike / forward in 1e9 fixed point, computed in u128 so both deep tails
+    // saturate instead of underflowing to 0 (which would abort) or wrapping the u64
+    // cast. Reaching either tail needs the forward to leave the entire encodable
+    // strike ladder by orders of magnitude; saturating keeps NAV / redeem /
+    // liquidation reads live there rather than aborting the whole market.
+    let strike_ratio_scaled =
+        ((strike as u128) * (math::float_scaling!() as u128)) / (forward as u128);
+    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
+    if (strike_ratio_scaled == 0) return math::float_scaling!();
+    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
+    if (strike_ratio_scaled > (std::u64::max_value!() as u128)) return 0;
+    let strike_ratio = strike_ratio_scaled as u64;
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);

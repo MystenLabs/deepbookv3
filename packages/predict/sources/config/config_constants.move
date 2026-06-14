@@ -160,6 +160,13 @@ public(package) fun assert_oracle_tick_size(value: u64) {
         value > 0 && value % deepbook_predict::constants::oracle_tick_size_unit!() == 0,
         EInvalidOracleTickSize,
     );
+    // Prevent raw-strike multiplication overflow: the maximum finite strike is
+    // `pos_inf_tick * tick_size`, which must fit in `u64`. Pure config bound;
+    // normal market tick sizes are far below it.
+    assert!(
+        value <= std::u64::max_value!() / deepbook_predict::constants::pos_inf_tick!(),
+        EInvalidOracleTickSize,
+    );
 }
 
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }

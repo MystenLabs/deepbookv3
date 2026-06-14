@@ -21,6 +21,10 @@ public struct OrderMinted has copy, drop, store {
     /// forward unchanged across partial-close replacements. Equals `order_id` here.
     position_root_id: u256,
     owner: address,
+    /// Canonical packed strike range (lower/higher u24 ticks). `lower_strike` and
+    /// `higher_strike` are the derived display form, `tick * tick_size` with the
+    /// `tick_size` from `MarketCreated`; the range key is the source of truth.
+    range_key: u64,
     lower_strike: u64,
     higher_strike: u64,
     leverage: u64,
@@ -105,6 +109,7 @@ public(package) fun emit_order_minted(
     expiry_market_id: ID,
     manager: &PredictManager,
     order: &Order,
+    range_key: u64,
     lower_strike: u64,
     higher_strike: u64,
     leverage: u64,
@@ -120,6 +125,7 @@ public(package) fun emit_order_minted(
         order_id: order.id(),
         position_root_id: order.id(),
         owner: manager.owner(),
+        range_key,
         lower_strike,
         higher_strike,
         leverage,

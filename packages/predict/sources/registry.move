@@ -23,7 +23,6 @@ use deepbook_predict::{
     predict_manager::{Self, PredictManager},
     predict_trade_cap::PredictTradeCap,
     predict_withdraw_cap::PredictWithdrawCap,
-    pricing,
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
@@ -263,7 +262,6 @@ public fun create_expiry_market(
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EFeedIdMismatch);
     let tick_size = registry.pyth_feed_configs.borrow(pyth_lazer_feed_id).tick_size;
-    pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let expiry_market_id = expiry_market::create_and_share(
@@ -274,7 +272,6 @@ public fun create_expiry_market(
         pool_vault.id(),
         pyth_lazer_feed_id,
         expiry,
-        pyth.spot(),
         tick_size,
         ctx,
     );

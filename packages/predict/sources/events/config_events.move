@@ -80,9 +80,8 @@ public struct MarketCreated has copy, drop, store {
     bs_feed_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    min_strike: u64,
+    /// Raw-price-per-tick factor; indexers/SDKs derive raw strikes as `tick * tick_size`.
     tick_size: u64,
-    max_strike: u64,
 }
 
 /// Emitted alongside `MarketCreated` with the per-market policy snapshotted into
@@ -189,9 +188,7 @@ public(package) fun emit_market_created(
     bs_feed_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    min_strike: u64,
     tick_size: u64,
-    max_strike: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -200,9 +197,7 @@ public(package) fun emit_market_created(
         bs_feed_id,
         pyth_lazer_feed_id,
         expiry,
-        min_strike,
         tick_size,
-        max_strike,
     });
 }
 
