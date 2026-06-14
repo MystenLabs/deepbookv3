@@ -5,7 +5,8 @@
 ///
 /// The registry owns two separate namespaces:
 /// - source catalog: one Propbook oracle object per `(oracle kind, source id)`
-/// - canonical binding: one active oracle per `(propbook underlying, kind, value kind)`
+/// - canonical binding: one immutable oracle per
+///   `(propbook underlying, kind, value kind)`
 ///
 /// Source oracle objects are permissionless wrappers around verified source data.
 /// Canonical bindings are admin-controlled because they are the trust claim that a
@@ -18,7 +19,6 @@ module propbook::registry;
 
 use propbook::{
     block_scholes_feed::{Self as block_scholes_feed, BlockScholesFeed},
-    constants,
     pyth_feed::{Self as pyth_feed, PythFeed}
 };
 use std::option::Option;
@@ -28,6 +28,7 @@ const ESourceAlreadyExists: u64 = 0;
 const ESourceNotFound: u64 = 1;
 const EInvalidOracleObject: u64 = 2;
 const ESourceAlreadyBound: u64 = 3;
+const EBindingAlreadyExists: u64 = 4;
 
 /// Oracle-kind tags stored in registry keys; future oracles add a value here.
 public(package) macro fun kind_pyth(): u8 {
@@ -72,15 +73,13 @@ public struct OracleBindingKey has copy, drop, store {
     value_kind: u8,
 }
 
-/// Canonical metadata for one active Propbook oracle binding.
+/// Canonical metadata for one immutable Propbook oracle binding.
 public struct OracleMetadata has copy, drop, store {
     propbook_underlying_id: u32,
     oracle_kind: u8,
     source_id: u32,
     propbook_oracle_id: ID,
     value_kind: u8,
-    quote_asset_id: u32,
-    scaling_decimals: u8,
 }
 
 /// Emitted when a Propbook source wrapper is created and registered.
@@ -90,16 +89,13 @@ public struct OracleSourceRegistered has copy, drop {
     propbook_oracle_id: ID,
 }
 
-/// Emitted when an admin binds or rebinds an oracle to a canonical Propbook
-/// underlying.
+/// Emitted when an admin binds an oracle to a canonical Propbook underlying.
 public struct OracleBound has copy, drop {
     propbook_underlying_id: u32,
     oracle_kind: u8,
     source_id: u32,
     propbook_oracle_id: ID,
     value_kind: u8,
-    quote_asset_id: u32,
-    scaling_decimals: u8,
 }
 
 fun init(ctx: &mut TxContext) {
@@ -202,14 +198,6 @@ public fun value_kind(metadata: &OracleMetadata): u8 {
     metadata.value_kind
 }
 
-public fun quote_asset_id(metadata: &OracleMetadata): u32 {
-    metadata.quote_asset_id
-}
-
-public fun scaling_decimals(metadata: &OracleMetadata): u8 {
-    metadata.scaling_decimals
-}
-
 /// Create and share the Propbook Pyth wrapper for `pyth_source_id`, then record
 /// it in the source catalog. Permissionless: a duplicate source aborts before
 /// object creation, and a junk source id creates an inert feed whose storage the
@@ -249,7 +237,6 @@ public fun bind_pyth_to_underlying(
     admin_cap: &RegistryAdminCap,
     feed: &PythFeed,
     propbook_underlying_id: u32,
-    quote_asset_id: u32,
 ) {
     registry.bind_oracle(
         admin_cap,
@@ -258,8 +245,6 @@ public fun bind_pyth_to_underlying(
         pyth_feed::pyth_source_id(feed),
         pyth_feed::id(feed),
         value_kind_spot!(),
-        quote_asset_id,
-        constants::float_scaling_decimals!() as u8,
     );
 }
 
@@ -269,7 +254,6 @@ public fun bind_block_scholes_to_underlying(
     admin_cap: &RegistryAdminCap,
     feed: &BlockScholesFeed,
     propbook_underlying_id: u32,
-    quote_asset_id: u32,
 ) {
     registry.bind_oracle(
         admin_cap,
@@ -278,8 +262,6 @@ public fun bind_block_scholes_to_underlying(
         block_scholes_feed::bs_source_id(feed),
         block_scholes_feed::id(feed),
         value_kind_vol_surface!(),
-        quote_asset_id,
-        constants::float_scaling_decimals!() as u8,
     );
 }
 
@@ -311,9 +293,9 @@ fun record_source(
     });
 }
 
-/// Bind or rebind one source oracle object to a canonical Propbook underlying.
+/// Bind one source oracle object to a canonical Propbook underlying.
 /// Source wrapper creation remains permissionless; this canonical mapping is the
-/// admin-controlled trust claim downstream consumers can discover.
+/// insert-only admin-controlled trust claim downstream consumers can discover.
 fun bind_oracle(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,
@@ -322,12 +304,13 @@ fun bind_oracle(
     source_id: u32,
     propbook_oracle_id: ID,
     value_kind: u8,
-    quote_asset_id: u32,
-    scaling_decimals: u8,
 ) {
     let source_key = OracleSourceKey { oracle_kind, source_id };
     assert!(registry.sources.contains(source_key), ESourceNotFound);
     assert!(*registry.sources.borrow(source_key) == propbook_oracle_id, EInvalidOracleObject);
+
+    let binding_key = OracleBindingKey { propbook_underlying_id, oracle_kind, value_kind };
+    assert!(!registry.bindings.contains(binding_key), EBindingAlreadyExists);
 
     if (registry.source_bindings.contains(source_key)) {
         assert!(
@@ -336,32 +319,14 @@ fun bind_oracle(
         );
     };
 
-    let binding_key = OracleBindingKey { propbook_underlying_id, oracle_kind, value_kind };
     let metadata = OracleMetadata {
         propbook_underlying_id,
         oracle_kind,
         source_id,
         propbook_oracle_id,
         value_kind,
-        quote_asset_id,
-        scaling_decimals,
     };
-    if (registry.bindings.contains(binding_key)) {
-        let old = *registry.bindings.borrow(binding_key);
-        let old_source_key = OracleSourceKey {
-            oracle_kind: old.oracle_kind,
-            source_id: old.source_id,
-        };
-        if (
-            old_source_key.oracle_kind != source_key.oracle_kind ||
-                old_source_key.source_id != source_key.source_id
-        ) {
-            registry.source_bindings.remove(old_source_key);
-        };
-        *registry.bindings.borrow_mut(binding_key) = metadata;
-    } else {
-        registry.bindings.add(binding_key, metadata);
-    };
+    registry.bindings.add(binding_key, metadata);
 
     if (!registry.source_bindings.contains(source_key)) {
         registry.source_bindings.add(source_key, propbook_underlying_id);
@@ -373,8 +338,6 @@ fun bind_oracle(
         source_id,
         propbook_oracle_id,
         value_kind,
-        quote_asset_id,
-        scaling_decimals,
     });
 }
 

@@ -6,7 +6,6 @@ module propbook::registry_tests;
 
 use propbook::{
     block_scholes_feed::BlockScholesFeed,
-    constants,
     pyth_feed::{Self as pyth_feed, PythFeed},
     registry::{Self, OracleMetadata, OracleRegistry, RegistryAdminCap}
 };
@@ -16,8 +15,6 @@ use sui::test_scenario::{Self as test, Scenario, return_shared};
 const ADMIN: address = @0xAD;
 const BTC_UNDERLYING_ID: u32 = 1;
 const ETH_UNDERLYING_ID: u32 = 2;
-const QUOTE_USD_ID: u32 = 840;
-const QUOTE_USD_ALT_ID: u32 = 841;
 const PYTH_SOURCE_A: u32 = 10;
 const PYTH_SOURCE_B: u32 = 11;
 const PYTH_SOURCE_UNKNOWN: u32 = 99;
@@ -31,18 +28,17 @@ fun bind_pyth_to_underlying_records_typed_lookup_and_metadata() {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID, QUOTE_USD_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID);
 
     assert_eq!(
         registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         pyth_a_id,
     );
-    assert_pyth_metadata(
+    assert_metadata(
         registry.pyth_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         BTC_UNDERLYING_ID,
         PYTH_SOURCE_A,
         pyth_a_id,
-        QUOTE_USD_ID,
     );
     assert!(registry.propbook_pyth_id_for_underlying(ETH_UNDERLYING_ID).is_none());
 
@@ -59,18 +55,17 @@ fun bind_block_scholes_to_underlying_records_typed_lookup_and_metadata() {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_a_id);
 
-    registry.bind_block_scholes_to_underlying(&admin_cap, &bs, BTC_UNDERLYING_ID, QUOTE_USD_ID);
+    registry.bind_block_scholes_to_underlying(&admin_cap, &bs, BTC_UNDERLYING_ID);
 
     assert_eq!(
         registry.propbook_block_scholes_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         bs_a_id,
     );
-    assert_bs_metadata(
+    assert_metadata(
         registry.block_scholes_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         BTC_UNDERLYING_ID,
         BS_SOURCE_A,
         bs_a_id,
-        QUOTE_USD_ID,
     );
     assert!(registry.propbook_block_scholes_id_for_underlying(ETH_UNDERLYING_ID).is_none());
 
@@ -89,7 +84,7 @@ fun bind_source_with_wrong_propbook_object_aborts() {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let rogue_pyth = scenario.take_shared_by_id<PythFeed>(rogue_pyth_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &rogue_pyth, BTC_UNDERLYING_ID, QUOTE_USD_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &rogue_pyth, BTC_UNDERLYING_ID);
 
     abort 999
 }
@@ -103,12 +98,7 @@ fun bind_unregistered_source_aborts() {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let unregistered_pyth = scenario.take_shared_by_id<PythFeed>(unregistered_pyth_id);
 
-    registry.bind_pyth_to_underlying(
-        &admin_cap,
-        &unregistered_pyth,
-        BTC_UNDERLYING_ID,
-        QUOTE_USD_ID,
-    );
+    registry.bind_pyth_to_underlying(&admin_cap, &unregistered_pyth, BTC_UNDERLYING_ID);
 
     abort 999
 }
@@ -120,50 +110,24 @@ fun same_source_cannot_bind_to_two_underlyings() {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID, QUOTE_USD_ID);
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth, ETH_UNDERLYING_ID, QUOTE_USD_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth, ETH_UNDERLYING_ID);
 
     abort 999
 }
 
-#[test]
-fun canonical_rebind_replaces_lookup_and_releases_old_source() {
+#[test, expected_failure(abort_code = registry::EBindingAlreadyExists)]
+fun rebinding_bound_underlying_aborts() {
     let (scenario, pyth_a_id, pyth_b_id, _bs_a_id, _bs_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
     let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
     let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID, QUOTE_USD_ID);
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID, QUOTE_USD_ALT_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
 
-    assert_eq!(
-        registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
-        pyth_b_id,
-    );
-    assert_pyth_metadata(
-        registry.pyth_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
-        BTC_UNDERLYING_ID,
-        PYTH_SOURCE_B,
-        pyth_b_id,
-        QUOTE_USD_ALT_ID,
-    );
-
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, ETH_UNDERLYING_ID, QUOTE_USD_ID);
-    assert_eq!(
-        registry.propbook_pyth_id_for_underlying(ETH_UNDERLYING_ID).destroy_some(),
-        pyth_a_id,
-    );
-    assert_eq!(
-        registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
-        pyth_b_id,
-    );
-
-    return_shared(pyth_a);
-    return_shared(pyth_b);
-    return_shared(registry);
-    destroy(admin_cap);
-    scenario.end();
+    abort 999
 }
 
 fun setup_registry_with_feeds(): (Scenario, ID, ID, ID, ID) {
@@ -198,30 +162,13 @@ fun setup_registry_with_feeds(): (Scenario, ID, ID, ID, ID) {
     (scenario, pyth_a_id, pyth_b_id, bs_a_id, bs_b_id)
 }
 
-fun assert_pyth_metadata(
+fun assert_metadata(
     metadata: OracleMetadata,
     expected_underlying_id: u32,
     expected_source_id: u32,
     expected_oracle_id: ID,
-    expected_quote_asset_id: u32,
 ) {
     assert_eq!(registry::propbook_underlying_id(&metadata), expected_underlying_id);
     assert_eq!(registry::source_id(&metadata), expected_source_id);
     assert_eq!(registry::propbook_oracle_id(&metadata), expected_oracle_id);
-    assert_eq!(registry::quote_asset_id(&metadata), expected_quote_asset_id);
-    assert_eq!(registry::scaling_decimals(&metadata), constants::float_scaling_decimals!() as u8);
-}
-
-fun assert_bs_metadata(
-    metadata: OracleMetadata,
-    expected_underlying_id: u32,
-    expected_source_id: u32,
-    expected_oracle_id: ID,
-    expected_quote_asset_id: u32,
-) {
-    assert_eq!(registry::propbook_underlying_id(&metadata), expected_underlying_id);
-    assert_eq!(registry::source_id(&metadata), expected_source_id);
-    assert_eq!(registry::propbook_oracle_id(&metadata), expected_oracle_id);
-    assert_eq!(registry::quote_asset_id(&metadata), expected_quote_asset_id);
-    assert_eq!(registry::scaling_decimals(&metadata), constants::float_scaling_decimals!() as u8);
 }
