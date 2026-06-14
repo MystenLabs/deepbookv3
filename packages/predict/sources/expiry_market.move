@@ -859,7 +859,7 @@ fun settle_live_redeem_payment(
     market.cash.receive(payout.split(penalty_amount));
 
     market.assert_cash_backing();
-    deposit_live_payout(manager, proof, payout, ctx);
+    manager.deposit_with_proof(proof, payout.into_coin(ctx), ctx);
     (builder_fee_amount, penalty_amount)
 }
 
@@ -870,7 +870,7 @@ fun settle_settled_redeem_payment(
     ctx: &mut TxContext,
 ) {
     let payout = market.cash.pay_authorized(payout_amount);
-    deposit_permissionless_payout(manager, payout, ctx);
+    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
 
     market.assert_cash_backing();
 }
@@ -883,23 +883,6 @@ fun collect_trade_fee(
     let fee_amount = market.cash.collect_trade_fee(fee);
     if (fee_amount == 0) return;
     manager.record_trading_fee_paid(market.id(), fee_amount);
-}
-
-fun deposit_live_payout(
-    manager: &mut PredictManager,
-    proof: &PredictTradeProof,
-    payout: Balance<DUSDC>,
-    ctx: &mut TxContext,
-) {
-    manager.deposit_with_proof(proof, payout.into_coin(ctx), ctx);
-}
-
-fun deposit_permissionless_payout(
-    manager: &mut PredictManager,
-    payout: Balance<DUSDC>,
-    ctx: &mut TxContext,
-) {
-    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
 }
 
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
