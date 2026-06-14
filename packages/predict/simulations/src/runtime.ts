@@ -5,6 +5,7 @@ import { deriveObjectID } from "@mysten/sui/utils";
 
 import {
     ADMIN_CAP_ID,
+    BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
     DUSDC_CURRENCY_ID,
     DUSDC_PACKAGE_ID,
     LOCAL_PYTH_GOVERNANCE_CHAIN,
@@ -14,9 +15,10 @@ import {
     LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS,
     LOCAL_PYTH_SIGNER_PRIVATE_KEY,
     LOCAL_PYTH_SIGNER_PUBLIC_KEY,
+    ORACLE_REGISTRY_ID,
     PACKAGE_ID,
-    PREDICT_MATH_PACKAGE_ID,
     POOL_VAULT_ID,
+    PROPBOOK_PACKAGE_ID,
     PROTOCOL_CONFIG_ID,
     PYTH_LAZER_PACKAGE_ID,
     PYTH_LAZER_STATE_ID,
@@ -51,9 +53,18 @@ export interface ExecutionReceipt {
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
+// Pyth Lazer feed id (the propbook spot feed key) AND the Block Scholes feed
+// `underlying` id. The harness binds one market to one Pyth feed + one BS feed
+// of the same underlying, so a single id serves both.
 const PYTH_FEED_ID = 1;
-const NEG_INF_STRIKE = 0n;
-const POS_INF_STRIKE = (1n << 64n) - 1n;
+const BS_UNDERLYING_ID = PYTH_FEED_ID;
+// Strike range encoding (range_codec / constants.move): two u24 ticks packed
+// `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
+// neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
+// side). The harness tick size is $1 (1e9-scaled), mirroring the registered feed.
+const TICK_BITS = 24n;
+const POS_INF_TICK = (1n << TICK_BITS) - 1n;
+const ORACLE_TICK_SIZE = 1_000_000_000n;
 const SETUP_RESPONSE_OPTIONS = {
     showEffects: true,
     showEvents: true,
@@ -116,8 +127,22 @@ export function target(module: string, fn: string): `${string}::${string}::${str
     return `${PACKAGE_ID}::${module}::${fn}`;
 }
 
-function predictMathTarget(module: string, fn: string): `${string}::${string}::${string}` {
-    return `${PREDICT_MATH_PACKAGE_ID}::${module}::${fn}`;
+// Note: `predict_math` was renamed to `fixed_math`, but the harness no longer makes
+// any direct fixed_math/i64 Move call — the old oracle path built SVI `i64`s via
+// `i64::from_parts`; the propbook BS update now takes magnitude+sign primitives
+// directly (`block_scholes_oracle::update::new_update`). So there is no
+// `fixedMathTarget` helper. The rename still matters for the localnet publish flow
+// and the named-address dependency (see SIM_STATUS / run.sh).
+
+// propbook owns the extracted Pyth spot feed and Block Scholes surface feed.
+function propbookTarget(module: string, fn: string): `${string}::${string}::${string}` {
+    return `${PROPBOOK_PACKAGE_ID}::${module}::${fn}`;
+}
+
+// `block_scholes_oracle` is the STUB BS signed-data verifier that mints the
+// verified `Update` consumed by `block_scholes_feed::update_from_bs`.
+function bsOracleTarget(module: string, fn: string): `${string}::${string}::${string}` {
+    return `${BLOCK_SCHOLES_ORACLE_PACKAGE_ID}::${module}::${fn}`;
 }
 
 function pythLazerTarget(module: string, fn: string): `${string}::${string}::${string}` {
@@ -171,11 +196,13 @@ async function nextSourceTimestampMs(): Promise<bigint> {
     throw new Error("localnet Clock did not advance enough for a fresh source timestamp");
 }
 
+// One oracle refresh now writes BOTH propbook feeds: a permissionless Pyth Lazer
+// spot update (PythFeed) and a Block Scholes surface update (BlockScholesFeed) for
+// the market's expiry. There is no in-package oracle and no writer cap anymore.
 interface OracleRefreshParams {
-    oracleId: string;
-    protocolConfigId: string;
-    pythSourceId: string;
-    oracleCapId: string;
+    pythFeedId: string;
+    bsFeedId: string;
+    expiry: bigint;
     spot: bigint;
     forward: bigint;
     svi: {
@@ -189,28 +216,12 @@ interface OracleRefreshParams {
     };
 }
 
-export interface ExpiryPoolSyncParams {
-    poolVaultId: string;
-    protocolConfigId: string;
-    expiryMarketId: string;
-    oracleId: string;
-    pythSourceId: string;
-}
-
-interface SupplyWithExpiryPoolSyncParams extends ExpiryPoolSyncParams {
-    amount: bigint;
-}
-
-interface WithdrawWithExpiryPoolSyncParams extends ExpiryPoolSyncParams {
-    lpCoinId: string;
-}
-
 interface MintParams {
     expiryMarketId: string;
     protocolConfigId: string;
     managerId: string;
-    oracleId: string;
-    pythSourceId: string;
+    pythFeedId: string;
+    bsFeedId: string;
     strike: bigint;
     isUp: boolean;
     quantity: bigint;
@@ -221,70 +232,49 @@ interface RedeemParams {
     expiryMarketId: string;
     protocolConfigId: string;
     managerId: string;
-    oracleId: string;
-    pythSourceId: string;
+    pythFeedId: string;
+    bsFeedId: string;
     orderId: string;
     closeQuantity: bigint;
 }
 
-async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
-    const priceSourceTimestampMs = await nextSourceTimestampMs();
-    addPythSourceUpdate(
-        tx,
-        params.pythSourceId,
-        params.protocolConfigId,
-        params.spot,
-        priceSourceTimestampMs,
-    );
-
-    tx.moveCall({
-        target: target("market_oracle", "update_block_scholes_prices"),
-        arguments: [
-            tx.object(params.oracleId),
-            tx.object(params.protocolConfigId),
-            tx.object(params.oracleCapId),
-            tx.pure.u64(params.spot),
-            tx.pure.u64(params.forward),
-            tx.pure.u64(priceSourceTimestampMs),
-            tx.object(CLOCK_ID),
-        ],
-    });
-
-    const rho = tx.moveCall({
-        target: predictMathTarget("i64", "from_parts"),
-        arguments: [tx.pure.u64(params.svi.rho), tx.pure.bool(params.svi.rhoNegative)],
-    });
-    const m = tx.moveCall({
-        target: predictMathTarget("i64", "from_parts"),
-        arguments: [tx.pure.u64(params.svi.m), tx.pure.bool(params.svi.mNegative)],
-    });
-    const sviParams = tx.moveCall({
-        target: target("market_oracle", "new_svi_params"),
-        arguments: [
-            tx.pure.u64(params.svi.a),
-            tx.pure.u64(params.svi.b),
-            rho,
-            m,
-            tx.pure.u64(params.svi.sigma),
-        ],
-    });
-    tx.moveCall({
-        target: target("market_oracle", "update_svi"),
-        arguments: [
-            tx.object(params.oracleId),
-            tx.object(params.protocolConfigId),
-            tx.object(params.oracleCapId),
-            sviParams,
-            tx.pure.u64(priceSourceTimestampMs),
-            tx.object(CLOCK_ID),
-        ],
-    });
+// Inputs to drive one privileged full-pool flush (the async LP drain).
+export interface FlushParams {
+    poolVaultId: string;
+    protocolConfigId: string;
+    expiryMarketId: string;
+    pythFeedId: string;
+    bsFeedId: string;
 }
 
-function addPythSourceUpdate(
+// Convert a raw binary-range strike to the packed `range_key`. An UP order is
+// `(strike, +inf)` -> lower_tick = strike/tick_size, higher_tick = POS_INF_TICK; a
+// DOWN order is `(-inf, strike)` -> lower_tick = 0 (neg-inf), higher_tick =
+// strike/tick_size. Mirrors `range_codec::pack` + `strikes_from_ticks`.
+function packRangeKeyForStrike(strike: bigint, isUp: boolean): bigint {
+    const tick = strike / ORACLE_TICK_SIZE;
+    if (tick * ORACLE_TICK_SIZE !== strike) {
+        throw new Error(`strike ${strike} is not a whole tick multiple of ${ORACLE_TICK_SIZE}`);
+    }
+    if (tick <= 0n || tick >= POS_INF_TICK) {
+        throw new Error(`strike tick ${tick} outside the finite tick domain (1..POS_INF_TICK-1)`);
+    }
+    const lowerTick = isUp ? tick : 0n;
+    const higherTick = isUp ? POS_INF_TICK : tick;
+    return lowerTick | (higherTick << TICK_BITS);
+}
+
+async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
+    const sourceTimestampMs = await nextSourceTimestampMs();
+    addPythFeedUpdate(tx, params.pythFeedId, params.spot, sourceTimestampMs);
+    addBlockScholesSurfaceUpdate(tx, params, sourceTimestampMs);
+}
+
+// Permissionless Pyth Lazer spot update: parse+verify the signed Lazer payload,
+// then store it through the propbook PythFeed (no protocol config, no cap).
+function addPythFeedUpdate(
     tx: Transaction,
-    pythSourceId: string,
-    protocolConfigId: string,
+    pythFeedId: string,
     spot: bigint,
     sourceTimestampMs: bigint,
 ): void {
@@ -303,13 +293,40 @@ function addPythSourceUpdate(
         ],
     });
     tx.moveCall({
-        target: target("pyth_source", "update_from_lazer"),
+        target: propbookTarget("pyth_feed", "update_from_lazer"),
+        arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
+    });
+}
+
+// Block Scholes surface update for one expiry: build the STUB verified `Update`
+// (spot + forward + SVI, carried as magnitude+sign primitives) via
+// `block_scholes_oracle::update::new_update`, then ingest it into the propbook
+// BlockScholesFeed. There is no writer cap and no separate SVI call anymore.
+function addBlockScholesSurfaceUpdate(
+    tx: Transaction,
+    params: OracleRefreshParams,
+    publishedAtMs: bigint,
+): void {
+    const update = tx.moveCall({
+        target: bsOracleTarget("update", "new_update"),
         arguments: [
-            tx.object(pythSourceId),
-            tx.object(protocolConfigId),
-            update,
-            tx.object(CLOCK_ID),
+            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u64(params.expiry),
+            tx.pure.u64(publishedAtMs),
+            tx.pure.u64(params.spot),
+            tx.pure.u64(params.forward),
+            tx.pure.u64(params.svi.a),
+            tx.pure.u64(params.svi.b),
+            tx.pure.u64(params.svi.sigma),
+            tx.pure.u64(params.svi.rho),
+            tx.pure.bool(params.svi.rhoNegative),
+            tx.pure.u64(params.svi.m),
+            tx.pure.bool(params.svi.mNegative),
         ],
+    });
+    tx.moveCall({
+        target: propbookTarget("block_scholes_feed", "update_from_bs"),
+        arguments: [tx.object(params.bsFeedId), update, tx.object(CLOCK_ID)],
     });
 }
 
@@ -322,36 +339,41 @@ function mintDusdc(tx: Transaction, amount: bigint) {
     return coin;
 }
 
-function startPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams) {
-    const sync = tx.moveCall({
-        target: target("plp", "start_pool_sync"),
-        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
+// Run one full-pool flush over the single active market in the same PTB:
+// privileged `start_pool_valuation` (AdminCap) -> one `value_expiry` for our
+// market -> `finish_flush`, which drains the supply/withdraw request queues at the
+// frozen mark. The harness has exactly one expiry market, so the snapshot covers
+// one `value_expiry`. (Multi-market topologies must call `value_expiry` once per
+// active market between start and finish.)
+function addFlush(tx: Transaction, params: FlushParams): void {
+    const valuation = tx.moveCall({
+        target: target("plp", "start_pool_valuation"),
+        arguments: [
+            tx.object(params.protocolConfigId),
+            tx.object(params.poolVaultId),
+            tx.object(ADMIN_CAP_ID),
+        ],
     });
     tx.moveCall({
-        target: target("plp", "sync_expiry"),
+        target: target("plp", "value_expiry"),
         arguments: [
-            sync,
+            valuation,
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
-            tx.object(params.oracleId),
-            tx.object(params.pythSourceId),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsFeedId),
             tx.object(CLOCK_ID),
         ],
     });
-    return sync;
-}
-
-function finishPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams): void {
-    const sync = startPoolSyncWithExpiry(tx, params);
     tx.moveCall({
-        target: target("plp", "finish_pool_sync"),
-        arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), sync],
+        target: target("plp", "finish_flush"),
+        arguments: [valuation, tx.object(params.poolVaultId), tx.object(params.protocolConfigId)],
     });
 }
 
 function addMint(tx: Transaction, params: MintParams): void {
-    const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
+    const rangeKey = packRangeKeyForStrike(params.strike, params.isUp);
     const proof = tx.moveCall({
         target: target("predict_manager", "generate_proof_as_owner"),
         arguments: [tx.object(params.managerId)],
@@ -363,10 +385,9 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.object(params.managerId),
             proof,
             tx.object(params.protocolConfigId),
-            tx.object(params.oracleId),
-            tx.object(params.pythSourceId),
-            tx.pure.u64(lower),
-            tx.pure.u64(higher),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsFeedId),
+            tx.pure.u64(rangeKey),
             tx.pure.u64(params.quantity),
             tx.pure.u64(params.leverage),
             tx.object(CLOCK_ID),
@@ -389,19 +410,13 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             tx.object(params.managerId),
             proof,
             tx.object(params.protocolConfigId),
-            tx.object(params.oracleId),
-            tx.object(params.pythSourceId),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsFeedId),
             tx.pure.u256(BigInt(params.orderId)),
             tx.pure.u64(params.closeQuantity),
             tx.object(CLOCK_ID),
         ],
     });
-}
-
-function binaryRangeBounds(strike: bigint, isUp: boolean): { lower: bigint; higher: bigint } {
-    return isUp
-        ? { lower: strike, higher: POS_INF_STRIKE }
-        : { lower: NEG_INF_STRIKE, higher: strike };
 }
 
 export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
@@ -414,39 +429,40 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
     return tx;
 }
 
-export function createMarketOracleCapTx(recipient: string): Transaction {
-    const tx = new Transaction();
-    const cap = tx.moveCall({
-        target: target("market_oracle_writer_cap", "create"),
-        arguments: [tx.object(ADMIN_CAP_ID)],
-    });
-    tx.transferObjects([cap], tx.pure.address(recipient));
-    return tx;
-}
-
 export function mintLifecycleCapTx(recipient: string): Transaction {
     const tx = new Transaction();
+    // MarketLifecycleCap mint moved from `plp` to `registry` (the allowlist now
+    // lives on Registry, its sole gating call site being create_expiry_market).
     const cap = tx.moveCall({
-        target: target("plp", "mint_lifecycle_cap"),
-        arguments: [tx.object(POOL_VAULT_ID), tx.object(ADMIN_CAP_ID)],
+        target: target("registry", "mint_lifecycle_cap"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
     return tx;
 }
 
-export function createPythSourceTx(
-    feedId: number,
-    tickSize: bigint,
-): Transaction {
+// Admin-approve one Pyth Lazer feed (records the strike tick size future markets
+// use) AND permissionlessly create the two propbook feeds the market binds to: the
+// global Pyth spot feed and the per-underlying Block Scholes surface feed. Both
+// `create_and_share` calls register into the shared propbook `OracleRegistry`.
+export function registerPythFeedAndCreateFeedsTx(feedId: number, tickSize: bigint): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "create_pyth_source"),
+        target: target("registry", "register_pyth_feed"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u32(feedId),
             tx.pure.u64(tickSize),
         ],
+    });
+    tx.moveCall({
+        target: propbookTarget("pyth_feed", "create_and_share"),
+        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(feedId)],
+    });
+    tx.moveCall({
+        target: propbookTarget("block_scholes_feed", "create_and_share"),
+        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
     });
     return tx;
 }
@@ -494,32 +510,46 @@ export function updatePythTrustedSignerTx(): Transaction {
     return tx;
 }
 
-export async function seedPythSourceAndCreateExpiryMarketTx(params: {
-    poolVaultId: string;
-    protocolConfigId: string;
-    pythSourceId: string;
-    lifecycleCapId: string;
-    writerCapId: string;
+// Seed the Block Scholes surface (and Pyth spot) for the market's expiry. Market
+// creation itself reads NO spot now (absolute ticks need no grid centering), but a
+// fresh surface must exist before the first mint and before any flush valuation
+// can price `current_nav`. Kept as its own tx so it can run before/independently
+// of market creation.
+export async function seedOracleTx(params: {
+    pythFeedId: string;
+    bsFeedId: string;
     expiry: bigint;
     spot: bigint;
+    forward: bigint;
+    svi: OracleRefreshParams["svi"];
 }): Promise<Transaction> {
     const tx = new Transaction();
-    addPythSourceUpdate(
-        tx,
-        params.pythSourceId,
-        params.protocolConfigId,
-        params.spot,
-        await nextSourceTimestampMs(),
-    );
+    await addOracleRefresh(tx, params);
+    return tx;
+}
+
+// Create the expiry market bound to its propbook Pyth + Block Scholes feeds.
+// No spot is read at creation; the registered feed `tick_size` defines the grid.
+// `create_expiry_market` returns one ID and registers the market with the vault as
+// a zero-cash accounting row (not mintable until `rebalance_expiry_cash` funds it).
+export function createExpiryMarketTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    pythFeedId: string;
+    bsFeedId: string;
+    lifecycleCapId: string;
+    expiry: bigint;
+}): Transaction {
+    const tx = new Transaction();
     tx.moveCall({
         target: target("registry", "create_expiry_market"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.object(params.pythSourceId),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsFeedId),
             tx.object(params.lifecycleCapId),
-            tx.pure.vector("id", [params.writerCapId]),
             tx.pure.u64(params.expiry),
             tx.object(CLOCK_ID),
         ],
@@ -527,87 +557,71 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
     return tx;
 }
 
-export function supplyTx(
-    poolVaultId: string,
-    protocolConfigId: string,
-    amount: bigint,
-    pythSourceId: string,
-): Transaction {
+// Fund / rebalance one expiry's cash from pool idle toward target. Standalone and
+// permissionless; this is what makes a freshly created market mintable. Replaces
+// the old setup-only PLP sync.
+export function rebalanceExpiryCashTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    expiryMarketId: string;
+}): Transaction {
     const tx = new Transaction();
-    const dusdc = mintDusdc(tx, amount);
-    const sync = tx.moveCall({
-        target: target("plp", "start_pool_sync"),
-        arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
-    });
-    // The sim pool holds no SUI/DEEP incentives, so supply's incentive sources are
-    // ignored; pass the market PythSource as a placeholder for both slots.
-    const [plpCoin] = tx.moveCall({
-        target: target("plp", "supply"),
+    tx.moveCall({
+        target: target("plp", "rebalance_expiry_cash"),
         arguments: [
-            tx.object(poolVaultId),
-            tx.object(protocolConfigId),
-            sync,
-            dusdc,
-            tx.object(pythSourceId),
-            tx.object(pythSourceId),
-            tx.object(CLOCK_ID),
+            tx.object(params.poolVaultId),
+            tx.object(params.expiryMarketId),
+            tx.object(params.protocolConfigId),
         ],
     });
-    tx.transferObjects([plpCoin], tx.pure.address(address));
     return tx;
 }
 
-export function syncExpiryTx(params: ExpiryPoolSyncParams): Transaction {
+// Queue a supply request: escrow `amount` DUSDC, recorded against the manager as
+// the fill recipient. The minted PLP is delivered to the manager (via the balance
+// accumulator) at the next flush, NOT returned here. Returns no object.
+export function requestSupplyTx(params: {
+    poolVaultId: string;
+    managerId: string;
+    amount: bigint;
+}): Transaction {
     const tx = new Transaction();
-    finishPoolSyncWithExpiry(tx, params);
-    return tx;
-}
-
-export async function refreshOracleAndSupplyWithExpiryPoolSyncTx(
-    params: OracleRefreshParams & SupplyWithExpiryPoolSyncParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
     const dusdc = mintDusdc(tx, params.amount);
-    const sync = startPoolSyncWithExpiry(tx, params);
-    // No incentives in the sim pool, so the incentive sources are ignored; reuse
-    // the market PythSource as a placeholder for both slots.
-    const [plpCoin] = tx.moveCall({
-        target: target("plp", "supply"),
-        arguments: [
-            tx.object(params.poolVaultId),
-            tx.object(params.protocolConfigId),
-            sync,
-            dusdc,
-            tx.object(params.pythSourceId),
-            tx.object(params.pythSourceId),
-            tx.object(CLOCK_ID),
-        ],
+    tx.moveCall({
+        target: target("plp", "request_supply"),
+        arguments: [tx.object(params.poolVaultId), tx.object(params.managerId), dusdc],
     });
-    tx.transferObjects([plpCoin], tx.pure.address(address));
     return tx;
 }
 
-export async function refreshOracleAndWithdrawWithExpiryPoolSyncTx(
-    params: OracleRefreshParams & WithdrawWithExpiryPoolSyncParams,
+// Queue a withdraw request: escrow `lpCoinId` PLP shares against the manager. The
+// DUSDC fill is delivered at the next flush, NOT returned here.
+export function requestWithdrawTx(params: {
+    poolVaultId: string;
+    managerId: string;
+    lpCoinId: string;
+}): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("plp", "request_withdraw"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.managerId),
+            tx.object(params.lpCoinId),
+        ],
+    });
+    return tx;
+}
+
+// Refresh the oracle, then run one privileged full-pool flush that drains both LP
+// request queues at the frozen mark. The drain happens inside `finish_flush`; no
+// per-LP coin is returned (fills land on the manager via the accumulator).
+export async function refreshOracleAndFlushTx(
+    params: OracleRefreshParams & FlushParams,
 ): Promise<Transaction> {
     const tx = new Transaction();
     await addOracleRefresh(tx, params);
-    const sync = startPoolSyncWithExpiry(tx, params);
-    // withdraw returns (Coin<DUSDC>, Coin<SUI>, Coin<DEEP>): DUSDC pro-rata plus
-    // each incentive in-kind. The sim pool holds no incentives, so the SUI/DEEP
-    // coins are zero-value; transfer all three out.
-    const [dusdc, sui, deep] = tx.moveCall({
-        target: target("plp", "withdraw"),
-        arguments: [
-            tx.object(params.poolVaultId),
-            tx.object(params.protocolConfigId),
-            sync,
-            tx.object(params.lpCoinId),
-            tx.object(CLOCK_ID),
-        ],
-    });
-    tx.transferObjects([dusdc, sui, deep], tx.pure.address(address));
+    addFlush(tx, params);
     return tx;
 }
 

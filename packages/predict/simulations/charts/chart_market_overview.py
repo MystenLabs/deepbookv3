@@ -48,7 +48,7 @@ def extract_market_activity(
         x = record_x(record, mode, origin)
         for update in record.get("updates", []):
             update_type = update.get("type")
-            if update_type == "oracle_prices_updated":
+            if update_type == "pyth_feed_updated":
                 spot = to_price(int(update["spot"]))
                 if spot is not None:
                     prices.append((x, spot))

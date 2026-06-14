@@ -28,23 +28,23 @@ import {
     POOL_VAULT_ID,
     PROTOCOL_CONFIG_ID,
     address,
+    createExpiryMarketTx,
     createManagerTx,
-    createMarketOracleCapTx,
-    createPythSourceTx,
     depositToManagerTx,
     deriveManagerId,
     execute,
     executeAndWait,
     finalizeDusdcCurrencyRegistrationTx,
     mintLifecycleCapTx,
+    rebalanceExpiryCashTx,
+    refreshOracleAndFlushTx,
     refreshOracleAndMintTx,
     refreshOracleAndRedeemTx,
-    seedPythSourceAndCreateExpiryMarketTx,
-    refreshOracleAndSupplyWithExpiryPoolSyncTx,
-    refreshOracleAndWithdrawWithExpiryPoolSyncTx,
+    registerPythFeedAndCreateFeedsTx,
+    requestSupplyTx,
+    requestWithdrawTx,
+    seedOracleTx,
     setTemplateExpiryFeeConfigTx,
-    supplyTx,
-    syncExpiryTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
 } from "./runtime.js";
@@ -59,18 +59,14 @@ const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
+// Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
+// tick * tick_size`, no centered grid. The harness tick size is $1 (1e9-scaled).
+// A strike is encoded as a tick; the only validity bound is the finite tick
+// domain `1..POS_INF_TICK - 1`.
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
-const ORACLE_GRID_TICKS = 100_000n;
-const ORACLE_CENTER_TICKS = ORACLE_GRID_TICKS / 2n;
-const NEG_INF_STRIKE = 0n;
-const POS_INF_STRIKE = (1n << 64n) - 1n;
+const TICK_BITS = 24n;
+const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
-
-interface OracleGrid {
-    minStrike: bigint;
-    tickSize: bigint;
-    maxStrike: bigint;
-}
 
 interface SimulationCapital {
     vaultSeed: bigint;
@@ -95,7 +91,11 @@ interface EconomicState {
 interface AliasState {
     orderIdsByRef: Map<string, string>;
     orderRefsById: Map<string, string>;
-    lpCoinIdsByRef: Map<string, string>;
+    // LP requests are now keyed by their queue index (the cancel handle returned by
+    // request_supply / request_withdraw), not a returned PLP coin object — the async
+    // flush delivers fills to the manager via the balance accumulator, so no PLP coin
+    // is created in the request tx.
+    lpRequestIndexByRef: Map<string, bigint>;
 }
 
 function parseArgs() {
@@ -149,58 +149,23 @@ function initialAliases(): AliasState {
     return {
         orderIdsByRef: new Map(),
         orderRefsById: new Map(),
-        lpCoinIdsByRef: new Map(),
+        lpRequestIndexByRef: new Map(),
     };
 }
 
-let configuredOracleGrid: OracleGrid | null = null;
-
-function oracleGridForSpot(spot: bigint): OracleGrid {
-    if (spot <= 0n) throw new Error("initial Pyth spot must be positive");
-    // Mirror strike_grid::new_centered: Move centers the grid on tick-floored
-    // spot, so compare on whole ticks.
-    if (spot / ORACLE_TICK_SIZE > ORACLE_GRID_TICKS) {
+// Snap a raw strike DOWN to its tick boundary, then back to a raw strike. With the
+// absolute-tick domain there is no grid to center; alignment is just flooring to a
+// whole tick multiple. The tick must land in the finite domain `1..POS_INF_TICK-1`.
+function alignStrikeToTick(strike: bigint): bigint {
+    if (strike <= 0n) throw new Error("strike must be positive");
+    const tick = strike / ORACLE_TICK_SIZE;
+    if (tick <= 0n || tick >= POS_INF_TICK) {
         throw new Error(
-            "initial Pyth spot exceeds oracle tick coverage; raise the oracle tick size to cover a higher spot",
+            `strike tick ${tick} outside the finite tick domain (1..POS_INF_TICK-1); ` +
+                "raise the oracle tick size to cover a higher strike",
         );
     }
-    const centerStrikeIndex = spot / ORACLE_TICK_SIZE;
-    if (centerStrikeIndex <= ORACLE_CENTER_TICKS) {
-        throw new Error("initial Pyth spot is too low for centered oracle grid");
-    }
-    const minStrike = (centerStrikeIndex - ORACLE_CENTER_TICKS) * ORACLE_TICK_SIZE;
-    return {
-        minStrike,
-        tickSize: ORACLE_TICK_SIZE,
-        maxStrike: minStrike + ORACLE_GRID_TICKS * ORACLE_TICK_SIZE,
-    };
-}
-
-function setOracleGrid(grid: OracleGrid): void {
-    configuredOracleGrid = grid;
-}
-
-function oracleGrid(): OracleGrid {
-    if (configuredOracleGrid === null) {
-        throw new Error("oracle grid has not been configured");
-    }
-    return configuredOracleGrid;
-}
-
-function alignStrikeToGrid(strike: bigint): bigint {
-    const grid = oracleGrid();
-    const relative = strike - grid.minStrike;
-    const tickIndex = relative / grid.tickSize;
-    const snapped = grid.minStrike + tickIndex * grid.tickSize;
-    if (snapped < grid.minStrike) return grid.minStrike;
-    if (snapped > grid.maxStrike) return grid.maxStrike;
-    return snapped;
-}
-
-function binaryRangeBounds(strike: bigint, isUp: boolean): { lower: bigint; higher: bigint } {
-    return isUp
-        ? { lower: strike, higher: POS_INF_STRIKE }
-        : { lower: NEG_INF_STRIKE, higher: strike };
+    return tick * ORACLE_TICK_SIZE;
 }
 
 function direction(row: MintRow): "UP" | "DN" {
@@ -288,16 +253,29 @@ function sviInput(row: MintRow | OracleRefreshData) {
     };
 }
 
+// The canonical mint input now mirrors the packed range key (two u24 ticks) the
+// contract takes at the entrypoint. `lower_tick`/`higher_tick` are the display
+// form; `range_key` is the source of truth (lower | higher << TICK_BITS).
 function mintInput(row: MintRow): Record<string, string> {
-    const strike = alignStrikeToGrid(row.strike);
-    const { lower, higher } = binaryRangeBounds(strike, row.isUp);
+    const strike = alignStrikeToTick(row.strike);
+    const { lowerTick, higherTick } = binaryRangeTicks(strike, row.isUp);
     return {
         order_ref: row.orderRef,
-        lower_strike: lower.toString(),
-        higher_strike: higher.toString(),
+        range_key: (lowerTick | (higherTick << TICK_BITS)).toString(),
+        lower_tick: lowerTick.toString(),
+        higher_tick: higherTick.toString(),
         quantity: row.quantity.toString(),
         leverage: row.leverage.toString(),
     };
+}
+
+// Ticks for a binary range. UP `(strike, +inf)` -> (strike/tick, POS_INF_TICK);
+// DOWN `(-inf, strike)` -> (0 = neg-inf, strike/tick). Mirrors range_codec.
+function binaryRangeTicks(strike: bigint, isUp: boolean): { lowerTick: bigint; higherTick: bigint } {
+    const tick = strike / ORACLE_TICK_SIZE;
+    return isUp
+        ? { lowerTick: tick, higherTick: POS_INF_TICK }
+        : { lowerTick: 0n, higherTick: tick };
 }
 
 function rowInput(row: ScenarioRow): Record<string, unknown> {
@@ -332,25 +310,31 @@ function oracleRefreshInput(row: ScenarioRow): Record<string, unknown> {
     };
 }
 
-function normalizePricesUpdated(event: any): Record<string, unknown> {
+// propbook `pyth_feed::PythFeedUpdated`: the global Pyth spot tick. Timestamps are
+// localnet-clock-derived, so they are intentionally excluded from the parity diff.
+function normalizePythFeedUpdated(event: any): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
-        type: "oracle_prices_updated",
+        type: "pyth_feed_updated",
         spot: decimal(json.spot),
-        forward: decimal(json.forward),
-        basis: decimal(json.basis),
     };
 }
 
-function normalizeSviUpdated(event: any): Record<string, unknown> {
+// propbook `block_scholes_feed::BlockScholesSurfaceUpdated`: this expiry's surface
+// (spot + forward + SVI). Replaces the old in-package BlockScholesPricesUpdated +
+// BlockScholesSVIUpdated pair. `basis` is no longer an event field; consumers
+// derive it as forward/spot. Timestamps are localnet-clock-derived → not diffed.
+function normalizeBlockScholesSurfaceUpdated(event: any): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
-        type: "oracle_svi_updated",
-        a: decimal(json.a),
-        b: decimal(json.b),
-        rho: signedI64(json.rho),
-        m: signedI64(json.m),
-        sigma: decimal(json.sigma),
+        type: "block_scholes_surface_updated",
+        spot: decimal(json.spot),
+        forward: decimal(json.forward),
+        a: decimal(json.svi_a),
+        b: decimal(json.svi_b),
+        rho: signedI64(json.svi_rho),
+        m: signedI64(json.svi_m),
+        sigma: decimal(json.svi_sigma),
     };
 }
 
@@ -361,6 +345,7 @@ function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unkn
         type: "order_minted",
         order_ref: orderRef,
         order_sequence: orderSequence(decimal(json.order_id)),
+        range_key: decimal(json.range_key),
         lower_strike: decimal(json.lower_strike),
         higher_strike: decimal(json.higher_strike),
         leverage: decimal(json.leverage),
@@ -432,30 +417,91 @@ function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<str
     };
 }
 
-function normalizeSupplyExecuted(event: any, row: ScenarioRow): Record<string, unknown> {
+// === Async LP request/flush events (replace the deleted sync SupplyExecuted /
+// WithdrawExecuted). A supply/withdraw is now a two-phase flow: a request row
+// escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
+// queues at one frozen mark, emitting PoolValued + FlushExecuted plus per-request
+// SupplyFilled / WithdrawFilled / SupplyRefunded / WithdrawRefunded. The `index`
+// queue handle replaces the old returned PLP coin object as the request alias key.
+
+function normalizeSupplyRequested(event: any, row: ScenarioRow): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
-        type: "pool_supply",
+        type: "supply_requested",
         lp_ref: row.action === "supply" ? row.lpRef : null,
-        payment: decimal(json.payment),
-        shares_minted: decimal(json.shares_minted),
-        pool_value_before: decimal(json.pool_value_before),
-        incentive_value: decimal(json.incentive_value),
-        total_supply_after: decimal(json.total_supply_after),
-        idle_balance_after: decimal(json.idle_balance_after),
+        index: decimal(json.index),
+        amount: decimal(json.amount),
     };
 }
 
-function normalizeWithdrawExecuted(event: any, row: ScenarioRow): Record<string, unknown> {
+function normalizeWithdrawRequested(event: any, row: ScenarioRow): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
-        type: "pool_withdraw",
+        type: "withdraw_requested",
         lp_ref: row.action === "withdraw" ? row.lpRef : null,
+        index: decimal(json.index),
+        amount: decimal(json.amount),
+    };
+}
+
+function normalizeSupplyFilled(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "supply_filled",
+        index: decimal(json.index),
+        dusdc_amount: decimal(json.dusdc_amount),
+        shares_minted: decimal(json.shares_minted),
+    };
+}
+
+function normalizeWithdrawFilled(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "withdraw_filled",
+        index: decimal(json.index),
         shares_burned: decimal(json.shares_burned),
-        payout: decimal(json.payout),
-        withdraw_fee: decimal(json.withdraw_fee),
-        pool_value_before: decimal(json.pool_value_before),
-        total_supply_after: decimal(json.total_supply_after),
+        dusdc_amount: decimal(json.dusdc_amount),
+    };
+}
+
+function normalizeSupplyRefunded(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "supply_refunded",
+        index: decimal(json.index),
+        dusdc_amount: decimal(json.dusdc_amount),
+    };
+}
+
+function normalizeWithdrawRefunded(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "withdraw_refunded",
+        index: decimal(json.index),
+        plp_amount: decimal(json.plp_amount),
+    };
+}
+
+function normalizePoolValued(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "pool_valued",
+        pool_nav: decimal(json.pool_nav),
+        idle_balance: decimal(json.idle_balance),
+        active_market_nav: decimal(json.active_market_nav),
+        market_count: decimal(json.market_count),
+    };
+}
+
+function normalizeFlushExecuted(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "flush_executed",
+        pool_value: decimal(json.pool_value),
+        total_supply: decimal(json.total_supply),
+        supplies_filled: decimal(json.supplies_filled),
+        withdrawals_filled: decimal(json.withdrawals_filled),
+        requests_processed: decimal(json.requests_processed),
         idle_balance_after: decimal(json.idle_balance_after),
     };
 }
@@ -507,8 +553,9 @@ function normalizeUpdates(
     const updates: Record<string, unknown>[] = [];
     for (const event of receipt.events) {
         const name = eventName(event);
-        if (name === "BlockScholesPricesUpdated") updates.push(normalizePricesUpdated(event));
-        else if (name === "BlockScholesSVIUpdated") updates.push(normalizeSviUpdated(event));
+        if (name === "PythFeedUpdated") updates.push(normalizePythFeedUpdated(event));
+        else if (name === "BlockScholesSurfaceUpdated")
+            updates.push(normalizeBlockScholesSurfaceUpdated(event));
         else if (name === "OrderLiquidated") updates.push(normalizeOrderLiquidated(event, aliases));
         else if (name === "OrderMinted") updates.push(normalizeOrderMinted(event, row));
         else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
@@ -516,8 +563,14 @@ function normalizeUpdates(
             updates.push(normalizeLiquidatedOrderRedeemed(event, row));
         else if (name === "SettledOrderRedeemed")
             updates.push(normalizeSettledOrderRedeemed(event, row));
-        else if (name === "SupplyExecuted") updates.push(normalizeSupplyExecuted(event, row));
-        else if (name === "WithdrawExecuted") updates.push(normalizeWithdrawExecuted(event, row));
+        else if (name === "SupplyRequested") updates.push(normalizeSupplyRequested(event, row));
+        else if (name === "WithdrawRequested") updates.push(normalizeWithdrawRequested(event, row));
+        else if (name === "SupplyFilled") updates.push(normalizeSupplyFilled(event));
+        else if (name === "WithdrawFilled") updates.push(normalizeWithdrawFilled(event));
+        else if (name === "SupplyRefunded") updates.push(normalizeSupplyRefunded(event));
+        else if (name === "WithdrawRefunded") updates.push(normalizeWithdrawRefunded(event));
+        else if (name === "PoolValued") updates.push(normalizePoolValued(event));
+        else if (name === "FlushExecuted") updates.push(normalizeFlushExecuted(event));
         else if (name === "ExpiryCashRebalanced")
             updates.push(normalizeExpiryCashRebalanced(event));
         else if (name === "ExpiryCashReceived") updates.push(normalizeExpiryCashReceived(event));
@@ -585,13 +638,28 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
         state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
         state.vaultProtocolReserveBalance = BigInt(decimal(update.protocol_reserve_balance_after));
         state.profitBasisDebits = profitBasisAfter;
-    } else if (update.type === "pool_supply") {
+    } else if (update.type === "supply_filled") {
+        // A supply fill mints PLP and joins its escrowed DUSDC into idle. PLP supply
+        // grows by shares_minted; idle is reconciled by the FlushExecuted snapshot.
+        state.vaultTotalPlpSupply += BigInt(decimal(update.shares_minted));
+    } else if (update.type === "withdraw_filled") {
+        // A withdraw fill burns PLP and pays DUSDC from idle. PLP supply shrinks by
+        // shares_burned; idle is reconciled by the FlushExecuted snapshot.
+        state.vaultTotalPlpSupply -= BigInt(decimal(update.shares_burned));
+    } else if (update.type === "flush_executed") {
+        // FlushExecuted carries the post-drain idle balance; trust it as the
+        // authoritative idle after both queues drain at the frozen mark.
         state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-        state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
-    } else if (update.type === "pool_withdraw") {
-        state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-        state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
     }
+    // NOTE: supply_requested / withdraw_requested escrow funds OUTSIDE the tracked
+    // vault/manager balances (the request queue holds them); they move balances only
+    // at the flush. They carry no state delta here.
+    // TODO(sim-parity): the async request -> flush split changes WHEN PLP supply and
+    // manager balances move relative to the old synchronous supply/withdraw. The
+    // manager-side credit of a supply fill / withdraw payout now lands via the
+    // balance accumulator (send_funds) and is absorbed lazily on the manager's next
+    // capital op, NOT in this tx. Confirm the exact manager_balance + PLP-supply
+    // timing against a localnet run before trusting LP-row parity.
 }
 
 function stateSnapshot(state: EconomicState): Record<string, string> {
@@ -652,17 +720,11 @@ function eventOrderId(receipt: ExecutionReceipt, name: string): string | null {
     return json.order_id === undefined ? null : decimal(json.order_id);
 }
 
-function createdPlpCoinId(receipt: ExecutionReceipt): string {
-    const change = receipt.objectChanges.find(
-        (objectChange: any) =>
-            objectChange.type === "created" &&
-            String(objectChange.objectType ?? "").includes("::coin::Coin") &&
-            String(objectChange.objectType ?? "").includes("::plp::PLP"),
-    );
-    if (!change?.objectId) {
-        throw new Error("Supply transaction did not create a PLP coin object");
-    }
-    return change.objectId;
+function requestIndex(receipt: ExecutionReceipt, name: string): bigint | null {
+    const event = findEvent(receipt.events, name);
+    if (!event) return null;
+    const json = event.parsedJson ?? {};
+    return json.index === undefined ? null : BigInt(decimal(json.index));
 }
 
 function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: AliasState) {
@@ -701,10 +763,16 @@ function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: Ali
         return;
     }
 
+    // A supply/withdraw row now ENQUEUES a request (the flush drains it later), so the
+    // alias is the queue index, not a PLP coin object. The index is the cancel handle.
     if (row.action === "supply") {
-        aliases.lpCoinIdsByRef.set(row.lpRef, createdPlpCoinId(receipt));
+        const index = requestIndex(receipt, "SupplyRequested");
+        if (index === null) throw new Error(`Missing SupplyRequested event for ${row.lpRef}`);
+        aliases.lpRequestIndexByRef.set(row.lpRef, index);
     } else if (row.action === "withdraw") {
-        aliases.lpCoinIdsByRef.delete(row.lpRef);
+        const index = requestIndex(receipt, "WithdrawRequested");
+        if (index === null) throw new Error(`Missing WithdrawRequested event for ${row.lpRef}`);
+        aliases.lpRequestIndexByRef.set(row.lpRef, index);
     }
 }
 
@@ -741,15 +809,44 @@ function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapi
     };
 }
 
-function firstBlockScholesSpot(row: ScenarioRow): bigint {
-    return row.action === "oracle_mint_ptb" ? row.spot : row.oracleRefresh.spot;
+interface OracleSeedData {
+    spot: bigint;
+    forward: bigint;
+    svi: {
+        a: bigint;
+        b: bigint;
+        rho: bigint;
+        rhoNegative: boolean;
+        m: bigint;
+        mNegative: boolean;
+        sigma: bigint;
+    };
+}
+
+// The first scenario row's full oracle snapshot (spot + forward + SVI). Used to
+// seed the Block Scholes surface for the market's expiry before any mint. A mint
+// row carries the SVI inline; every other action carries it under `oracleRefresh`.
+function firstOracleData(row: ScenarioRow): OracleSeedData {
+    const o = row.action === "oracle_mint_ptb" ? row : row.oracleRefresh;
+    return {
+        spot: o.spot,
+        forward: o.forward,
+        svi: {
+            a: o.a,
+            b: o.b,
+            rho: o.rho,
+            rhoNegative: o.rhoNegative,
+            m: o.m,
+            mNegative: o.mNegative,
+            sigma: o.sigma,
+        },
+    };
 }
 
 async function setupSimulation(
     scenarioConfig: any,
     capital: SimulationCapital,
-    initialPythSpot: bigint,
-    grid: OracleGrid,
+    seed: OracleSeedData,
 ): Promise<SimState> {
     console.log(`[${ts()}] --- Setup ---`);
     const expiryFeeMaxMultiplier = protocolConfigValue(
@@ -781,13 +878,6 @@ async function setupSimulation(
     console.log(`[${ts()}]   PoolVault: ${poolVaultId}`);
     console.log(`[${ts()}]   ProtocolConfig: ${protocolConfigId}`);
 
-    result = await executeAndWait(createMarketOracleCapTx(address), "create_oracle_cap");
-    const oracleCapChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("MarketOracleWriterCap"),
-    );
-    const oracleCapId: string = oracleCapChange.objectId;
-    console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
-
     result = await executeAndWait(mintLifecycleCapTx(address), "mint_lifecycle_cap");
     const lifecycleCapChange = result.objectChanges.find(
         (change: any) => change.type === "created" && change.objectType.includes("MarketLifecycleCap"),
@@ -795,15 +885,24 @@ async function setupSimulation(
     const lifecycleCapId: string = lifecycleCapChange.objectId;
     console.log(`[${ts()}]   LifecycleCap: ${lifecycleCapId}`);
 
+    // Admin-approve the Pyth feed AND create the two propbook feeds (Pyth spot +
+    // Block Scholes surface). Both feed objects are shared; capture their IDs.
     result = await executeAndWait(
-        createPythSourceTx(1, ORACLE_TICK_SIZE),
-        "create_pyth_source",
+        registerPythFeedAndCreateFeedsTx(1, ORACLE_TICK_SIZE),
+        "register_pyth_feed_and_create_feeds",
     );
-    const pythSourceChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("PythSource"),
+    const pythFeedChange = result.objectChanges.find(
+        (change: any) => change.type === "created" && change.objectType.includes("pyth_feed::PythFeed"),
     );
-    const pythSourceId: string = pythSourceChange.objectId;
-    console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
+    const bsFeedChange = result.objectChanges.find(
+        (change: any) =>
+            change.type === "created" &&
+            change.objectType.includes("block_scholes_feed::BlockScholesFeed"),
+    );
+    const pythFeedId: string = pythFeedChange.objectId;
+    const bsFeedId: string = bsFeedChange.objectId;
+    console.log(`[${ts()}]   PythFeed: ${pythFeedId}`);
+    console.log(`[${ts()}]   BlockScholesFeed: ${bsFeedId}`);
 
     await executeAndWait(
         setTemplateExpiryFeeConfigTx(protocolConfigId, expiryFeeWindowMs, expiryFeeMaxMultiplier),
@@ -816,53 +915,41 @@ async function setupSimulation(
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
     console.log(`[${ts()}]   Pyth trusted signer configured`);
 
+    // Seed the Block Scholes surface + Pyth spot for the market's expiry so pricing
+    // (mint admission, flush NAV valuation) has a fresh surface to read. Market
+    // creation reads NO spot now (absolute ticks), but the surface must exist before
+    // the first priced op.
     await executeAndWait(
-        supplyTx(poolVaultId, protocolConfigId, capital.vaultSeed, pythSourceId),
-        "supply",
-    );
-    console.log(`[${ts()}]   Vault funded: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
-
-    result = await executeAndWait(
-        await seedPythSourceAndCreateExpiryMarketTx({
-            poolVaultId,
-            protocolConfigId,
-            pythSourceId,
-            lifecycleCapId,
-            writerCapId: oracleCapId,
+        await seedOracleTx({
+            pythFeedId,
+            bsFeedId,
             expiry: EXPIRY_MS,
-            spot: initialPythSpot,
+            spot: seed.spot,
+            forward: seed.forward,
+            svi: seed.svi,
         }),
-        "seed_pyth_source_and_create_expiry_market",
-        50_000_000_000n,
+        "seed_oracle_surface",
     );
     console.log(
-        `[${ts()}]   PythSource seeded: spot=${initialPythSpot} grid=$${scaledUsd(grid.minStrike)}-$${scaledUsd(grid.maxStrike)} tick=$${scaledUsd(grid.tickSize)}`,
+        `[${ts()}]   Oracle seeded: spot=${seed.spot} forward=${seed.forward} tick=$${scaledUsd(ORACLE_TICK_SIZE)}`,
     );
-    const oracleChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" &&
-            change.objectType.includes("MarketOracle") &&
-            !change.objectType.includes("Cap"),
+
+    result = await executeAndWait(
+        createExpiryMarketTx({
+            poolVaultId,
+            protocolConfigId,
+            pythFeedId,
+            bsFeedId,
+            lifecycleCapId,
+            expiry: EXPIRY_MS,
+        }),
+        "create_expiry_market",
     );
-    const oracleId: string = oracleChange.objectId;
     const expiryMarketChange = result.objectChanges.find(
         (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket"),
     );
     const expiryMarketId: string = expiryMarketChange.objectId;
     console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId}`);
-    console.log(`[${ts()}]   Oracle: ${oracleId}`);
-
-    await executeAndWait(
-        syncExpiryTx({
-            poolVaultId,
-            protocolConfigId,
-            expiryMarketId,
-            oracleId,
-            pythSourceId,
-        }),
-        "sync_expiry_cash_floor",
-    );
-    console.log(`[${ts()}]   Expiry cash floor funded: ${EXPIRY_CASH_FLOOR / DUSDC_DECIMALS} DUSDC`);
 
     const managerId = deriveManagerId(address);
     await executeAndWait(createManagerTx(), "create_manager");
@@ -871,13 +958,30 @@ async function setupSimulation(
     await executeAndWait(depositToManagerTx(managerId, capital.managerSeed), "deposit_to_manager");
     console.log(`[${ts()}]   Manager funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
 
+    // TODO(sim-parity): vault bootstrap funding + expiry-cash-floor funding are now
+    // async. The old path supplied the vault synchronously (returned PLP 1:1) then
+    // ran a setup PLP sync to push the cash floor into the expiry. The new model is:
+    //   1. request_supply(vaultSeed) routed through the manager, then a privileged
+    //      flush (start_pool_valuation/value_expiry/finish_flush) that bootstrap-mints
+    //      PLP 1:1 (total_supply==0 requires pool_value==0 — true before any market is
+    //      funded), delivering the PLP to the manager via the accumulator.
+    //   2. rebalance_expiry_cash(market) to push idle -> expiry up to the cash floor.
+    // Both the ordering relative to market creation and the bootstrap-mark invariants
+    // need a localnet run to confirm. Left unfunded here so the dependency on a
+    // localnet-confirmed async bootstrap is explicit rather than guessed. The
+    // single-active-market flush builder is `refreshOracleAndFlushTx`; the cash-floor
+    // primitive is `rebalanceExpiryCashTx`.
+    void rebalanceExpiryCashTx;
+    void requestSupplyTx;
+    void refreshOracleAndFlushTx;
+    console.log(`[${ts()}]   (vault bootstrap funding deferred — see TODO(sim-parity))`);
+
     const state: SimState = {
         poolVaultId,
         protocolConfigId,
         expiryMarketId,
-        pythSourceId,
-        oracleId,
-        oracleCapId,
+        pythFeedId,
+        bsFeedId,
         managerId,
     };
 
@@ -893,16 +997,16 @@ async function executeRow(
     aliases: AliasState,
 ): Promise<ExecutionReceipt> {
     if (row.action === "oracle_mint_ptb") {
-        const alignedStrike = alignStrikeToGrid(row.strike);
+        const alignedStrike = alignStrikeToTick(row.strike);
         return execute(
             () =>
                 refreshOracleAndMintTx({
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
                     managerId: state.managerId,
-                    oracleId: state.oracleId,
-                    oracleCapId: state.oracleCapId,
-                    pythSourceId: state.pythSourceId,
+                    pythFeedId: state.pythFeedId,
+                    bsFeedId: state.bsFeedId,
+                    expiry: EXPIRY_MS,
                     strike: alignedStrike,
                     isUp: row.isUp,
                     quantity: row.quantity,
@@ -932,9 +1036,9 @@ async function executeRow(
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
                     managerId: state.managerId,
-                    oracleId: state.oracleId,
-                    oracleCapId: state.oracleCapId,
-                    pythSourceId: state.pythSourceId,
+                    pythFeedId: state.pythFeedId,
+                    bsFeedId: state.bsFeedId,
+                    expiry: EXPIRY_MS,
                     orderId,
                     closeQuantity: row.closeQuantity,
                     spot: row.oracleRefresh.spot,
@@ -945,42 +1049,45 @@ async function executeRow(
         );
     }
 
+    // TODO(sim-parity): supply/withdraw are now ASYNC. A row can only ENQUEUE a
+    // request here (request_supply / request_withdraw); the economic effect (PLP
+    // mint/burn, manager credit) happens at a later privileged flush
+    // (start_pool_valuation -> value_expiry -> finish_flush), which is a separate
+    // PTB and which the contract restricts to the operator AdminCap / lifecycle
+    // cap. The single-PTB-per-row model and the inline oracle-refresh+sync that the
+    // old SupplyExecuted/WithdrawExecuted events produced no longer exist. Two
+    // unresolved questions block a faithful localnet mapping, each needing a real
+    // run to confirm:
+    //   1. Cadence: does each supply/withdraw row trigger its own flush (request +
+    //      flush in adjacent txs), or do requests batch until a periodic flush? The
+    //      generator emits no flush row, so the runner must synthesize flush txs.
+    //   2. Withdraw escrow source: request_withdraw takes a Coin<PLP>, but the
+    //      manager holds PLP fills as balance-accumulator credit (send_funds),
+    //      absorbed lazily — there is no PLP coin object to escrow without first
+    //      extracting it from the manager's BalanceManager.
+    // Until a localnet run resolves both, this enqueues the request (verifiable
+    // structurally) but does NOT drive the row's full economics. The Python mirror
+    // (python_replay supply_update/withdraw_update) still models the OLD synchronous
+    // semantics and must be reworked to the request->flush split in the same pass.
     if (row.action === "supply") {
         return execute(
             () =>
-                refreshOracleAndSupplyWithExpiryPoolSyncTx({
+                requestSupplyTx({
                     poolVaultId: state.poolVaultId,
-                    protocolConfigId: state.protocolConfigId,
-                    expiryMarketId: state.expiryMarketId,
-                    oracleId: state.oracleId,
-                    oracleCapId: state.oracleCapId,
-                    pythSourceId: state.pythSourceId,
+                    managerId: state.managerId,
                     amount: row.amount,
-                    spot: row.oracleRefresh.spot,
-                    forward: row.oracleRefresh.forward,
-                    svi: row.oracleRefresh,
                 }),
             "supply",
         );
     }
 
-    const lpCoinId = aliases.lpCoinIdsByRef.get(row.lpRef);
-    if (!lpCoinId) throw new Error(`Unknown lp_ref ${row.lpRef}`);
-    return execute(
-        () =>
-            refreshOracleAndWithdrawWithExpiryPoolSyncTx({
-                poolVaultId: state.poolVaultId,
-                protocolConfigId: state.protocolConfigId,
-                expiryMarketId: state.expiryMarketId,
-                oracleId: state.oracleId,
-                oracleCapId: state.oracleCapId,
-                pythSourceId: state.pythSourceId,
-                lpCoinId,
-                spot: row.oracleRefresh.spot,
-                forward: row.oracleRefresh.forward,
-                svi: row.oracleRefresh,
-            }),
-        "withdraw",
+    // Withdraw needs a Coin<PLP> to escrow; see the TODO(sim-parity) above. The
+    // alias index recorded at supply time is the cancel handle, not a PLP coin, so
+    // this throws until the async PLP-extraction flow is confirmed on localnet.
+    void requestWithdrawTx;
+    throw new Error(
+        `withdraw row ${row.step} (${row.lpRef}) needs the localnet-confirmed async ` +
+            "PLP-escrow flow (see TODO(sim-parity) in executeRow); not runnable yet",
     );
 }
 
@@ -1019,7 +1126,7 @@ async function executeScenario(
 
             if (row.action === "oracle_mint_ptb") {
                 successfulMints++;
-                const alignedStrike = alignStrikeToGrid(row.strike);
+                const alignedStrike = alignStrikeToTick(row.strike);
                 process.stdout.write(
                     `[${ts()}]   [${row.step}] ${direction(row)} $${scaledUsd(alignedStrike)} qty=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}\n`,
                 );
@@ -1029,7 +1136,7 @@ async function executeScenario(
         } catch (error) {
             if (row.action === "oracle_mint_ptb") {
                 throw new Error(
-                    `${mintContext(row, alignStrikeToGrid(row.strike))} failed: ${errorMessage(error)}`,
+                    `${mintContext(row, alignStrikeToTick(row.strike))} failed: ${errorMessage(error)}`,
                 );
             }
             throw new Error(
@@ -1092,10 +1199,7 @@ async function main() {
     }
     if (rows.length === 0) throw new Error("Scenario has no executable rows");
 
-    const initialPythSpot = firstBlockScholesSpot(rows[0]);
-    const grid = oracleGridForSpot(initialPythSpot);
-    setOracleGrid(grid);
-    const state = await setupSimulation(scenarioConfig, capital, initialPythSpot, grid);
+    const state = await setupSimulation(scenarioConfig, capital, firstOracleData(rows[0]));
     await executeScenario(rows, state, capital, scenario, args.maxRows, !args.skipPython);
 }
 

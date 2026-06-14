@@ -112,9 +112,11 @@ export interface SimState {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    pythSourceId: string;
-    oracleId: string;
-    oracleCapId: string;
+    // propbook feeds replace the in-package oracle + Pyth source. There is no
+    // writer cap anymore (BS surface updates are permissionless via the verified
+    // `Update`).
+    pythFeedId: string;
+    bsFeedId: string;
     managerId: string;
 }
 
