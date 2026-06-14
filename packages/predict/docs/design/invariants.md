@@ -182,7 +182,13 @@ and contributors. For *how* each mechanism works, follow the links into
   an exact Propbook Pyth spot cannot be live-valued: `value_expiry` tries passive
   settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
   market remains unsettled. This preserves the single exact mark for PLP supply and
-  withdraw; no approximate substitute mark is allowed.
+  withdraw; no approximate substitute mark is allowed. Because the flush must value
+  every active market exactly once, this abort blocks the *whole* pool flush, not
+  just the one market — so an expiry whose exact settlement spot is permanently
+  unobtainable is a cross-market liveness brick, not a benign wait. Guaranteeing the
+  exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, or a
+  bounded settlement fallback) is a pre-testnet open item — see the open-issues
+  tracker.
 
 ## Configuration
 
