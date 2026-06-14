@@ -12,10 +12,8 @@ const EInvalidMinFee: u64 = 1;
 const EInvalidMinAskPrice: u64 = 2;
 const EInvalidMaxAskPrice: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
-const EInvalidBlockScholesPricesFreshnessMs: u64 = 5;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 6;
+const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 7;
-const EInvalidSettlementFreshnessMs: u64 = 8;
 const EInvalidTradingLossRebateRate: u64 = 14;
 const EInvalidTerminalFloorIndex: u64 = 15;
 const EInvalidExpiryFeeWindowMs: u64 = 16;
@@ -38,7 +36,7 @@ const EInvalidBackingBufferLambda: u64 = 29;
 public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
 public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
 public(package) macro fun max_protocol_reserve_profit_share(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 
 public(package) fun assert_protocol_reserve_profit_share(value: u64) {
@@ -68,10 +66,10 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
 
 public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
 public(package) macro fun min_terminal_floor_index(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 public(package) macro fun max_terminal_floor_index(): u64 {
-    2 * predict_math::math::float_scaling!()
+    2 * fixed_math::math::float_scaling!()
 }
 
 public(package) fun assert_terminal_floor_index(value: u64) {
@@ -95,7 +93,7 @@ public(package) fun assert_liquidation_ltv(value: u64) {
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
 public(package) macro fun max_backing_buffer_lambda(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 
 public(package) fun assert_backing_buffer_lambda(value: u64) {
@@ -109,7 +107,7 @@ public(package) fun assert_backing_buffer_lambda(value: u64) {
 
 public(package) macro fun default_base_fee(): u64 { 20_000_000 }
 public(package) macro fun min_base_fee(): u64 { 1 }
-public(package) macro fun max_base_fee(): u64 { predict_math::math::float_scaling!() }
+public(package) macro fun max_base_fee(): u64 { fixed_math::math::float_scaling!() }
 
 public(package) fun assert_base_fee(value: u64) {
     assert!(value >= min_base_fee!() && value <= max_base_fee!(), EInvalidBaseFee);
@@ -117,7 +115,7 @@ public(package) fun assert_base_fee(value: u64) {
 
 public(package) macro fun default_min_fee(): u64 { 5_000_000 }
 public(package) macro fun min_min_fee(): u64 { 0 }
-public(package) macro fun max_min_fee(): u64 { predict_math::math::float_scaling!() }
+public(package) macro fun max_min_fee(): u64 { fixed_math::math::float_scaling!() }
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
@@ -141,13 +139,13 @@ public(package) fun assert_expiry_fee_window_ms(value: u64) {
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
 /// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
 public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
-    10 * predict_math::math::float_scaling!()
+    10 * fixed_math::math::float_scaling!()
 }
 
 public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
@@ -167,7 +165,7 @@ public(package) fun assert_oracle_tick_size(value: u64) {
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
 public(package) macro fun min_min_ask_price(): u64 { 0 }
 public(package) macro fun max_min_ask_price(): u64 {
-    predict_math::math::float_scaling!() - 1
+    fixed_math::math::float_scaling!() - 1
 }
 
 public(package) fun assert_min_ask_price(value: u64) {
@@ -177,7 +175,7 @@ public(package) fun assert_min_ask_price(value: u64) {
 public(package) macro fun default_max_ask_price(): u64 { 990_000_000 }
 public(package) macro fun min_max_ask_price(): u64 { 0 }
 public(package) macro fun max_max_ask_price(): u64 {
-    predict_math::math::float_scaling!() - 1
+    fixed_math::math::float_scaling!() - 1
 }
 
 public(package) fun assert_max_ask_price(value: u64) {
@@ -195,27 +193,18 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-public(package) macro fun default_block_scholes_prices_freshness_ms(): u64 { 3_000 }
-public(package) macro fun min_block_scholes_prices_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_prices_freshness_ms(): u64 { 60_000 }
+// One Block Scholes surface row carries spot + forward + SVI written together, so
+// a single freshness window covers the whole surface (was a separate price and
+// SVI window before the oracle moved to per-expiry surfaces).
+public(package) macro fun default_block_scholes_surface_freshness_ms(): u64 { 3_000 }
+public(package) macro fun min_block_scholes_surface_freshness_ms(): u64 { 1 }
+public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 { 60_000 }
 
-public(package) fun assert_block_scholes_prices_freshness_ms(value: u64) {
+public(package) fun assert_block_scholes_surface_freshness_ms(value: u64) {
     assert!(
-        value >= min_block_scholes_prices_freshness_ms!()
-            && value <= max_block_scholes_prices_freshness_ms!(),
-        EInvalidBlockScholesPricesFreshnessMs,
-    );
-}
-
-public(package) macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
-public(package) macro fun min_block_scholes_svi_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 { 60_000 }
-
-public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
-    assert!(
-        value >= min_block_scholes_svi_freshness_ms!()
-            && value <= max_block_scholes_svi_freshness_ms!(),
-        EInvalidBlockScholesSVIFreshnessMs,
+        value >= min_block_scholes_surface_freshness_ms!()
+            && value <= max_block_scholes_surface_freshness_ms!(),
+        EInvalidBlockScholesSurfaceFreshnessMs,
     );
 }
 
@@ -237,7 +226,7 @@ public(package) fun assert_ewma_alpha(value: u64) {
 /// call from raising the bar so high the penalty can never trigger.
 public(package) macro fun default_ewma_z_score_threshold(): u64 { 3_000_000_000 }
 public(package) macro fun min_ewma_z_score_threshold(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 public(package) macro fun max_ewma_z_score_threshold(): u64 { 10_000_000_000 }
 
@@ -268,7 +257,7 @@ public(package) macro fun default_trading_loss_rebate_rate(): u64 {
 }
 public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
 public(package) macro fun max_trading_loss_rebate_rate(): u64 {
-    predict_math::math::float_scaling!()
+    fixed_math::math::float_scaling!()
 }
 
 public(package) fun assert_trading_loss_rebate_rate(value: u64) {
@@ -327,17 +316,4 @@ public(package) fun assert_benefit_powers(lower: u64, upper: u64) {
     assert_lower_benefit_power(lower);
     assert_upper_benefit_power(upper);
     assert!(upper > 2 * lower, EInvalidBenefitPowers);
-}
-
-// === Market Oracle ===
-
-public(package) macro fun default_settlement_freshness_ms(): u64 { 3_000 }
-public(package) macro fun min_settlement_freshness_ms(): u64 { 1 }
-public(package) macro fun max_settlement_freshness_ms(): u64 { 60_000 }
-
-public(package) fun assert_settlement_freshness_ms(value: u64) {
-    assert!(
-        value >= min_settlement_freshness_ms!() && value <= max_settlement_freshness_ms!(),
-        EInvalidSettlementFreshnessMs,
-    );
 }

@@ -7,7 +7,7 @@
 /// feed module can keep validation and storage as its single chokepoint.
 module propbook::lazer_decode;
 
-use predict_math::math;
+use fixed_math::math;
 use propbook::constants;
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use std::option::Option;

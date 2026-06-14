@@ -7,7 +7,6 @@ module deepbook_predict::config_events;
 use deepbook_predict::{
     ewma_config::EwmaConfig,
     expiry_cash_config::ExpiryCashConfig,
-    market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
     stake_config::StakeConfig,
     strike_exposure_config::StrikeExposureConfig
@@ -18,8 +17,7 @@ use sui::event;
 public struct PricingConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     pyth_spot_freshness_ms: u64,
-    block_scholes_prices_freshness_ms: u64,
-    block_scholes_svi_freshness_ms: u64,
+    block_scholes_surface_freshness_ms: u64,
 }
 
 /// Emitted when liquidation-budget policy changes.
@@ -48,12 +46,6 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     expiry_fee_max_multiplier: u64,
 }
 
-/// Emitted when future market-oracle template policy changes.
-public struct MarketOracleTemplateConfigUpdated has copy, drop, store {
-    protocol_config_id: ID,
-    settlement_freshness_ms: u64,
-}
-
 /// Emitted when the EWMA gas-price penalty config changes.
 public struct EwmaConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
@@ -77,14 +69,15 @@ public struct TradingPausedUpdated has copy, drop, store {
     paused: bool,
 }
 
-/// Emitted when a new expiry market and its oracle are created.
+/// Emitted when a new expiry market is created.
 public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
-    market_oracle_id: ID,
     pool_vault_id: ID,
-    /// PythSource object and Lazer feed backing this market's spot, so
-    /// `PythSourceUpdated` history (keyed by these) can be fanned into the market.
-    pyth_source_id: ID,
+    /// propbook Pyth spot feed and Block Scholes surface feed bound to this market,
+    /// plus the Lazer feed id, so propbook feed-update history (keyed by these) can
+    /// be fanned into the market.
+    pyth_feed_id: ID,
+    bs_feed_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
     min_strike: u64,
@@ -98,7 +91,6 @@ public struct MarketCreated has copy, drop, store {
 /// authoritative source for the policy actually in force on the market.
 public struct MarketConfigSnapshot has copy, drop, store {
     expiry_market_id: ID,
-    market_oracle_id: ID,
     terminal_floor_index: u64,
     liquidation_ltv: u64,
     backing_buffer_lambda: u64,
@@ -109,12 +101,6 @@ public struct MarketConfigSnapshot has copy, drop, store {
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     trading_loss_rebate_rate: u64,
-}
-
-/// Emitted when admin updates one live oracle's config.
-public struct MarketOracleConfigUpdated has copy, drop, store {
-    market_oracle_id: ID,
-    settlement_freshness_ms: u64,
 }
 
 /// Emitted when minting pause state changes for one expiry market.
@@ -129,8 +115,7 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
     event::emit(PricingConfigUpdated {
         protocol_config_id,
         pyth_spot_freshness_ms: config.pyth_spot_freshness_ms(),
-        block_scholes_prices_freshness_ms: config.block_scholes_prices_freshness_ms(),
-        block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms(),
+        block_scholes_surface_freshness_ms: config.block_scholes_surface_freshness_ms(),
     });
 }
 
@@ -172,16 +157,6 @@ public(package) fun emit_strike_exposure_template_config_updated(
     });
 }
 
-public(package) fun emit_market_oracle_template_config_updated(
-    protocol_config_id: ID,
-    config: &MarketOracleConfig,
-) {
-    event::emit(MarketOracleTemplateConfigUpdated {
-        protocol_config_id,
-        settlement_freshness_ms: config.settlement_freshness_ms(),
-    });
-}
-
 public(package) fun emit_ewma_config_updated(protocol_config_id: ID, config: &EwmaConfig) {
     event::emit(EwmaConfigUpdated {
         protocol_config_id,
@@ -209,9 +184,9 @@ public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: 
 
 public(package) fun emit_market_created(
     expiry_market_id: ID,
-    market_oracle_id: ID,
     pool_vault_id: ID,
-    pyth_source_id: ID,
+    pyth_feed_id: ID,
+    bs_feed_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
     min_strike: u64,
@@ -220,9 +195,9 @@ public(package) fun emit_market_created(
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
-        market_oracle_id,
         pool_vault_id,
-        pyth_source_id,
+        pyth_feed_id,
+        bs_feed_id,
         pyth_lazer_feed_id,
         expiry,
         min_strike,
@@ -233,13 +208,11 @@ public(package) fun emit_market_created(
 
 public(package) fun emit_market_config_snapshot(
     expiry_market_id: ID,
-    market_oracle_id: ID,
     strike_exposure_config: &StrikeExposureConfig,
     expiry_cash_config: &ExpiryCashConfig,
 ) {
     event::emit(MarketConfigSnapshot {
         expiry_market_id,
-        market_oracle_id,
         terminal_floor_index: strike_exposure_config.terminal_floor_index(),
         liquidation_ltv: strike_exposure_config.liquidation_ltv(),
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
@@ -250,16 +223,6 @@ public(package) fun emit_market_config_snapshot(
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
-    });
-}
-
-public(package) fun emit_market_oracle_config_updated(
-    market_oracle_id: ID,
-    config: &MarketOracleConfig,
-) {
-    event::emit(MarketOracleConfigUpdated {
-        market_oracle_id,
-        settlement_freshness_ms: config.settlement_freshness_ms(),
     });
 }
 

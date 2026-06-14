@@ -3,10 +3,10 @@
 
 /// Registry, versioning, and creation entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects, stores uniqueness indexes for
-/// Pyth sources and expiries, and exposes registry-owned governance entrypoints. Runtime
-/// pool accounting, expiry risk, oracle state, and user positions stay in their
-/// owning modules.
+/// This module creates shared setup objects, stores admin-approved Pyth feed
+/// configs and the expiry uniqueness index, and exposes registry-owned governance
+/// entrypoints. Runtime pool accounting, expiry risk, oracle feeds, and user
+/// positions stay in their owning modules.
 module deepbook_predict::registry;
 
 use deepbook::registry::Registry as DeepbookRegistry;
@@ -17,7 +17,6 @@ use deepbook_predict::{
     constants,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap},
-    market_oracle::{Self, MarketOracle},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
     predict_deposit_cap::PredictDepositCap,
@@ -25,13 +24,13 @@ use deepbook_predict::{
     predict_trade_cap::PredictTradeCap,
     predict_withdraw_cap::PredictWithdrawCap,
     pricing,
-    protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource}
+    protocol_config::{Self, ProtocolConfig}
 };
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
 const EFeedIdMismatch: u64 = 0;
-const EPythSourceAlreadyCreated: u64 = 1;
+const EPythFeedAlreadyRegistered: u64 = 1;
 const EInvalidExpiry: u64 = 2;
 const EExpiryMarketAlreadyCreated: u64 = 3;
 const EPauseCapNotValid: u64 = 4;
@@ -43,10 +42,10 @@ const EPythFeedNotRegistered: u64 = 9;
 const ELifecycleCapNotValid: u64 = 10;
 const ELifecycleCapNotFound: u64 = 11;
 
-/// Registry-owned config for one Pyth Lazer feed.
+/// Registry-owned config for one admin-approved Pyth Lazer feed. Admin approval
+/// of a feed is recorded by inserting this row; the propbook `PythFeed` /
+/// `BlockScholesFeed` objects themselves are created permissionlessly in propbook.
 public struct PythFeedConfig has copy, drop, store {
-    /// Shared PythSource object bound to the feed.
-    pyth_source_id: ID,
     /// Admin-selected strike tick size for future expiries.
     tick_size: u64,
 }
@@ -54,7 +53,7 @@ public struct PythFeedConfig has copy, drop, store {
 /// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Pyth Lazer feed ID -> source object and oracle-grid config.
+    /// Pyth Lazer feed ID -> admin-approved oracle-grid config (tick size).
     pyth_feed_configs: Table<u32, PythFeedConfig>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,
@@ -81,15 +80,6 @@ public fun id(registry: &Registry): ID {
 /// state. Pool sync helpers snapshot this; newly-created pools inherit it.
 public fun allowed_versions(registry: &Registry): VecSet<u64> {
     registry.allowed_versions
-}
-
-/// Return the shared PythSource ID for a feed, if it has been created.
-public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
-    if (registry.pyth_feed_configs.contains(pyth_lazer_feed_id)) {
-        option::some(registry.pyth_feed_configs.borrow(pyth_lazer_feed_id).pyth_source_id)
-    } else {
-        option::none()
-    }
 }
 
 /// Return the configured strike tick size for a Pyth Lazer feed, if registered.
@@ -148,16 +138,6 @@ public fun sync_expiry_market_allowed_versions(registry: &Registry, market: &mut
 /// Sync a pool vault's `allowed_versions` mirror from the registry.
 public fun sync_pool_vault_allowed_versions(registry: &Registry, vault: &mut PoolVault) {
     vault.set_allowed_versions(registry.allowed_versions);
-}
-
-/// Sync a market oracle's `allowed_versions` mirror from the registry.
-public fun sync_market_oracle_allowed_versions(registry: &Registry, market: &mut MarketOracle) {
-    market.set_allowed_versions(registry.allowed_versions);
-}
-
-/// Sync a Pyth source's `allowed_versions` mirror from the registry.
-public fun sync_pyth_source_allowed_versions(registry: &Registry, source: &mut PythSource) {
-    source.set_allowed_versions(registry.allowed_versions);
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -240,79 +220,58 @@ public fun pause_expiry_market_mint_pause_cap(
     market.pause_mint();
 }
 
-/// Create a shared Pyth source for one admin-approved Lazer feed.
-///
-/// The registry enforces one source object per feed ID.
-public fun create_pyth_source(
+/// Record admin approval of one Pyth Lazer feed and the strike tick size its
+/// future expiry markets use. The propbook `PythFeed` and `BlockScholesFeed`
+/// objects are created permissionlessly in propbook; this row only gates which
+/// feeds Predict will build markets on. The registry enforces one row per feed ID.
+public fun register_pyth_feed(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
     tick_size: u64,
-    ctx: &mut TxContext,
-): ID {
+) {
     registry.assert_version_allowed();
-    assert!(!registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
+    assert!(!registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythFeedAlreadyRegistered);
     config_constants::assert_oracle_tick_size(tick_size);
-    let pyth_source_id = pyth_source::create_and_share(
-        pyth_lazer_feed_id,
-        registry.allowed_versions,
-        ctx,
-    );
-    registry
-        .pyth_feed_configs
-        .add(
-            pyth_lazer_feed_id,
-            PythFeedConfig {
-                pyth_source_id,
-                tick_size,
-            },
-        );
-    pyth_source_id
+    registry.pyth_feed_configs.add(pyth_lazer_feed_id, PythFeedConfig { tick_size });
 }
 
-/// Create the MarketOracle and ExpiryMarket objects for one future expiry.
+/// Create the ExpiryMarket for one future expiry, bound to its propbook Pyth spot
+/// feed and Block Scholes surface feed.
 ///
-/// The registry enforces one market per expiry and validates the registered
-/// Pyth source. The market is created with zero cash and registered with the
-/// pool vault as an accounting row only; it is not mintable until
-/// `plp::rebalance_expiry_cash` funds it.
+/// The registry enforces one market per expiry and that the Pyth feed is admin
+/// approved (`register_pyth_feed`). Pairing the Pyth and Block Scholes feeds to
+/// one underlying is a creation-time trust: the market-deployer cap holder passes
+/// both feed objects, and that cap is trusted. The market is created with zero
+/// cash and registered with the pool vault as an accounting row only; it is not
+/// mintable until `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     lifecycle_cap: &MarketLifecycleCap,
-    writer_cap_ids: vector<ID>,
     expiry: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): (ID, ID) {
+): ID {
     registry.assert_version_allowed();
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EFeedIdMismatch);
-    let pyth_config = registry.pyth_feed_configs.borrow(pyth_lazer_feed_id);
-    assert!(pyth_config.pyth_source_id == pyth.id(), EFeedIdMismatch);
-    let tick_size = pyth_config.tick_size;
+    let tick_size = registry.pyth_feed_configs.borrow(pyth_lazer_feed_id).tick_size;
     pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
-    let market_oracle_id = market_oracle::create_and_share(
-        pyth,
-        config,
-        writer_cap_ids,
-        expiry,
-        allowed_versions,
-        ctx,
-    );
     let expiry_market_id = expiry_market::create_and_share(
         config,
         allowed_versions,
-        market_oracle_id,
-        pool_vault.id(),
         pyth.id(),
+        bs.id(),
+        pool_vault.id(),
         pyth_lazer_feed_id,
         expiry,
         pyth.spot(),
@@ -322,7 +281,7 @@ public fun create_expiry_market(
     pool_vault.register_expiry(expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
-    (expiry_market_id, market_oracle_id)
+    expiry_market_id
 }
 
 /// Create a derived shared BuilderCode for the caller and index.

@@ -14,17 +14,16 @@ module deepbook_predict::strike_exposure;
 use deepbook_predict::{
     constants,
     liquidation_book::{Self, LiquidationBook},
-    market_oracle::MarketOracle,
     order::{Self, Order},
     order_events,
     pricing::{Self, Pricer},
     pricing_config::PricingConfig,
-    pyth_source::PythSource,
     strike_exposure_config::StrikeExposureConfig,
     strike_grid::{Self, StrikeGrid},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use predict_math::math;
+use fixed_math::math;
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 1;
@@ -342,8 +341,8 @@ public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order:
 public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     order: &Order,
     clock: &Clock,
 ): bool {
@@ -351,7 +350,7 @@ public(package) fun liquidate_live_order(
 
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    let pricer = pricing::pricer(config, market, pyth, clock);
+    let pricer = pricing::pricer(config, pyth, bs, exposure.expiry_ms, clock);
     exposure.liquidate_order_if_under_floor(
         &pricer,
         order,
@@ -364,8 +363,8 @@ public(package) fun liquidate_live_order(
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     budget: u64,
     clock: &Clock,
 ): u64 {
@@ -373,7 +372,7 @@ public(package) fun liquidate_live_orders(
     if (candidates.is_empty()) return 0;
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    let pricer = pricing::pricer(config, market, pyth, clock);
+    let pricer = pricing::pricer(config, pyth, bs, exposure.expiry_ms, clock);
 
     let mut liquidated_count = 0;
     let mut i = 0;
