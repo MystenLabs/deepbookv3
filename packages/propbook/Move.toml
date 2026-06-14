@@ -8,7 +8,7 @@ version = "0.0.1"
 # auto-managed from the package name (matching `packages/predict`).
 
 [dependencies]
-predict_math = { local = "../predict_math" }
+fixed_math = { local = "../fixed_math" }
 # STUB BS signed-data verifier (leaf, no deps). Mints the verified `Update` that
 # `propbook::block_scholes_feed::update_from_bs` consumes, mirroring `pyth_lazer`.
 block_scholes_oracle = { local = "../block_scholes_oracle" }

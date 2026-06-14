@@ -5,16 +5,19 @@ version = "0.0.1"
 
 [dependencies]
 deepbook = { local = "../deepbook" }
-predict_math = { local = "../predict_math" }
+fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
+# Standalone Pyth + Block Scholes oracle feeds. Predict consumes `propbook::pyth_feed`
+# and `propbook::block_scholes_feed` for live spot/surface pricing (the former
+# in-package `market_oracle`/`pyth_source` modules were extracted into propbook).
+propbook = { local = "../propbook" }
 # DEEP token, used for staking custody (`registry::stake_deep`). Declared with the
 # same git source as `deepbook`'s dependency so the resolver unifies the package.
 token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
-# Official Pyth Lazer Sui package. Used by `pyth_source::update_from_lazer` to
-# consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
-# package-scoped, so the Move type system enforces "this value came from
-# Pyth's verifier." Use `rev = "sui-testnet"` for testnet because Wormhole is
-# custom-deployed there.
+# Official Pyth Lazer Sui package — now a transitive dependency through `propbook`
+# (which consumes the verified `pyth_lazer::update::Update`). Kept as a direct dep
+# so the publishable root declares the `dep-replacements` linking below. Use
+# `rev = "sui-testnet"` for testnet because Wormhole is custom-deployed there.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source

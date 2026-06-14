@@ -15,7 +15,7 @@
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, strike_grid::StrikeGrid};
-use predict_math::math;
+use fixed_math::math;
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;

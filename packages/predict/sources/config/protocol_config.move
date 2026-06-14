@@ -14,7 +14,6 @@ use deepbook_predict::{
     config_events,
     ewma_config::{Self, EwmaConfig},
     expiry_cash_config::{Self, ExpiryCashConfig},
-    market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
     stake_config::{Self, StakeConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
@@ -33,7 +32,6 @@ public struct ProtocolConfig has key {
     protocol_reserve_profit_share: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
-    market_oracle_template_config: MarketOracleConfig,
     expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
     stake_config: StakeConfig,
@@ -188,23 +186,13 @@ public fun set_pyth_spot_freshness_ms(
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
-/// Set the live Block Scholes spot/forward freshness threshold.
-public fun set_block_scholes_prices_freshness_ms(
+/// Set the live Block Scholes surface (spot/forward/SVI) freshness threshold.
+public fun set_block_scholes_surface_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
-    config.pricing_config.set_block_scholes_prices_freshness_ms(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-/// Set the live Block Scholes SVI freshness threshold.
-public fun set_block_scholes_svi_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.pricing_config.set_block_scholes_svi_freshness_ms(value);
+    config.pricing_config.set_block_scholes_surface_freshness_ms(value);
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
@@ -230,19 +218,6 @@ public fun set_trade_liquidation_budget(
     config_constants::assert_trade_liquidation_budget(budget);
     config.trade_liquidation_budget = budget;
     config_events::emit_risk_config_updated(config.id(), config.trade_liquidation_budget);
-}
-
-/// Set the settlement freshness threshold template for future market oracles.
-public fun set_market_oracle_template_settlement_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.market_oracle_template_config.set_settlement_freshness_ms(value);
-    config_events::emit_market_oracle_template_config_updated(
-        config.id(),
-        &config.market_oracle_template_config,
-    );
 }
 
 /// Set the EWMA gas-price penalty parameters.
@@ -280,10 +255,6 @@ public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 
 
 public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
     config.trade_liquidation_budget
-}
-
-public(package) fun market_oracle_config_snapshot(config: &ProtocolConfig): MarketOracleConfig {
-    market_oracle_config::snapshot(&config.market_oracle_template_config)
 }
 
 public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {
@@ -375,7 +346,6 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
-        market_oracle_template_config: market_oracle_config::new(),
         expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),
         stake_config: stake_config::new(),

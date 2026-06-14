@@ -52,9 +52,9 @@
 /// floor-rounding direction lives in this module's `mul`/`div`, far above this
 /// resolution. Budgets are asserted in `math_tests.move` against an independent
 /// reference (`tests/helper/reference/generate_constants.py`).
-module predict_math::math;
+module fixed_math::math;
 
-use predict_math::i64;
+use fixed_math::i64;
 
 const EInputZero: u64 = 0;
 const EInvalidPrecision: u64 = 1;

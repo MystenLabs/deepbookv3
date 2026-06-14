@@ -3,18 +3,16 @@
 
 /// Pricing for Predict markets.
 ///
-/// This module is the app-facing read layer for oracle data. It resolves
-/// market oracle and Pyth source state on demand and computes SVI range
-/// prices. It does not mutate oracle, pool, expiry, or position state.
+/// This module is the app-facing read layer for oracle data. It reads the
+/// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
+/// range prices. It does not mutate feed, pool, expiry, or position state, and it
+/// does not own feed binding or market liveness — `expiry_market` validates the
+/// passed feeds belong to the market and that the market is active before pricing.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{
-    constants,
-    market_oracle::{MarketOracle, SVIParams},
-    pricing_config::PricingConfig,
-    pyth_source::PythSource
-};
-use predict_math::{i64, math};
+use deepbook_predict::{constants, pricing_config::PricingConfig};
+use fixed_math::{i64, math};
+use propbook::{block_scholes_feed::{BlockScholesFeed, SVIParams}, pyth_feed::PythFeed};
 use sui::clock::Clock;
 
 /// Value snapshot of live oracle inputs for one or more price calculations.
@@ -27,21 +25,23 @@ const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
-const EBlockScholesPriceStale: u64 = 5;
-const EBlockScholesSVIStale: u64 = 6;
+const EBlockScholesSurfaceStale: u64 = 5;
 const EInvalidStrikeRatio: u64 = 7;
 const EPythSpotStale: u64 = 8;
 
 // === Public-Package Functions ===
 
-/// Snapshot the current live oracle inputs for repeated quote calculations.
+/// Snapshot the current live oracle inputs for `expiry`'s repeated quote
+/// calculations. Reads the Pyth spot feed and the Block Scholes surface for this
+/// expiry; the caller owns feed binding and market liveness.
 public(package) fun pricer(
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    expiry: u64,
     clock: &Clock,
 ): Pricer {
-    let (forward, svi) = live_inputs(config, market, pyth, clock);
+    let (forward, svi) = live_inputs(config, pyth, bs, expiry, clock);
     Pricer { forward, svi }
 }
 
@@ -56,75 +56,54 @@ public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
 }
 
 /// Abort unless the Pyth spot source is fresh.
-public(package) fun assert_pyth_spot_fresh(
-    config: &PricingConfig,
-    pyth: &PythSource,
-    clock: &Clock,
-) {
+public(package) fun assert_pyth_spot_fresh(config: &PricingConfig, pyth: &PythFeed, clock: &Clock) {
     assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
 }
 
 // === Private Functions ===
 
-fun assert_live_quote_available(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-) {
-    market.assert_pyth_source(pyth);
-    market.assert_active(clock);
-    assert_live_oracle_fresh(config, market, clock);
-}
-
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
-/// Fresh Pyth spot is canonical for spot; forward is then derived from the
-/// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
-/// fresh Block Scholes forward. SVI must be fresh either way.
+/// Fresh Pyth spot is canonical for spot; forward is then derived from this
+/// expiry's Block Scholes basis. If Pyth is stale, pricing falls back to the
+/// Block Scholes forward. The Block Scholes surface (basis + forward + SVI) must
+/// be fresh either way.
 fun live_inputs(
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    expiry: u64,
     clock: &Clock,
 ): (u64, SVIParams) {
-    assert_live_quote_available(config, market, pyth, clock);
+    assert!(block_scholes_surface_is_fresh(config, bs, expiry, clock), EBlockScholesSurfaceStale);
 
     let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
-        math::mul(pyth.spot(), market.block_scholes_basis())
+        math::mul(pyth.spot(), bs.basis(expiry))
     } else {
-        market.block_scholes_forward()
+        bs.forward(expiry)
     };
 
-    (forward, market.block_scholes_svi())
+    (forward, bs.svi(expiry))
 }
 
-fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
-}
-
-fun block_scholes_price_is_fresh(
+/// A surface is usable only if a row exists for `expiry` and it is fresh; the
+/// presence check short-circuits so the freshness read never aborts on a missing
+/// row (a missing surface is treated as stale, not a hard error).
+fun block_scholes_surface_is_fresh(
     config: &PricingConfig,
-    market: &MarketOracle,
+    bs: &BlockScholesFeed,
+    expiry: u64,
     clock: &Clock,
 ): bool {
-    timestamp_is_fresh(
-        market.block_scholes_price_freshness_timestamp_ms(),
-        config.block_scholes_prices_freshness_ms(),
-        clock,
-    )
+    bs.has_expiry(expiry) &&
+        timestamp_is_fresh(
+            bs.surface_freshness_timestamp_ms(expiry),
+            config.block_scholes_surface_freshness_ms(),
+            clock,
+        )
 }
 
-fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
-    timestamp_is_fresh(
-        market.block_scholes_svi_freshness_timestamp_ms(),
-        config.block_scholes_svi_freshness_ms(),
-        clock,
-    )
-}
-
-fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
+fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythFeed, clock: &Clock): bool {
     timestamp_is_fresh(pyth.freshness_timestamp_ms(), config.pyth_spot_freshness_ms(), clock)
 }
 

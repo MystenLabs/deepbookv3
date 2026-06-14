@@ -7,8 +7,7 @@
 /// admin mint/revoke entrypoints; this module owns only the cap object itself.
 module deepbook_predict::market_lifecycle_cap;
 
-/// Capability authorized for market lifecycle operations. Independent of
-/// `MarketOracleWriterCap`: holding one grants nothing of the other.
+/// Capability authorized for market lifecycle operations (market creation).
 public struct MarketLifecycleCap has key, store {
     id: UID,
 }

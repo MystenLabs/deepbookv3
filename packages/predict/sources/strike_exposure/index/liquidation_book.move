@@ -15,7 +15,7 @@
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, strike_grid::StrikeGrid};
-use predict_math::math;
+use fixed_math::math;
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;

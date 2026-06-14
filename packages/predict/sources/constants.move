@@ -104,14 +104,6 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
-// === SVI Oracle Bounds ===
-
-/// SVI `sigma` lower bound: 1e-3 in 1e9 fixed-point.
-public(package) macro fun svi_sigma_min(): u64 { 1_000_000 }
-
-/// SVI `sigma` upper bound: 100.0 in 1e9 fixed-point.
-public(package) macro fun svi_sigma_max(): u64 { 100_000_000_000 }
-
 // === Oracle Strike Grid ===
 
 /// Fixed number of strike ticks each oracle must cover.
@@ -131,21 +123,6 @@ public macro fun neg_inf(): u64 { 0 }
 
 /// Sentinel upper strike for ranges open to positive infinity.
 public macro fun pos_inf(): u64 { std::u64::max_value!() }
-
-// === Settlement Sampling ===
-
-/// Window before expiry over which fresh spot samples are collected for the
-/// random-average settlement price.
-public(package) macro fun settlement_sample_window_ms(): u64 { 60_000 }
-
-/// Minimum pre-expiry samples required before settlement uses the sampled-average
-/// path. With fewer samples, settlement falls through to the next latched source
-/// in priority order.
-public(package) macro fun min_settlement_samples(): u64 { 30 }
-
-/// Maximum pre-expiry spot samples retained per market (most recent kept). Bounds
-/// storage/gas; with the half-subset mean, the averaged subset is <= this / 2.
-public(package) macro fun max_settlement_samples(): u64 { 200 }
 
 // === NAV Valuation ===
 

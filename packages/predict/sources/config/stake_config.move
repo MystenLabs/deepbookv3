@@ -10,7 +10,7 @@
 module deepbook_predict::stake_config;
 
 use deepbook_predict::{config_constants, constants};
-use predict_math::math;
+use fixed_math::math;
 
 public struct StakeConfig has store {
     /// Active stake at the curve kink (half of max benefits), in raw DEEP units.
