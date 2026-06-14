@@ -15,7 +15,7 @@ module deepbook_predict::predict_manager_tests;
 use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{coin, test_scenario::{Self as test, return_shared}};
+use sui::{balance, coin, test_scenario::{Self as test, return_shared}};
 
 const DEPOSIT_AMOUNT: u64 = 1_000_000;
 const WITHDRAW_AMOUNT: u64 = 400_000;
@@ -111,6 +111,42 @@ fun deposit_permissionless_works_without_owner_sender() {
     let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
     manager.deposit_permissionless(coin, scenario.ctx());
     assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
+
+    destroy(manager);
+    scenario.end();
+}
+
+// === accumulator-delivered settle (the async-LP money path) ===
+
+#[test]
+fun settle_delivered_absorbs_flush_funds_into_internal_custody() {
+    // Mirrors what `finish_flush` -> `drain_lp_requests` does to a fill recipient:
+    // `balance::send_funds` delivers the balance to the manager's object-accumulator
+    // address, and the manager's settle path (the real
+    // `withdraw_funds_from_object`/`redeem_funds`/`deposit_with_cap` legs, here driven
+    // through the test seam since an `AccumulatorRoot` cannot be constructed in a unit
+    // test) absorbs it into internal DUSDC custody.
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    balance::send_funds(
+        balance::create_for_testing<DUSDC>(DEPOSIT_AMOUNT),
+        manager.id().to_address(),
+    );
+    manager.settle_delivered_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
+    assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
+
+    destroy(manager);
+    scenario.end();
+}
+
+#[test]
+fun settle_delivered_zero_is_a_no_op() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.settle_delivered_for_testing<DUSDC>(0, scenario.ctx());
+    assert_eq!(manager.balance(), 0);
 
     destroy(manager);
     scenario.end();

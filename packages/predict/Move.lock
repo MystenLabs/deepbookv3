@@ -109,8 +109,8 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.testnet.deepbook_predict]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "2AFECA595C1AD925066AF273B267355894244B1CC02A8C206099C990D557C2BB"
-deps = { deepbook = "deepbook", dusdc = "dusdc", fixed_math = "fixed_math", propbook = "propbook", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", token = "token", wormhole = "wormhole" }
+manifest_digest = "00C361D5818B5F3578CCBD9B6AB38ED40154151F550328FADE058F3855B3E1AC"
+deps = { block_scholes_oracle = "block_scholes_oracle", deepbook = "deepbook", dusdc = "dusdc", fixed_math = "fixed_math", propbook = "propbook", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", token = "token", wormhole = "wormhole" }
 
 [pinned.testnet.dusdc]
 source = { local = "../dusdc" }

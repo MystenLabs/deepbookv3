@@ -11,13 +11,18 @@
 /// independently of the contract. Solvency invariants (PLP supply and idle deltas)
 /// are asserted, not just returns.
 ///
-/// The minted PLP / paid DUSDC are delivered to the recipient's balance accumulator,
-/// which a Move unit test cannot read back without an `AccumulatorRoot`. So
-/// withdraw-side tests escrow a `coin::mint_for_testing<PLP>` stand-in for the
-/// accumulator-delivered shares (the vault's `total_supply` is set consistently by a
-/// real bootstrap supply first), and delivery/settle of fills is asserted only
-/// indirectly (queue drained, escrow consumed, supply minted/burned). See
-/// TODO(test-accumulator-root).
+/// The minted PLP / paid DUSDC are delivered to the recipient manager's balance
+/// accumulator. The supply-side delivery is verified end to end:
+/// `supply_round_trip_delivers_minted_plp_to_manager` flushes a real supply and
+/// absorbs the `send_funds`-delivered PLP into the manager via the pre-approved
+/// `settle_delivered_for_testing` seam (an `AccumulatorRoot` cannot be constructed in
+/// a unit test, so the seam supplies the delivered amount and runs the real
+/// settle legs). The withdraw-side fills cannot read the accumulator back to
+/// re-escrow, so the withdraw tests escrow a `coin::mint_for_testing<PLP>` stand-in
+/// for the delivered shares (the vault's `total_supply` is set consistently by a real
+/// bootstrap supply first); the manager-side absorption of a withdraw's DUSDC uses the
+/// identical `send_funds` -> settle mechanism proven in
+/// `predict_manager_tests::settle_delivered_absorbs_flush_funds_into_internal_custody`.
 #[test_only]
 module deepbook_predict::lp_flow_tests;
 
@@ -135,6 +140,34 @@ fun bootstrap_supply_mints_one_to_one_and_joins_idle() {
     assert_eq!(vault.supply_queue().escrow_value(), 0);
 
     return_shared(vault);
+    destroy(manager);
+    fx.finish();
+}
+
+#[test]
+fun supply_round_trip_delivers_minted_plp_to_manager() {
+    // The headline async-LP money path end to end: a manager supplies DUSDC, the
+    // flush mints PLP and `send_funds`-delivers it to the manager's accumulator
+    // address, and the manager absorbs the delivery into internal PLP custody. The
+    // bootstrap supply is 1:1, so the delivered share count is exactly the deposit.
+    let mut fx = helpers::setup_market_default();
+    let mut manager = fx.create_funded_manager(0);
+    let amount = min_supply!();
+    enqueue_supply(&mut fx, &manager, amount);
+
+    flush(&mut fx);
+
+    // Absorb the flush-delivered PLP (bootstrap mints 1:1, so `amount` shares).
+    fx.scenario_mut().next_tx(test_constants::alice());
+    manager.settle_delivered_for_testing<PLP>(amount, fx.scenario_mut().ctx());
+    assert_eq!(manager.internal_balance<PLP>(), amount);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.plp_total_supply(), amount); // total shares == the delivered shares
+    assert_eq!(vault.idle_balance(), amount); // the escrowed DUSDC joined idle
+    return_shared(vault);
+
     destroy(manager);
     fx.finish();
 }

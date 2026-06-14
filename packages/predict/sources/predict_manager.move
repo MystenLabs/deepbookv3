@@ -635,3 +635,26 @@ fun mint_withdraw_cap_internal(
     account_events::emit_predict_withdraw_cap_minted(manager_id, cap.id());
     cap
 }
+
+// === Test-Only Functions ===
+
+/// Irreducible accumulator seam (unit-tests.md rule 18). `settle<T>` reads the
+/// delivered amount from a `sui::accumulator::AccumulatorRoot`, which a Move unit
+/// test cannot construct (private `create`, `@0x0`-only). This seam takes the
+/// `amount` directly and runs the identical production legs
+/// (`withdraw_funds_from_object` → `redeem_funds` → `deposit_with_cap`), so a test
+/// can exercise the supply → flush → `send_funds` → settle → internal-custody money
+/// path end to end after the flush has `send_funds`-delivered `amount` of `T` to
+/// this manager's object-accumulator address.
+#[test_only]
+public fun settle_delivered_for_testing<T>(
+    self: &mut PredictManager,
+    amount: u64,
+    ctx: &mut TxContext,
+) {
+    if (amount == 0) return;
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
+    self
+        .balance_manager
+        .deposit_with_cap(&self.deposit_cap, balance::redeem_funds(withdrawal).into_coin(ctx), ctx);
+}
