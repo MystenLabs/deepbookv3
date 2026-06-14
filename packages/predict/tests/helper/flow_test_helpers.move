@@ -295,8 +295,14 @@ public fun prepare_live_oracle_at(
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
-    pyth.store_tick_for_testing(live_price, source_timestamp_ms, source_timestamp_ms);
-    self.seed_bs_surface(market, bs, live_price, live_price, source_timestamp_ms);
+    // The Pyth feed and BS surface both reject non-advancing source timestamps, so a
+    // re-seed (a second market sharing this Pyth feed, or a price change for one
+    // market) must use a strictly-newer timestamp. Bump past the current Pyth row
+    // when the requested timestamp would not advance; the freshness window is wide
+    // enough to absorb the handful of re-seeds a test performs.
+    let ts = source_timestamp_ms.max(pyth.source_timestamp_ms() + 1);
+    pyth.store_tick_for_testing(live_price, ts, ts);
+    self.seed_bs_surface(market, bs, live_price, live_price, ts);
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping

@@ -19,6 +19,11 @@ token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packag
 # so the publishable root declares the `dep-replacements` linking below. Use
 # `rev = "sui-testnet"` for testnet because Wormhole is custom-deployed there.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+# The stub Block Scholes verifier. Predict SOURCE does not use it (the BS surface
+# is read through `propbook::block_scholes_feed`), but the test fixtures construct a
+# verified `update::Update` via its public `new_update` to seed surfaces. Declared
+# with the same `local` source propbook uses so the resolver unifies the package.
+block_scholes_oracle = { local = "../block_scholes_oracle" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
 # for typechecking only; `dep-replacements` tells `sui client publish` to link
