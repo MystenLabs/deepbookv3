@@ -17,12 +17,13 @@ use bigdecimal::BigDecimal;
 use diesel::ExpressionMethods;
 use diesel_async::RunQueryDsl;
 use http_body_util::BodyExt;
+use predict_schema::models::lp_request_status;
 use predict_schema::models::order_status as status;
 use predict_schema::models::{
-    BlockScholesPricesUpdated, DeepStaked, DeepUnstaked, ExpiryCashRebalanced,
-    ExpiryMarketMintPausedUpdated, LiquidatedOrderRedeemed, LiveOrderRedeemed,
-    MarketConfigSnapshot, MarketCreated, OrderLiquidated, OrderMinted, OrderState,
-    PricingConfigUpdated, SettledOrderRedeemed, SupplyExecuted,
+    DeepStaked, DeepUnstaked, ExpiryCashRebalanced, ExpiryMarketMintPausedUpdated, FlushExecuted,
+    LiquidatedOrderRedeemed, LiveOrderRedeemed, LpRequestState, MarketConfigSnapshot,
+    MarketCreated, MarketSettled, OrderLiquidated, OrderMinted, OrderState, PricingConfigUpdated,
+    SettledOrderRedeemed, SupplyFilled, SupplyRequested, WithdrawFilled, WithdrawRequested,
 };
 use predict_schema::schema;
 use predict_server::server::{make_router, AppState};
@@ -37,7 +38,6 @@ use url::Url;
 
 const MARKET: &str = "0xmarket-1";
 const MANAGER: &str = "0xmanager-1";
-const ORACLE: &str = "0xoracle-1";
 const VAULT: &str = "0xvault-1";
 const OWNER: &str = "0xowner-1";
 const SENDER: &str = "0xsender";
@@ -150,8 +150,8 @@ fn order_minted_row(
         order_id: tag.into(),
         position_root_id: tag.into(),
         owner: OWNER.into(),
-        lower_strike: bd(95_000),
-        higher_strike: bd(105_000),
+        lower_tick: 3,
+        higher_tick: 7,
         leverage: 1_000_000_000,
         entry_probability: 450_000_000,
         quantity: bd(70_000),
@@ -271,31 +271,6 @@ fn order_liquidated_row(
     }
 }
 
-fn prices_row(
-    tag: &str,
-    oracle: &str,
-    checkpoint: i64,
-    ts_ms: i64,
-    spot: i64,
-) -> BlockScholesPricesUpdated {
-    BlockScholesPricesUpdated {
-        event_digest: format!("bsp-{tag}"),
-        digest: format!("d-bsp-{tag}"),
-        sender: SENDER.into(),
-        checkpoint,
-        tx_index: 0,
-        event_index: 0,
-        checkpoint_timestamp_ms: ts_ms,
-        package: PKG.into(),
-        market_oracle_id: oracle.into(),
-        spot: bd(spot),
-        forward: bd(spot),
-        basis: bd(0),
-        source_timestamp_ms: ts_ms,
-        update_timestamp_ms: ts_ms,
-    }
-}
-
 fn staked_row(tag: &str, manager: &str, checkpoint: i64, ts_ms: i64) -> DeepStaked {
     DeepStaked {
         event_digest: format!("stake-{tag}"),
@@ -330,7 +305,7 @@ fn unstaked_row(tag: &str, manager: &str, checkpoint: i64, ts_ms: i64) -> DeepUn
     }
 }
 
-fn market_created_row(market: &str, oracle: &str, checkpoint: i64, ts_ms: i64) -> MarketCreated {
+fn market_created_row(market: &str, checkpoint: i64, ts_ms: i64) -> MarketCreated {
     MarketCreated {
         event_digest: format!("mkt-{market}"),
         digest: format!("d-mkt-{market}"),
@@ -341,14 +316,10 @@ fn market_created_row(market: &str, oracle: &str, checkpoint: i64, ts_ms: i64) -
         checkpoint_timestamp_ms: ts_ms,
         package: PKG.into(),
         expiry_market_id: market.into(),
-        market_oracle_id: oracle.into(),
         pool_vault_id: VAULT.into(),
-        pyth_source_id: "0xpyth-1".into(),
-        pyth_lazer_feed_id: 1,
+        propbook_underlying_id: 42,
         expiry: T0_MS + 86_400_000,
-        min_strike: bd(90_000),
         tick_size: bd(1_000),
-        max_strike: bd(110_000),
     }
 }
 
@@ -369,7 +340,6 @@ fn config_snapshot_row(
         checkpoint_timestamp_ms: ts_ms,
         package: PKG.into(),
         expiry_market_id: market.into(),
-        market_oracle_id: ORACLE.into(),
         terminal_floor_index: 3,
         liquidation_ltv: 900_000_000,
         backing_buffer_lambda: 500_000_000,
@@ -403,17 +373,40 @@ fn mint_paused_row(
     }
 }
 
-fn supply_row(
-    tag: &str,
-    vault: &str,
+fn market_settled_row(
+    market: &str,
     checkpoint: i64,
     ts_ms: i64,
-    total_supply_after: i64,
-    idle_after: i64,
-) -> SupplyExecuted {
-    SupplyExecuted {
-        event_digest: format!("supply-{tag}"),
-        digest: format!("d-supply-{tag}"),
+    settlement_price: i64,
+) -> MarketSettled {
+    MarketSettled {
+        event_digest: format!("settled-{market}-{checkpoint}"),
+        digest: format!("d-settled-{market}-{checkpoint}"),
+        sender: SENDER.into(),
+        checkpoint,
+        tx_index: 0,
+        event_index: 0,
+        checkpoint_timestamp_ms: ts_ms,
+        package: PKG.into(),
+        expiry_market_id: market.into(),
+        propbook_underlying_id: 42,
+        expiry: T0_MS + 86_400_000,
+        settlement_price: bd(settlement_price),
+        settled_at_ms: ts_ms,
+    }
+}
+
+fn supply_requested_row(
+    tag: &str,
+    vault: &str,
+    manager: &str,
+    request_index: i64,
+    checkpoint: i64,
+    ts_ms: i64,
+) -> SupplyRequested {
+    SupplyRequested {
+        event_digest: format!("sreq-{tag}"),
+        digest: format!("d-sreq-{tag}"),
         sender: SENDER.into(),
         checkpoint,
         tx_index: 0,
@@ -421,11 +414,118 @@ fn supply_row(
         checkpoint_timestamp_ms: ts_ms,
         package: PKG.into(),
         pool_vault_id: vault.into(),
-        payment: bd(100),
-        shares_minted: bd(100),
-        pool_value_before: bd(0),
-        incentive_value: bd(0),
-        total_supply_after: bd(total_supply_after),
+        predict_manager_id: manager.into(),
+        recipient: OWNER.into(),
+        request_index,
+        amount: bd(100),
+    }
+}
+
+fn withdraw_requested_row(
+    tag: &str,
+    vault: &str,
+    manager: &str,
+    request_index: i64,
+    checkpoint: i64,
+    ts_ms: i64,
+) -> WithdrawRequested {
+    WithdrawRequested {
+        event_digest: format!("wreq-{tag}"),
+        digest: format!("d-wreq-{tag}"),
+        sender: SENDER.into(),
+        checkpoint,
+        tx_index: 0,
+        event_index: 0,
+        checkpoint_timestamp_ms: ts_ms,
+        package: PKG.into(),
+        pool_vault_id: vault.into(),
+        predict_manager_id: manager.into(),
+        recipient: OWNER.into(),
+        request_index,
+        amount: bd(50),
+    }
+}
+
+fn supply_filled_row(
+    tag: &str,
+    vault: &str,
+    manager: &str,
+    request_index: i64,
+    checkpoint: i64,
+    ts_ms: i64,
+) -> SupplyFilled {
+    SupplyFilled {
+        event_digest: format!("sfill-{tag}"),
+        digest: format!("d-sfill-{tag}"),
+        sender: SENDER.into(),
+        checkpoint,
+        tx_index: 0,
+        event_index: 0,
+        checkpoint_timestamp_ms: ts_ms,
+        package: PKG.into(),
+        pool_vault_id: vault.into(),
+        predict_manager_id: manager.into(),
+        recipient: OWNER.into(),
+        request_index,
+        dusdc_amount: bd(100),
+        shares_minted: bd(99),
+    }
+}
+
+fn withdraw_filled_row(
+    tag: &str,
+    vault: &str,
+    manager: &str,
+    request_index: i64,
+    checkpoint: i64,
+    ts_ms: i64,
+) -> WithdrawFilled {
+    WithdrawFilled {
+        event_digest: format!("wfill-{tag}"),
+        digest: format!("d-wfill-{tag}"),
+        sender: SENDER.into(),
+        checkpoint,
+        tx_index: 0,
+        event_index: 0,
+        checkpoint_timestamp_ms: ts_ms,
+        package: PKG.into(),
+        pool_vault_id: vault.into(),
+        predict_manager_id: manager.into(),
+        recipient: OWNER.into(),
+        request_index,
+        shares_burned: bd(50),
+        dusdc_amount: bd(51),
+    }
+}
+
+fn flush_row(
+    tag: &str,
+    vault: &str,
+    checkpoint: i64,
+    ts_ms: i64,
+    pool_value: i64,
+    total_supply: i64,
+    idle_after: i64,
+) -> FlushExecuted {
+    FlushExecuted {
+        event_digest: format!("flush-{tag}"),
+        digest: format!("d-flush-{tag}"),
+        sender: SENDER.into(),
+        checkpoint,
+        tx_index: 0,
+        event_index: 0,
+        checkpoint_timestamp_ms: ts_ms,
+        package: PKG.into(),
+        pool_vault_id: vault.into(),
+        epoch: 1,
+        pool_value: bd(pool_value),
+        total_supply: bd(total_supply),
+        active_market_nav: bd(0),
+        market_count: 0,
+        idle_balance_before: bd(idle_after),
+        supplies_filled: 1,
+        withdrawals_filled: 0,
+        requests_processed: 1,
         idle_balance_after: bd(idle_after),
     }
 }
@@ -475,8 +575,7 @@ fn pricing_config_row(
         package: PKG.into(),
         protocol_config_id: "0xprotocol-config".into(),
         pyth_spot_freshness_ms: freshness_ms,
-        block_scholes_prices_freshness_ms: freshness_ms,
-        block_scholes_svi_freshness_ms: freshness_ms,
+        block_scholes_surface_freshness_ms: freshness_ms,
     }
 }
 
@@ -503,8 +602,6 @@ fn state_row(
         floor_shares: bd(0),
         quantity: bd(70_000),
         sequence,
-        lower_strike: None,
-        higher_strike: None,
         leverage: None,
         entry_probability: None,
         net_premium: None,
@@ -535,8 +632,6 @@ async fn insert_order_state(db: &Db, r: &OrderState) {
             os::floor_shares.eq(r.floor_shares.clone()),
             os::quantity.eq(r.quantity.clone()),
             os::sequence.eq(r.sequence),
-            os::lower_strike.eq(r.lower_strike.clone()),
-            os::higher_strike.eq(r.higher_strike.clone()),
             os::leverage.eq(r.leverage),
             os::entry_probability.eq(r.entry_probability),
             os::net_premium.eq(r.net_premium.clone()),
@@ -544,6 +639,60 @@ async fn insert_order_state(db: &Db, r: &OrderState) {
             os::checkpoint.eq(r.checkpoint),
             os::tx_index.eq(r.tx_index),
             os::event_index.eq(r.event_index),
+        ))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+}
+
+/// `lp_request_state` row with the identity/amount columns set and the fill
+/// columns NULL; tests override the fields they exercise.
+fn lp_state_row(
+    vault: &str,
+    is_supply: bool,
+    request_index: i64,
+    st: &str,
+    opened_at_ms: i64,
+) -> LpRequestState {
+    LpRequestState {
+        pool_vault_id: vault.into(),
+        is_supply,
+        request_index,
+        predict_manager_id: Some(MANAGER.into()),
+        recipient: Some(OWNER.into()),
+        requested_amount: Some(bd(100)),
+        status: st.into(),
+        filled_dusdc: None,
+        filled_shares: None,
+        opened_at_ms,
+        updated_at_ms: opened_at_ms,
+        checkpoint: 1,
+        tx_index: 0,
+        event_index: request_index,
+    }
+}
+
+/// `lp_request_state` has no Insertable model (the indexer writes it through raw
+/// upsert SQL), so tests seed it column-by-column.
+async fn insert_lp_request_state(db: &Db, r: &LpRequestState) {
+    use schema::lp_request_state as lrs;
+    let mut conn = db.connect().await.unwrap();
+    diesel::insert_into(lrs::table)
+        .values((
+            lrs::pool_vault_id.eq(r.pool_vault_id.clone()),
+            lrs::is_supply.eq(r.is_supply),
+            lrs::request_index.eq(r.request_index),
+            lrs::predict_manager_id.eq(r.predict_manager_id.clone()),
+            lrs::recipient.eq(r.recipient.clone()),
+            lrs::requested_amount.eq(r.requested_amount.clone()),
+            lrs::status.eq(r.status.clone()),
+            lrs::filled_dusdc.eq(r.filled_dusdc.clone()),
+            lrs::filled_shares.eq(r.filled_shares.clone()),
+            lrs::opened_at_ms.eq(r.opened_at_ms),
+            lrs::updated_at_ms.eq(r.updated_at_ms),
+            lrs::checkpoint.eq(r.checkpoint),
+            lrs::tx_index.eq(r.tx_index),
+            lrs::event_index.eq(r.event_index),
         ))
         .execute(&mut conn)
         .await
@@ -687,41 +836,95 @@ async fn manager_feed_excludes_order_liquidated() {
 }
 
 #[tokio::test]
-async fn oracle_prices_single_table_window() {
-    const OTHER_ORACLE: &str = "0xoracle-2";
+async fn vault_supply_requests_single_table_window() {
+    const OTHER_VAULT: &str = "0xvault-2";
     let (_temp_db, db, router) = setup().await;
 
-    let rows = vec![
-        prices_row("a1", ORACLE, 1, T0_MS, 100),
-        prices_row("a2", ORACLE, 2, T0_MS + 1000, 110),
-        prices_row("a3", ORACLE, 3, T0_MS + 2000, 120),
-        prices_row("b1", OTHER_ORACLE, 4, T0_MS + 1000, 999),
-    ];
-    seed!(db, block_scholes_prices_updated, &rows);
-
-    // Only this oracle's rows, newest-first, each carrying its kind.
-    let page = get(&router, &format!("/oracles/{ORACLE}/prices")).await;
-    assert_eq!(str_col(&page, "spot"), vec!["120", "110", "100"]);
-    assert_eq!(
-        str_col(&page, "kind"),
-        vec!["block_scholes_prices_updated"; 3]
+    seed!(
+        db,
+        supply_requested,
+        &supply_requested_row("a1", VAULT, MANAGER, 1, 1, T0_MS)
     );
+    seed!(
+        db,
+        supply_requested,
+        &supply_requested_row("a2", VAULT, MANAGER, 2, 2, T0_MS + 1000)
+    );
+    seed!(
+        db,
+        supply_requested,
+        &supply_requested_row("a3", VAULT, MANAGER, 3, 3, T0_MS + 2000)
+    );
+    // A different vault's request must never appear in this vault's feed.
+    seed!(
+        db,
+        supply_requested,
+        &supply_requested_row("b1", OTHER_VAULT, MANAGER, 9, 4, T0_MS + 1000)
+    );
+
+    // Only this vault's rows, newest-first, each carrying its kind.
+    let page = get(&router, &format!("/vaults/{VAULT}/supply-requests")).await;
+    assert_eq!(i64_col(&page, "request_index"), vec![3, 2, 1]);
+    assert_eq!(str_col(&page, "kind"), vec!["supply_requested"; 3]);
 
     // Window pinning exactly the middle second.
     let page = get(
         &router,
         &format!(
-            "/oracles/{ORACLE}/prices?start_time={}&end_time={}",
+            "/vaults/{VAULT}/supply-requests?start_time={}&end_time={}",
             T0_S + 1,
             T0_S + 1
         ),
     )
     .await;
-    assert_eq!(str_col(&page, "spot"), vec!["110"]);
+    assert_eq!(i64_col(&page, "request_index"), vec![2]);
 
     // Limit keeps the newest rows.
-    let page = get(&router, &format!("/oracles/{ORACLE}/prices?limit=2")).await;
-    assert_eq!(str_col(&page, "spot"), vec!["120", "110"]);
+    let page = get(&router, &format!("/vaults/{VAULT}/supply-requests?limit=2")).await;
+    assert_eq!(i64_col(&page, "request_index"), vec![3, 2]);
+}
+
+#[tokio::test]
+async fn vault_fill_and_flush_feeds_carry_kind() {
+    let (_temp_db, db, router) = setup().await;
+
+    seed!(
+        db,
+        withdraw_requested,
+        &withdraw_requested_row("w1", VAULT, MANAGER, 1, 1, T0_MS)
+    );
+    seed!(
+        db,
+        supply_filled,
+        &supply_filled_row("sf1", VAULT, MANAGER, 1, 2, T0_MS + 1000)
+    );
+    seed!(
+        db,
+        withdraw_filled,
+        &withdraw_filled_row("wf1", VAULT, MANAGER, 1, 3, T0_MS + 2000)
+    );
+    seed!(
+        db,
+        flush_executed,
+        &flush_row("f1", VAULT, 4, T0_MS + 3000, 1000, 900, 500)
+    );
+
+    let page = get(&router, &format!("/vaults/{VAULT}/withdraw-requests")).await;
+    assert_eq!(str_col(&page, "kind"), vec!["withdraw_requested"]);
+    assert_eq!(str_col(&page, "amount"), vec!["50"]);
+
+    let page = get(&router, &format!("/vaults/{VAULT}/supply-fills")).await;
+    assert_eq!(str_col(&page, "kind"), vec!["supply_filled"]);
+    assert_eq!(str_col(&page, "shares_minted"), vec!["99"]);
+
+    let page = get(&router, &format!("/vaults/{VAULT}/withdraw-fills")).await;
+    assert_eq!(str_col(&page, "kind"), vec!["withdraw_filled"]);
+    assert_eq!(str_col(&page, "dusdc_amount"), vec!["51"]);
+
+    let page = get(&router, &format!("/vaults/{VAULT}/flushes")).await;
+    assert_eq!(str_col(&page, "kind"), vec!["flush_executed"]);
+    assert_eq!(str_col(&page, "pool_value"), vec!["1000"]);
+    assert_eq!(str_col(&page, "total_supply"), vec!["900"]);
 }
 
 #[tokio::test]
@@ -745,11 +948,7 @@ async fn manager_staking_merges_stake_and_unstake() {
 async fn market_state_composes_latest_rows() {
     let (_temp_db, db, router) = setup().await;
 
-    seed!(
-        db,
-        market_created,
-        &market_created_row(MARKET, ORACLE, 1, T0_MS)
-    );
+    seed!(db, market_created, &market_created_row(MARKET, 1, T0_MS));
     // Two config snapshots sharing checkpoint_timestamp_ms: the row from the
     // HIGHER checkpoint must win the "latest" read.
     seed!(
@@ -767,32 +966,25 @@ async fn market_state_composes_latest_rows() {
         expiry_market_mint_paused_updated,
         &mint_paused_row(MARKET, true, 2, T0_MS)
     );
-    // Oracle component resolved through market_created.market_oracle_id.
+    // Terminal settlement component (present once the market has settled).
     seed!(
         db,
-        block_scholes_prices_updated,
-        &prices_row("p1", ORACLE, 3, T0_MS, 123)
+        market_settled,
+        &market_settled_row(MARKET, 3, T0_MS, 99_000)
     );
 
     let state = get(&router, &format!("/markets/{MARKET}/state")).await;
-    assert_eq!(state["market"]["market_oracle_id"], ORACLE);
+    assert_eq!(state["market"]["pool_vault_id"], VAULT);
+    assert_eq!(state["market"]["propbook_underlying_id"], 42);
     assert_eq!(state["config"]["checkpoint"], 9);
     assert_eq!(state["config"]["base_fee"], "200");
     assert_eq!(state["mint_paused"]["paused"], true);
-    assert_eq!(state["oracle_prices"]["spot"], "123");
-    assert!(state["oracle_svi"].is_null());
-    assert!(state["settlement"].is_null());
+    assert_eq!(state["settlement"]["settlement_price"], "99000");
+    assert_eq!(state["settlement"]["kind"], "market_settled");
 
     // Unknown market: every component is null.
     let state = get(&router, "/markets/0xunknown/state").await;
-    for component in [
-        "market",
-        "config",
-        "mint_paused",
-        "oracle_prices",
-        "oracle_svi",
-        "settlement",
-    ] {
+    for component in ["market", "config", "mint_paused", "settlement"] {
         assert!(state[component].is_null(), "{component} should be null");
     }
 }
@@ -801,12 +993,13 @@ async fn market_state_composes_latest_rows() {
 async fn vault_state_current_uses_newest_triple_across_tables() {
     let (_temp_db, db, router) = setup().await;
 
-    // Supply (older, checkpoint 10) carries total_supply_after; rebalance
-    // (newer, checkpoint 20) carries only idle_balance_after.
+    // Flush (older, checkpoint 10) is the valuation: total_supply/pool_value
+    // come only from it, and it carries idle_balance_after=500. Rebalance
+    // (newer, checkpoint 20) carries a newer idle_balance_after=600.
     seed!(
         db,
-        supply_executed,
-        &supply_row("s1", VAULT, 10, T0_MS, 111, 500)
+        flush_executed,
+        &flush_row("f1", VAULT, 10, T0_MS, 1000, 111, 500)
     );
     seed!(
         db,
@@ -815,13 +1008,17 @@ async fn vault_state_current_uses_newest_triple_across_tables() {
     );
 
     let state = get(&router, &format!("/vaults/{VAULT}/state")).await;
+    // idle_balance_after = newest triple = the rebalance.
     assert_eq!(state["current"]["idle_balance_after"], "600");
-    assert_eq!(state["current"]["total_supply_after"], "111");
+    // total_supply / pool_value come from the latest flush (the valuation).
+    assert_eq!(state["current"]["total_supply"], "111");
+    assert_eq!(state["current"]["pool_value"], "1000");
     assert!(state["current"]["protocol_reserve_balance_after"].is_null());
     assert!(state["current"]["profit_basis_after"].is_null());
-    assert_eq!(state["latest_supply"]["kind"], "supply_executed");
+    assert_eq!(state["latest_flush"]["kind"], "flush_executed");
     assert_eq!(state["latest_cash_rebalance"]["checkpoint"], 20);
-    assert!(state["latest_withdrawal"].is_null());
+    assert!(state["latest_supply_fill"].is_null());
+    assert!(state["latest_withdraw_fill"].is_null());
     assert!(state["latest_profit"].is_null());
 }
 
@@ -832,8 +1029,8 @@ async fn manager_positions_filters_status_and_joins_root() {
     // Root: replaced, carries the entry facts.
     let mut root = state_row(MARKET, "1001", status::REPLACED, T0_MS, 1);
     root.replacement_order_id = Some("1002".into());
-    root.lower_strike = Some(bd(95_000));
     root.leverage = Some(2_000_000_000);
+    root.entry_probability = Some(450_000_000);
     root.net_premium = Some(bd(54));
     insert_order_state(&db, &root).await;
     // Replacement: open, entry facts NULL, points at the root.
@@ -907,6 +1104,70 @@ async fn manager_positions_window_and_ordering() {
 }
 
 #[tokio::test]
+async fn manager_lp_requests_filters_status_window_and_ordering() {
+    let (_temp_db, db, router) = setup().await;
+
+    // Two open supply requests share opened_at_ms T0; request_index is the
+    // deterministic tiebreak (DESC). A cancelled one must be excluded by the
+    // default ?status=open. A withdraw request at a later time leads the feed.
+    insert_lp_request_state(
+        &db,
+        &lp_state_row(VAULT, true, 1, lp_request_status::OPEN, T0_MS),
+    )
+    .await;
+    insert_lp_request_state(
+        &db,
+        &lp_state_row(VAULT, true, 5, lp_request_status::OPEN, T0_MS),
+    )
+    .await;
+    insert_lp_request_state(
+        &db,
+        &lp_state_row(VAULT, false, 2, lp_request_status::OPEN, T0_MS + 10_000),
+    )
+    .await;
+    insert_lp_request_state(
+        &db,
+        &lp_state_row(VAULT, true, 3, lp_request_status::CANCELLED, T0_MS),
+    )
+    .await;
+
+    // Default ?status=open: the three open rows, newest-opened first with
+    // request_index DESC inside the T0 tie. The cancelled row is excluded.
+    let page = get(&router, &format!("/managers/{MANAGER}/lp-requests")).await;
+    assert_eq!(i64_col(&page, "request_index"), vec![2, 5, 1]);
+    let row = &page.as_array().unwrap()[0];
+    assert_eq!(row["kind"], "lp_request_state");
+    assert_eq!(row["is_supply"], false);
+    assert_eq!(row["status"], lp_request_status::OPEN);
+    assert_eq!(row["requested_amount"], "100");
+
+    // ?status=cancelled: only the cancelled handle.
+    let page = get(
+        &router,
+        &format!("/managers/{MANAGER}/lp-requests?status=cancelled"),
+    )
+    .await;
+    assert_eq!(i64_col(&page, "request_index"), vec![3]);
+
+    // Window over opened_at_ms (unix seconds, inclusive) catches only the
+    // withdraw request opened at T0 + 10s.
+    let page = get(
+        &router,
+        &format!(
+            "/managers/{MANAGER}/lp-requests?start_time={}&end_time={}",
+            T0_S + 1,
+            T0_S + 15
+        ),
+    )
+    .await;
+    assert_eq!(i64_col(&page, "request_index"), vec![2]);
+
+    // Limit keeps the newest-opened rows.
+    let page = get(&router, &format!("/managers/{MANAGER}/lp-requests?limit=2")).await;
+    assert_eq!(i64_col(&page, "request_index"), vec![2, 5]);
+}
+
+#[tokio::test]
 async fn market_open_interest_sums_open_rows_only() {
     let (_temp_db, db, router) = setup().await;
 
@@ -963,32 +1224,13 @@ async fn mv_bucket_feeds_window_and_limit() {
         order_minted,
         &order_minted_row("m2", MARKET, MANAGER, (2, 0, 0), bucket_ms + 2000)
     );
-    // Three price updates in one minute bucket; open/close picked by the
-    // checkpoint triple (100 first, 200 last), high/low across all three.
-    seed!(
-        db,
-        block_scholes_prices_updated,
-        &prices_row("p1", ORACLE, 1, bucket_ms + 1000, 100)
-    );
-    seed!(
-        db,
-        block_scholes_prices_updated,
-        &prices_row("p2", ORACLE, 2, bucket_ms + 1000, 300)
-    );
-    seed!(
-        db,
-        block_scholes_prices_updated,
-        &prices_row("p3", ORACLE, 3, bucket_ms + 2000, 200)
-    );
 
     {
         let mut conn = db.connect().await.unwrap();
-        for view in ["market_activity_1h", "oracle_prices_1m"] {
-            diesel::sql_query(format!("REFRESH MATERIALIZED VIEW {view}"))
-                .execute(&mut conn)
-                .await
-                .unwrap();
-        }
+        diesel::sql_query("REFRESH MATERIALIZED VIEW market_activity_1h")
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
 
     // market_activity_1h: one bucket aggregating both mints.
@@ -1012,17 +1254,6 @@ async fn mv_bucket_feeds_window_and_limit() {
     )
     .await;
     assert_eq!(page.as_array().unwrap().len(), 0);
-
-    // oracle_prices_1m: one OHLC candle; open/close by triple, not by spot.
-    let page = get(&router, &format!("/oracles/{ORACLE}/prices/sampled")).await;
-    let candle = &page.as_array().unwrap()[0];
-    assert_eq!(page.as_array().unwrap().len(), 1);
-    assert_eq!(candle["kind"], "oracle_prices_1m");
-    assert_eq!(candle["open"], "100");
-    assert_eq!(candle["high"], "300");
-    assert_eq!(candle["low"], "100");
-    assert_eq!(candle["close"], "200");
-    assert_eq!(candle["update_count"], 3);
 
     // Unseeded MV feeds return empty pages (not errors).
     let page = get(&router, &format!("/markets/{MARKET}/liquidation-stats")).await;
@@ -1053,11 +1284,9 @@ async fn protocol_config_returns_latest_of_each_table() {
     assert_eq!(config["pricing"]["pyth_spot_freshness_ms"], 2000);
     assert_eq!(config["pricing"]["kind"], "pricing_config_updated");
     for unseeded in [
-        "fee",
         "risk",
         "expiry_cash_template",
         "strike_exposure_template",
-        "market_oracle_template",
         "ewma",
         "stake",
         "trading_paused",
