@@ -17,6 +17,7 @@ use sui::clock::Clock;
 
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
+const ENoLatest: u64 = 2;
 
 /// One source-native Pyth Lazer payload for this feed. The generic oracle lane
 /// stores Propbook's canonical millisecond timestamps around this payload; Pyth's
@@ -52,7 +53,14 @@ public fun pyth_source_id(feed: &PythFeed): u32 {
     feed.pyth_source_id
 }
 
-/// Return the latest derived normalized spot in 1e9 price scaling.
+/// Whether this feed has accepted a live source observation.
+public fun has_latest(feed: &PythFeed): bool {
+    feed.lane.has_latest()
+}
+
+/// Return the latest positive-only normalized spot in 1e9 price scaling.
+/// Aborts `ENoLatest` if no live update has landed yet, and aborts if the
+/// source-native value cannot be represented as a positive Propbook spot.
 public fun spot(feed: &PythFeed): u64 {
     let observation = feed.latest_observation();
     normalized_spot_1e9(&observation)
@@ -76,8 +84,8 @@ public fun update_timestamp_ms(feed: &PythFeed): u64 {
     feed.latest_observation().update_timestamp_ms()
 }
 
-/// Freshness reference for consumers: the older of the publisher and on-chain
-/// landing timestamps.
+/// Freshness reference for consumers: the latest source timestamp, or `0` if no
+/// live update has landed yet.
 public fun freshness_timestamp_ms(feed: &PythFeed): u64 {
     feed.lane.freshness_timestamp_ms()
 }
@@ -116,8 +124,10 @@ public fun has_official_settlement(feed: &PythFeed, resolution_timestamp_ms: u64
     feed.lane.has_official_settlement(resolution_timestamp_ms)
 }
 
-/// Return the source-native latest observation.
+/// Return the source-native latest observation. Aborts `ENoLatest` if no live
+/// update has landed yet.
 public fun latest_observation(feed: &PythFeed): OracleObservation<PythSourcePayload> {
+    assert!(feed.has_latest(), ENoLatest);
     feed.lane.latest()
 }
 
@@ -159,15 +169,19 @@ public fun observation_update_timestamp_ms(
     observation.update_timestamp_ms()
 }
 
-/// Derived normalized spot in 1e9 price scaling for this source observation.
+/// Positive-only normalized spot in 1e9 price scaling for this source
+/// observation. Raw Pyth fields are available through the payload getters for
+/// consumers that need source-native data instead.
 public fun normalized_spot_1e9(observation: &OracleObservation<PythSourcePayload>): u64 {
     let payload = observation.payload();
-    lazer_decode::normalize_pyth_price_parts(
+    let parts = lazer_decode::new_price_parts(
         payload.price_magnitude,
         payload.price_is_negative,
         payload.exponent_magnitude,
         payload.exponent_is_negative,
-    )
+        payload.source_timestamp_us,
+    );
+    lazer_decode::normalize_pyth_price_parts(&parts)
 }
 
 // === Write Functions ===
@@ -176,22 +190,7 @@ public fun normalized_spot_1e9(observation: &OracleObservation<PythSourcePayload
 /// oracle lane, then emit the update event.
 public fun update_from_lazer(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
-    let (
-        price_magnitude,
-        price_is_negative,
-        exponent_magnitude,
-        exponent_is_negative,
-        source_timestamp_us,
-    ) = lazer_decode::extract_source_price(&update, feed.pyth_source_id);
-    let observation = new_observation(
-        feed.pyth_source_id,
-        price_magnitude,
-        price_is_negative,
-        exponent_magnitude,
-        exponent_is_negative,
-        source_timestamp_us,
-        clock.timestamp_ms(),
-    );
+    let observation = feed.new_observation_from_lazer(&update, clock.timestamp_ms());
     let id = feed.id();
     feed.lane.record_observation_if_fresh(id, observation);
 }
@@ -206,22 +205,7 @@ public fun record_official_settlement_from_lazer(
     clock: &Clock,
 ) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
-    let (
-        price_magnitude,
-        price_is_negative,
-        exponent_magnitude,
-        exponent_is_negative,
-        source_timestamp_us,
-    ) = lazer_decode::extract_source_price(&update, feed.pyth_source_id);
-    let observation = new_observation(
-        feed.pyth_source_id,
-        price_magnitude,
-        price_is_negative,
-        exponent_magnitude,
-        exponent_is_negative,
-        source_timestamp_us,
-        clock.timestamp_ms(),
-    );
+    let observation = feed.new_observation_from_lazer(&update, clock.timestamp_ms());
     let id = feed.id();
     feed.lane.record_official_settlement(id, observation);
 }
@@ -250,25 +234,30 @@ public(package) fun create_and_share(pyth_source_id: u32, ctx: &mut TxContext): 
 
 // === Private Functions ===
 
+fun new_observation_from_lazer(
+    feed: &PythFeed,
+    update: &LazerUpdate,
+    update_timestamp_ms: u64,
+): OracleObservation<PythSourcePayload> {
+    let parts = lazer_decode::extract_source_price(update, feed.pyth_source_id);
+    new_observation(feed.pyth_source_id, &parts, update_timestamp_ms)
+}
+
 fun new_observation(
     pyth_source_id: u32,
-    price_magnitude: u64,
-    price_is_negative: bool,
-    exponent_magnitude: u16,
-    exponent_is_negative: bool,
-    source_timestamp_us: u64,
+    parts: &lazer_decode::LazerPriceParts,
     update_timestamp_ms: u64,
 ): OracleObservation<PythSourcePayload> {
     oracle_lane::new_observation(
         PythSourcePayload {
             pyth_source_id,
-            price_magnitude,
-            price_is_negative,
-            exponent_magnitude,
-            exponent_is_negative,
-            source_timestamp_us,
+            price_magnitude: parts.price_magnitude(),
+            price_is_negative: parts.price_is_negative(),
+            exponent_magnitude: parts.exponent_magnitude(),
+            exponent_is_negative: parts.exponent_is_negative(),
+            source_timestamp_us: parts.source_timestamp_us(),
         },
-        source_timestamp_ms_from_us(source_timestamp_us),
+        source_timestamp_ms_from_us(parts.source_timestamp_us()),
         update_timestamp_ms,
     )
 }
@@ -303,15 +292,43 @@ public fun store_observation_for_testing(
     source_timestamp_us: u64,
     update_timestamp_ms: u64,
 ) {
-    let observation = new_observation(
-        feed.pyth_source_id,
+    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    let parts = lazer_decode::new_price_parts(
         price_magnitude,
         price_is_negative,
         exponent_magnitude,
         exponent_is_negative,
         source_timestamp_us,
-        update_timestamp_ms,
     );
+    let observation = new_observation(feed.pyth_source_id, &parts, update_timestamp_ms);
     let id = feed.id();
     feed.lane.record_observation_if_fresh(id, observation);
+}
+
+#[test_only]
+public fun record_official_settlement_for_testing(
+    feed: &mut PythFeed,
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+    source_timestamp_us: u64,
+    update_timestamp_ms: u64,
+) {
+    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    let parts = lazer_decode::new_price_parts(
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        source_timestamp_us,
+    );
+    let observation = new_observation(feed.pyth_source_id, &parts, update_timestamp_ms);
+    let id = feed.id();
+    feed.lane.record_official_settlement(id, observation);
+}
+
+#[test_only]
+public fun set_version_for_testing(feed: &mut PythFeed, version: u64) {
+    feed.version = version;
 }

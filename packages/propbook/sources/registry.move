@@ -117,79 +117,6 @@ public fun registry_admin_cap_id(cap: &RegistryAdminCap): ID {
     cap.id.to_inner()
 }
 
-/// Create and share the Propbook Pyth wrapper for `pyth_source_id`, then record
-/// it in the source catalog. Permissionless: a duplicate source aborts before
-/// object creation, and a junk source id creates an inert feed whose storage the
-/// caller pays for.
-public fun create_and_share_pyth_feed(
-    registry: &mut OracleRegistry,
-    pyth_source_id: u32,
-    ctx: &mut TxContext,
-): ID {
-    assert_source_available(registry, kind_pyth!(), pyth_source_id);
-    let propbook_pyth_id = pyth_feed::create_and_share(pyth_source_id, ctx);
-    registry.record_source(kind_pyth!(), pyth_source_id, propbook_pyth_id);
-    propbook_pyth_id
-}
-
-/// Create and share the Propbook Block Scholes wrapper for `bs_source_id`, then
-/// record it in the source catalog. Permissionless: a duplicate source aborts
-/// before object creation.
-public fun create_and_share_block_scholes_feed(
-    registry: &mut OracleRegistry,
-    bs_source_id: u32,
-    ctx: &mut TxContext,
-): ID {
-    assert_source_available(registry, kind_block_scholes!(), bs_source_id);
-    let propbook_block_scholes_id = block_scholes_feed::create_and_share(bs_source_id, ctx);
-    registry.record_source(
-        kind_block_scholes!(),
-        bs_source_id,
-        propbook_block_scholes_id,
-    );
-    propbook_block_scholes_id
-}
-
-/// Admin-bind this Pyth source feed to a canonical Propbook underlying.
-public fun bind_pyth_to_underlying(
-    registry: &mut OracleRegistry,
-    admin_cap: &RegistryAdminCap,
-    feed: &PythFeed,
-    propbook_underlying_id: u32,
-    quote_asset_id: u32,
-) {
-    registry.bind_oracle(
-        admin_cap,
-        propbook_underlying_id,
-        kind_pyth!(),
-        pyth_feed::pyth_source_id(feed),
-        pyth_feed::id(feed),
-        value_kind_spot!(),
-        quote_asset_id,
-        constants::float_scaling_decimals!() as u8,
-    );
-}
-
-/// Admin-bind this Block Scholes source feed to a canonical Propbook underlying.
-public fun bind_block_scholes_to_underlying(
-    registry: &mut OracleRegistry,
-    admin_cap: &RegistryAdminCap,
-    feed: &BlockScholesFeed,
-    propbook_underlying_id: u32,
-    quote_asset_id: u32,
-) {
-    registry.bind_oracle(
-        admin_cap,
-        propbook_underlying_id,
-        kind_block_scholes!(),
-        block_scholes_feed::bs_source_id(feed),
-        block_scholes_feed::id(feed),
-        value_kind_vol_surface!(),
-        quote_asset_id,
-        constants::float_scaling_decimals!() as u8,
-    );
-}
-
 /// Whether a Propbook Pyth source wrapper exists for `pyth_source_id`.
 public fun contains_pyth_source(registry: &OracleRegistry, pyth_source_id: u32): bool {
     registry.contains_source(kind_pyth!(), pyth_source_id)
@@ -283,6 +210,79 @@ public fun scaling_decimals(metadata: &OracleMetadata): u8 {
     metadata.scaling_decimals
 }
 
+/// Create and share the Propbook Pyth wrapper for `pyth_source_id`, then record
+/// it in the source catalog. Permissionless: a duplicate source aborts before
+/// object creation, and a junk source id creates an inert feed whose storage the
+/// caller pays for.
+public fun create_and_share_pyth_feed(
+    registry: &mut OracleRegistry,
+    pyth_source_id: u32,
+    ctx: &mut TxContext,
+): ID {
+    assert_source_available(registry, kind_pyth!(), pyth_source_id);
+    let propbook_pyth_id = pyth_feed::create_and_share(pyth_source_id, ctx);
+    registry.record_source(kind_pyth!(), pyth_source_id, propbook_pyth_id);
+    propbook_pyth_id
+}
+
+/// Create and share the Propbook Block Scholes wrapper for `bs_source_id`, then
+/// record it in the source catalog. Permissionless: a duplicate source aborts
+/// before object creation.
+public fun create_and_share_block_scholes_feed(
+    registry: &mut OracleRegistry,
+    bs_source_id: u32,
+    ctx: &mut TxContext,
+): ID {
+    assert_source_available(registry, kind_block_scholes!(), bs_source_id);
+    let propbook_block_scholes_id = block_scholes_feed::create_and_share(bs_source_id, ctx);
+    registry.record_source(
+        kind_block_scholes!(),
+        bs_source_id,
+        propbook_block_scholes_id,
+    );
+    propbook_block_scholes_id
+}
+
+/// Admin-bind this Pyth source feed to a canonical Propbook underlying.
+public fun bind_pyth_to_underlying(
+    registry: &mut OracleRegistry,
+    admin_cap: &RegistryAdminCap,
+    feed: &PythFeed,
+    propbook_underlying_id: u32,
+    quote_asset_id: u32,
+) {
+    registry.bind_oracle(
+        admin_cap,
+        propbook_underlying_id,
+        kind_pyth!(),
+        pyth_feed::pyth_source_id(feed),
+        pyth_feed::id(feed),
+        value_kind_spot!(),
+        quote_asset_id,
+        constants::float_scaling_decimals!() as u8,
+    );
+}
+
+/// Admin-bind this Block Scholes source feed to a canonical Propbook underlying.
+public fun bind_block_scholes_to_underlying(
+    registry: &mut OracleRegistry,
+    admin_cap: &RegistryAdminCap,
+    feed: &BlockScholesFeed,
+    propbook_underlying_id: u32,
+    quote_asset_id: u32,
+) {
+    registry.bind_oracle(
+        admin_cap,
+        propbook_underlying_id,
+        kind_block_scholes!(),
+        block_scholes_feed::bs_source_id(feed),
+        block_scholes_feed::id(feed),
+        value_kind_vol_surface!(),
+        quote_asset_id,
+        constants::float_scaling_decimals!() as u8,
+    );
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the singleton registry. Owning the share in the defining
@@ -337,6 +337,15 @@ fun bind_oracle(
     };
 
     let binding_key = OracleBindingKey { propbook_underlying_id, oracle_kind, value_kind };
+    let metadata = OracleMetadata {
+        propbook_underlying_id,
+        oracle_kind,
+        source_id,
+        propbook_oracle_id,
+        value_kind,
+        quote_asset_id,
+        scaling_decimals,
+    };
     if (registry.bindings.contains(binding_key)) {
         let old = *registry.bindings.borrow(binding_key);
         let old_source_key = OracleSourceKey {
@@ -349,26 +358,9 @@ fun bind_oracle(
         ) {
             registry.source_bindings.remove(old_source_key);
         };
-        let metadata = registry.bindings.borrow_mut(binding_key);
-        metadata.source_id = source_id;
-        metadata.propbook_oracle_id = propbook_oracle_id;
-        metadata.quote_asset_id = quote_asset_id;
-        metadata.scaling_decimals = scaling_decimals;
+        *registry.bindings.borrow_mut(binding_key) = metadata;
     } else {
-        registry
-            .bindings
-            .add(
-                binding_key,
-                OracleMetadata {
-                    propbook_underlying_id,
-                    oracle_kind,
-                    source_id,
-                    propbook_oracle_id,
-                    value_kind,
-                    quote_asset_id,
-                    scaling_decimals,
-                },
-            );
+        registry.bindings.add(binding_key, metadata);
     };
 
     if (!registry.source_bindings.contains(source_key)) {
@@ -405,9 +397,9 @@ fun canonical_oracle_id(
     oracle_kind: u8,
     value_kind: u8,
 ): Option<ID> {
-    let metadata = registry.canonical_metadata(propbook_underlying_id, oracle_kind, value_kind);
-    if (metadata.is_some()) {
-        option::some(metadata.destroy_some().propbook_oracle_id)
+    let key = OracleBindingKey { propbook_underlying_id, oracle_kind, value_kind };
+    if (registry.bindings.contains(key)) {
+        option::some(registry.bindings.borrow(key).propbook_oracle_id)
     } else {
         option::none()
     }

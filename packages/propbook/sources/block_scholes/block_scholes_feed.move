@@ -145,8 +145,8 @@ public fun svi(feed: &BlockScholesFeed, expiry: u64): SVIParams {
     observation_svi(&observation)
 }
 
-/// Freshness reference for this expiry's surface row: the older of its publisher
-/// and on-chain landing timestamps. Aborts `EExpiryNotFound` if no row.
+/// Freshness reference for this expiry's surface row: the source timestamp.
+/// Aborts `EExpiryNotFound` if no row.
 public fun surface_freshness_timestamp_ms(feed: &BlockScholesFeed, expiry: u64): u64 {
     assert!(feed.has_expiry(expiry), EExpiryNotFound);
     feed.expiries.borrow(expiry).freshness_timestamp_ms()
@@ -220,7 +220,7 @@ public fun update_from_bs(
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.source_id() == feed.bs_source_id, EWrongSource);
 
-    let observation = new_observation(feed.bs_source_id, &update, clock.timestamp_ms());
+    let observation = feed.new_observation_from_bs(&update, clock.timestamp_ms());
     let expiry = observation_expiry_ms(&observation);
     feed.add_empty_expiry_if_absent(expiry, ctx);
     let id = feed.id();
@@ -245,7 +245,7 @@ public fun record_official_settlement_from_bs(
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.source_id() == feed.bs_source_id, EWrongSource);
 
-    let observation = new_observation(feed.bs_source_id, &update, clock.timestamp_ms());
+    let observation = feed.new_observation_from_bs(&update, clock.timestamp_ms());
     let expiry = observation_expiry_ms(&observation);
     feed.add_empty_expiry_if_absent(expiry, ctx);
     let id = feed.id();
@@ -278,6 +278,14 @@ public(package) fun create_and_share(bs_source_id: u32, ctx: &mut TxContext): ID
 }
 
 // === Private Functions ===
+
+fun new_observation_from_bs(
+    feed: &BlockScholesFeed,
+    update: &Update,
+    update_timestamp_ms: u64,
+): OracleObservation<BlockScholesSourcePayload> {
+    new_observation(feed.bs_source_id, update, update_timestamp_ms)
+}
 
 fun new_observation(
     bs_source_id: u32,
@@ -325,4 +333,11 @@ fun empty_payload(bs_source_id: u32, expiry_ms: u64): BlockScholesSourcePayload 
             sigma: 0,
         },
     }
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun set_version_for_testing(feed: &mut BlockScholesFeed, version: u64) {
+    feed.version = version;
 }

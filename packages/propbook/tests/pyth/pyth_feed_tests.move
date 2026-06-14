@@ -18,6 +18,9 @@ const BTC_SOURCE_ID: u32 = 1;
 const UNKNOWN_SOURCE_ID: u32 = 999;
 const SPOT_65K: u64 = 65_000_000_000_000;
 const EXPONENT_NEG_9: u16 = 9;
+const SOURCE_TS_US_NON_EXACT_MS: u64 = 1_001;
+const SOURCE_TS_MS_CEIL: u64 = 2;
+const VERSION_ZERO: u64 = 0;
 
 // === Registry / permissionless creation tests ===
 
@@ -48,14 +51,48 @@ fun create_duplicate_pyth_source_aborts() {
 // === Integration: a source observation flows into the generic lane ===
 
 #[test]
+fun empty_feed_has_no_latest_and_zero_freshness() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    assert!(!feed.has_latest());
+    assert_eq!(feed.freshness_timestamp_ms(), 0);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = pyth_feed::ENoLatest)]
+fun latest_observation_on_empty_feed_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.latest_observation();
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pyth_feed::ENoLatest)]
+fun spot_on_empty_feed_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.spot();
+
+    abort 999
+}
+
+#[test]
 fun store_observation_flows_into_lane() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
     let source_ts = 7 * constants::minute_ms!() + 123;
     let update_ts = source_ts + 50;
+    assert!(!feed.has_latest());
     store_spot(&mut feed, SPOT_65K, source_ts, update_ts);
 
+    assert!(feed.has_latest());
     assert_eq!(feed.pyth_source_id(), BTC_SOURCE_ID);
     assert_eq!(feed.spot(), SPOT_65K);
     assert_eq!(feed.source_timestamp_us(), source_ts * 1000);
@@ -75,6 +112,32 @@ fun store_observation_flows_into_lane() {
     scenario.end();
 }
 
+#[test]
+fun official_settlement_for_testing_ceil_rounds_source_us_without_latest() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.record_official_settlement_for_testing(
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_US_NON_EXACT_MS,
+        SOURCE_TS_MS_CEIL,
+    );
+
+    assert!(!feed.has_latest());
+    assert!(feed.has_official_settlement(SOURCE_TS_MS_CEIL));
+    assert!(!feed.has_official_settlement(SOURCE_TS_MS_CEIL - 1));
+    let settlement = feed.official_observation_at_resolution(SOURCE_TS_MS_CEIL);
+    assert_eq!(pyth_feed::observation_source_timestamp_us(&settlement), SOURCE_TS_US_NON_EXACT_MS);
+    assert_eq!(pyth_feed::observation_source_timestamp_ms(&settlement), SOURCE_TS_MS_CEIL);
+    assert_eq!(pyth_feed::normalized_spot_1e9(&settlement), SPOT_65K);
+
+    return_shared(feed);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = oracle_lane::EStaleSourceUpdate)]
 fun store_observation_stale_source_aborts() {
     let (scenario, feed_obj_id) = setup_feed();
@@ -82,6 +145,42 @@ fun store_observation_stale_source_aborts() {
 
     store_spot(&mut feed, SPOT_65K, 5_000, 5_000);
     store_spot(&mut feed, SPOT_65K, 5_000, 9_000);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EWrongVersion)]
+fun store_observation_wrong_version_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.set_version_for_testing(VERSION_ZERO);
+    store_spot(&mut feed, SPOT_65K, 5_000, 5_000);
+
+    abort 999
+}
+
+#[test]
+fun migrate_restores_current_version_and_updates_resume() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.set_version_for_testing(VERSION_ZERO);
+    feed.migrate();
+    assert_eq!(feed.version(), constants::current_version!());
+    store_spot(&mut feed, SPOT_65K, 5_000, 5_000);
+    assert_eq!(feed.spot(), SPOT_65K);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = pyth_feed::ENotNewerVersion)]
+fun migrate_current_version_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.migrate();
 
     abort 999
 }

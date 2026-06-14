@@ -30,7 +30,8 @@ use deepbook_predict::{
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
-    test_constants
+    test_constants,
+    test_helpers
 };
 use dusdc::dusdc::DUSDC;
 use propbook::{
@@ -95,8 +96,10 @@ public fun setup_market(tick: u64): Fixture {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
-    // tx2: mint the lifecycle cap and capture the vault id.
+    // tx2: bind both feeds to the canonical underlying, mint the lifecycle cap,
+    // and capture the vault id.
     scenario.next_tx(test_constants::admin());
+    test_helpers::bind_feeds_to_underlying(&mut scenario, pyth_id, bs_id);
     let mut registry = scenario.take_shared<Registry>();
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
     return_shared(registry);
@@ -159,19 +162,23 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let bs = self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id);
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
+    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
     let expiry_id = registry::create_expiry_market(
         &mut registry,
         &mut vault,
         &config,
+        &oracle_registry,
         &pyth,
         &bs,
         &self.lifecycle_cap,
+        test_constants::propbook_underlying_id(),
         expiry,
         &self.clock,
         self.scenario.ctx(),
     );
     return_shared(config);
+    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
     return_shared(bs);
@@ -301,7 +308,11 @@ public fun prepare_live_oracle_at(
     // market) must use a strictly-newer timestamp. Bump past the current Pyth row
     // when the requested timestamp would not advance; the freshness window is wide
     // enough to absorb the handful of re-seeds a test performs.
-    let ts = source_timestamp_ms.max(pyth.source_timestamp_ms() + 1);
+    let ts = if (pyth.has_latest()) {
+        source_timestamp_ms.max(pyth.source_timestamp_ms() + 1)
+    } else {
+        source_timestamp_ms
+    };
     store_pyth_spot(pyth, live_price, ts, ts);
     self.seed_bs_surface(market, bs, live_price, live_price, ts);
 }

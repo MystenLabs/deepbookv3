@@ -10,6 +10,8 @@
 /// `source_timestamp_ms` is Propbook's canonical freshness key. Source modules
 /// may keep richer native timestamps inside `Payload`, but lane ordering,
 /// history bucketing, and future-source checks are all millisecond-denominated.
+/// Live writes reject future source timestamps, so freshness is equivalent to
+/// source time under that invariant.
 module propbook::oracle_lane;
 
 use propbook::{observation_history::{Self, ObservationHistory}, oracle_events};
@@ -55,7 +57,7 @@ public fun update_timestamp_ms<Payload: copy + drop + store>(
 }
 
 public fun freshness_timestamp_ms<Payload: copy + drop + store>(lane: &OracleLane<Payload>): u64 {
-    lane.latest.source_timestamp_ms.min(lane.latest.update_timestamp_ms)
+    lane.latest.source_timestamp_ms
 }
 
 public fun payload<Payload: copy + drop + store>(

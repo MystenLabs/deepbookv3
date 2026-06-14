@@ -45,6 +45,7 @@ const T_EARLY: u64 = 100;
 const T_MID: u64 = 150;
 const T_LATE: u64 = 200;
 const T_SAME: u64 = 300;
+const VERSION_ZERO: u64 = 0;
 
 #[test]
 fun update_from_bs_records_source_observation_and_surface() {
@@ -330,6 +331,55 @@ fun update_future_source_aborts() {
         &clock,
         scenario.ctx(),
     );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = block_scholes_feed::EWrongVersion)]
+fun update_wrong_version_aborts() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(LANDED_HIGH);
+
+    feed.set_version_for_testing(VERSION_ZERO);
+    feed.update_from_bs(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+#[test]
+fun migrate_restores_current_version_and_updates_resume() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(LANDED_HIGH);
+
+    feed.set_version_for_testing(VERSION_ZERO);
+    feed.migrate();
+    assert_eq!(feed.version(), propbook::constants::current_version!());
+    feed.update_from_bs(
+        bs_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, SPOT, FORWARD_A),
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(feed.spot(EXPIRY_A), SPOT);
+
+    clock.destroy_for_testing();
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = block_scholes_feed::ENotNewerVersion)]
+fun migrate_current_version_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<BlockScholesFeed>(feed_obj_id);
+
+    feed.migrate();
 
     abort 999
 }

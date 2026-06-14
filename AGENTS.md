@@ -93,7 +93,7 @@ are current. The earlier build-phase directives (source-only / defer-tests / def
 are **retired** — the normal norms (tests + docs land with code) apply again.
 
 **Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit + the finalize audit):**
-- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + `BlockScholesFeed` (per-expiry surface). `expiry_market` owns feed binding (`assert_feeds`) + liveness (`assert_active`); `pricing` owns surface freshness + SVI math. Ingest validity (`forward>0`, `|rho|<=1`, sigma band) is enforced at the propbook chokepoint.
+- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + `BlockScholesFeed` (per-expiry surface). `expiry_market` owns feed binding (`assert_feeds`) + liveness (`assert_active`); `pricing` owns surface freshness + SVI math. Propbook stores raw BS source fields; the pricing-safe envelope (`forward>0`, basis, `|rho|<=1`, sigma band) is enforced by the consumer in `predict::pricing`.
 - **One canonical strike interpretation = absolute integer ticks, protocol-wide** (`raw = tick * tick_size`). `range_codec` owns packing/conversion/the settlement prefix; no centered grid, no boundary indices. No-spot market creation; price-tail saturation.
 - **The flush is PRIVILEGED, cron-driven** — operator `AdminCap` or market-deployer `MarketLifecycleCap`, NOT permissionless. Closes the NAV-manipulation gate (audit L8).
 - **L10 supply mark = the EXACT `current_nav`** (tree walk − leveraged correction), one mark for supply AND withdraw, **no conservative band** (landed; the band belonged to the deleted approximate-NAV world).
