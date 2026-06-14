@@ -196,7 +196,6 @@ fun bind_only_pyth(scenario: &Scenario, pyth_id: ID) {
         &admin_cap,
         &pyth,
         test_constants::propbook_underlying_id(),
-        test_constants::quote_asset_id(),
     );
     return_shared(pyth);
     return_shared(oracle_registry);

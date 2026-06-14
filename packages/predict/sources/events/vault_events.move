@@ -80,8 +80,8 @@ public struct DeepUnstaked has copy, drop, store {
 }
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
-/// (or refund) will be delivered to `recipient` (the manager's address) at the next
-/// flush. `index` is the queue handle used to cancel.
+/// will be delivered to `recipient` (the manager's address) at a later flush.
+/// `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
     predict_manager_id: ID,
@@ -91,7 +91,7 @@ public struct SupplyRequested has copy, drop, store {
 }
 
 /// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC (or a PLP refund) will be delivered to `recipient` at the next flush.
+/// DUSDC will be delivered to `recipient` at a later flush.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
     predict_manager_id: ID,
@@ -132,27 +132,9 @@ public struct WithdrawFilled has copy, drop, store {
     dusdc_amount: u64,
 }
 
-/// Emitted when a supply request prices to zero shares (dust at the flush mark, or a
-/// wiped pool) and its escrowed `dusdc_amount` is returned to `recipient` instead.
-public struct SupplyRefunded has copy, drop, store {
-    pool_vault_id: ID,
-    recipient: address,
-    index: u64,
-    dusdc_amount: u64,
-}
-
-/// Emitted when a withdraw request prices to zero DUSDC (dust at the flush mark, or a
-/// wiped pool) and its escrowed `plp_amount` is returned to `recipient` instead.
-public struct WithdrawRefunded has copy, drop, store {
-    pool_vault_id: ID,
-    recipient: address,
-    index: u64,
-    plp_amount: u64,
-}
-
 /// Emitted once per flush after both queues drain: the frozen mark every fill was
 /// priced at (`pool_value` over `total_supply`), how many of each kind filled, and
-/// the total cursor advances spent against the per-flush cap.
+/// the total live requests processed against the per-flush cap.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
@@ -349,34 +331,6 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
-    });
-}
-
-public(package) fun emit_supply_refunded(
-    pool_vault_id: ID,
-    recipient: address,
-    index: u64,
-    dusdc_amount: u64,
-) {
-    event::emit(SupplyRefunded {
-        pool_vault_id,
-        recipient,
-        index,
-        dusdc_amount,
-    });
-}
-
-public(package) fun emit_withdraw_refunded(
-    pool_vault_id: ID,
-    recipient: address,
-    index: u64,
-    plp_amount: u64,
-) {
-    event::emit(WithdrawRefunded {
-        pool_vault_id,
-        recipient,
-        index,
-        plp_amount,
     });
 }
 

@@ -27,11 +27,7 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math::float_scaling as float;
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, test_scenario::return_shared};
 
@@ -46,7 +42,7 @@ const IDLE_SEED: u64 = 1_200_000_000_000;
 fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut fx = helpers::setup_market_default();
     let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    seed_idle(&mut fx, IDLE_SEED);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
     fund_market_with_order(&mut fx, &mut manager, e1);
@@ -99,7 +95,8 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
 #[test]
 fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, IDLE_SEED);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
     fund_empty_market(&mut fx, e1);
@@ -121,8 +118,14 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
-    assert_eq!(fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs), constants::expiry_cash_floor!());
-    assert_eq!(fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs), constants::expiry_cash_floor!());
+    assert_eq!(
+        fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs),
+        constants::expiry_cash_floor!(),
+    );
+    assert_eq!(
+        fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs),
+        constants::expiry_cash_floor!(),
+    );
     assert_eq!(vault.profit_basis_debits(), 2 * constants::expiry_cash_floor!());
     assert_eq!(vault.profit_basis_credits(), 0);
     assert_eq!(pool_nav, IDLE_SEED);
@@ -134,14 +137,16 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     return_shared(vault);
     return_shared(m1);
     return_shared(m2);
+    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun empty_pool_valuation_returns_idle() {
-    let idle_seed = 7_000_000;
+    let idle_seed = constants::min_supply_request!();
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, idle_seed);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, idle_seed);
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
@@ -154,6 +159,7 @@ fun empty_pool_valuation_returns_idle() {
 
     return_shared(config);
     return_shared(vault);
+    destroy(manager);
     fx.finish();
 }
 
@@ -162,7 +168,8 @@ fun empty_pool_valuation_returns_idle() {
 #[test, expected_failure(abort_code = plp::EMissingExpiryValuation)]
 fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, IDLE_SEED);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
     fund_empty_market(&mut fx, e1);
@@ -187,7 +194,8 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
 #[test, expected_failure(abort_code = plp::EExpiryMarketAlreadyValued)]
 fun value_expiry_aborts_on_double_value() {
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, IDLE_SEED);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
@@ -211,7 +219,7 @@ fun value_expiry_aborts_on_double_value() {
 fun mint_during_valuation_aborts() {
     let mut fx = helpers::setup_market_default();
     let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    seed_idle(&mut fx, IDLE_SEED);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -241,7 +249,8 @@ fun mint_during_valuation_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun rebalance_during_valuation_aborts() {
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, IDLE_SEED);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
@@ -261,7 +270,7 @@ fun rebalance_during_valuation_aborts() {
 fun valuation_flow_releases_lock_and_mint_succeeds() {
     let mut fx = helpers::setup_market_default();
     let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    seed_idle(&mut fx, IDLE_SEED);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -382,13 +391,26 @@ fun set_protocol_reserve_profit_share_above_max_aborts() {
 
 // === Helpers ===
 
-/// Seed pool idle DUSDC directly (the production supply flow is the LP queue).
-fun seed_idle(fx: &mut helpers::Fixture, amount: u64) {
+/// Bootstrap pool idle through the LP queue so nonzero NAV has matching PLP supply.
+fun bootstrap_pool(fx: &mut helpers::Fixture, manager: &PredictManager, amount: u64) {
     let vault_id = fx.vault_id();
-    fx.scenario_mut().next_tx(test_constants::admin());
+    fx.scenario_mut().next_tx(manager.owner());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
     let funds = coin::mint_for_testing<DUSDC>(amount, fx.scenario_mut().ctx());
-    vault.receive_idle_for_testing(funds);
+    vault.request_supply(manager, &config, funds);
+    return_shared(config);
+    return_shared(vault);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
+    let valuation = fx.start_flush(&mut config, &vault);
+    let pool_nav = valuation.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    assert_eq!(pool_nav, 0);
+    assert_eq!(vault.idle_balance(), amount);
+    assert_eq!(vault.plp_total_supply(), amount);
+    return_shared(config);
     return_shared(vault);
 }
 

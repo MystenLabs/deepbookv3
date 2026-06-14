@@ -4,12 +4,12 @@
 /// Flow coverage for the async LP layer: request minimums, manager-routed
 /// cancellation (refund deposits straight back into the requesting manager), and
 /// the flush drain (`finish_flush`) — bootstrap 1:1, proportional supply/withdraw at
-/// a frozen mark, per-request refund-and-continue isolation, the per-flush cap with
-/// carry-over, FIFO-until-idle-dry, and epoch-snapshot consistency (two withdrawals
-/// in one flush price at the SAME frozen mark). Flushes run over an empty market set
-/// so `pool_nav == idle` exactly; every expected share/payout is hand-computed
-/// independently of the contract. Solvency invariants (PLP supply and idle deltas)
-/// are asserted, not just returns.
+/// a frozen mark, PLP-price circuit breakers, the per-flush cap with carry-over,
+/// cancelled requests not spending the cap, FIFO-until-idle-dry, and epoch-snapshot
+/// consistency (two withdrawals in one flush price at the SAME frozen mark). Most
+/// flushes run over an empty market set so `pool_nav == idle` exactly; every expected
+/// share/payout is hand-computed independently of the contract. Solvency invariants
+/// (PLP supply and idle deltas) are asserted, not just returns.
 ///
 /// The minted PLP / paid DUSDC are delivered to the recipient manager's balance
 /// accumulator. The supply-side delivery is verified end to end:
@@ -27,8 +27,13 @@
 module deepbook_predict::lp_flow_tests;
 
 use deepbook_predict::{
-    constants::{min_supply_request as min_supply, min_withdraw_request as min_withdraw},
+    constants::{
+        max_requests_per_flush as max_requests,
+        min_supply_request as min_supply,
+        min_withdraw_request as min_withdraw
+    },
     flow_test_helpers as helpers,
+    lp_book,
     plp::{Self, PoolVault, PLP},
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
@@ -43,7 +48,7 @@ const BOB: address = @0xB0B;
 
 // === Request minimums ===
 
-#[test, expected_failure(abort_code = plp::EBelowMinSupplyRequest)]
+#[test, expected_failure(abort_code = lp_book::EBelowMinSupplyRequest)]
 fun request_supply_below_min_aborts() {
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);
@@ -55,7 +60,7 @@ fun request_supply_below_min_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = plp::EBelowMinWithdrawRequest)]
+#[test, expected_failure(abort_code = lp_book::EBelowMinWithdrawRequest)]
 fun request_withdraw_below_min_aborts() {
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);
@@ -80,11 +85,9 @@ fun cancel_supply_refunds_dusdc_into_manager() {
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     vault.cancel_supply_request(&mut manager, &config, index, fx.scenario_mut().ctx());
 
-    // Escrow returned straight to the manager's internal DUSDC custody; the queue is
-    // empty again and holds no escrow.
+    // Escrow returned straight to the manager's internal DUSDC custody.
     assert_eq!(manager.internal_balance<DUSDC>(), min_supply!());
     assert_eq!(vault.supply_requests_pending(), 0);
-    assert_eq!(vault.supply_queue().escrow_value(), 0);
 
     return_shared(config);
     return_shared(vault);
@@ -105,7 +108,6 @@ fun cancel_withdraw_refunds_plp_into_manager() {
 
     assert_eq!(manager.internal_balance<PLP>(), min_withdraw!());
     assert_eq!(vault.withdraw_requests_pending(), 0);
-    assert_eq!(vault.withdraw_queue().escrow_value(), 0);
 
     return_shared(config);
     return_shared(vault);
@@ -113,7 +115,7 @@ fun cancel_withdraw_refunds_plp_into_manager() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = plp::ENotRequestOwner)]
+#[test, expected_failure(abort_code = lp_book::ENotRequestOwner)]
 fun cancel_with_non_recipient_manager_aborts() {
     let mut fx = helpers::setup_market_default();
     let manager_a = fx.create_funded_manager(0);
@@ -211,7 +213,6 @@ fun bootstrap_supply_mints_one_to_one_and_joins_idle() {
     assert_eq!(vault.plp_total_supply(), min_supply!());
     assert_eq!(vault.idle_balance(), min_supply!());
     assert_eq!(vault.supply_requests_pending(), 0);
-    assert_eq!(vault.supply_queue().escrow_value(), 0);
 
     return_shared(vault);
     destroy(manager);
@@ -332,36 +333,43 @@ fun priced_withdraw_burns_and_pays_from_idle() {
     fx.finish();
 }
 
-// === Per-request failure isolation ===
+// === NAV circuit breakers ===
 
-#[test]
-fun zero_share_supply_refunds_and_drain_continues() {
+#[test, expected_failure(abort_code = plp::EPlpPriceAboveCircuitBreaker)]
+fun high_plp_price_aborts_before_draining_supply_queue() {
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);
-    // Bootstrap 10e6 PLP, then raise idle to 2e14 so the mark is 2e7 per share.
+    // Bootstrap 10e6 PLP, then raise idle to 2e14 so the mark is far above the
+    // executable PLP price envelope.
     enqueue_supply(&mut fx, &manager, min_supply!());
     flush(&mut fx);
     let high_pool_value = 200_000_000_000_000; // 2e14
     seed_idle(&mut fx, high_pool_value - min_supply!()); // idle -> 2e14
 
-    // First a dust supply that prices to 0 shares (10e6 * 10e6 / 2e14 = 0), then a
-    // large supply that fills (2e14 * 10e6 / 2e14 = 10e6 shares). The drain must
-    // refund the first and still fill the second.
+    // The queued request would price to zero shares under the old refund path. The
+    // new invariant aborts before any request is drained.
     enqueue_supply(&mut fx, &manager, min_supply!());
-    enqueue_supply(&mut fx, &manager, high_pool_value);
     flush(&mut fx);
 
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    // Only the large supply minted (10e6) and joined idle; the dust supply was
-    // refunded (its escrow neither minted nor joined idle). Both were processed.
-    assert_eq!(vault.plp_total_supply(), 20_000_000); // 10e6 + 10e6
-    assert_eq!(vault.idle_balance(), high_pool_value + high_pool_value); // 4e14
-    assert_eq!(vault.supply_requests_pending(), 0);
+    abort 999
+}
 
-    return_shared(vault);
-    destroy(manager);
-    fx.finish();
+#[test, expected_failure(abort_code = plp::EPlpSupplyDust)]
+fun plp_supply_dust_aborts_before_draining_supply_queue() {
+    let mut fx = helpers::setup_market_default();
+    let manager = fx.create_funded_manager(0);
+    enqueue_supply(&mut fx, &manager, min_supply!());
+    flush(&mut fx);
+
+    // Burn all but 999_999 PLP. The resulting total supply is below the minimum
+    // withdraw request, so the next flush is stopped by the local circuit breaker.
+    enqueue_withdraw(&mut fx, &manager, 9_000_001);
+    flush(&mut fx);
+
+    enqueue_supply(&mut fx, &manager, min_supply!());
+    flush(&mut fx);
+
+    abort 999
 }
 
 // === Per-flush cap and carry-over ===
@@ -392,8 +400,52 @@ fun flush_caps_at_max_requests_and_carries_rest() {
     assert_eq!(vault.plp_total_supply(), 100 * min_supply!());
     assert_eq!(vault.idle_balance(), 100 * min_supply!());
     assert_eq!(vault.supply_requests_pending(), 1);
-    assert_eq!(vault.supply_queue().head(), 100);
-    assert_eq!(vault.supply_queue().tail(), 101);
+
+    return_shared(vault);
+    flush(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.plp_total_supply(), 101 * min_supply!());
+    assert_eq!(vault.idle_balance(), 101 * min_supply!());
+    assert_eq!(vault.supply_requests_pending(), 0);
+
+    return_shared(vault);
+    destroy(manager);
+    fx.finish();
+}
+
+#[test]
+fun cancelled_supply_requests_do_not_spend_flush_capacity() {
+    let mut fx = helpers::setup_market_default();
+    let mut manager = fx.create_funded_manager(0);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut i = 0;
+    while (i < max_requests!()) {
+        let coin = coin::mint_for_testing<DUSDC>(min_supply!(), fx.scenario_mut().ctx());
+        let index = vault.request_supply(&manager, &config, coin);
+        vault.cancel_supply_request(&mut manager, &config, index, fx.scenario_mut().ctx());
+        i = i + 1;
+    };
+
+    let coin = coin::mint_for_testing<DUSDC>(min_supply!(), fx.scenario_mut().ctx());
+    let live_index = vault.request_supply(&manager, &config, coin);
+    assert_eq!(live_index, max_requests!());
+    assert_eq!(vault.supply_requests_pending(), 1);
+    assert_eq!(manager.internal_balance<DUSDC>(), max_requests!() * min_supply!());
+    return_shared(config);
+    return_shared(vault);
+
+    flush(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.plp_total_supply(), min_supply!());
+    assert_eq!(vault.idle_balance(), min_supply!());
+    assert_eq!(vault.supply_requests_pending(), 0);
 
     return_shared(vault);
     destroy(manager);
@@ -423,8 +475,6 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
     assert_eq!(vault.plp_total_supply(), 10_000_000); // only the first 20e6 burned
     assert_eq!(vault.idle_balance(), 10_000_000); // only the first 20e6 paid
     assert_eq!(vault.withdraw_requests_pending(), 1); // second carried
-    assert_eq!(vault.withdraw_queue().head(), 1); // advanced only past the first
-    assert_eq!(vault.withdraw_queue().tail(), 2);
 
     return_shared(vault);
     destroy(manager);

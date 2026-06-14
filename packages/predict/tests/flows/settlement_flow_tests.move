@@ -10,6 +10,7 @@ use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket},
     flow_test_helpers as helpers,
     plp::PoolVault,
+    predict_manager::PredictManager,
     pricing,
     protocol_config::ProtocolConfig,
     test_constants
@@ -163,7 +164,8 @@ fun passive_settled_redeem_pays_terminal_payout() {
 #[test]
 fun passive_settled_market_sweep_unblocks_pool_valuation() {
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, IDLE_SEED);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     fund_empty_market(&mut fx, expiry_id);
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
@@ -195,13 +197,15 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
+    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun passive_settled_standalone_rebalance_sweeps_market() {
     let mut fx = helpers::setup_market_default();
-    seed_idle(&mut fx, IDLE_SEED);
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     fund_empty_market(&mut fx, expiry_id);
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
@@ -228,6 +232,7 @@ fun passive_settled_standalone_rebalance_sweeps_market() {
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
+    destroy(manager);
     fx.finish();
 }
 
@@ -235,12 +240,25 @@ fun settlement_inside_default_finite_range(): u64 {
     (helpers::strike_tick() + 1) * test_constants::default_tick_size()
 }
 
-fun seed_idle(fx: &mut helpers::Fixture, amount: u64) {
+fun bootstrap_pool(fx: &mut helpers::Fixture, manager: &PredictManager, amount: u64) {
     let vault_id = fx.vault_id();
-    fx.scenario_mut().next_tx(test_constants::admin());
+    fx.scenario_mut().next_tx(manager.owner());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
     let funds = coin::mint_for_testing<DUSDC>(amount, fx.scenario_mut().ctx());
-    vault.receive_idle_for_testing(funds);
+    vault.request_supply(manager, &config, funds);
+    return_shared(config);
+    return_shared(vault);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
+    let valuation = fx.start_flush(&mut config, &vault);
+    let pool_nav = valuation.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    assert_eq!(pool_nav, 0);
+    assert_eq!(vault.idle_balance(), amount);
+    assert_eq!(vault.plp_total_supply(), amount);
+    return_shared(config);
     return_shared(vault);
 }
 

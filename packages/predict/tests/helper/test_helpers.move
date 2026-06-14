@@ -120,14 +120,12 @@ public fun bind_feeds_to_underlying(scenario: &Scenario, pyth_id: ID, bs_id: ID)
         &admin_cap,
         &pyth,
         test_constants::propbook_underlying_id(),
-        test_constants::quote_asset_id(),
     );
     propbook_registry::bind_block_scholes_to_underlying(
         &mut oracle_registry,
         &admin_cap,
         &bs,
         test_constants::propbook_underlying_id(),
-        test_constants::quote_asset_id(),
     );
     return_shared(pyth);
     return_shared(bs);

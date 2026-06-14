@@ -60,8 +60,14 @@ public(package) macro fun min_supply_request(): u64 { 10_000_000 }
 /// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
 public(package) macro fun min_withdraw_request(): u64 { 1_000_000 }
 
-/// Max LP requests (supplies + withdrawals, including cancelled-hole skips) a single
-/// flush advances its drain cursor over. Bounds per-flush gas; the rest carry.
+/// Minimum executable PLP price: 0.01 DUSDC per PLP, in FLOAT_SCALING.
+public(package) macro fun min_plp_price(): u64 { 10_000_000 }
+
+/// Maximum executable PLP price: 100 DUSDC per PLP, in FLOAT_SCALING.
+public(package) macro fun max_plp_price(): u64 { 100_000_000_000 }
+
+/// Max live LP requests (supplies + withdrawals) a single flush processes.
+/// Bounds per-flush gas; the rest carry.
 public(package) macro fun max_requests_per_flush(): u64 { 100 }
 
 // === Leverage ===
