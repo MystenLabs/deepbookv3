@@ -23,15 +23,22 @@ module deepbook_predict::registry_guard_tests;
 use deepbook_predict::{
     constants,
     flow_test_helpers,
-    market_oracle_writer_cap,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
-    pyth_source::{Self, PythSource},
     registry::{Self, Registry},
     test_constants,
     test_helpers
 };
+use propbook::{
+    block_scholes_feed::{Self, BlockScholesFeed},
+    pyth_feed::{Self, PythFeed},
+    registry::{Self as propbook_registry, OracleRegistry}
+};
 use sui::{clock, test_scenario::return_shared};
+
+/// A Pyth Lazer feed id the registry never approves; a `PythFeed` created for it
+/// is therefore not bound to any registered tick-size config.
+const UNREGISTERED_PYTH_FEED_ID: u32 = 777;
 
 // === create_expiry_market ===
 
@@ -40,7 +47,7 @@ fun create_expiry_market_with_expiry_at_now_aborts() {
     let mut fx = flow_test_helpers::setup_market_default();
 
     // Boundary: expiry == clock.timestamp_ms() fails the strict `expiry > now`.
-    let (_expiry_id, _oracle_id) = fx.create_expiry(test_constants::now_ms());
+    let _expiry_id = fx.create_expiry(test_constants::now_ms());
     abort 999
 }
 
@@ -48,51 +55,57 @@ fun create_expiry_market_with_expiry_at_now_aborts() {
 fun create_expiry_market_duplicate_expiry_aborts() {
     let mut fx = flow_test_helpers::setup_market_default();
 
-    let (_expiry_id, _oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
-    let (_dup_id, _dup_oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
+    let _expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let _dup_id = fx.create_expiry(test_constants::default_expiry_ms());
     abort 999
 }
 
 #[test, expected_failure(abort_code = registry::EFeedIdMismatch)]
-fun create_expiry_market_with_wrong_pyth_source_object_aborts() {
+fun create_expiry_market_with_unregistered_pyth_feed_aborts() {
     let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
-    registry::create_pyth_source(
+    propbook_registry::init_for_testing(scenario.ctx());
+    // Approve the canonical feed so the registry is non-empty; the market is then
+    // built against a different, unapproved feed object.
+    registry::register_pyth_feed(
         &mut reg,
         &admin_cap,
         test_constants::pyth_feed_id(),
         test_constants::default_tick_size(),
-        scenario.ctx(),
     );
-    // A second source claiming the registered feed id, created outside the
-    // registry, so its object ID differs from the registered config's source.
-    // Registry feed uniqueness means every registry-created source matches its
-    // own config, so this state is only constructible through the package
-    // constructor — the test pins the object-identity guard (defense-in-depth
-    // against any future non-registry creation path) at the unit level.
-    let rogue_pyth_id = pyth_source::create_and_share(
-        test_constants::pyth_feed_id(),
-        reg.allowed_versions(),
-        scenario.ctx(),
-    );
-    let oracle_cap = market_oracle_writer_cap::create(&admin_cap, scenario.ctx());
-    let clock = clock::create_for_testing(scenario.ctx());
     let registry_id = reg.id();
     return_shared(reg);
+
+    scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
+    let rogue_pyth_id = pyth_feed::create_and_share(
+        &mut oracle_registry,
+        UNREGISTERED_PYTH_FEED_ID,
+        scenario.ctx(),
+    );
+    let bs_id = block_scholes_feed::create_and_share(
+        &mut oracle_registry,
+        UNREGISTERED_PYTH_FEED_ID,
+        scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(test_constants::now_ms());
 
     scenario.next_tx(test_constants::admin());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
     let mut vault = scenario.take_shared<PoolVault>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let rogue_pyth = scenario.take_shared_by_id<PythSource>(rogue_pyth_id);
+    let rogue_pyth = scenario.take_shared_by_id<PythFeed>(rogue_pyth_id);
+    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
-    let (_expiry_id, _oracle_id) = registry::create_expiry_market(
+    let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
         &config,
         &rogue_pyth,
+        &bs,
         &lifecycle_cap,
-        vector[oracle_cap.id()],
         test_constants::default_expiry_ms(),
         &clock,
         scenario.ctx(),
