@@ -36,14 +36,18 @@ import {
     execute,
     executeAndWait,
     finalizeDusdcCurrencyRegistrationTx,
+    MIN_BOOTSTRAP_LIQUIDITY,
+    lockCapitalTx,
+    mintDepositCapTx,
     mintLifecycleCapTx,
+    mintWithdrawCapTx,
     rebalanceExpiryCashTx,
     refreshOracleAndFlushTx,
     refreshOracleAndMintTx,
     refreshOracleAndRedeemTx,
     registerUnderlyingAndCreateFeedsTx,
     requestSupplyTx,
-    withdrawSettledAndRequestTx,
+    requestWithdrawTx,
     seedOracleTx,
     setTemplateExpiryFeeConfigTx,
     type ExecutionReceipt,
@@ -1006,19 +1010,52 @@ async function setupSimulation(
     await executeAndWait(createManagerTx(), "create_manager");
     console.log(`[${ts()}]   Manager: ${managerId}`);
 
-    await executeAndWait(depositToManagerTx(managerId, capital.managerSeed), "deposit_to_manager");
+    // Cap-based capital auth: deposit/request_supply/request_withdraw are no longer
+    // owner-direct — they take a `PredictDepositCap` / `PredictWithdrawCap`. Mint both
+    // (owner-gated; the signer is the owner) and capture their IDs.
+    result = await executeAndWait(mintDepositCapTx(managerId), "mint_deposit_cap");
+    const depositCapChange = result.objectChanges.find(
+        (change: any) => change.type === "created" && change.objectType.includes("PredictDepositCap"),
+    );
+    const depositCapId: string = depositCapChange.objectId;
+    result = await executeAndWait(mintWithdrawCapTx(managerId), "mint_withdraw_cap");
+    const withdrawCapChange = result.objectChanges.find(
+        (change: any) => change.type === "created" && change.objectType.includes("PredictWithdrawCap"),
+    );
+    const withdrawCapId: string = withdrawCapChange.objectId;
+    console.log(`[${ts()}]   Manager caps: deposit=${depositCapId} withdraw=${withdrawCapId}`);
+
+    await executeAndWait(
+        depositToManagerTx(managerId, depositCapId, capital.managerSeed),
+        "deposit_to_manager",
+    );
     console.log(`[${ts()}]   Manager funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
 
     // Vault bootstrap (async): the market is already registered active (with 0 cash)
     // by create_expiry_market, so the bootstrap flush values it (NAV 0, no orders).
-    //   1. request_supply(vaultSeed) escrows DUSDC against the manager.
-    //   2. a privileged flush bootstrap-mints PLP 1:1 (total_supply==0 / pool_value==0)
-    //      and joins the escrowed DUSDC into idle; the PLP is delivered to the manager
-    //      via the balance accumulator.
+    //   0. lock_capital permanently locks the genesis minimum liquidity so
+    //      total_supply > 0; request_supply aborts ENotBootstrapped until it has.
+    //   1. request_supply(vaultSeed) deposits fresh DUSDC into the manager and pulls
+    //      it into queue escrow against the manager.
+    //   2. a privileged flush bootstrap-mints PLP ~1:1 (genesis total_supply ==
+    //      pool_value == min liquidity) and joins the escrowed DUSDC into idle; the
+    //      PLP is delivered to the manager via the balance accumulator.
     //   3. rebalance_expiry_cash pushes idle -> expiry up to the cash floor so the
     //      market is mintable.
+    await executeAndWait(lockCapitalTx(poolVaultId), "bootstrap_lock_capital");
+    console.log(
+        `[${ts()}]   Genesis liquidity locked: ${MIN_BOOTSTRAP_LIQUIDITY / DUSDC_DECIMALS} DUSDC`,
+    );
+
     await executeAndWait(
-        requestSupplyTx({ poolVaultId, protocolConfigId, managerId, amount: capital.vaultSeed }),
+        requestSupplyTx({
+            poolVaultId,
+            protocolConfigId,
+            managerId,
+            depositCapId,
+            withdrawCapId,
+            amount: capital.vaultSeed,
+        }),
         "bootstrap_request_supply",
     );
     console.log(`[${ts()}]   Bootstrap supply queued: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
@@ -1053,6 +1090,8 @@ async function setupSimulation(
         pythFeedId,
         bsFeedId,
         managerId,
+        depositCapId,
+        withdrawCapId,
         lifecycleCapId,
     };
 
@@ -1123,9 +1162,10 @@ async function executeRow(
     // supply/withdraw are ASYNC: a row only ENQUEUES a request; the economic effect
     // (PLP mint/burn, manager credit) lands at a later privileged flush
     // (start_pool_valuation -> value_expiry -> finish_flush), synthesized by the
-    // runner at the batched checkpoints (see executeScenario). request_supply escrows
-    // fresh DUSDC; request_withdraw escrows a Coin<PLP> the manager first materializes
-    // from its balance accumulator via withdraw_settled<PLP>.
+    // runner at the batched checkpoints (see executeScenario). request_supply deposits
+    // fresh DUSDC into the manager and pulls it into escrow; request_withdraw pulls PLP
+    // from manager custody, auto-settling any flush-delivered PLP first (no separate
+    // withdraw_settled step).
     if (row.action === "supply") {
         return execute(
             () =>
@@ -1133,6 +1173,8 @@ async function executeRow(
                     poolVaultId: state.poolVaultId,
                     protocolConfigId: state.protocolConfigId,
                     managerId: state.managerId,
+                    depositCapId: state.depositCapId,
+                    withdrawCapId: state.withdrawCapId,
                     amount: row.amount,
                 }),
             "supply",
@@ -1142,15 +1184,17 @@ async function executeRow(
     // Withdraw fully unwinds its referenced supply. Affordability against the
     // manager's materialized PLP is pre-checked in executeScenario (skip-and-log when
     // the batched cadence hasn't minted enough yet), so by here the shares are known
-    // available; decrement the running balance and build settle+request in one PTB.
+    // available; decrement the running balance and enqueue the withdraw request, which
+    // auto-settles delivered PLP into custody and pulls `shares`.
     const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
     aliases.availableSettledPlp -= shares;
     return execute(
         () =>
-            withdrawSettledAndRequestTx({
+            requestWithdrawTx({
                 poolVaultId: state.poolVaultId,
                 protocolConfigId: state.protocolConfigId,
                 managerId: state.managerId,
+                withdrawCapId: state.withdrawCapId,
                 shares,
             }),
         "withdraw",

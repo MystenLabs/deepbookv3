@@ -120,6 +120,11 @@ export interface SimState {
     pythFeedId: string;
     bsFeedId: string;
     managerId: string;
+    // Capital-flow caps for the sender-owned manager. `deposit` is gated by the
+    // deposit cap; the capital-out paths (`request_supply`, `request_withdraw`) are
+    // gated by the withdraw cap.
+    depositCapId: string;
+    withdrawCapId: string;
     // Sole flush-start authority: the market-deployer MarketLifecycleCap, used to
     // mint a per-flush lifecycle proof for `plp::start_pool_valuation`.
     lifecycleCapId: string;
