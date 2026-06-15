@@ -1,0 +1,30 @@
+{
+  "network": "testnet",
+  "deployer": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+  "packages": {
+    "fixed_math_package_id": "0xab488e225566fcea39a504dfc7bf98c12e9bc99fa5d3684bf6dff5f83807e938",
+    "propbook_package_id": "0xd848f191f5b3619d96e98063d8a3e6b15489b1671118da4ab71938170bcdf892"
+  },
+  "verifier_packages": {
+    "block_scholes_verifier_package_id": "0x7ad752f3cf2f8c2c92dab8f53e49b7d4dba4b92b5b56de113e55d55cb4c89a15",
+    "pyth_lazer_verifier_package_id": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+    "wormhole_verifier_package_id": "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2"
+  },
+  "shared_objects": {
+    "oracle_registry_shared_object_id": "0x6c66d10d196eb1b611b6a5ac01362c1edd3f908c9076ef0e7bf61fd54b1a39f6",
+    "pyth_feed_shared_object_id": "0x2b7b2854cf24273ee30b6ffd5f98bc249f3567da02be3e0fb0b14817a58d7322",
+    "block_scholes_feed_shared_object_id": "0x06759be7ee0ff532ff5d4c57fb256537bdbd980e5d1f35767681afa6220e026a",
+    "pyth_lazer_state_shared_object_id": "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
+    "wormhole_state_shared_object_id": "0x3c89c52e413edb9b0d9a145e02258c96916c79b1e57a12861bb61791ee5c5f81"
+  },
+  "capabilities": {
+    "registry_admin_cap_object_id": "0xd5adeab15741ee1ba17634b013f44f0850d1861fb7855410380c398bc284735b"
+  },
+  "bindings": {
+    "propbook_underlying_id": 1,
+    "pyth_source_id": 1,
+    "bs_source_id": 1,
+    "pyth_bound": 1,
+    "block_scholes_bound": 1
+  }
+}
