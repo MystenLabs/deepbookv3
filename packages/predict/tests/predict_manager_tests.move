@@ -249,7 +249,7 @@ fun add_position_duplicate_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = predict_manager::EInsufficientPosition)]
+#[test, expected_failure(abort_code = predict_manager::EPositionNotFound)]
 fun remove_position_that_does_not_exist_aborts() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);

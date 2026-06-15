@@ -45,6 +45,7 @@ const EInvalidProof: u64 = 2;
 const EInvalidCap: u64 = 3;
 const EMaxCapsReached: u64 = 4;
 const ECapNotInList: u64 = 5;
+const EPositionNotFound: u64 = 6;
 const EPositionAlreadyExists: u64 = 7;
 
 /// Cap-count safety ceiling per manager. Mirrors BalanceManager's MAX_TRADE_CAPS.
@@ -510,7 +511,7 @@ public(package) fun remove_position(
     order_id: u256,
 ): u256 {
     let key = position_key(expiry_market_id, order_id);
-    assert!(self.positions.contains(key), EInsufficientPosition);
+    assert!(self.positions.contains(key), EPositionNotFound);
     let position_root_id = self.positions.remove(key);
     let summary = self.summary_mut(expiry_market_id);
     assert!(summary.open_position_count > 0, EInsufficientPosition);

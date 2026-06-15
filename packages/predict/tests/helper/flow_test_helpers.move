@@ -449,6 +449,17 @@ public fun redeem_settled(
     (closed_id, replacement_id)
 }
 
+/// Run the passive settlement gate against the fixture clock and return whether the
+/// market is settled after the attempt.
+public fun ensure_settled(
+    self: &Fixture,
+    market: &mut ExpiryMarket,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+): bool {
+    market.ensure_settled(oracle_registry, pyth, &self.clock)
+}
+
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
 /// Returns the number of orders liquidated.
 public fun liquidate(

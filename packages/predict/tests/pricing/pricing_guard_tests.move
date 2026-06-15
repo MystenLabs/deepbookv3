@@ -17,6 +17,21 @@
 /// fallback is pinned with exact values in
 /// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
 /// so it is not duplicated here.
+///
+/// The `assert_surface_pricing_safe` envelope rejects (`EBlockScholesSurfaceInvalid`)
+/// is covered here too: one test per reachable branch seeds a surface that violates
+/// exactly that bound (`forward` ceiling, `basis`, `a`, `b`, `rho`, `m`, `sigma`),
+/// leaving every other input default so only the targeted branch fires. The
+/// `spot == 0` / `forward == 0` branch of that assert is unreachable through
+/// `load_live_pricer`: `block_scholes_feed::normalized_surface_from_read` drops a
+/// zero-spot/zero-forward surface upstream (-> `EBlockScholesSurfaceStale`), so those
+/// two conditions are defensive-only and not tested here. `EZeroForward` is reached
+/// via a tiny-forward / large-spot surface (no LOWER basis bound), where the
+/// re-anchored `spot * (forward/spot)` rounds to 0. `EZeroVariance` and
+/// `ECannotBeNegative` in `compute_nd2` are unreachable from the live pricer: the
+/// envelope's `|rho| <= 1` makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0`
+/// always, and with `sigma >= 1e-3` the variance cannot round to 0 without
+/// out-of-envelope inputs; both are defensive fixed-point guards, noted not tested.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -28,11 +43,7 @@ use deepbook_predict::{
     test_constants
 };
 use fixed_math::math::float_scaling as float;
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
@@ -46,6 +57,13 @@ const DEEP_ITM_STRIKE: u64 = 1;
 /// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
 /// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
+
+// Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
+// are module-private, so the bounds are reproduced here from the source, not read).
+// The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
+const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
+const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
+const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
 
 // === Abort guards (production-valid fixture bring-up) ===
 
@@ -124,7 +142,208 @@ fun deep_otm_up_price_saturates_to_zero() {
     fx.finish();
 }
 
+// === Surface pricing-safe envelope rejects (EBlockScholesSurfaceInvalid) ===
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_forward_above_spot_ceiling_aborts() {
+    // forward just over the spot ceiling fires the `forward <= max_pricing_spot`
+    // branch before the basis check. spot small so the basis arithmetic stays in u128.
+    load_pricer_with_spot_forward(test_constants::float(), MAX_PRICING_SPOT + 1);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_basis_above_max_aborts() {
+    // basis = forward * 1e9 / spot = 101e9 > 100e9, with forward still under the
+    // spot ceiling so the basis branch (not the ceiling branch) is the one that fires.
+    let spot = 100 * test_constants::float();
+    let forward = spot * 101;
+    load_pricer_with_spot_forward(spot, forward);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_svi_a_above_max_aborts() {
+    load_pricer_with_invalid_svi(MAX_SVI_INPUT + 1, default_svi_b(), default_svi_sigma());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_svi_b_above_max_aborts() {
+    load_pricer_with_invalid_svi(default_svi_a(), MAX_SVI_INPUT + 1, default_svi_sigma());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_svi_rho_above_one_aborts() {
+    // rho magnitude just over 1.0 fails `|rho| <= 1e9`.
+    load_pricer_with_full_svi(
+        default_svi_a(),
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::float() + 1,
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_svi_m_above_max_aborts() {
+    load_pricer_with_full_svi(
+        default_svi_a(),
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::float(),
+        false,
+        MAX_SVI_INPUT + 1,
+        false,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_svi_sigma_below_min_aborts() {
+    load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), MIN_SVI_SIGMA - 1);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSurfaceInvalid)]
+fun surface_with_svi_sigma_above_max_aborts() {
+    load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), MAX_SVI_INPUT + 1);
+    abort EUnexpectedSuccess
+}
+
+// === Deep-math abort (EZeroForward) ===
+
+/// A surface whose forward is tiny relative to spot has basis 0 (no LOWER basis
+/// bound), so it passes the envelope, but the re-anchored live forward
+/// `mul(spot, div(forward, spot))` rounds to 0 and `compute_nd2` aborts on the first
+/// finite-strike quote.
+#[test, expected_failure(abort_code = pricing::EZeroForward)]
+fun re_anchored_zero_forward_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    let spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
+    fx.prepare_real_oracle(
+        &mut bs,
+        &mut pyth,
+        spot,
+        1, // forward == 1: div(1, 1e17) == 0, so spot * 0 == 0
+        default_svi_a(),
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+
+    pricer.up_price(test_constants::default_live_price());
+
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    fx.finish();
+    abort EUnexpectedSuccess
+}
+
 // === Helpers ===
+
+fun default_svi_a(): u64 { test_constants::default_svi_a() }
+
+fun default_svi_b(): u64 { test_constants::default_svi_b() }
+
+fun default_svi_sigma(): u64 { test_constants::default_svi_sigma() }
+
+fun default_svi_m_magnitude(): u64 { test_constants::default_svi_m() }
+
+/// Seed a surface with the given spot/forward and default SVI, then load the pricer
+/// (where `assert_surface_pricing_safe` runs).
+fun load_pricer_with_spot_forward(spot: u64, forward: u64) {
+    load_pricer_with_full_svi_and_spot(
+        spot,
+        forward,
+        default_svi_a(),
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+}
+
+/// Seed a default-spot/forward surface with the given SVI a/b/sigma (rho/m default),
+/// then load the pricer.
+fun load_pricer_with_invalid_svi(svi_a: u64, svi_b: u64, svi_sigma: u64) {
+    load_pricer_with_full_svi(
+        svi_a,
+        svi_b,
+        svi_sigma,
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+}
+
+/// Seed a default-spot/forward surface with a fully specified SVI, then load.
+fun load_pricer_with_full_svi(
+    svi_a: u64,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    load_pricer_with_full_svi_and_spot(
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        svi_a,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
+}
+
+fun load_pricer_with_full_svi_and_spot(
+    spot: u64,
+    forward: u64,
+    svi_a: u64,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    fx.prepare_real_oracle(
+        &mut bs,
+        &mut pyth,
+        spot,
+        forward,
+        svi_a,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
+    // `load_pricer` runs `assert_surface_pricing_safe`; the invalid surface aborts
+    // here before the pricer is returned.
+    let _pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    fx.finish();
+}
 
 /// Bring up the default live oracle: fresh Pyth spot + Block Scholes surface,
 /// quotable at the fixture clock (forward == 100e9).

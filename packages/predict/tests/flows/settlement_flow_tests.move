@@ -162,6 +162,62 @@ fun passive_settled_redeem_pays_terminal_payout() {
 }
 
 #[test]
+fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let (mut pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+
+    let order_id = fx.mint(
+        &config,
+        &oracle_registry,
+        &mut manager,
+        &mut market,
+        &pyth,
+        &bs,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 1,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot(&mut pyth, market.expiry(), settlement_price);
+
+    // First call records the settlement price from the exact expiry spot.
+    assert_eq!(fx.ensure_settled(&mut market, &oracle_registry, &pyth), true);
+    // Second call (clock now far past expiry) must early-return true via the
+    // already-settled gate without re-reading the oracle or changing the price.
+    fx.set_clock_for_testing(test_constants::short_expiry_ms() * 2);
+    assert_eq!(fx.ensure_settled(&mut market, &oracle_registry, &pyth), true);
+
+    // The redeem pays the terminal in-range payout, proving the recorded settlement
+    // price is unchanged by the second `ensure_settled`.
+    fx.redeem_settled(
+        &config,
+        &oracle_registry,
+        &mut manager,
+        &mut market,
+        &pyth,
+        &bs,
+        order_id,
+        test_constants::mint_quantity(),
+    );
+    helpers::check_manager(
+        &manager,
+        expiry_id,
+        helpers::expected_manager_state(POST_SETTLED_REDEEM_BALANCE, MINT_MIN_FEE, 0, 0, 0),
+    );
+
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    destroy(manager);
+    fx.finish();
+}
+
+#[test]
 fun passive_settled_market_sweep_unblocks_pool_valuation() {
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);

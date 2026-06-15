@@ -154,6 +154,11 @@ public fun current_nav(
 ): u64 {
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     let liability = market.strike_exposure.exact_live_liability(&pricer, clock);
+    // Floor at 0 rather than abort: a degenerate underwater market marks at 0, and
+    // partial-close `walk_linear` survivors can leave residual ulp dust that makes
+    // liability exceed free cash by ~1-2 ulp/order, biasing the supply mark down by
+    // that dust. Intentional per ROUNDING_POLICY R1/R2 (liveness; the supply mark
+    // never *over*-counts TRUE, so incumbents are never diluted).
     market.cash.free_cash().saturating_sub(liability)
 }
 
@@ -873,8 +878,12 @@ fun settle_settled_redeem_payment(
     payout_amount: u64,
     ctx: &mut TxContext,
 ) {
-    let payout = market.cash.pay_authorized(payout_amount);
-    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    // A settled losing position pays nothing; `redeem_settled` is permissionless,
+    // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
+    if (payout_amount > 0) {
+        let payout = market.cash.pay_authorized(payout_amount);
+        manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    };
 
     market.assert_cash_backing();
 }

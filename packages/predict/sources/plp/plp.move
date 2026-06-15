@@ -532,6 +532,12 @@ public(package) fun lp_pool_value(
 
 /// Abort before draining LP requests if the bootstrapped pool is dust-sized or the
 /// frozen mark implies a PLP price outside the executable protocol envelope.
+///
+/// The price-bound checks use floor-rounded math (`math::div`, and `mul_div_down`
+/// when the drain converts shares↔value) intentionally, so each boundary stays
+/// conservative — the floored price is a lower bound on the true price, so passing
+/// the lower-bound check guarantees the real price clears it, and the floored
+/// upper-bound RHS only tightens the cap. The protocol is never short.
 fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
     if (total_supply == 0) {
         assert!(pool_nav == 0, EBootstrapNavNotEmpty);

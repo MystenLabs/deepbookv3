@@ -73,6 +73,11 @@ async fn main() -> Result<(), anyhow::Error> {
         mv_refresh_interval_secs,
     } = Args::parse();
 
+    // Validate the package addresses eagerly so the fail-fast unset-address panic
+    // (TODO(testnet-deploy)) fires at process boot rather than on the first
+    // checkpoint ingestion.
+    let _ = env.package_addresses();
+
     let ingestion_args = IngestionClientArgs {
         remote_store_url: Some(env.remote_store_url()),
         ..Default::default()

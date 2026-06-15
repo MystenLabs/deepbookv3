@@ -188,7 +188,10 @@ fn normalize_raw_spot(raw: &crate::models::RawSpot) -> Option<BigDecimal> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::RawSpot;
+    use crate::models::{
+        BlockScholesObservationEvent, OracleReadRawSurface, RawSpot, RawSurface, SVIParams,
+    };
+    use sui_types::base_types::ObjectID;
 
     fn raw(
         price_magnitude: u64,
@@ -245,5 +248,63 @@ mod tests {
     fn normalize_overflow_shift_is_none() {
         // exponent +20 with positive sign: target + exp = 29 > 18 -> None.
         assert_eq!(normalize_raw_spot(&raw(1, false, 20, false)), None);
+    }
+
+    #[test]
+    fn map_bs_passes_through_amounts_and_collapses_signed_svi() {
+        // Non-zero spot/forward: normalized passthrough is Some(spot)/Some(forward)
+        // (the BS feed stores spot/forward already in 1e9 scaling, so the mapper
+        // does not rescale — it only drops the zero sentinels). rho is negative,
+        // m is positive, so `signed` collapses them to -3 and +4.
+        let ev = BlockScholesObservationEvent {
+            propbook_oracle_id: ObjectID::ZERO,
+            observation: OracleReadRawSurface {
+                source_timestamp_ms: 1_700_000_001_000,
+                update_timestamp_ms: 1_700_000_002_000,
+                value: RawSurface {
+                    bs_source_id: 7,
+                    expiry_ms: 1_800_000_000_000,
+                    spot: 100_000_000_000,
+                    forward: 105_000_000_000,
+                    svi: SVIParams {
+                        a: 1,
+                        b: 2,
+                        rho: I64 {
+                            magnitude: 3,
+                            is_negative: true,
+                        },
+                        m: I64 {
+                            magnitude: 4,
+                            is_negative: false,
+                        },
+                        sigma: 5,
+                    },
+                },
+            },
+        };
+        let meta = OracleEventMeta::for_test("0xdig", "0xsender", 42, 3, 9_999, 1, "0xpkg");
+
+        let row = map_bs(&ev, &meta, true);
+
+        assert_eq!(row.bs_source_id, 7);
+        assert_eq!(row.expiry_ms, 1_800_000_000_000);
+        assert_eq!(row.spot, BigDecimal::from(100_000_000_000u64));
+        assert_eq!(row.forward, BigDecimal::from(105_000_000_000u64));
+        assert_eq!(
+            row.normalized_spot,
+            Some(BigDecimal::from(100_000_000_000u64))
+        );
+        assert_eq!(
+            row.normalized_forward,
+            Some(BigDecimal::from(105_000_000_000u64))
+        );
+        assert_eq!(row.svi_a, BigDecimal::from(1u64));
+        assert_eq!(row.svi_b, BigDecimal::from(2u64));
+        assert_eq!(row.svi_rho, BigDecimal::from(-3i64));
+        assert_eq!(row.svi_m, BigDecimal::from(4i64));
+        assert_eq!(row.svi_sigma, BigDecimal::from(5u64));
+        assert_eq!(row.source_timestamp_ms, 1_700_000_001_000);
+        assert_eq!(row.update_timestamp_ms, 1_700_000_002_000);
+        assert!(row.is_exact);
     }
 }
