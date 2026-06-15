@@ -297,6 +297,7 @@ public fun create_expiry_market(
     registry.assert_version_allowed();
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     // Expiry must land on the resolution-feed grid so the exact-ms settling Pyth
     // observation is always producible; an off-grid expiry could never settle and

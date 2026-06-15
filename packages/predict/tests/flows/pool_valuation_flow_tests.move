@@ -291,6 +291,24 @@ fun rebalance_during_valuation_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun create_expiry_market_during_valuation_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let manager = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+
+    // Engage the valuation lock on the shared config, then attempt to create a market:
+    // create_expiry_market is an active-set mutation, so it must abort under the lock.
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    config.begin_valuation();
+    return_shared(config);
+
+    fx.create_expiry(test_constants::default_expiry_ms());
+
+    abort 999
+}
+
 #[test]
 fun valuation_flow_releases_lock_and_mint_succeeds() {
     let mut fx = helpers::setup_market_default();
