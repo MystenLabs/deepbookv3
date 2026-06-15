@@ -23,6 +23,7 @@ use deepbook_predict::{
     market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
+    predict_withdraw_cap::PredictWithdrawCap,
     protocol_config::ProtocolConfig,
     vault_events
 };
@@ -30,6 +31,7 @@ use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::{
+    accumulator::AccumulatorRoot,
     balance::{Self, Balance},
     clock::Clock,
     coin::{Coin, TreasuryCap},
@@ -380,66 +382,86 @@ public fun lock_capital(vault: &mut PoolVault, _admin_cap: &AdminCap, payment: C
     vault_events::emit_capital_locked(vault.id(), amount);
 }
 
-/// Queue a supply request: escrow `payment` DUSDC and record the requesting manager
-/// as the fill recipient. Routed through `manager` so a composing vault's own
-/// manager — not the tx signer — receives the minted PLP at the next flush. Returns
-/// the queue index, the handle used to cancel before the flush.
+/// Queue a supply request: pull `amount` DUSDC from the manager's internal custody
+/// into queue escrow, recording the manager as the fill recipient. Supplying is a
+/// capital-out move, so it is authorized by a `PredictWithdrawCap` (held by the
+/// owner or a composing vault), and the pull auto-settles any flush-delivered DUSDC
+/// first. The manager receives the minted PLP at the next flush. Returns the queue
+/// index, the handle used to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
-    manager: &PredictManager,
+    manager: &mut PredictManager,
+    cap: &PredictWithdrawCap,
     config: &ProtocolConfig,
-    payment: Coin<DUSDC>,
+    root: &AccumulatorRoot,
+    amount: u64,
+    ctx: &mut TxContext,
 ): u64 {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    let payment = manager.withdraw<DUSDC>(cap, root, amount, ctx);
     let vault_id = vault.id();
     vault.lp.request_supply(vault_id, manager, payment)
 }
 
-/// Queue a withdraw request: escrow `lp` PLP shares and record the requesting manager
-/// as the fill recipient. Returns the queue index used to cancel before the flush.
+/// Queue a withdraw request: pull `amount` PLP shares from the manager's internal
+/// custody into queue escrow, recording the manager as the fill recipient.
+/// Authorized by a `PredictWithdrawCap`; the pull auto-settles any flush-delivered
+/// PLP first. Returns the queue index used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
-    manager: &PredictManager,
+    manager: &mut PredictManager,
+    cap: &PredictWithdrawCap,
     config: &ProtocolConfig,
-    lp: Coin<PLP>,
+    root: &AccumulatorRoot,
+    amount: u64,
+    ctx: &mut TxContext,
 ): u64 {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    let lp = manager.withdraw<PLP>(cap, root, amount, ctx);
     let vault_id = vault.id();
     vault.lp.request_withdraw(vault_id, manager, lp)
 }
 
 /// Cancel a still-pending supply request, refunding its escrowed DUSDC straight into
-/// the requesting manager. The caller must own `manager`, and `manager` must be the
-/// request's recorded recipient.
+/// the requesting manager. Authorized by a `PredictWithdrawCap` (proves withdraw
+/// authority over the manager); `manager` must be the request's recorded recipient.
 public fun cancel_supply_request(
     vault: &mut PoolVault,
     manager: &mut PredictManager,
+    cap: &PredictWithdrawCap,
     config: &ProtocolConfig,
+    root: &AccumulatorRoot,
     index: u64,
     ctx: &mut TxContext,
 ) {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    manager.validate_withdrawer(cap);
+    manager.settle<DUSDC>(root, ctx);
     let vault_id = vault.id();
     vault.lp.cancel_supply_request(vault_id, manager, index, ctx);
 }
 
 /// Cancel a still-pending withdraw request, refunding its escrowed PLP straight into
-/// the requesting manager. The caller must own `manager`, and `manager` must be the
-/// request's recorded recipient.
+/// the requesting manager. Authorized by a `PredictWithdrawCap`; `manager` must be
+/// the request's recorded recipient.
 public fun cancel_withdraw_request(
     vault: &mut PoolVault,
     manager: &mut PredictManager,
+    cap: &PredictWithdrawCap,
     config: &ProtocolConfig,
+    root: &AccumulatorRoot,
     index: u64,
     ctx: &mut TxContext,
 ) {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    manager.validate_withdrawer(cap);
+    manager.settle<PLP>(root, ctx);
     let vault_id = vault.id();
     vault.lp.cancel_withdraw_request(vault_id, manager, index, ctx);
 }

@@ -12,6 +12,7 @@
 module deepbook_predict::no_double_pay_liquidation_tests;
 
 use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
+use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
@@ -122,7 +123,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
 
     // --- The holder clears the tombstone with a full close: exactly zero
     // payout, zero fee, position removed, market sheet bit-identical.
-    let balance_before = manager.balance();
+    let balance_before = manager.internal_balance<DUSDC>();
     let (closed_id, replacement) = fx.redeem(
         &config,
         &oracle_registry,
@@ -133,7 +134,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         order_id,
         test_constants::mint_quantity(),
     );
-    assert_eq!(manager.balance(), balance_before);
+    assert_eq!(manager.internal_balance<DUSDC>(), balance_before);
     assert_eq!(closed_id, order_id);
     assert!(replacement.is_none());
     assert!(!manager.has_position(expiry_id, order_id));

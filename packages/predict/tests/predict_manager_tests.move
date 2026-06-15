@@ -4,18 +4,19 @@
 /// Unit coverage for `PredictManager`: DUSDC custody, caps/proofs, position and
 /// trading-fee bookkeeping, and the lazy stake roll.
 ///
-/// The accumulator-delivered capital path (`settled_balance` / `withdraw_settled`
-/// and the private `settle`) reads a `sui::accumulator::AccumulatorRoot`, which a
-/// Move unit test cannot construct (private `create`, `@0x0`-only). The
-/// flush-delivery -> manager-receipt money path is exercised end-to-end through the
-/// pre-approved `withdraw_delivered_for_testing` seam in `lp_flow_tests`.
+/// The accumulator is ambient: every capital op auto-settles flush-delivered funds
+/// from a `sui::accumulator::AccumulatorRoot` before proceeding. That root cannot be
+/// constructed in a Move unit test (private `create`, `@0x0`-only), so the settling
+/// capital entrypoints (`deposit` / `withdraw`) live in the untested outer layer;
+/// these tests drive the root-free pieces (`deposit_funds`,
+/// `withdraw_with_proof`, `internal_balance`).
 #[test_only]
 module deepbook_predict::predict_manager_tests;
 
 use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{balance, coin, test_scenario::{Self as test, return_shared}};
+use sui::{coin, test_scenario::{Self as test, return_shared}};
 
 const DEPOSIT_AMOUNT: u64 = 1_000_000;
 const WITHDRAW_AMOUNT: u64 = 400_000;
@@ -51,7 +52,7 @@ fun fresh_manager_has_alice_owner_and_zero_balance() {
     let manager = create_alice_manager(&mut scenario, registry_id);
 
     assert_eq!(manager.owner(), test_constants::alice());
-    assert_eq!(manager.balance(), 0);
+    assert_eq!(manager.internal_balance<DUSDC>(), 0);
 
     destroy(manager);
     scenario.end();
@@ -71,29 +72,19 @@ fun id_is_stable_across_reads() {
 // === deposit / withdraw ===
 
 #[test]
-fun deposit_increases_balance() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-
-    let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    manager.deposit(coin, scenario.ctx());
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
-
-    destroy(manager);
-    scenario.end();
-}
-
-#[test]
 fun withdraw_decreases_balance_and_returns_coin() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
     let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    manager.deposit(coin, scenario.ctx());
+    manager.deposit_funds(coin.into_balance(), scenario.ctx());
 
-    let withdrawn = manager.withdraw(WITHDRAW_AMOUNT, scenario.ctx());
+    // Withdraw routes through the root-free `withdraw_with_proof` inner; the public
+    // `withdraw` settles first and is untestable (the root can't be constructed).
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    let withdrawn = manager.withdraw_with_proof(&proof, WITHDRAW_AMOUNT, scenario.ctx());
     assert_eq!(withdrawn.value(), WITHDRAW_AMOUNT);
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT - WITHDRAW_AMOUNT);
+    assert_eq!(manager.internal_balance<DUSDC>(), DEPOSIT_AMOUNT - WITHDRAW_AMOUNT);
 
     destroy(manager);
     destroy(withdrawn);
@@ -101,52 +92,16 @@ fun withdraw_decreases_balance_and_returns_coin() {
 }
 
 #[test]
-fun deposit_permissionless_works_without_owner_sender() {
-    // deposit_permissionless uses the manager's stored DepositCap so anyone
-    // can credit the manager (used for protocol-driven payouts).
+fun deposit_funds_credits_without_owner_sender() {
+    // deposit_funds uses the manager's stored DepositCap so anyone can credit the
+    // manager with no caller authority (protocol payouts, LP cancel refunds).
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
     scenario.next_tx(test_constants::bob());
     let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    manager.deposit_permissionless(coin, scenario.ctx());
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
-
-    destroy(manager);
-    scenario.end();
-}
-
-// === accumulator-delivered settle (the async-LP money path) ===
-
-#[test]
-fun settle_delivered_absorbs_flush_funds_into_internal_custody() {
-    // Mirrors what `finish_flush` -> `drain_lp_requests` does to a fill recipient:
-    // `balance::send_funds` delivers the balance to the manager's object-accumulator
-    // address, and the manager's settle path (the real
-    // `withdraw_funds_from_object`/`redeem_funds`/`deposit_with_cap` legs, here driven
-    // through the test seam since an `AccumulatorRoot` cannot be constructed in a unit
-    // test) absorbs it into internal DUSDC custody.
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-
-    balance::send_funds(
-        balance::create_for_testing<DUSDC>(DEPOSIT_AMOUNT),
-        manager.id().to_address(),
-    );
-    manager.settle_delivered_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
-
-    destroy(manager);
-    scenario.end();
-}
-
-#[test]
-fun settle_delivered_zero_is_a_no_op() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-
-    manager.settle_delivered_for_testing<DUSDC>(0, scenario.ctx());
-    assert_eq!(manager.balance(), 0);
+    manager.deposit_funds(coin.into_balance(), scenario.ctx());
+    assert_eq!(manager.internal_balance<DUSDC>(), DEPOSIT_AMOUNT);
 
     destroy(manager);
     scenario.end();

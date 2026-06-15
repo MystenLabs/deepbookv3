@@ -134,7 +134,6 @@ public(package) fun cancel_supply_request<LP>(
     ctx: &mut TxContext,
 ) {
     let recipient = manager.id().to_address();
-    manager.assert_owner(ctx);
     let (request, refund) = book.supply_queue.remove_for_recipient(index, recipient);
     manager.deposit_funds(refund, ctx);
     vault_events::emit_request_cancelled(
@@ -155,7 +154,6 @@ public(package) fun cancel_withdraw_request<LP>(
     ctx: &mut TxContext,
 ) {
     let recipient = manager.id().to_address();
-    manager.assert_owner(ctx);
     let (request, refund) = book.withdraw_queue.remove_for_recipient(index, recipient);
     manager.deposit_funds(refund, ctx);
     vault_events::emit_request_cancelled(

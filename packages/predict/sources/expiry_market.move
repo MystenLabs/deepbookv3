@@ -28,7 +28,13 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::VecSet};
+use sui::{
+    accumulator::AccumulatorRoot,
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    vec_set::VecSet
+};
 
 const EPackageVersionDisabled: u64 = 3;
 const EMintPaused: u64 = 4;
@@ -193,6 +199,7 @@ public fun mint(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
+    root: &AccumulatorRoot,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -200,10 +207,7 @@ public fun mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_version_allowed();
-    assert!(!market.mint_paused, EMintPaused);
-    config.assert_trading_allowed();
-    config.assert_not_valuation_in_progress();
+    manager.settle<DUSDC>(root, ctx);
     market.mint_internal(
         manager,
         proof,
@@ -234,11 +238,13 @@ public fun redeem(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
+    root: &AccumulatorRoot,
     order_id: u256,
     close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    manager.settle<DUSDC>(root, ctx);
     market.redeem_internal(
         manager,
         option::some(proof),
@@ -265,11 +271,13 @@ public fun redeem_settled(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
+    root: &AccumulatorRoot,
     order_id: u256,
     close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    manager.settle<DUSDC>(root, ctx);
     market.redeem_internal(
         manager,
         option::none(),
@@ -546,11 +554,13 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     }
 }
 
-/// Shared redeem dispatch behind `redeem` (proof) and `redeem_settled` (none).
-/// `proof` is consumed only on the live branch; the settled and liquidated
-/// branches drop it. The live branch requires `some`, else
-/// `EProofRequiredForLiveRedeem`.
-fun redeem_internal(
+/// Shared redeem dispatch + flow gates (version, valuation lock) behind the public
+/// `redeem` (proof) / `redeem_settled` (none) entrypoints, which only perform the
+/// ambient manager settle before delegating here. `proof` is consumed only on the
+/// live branch; the settled and liquidated branches drop it, and the live branch
+/// requires `some` else `EProofRequiredForLiveRedeem`. Root-free so this dispatch and
+/// its branch handlers stay unit-testable; the settle reverts atomically on a gate abort.
+public(package) fun redeem_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     proof: Option<PredictTradeProof>,
@@ -644,7 +654,11 @@ fun ewma_penalty(
     market.ewma.penalty_fee(config, quantity, ctx)
 }
 
-fun mint_internal(
+/// Mint logic + flow gates (version, mint-pause, trading pause, valuation lock)
+/// behind the public `mint` entrypoint, which only performs the ambient manager
+/// settle before delegating here. Root-free so it stays unit-testable; the settle is
+/// reverted atomically if a gate aborts.
+public(package) fun mint_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
@@ -659,6 +673,10 @@ fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
+    market.assert_version_allowed();
+    assert!(!market.mint_paused, EMintPaused);
+    config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     // Proof is validated inside withdraw_with_proof below. Live oracle validation
     // and liveness are resolved into `pricer` before any trade mutation.
@@ -882,7 +900,7 @@ fun settle_settled_redeem_payment(
     // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
     if (payout_amount > 0) {
         let payout = market.cash.pay_authorized(payout_amount);
-        manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+        manager.deposit_funds(payout, ctx);
     };
 
     market.assert_cash_backing();

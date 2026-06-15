@@ -7,14 +7,18 @@
 /// BalanceManager, while positions are tracked by order IDs scoped to an
 /// ExpiryMarket.
 ///
-/// Authorization mirrors BalanceManager: the manager owner can act directly,
-/// or grant `PredictTradeCap`, `PredictDepositCap`, and `PredictWithdrawCap`
-/// to other addresses. `PredictTradeProof` is consumed by predict modules to
-/// authorize a mint/redeem trade and to route the fee deposit/withdraw
-/// through the manager's inner BalanceManager caps. The inner BalanceManager
-/// `DepositCap` and `WithdrawCap` are held by PredictManager itself and never
-/// exposed — all custody operations route through them so the inner
-/// BalanceManager owner check never fires from a cap holder's call.
+/// Authorization separates capital from trading, mirroring BalanceManager.
+/// Capital movement — `deposit` / `withdraw` and the LP supply / withdraw / cancel
+/// flows — is gated by `PredictDepositCap` / `PredictWithdrawCap`; trades
+/// (`mint` / `redeem`) by a `PredictTradeProof`, minted from the owner
+/// (`generate_proof_as_owner`) or a `PredictTradeCap` (`generate_proof_as_trader`).
+/// A trade proof is NOT capital authority: it routes a trade's deposit/withdraw to
+/// the protocol, never to the caller, so it must never gate a standalone withdraw.
+/// The owner mints these caps via the owner-gated `mint_*_cap`; a self-owned composing
+/// vault receives them at creation (`new_self_owned`). The inner BalanceManager
+/// `DepositCap` / `WithdrawCap` are held by PredictManager itself and never exposed —
+/// all custody routes through them, and every capital op first settles any
+/// accumulator-delivered funds into internal custody (the ambient accumulator).
 module deepbook_predict::predict_manager;
 
 use deepbook::{
@@ -168,25 +172,6 @@ public fun trading_fees_paid(self: &PredictManager, expiry_market_id: ID): u64 {
     }
 }
 
-/// Return the DUSDC balance held by this PredictManager.
-public fun balance(self: &PredictManager): u64 {
-    self.balance_manager.balance<DUSDC>()
-}
-
-/// Return this manager's internal custody balance of `T`. Generalizes `balance()`
-/// to the multi-coin (DUSDC + PLP) custody the async-LP flow gives the manager;
-/// excludes funds the flush delivered to the accumulator but not yet settled in.
-public fun internal_balance<T>(self: &PredictManager): u64 {
-    self.balance_manager.balance<T>()
-}
-
-/// Return this manager's total claimable `T`: internal custody plus funds the
-/// async-LP flush delivered to this manager's accumulator address and not yet
-/// settled in. Read-only — settling happens lazily inside the capital ops below.
-public fun settled_balance<T>(self: &PredictManager, root: &AccumulatorRoot): u64 {
-    self.balance_manager.balance<T>() + balance::settled_funds_value<T>(root, self.id.to_address())
-}
-
 /// Return the manager's active staked DEEP (the amount that earns benefits).
 public fun active_stake(self: &PredictManager): u64 {
     self.active_stake
@@ -279,58 +264,30 @@ public fun validate_proof(self: &PredictManager, proof: &PredictTradeProof) {
     assert!(self.id() == proof.predict_manager_id, EInvalidProof);
 }
 
-/// Deposit DUSDC into the manager. Only the manager owner may call.
-public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &mut TxContext) {
-    self.assert_owner(ctx);
-    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
-}
-
-/// Withdraw DUSDC from the manager. Only the manager owner may call.
-public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
-    self.assert_owner(ctx);
-    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
-}
-
-/// Deposit DUSDC using a `PredictDepositCap`.
-public fun deposit_with_cap(
+/// Deposit `T` (DUSDC or PLP) into the manager using a `PredictDepositCap` (held by
+/// the owner or a composing vault). Generic so PLP withdrawn to a wallet or received
+/// by transfer can be re-deposited and then redeemed via `request_withdraw`. Settles
+/// any flush-delivered `T` into custody first — the accumulator is ambient: every
+/// write reconciles delivered funds before proceeding.
+public fun deposit<T>(
     self: &mut PredictManager,
     cap: &PredictDepositCap,
-    coin: Coin<DUSDC>,
-    ctx: &TxContext,
+    root: &AccumulatorRoot,
+    coin: Coin<T>,
+    ctx: &mut TxContext,
 ) {
     self.validate_depositor(cap);
+    self.settle<T>(root, ctx);
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Withdraw DUSDC using a `PredictWithdrawCap`.
-public fun withdraw_with_cap(
-    self: &mut PredictManager,
-    cap: &PredictWithdrawCap,
-    amount: u64,
-    ctx: &mut TxContext,
-): Coin<DUSDC> {
-    self.validate_withdrawer(cap);
-    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
-}
-
-/// Withdraw `amount` of `T` as the manager owner, first settling any funds the
-/// async-LP flush delivered to this manager's accumulator. Lets the owner pull out
-/// flush-delivered PLP or DUSDC to fund the next request.
-public fun withdraw_settled<T>(
-    self: &mut PredictManager,
-    root: &AccumulatorRoot,
-    amount: u64,
-    ctx: &mut TxContext,
-): Coin<T> {
-    self.assert_owner(ctx);
-    self.settle<T>(root, ctx);
-    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
-}
-
-/// Withdraw `amount` of `T` with a `PredictWithdrawCap`, first settling delivered
-/// funds. The path a self-owned (composing-vault) manager uses, since its
-/// owner-direct path is permanently unreachable.
-public fun withdraw_settled_with_cap<T>(
+/// Withdraw `amount` of `T` (DUSDC or PLP) using a `PredictWithdrawCap`. Settles
+/// any flush-delivered `T` into custody first, so a withdraw never misses funds
+/// the async-LP flush already delivered. This is the sole capital-out path: a
+/// trade proof must not gate it (that would let a trade-only delegate drain the
+/// manager); withdraw authority is the `PredictWithdrawCap`, held by the owner or
+/// a composing vault.
+public fun withdraw<T>(
     self: &mut PredictManager,
     cap: &PredictWithdrawCap,
     root: &AccumulatorRoot,
@@ -446,19 +403,11 @@ public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
     assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
 }
 
-/// Deposit protocol payouts without requiring any authorization. Used for
-/// settled redemptions, which any caller may trigger.
-public(package) fun deposit_permissionless(
-    self: &mut PredictManager,
-    coin: Coin<DUSDC>,
-    ctx: &TxContext,
-) {
-    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
-}
-
 /// Deposit a typed balance straight into internal custody — no authorization, no
-/// accumulator round-trip. `plp` uses this to refund a cancelled LP request
-/// directly into the manager that owns it; cancel already proved manager ownership.
+/// accumulator round-trip. Used where the protocol already holds the funds and no
+/// caller authority is needed: `expiry_market` crediting a settled-redeem payout (any
+/// keeper may trigger it) and `plp` refunding a cancelled LP request into the manager
+/// that owns it (cancel already proved manager ownership).
 public(package) fun deposit_funds<T>(
     self: &mut PredictManager,
     funds: Balance<T>,
@@ -558,7 +507,11 @@ public(package) fun remove_all_stake(self: &mut PredictManager): u64 {
 /// address into internal custody. Lazy like `update_stake`: a zero settled balance
 /// is a clean no-op. The capital ops call it first so a withdraw never misses funds
 /// the flush already delivered.
-fun settle<T>(self: &mut PredictManager, root: &AccumulatorRoot, ctx: &mut TxContext) {
+public(package) fun settle<T>(
+    self: &mut PredictManager,
+    root: &AccumulatorRoot,
+    ctx: &mut TxContext,
+) {
     let amount = balance::settled_funds_value<T>(root, self.id.to_address());
     if (amount == 0) return;
     let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
@@ -594,7 +547,9 @@ fun validate_depositor(self: &PredictManager, deposit_cap: &PredictDepositCap) {
     assert!(self.allow_listed.contains(object::borrow_id(deposit_cap)), EInvalidCap);
 }
 
-fun validate_withdrawer(self: &PredictManager, withdraw_cap: &PredictWithdrawCap) {
+/// Abort unless `withdraw_cap` is allow-listed on this manager. Package API so
+/// `plp` can authorize LP cancel, which proves withdraw authority over the manager.
+public(package) fun validate_withdrawer(self: &PredictManager, withdraw_cap: &PredictWithdrawCap) {
     assert!(self.allow_listed.contains(object::borrow_id(withdraw_cap)), EInvalidCap);
 }
 
@@ -639,23 +594,10 @@ fun mint_withdraw_cap_internal(
 
 // === Test-Only Functions ===
 
-/// Irreducible accumulator seam (unit-tests.md rule 18). `settle<T>` reads the
-/// delivered amount from a `sui::accumulator::AccumulatorRoot`, which a Move unit
-/// test cannot construct (private `create`, `@0x0`-only). This seam takes the
-/// `amount` directly and runs the identical production legs
-/// (`withdraw_funds_from_object` → `redeem_funds` → `deposit_with_cap`), so a test
-/// can exercise the supply → flush → `send_funds` → settle → internal-custody money
-/// path end to end after the flush has `send_funds`-delivered `amount` of `T` to
-/// this manager's object-accumulator address.
+/// Return this manager's internal custody balance of `T` (DUSDC or PLP),
+/// excluding funds the async-LP flush delivered to the accumulator but not yet
+/// settled in. Test-only: production money paths settle, then read internal custody.
 #[test_only]
-public fun settle_delivered_for_testing<T>(
-    self: &mut PredictManager,
-    amount: u64,
-    ctx: &mut TxContext,
-) {
-    if (amount == 0) return;
-    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
-    self
-        .balance_manager
-        .deposit_with_cap(&self.deposit_cap, balance::redeem_funds(withdrawal).into_coin(ctx), ctx);
+public fun internal_balance<T>(self: &PredictManager): u64 {
+    self.balance_manager.balance<T>()
 }

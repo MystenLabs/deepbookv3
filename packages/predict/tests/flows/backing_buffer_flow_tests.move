@@ -22,6 +22,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     test_constants
 };
+use dusdc::dusdc::DUSDC;
 use fixed_math::math::{Self, float_scaling as float};
 use propbook::{
     block_scholes_feed::BlockScholesFeed,
@@ -205,7 +206,7 @@ fun exact_reserve_partial_close_preserves_live_floor() {
 
     // Closing half of the leveraged UP side pays 250e6 gross, with 5e6 retained
     // as fee, and lowers the live reserve to 1.1875e9.
-    let balance_before_close = manager.balance();
+    let balance_before_close = manager.internal_balance<DUSDC>();
     let (_closed, replacement) = fx.redeem(
         &config,
         &oracle_registry,
@@ -217,7 +218,10 @@ fun exact_reserve_partial_close_preserves_live_floor() {
         QUANTITY,
     );
     let up_survivor = replacement.destroy_some();
-    assert_eq!(manager.balance() - balance_before_close, LEVERAGED_PARTIAL_NET_PAYOUT);
+    assert_eq!(
+        manager.internal_balance<DUSDC>() - balance_before_close,
+        LEVERAGED_PARTIAL_NET_PAYOUT,
+    );
     assert_eq!(market.cash_balance(), LEVERAGED_REQUIRED_CASH - LEVERAGED_PARTIAL_NET_PAYOUT);
     assert_eq!(market.payout_liability(), LEVERAGED_PARTIAL_RESERVE);
     assert!(manager.has_position(expiry_id, up_survivor));

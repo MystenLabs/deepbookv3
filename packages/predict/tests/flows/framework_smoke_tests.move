@@ -14,6 +14,7 @@ use deepbook_predict::{
     pricing,
     test_constants
 };
+use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 
 #[test]
@@ -50,7 +51,7 @@ fun setup_everything_check_manager_return_market_smoke() {
     // A mint charges a non-zero fee and a non-zero net_premium, so the free balance
     // strictly decreases.
     assert!(manager.trading_fees_paid(expiry_id) > 0);
-    assert!(manager.balance() < test_constants::default_manager_deposit());
+    assert!(manager.internal_balance<DUSDC>() < test_constants::default_manager_deposit());
 
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);

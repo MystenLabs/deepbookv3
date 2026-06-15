@@ -270,8 +270,8 @@ public fun create_funded_manager_as(
     let mut registry = self.scenario.take_shared<Registry>();
     let mut manager = registry::create_manager(&mut registry, self.scenario.ctx());
     return_shared(registry);
-    manager.deposit(
-        coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()),
+    manager.deposit_funds(
+        coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()).into_balance(),
         self.scenario.ctx(),
     );
     manager
@@ -377,7 +377,7 @@ public fun mint(
     leverage: u64,
 ): u256 {
     let proof = manager.generate_proof_as_owner(self.scenario.ctx());
-    let order_id = market.mint(
+    let order_id = market.mint_internal(
         manager,
         &proof,
         config,
@@ -407,9 +407,9 @@ public fun redeem(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     let proof = manager.generate_proof_as_owner(self.scenario.ctx());
-    let (closed_id, replacement_id) = market.redeem(
+    let (closed_id, replacement_id) = market.redeem_internal(
         manager,
-        proof,
+        option::some(proof),
         config,
         oracle_registry,
         pyth,
@@ -435,8 +435,9 @@ public fun redeem_settled(
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
-    let (closed_id, replacement_id) = market.redeem_settled(
+    let (closed_id, replacement_id) = market.redeem_internal(
         manager,
+        option::none(),
         config,
         oracle_registry,
         pyth,
@@ -637,7 +638,7 @@ public fun expected_manager_state(
 
 /// Assert a manager's full state sheet against `expected` for `expiry_id`.
 public fun check_manager(manager: &PredictManager, expiry_id: ID, expected: ExpectedManagerState) {
-    assert_eq!(manager.balance(), expected.balance);
+    assert_eq!(manager.internal_balance<DUSDC>(), expected.balance);
     assert_eq!(manager.trading_fees_paid(expiry_id), expected.fees_paid);
     assert_eq!(manager.expiry_position_count(expiry_id), expected.position_count);
     assert_eq!(manager.active_stake(), expected.active_stake);
