@@ -40,7 +40,7 @@ DUSDC is the protocol's settlement currency and has 6 decimals. Custody is parti
 
 - **Per-trader funds** live inside each `PredictManager`'s inner `BalanceManager` (a DeepBook core object). Deposits, withdrawals, net premiums, fees, and payouts all flow through this balance.
 - **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus the unresolved rebate reserve; the market re-asserts this backing invariant after every cash movement.
-- **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). The vault also custodies all staked DEEP. DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault until the next flush drains them.
+- **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). The vault also custodies all staked DEEP. DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting manager's internal custody under its `PredictWithdrawCap` — until the next flush drains them.
 
 Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' net premiums and fees flow from a `PredictManager` into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into a `PredictManager`; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to managers through the balance accumulator. Builder fees are the one outflow that leaves this mesh entirely (see below).
 
@@ -50,18 +50,20 @@ Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash
 
 Authorization mirrors `BalanceManager`. There are two manager shapes, distinguished by who owns the inner `BalanceManager`:
 
-- **Sender-owned** (`new`, derived at slot 0): the transaction sender is the inner `BalanceManager` owner and can deposit, withdraw, mint caps, and generate trade proofs directly without holding any cap.
+- **Sender-owned** (`new`, derived at slot 0): the transaction sender is the inner `BalanceManager` owner and can mint caps and generate trade proofs directly without holding any cap. Capital movement itself — deposit and withdraw — always goes through a `PredictDepositCap` / `PredictWithdrawCap`; the owner simply mints one for itself.
 - **Self-owned** (`new_self_owned`, derived at slot 1): the inner `BalanceManager`'s owner is set to the manager's own object-ID-as-address, which no transaction sender can ever match. The owner-direct paths are permanently unreachable, so the caps minted at construction are the only authority that will ever exist on this manager. This is for contracts (vaults, structured products) that do not want a deployer-key trust anchor. Creating one requires the `PredictApp` witness to have been authorized once on the DeepBook `Registry` via `authorize_app<PredictApp>`.
 
-The manager exposes three delegated capabilities, all tracked in one `allow_listed` ID set so a single revoke path covers them:
+The manager exposes three capabilities, all tracked in one `allow_listed` ID set so a single revoke path covers them. Capability is split by concern: the trade cap gates *trading*, the deposit/withdraw caps gate *capital movement*. A trade proof is deliberately never accepted for a standalone withdraw — it routes a trade's funds to the protocol, never to the caller, so gating capital-out with it would let a trade-only delegate drain the manager.
 
 | Capability | Grants | Notes |
 | --- | --- | --- |
 | `PredictTradeCap` | generate a `PredictTradeProof` to mint/redeem | owned object; concurrent proof generation risks equivocation, so high-frequency callers should trade as the owner |
-| `PredictDepositCap` | deposit DUSDC for a non-owner | |
-| `PredictWithdrawCap` | withdraw DUSDC for a non-owner | |
+| `PredictDepositCap` | deposit `DUSDC` or `PLP` into the manager | required for every deposit, owner included |
+| `PredictWithdrawCap` | withdraw `DUSDC` or `PLP`; also queue and cancel LP supply/withdraw requests | the sole capital-out authority |
 
 The inner `BalanceManager`'s own `DepositCap` and `WithdrawCap` are held inside `PredictManager` and never exposed. Every custody operation routes through them, so the inner `BalanceManager`'s owner check never fires from a Predict cap holder's call — the Predict-level cap check is the real gate.
+
+**Capital ops settle first (ambient accumulator).** Every deposit, withdraw, and LP supply/withdraw request first sweeps any funds the LP flush delivered to the manager's accumulator address (`balance::send_funds`) into the inner `BalanceManager`, then proceeds — so delivered fills are spendable as if already in custody, with no separate settle step. The shared `AccumulatorRoot` is threaded through these entrypoints purely for that sweep.
 
 ### PredictTradeProof — ephemeral trade authorization
 
