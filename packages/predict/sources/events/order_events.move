@@ -21,8 +21,11 @@ public struct OrderMinted has copy, drop, store {
     /// forward unchanged across partial-close replacements. Equals `order_id` here.
     position_root_id: u256,
     owner: address,
-    lower_strike: u64,
-    higher_strike: u64,
+    /// Canonical strike range as absolute ticks: `lower_tick` (`0` = `-inf`) and
+    /// `higher_tick` (`pos_inf_tick` = `+inf`). Raw strikes are the derived display
+    /// form, `tick * tick_size` with the `tick_size` from `MarketCreated`.
+    lower_tick: u64,
+    higher_tick: u64,
     leverage: u64,
     /// 1e9-scaled range probability quoted at entry.
     entry_probability: u64,
@@ -105,8 +108,6 @@ public(package) fun emit_order_minted(
     expiry_market_id: ID,
     manager: &PredictManager,
     order: &Order,
-    lower_strike: u64,
-    higher_strike: u64,
     leverage: u64,
     entry_probability: u64,
     net_premium: u64,
@@ -120,8 +121,8 @@ public(package) fun emit_order_minted(
         order_id: order.id(),
         position_root_id: order.id(),
         owner: manager.owner(),
-        lower_strike,
-        higher_strike,
+        lower_tick: order.lower_tick(),
+        higher_tick: order.higher_tick(),
         leverage,
         entry_probability,
         quantity: order.quantity(),

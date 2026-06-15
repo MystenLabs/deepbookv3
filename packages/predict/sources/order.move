@@ -3,29 +3,30 @@
 
 /// Immutable contract terms encoded in a Predict order ID.
 ///
-/// An `Order` represents the durable contract terms needed after mint: range
-/// boundary indexes, quantity, normalized floor shares, original open time, and
-/// expiry-local sequence. Mint-only inputs such as entry probability, leverage,
-/// net premium, and fee policy intentionally live outside this module. The
-/// packed ID is the single source of truth at protocol boundaries, while concrete
-/// strike grids and floor-index timing are interpreted by `StrikeExposure`.
+/// An `Order` represents the durable contract terms needed after mint: the lower
+/// and higher strike ticks, quantity, normalized floor shares, original open time,
+/// and expiry-local sequence. Mint-only inputs such as entry probability, leverage,
+/// net premium, and fee policy intentionally live outside this module. The packed
+/// ID is the single source of truth at protocol boundaries; raw strike conversion
+/// (through the owning market's `tick_size`) and floor-index timing are interpreted
+/// by `StrikeExposure`.
 module deepbook_predict::order;
 
 use deepbook_predict::constants;
 
 const EInvalidOrderId: u64 = 0;
 const EInvalidOpenedAt: u64 = 1;
-const EInvalidBoundaryIndex: u64 = 2;
+const EInvalidTick: u64 = 2;
 const EInvalidFloorShares: u64 = 3;
-const EInvalidBoundaryRange: u64 = 4;
+const EInvalidRange: u64 = 4;
 const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 
 const QUANTITY_LOTS_OFFSET: u8 = 200;
 const FLOOR_SHARES_OFFSET: u8 = 136;
 const OPENED_AT_OFFSET: u8 = 88;
-const LOWER_BOUNDARY_INDEX_OFFSET: u8 = 64;
-const HIGHER_BOUNDARY_INDEX_OFFSET: u8 = 40;
+const LOWER_TICK_OFFSET: u8 = 64;
+const HIGHER_TICK_OFFSET: u8 = 40;
 const ORDER_ID_BITS: u8 = 232;
 
 const U24_MASK: u256 = (1u256 << 24) - 1;
@@ -58,14 +59,15 @@ public(package) fun opened_at_ms(order: &Order): u64 {
     decode_u48(order.id, OPENED_AT_OFFSET)
 }
 
-/// Return the lower strike boundary index encoded in this order.
-public(package) fun lower_boundary_index(order: &Order): u64 {
-    decode_u24(order.id, LOWER_BOUNDARY_INDEX_OFFSET)
+/// Return the lower strike tick encoded in this order (`0` is the `neg_inf` lower).
+public(package) fun lower_tick(order: &Order): u64 {
+    decode_u24(order.id, LOWER_TICK_OFFSET)
 }
 
-/// Return the higher strike boundary index encoded in this order.
-public(package) fun higher_boundary_index(order: &Order): u64 {
-    decode_u24(order.id, HIGHER_BOUNDARY_INDEX_OFFSET)
+/// Return the higher strike tick encoded in this order (`pos_inf_tick` is the
+/// `pos_inf` higher).
+public(package) fun higher_tick(order: &Order): u64 {
+    decode_u24(order.id, HIGHER_TICK_OFFSET)
 }
 
 /// Return the encoded quantity in position lots.
@@ -83,19 +85,19 @@ public(package) fun sequence(order: &Order): u64 {
     (order.id & U40_MASK) as u64
 }
 
-/// Construct an order ID from already-normalized strike boundary indices.
-public(package) fun new_from_boundary_indices(
+/// Construct an order ID from validated strike ticks.
+public(package) fun new_from_ticks(
     opened_at_ms: u64,
-    lower_boundary_index: u64,
-    higher_boundary_index: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     floor_shares: u64,
     quantity: u64,
     sequence: u64,
 ): Order {
     new(
         opened_at_ms,
-        lower_boundary_index,
-        higher_boundary_index,
+        lower_tick,
+        higher_tick,
         floor_shares,
         quantity_lots_from_quantity(quantity),
         sequence,
@@ -110,10 +112,10 @@ public(package) fun replacement(
     sequence: u64,
 ): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
-    new_from_boundary_indices(
+    new_from_ticks(
         old_order.opened_at_ms(),
-        old_order.lower_boundary_index(),
-        old_order.higher_boundary_index(),
+        old_order.lower_tick(),
+        old_order.higher_tick(),
         floor_shares,
         quantity,
         sequence,
@@ -138,20 +140,20 @@ public(package) fun floor_shares(order: &Order): u64 {
 
 fun new(
     opened_at_ms: u64,
-    lower_boundary_index: u64,
-    higher_boundary_index: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     floor_shares: u64,
     quantity_lots: u64,
     sequence: u64,
 ): Order {
     assert!(opened_at_ms <= U48_MASK as u64, EInvalidOpenedAt);
-    assert!(lower_boundary_index <= U24_MASK as u64, EInvalidBoundaryIndex);
-    assert!(higher_boundary_index <= U24_MASK as u64, EInvalidBoundaryIndex);
+    assert!(lower_tick <= U24_MASK as u64, EInvalidTick);
+    assert!(higher_tick <= U24_MASK as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     let quantity = quantity_lots * constants::position_lot_size!();
     assert!(floor_shares <= quantity, EInvalidFloorShares);
-    assert_valid_order_shape(lower_boundary_index, higher_boundary_index, floor_shares > 0);
+    assert_valid_order_shape(lower_tick, higher_tick, floor_shares > 0);
 
     let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
     let floor_shares_key = encode_floor_shares_key(floor_shares);
@@ -159,8 +161,8 @@ fun new(
         (quantity_lots_key << QUANTITY_LOTS_OFFSET)
         | (floor_shares_key << FLOOR_SHARES_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
-        | ((lower_boundary_index as u256) << LOWER_BOUNDARY_INDEX_OFFSET)
-        | ((higher_boundary_index as u256) << HIGHER_BOUNDARY_INDEX_OFFSET)
+        | ((lower_tick as u256) << LOWER_TICK_OFFSET)
+        | ((higher_tick as u256) << HIGHER_TICK_OFFSET)
         | (sequence as u256);
 
     Order { id }
@@ -211,38 +213,19 @@ fun assert_valid(order: &Order) {
     assert!(quantity_lots > 0, EInvalidQuantity);
     assert!(order.floor_shares() <= order.quantity(), EInvalidFloorShares);
     assert_valid_order_shape(
-        order.lower_boundary_index(),
-        order.higher_boundary_index(),
+        order.lower_tick(),
+        order.higher_tick(),
         order.is_leveraged(),
     );
 }
 
-fun assert_valid_order_shape(
-    lower_boundary_index: u64,
-    higher_boundary_index: u64,
-    is_leveraged: bool,
-) {
-    let max_boundary_index = max_encoded_boundary_index();
-    assert!(lower_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
-    assert!(higher_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
-    assert!(lower_boundary_index < higher_boundary_index, EInvalidBoundaryRange);
-    assert!(
-        !(lower_boundary_index == 0 && higher_boundary_index == max_boundary_index),
-        EInvalidBoundaryRange,
-    );
+fun assert_valid_order_shape(lower_tick: u64, higher_tick: u64, is_leveraged: bool) {
+    let pos_inf_tick = constants::pos_inf_tick!();
+    assert!(lower_tick <= pos_inf_tick, EInvalidTick);
+    assert!(higher_tick <= pos_inf_tick, EInvalidTick);
+    assert!(lower_tick < higher_tick, EInvalidRange);
+    assert!(!(lower_tick == 0 && higher_tick == pos_inf_tick), EInvalidRange);
     if (!is_leveraged) return;
 
-    assert!(
-        lower_boundary_index == 0 || higher_boundary_index == max_boundary_index,
-        EInvalidBoundaryRange,
-    );
-}
-
-/// Highest boundary index the packed order ID can encode for any expiry grid.
-///
-/// `Order` does not map indexes to concrete strikes; `StrikeGrid` owns runtime
-/// boundary mapping for each expiry. This bound only validates that the packed
-/// u24 field is within the fixed protocol-wide boundary-index domain.
-fun max_encoded_boundary_index(): u64 {
-    constants::oracle_strike_grid_ticks!() + 2
+    assert!(lower_tick == 0 || higher_tick == pos_inf_tick, EInvalidRange);
 }

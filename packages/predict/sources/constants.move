@@ -23,9 +23,7 @@ public macro fun current_version(): u64 { 1 }
 /// form into the package's 1e9-scaled `u64`.
 public(package) macro fun float_scaling_decimals(): u64 { 9 }
 
-/// Decimals of the DUSDC settlement asset. `pyth_source::value_in_dusdc` converts
-/// the USD value of admin-deposited non-DUSDC incentive assets into this scale so
-/// it sums directly with the pool's DUSDC-denominated value.
+/// Decimals of the DUSDC settlement asset (the pool's denomination).
 public macro fun dusdc_decimals(): u8 { 6 }
 
 // === Position Sizing ===
@@ -41,19 +39,38 @@ public macro fun min_net_premium(): u64 { 1_000_000 }
 /// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
 public(package) macro fun expiry_cash_floor(): u64 { 50_000_000_000 }
 
-/// Maximum active expiries that can require full-pool sync processing.
+/// Maximum active expiries that can be registered to the pool at once.
 public(package) macro fun max_active_expiry_markets(): u64 { 10 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 
-// === Incentive Streaming ===
+/// Global cap on net DUSDC the pool may have funded into any one expiry.
+/// Per-expiry tuning is deferred to B-rest; main carried this as a per-expiry
+/// admin config, dissolved here into a single upgrade-required risk cap.
+public(package) macro fun expiry_max_funding(): u64 { 250_000_000_000 }
 
-/// Maximum linear vesting window for an admin incentive deposit (365 days).
-/// A zero window is rejected separately (it would divide by zero in the release
-/// math); this ceiling stops an admin from locking a donation away from holders
-/// indefinitely.
-public(package) macro fun max_incentive_stream_ms(): u64 { 31_536_000_000 }
+// === Async LP Requests ===
+// Minimums and the per-flush cap are upgrade-required for now. A per-vault
+// admin-tunable minimum is a deferred follow-up (see config rules in move.md).
+
+/// Minimum DUSDC a single supply request must escrow: 10 DUSDC (6-decimal units).
+public(package) macro fun min_supply_request(): u64 { 10_000_000 }
+
+/// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
+public(package) macro fun min_withdraw_request(): u64 { 1_000_000 }
+
+/// Permanent genesis liquidity locked at the one-time `plp::lock_capital` bootstrap:
+/// 10 DUSDC (6-decimal units). MUST be >= `min_withdraw_request` so `total_supply`
+/// can never re-enter the dust band post-genesis (pinned by a constant-relationship
+/// test); the locked PLP keeps `total_supply > 0` for the life of the pool.
+public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
+
+/// Minimum executable PLP price: 0.01 DUSDC per PLP, in FLOAT_SCALING.
+public(package) macro fun min_plp_price(): u64 { 10_000_000 }
+
+/// Maximum executable PLP price: 100 DUSDC per PLP, in FLOAT_SCALING.
+public(package) macro fun max_plp_price(): u64 { 100_000_000_000 }
 
 // === Leverage ===
 
@@ -95,41 +112,32 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
-// === Curve Builder ===
+// === Settlement ===
 
-/// Number of sample points for adaptive curve building.
-public(package) macro fun curve_samples(): u64 { 50 }
+/// Resolution-feed grid period. Terminal settlement is an exact whole-millisecond
+/// lookup keyed at `market.expiry`; `pyth_feed::insert_at` accepts only a print
+/// whose signed publisher timestamp is exactly that millisecond. The off-chain
+/// resolution relayer sources that key from Pyth Lazer's exact-timestamp
+/// resolution endpoints and inserts it on this millisecond grid.
+/// `registry::create_expiry_market` requires `expiry % resolution_period_ms!() == 0`
+/// so the settling key is always producible; an off-grid expiry could never settle
+/// and would block the pool flush indefinitely (`plp::value_expiry` aborts on a
+/// past-expiry market that has no settling observation yet).
+public(package) macro fun resolution_period_ms(): u64 { 60_000 }
 
-// === SVI Oracle Bounds ===
+// === Strike Tick Domain ===
 
-/// SVI `sigma` lower bound: 1e-3 in 1e9 fixed-point.
-public(package) macro fun svi_sigma_min(): u64 { 1_000_000 }
+/// Bit width of each strike tick field in the packed range key and order ID.
+public(package) macro fun tick_bits(): u8 { 24 }
 
-/// SVI `sigma` upper bound: 100.0 in 1e9 fixed-point.
-public(package) macro fun svi_sigma_max(): u64 { 100_000_000_000 }
+/// Positive-infinity sentinel tick, maximum finite-tick bound, and u24 mask for
+/// unpacking a tick. As the higher tick it is the open upper bound; finite ticks
+/// occupy `1..pos_inf_tick - 1`, and tick `0` is the negative-infinity sentinel
+/// as the lower tick. Read by `order` (shape validation) and the range/tick codec.
+public(package) macro fun pos_inf_tick(): u64 { (1u64 << tick_bits!()) - 1 }
 
-// === Oracle Strike Grid ===
-
-/// Fixed number of strike ticks each oracle must cover.
-public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
-
-/// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
-public macro fun oracle_tick_size_unit(): u64 { 10_000 }
-
-/// Expiries within this window preallocate the smallest centered NAV matrix span.
-public(package) macro fun short_expiry_preallocation_window_ms(): u64 { 60 * 60 * 1000 }
-
-/// Expiries within this window preallocate the medium centered NAV matrix span.
-public(package) macro fun medium_expiry_preallocation_window_ms(): u64 { 60 * 60 * 24 * 1000 }
-
-/// Centered strike ticks preallocated for expiries within one hour.
-public(package) macro fun short_expiry_preallocated_ticks(): u64 { 10_000 }
-
-/// Centered strike ticks preallocated for expiries within one day.
-public(package) macro fun medium_expiry_preallocated_ticks(): u64 { 25_000 }
-
-/// Centered strike ticks preallocated for later expiries.
-public(package) macro fun default_expiry_preallocated_ticks(): u64 { 50_000 }
+/// Granularity unit for market tick sizes; every tick_size must be a multiple of this value.
+public macro fun market_tick_size_unit(): u64 { 10_000 }
 
 /// Sentinel lower strike for ranges open to negative infinity.
 public macro fun neg_inf(): u64 { 0 }
@@ -137,20 +145,19 @@ public macro fun neg_inf(): u64 { 0 }
 /// Sentinel upper strike for ranges open to positive infinity.
 public macro fun pos_inf(): u64 { std::u64::max_value!() }
 
-// === Settlement Sampling ===
+// === NAV Valuation ===
 
-/// Window before expiry over which fresh spot samples are collected for the
-/// random-average settlement price.
-public(package) macro fun settlement_sample_window_ms(): u64 { 60_000 }
-
-/// Minimum pre-expiry samples required before settlement uses the sampled-average
-/// path. With fewer samples, settlement falls through to the next latched source
-/// in priority order.
-public(package) macro fun min_settlement_samples(): u64 { 30 }
-
-/// Maximum pre-expiry spot samples retained per market (most recent kept). Bounds
-/// storage/gas; with the half-subset mean, the averaged subset is <= this / 2.
-public(package) macro fun max_settlement_samples(): u64 { 200 }
+/// Max up-price spread (1e9-scaled probability) permitted to collapse a payout
+/// subtree to one interpolated price in the exact-NAV linear walk. The per-subtree
+/// error introduced is bounded by `tolerance * subtree_quantity`; the correction
+/// (floor) term is always priced exactly regardless. `0` disables interpolation,
+/// so the walk is fully exact.
+///
+/// PLACEHOLDER = 0 (exact, interpolation off): the exact walk is the default and
+/// interpolation is a benchmark-gated fallback (see ASYNC_NAV_REDESIGN §2.3.2). A
+/// nonzero tolerance must be sized by the §7 gas/accuracy benchmark before it is
+/// enabled — it is upgrade-required, not admin-tunable.
+public(package) macro fun nav_interpolation_price_tolerance(): u64 { 0 }
 
 // === PredictManager Derivation ===
 

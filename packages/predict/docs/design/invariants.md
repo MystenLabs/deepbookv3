@@ -63,25 +63,56 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## NAV and valuation
 
-- Live valuation reads raw aggregate range and floor facts
-  (`strike_nav_matrix::live_value`). `expiry_market::pool_nav` uses the aggregate-
-  clamped liability only for its backing assert, then returns free cash
-  (`cash − rebate_reserve`) plus the raw totals to PLP.
-- PLP computes the active mark and uncertainty band from one limited-recourse
-  bucket split. Verified and unscanned buckets each clamp their own
-  `range − floor`; the supply mark uses the optimistic endpoint, and the
-  withdraw fee charges pro-rata against `band = min(unscanned_floor,
-  unscanned_range)`. The **withdraw mark ≤ supply mark**, and the supply mark is
-  an upper bound on true recoverable value.
+- **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
+  free_cash − exact_per_order_liability`, floored at zero, where `free_cash =
+  cash − rebate_reserve` and the liability is the payout-tree linear walk
+  (`strike_payout_tree::walk_linear`, `Σ qty·P`) minus the leveraged-book floor
+  correction (`liquidation_book::correction_value`). An underwater leveraged order
+  nets to zero by the per-order floor cap, so the read needs no liquidation pass.
+  It is a **pure read with no backing assert** (backing is owned by the payout-tree
+  reserve and proven on every trade); the `saturating_sub` cash floor marks a
+  degenerate (underwater) market at 0, the correct per-market limited-recourse
+  value, never negative.
+- **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP
+  supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of the
+  protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`),
+  computed once in `finish_flush`. Because each
+  `current_nav` is exact, that one mark equals true recoverable value in both
+  directions: a supplier prices `=` fair shares (never over-mints to dilute
+  incumbents) and a withdrawer draws `=` fair cash. There is **no conservative
+  band** — the bucket/band decomposition belonged to the deleted approximate-NAV
+  world. Any liveness clamp inside `current_nav` (the degenerate-underwater cash
+  floor) only ever *maximizes* NAV when it fires, preserving the supply-mark
+  direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
+- **Exactly-once full-pool valuation.** The flush hot potato (`PoolValuation`)
+  snapshots the active-expiry set at `start_pool_valuation`; each `value_expiry`
+  proves its market is in the snapshot and not already valued, and `finish_flush`
+  proves the valued set equals the snapshot. A missed or double-counted market would
+  mis-price the pool, so the completeness proof is mandatory; the potato has no
+  abilities, so it must be consumed by `finish_flush`.
 
 ## Settlement
 
+- **Passive exact settlement.** Normal flows that branch on settlement call
+  `expiry_market::ensure_settled` first. It records the exact normalized Pyth spot
+  at the market's expiry timestamp from Propbook if present; otherwise the market
+  remains unsettled. There is no public settle-only entrypoint.
 - A settled order pays `quantity − terminal_floor` if the settlement price is in
   `(lower, higher]`, else 0 (`close_settled_order`), with `terminal_floor =
   floor_shares × terminal_floor_index`.
+- **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
+  prices against tick boundaries through one threshold tick, `prefix_limit_tick =
+  ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is
+  active in the prefix walk iff `t < prefix_limit_tick`, which is exactly
+  `t · tick_size < settlement`. The payout-tree prefix-sum winner therefore equals
+  the per-order settled-close winner — both use the same half-open `(lower, higher]`
+  threshold and the same `tick_size`, so settlement equal to a higher boundary still
+  wins at `higher`. `prefix_limit_tick` is a plain `u64` comparison bound (it can
+  legitimately exceed `pos_inf_tick` when settlement is above the encodable range)
+  and is never validated as a domain tick.
 - `materialize_settled_liability` is idempotent and caches the exact terminal
-  liability at the settlement price; live indexes survive until privileged
-  compaction.
+  liability at the settlement price; live indexes survive until the settled-market
+  sweep deactivates the expiry.
 
 ## Liquidation
 
@@ -108,9 +139,17 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Order encoding
 
 - The order id packs, in 232 bits: quantity lots (u32), floor shares (u64),
-  opened-at ms (u48), lower and higher boundary index (u24 each), and an
+  opened-at ms (u48), lower and higher strike **tick** (u24 each), and an
   expiry-local sequence (u40). The quantity field stores the complement, so an
-  ascending sort is larger-first.
+  ascending sort is larger-first. A finite strike is `tick · tick_size`; lower tick
+  `0` is the `neg_inf` sentinel and higher tick `pos_inf_tick` is the `pos_inf`
+  sentinel.
+- **Lossless tick round-trip.** Every atom the canonical evaluator reads —
+  quantity, floor shares, opened-at, and both ticks — round-trips through the packed
+  id with no loss. The two `u24` tick fields encode the *same* absolute ticks used at
+  the entrypoints, the payout tree, and the liquidation book, so an order's strike
+  range is bit-identical whether read from the id, the tree, or the event. A lossy
+  repack would be an accounting bug, not a precision nit.
 - Mint-admission policy (leverage tiers, price thresholds) is **not** part of
   order decoding or structural validation — a future policy change must never
   invalidate an existing packed id.
@@ -123,21 +162,34 @@ and contributors. For *how* each mechanism works, follow the links into
   min_fee) × expiry_ramp_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
-- PLP withdrawal carries an uncertainty-band fee (`withdraw_fee_alpha ×
-  aggregate_band × lp_share`, capped at the payout), retained in idle for the LPs
-  who remain.
+- PLP supply and withdraw carry **no fee**. The former uncertainty-band withdraw
+  fee (`withdraw_fee_alpha`) was deleted with the approximate-NAV band — the exact
+  single-mark NAV has no valuation uncertainty to price.
 
 ## Lifecycle
 
-- Two orthogonal axes — oracle status (active → pending-settlement → settled) and
-  pool/storage (registered → deactivated → compacted) — plus three independent
-  gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`). "Paused"
-  is not a state.
-- Trading pause blocks new risk creation; exits, settlement cleanup, and
+- Two orthogonal axes — market status (active → past-expiry → settled) and pool
+  registration (registered → deactivated) — plus three
+  independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
+  "Paused" is not a state.
+- Trading pause blocks new risk creation; exits, settled-market cleanup, and
   valuation are gated only by the valuation lock.
-- Compaction is **pool-coordinated**: it returns LP cash to the pool, unregisters
-  the expiry from active valuation, and leaves the expiry as payout/rebate escrow
-  only — there is no expiry-only path that can strand capital.
+- The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
+  unregisters the expiry from active valuation, and materializes terminal profit —
+  there is no expiry-only path that can strand capital. (The standalone compaction
+  step was deleted with the dense NAV matrix; the payout tree is full-lifecycle, so
+  the sweep alone suffices.)
+- **Past-expiry exact-data liveness.** A market that crosses its expiry but lacks
+  an exact Propbook Pyth spot cannot be live-valued: `value_expiry` tries passive
+  settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
+  market remains unsettled. This preserves the single exact mark for PLP supply and
+  withdraw; no approximate substitute mark is allowed. Because the flush must value
+  every active market exactly once, this abort blocks the *whole* pool flush, not
+  just the one market — so an expiry whose exact settlement spot is permanently
+  unobtainable is a cross-market liveness brick, not a benign wait. Guaranteeing the
+  exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, or a
+  bounded settlement fallback) is a pre-testnet open item — see the open-issues
+  tracker.
 
 ## Configuration
 
@@ -150,9 +202,24 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Cross-object binding
 
-- `ExpiryMarket` validates that the market, oracle, Pyth source, and range key
-  belong together before composing them for trading. The registry enforces one
-  Pyth source per feed.
+- `ExpiryMarket` stores the Propbook underlying ID; `pricing::load_live_pricer`
+  validates that the two propbook feeds passed to a priced flow match Propbook's
+  current canonical binding for that underlying and that the market is still
+  pre-expiry for live pricing. The registry records one admin-approved config row
+  per Propbook underlying. Predict does not version-gate the external feeds.
+
+## Producer facts and single clamp
+
+- **Cross-module returns carry owned facts, not a consumer's policy.** A module
+  returns quantities it is the source of truth for (an exposure book returns its raw
+  live liability; the pool returns its profit basis), never a value pre-shaped for a
+  caller's mark, haircut, or stance. `strike_exposure::exact_live_liability` returns
+  the liability fact; `expiry_market::current_nav` owns the NAV cash floor.
+- **Each economic quantity is clamped exactly once, at the policy owner.** A lossy
+  transform (clamp at zero, `min`/`max`, saturating subtraction, rounding) is applied
+  once, as the last step before use, in the module that owns the policy — never on a
+  value a downstream consumer applies further arithmetic to. The single `current_nav`
+  cash floor is the canonical example: the liability producer does not pre-floor it.
 
 ## Rounding
 
@@ -164,7 +231,7 @@ and contributors. For *how* each mechanism works, follow the links into
   `mul(floor_shares, terminal_floor_index)`), so a reserve can never be short of
   the payout it backs.
 - Dust is biased to the protocol/LP pool, never against solvency: payouts round
-  down (the holder absorbs ≤1 unit), and the aggregate-NAV floor rounds down so
-  dust cannot abort valuation. One deliberate carve-out: incentive USD valuation
-  rounds **up**, marking incentive value conservatively high for supply pricing.
-  See the "Rounding and dust" section of [../risks.md](../risks.md).
+  down (the holder absorbs ≤1 unit). The exact NAV walk floors at zero with
+  `saturating_sub` so bounded fixed-point ulp dust (which the boundary-aggregated
+  liability can carry) cannot underflow and abort valuation. See the "Rounding and
+  dust" section of [../risks.md](../risks.md).

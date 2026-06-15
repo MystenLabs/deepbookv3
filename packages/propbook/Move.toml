@@ -1,0 +1,29 @@
+[package]
+name = "propbook"
+edition = "2024.beta"
+version = "0.0.1"
+
+# No `[addresses]` block: it makes the manifest "old-style", which cannot depend
+# on the new-style `pyth_lazer` git package. The named address `propbook` is
+# auto-managed from the package name (matching `packages/predict`).
+
+[dependencies]
+fixed_math = { local = "../fixed_math" }
+# STUB BS signed-data verifier (leaf, no deps). Mints the verified `Update` that
+# `propbook::block_scholes_feed::update` consumes, mirroring `pyth_lazer`.
+block_scholes_oracle = { local = "../block_scholes_oracle" }
+# Official Pyth Lazer Sui package. Used by `propbook::pyth_feed::update`
+# to consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
+# package-scoped, so the Move type system enforces "this value came from Pyth's
+# verifier." Use `rev = "sui-testnet"` for testnet because Wormhole is
+# custom-deployed there.
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+
+# `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
+# for typechecking only; `dep-replacements` tells `sui client publish` to link
+# against the on-chain packages instead of re-publishing them. Copied verbatim
+# from `packages/predict/Move.toml` so the published-at/original-id addresses can
+# never drift between the two consumers.
+[dep-replacements.testnet]
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
+wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "sui-testnet", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }

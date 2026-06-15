@@ -16,9 +16,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         // Staleness window in ms, bounded.
         pyth_spot_freshness_ms: ev.pyth_spot_freshness_ms as i64,
         // Staleness window in ms, bounded.
-        block_scholes_prices_freshness_ms: ev.block_scholes_prices_freshness_ms as i64,
-        // Staleness window in ms, bounded.
-        block_scholes_svi_freshness_ms: ev.block_scholes_svi_freshness_ms as i64,
+        block_scholes_surface_freshness_ms: ev.block_scholes_surface_freshness_ms as i64,
     }
 }
 

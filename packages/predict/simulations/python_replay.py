@@ -13,10 +13,8 @@ from typing import Any
 
 from python_indexes.liquidation_book import (
     LiquidationBook,
-    boundary_index_for_order_side,
     encode_order_id,
 )
-from python_indexes.strike_nav_matrix import StrikeNavMatrix
 from python_indexes.strike_payout_tree import StrikePayoutTree
 
 FLOAT_SCALING = 1_000_000_000
@@ -42,17 +40,21 @@ BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ASK_PRICE = 10_000_000
 MAX_ASK_PRICE = 990_000_000
+# Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
+# tick * tick_size`, no centered grid. Finite ticks occupy 1..POS_INF_TICK-1; tick
+# 0 is the neg-inf sentinel (lower side) and POS_INF_TICK is the pos-inf sentinel
+# (higher side). The on-chain pos-inf raw strike sentinel is u64::MAX.
 ORACLE_TICK_SIZE = FLOAT_SCALING
-ORACLE_GRID_TICKS = 100_000
-ORACLE_CENTER_TICKS = ORACLE_GRID_TICKS // 2
-# Centered grid bounds are derived from the first scenario spot by
-# configure_oracle_grid(). They stay None until then so any strike math run
-# before configuration fails loudly instead of silently snapping against a
-# stale default grid (mirrors the oracleGrid() guard in sim.ts).
-ORACLE_MIN_STRIKE = None
-ORACLE_MAX_STRIKE = None
+TICK_BITS = 24
+POS_INF_TICK = (1 << TICK_BITS) - 1
 NEG_INF_STRIKE = 0
-POS_INF_STRIKE = (1 << 64) - 1
+POS_INF_STRIKE = (1 << 64) - 1  # constants::pos_inf!() == u64::MAX
+# The raw-strike bounds of the finite tick domain, used only to construct the
+# payout tree (which is keyed by raw strikes = tick*tick_size). These are fixed
+# constants now — there is NO centered grid derived from the first spot, so they
+# are known before any row runs (no configure_oracle_grid step).
+ORACLE_MIN_STRIKE = 1 * ORACLE_TICK_SIZE
+ORACLE_MAX_STRIKE = (POS_INF_TICK - 1) * ORACLE_TICK_SIZE
 MIN_ORDER_PRINCIPAL = 1_000_000
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
@@ -67,7 +69,8 @@ VALUATION_LIQUIDATION_BUDGET = 192
 LIQUIDATION_HEAD_SCAN_DIVISOR = 3
 CURVE_SAMPLES = 50
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
-WITHDRAW_FEE_ALPHA = 250_000_000
+# WITHDRAW_FEE_ALPHA removed: the withdraw band fee died with the approximate-NAV
+# world. The async flush pays withdrawals exactly pro-rata (plp::withdraw_dusdc).
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 # Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
@@ -158,7 +161,6 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global LIQUIDATION_HEAD_SCAN_DIVISOR
     global CURVE_SAMPLES
     global PROTOCOL_RESERVE_PROFIT_SHARE
-    global WITHDRAW_FEE_ALPHA
     global TRADING_LOSS_REBATE_RATE
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
@@ -198,7 +200,6 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "protocol_reserve_profit_share",
         PROTOCOL_RESERVE_PROFIT_SHARE,
     )
-    WITHDRAW_FEE_ALPHA = _config_int(config, "protocol", "withdraw_fee_alpha", WITHDRAW_FEE_ALPHA)
     TRADING_LOSS_REBATE_RATE = _config_int(
         config,
         "protocol",
@@ -281,59 +282,49 @@ def scenario_quantity_scale() -> int:
     return 1
 
 
-def configure_oracle_grid(initial_spot: int) -> None:
-    global ORACLE_MIN_STRIKE
-    global ORACLE_MAX_STRIKE
-
-    if initial_spot <= 0:
-        raise ValueError("initial Pyth spot must be positive")
-    # Mirror strike_grid::new_centered: Move centers the grid on tick-floored
-    # spot, so compare on whole ticks.
-    if initial_spot // ORACLE_TICK_SIZE > ORACLE_GRID_TICKS:
-        raise ValueError(
-            "initial Pyth spot exceeds oracle tick coverage; raise the oracle "
-            "tick size to cover a higher spot"
-        )
-    center_strike_index = initial_spot // ORACLE_TICK_SIZE
-    if center_strike_index <= ORACLE_CENTER_TICKS:
-        raise ValueError("initial Pyth spot is too low for centered oracle grid")
-
-    ORACLE_MIN_STRIKE = (center_strike_index - ORACLE_CENTER_TICKS) * ORACLE_TICK_SIZE
-    ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + ORACLE_GRID_TICKS * ORACLE_TICK_SIZE
-
-
-def first_block_scholes_spot(rows: list[dict[str, Any]]) -> int:
-    if not rows:
-        raise ValueError("scenario has no executable rows")
-    first = rows[0]
-    if first["action"] == "oracle_mint_ptb":
-        return first["spot"]
-    return first["oracleRefresh"]["spot"]
-
-
 def signed_svi_value(magnitude: int, is_negative: bool) -> str:
     if magnitude == 0:
         return "0"
     return f"-{magnitude}" if is_negative else str(magnitude)
 
 
-def align_strike_to_grid(strike: int) -> int:
-    if ORACLE_MIN_STRIKE is None:
-        raise ValueError("oracle grid has not been configured")
-    relative = strike - ORACLE_MIN_STRIKE
-    tick_index = relative // ORACLE_TICK_SIZE
-    snapped = ORACLE_MIN_STRIKE + tick_index * ORACLE_TICK_SIZE
-    if snapped < ORACLE_MIN_STRIKE:
-        return ORACLE_MIN_STRIKE
-    if snapped > ORACLE_MAX_STRIKE:
-        return ORACLE_MAX_STRIKE
-    return snapped
+def align_strike_to_tick(strike: int) -> int:
+    # Snap a raw strike DOWN to its whole-tick multiple. The absolute-tick domain
+    # has no grid to center; alignment is just flooring. The tick must land in the
+    # finite domain 1..POS_INF_TICK-1.
+    if strike <= 0:
+        raise ValueError("strike must be positive")
+    tick = strike // ORACLE_TICK_SIZE
+    if tick <= 0 or tick >= POS_INF_TICK:
+        raise ValueError(
+            "strike tick outside the finite tick domain (1..POS_INF_TICK-1); "
+            "raise the oracle tick size to cover a higher strike"
+        )
+    return tick * ORACLE_TICK_SIZE
 
 
 def binary_range_bounds(strike: int, is_up: bool) -> tuple[int, int]:
+    # Raw-strike binary range. UP -> (strike, +inf); DOWN -> (-inf, strike).
     if is_up:
         return strike, POS_INF_STRIKE
     return NEG_INF_STRIKE, strike
+
+
+def binary_range_ticks(strike: int, is_up: bool) -> tuple[int, int]:
+    # Tick range for a binary order. UP (strike, +inf) -> (strike/tick, POS_INF_TICK);
+    # DOWN (-inf, strike) -> (0 = neg-inf, strike/tick). Mirrors range_codec.
+    tick = strike // ORACLE_TICK_SIZE
+    if is_up:
+        return tick, POS_INF_TICK
+    return 0, tick
+
+
+def strikes_from_ticks(lower_tick: int, higher_tick: int) -> tuple[int, int]:
+    # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strikes_from_ticks):
+    # lower_tick 0 -> NEG_INF_STRIKE; higher_tick POS_INF_TICK -> POS_INF_STRIKE.
+    lower = NEG_INF_STRIKE if lower_tick == 0 else lower_tick * ORACLE_TICK_SIZE
+    higher = POS_INF_STRIKE if higher_tick == POS_INF_TICK else higher_tick * ORACLE_TICK_SIZE
+    return lower, higher
 
 
 def parse_mint_quantity(quantity: int, line_number: int, field: str = "quantity") -> int:
@@ -512,7 +503,7 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
 
 
 def live_forward(spot: int, forward: int) -> int:
-    # Mirror pricing::live_inputs fresh-spot branch: the on-chain forward used for
+    # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
     # every live quote/valuation/liquidation is NOT the pushed forward, but is
     # re-derived from the live Pyth spot and the stored Block Scholes basis as
     # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
@@ -931,28 +922,17 @@ def build_curve(svi: dict[str, Any], forward: int, min_strike: int, max_strike: 
             break
         lo = points[best_idx]
         hi = points[best_idx + 1]
-        mid = align_strike_to_grid((lo["strike"] + hi["strike"]) // 2)
+        mid = align_strike_to_tick((lo["strike"] + hi["strike"]) // 2)
         points.insert(best_idx + 1, {"strike": mid, "up_price": compute_up_price(svi, forward, mid)})
     return points
-
-
-def order_boundary_index(strike: int) -> int:
-    return boundary_index_for_order_side(
-        strike,
-        min_strike=ORACLE_MIN_STRIKE,
-        tick_size=ORACLE_TICK_SIZE,
-        max_strike=ORACLE_MAX_STRIKE,
-        neg_inf=NEG_INF_STRIKE,
-        pos_inf=POS_INF_STRIKE,
-    )
 
 
 def order_id_for_terms(order: dict[str, Any]) -> int:
     return encode_order_id(
         opened_at_ms=order["opened_at_ms"],
-        lower_boundary_index=order["lower_boundary_index"],
-        higher_boundary_index=order["higher_boundary_index"],
-        max_boundary_index=ORACLE_GRID_TICKS + 2,
+        lower_tick=order["lower_tick"],
+        higher_tick=order["higher_tick"],
+        pos_inf_tick=POS_INF_TICK,
         floor_shares=order_floor_shares(order),
         quantity=order["quantity"],
         sequence=order["sequence"],
@@ -1075,8 +1055,11 @@ def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
         order.get("open_floor_index", FLOAT_SCALING),
         floor_shares,
     )
+    # The payout tree stays (it owns max_live_backing_payout + settled_payout
+    # aggregates). The dense StrikeNavMatrix is GONE: NAV is now the exact
+    # order-sum walk_linear - correction (see exact_live_liability), which reads
+    # model["orders"] directly and needs no per-order NAV index.
     model["payout"].insert_range(order["lower"], order["higher"], terminal_payout, live_backing_payout)
-    model["nav"].insert_range(order["lower"], order["higher"], order["quantity"], floor_shares)
     model["live_backing_liability"] += live_backing_payout
     invalidate_valuation_cache(model)
     track_minted_boundaries(model, order["lower"], order["higher"])
@@ -1101,7 +1084,6 @@ def remove_closed_live_order(
 
     closed_floor_shares = old_floor_shares - remaining_floor_shares
     model["payout"].remove_range(order["lower"], order["higher"], old_terminal_payout, old_live_backing_payout)
-    model["nav"].remove_range(order["lower"], order["higher"], order["quantity"], old_floor_shares)
     model["live_backing_liability"] -= old_live_backing_payout
     if resulting_order is not None:
         model["payout"].insert_range(
@@ -1109,12 +1091,6 @@ def remove_closed_live_order(
             resulting_order["higher"],
             remaining_terminal_payout,
             remaining_live_backing_payout,
-        )
-        model["nav"].insert_range(
-            resulting_order["lower"],
-            resulting_order["higher"],
-            resulting_order["quantity"],
-            remaining_floor_shares,
         )
         model["live_backing_liability"] += remaining_live_backing_payout
     invalidate_valuation_cache(model)
@@ -1158,36 +1134,56 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
     return curve
 
 
-def live_valuation_components(
-    model: dict[str, Any],
-    curve: list[dict[str, int]] | None = None,
-) -> tuple[int, int]:
-    key = valuation_curve_key(model)
-    if key is None:
-        return (0, 0)
-    if curve is None:
-        curve = build_valuation_curve(model)
-    if curve is None:
-        return (0, 0)
-    cache = model["valuation_cache"]
+# --- Exact NAV liability (replaces the deleted dense StrikeNavMatrix + curve). ---
+# The contract's `strike_exposure::exact_live_liability` is `linear - correction`,
+# where the payout-tree `walk_linear` and the leveraged-book `correction_value` are
+# just efficient on-chain aggregations of per-order sums. Mirrored here order-by-
+# order (the simulation has one book, so the O(n) walk is fine and EXACT — it does
+# not depend on the deleted grid/curve interpolation at all):
+#   linear     = Σ_active           quantity · range_price(lower, higher)
+#   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
+#                                       floor_shares · floor_index_now)
+#   exact_live_liability = max(0, linear - correction)
+# walk_linear over all orders equals Σ qty·range_price because each `(lower, higher]`
+# order contributes q·P(lower) - q·P(higher) = q·(up(lower) - up(higher)) =
+# q·range_price(lower, higher) to the tree's start/end totals (neg-inf rides base
+# P=1, pos-inf ends are P=0). There is NO conservative band anymore (deleted with
+# the approximate-NAV world): the flush prices one EXACT mark for both supply and
+# withdraw.
+def exact_live_liability(model: dict[str, Any]) -> int:
+    if model["current_svi"] is None or model["current_forward"] == 0:
+        raise ValueError("pool valuation requires prior price and SVI updates")
     floor_index = model_floor_index(model)
-    liability_key = (key, model["nav"].version, floor_index)
-    if cache["liability_key"] == liability_key:
-        return cache["liability"]
-    components = model["nav"].valuation_components(
-        curve,
-        minted_min_strike=model["minted_min_strike"],
-        minted_max_strike=model["minted_max_strike"],
-        floor_index=floor_index,
-    )
-    cache["liability_key"] = liability_key
-    cache["liability"] = components
-    return components
+    linear = 0
+    correction = 0
+    for order in model["orders"].values():
+        if order["status"] != "active":
+            continue
+        range_value = deepbook_mul(
+            compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"]),
+            order["quantity"],
+        )
+        linear += range_value
+        if order["leverage"] != LEVERAGE_ONE_X:
+            floor_value = floor_amount_for_index(order_floor_shares(order), floor_index)
+            correction += min(range_value, floor_value)
+    return max(0, linear - correction)
 
 
 def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] | None = None) -> int:
-    total_range, total_floor_amount = live_valuation_components(model, curve)
-    return max(0, total_range - total_floor_amount)
+    # `curve` is accepted for call-site compatibility but ignored: the exact walk
+    # needs no curve. (Kept positional so the Python-only derived sampler, which
+    # passes a curve, still type-checks.)
+    return exact_live_liability(model)
+
+
+# current_nav (per ExpiryMarket): free cash minus the exact per-order live
+# liability, floored at zero. free_cash = expiry_cash - rebate_reserve. This is the
+# EXACT mark the flush prices supply AND withdraw at.
+def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
+    rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
+    free_cash = max(0, state["expiry_cash_balance"] - rebate_reserve)
+    return max(0, free_cash - exact_live_liability(model))
 
 
 def compute_pool_value(
@@ -1196,17 +1192,15 @@ def compute_pool_value(
     curve: list[dict[str, int]] | None = None,
     position_liability: int | None = None,
 ) -> int:
+    # Pool NAV = lp_pool_value(idle, credits, debits, share, active), where the
+    # single active market's NAV is the EXACT `current_nav` above (settled markets
+    # contribute 0 — not modelled here, settlement is stubbed). Mirrors
+    # plp::lp_pool_value's saturating exclusion of pending protocol profit.
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
-    if position_liability is None:
-        position_liability = live_position_liability(model, curve)
-    rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    reserved_cash = position_liability + rebate_reserve
-    if state["expiry_cash_balance"] < reserved_cash:
-        raise ValueError("valuation exceeds expiry cash")
-    active_expiry_value = state["expiry_cash_balance"] - reserved_cash
+    active_expiry_value = current_nav(model, state)
     pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
-    return state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit
+    return max(0, state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit)
 
 
 def expiry_net_funding(state: dict[str, int]) -> int:
@@ -1328,37 +1322,25 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
     ]
 
 
-def pool_sync_updates_and_value(
+# The flush valuation: rebalance the (single) active expiry, then price the pool
+# NAV at the EXACT mark. The deleted approximate-NAV world's verified-vs-unscanned
+# floor scan, supply_liability band, and aggregate_band are GONE — the flush uses
+# one exact `current_nav` for both supply and withdraw (DOCS_CONSOLIDATED_FACTS §3,
+# move.md NAV-mark invariant). Returns (cash-rebalance updates, pool_value,
+# synced_state).
+# TODO(sim-parity): in the contract this is finish_flush's `pool_nav = lp_pool_value(
+# idle, credits, debits, share, Σ current_nav)` computed once after value_expiry over
+# every active market, then used to drain BOTH queues. The async cadence (when the
+# flush runs relative to request rows) and the per-request FIFO/until-idle-dry drain
+# are not modelled here; confirm against a localnet run.
+def flush_valuation(
     model: dict[str, Any],
     state: dict[str, int],
-    curve: list[dict[str, int]] | None = None,
-    verified_floor_amount: int = 0,
-    verified_range: int = 0,
-) -> tuple[list[dict[str, Any]], int, dict[str, int], int]:
-    total_range, total_floor_amount = live_valuation_components(model, curve)
-    position_liability = max(0, total_range - total_floor_amount)
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
     synced_state = dict(state)
     updates = sync_active_expiry_cash_updates(model, synced_state)
-    rebate_reserve = deepbook_mul(
-        synced_state["expiry_unresolved_trading_fees"],
-        TRADING_LOSS_REBATE_RATE,
-    )
-    required_cash = position_liability + rebate_reserve
-    if synced_state["expiry_cash_balance"] < required_cash:
-        raise ValueError("valuation exceeds expiry cash")
-
-    free_cash = synced_state["expiry_cash_balance"] - rebate_reserve
-    unscanned_floor = max(0, total_floor_amount - verified_floor_amount)
-    unscanned_range = max(0, total_range - verified_range)
-    supply_liability = max(0, verified_range - verified_floor_amount) + max(
-        0,
-        unscanned_range - unscanned_floor,
-    )
-    active_expiry_value = max(0, free_cash - supply_liability)
-    pending_protocol_profit = pending_protocol_profit_exclusion(synced_state, active_expiry_value)
-    pool_value = synced_state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit
-    aggregate_band = min(unscanned_floor, unscanned_range)
-    return updates, pool_value, synced_state, aggregate_band
+    pool_value = compute_pool_value(model, synced_state)
+    return updates, pool_value, synced_state
 
 
 def pending_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
@@ -1459,12 +1441,14 @@ def svi_input(row: dict[str, Any]) -> dict[str, str]:
 
 
 def mint_input(row: dict[str, Any]) -> dict[str, str]:
-    strike = align_strike_to_grid(row["strike"])
-    lower, higher = binary_range_bounds(strike, row["isUp"])
+    # Mirror sim.ts mintInput: the canonical mint input is the (lower_tick,
+    # higher_tick) pair the entrypoint takes directly (no standalone range key).
+    strike = align_strike_to_tick(row["strike"])
+    lower_tick, higher_tick = binary_range_ticks(strike, row["isUp"])
     return {
         "order_ref": row["orderRef"],
-        "lower_strike": str(lower),
-        "higher_strike": str(higher),
+        "lower_tick": str(lower_tick),
+        "higher_tick": str(higher_tick),
         "quantity": str(row["quantity"]),
         "leverage": str(row["leverage"]),
     }
@@ -1500,19 +1484,25 @@ def oracle_refresh_input(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def oracle_prices_update(price: dict[str, Any]) -> dict[str, str]:
+# Propbook Pyth oracle_lane::ObservationRecorded normalized view: the global Pyth
+# spot tick. Mirrors the TS normalizer; timestamps are localnet-clock-derived and
+# excluded from the parity diff.
+def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
     return {
-        "type": "oracle_prices_updated",
+        "type": "pyth_feed_updated",
         "spot": str(price["spot"]),
-        "forward": str(price["forward"]),
-        "basis": str(deepbook_div(price["forward"], price["spot"])),
     }
 
 
-def oracle_svi_update(svi: dict[str, Any]) -> dict[str, str]:
+# Propbook Block Scholes oracle_lane::ObservationRecorded normalized view: this
+# expiry's surface (spot + forward + SVI). `basis` is no longer an event field
+# (derived as forward/spot).
+def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
     return {
-        "type": "oracle_svi_updated",
-        **svi_input(svi),
+        "type": "block_scholes_surface_updated",
+        "spot": str(oracle["spot"]),
+        "forward": str(oracle["forward"]),
+        **svi_input(oracle),
     }
 
 
@@ -1520,8 +1510,8 @@ def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], upda
     oracle = row["oracleRefresh"]
     model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
     model["current_svi"] = oracle
-    updates.append(oracle_prices_update(oracle))
-    updates.append(oracle_svi_update(oracle))
+    updates.append(pyth_feed_update(oracle))
+    updates.append(block_scholes_surface_update(oracle))
 
 
 def order_minted_update(
@@ -1531,8 +1521,9 @@ def order_minted_update(
     sequence: int,
     time_to_expiry_ms: int | None = None,
 ) -> dict[str, str]:
-    strike = align_strike_to_grid(mint["strike"])
+    strike = align_strike_to_tick(mint["strike"])
     lower, higher = binary_range_bounds(strike, mint["isUp"])
+    lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
     fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
@@ -1541,8 +1532,10 @@ def order_minted_update(
         "type": "order_minted",
         "order_ref": mint["orderRef"],
         "order_sequence": str(sequence),
-        "lower_strike": str(lower),
-        "higher_strike": str(higher),
+        # Canonical strike range as absolute ticks, matching the OrderMinted event
+        # (raw `lower`/`higher` are kept locally only for pricing, not emitted).
+        "lower_tick": str(lower_tick),
+        "higher_tick": str(higher_tick),
         "leverage": str(mint["leverage"]),
         "entry_probability": str(entry_probability),
         "quantity": str(mint["quantity"]),
@@ -1613,7 +1606,7 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         state["vault_idle_balance"] = int(update["idle_balance_after"])
         state["vault_protocol_reserve_balance"] = int(update["protocol_reserve_balance_after"])
         state["profit_basis_debits"] = profit_basis_after
-    elif update["type"] in ("pool_supply", "pool_withdraw"):
+    elif update["type"] in ("supply_filled", "withdraw_filled"):
         state["vault_idle_balance"] = int(update["idle_balance_after"])
         state["vault_total_plp_supply"] = int(update["total_supply_after"])
 
@@ -1717,22 +1710,15 @@ def append_pool_sync_phase(
     model: dict[str, Any],
     state: dict[str, int],
     updates: list[dict[str, Any]],
-) -> tuple[int, dict[str, int], int]:
-    liquidation_updates, verified_floor_amount, verified_range = run_liquidation_pass_with_verification(
-        model,
-        VALUATION_LIQUIDATION_BUDGET,
-    )
-    updates.extend(liquidation_updates)
-    curve = build_valuation_curve(model)
-    sync_updates, pool_value, synced_state, aggregate_band = pool_sync_updates_and_value(
-        model,
-        state,
-        curve,
-        verified_floor_amount,
-        verified_range,
-    )
+) -> tuple[int, dict[str, int]]:
+    # The flush still runs a passive liquidation pass, but NAV no longer needs its
+    # verified-floor/range output (the exact per-order floor-capped liability makes
+    # an underwater order net to zero with no scan — see exact_live_liability), so
+    # the verification plumbing and the band it fed are dropped.
+    updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
+    sync_updates, pool_value, synced_state = flush_valuation(model, state)
     updates.extend(sync_updates)
-    return pool_value, synced_state, aggregate_band
+    return pool_value, synced_state
 
 
 def track_minted_boundaries(model: dict[str, Any], lower: int, higher: int) -> None:
@@ -1758,11 +1744,16 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         model_fee_time_to_expiry_ms(model, opened_at_ms),
     )
     terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
+    lower_tick = int(update["lower_tick"])
+    higher_tick = int(update["higher_tick"])
+    lower, higher = strikes_from_ticks(lower_tick, higher_tick)
     order = {
         "ref": row["orderRef"],
         "sequence": model["next_sequence"],
-        "lower": int(update["lower_strike"]),
-        "higher": int(update["higher_strike"]),
+        "lower": lower,
+        "higher": higher,
+        "lower_tick": lower_tick,
+        "higher_tick": higher_tick,
         "leverage": row["leverage"],
         "entry_probability": int(update["entry_probability"]),
         "quantity": row["quantity"],
@@ -1773,8 +1764,6 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         "status": "active",
     }
     order["floor_shares"] = order_floor_shares(order)
-    order["lower_boundary_index"] = order_boundary_index(order["lower"])
-    order["higher_boundary_index"] = order_boundary_index(order["higher"])
     order["order_id"] = order_id_for_terms(order)
     model["orders"][row["orderRef"]] = order
     model["next_sequence"] += 1
@@ -1859,6 +1848,25 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
     }
 
 
+# === Async LP supply/withdraw (replaces the deleted synchronous SupplyExecuted /
+# WithdrawExecuted). A supply/withdraw is now: a request that escrows funds, then a
+# later privileged flush that drains the queue at one EXACT frozen mark
+# (current_nav). plp::supply_shares mints `amount * total_supply / pool_value`
+# (bootstrap 1:1 when total_supply == 0 AND pool_value == 0); plp::withdraw_dusdc
+# pays `shares * pool_value / total_supply` — NO withdraw fee (the band fee died with
+# the approximate-NAV world). Both round down; a dust request that prices to 0 is
+# refunded.
+#
+# TODO(sim-parity): this models a request and its flush fill TOGETHER in one record
+# (as if the runner ran request_supply + flush back-to-back), but the contract
+# split is genuinely async — the fill lands on the manager via the balance
+# accumulator (send_funds) and is absorbed lazily, and many requests can batch into
+# one flush draining supplies-first-then-withdrawals-FIFO-until-idle-dry. The exact
+# update sequence + balance timing the localnet runner emits (SupplyRequested then,
+# at a later flush, PoolValued/FlushExecuted/SupplyFilled) must be confirmed against
+# a real run before this is trusted for parity. The TS runner currently only
+# enqueues the request (see executeRow TODO(sim-parity)), so the two mirrors are not
+# yet aligned on the flush half.
 def supply_update(
     model: dict[str, Any],
     row: dict[str, Any],
@@ -1868,21 +1876,24 @@ def supply_update(
     if row["lpRef"] in model["lp_refs"]:
         raise ValueError(f"duplicate lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    shares = (
-        row["amount"]
-        if total_supply == 0
-        else mul_div_round_down(row["amount"], total_supply, pool_value)
-    )
+    # plp::supply_shares: bootstrap 1:1 requires an empty pool NAV.
+    if total_supply == 0:
+        if pool_value != 0:
+            raise ValueError("bootstrap supply requires empty pool NAV")
+        shares = row["amount"]
+    elif pool_value == 0:
+        shares = 0  # wiped pool — caller refunds the escrowed DUSDC
+    else:
+        shares = mul_div_round_down(row["amount"], total_supply, pool_value)
     if shares <= 0:
-        raise ValueError("supply would mint zero shares")
+        raise ValueError("supply priced to zero shares (would be refunded)")
     model["lp_refs"][row["lpRef"]] = shares
     return {
-        "type": "pool_supply",
+        "type": "supply_filled",
         "lp_ref": row["lpRef"],
-        "payment": str(row["amount"]),
+        "dusdc_amount": str(row["amount"]),
         "shares_minted": str(shares),
-        "pool_value_before": str(pool_value),
-        "incentive_value": "0",
+        "pool_value": str(pool_value),
         "total_supply_after": str(total_supply + shares),
         "idle_balance_after": str(synced_state["vault_idle_balance"] + row["amount"]),
     }
@@ -1893,33 +1904,26 @@ def withdraw_update(
     row: dict[str, Any],
     pool_value: int,
     synced_state: dict[str, int],
-    aggregate_band: int,
 ) -> dict[str, str]:
     shares = model["lp_refs"].get(row["lpRef"])
     if shares is None:
         raise ValueError(f"unknown lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    payout = deepbook_mul(pool_value, deepbook_div(shares, total_supply))
+    # plp::withdraw_dusdc: pro-rata, rounded down, NO withdraw fee.
+    payout = mul_div_round_down(shares, pool_value, total_supply) if total_supply else 0
     if payout <= 0:
-        raise ValueError("withdraw would pay zero")
-    total_fee_pool = deepbook_mul(WITHDRAW_FEE_ALPHA, aggregate_band)
-    fee_fraction = deepbook_div(shares, total_supply)
-    band_fee = deepbook_mul(total_fee_pool, fee_fraction)
-    nav_fee_cap = deepbook_mul(WITHDRAW_FEE_ALPHA, payout)
-    withdraw_fee = min(band_fee, nav_fee_cap)
-    net_payout = payout - withdraw_fee
-    if synced_state["vault_idle_balance"] < net_payout:
+        raise ValueError("withdraw priced to zero DUSDC (would be refunded)")
+    if synced_state["vault_idle_balance"] < payout:
         raise ValueError("insufficient idle balance for withdraw")
     del model["lp_refs"][row["lpRef"]]
     return {
-        "type": "pool_withdraw",
+        "type": "withdraw_filled",
         "lp_ref": row["lpRef"],
         "shares_burned": str(shares),
-        "payout": str(payout),
-        "withdraw_fee": str(withdraw_fee),
-        "pool_value_before": str(pool_value),
+        "dusdc_amount": str(payout),
+        "pool_value": str(pool_value),
         "total_supply_after": str(total_supply - shares),
-        "idle_balance_after": str(synced_state["vault_idle_balance"] - net_payout),
+        "idle_balance_after": str(synced_state["vault_idle_balance"] - payout),
     }
 
 
@@ -1944,6 +1948,16 @@ def apply_manager_summary_update(summary: dict[str, int], update: dict[str, Any]
 
 
 def settled_order_payout(order: dict[str, Any], settlement_price: int) -> int:
+    # Half-open (lower, higher] winner test on raw strikes. The Python payout tree is
+    # raw-strike-keyed, so this and the tree's settled_payout_liability use the same
+    # raw `settlement_price` threshold and agree with each other (the indexed==scanned
+    # cross-check still holds). TODO(sim-parity): the contract's tree is TICK-keyed and
+    # uses prefix_limit_tick = ceil(settlement / tick_size) (range_codec); for a
+    # settlement that is NOT a whole tick multiple the raw-strike threshold here can
+    # differ by up to one tick from the contract's. Settlement is stubbed on-chain
+    # (is_settled() always false), so this terminal-closeout path is Python-only and
+    # cannot be localnet-parity-checked until settlement-v2 — confirm the
+    # prefix_limit_tick equivalence then.
     if settlement_price > order["lower"] and settlement_price <= order["higher"]:
         _, terminal_payout, _ = order_index_update_terms(order)
         return terminal_payout
@@ -1955,14 +1969,6 @@ def reset_terminal_model(model: dict[str, Any]) -> None:
     model["liquidation"] = LiquidationBook()
     model["minted_min_strike"] = None
     model["minted_max_strike"] = None
-    model["nav"] = StrikeNavMatrix(
-        min_strike=ORACLE_MIN_STRIKE,
-        tick_size=ORACLE_TICK_SIZE,
-        max_strike=ORACLE_MAX_STRIKE,
-        float_scaling=FLOAT_SCALING,
-        neg_inf=NEG_INF_STRIKE,
-        pos_inf=POS_INF_STRIKE,
-    )
     model["payout"] = StrikePayoutTree(
         min_strike=ORACLE_MIN_STRIKE,
         tick_size=ORACLE_TICK_SIZE,
@@ -2169,13 +2175,14 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         terms = compute_mint_terms(int(update["entry_probability"]), int(update["quantity"]), leverage)
         floor_seed_amount = terms["floor_seed_amount"]
         floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, borrow_index_open)
+        lower, higher = strikes_from_ticks(int(update["lower_tick"]), int(update["higher_tick"]))
         analytics_insert_order(
             analytics,
             {
                 "ref": update["order_ref"],
                 "sequence": int(update["order_sequence"]),
-                "lower": int(update["lower_strike"]),
-                "higher": int(update["higher_strike"]),
+                "lower": lower,
+                "higher": higher,
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
@@ -2687,8 +2694,8 @@ def replay(
         if settlement_timestamp_ms is None:
             settlement_timestamp_ms = expiry_ms + 1
 
-    configure_oracle_grid(first_block_scholes_spot(rows))
-
+    # No grid to configure: strikes are absolute ticks (raw = tick*tick_size), so
+    # the tick domain is fixed and known before any row runs.
     state = initial_state()
     model: dict[str, Any] = {
         "current_forward": 0,
@@ -2702,14 +2709,6 @@ def replay(
         "lp_refs": {},
         "minted_min_strike": None,
         "minted_max_strike": None,
-        "nav": StrikeNavMatrix(
-            min_strike=ORACLE_MIN_STRIKE,
-            tick_size=ORACLE_TICK_SIZE,
-            max_strike=ORACLE_MAX_STRIKE,
-            float_scaling=FLOAT_SCALING,
-            neg_inf=NEG_INF_STRIKE,
-            pos_inf=POS_INF_STRIKE,
-        ),
         "payout": StrikePayoutTree(
             min_strike=ORACLE_MIN_STRIKE,
             tick_size=ORACLE_TICK_SIZE,
@@ -2746,6 +2745,17 @@ def replay(
     total_steps = len(rows)
     step_dt = BORROW_STEP_DT_MS if BORROW_STEP_DT_MS else max(1, LEVERAGE_FLOOR_WINDOW_MS // max(1, total_steps))
     derived_expiry_ms = expiry_ms if exact_time and expiry_ms is not None else total_steps * step_dt
+    # Parity-path async-LP request bookkeeping (mirrors the localnet runner). Supply /
+    # withdraw rows only ENQUEUE a request in the parity model; the flush (runner
+    # machinery, not a CSV row) drains them later, so no fill/oracle-refresh update is
+    # emitted per row. The bootstrap supply consumed supply-queue index 0, so scenario
+    # supplies start at 1; withdraws start at 0. Withdraws draw against the bootstrap
+    # PLP only (conservative, matching the runner) and any that exceed it are skipped
+    # with no emitted record (the runner `continue`s).
+    supply_queue_index = 1
+    withdraw_queue_index = 0
+    available_settled_plp = VAULT_SEED
+    lp_request_amounts: dict[str, int] = {}
     for step_index, row in enumerate(rows):
         updates: list[dict[str, Any]] = []
         action = row["action"]
@@ -2755,8 +2765,8 @@ def replay(
         if action == "oracle_mint_ptb":
             model["current_forward"] = live_forward(row["spot"], row["forward"])
             model["current_svi"] = row
-            updates.append(oracle_prices_update(row))
-            updates.append(oracle_svi_update(row))
+            updates.append(pyth_feed_update(row))
+            updates.append(block_scholes_surface_update(row))
             scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))
@@ -2769,15 +2779,52 @@ def replay(
                 updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(redeem_order(model, row))
         elif action == "supply":
-            apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = active_order_count(model)
-            pool_value, synced_state, _ = append_pool_sync_phase(model, state, updates)
-            updates.append(supply_update(model, row, pool_value, synced_state))
+            if exact_time:
+                # Long Python-only replay keeps the synchronous fill model so the
+                # economic charts still see LP fills + pool funding.
+                apply_inline_oracle_refresh(model, row, updates)
+                scan_active_count = active_order_count(model)
+                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
+                updates.append(supply_update(model, row, pool_value, synced_state))
+            else:
+                # Parity: request_supply only escrows DUSDC into the queue (no oracle
+                # refresh, no fill). Mirror the localnet request record exactly.
+                ref = row["lpRef"]
+                amount = row["amount"]
+                lp_request_amounts[ref] = amount
+                updates.append(
+                    {
+                        "type": "supply_requested",
+                        "lp_ref": ref,
+                        "index": str(supply_queue_index),
+                        "amount": str(amount),
+                    }
+                )
+                supply_queue_index += 1
         elif action == "withdraw":
-            apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = active_order_count(model)
-            pool_value, synced_state, aggregate_band = append_pool_sync_phase(model, state, updates)
-            updates.append(withdraw_update(model, row, pool_value, synced_state, aggregate_band))
+            if exact_time:
+                apply_inline_oracle_refresh(model, row, updates)
+                scan_active_count = active_order_count(model)
+                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
+                updates.append(withdraw_update(model, row, pool_value, synced_state))
+            else:
+                # Parity: request_withdraw escrows PLP (materialized from the bootstrap
+                # pool) into the queue. The runner skips — with no record — any withdraw
+                # the bootstrap PLP can't cover; mirror that exactly.
+                ref = row["lpRef"]
+                shares = lp_request_amounts.get(ref, 0)
+                if shares == 0 or shares > available_settled_plp:
+                    continue
+                available_settled_plp -= shares
+                updates.append(
+                    {
+                        "type": "withdraw_requested",
+                        "lp_ref": ref,
+                        "index": str(withdraw_queue_index),
+                        "amount": str(shares),
+                    }
+                )
+                withdraw_queue_index += 1
         else:
             raise ValueError(f"unsupported action {action}")
 

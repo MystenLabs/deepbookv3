@@ -1,201 +1,185 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pricing and valuation curves for Predict markets.
+/// Pricing for Predict markets.
 ///
-/// This module is the app-facing read layer for oracle data. It resolves
-/// market oracle and Pyth source state on demand, computes SVI prices, and
-/// builds aggregate valuation curves. It does not mutate oracle, pool, expiry,
-/// or position state.
+/// This module is the app-facing read layer for oracle data. It reads the
+/// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
+/// range prices. It does not mutate feed, pool, expiry, or position state, and it
+/// owns the live pricing boundary: current Propbook feed binding, pre-expiry
+/// market liveness, feed freshness, and Predict's pricing-safe surface envelope.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{
-    constants,
-    market_oracle::{MarketOracle, SVIParams},
-    pricing_config::PricingConfig,
-    pyth_source::PythSource
+use deepbook_predict::{constants, pricing_config::PricingConfig};
+use fixed_math::{i64, math};
+use propbook::{
+    block_scholes_feed::{Self as block_scholes_feed, BlockScholesFeed, SVIParams},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
 };
-use predict_math::{i64, math};
 use sui::clock::Clock;
+
+/// Value snapshot of live oracle inputs for one or more price calculations.
+public struct Pricer has copy, drop {
+    forward: u64,
+    svi: SVIParams,
+}
 
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
-const EInvalidCurveRange: u64 = 4;
-const EBlockScholesPriceStale: u64 = 5;
-const EBlockScholesSVIStale: u64 = 6;
-const EInvalidStrikeRatio: u64 = 7;
-const EPythSpotStale: u64 = 8;
+const EBlockScholesSurfaceStale: u64 = 5;
+const EBlockScholesSurfaceInvalid: u64 = 6;
+const EPythSpotInvalid: u64 = 7;
+const EWrongPythFeed: u64 = 8;
+const EWrongBlockScholesFeed: u64 = 9;
+const ELivePricingExpired: u64 = 10;
 
-/// Curve sample point with strike and one-sided UP price.
-public struct CurvePoint has copy, drop, store {
-    strike: u64,
-    up_price: u64,
-}
+/// Predict's private pricing envelope for raw propbook surfaces. These are not
+/// oracle-source validity rules; they only bound the SVI inputs tightly enough
+/// that Predict's fixed-point pricing math remains live and meaningful.
+macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
+// max_pricing_spot * max_pricing_basis / float_scaling == u64::max by
+// construction: the re-anchored forward (spot * basis) can't overflow u64.
+macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+macro fun min_svi_sigma(): u64 { 1_000_000 }
+macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public-Package Functions ===
 
-public(package) fun strike(point: &CurvePoint): u64 {
-    point.strike
+/// Validate the current live pricing boundary and snapshot oracle inputs for
+/// `expiry`'s repeated quote calculations.
+///
+/// This is the only path from raw Propbook oracle objects into Predict business
+/// logic. It first checks that `pyth` and `bs` are the current canonical Propbook
+/// oracles for `propbook_underlying_id`, then rejects past-expiry markets, then
+/// reads live oracle inputs under Predict's freshness and pricing-safe envelope.
+public(package) fun load_live_pricer(
+    config: &PricingConfig,
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    expiry: u64,
+    clock: &Clock,
+): Pricer {
+    assert_current_oracles(propbook_registry, propbook_underlying_id, pyth, bs);
+    assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
+    let (forward, svi) = live_inputs(config, pyth, bs, expiry, clock);
+    Pricer { forward, svi }
 }
 
-public(package) fun up_price(point: &CurvePoint): u64 {
-    point.up_price
+/// Return the current UP tail price for one strike.
+public(package) fun up_price(pricer: &Pricer, strike: u64): u64 {
+    compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
 /// Return the current raw probability for a live range.
-public(package) fun live_range_probability(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    lower: u64,
-    higher: u64,
-    clock: &Clock,
-): u64 {
-    let (forward, svi) = live_inputs(config, market, pyth, clock);
-    compute_range_price(&svi, forward, lower, higher)
-}
-
-/// Abort unless the live oracle inputs needed for a quote are currently usable.
-public(package) fun assert_live_quote_available(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-) {
-    market.assert_pyth_source(pyth);
-    market.assert_active(clock);
-    assert_live_oracle_fresh(config, market, clock);
-}
-
-public(package) fun assert_pyth_spot_fresh(
-    config: &PricingConfig,
-    pyth: &PythSource,
-    clock: &Clock,
-) {
-    assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
-}
-
-/// Resolve the live forward/SVI tuple used by all live pricing paths.
-///
-/// Fresh Pyth spot is canonical for spot; forward is then derived from the
-/// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
-/// fresh Block Scholes forward. SVI must be fresh either way.
-public(package) fun live_inputs(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): (u64, SVIParams) {
-    assert_live_quote_available(config, market, pyth, clock);
-
-    let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
-        math::mul(pyth.spot(), market.block_scholes_basis())
-    } else {
-        market.block_scholes_forward()
-    };
-
-    (forward, market.block_scholes_svi())
-}
-
-/// Build an adaptive piecewise-linear UP-price curve over a caller-validated strike interval.
-public(package) fun build_curve(
-    svi: &SVIParams,
-    forward: u64,
-    tick_size: u64,
-    min_strike: u64,
-    max_strike: u64,
-): vector<CurvePoint> {
-    assert_curve_inputs(tick_size, min_strike, max_strike);
-
-    if (min_strike == max_strike) {
-        let price = compute_up_price(svi, forward, min_strike);
-        return vector[
-            CurvePoint {
-                strike: min_strike,
-                up_price: price,
-            },
-        ]
-    };
-
-    let price_lo = compute_up_price(svi, forward, min_strike);
-    let price_hi = compute_up_price(svi, forward, max_strike);
-    let mut points = vector[
-        CurvePoint {
-            strike: min_strike,
-            up_price: price_lo,
-        },
-        CurvePoint {
-            strike: max_strike,
-            up_price: price_hi,
-        },
-    ];
-
-    let curve_samples = constants::curve_samples!();
-    let mut cur_samples = 2;
-    while (cur_samples < curve_samples) {
-        let (found, idx) = find_gap(&points, tick_size);
-        if (!found) break;
-
-        let strike_lo = points[idx].strike;
-        let strike_hi = points[idx + 1].strike;
-        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, min_strike, tick_size);
-        let price = compute_up_price(svi, forward, mid_strike);
-        insert_asc(
-            &mut points,
-            CurvePoint {
-                strike: mid_strike,
-                up_price: price,
-            },
-        );
-        cur_samples = cur_samples + 1;
-    };
-
-    points
+public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
 // === Private Functions ===
 
-fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
+fun assert_current_oracles(
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+) {
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
+    );
+    assert!(
+        propbook_registry
+            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+            .contains(&bs.id()),
+        EWrongBlockScholesFeed,
+    );
 }
 
-/// Return the raw range probability from two UP tail prices.
-fun range_price(lower_up_price: u64, higher_up_price: u64): u64 {
-    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
-    // inversion should price 0, not abort a legitimate mint/redeem/valuation.
-    lower_up_price.saturating_sub(higher_up_price)
-}
-
-fun block_scholes_price_is_fresh(
+/// Resolve the live forward/SVI tuple used by all live pricing paths.
+///
+/// Fresh Pyth spot is canonical for spot; forward is then derived from this
+/// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
+/// spot, pricing falls back to the Block Scholes forward. The Block Scholes
+/// surface (basis + forward + SVI) must be fresh and inside Predict's
+/// pricing-safe envelope either way.
+fun live_inputs(
     config: &PricingConfig,
-    market: &MarketOracle,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    expiry: u64,
     clock: &Clock,
-): bool {
-    timestamp_is_fresh(
-        market.block_scholes_price_freshness_timestamp_ms(),
-        config.block_scholes_prices_freshness_ms(),
-        clock,
-    )
-}
+): (u64, SVIParams) {
+    let surface_read = bs.normalized_surface(expiry);
+    assert!(surface_read.is_some(), EBlockScholesSurfaceStale);
+    let surface_read = surface_read.destroy_some();
+    assert!(
+        timestamp_is_fresh(
+            surface_read.read_source_timestamp_ms(),
+            config.block_scholes_surface_freshness_ms(),
+            clock,
+        ),
+        EBlockScholesSurfaceStale,
+    );
+    let surface = surface_read.read_value();
+    let bs_spot = block_scholes_feed::surface_spot(&surface);
+    let bs_forward = block_scholes_feed::surface_forward(&surface);
+    let svi = block_scholes_feed::surface_svi(&surface);
+    assert_surface_pricing_safe(bs_spot, bs_forward, &svi);
 
-fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
-    timestamp_is_fresh(
-        market.block_scholes_svi_freshness_timestamp_ms(),
-        config.block_scholes_svi_freshness_ms(),
-        clock,
-    )
-}
+    let pyth_spot = pyth.normalized_spot();
+    let forward = if (
+        pyth_spot.is_some()
+            && timestamp_is_fresh(
+                pyth_spot.borrow().read_source_timestamp_ms(),
+                config.pyth_spot_freshness_ms(),
+                clock,
+            )
+    ) {
+        let spot = pyth_spot.destroy_some().read_value();
+        assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
+        // Re-anchored forward = spot * (bs_forward / bs_spot) is intentionally
+        // NOT re-bounded to max_pricing_spot: with basis up to max_pricing_basis
+        // (100x), a legitimate contango forward exceeds the spot ceiling. The two
+        // envelope ceilings are co-designed so spot * basis <= u64::max (no
+        // overflow), and compute_nd2's deep-tail saturations keep pricing live
+        // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
+        // reads (R1 liveness).
+        math::mul(spot, math::div(bs_forward, bs_spot))
+    } else {
+        bs_forward
+    };
 
-fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
-    timestamp_is_fresh(pyth.freshness_timestamp_ms(), config.pyth_spot_freshness_ms(), clock)
+    (forward, svi)
 }
 
 fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
+}
+
+fun assert_surface_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
+    assert!(spot > 0 && forward > 0, EBlockScholesSurfaceInvalid);
+    assert!(forward <= max_pricing_spot!(), EBlockScholesSurfaceInvalid);
+    assert!(
+        ((forward as u128) * (math::float_scaling!() as u128)) / (spot as u128)
+            <= (max_pricing_basis!() as u128),
+        EBlockScholesSurfaceInvalid,
+    );
+    assert!(svi.a() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.b() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(
+        svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
+        EBlockScholesSurfaceInvalid,
+    );
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
@@ -204,7 +188,9 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    range_price(lower_up_price, higher_up_price)
+    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
+    // inversion should price 0, not abort a legitimate mint/redeem.
+    lower_up_price.saturating_sub(higher_up_price)
 }
 
 /// Compute the fair UP tail price for `strike`.
@@ -226,8 +212,18 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    let strike_ratio = math::div(strike, forward);
-    assert!(strike_ratio > 0, EInvalidStrikeRatio);
+    // strike / forward in 1e9 fixed point, computed in u128 so both deep tails
+    // saturate instead of underflowing to 0 (which would abort) or wrapping the u64
+    // cast. Reaching either tail needs the forward to leave the entire encodable
+    // strike ladder by orders of magnitude; saturating keeps NAV / redeem /
+    // liquidation reads live there rather than aborting the whole market.
+    let strike_ratio_scaled =
+        ((strike as u128) * (math::float_scaling!() as u128)) / (forward as u128);
+    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
+    if (strike_ratio_scaled == 0) return math::float_scaling!();
+    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
+    if (strike_ratio_scaled > (std::u64::max_value!() as u128)) return 0;
+    let strike_ratio = strike_ratio_scaled as u64;
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
@@ -257,53 +253,4 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let d2 = d2.neg();
 
     math::normal_cdf(&d2)
-}
-
-fun assert_curve_inputs(tick_size: u64, min_strike: u64, max_strike: u64) {
-    assert!(tick_size > 0, EInvalidCurveRange);
-    assert!(min_strike <= max_strike, EInvalidCurveRange);
-}
-
-/// Insert a new curve point while preserving ascending strike order.
-fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
-    points.push_back(new_point);
-    let mut i = points.length() - 1;
-    while (i > 0) {
-        if (points[i - 1].strike <= points[i].strike) break;
-        points.swap(i - 1, i);
-        i = i - 1;
-    };
-}
-
-/// Pick the next adjacent gap to bisect based on endpoint UP-price difference.
-fun find_gap(points: &vector<CurvePoint>, tick_size: u64): (bool, u64) {
-    let len = points.length();
-    let mut best_idx = len;
-    let mut best_price_diff = 0;
-
-    let mut i = 0;
-    while (i + 1 < len) {
-        let lo = &points[i];
-        let hi = &points[i + 1];
-
-        if (hi.strike - lo.strike <= tick_size) {
-            i = i + 1;
-            continue
-        };
-
-        let price_diff = range_price(lo.up_price, hi.up_price);
-        if (price_diff > best_price_diff) {
-            best_idx = i;
-            best_price_diff = price_diff;
-        };
-
-        i = i + 1;
-    };
-
-    (best_idx != len, best_idx)
-}
-
-/// Round a strike down to the nearest tick boundary from the curve origin.
-fun snap_to_tick(strike: u64, origin: u64, tick_size: u64): u64 {
-    origin + (strike - origin) / tick_size * tick_size
 }

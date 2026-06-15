@@ -1,70 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault lifecycle events for Predict.
-///
-/// These are low-frequency relative to trades, so they are rich: supply and
-/// withdraw carry the pool value used to price shares, and expiry cash receipts
-/// carry the pool-owned expiry cash-flow movements.
+/// Pool-vault events for Predict: DEEP staking, expiry cash/profit, and the async
+/// LP supply/withdraw request → flush lifecycle (the flush event carries the
+/// full-pool valuation it priced fills at).
 module deepbook_predict::vault_events;
 
 use sui::event;
 
-/// Emitted when DUSDC is supplied and PLP shares are minted.
-///
-/// `pool_value_before` is the full-pool NAV that priced the mint, so the NAV per
-/// share and pool composition are recoverable without a separate valuation event.
-public struct SupplyExecuted has copy, drop, store {
-    pool_vault_id: ID,
-    payment: u64,
-    shares_minted: u64,
-    /// Pool NAV used to price the mint, in DUSDC base units. Includes the
-    /// `incentive_value` slice below; subtract it to get the DUSDC-only NAV,
-    /// which is the basis `WithdrawExecuted.pool_value_before` reports.
-    pool_value_before: u64,
-    /// DUSDC-denominated value of vested SUI/DEEP incentives folded into
-    /// `pool_value_before`. Withdraw prices the DUSDC payout on the DUSDC-only
-    /// NAV (incentives paid in-kind), so this field makes the two bases comparable.
-    incentive_value: u64,
-    total_supply_after: u64,
-    idle_balance_after: u64,
-}
-
-/// Emitted when PLP shares are burned and DUSDC is withdrawn.
-public struct WithdrawExecuted has copy, drop, store {
-    pool_vault_id: ID,
-    shares_burned: u64,
-    /// Gross DUSDC payout priced from pool NAV before `withdraw_fee`.
-    payout: u64,
-    /// Band-based withdraw fee retained in idle balance for remaining LPs.
-    withdraw_fee: u64,
-    pool_value_before: u64,
-    total_supply_after: u64,
-    idle_balance_after: u64,
-}
-
-/// Emitted when live expiry cash is rebalanced against current backing needs.
-public struct ExpiryCashRebalanced has copy, drop, store {
-    pool_vault_id: ID,
-    expiry_market_id: ID,
-    amount: u64,
-    to_expiry: bool,
-    target_cash: u64,
-    expiry_cash_after: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
-}
-
-/// Emitted when an expiry's max net pool funding cap changes.
-public struct ExpiryMaxFundingUpdated has copy, drop, store {
-    pool_vault_id: ID,
-    expiry_market_id: ID,
-    max_expiry_funding: u64,
-    net_funding: u64,
-}
-
-/// Emitted when an expiry returns cash to the pool.
+/// Emitted when a settled expiry returns its free cash to the pool (during the
+/// settled-market sweep): the expiry is deactivated and all cash above settled
+/// backing is returned to idle.
 public struct ExpiryCashReceived has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -75,7 +21,28 @@ public struct ExpiryCashReceived has copy, drop, store {
     received_from_expiry_after: u64,
 }
 
-/// Emitted when terminal expiry profit is split between LPs and protocol reserves.
+/// Emitted when an active expiry's cash is rebalanced toward target: a top-up from
+/// idle (`to_expiry = true`) or a surplus-sweep back to idle (`to_expiry = false`).
+/// On a sweep, any carried protocol cut a prior settled sweep could not cover is also
+/// realized from the returned idle into the reserve, so `protocol_reserve_balance_after`
+/// and `pending_protocol_profit_after` report the post-drain state.
+public struct ExpiryCashRebalanced has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    to_expiry: bool,
+    target_cash: u64,
+    expiry_cash_after: u64,
+    idle_balance_after: u64,
+    sent_to_expiry_after: u64,
+    received_from_expiry_after: u64,
+    protocol_reserve_balance_after: u64,
+    pending_protocol_profit_after: u64,
+}
+
+/// Emitted when a terminal expiry's profit is materialized: the LP cut stays in idle
+/// and the protocol cut is realized into the protocol reserve up to available idle, any
+/// remainder carried in `pending_protocol_profit_after` for a later sweep to realize.
 public struct ExpiryProfitMaterialized has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -84,6 +51,7 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
+    pending_protocol_profit_after: u64,
 }
 
 /// Emitted when a manager stakes DEEP for trading benefits.
@@ -104,85 +72,98 @@ public struct DeepUnstaked has copy, drop, store {
     amount: u64,
 }
 
-// === Public-Package Functions ===
-
-public(package) fun emit_supply_executed(
+/// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
+/// will be delivered to `recipient` (the manager's address) at a later flush.
+/// `index` is the queue handle used to cancel.
+public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
-    payment: u64,
-    shares_minted: u64,
-    pool_value_before: u64,
-    incentive_value: u64,
-    total_supply_after: u64,
-    idle_balance_after: u64,
-) {
-    event::emit(SupplyExecuted {
-        pool_vault_id,
-        payment,
-        shares_minted,
-        pool_value_before,
-        incentive_value,
-        total_supply_after,
-        idle_balance_after,
-    });
-}
-
-public(package) fun emit_withdraw_executed(
-    pool_vault_id: ID,
-    shares_burned: u64,
-    payout: u64,
-    withdraw_fee: u64,
-    pool_value_before: u64,
-    total_supply_after: u64,
-    idle_balance_after: u64,
-) {
-    event::emit(WithdrawExecuted {
-        pool_vault_id,
-        shares_burned,
-        payout,
-        withdraw_fee,
-        pool_value_before,
-        total_supply_after,
-        idle_balance_after,
-    });
-}
-
-public(package) fun emit_expiry_cash_rebalanced(
-    pool_vault_id: ID,
-    expiry_market_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
     amount: u64,
-    to_expiry: bool,
-    target_cash: u64,
-    expiry_cash_after: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
-) {
-    event::emit(ExpiryCashRebalanced {
-        pool_vault_id,
-        expiry_market_id,
-        amount,
-        to_expiry,
-        target_cash,
-        expiry_cash_after,
-        idle_balance_after,
-        sent_to_expiry_after,
-        received_from_expiry_after,
-    });
 }
 
-public(package) fun emit_expiry_max_funding_updated(
+/// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
+/// DUSDC will be delivered to `recipient` at a later flush.
+public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
-    expiry_market_id: ID,
-    max_expiry_funding: u64,
-    net_funding: u64,
-) {
-    event::emit(ExpiryMaxFundingUpdated {
-        pool_vault_id,
-        expiry_market_id,
-        max_expiry_funding,
-        net_funding,
-    });
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
 }
+
+/// Emitted when an LP cancels a still-pending request before it is flushed: the
+/// escrow (`amount` of DUSDC if `is_supply`, else PLP) is refunded straight into the
+/// requesting manager.
+public struct RequestCancelled has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+}
+
+/// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
+/// `shares_minted` PLP were delivered to `recipient`. `predict_manager_id` is the
+/// owning manager (carried from the queued request so the fill is self-contained;
+/// `recipient` is its derived address).
+public struct SupplyFilled has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    dusdc_amount: u64,
+    shares_minted: u64,
+}
+
+/// Emitted when a withdraw request fills: `shares_burned` PLP were burned and
+/// `dusdc_amount` was delivered to `recipient` from pool idle. `predict_manager_id`
+/// is the owning manager (carried from the queued request).
+public struct WithdrawFilled has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    shares_burned: u64,
+    dusdc_amount: u64,
+}
+
+/// Emitted once per flush after both queues drain. The flush IS the full-pool
+/// valuation, so this single event carries the frozen mark every fill was priced at
+/// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
+/// plus `active_market_nav` over `market_count` active markets), how many of each
+/// kind filled, the total live requests processed against the per-flush cap, and the
+/// idle balance after the drain.
+public struct FlushExecuted has copy, drop, store {
+    pool_vault_id: ID,
+    epoch: u64,
+    /// LP-attributable pool NAV every fill was priced at: `lp_pool_value(idle,
+    /// credits, debits, reserve_share, active_market_nav)`.
+    pool_value: u64,
+    total_supply: u64,
+    /// Σ of each active market's exact NAV at valuation (settled markets contribute 0).
+    active_market_nav: u64,
+    /// Number of active markets valued for this flush.
+    market_count: u64,
+    /// Idle DUSDC held by the pool at valuation time, before the drain.
+    idle_balance_before: u64,
+    supplies_filled: u64,
+    withdrawals_filled: u64,
+    requests_processed: u64,
+    idle_balance_after: u64,
+}
+
+/// Emitted once when the pool is bootstrapped via `plp::lock_capital`: `amount`
+/// DUSDC is permanently locked as minimum liquidity and matching PLP is minted into
+/// the book's locked balance (never withdrawable), so `total_supply` stays > 0.
+public struct CapitalLocked has copy, drop, store {
+    pool_vault_id: ID,
+    amount: u64,
+}
+
+// === Public-Package Functions ===
 
 public(package) fun emit_expiry_cash_received(
     pool_vault_id: ID,
@@ -204,6 +185,34 @@ public(package) fun emit_expiry_cash_received(
     });
 }
 
+public(package) fun emit_expiry_cash_rebalanced(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    to_expiry: bool,
+    target_cash: u64,
+    expiry_cash_after: u64,
+    idle_balance_after: u64,
+    sent_to_expiry_after: u64,
+    received_from_expiry_after: u64,
+    protocol_reserve_balance_after: u64,
+    pending_protocol_profit_after: u64,
+) {
+    event::emit(ExpiryCashRebalanced {
+        pool_vault_id,
+        expiry_market_id,
+        amount,
+        to_expiry,
+        target_cash,
+        expiry_cash_after,
+        idle_balance_after,
+        sent_to_expiry_after,
+        received_from_expiry_after,
+        protocol_reserve_balance_after,
+        pending_protocol_profit_after,
+    });
+}
+
 public(package) fun emit_expiry_profit_materialized(
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -212,6 +221,7 @@ public(package) fun emit_expiry_profit_materialized(
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
+    pending_protocol_profit_after: u64,
 ) {
     event::emit(ExpiryProfitMaterialized {
         pool_vault_id,
@@ -221,6 +231,7 @@ public(package) fun emit_expiry_profit_materialized(
         idle_balance_after,
         protocol_reserve_balance_after,
         profit_basis_after,
+        pending_protocol_profit_after,
     });
 }
 
@@ -246,4 +257,122 @@ public(package) fun emit_deep_unstaked(pool_vault_id: ID, predict_manager_id: ID
         predict_manager_id,
         amount,
     });
+}
+
+public(package) fun emit_supply_requested(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+) {
+    event::emit(SupplyRequested {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        amount,
+    });
+}
+
+public(package) fun emit_withdraw_requested(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+) {
+    event::emit(WithdrawRequested {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        amount,
+    });
+}
+
+public(package) fun emit_request_cancelled(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+) {
+    event::emit(RequestCancelled {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        amount,
+        is_supply,
+    });
+}
+
+public(package) fun emit_supply_filled(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    dusdc_amount: u64,
+    shares_minted: u64,
+) {
+    event::emit(SupplyFilled {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        dusdc_amount,
+        shares_minted,
+    });
+}
+
+public(package) fun emit_withdraw_filled(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    shares_burned: u64,
+    dusdc_amount: u64,
+) {
+    event::emit(WithdrawFilled {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        shares_burned,
+        dusdc_amount,
+    });
+}
+
+public(package) fun emit_flush_executed(
+    pool_vault_id: ID,
+    epoch: u64,
+    pool_value: u64,
+    total_supply: u64,
+    active_market_nav: u64,
+    market_count: u64,
+    idle_balance_before: u64,
+    supplies_filled: u64,
+    withdrawals_filled: u64,
+    requests_processed: u64,
+    idle_balance_after: u64,
+) {
+    event::emit(FlushExecuted {
+        pool_vault_id,
+        epoch,
+        pool_value,
+        total_supply,
+        active_market_nav,
+        market_count,
+        idle_balance_before,
+        supplies_filled,
+        withdrawals_filled,
+        requests_processed,
+        idle_balance_after,
+    });
+}
+
+public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {
+    event::emit(CapitalLocked { pool_vault_id, amount });
 }

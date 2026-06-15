@@ -1,17 +1,19 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// S3/L1 settled-solvency flow: a finite-range 1x order is partially closed
-/// live, then settled exactly AT each boundary of its half-open range
-/// `(lower, higher]`. Pins that the settled payout reserve drains to exactly
-/// zero (no residual, no underflow), that a worthless settled survivor is
-/// still closable (a zero-payout permissionless close must not abort), and
-/// that custody conserves across the full market-cash / pool / manager sheets
-/// at every step. One parameterized runner, three boundary rows.
+/// S1/L1 live-solvency boundary for a thin FINITE-range 1x order: minted on
+/// `(min_strike, min_strike + tick]` exactly at the money, then partially closed
+/// live. Pins that the close removes the order's entire live terms and reinserts
+/// the exact residual (cancel-and-replace) so liability drops to the surviving
+/// half, that the survivor carries zero floor (a 1x order), and that custody
+/// conserves across the market-cash / manager sheets with S1 backing intact.
+///
+/// The settled-redeem boundary legs are covered by the passive settlement flow
+/// tests; this file keeps the live cancel-and-replace solvency boundary focused.
 #[test_only]
 module deepbook_predict::settled_solvency_boundary_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
+use deepbook_predict::{flow_test_helpers as helpers, order, test_constants};
 use std::unit_test::{assert_eq, destroy};
 
 /// Per-trade fee floors at `min_fee`: the fixture floors base_fee to 1, so the
@@ -41,76 +43,43 @@ const POST_CLOSE_BALANCE: u64 = 742_500_000;
 const REBATE_AFTER_MINT: u64 = 2_500_000;
 const REBATE_AFTER_CLOSE: u64 = 3_750_000;
 
-/// `(lower, higher]` INCLUDES higher: settling exactly at `higher` pays the
-/// surviving half its full notional, and the reserve drains to exactly zero.
 #[test]
-fun settlement_at_higher_boundary_pays_full() {
-    run_boundary_settlement(
-        helpers::min_strike() + test_constants::default_tick_size(),
-        HALF_CLOSE,
-    );
-}
-
-/// `(lower, higher]` EXCLUDES lower: settling exactly at `lower` pays zero,
-/// and the worthless settled survivor still closes without aborting.
-#[test]
-fun settlement_at_lower_boundary_pays_zero() {
-    run_boundary_settlement(helpers::min_strike(), 0);
-}
-
-/// Settlement strictly above `higher` pays zero (the strict > side of the
-/// half-open interval).
-#[test]
-fun settlement_above_higher_pays_zero() {
-    run_boundary_settlement(
-        helpers::min_strike() + 2 * test_constants::default_tick_size(),
-        0,
-    );
-}
-
-fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64) {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_live_market(
+fun finite_range_partial_close_preserves_live_solvency() {
+    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
-    // --- Post-funding-sync baseline: the pool topped the fresh expiry up to
-    // the cash floor out of idle; nothing owed, nothing spent.
-    let cash_floor = constants::expiry_cash_floor!();
-    let idle = test_constants::default_initial_supply() - cash_floor;
-    helpers::check_market_cash(&market, helpers::expected_market_cash(cash_floor, 0, 0));
-    helpers::check_pool(
-        &vault,
-        helpers::expected_pool_state(idle, test_constants::default_initial_supply(), 0),
-    );
+    // --- Baseline: the fixture seeded the fresh expiry with cash while pool
+    // funding is absent; nothing owed, nothing spent.
+    let seeded_cash = test_constants::default_seeded_expiry_cash();
+    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
     helpers::check_manager(
         &manager,
         expiry_id,
         helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
     );
-    assert!(!oracle.is_settled());
-
     // --- Mint one 1x order on the finite range (min_strike, min_strike + tick],
     // exactly at the money. Principal + fee land in expiry cash; live backing
     // for a zero-floor 1x order is its full quantity.
-    let higher = helpers::min_strike() + test_constants::default_tick_size();
     let order_id = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        higher,
+        &bs,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 1,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
-            cash_floor + MINT_PRINCIPAL + MINT_MIN_FEE,
+            seeded_cash + MINT_PRINCIPAL + MINT_MIN_FEE,
             test_constants::mint_quantity(),
             REBATE_AFTER_MINT,
         ),
@@ -127,10 +96,11 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
     // residual (cancel-and-replace), so liability drops to the surviving half.
     let (_closed, replacement) = fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order_id,
         HALF_CLOSE,
     );
@@ -138,7 +108,7 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
     let survivor = order::from_order_id(survivor_id);
     assert_eq!(survivor.quantity(), HALF_CLOSE);
     assert_eq!(survivor.floor_shares(), 0);
-    let cash_after_close = cash_floor + MINT_PRINCIPAL + MINT_MIN_FEE - CLOSE_NET_PAYOUT;
+    let cash_after_close = seeded_cash + MINT_PRINCIPAL + MINT_MIN_FEE - CLOSE_NET_PAYOUT;
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(cash_after_close, HALF_CLOSE, REBATE_AFTER_CLOSE),
@@ -151,59 +121,7 @@ fun run_boundary_settlement(settlement_price: u64, expected_settled_payout: u64)
     assert!(!manager.has_position(expiry_id, order_id));
     assert!(manager.has_position(expiry_id, survivor_id));
 
-    // --- Settle at the row's boundary price. Settlement is an oracle-domain
-    // write: the market cash sheet must be bit-identical to the pre-settle
-    // state, and the liability getter still reports the lazy (un-materialized)
-    // live reserve until the first settled redeem.
-    fx.settle_oracle(&config, &mut oracle, &mut pyth, settlement_price);
-    assert!(oracle.is_settled());
-    helpers::check_market_cash(
-        &market,
-        helpers::expected_market_cash(cash_after_close, HALF_CLOSE, REBATE_AFTER_CLOSE),
-    );
-
-    // --- Permissionless full close of the survivor. Settled redeem pays the
-    // exact terminal payout with no per-trade fee, and the materialized
-    // settled reserve drains to exactly zero — no residual, no underflow.
-    let balance_before = manager.balance();
-    fx.redeem_settled(
-        &config,
-        &mut manager,
-        &mut market,
-        &oracle,
-        &pyth,
-        survivor_id,
-        HALF_CLOSE,
-    );
-    assert_eq!(manager.balance() - balance_before, expected_settled_payout);
-    assert_eq!(market.payout_liability(), 0);
-    helpers::check_market_cash(
-        &market,
-        helpers::expected_market_cash(
-            cash_after_close - expected_settled_payout,
-            0,
-            REBATE_AFTER_CLOSE,
-        ),
-    );
-    helpers::check_manager(
-        &manager,
-        expiry_id,
-        helpers::expected_manager_state(
-            POST_CLOSE_BALANCE + expected_settled_payout,
-            MINT_MIN_FEE + CLOSE_FEE,
-            0,
-            0,
-            0,
-        ),
-    );
-    assert!(!manager.has_position(expiry_id, survivor_id));
-    // The pool sheet is untouched by the whole trade lifecycle.
-    helpers::check_pool(
-        &vault,
-        helpers::expected_pool_state(idle, test_constants::default_initial_supply(), 0),
-    );
-
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }

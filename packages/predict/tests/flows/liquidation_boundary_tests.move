@@ -18,17 +18,18 @@ module deepbook_predict::liquidation_boundary_tests;
 use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
 use std::unit_test::{assert_eq, destroy};
 
-/// now (100_000) + leverage_floor_window_ms / 2: floor phase at mint is
+/// now (120_000) + leverage_floor_window_ms / 2: floor phase at mint is
 /// exactly 0.5, so floor_index(open) = 1 + 0.2 * 0.5² = 1.05 exactly.
-const EXPIRY_MS: u64 = 15_768_100_000;
+/// Grid-aligned (`now` + a multiple of the resolution period).
+const EXPIRY_MS: u64 = 15_768_120_000;
 /// Check time T1 = EXPIRY_MS − 0.4 * window: floor phase exactly 0.6, so
 /// floor_index(T1) = 1 + 0.2 * 0.6² = 1.072 exactly — the schedule is
 /// genuinely live between mint and check (1.05 → 1.072).
-const T1_MS: u64 = 3_153_700_000;
-/// Oracle re-seed source timestamps: strictly after the setup's 99_000 seed
+const T1_MS: u64 = 3_153_720_000;
+/// Oracle re-seed source timestamps: strictly after the setup's 119_000 seed
 /// and within every freshness window of the T1 clock.
-const T1_ATM_SOURCE_TS: u64 = 3_153_699_500;
-const T1_DROP_SOURCE_TS: u64 = 3_153_699_700;
+const T1_ATM_SOURCE_TS: u64 = 3_153_719_500;
+const T1_DROP_SOURCE_TS: u64 = 3_153_719_700;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// 84_000 lots, chosen so floor_shares = financed_amount / 1.05 = 200_000_000 is an
 /// EXACT division (no dependence on the floor_shares rounding direction).
@@ -58,16 +59,16 @@ const DROPPED_SPOT: u64 = 99_000_000_000;
 
 #[test]
 fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
-    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
         EXPIRY_MS,
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     // --- Baseline.
-    let cash_floor = constants::expiry_cash_floor!();
-    helpers::check_market_cash(&market, helpers::expected_market_cash(cash_floor, 0, 0));
+    let seeded_cash = test_constants::default_seeded_expiry_cash();
+    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
     helpers::check_manager(
         &manager,
         expiry_id,
@@ -77,27 +78,29 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // --- Two identical 2x semi-infinite orders.
     let order_a = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         QUANTITY,
         LEVERAGE_TWO_X,
     );
     let order_b = fx.mint(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
-        helpers::min_strike(),
-        constants::pos_inf!(),
+        &bs,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
         QUANTITY,
         LEVERAGE_TWO_X,
     );
-    let cash_after_mints = cash_floor + 2 * (CONTRIBUTION + TRADE_FEE);
+    let cash_after_mints = seeded_cash + 2 * (CONTRIBUTION + TRADE_FEE);
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
@@ -117,14 +120,14 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // failed liquidation attempt must be a pure no-op.
     fx.set_clock_for_testing(T1_MS);
     fx.prepare_live_oracle_at(
-        &config,
-        &mut oracle,
+        &market,
         &mut pyth,
+        &mut bs,
         test_constants::default_live_price(),
         T1_ATM_SOURCE_TS,
     );
-    assert!(!fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_a));
-    assert!(!fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_b));
+    assert!(!fx.liquidate_order(&config, &oracle_registry, &mut market, &pyth, &bs, order_a));
+    assert!(!fx.liquidate_order(&config, &oracle_registry, &mut market, &pyth, &bs, order_b));
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
@@ -144,10 +147,11 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // (gross minus the LIVE floor at T1, minus the withheld fee).
     let (_closed, replacement) = fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order_a,
         QUANTITY,
     );
@@ -178,7 +182,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // basis stays 1.0). order_b is now liquidatable, but a budget-0 budgeted
     // pass selects zero candidates and must change nothing.
     fx.set_pyth_price_for_testing(&mut pyth, DROPPED_SPOT, T1_DROP_SOURCE_TS);
-    assert_eq!(fx.liquidate(&config, &mut market, &oracle, &pyth, 0), 0);
+    assert_eq!(fx.liquidate(&config, &oracle_registry, &mut market, &pyth, &bs, 0), 0);
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
@@ -201,7 +205,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
 
     // --- Targeted liquidation below the threshold: the knockout removes the
     // order's full backing, moves no cash, and never touches the manager.
-    assert!(fx.liquidate_order(&config, &mut market, &oracle, &pyth, order_b));
+    assert!(fx.liquidate_order(&config, &oracle_registry, &mut market, &pyth, &bs, order_b));
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(cash_after_redeem, 0, REBATE_AFTER_REDEEM),
@@ -222,10 +226,11 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     // --- Tombstone cleanup: zero payout, zero fee, position cleared.
     let (_closed_b, repl_b) = fx.redeem(
         &config,
+        &oracle_registry,
         &mut manager,
         &mut market,
-        &oracle,
         &pyth,
+        &bs,
         order_b,
         QUANTITY,
     );
@@ -247,7 +252,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     );
     assert!(!manager.has_position(expiry_id, order_b));
 
-    helpers::return_market(pyth, vault, market, oracle, config);
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     destroy(manager);
     fx.finish();
 }

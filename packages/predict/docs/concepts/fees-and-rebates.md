@@ -1,10 +1,10 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. The trading fee itself is shaped by an expiry ramp and reduced by a staking discount. Active DEEP stakers earn a discount on the trading fee. A portion of all trading fees is reserved as a trading-loss rebate that net-losing traders can reclaim after their positions in an expiry are fully closed. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. The trading fee itself is shaped by an expiry ramp and reduced by a staking discount. Active DEEP stakers earn a discount on the trading fee. A portion of all trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — while the rebate itself is **resolved and distributed off-chain**. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
-This page covers **per-trade** fees. The pool also charges one **LP-side** fee — an uncertainty-band fee on PLP withdrawal that accrues to remaining LPs — documented in [./liquidity-and-nav.md](./liquidity-and-nav.md).
+This page covers **per-trade** fees. The pool itself charges no LP-side fee: PLP supply and withdraw are priced at one exact pool-wide mark with no band or spread, documented in [./liquidity-and-nav.md](./liquidity-and-nav.md).
 
 ## Where fees come from
 
@@ -119,9 +119,9 @@ Newly staked DEEP becomes `inactive_stake` and only counts as `active_stake` in 
 
 ## 6. Trading-loss rebate
 
-Predict reserves a fraction of all trading fees and pays it back to traders who end an expiry at a net loss. The reserve is part of the expiry's cash-backing invariant: an expiry must always hold enough DUSDC to cover both its payout liability and its outstanding rebate reserve (see [./liquidity-and-nav.md](./liquidity-and-nav.md)).
+Predict reserves a fraction of all trading fees on-chain so net-losing traders can be rebated, but the rebate is **resolved and distributed off-chain**. On-chain, the protocol's only job is to hold the reserve as part of the expiry's cash-backing invariant: an expiry must always hold enough DUSDC to cover both its payout liability and its outstanding rebate reserve (see [./liquidity-and-nav.md](./liquidity-and-nav.md)).
 
-### How the reserve accrues
+### How the reserve accrues (on-chain)
 
 When a trading fee is collected, `ExpiryCash` adds it to `unresolved_trading_fees_paid`. The rebate reserve owed at any time is a configured fraction of that basis:
 
@@ -129,26 +129,22 @@ When a trading fee is collected, `ExpiryCash` adds it to `unresolved_trading_fee
 rebate_reserve = unresolved_trading_fees_paid * trading_loss_rebate_rate
 ```
 
-The expiry's required cash backing is `payout_liability + rebate_reserve`, so released LP cash and surplus are always computed net of the reserve still owed. The congestion surcharge and builder fee are excluded from this basis — only the trading fee counts.
+The expiry's required cash backing is `payout_liability + rebate_reserve`, so released LP cash and surplus are always computed net of the reserve still owed. The congestion surcharge and builder fee are excluded from this basis — only the trading fee counts. On-chain this accumulator is write-only: it grows as fees are collected and is never decremented by a claim, because there is no on-chain rebate claim.
 
-### How a rebate is claimed
+### How a rebate is resolved (off-chain)
 
-A manager claims its trading-loss rebate for an expiry once **all** of its positions in that expiry are closed (settled, redeemed, or liquidated). At that point the manager's per-expiry summary is resolved into two totals:
-
-- `trading_fees_paid` — the trading fees this manager paid into the expiry.
-- `gross_profit` — `max(0, gross_received_from_expiry − gross_paid_to_expiry)`: the manager's net gain across all its positions in the expiry, floored at zero.
-
-The rebate is offset by any profit, so only net-losing traders receive it:
+There is **no on-chain rebate-claim entrypoint.** The data an off-chain resolver needs is maintained on-chain and exposed for it: each `PredictManager` tracks a per-expiry `ExpiryTradingSummary` of `trading_fees_paid` (trading fees this manager paid into the expiry, builder fee and surcharge excluded) and its open-position count, and the order-domain events record every position's cash flow. The off-chain eligibility model is:
 
 ```text
+gross_profit     = max(0, gross_received_from_expiry − gross_paid_to_expiry)
 resolved_reserve = trading_fees_paid * trading_loss_rebate_rate
-eligible_rebate  = max(0, resolved_reserve - gross_profit)
+eligible_rebate  = max(0, resolved_reserve − gross_profit)
 rebate_amount    = eligible_rebate * benefit_ratio(active_stake)
 ```
 
-A profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero and no rebate is paid. A losing trader recovers a portion of the fees they paid, scaled by their active-stake benefit ratio. The same benefit curve that drives the fee discount governs the trader's share of the eligible rebate; unlike the fee discount, the rebate carries **no separate staking cap** — its size is bounded entirely by the configured `trading_loss_rebate_rate`.
+The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Resolution conceptually happens once **all** of a manager's positions in the expiry are closed.
 
-The paid `rebate_amount` is split off the expiry's reserved rebate cash; any residual (the part of the resolved reserve not paid out, e.g. when stake is below full or rounding leaves dust) returns to the pool. Resolving the basis decrements `unresolved_trading_fees_paid` so the expiry's required backing falls by exactly the resolved reserve.
+Because resolution is off-chain, the reserved DUSDC is not paid out on-chain. When an expiry settles (see [./liquidity-and-nav.md](./liquidity-and-nav.md)), its cash above `payout_liability + rebate_reserve` is swept back to the pool, and the still-reserved rebate cash returns to the pool as terminal profit — split between the protocol reserve and LP idle by the protocol profit share. Distribution of the off-chain-resolved rebates to losing traders is handled separately, outside the contract.
 
 ## How the components combine
 
@@ -166,8 +162,8 @@ flowchart TD
     NETFEE --> COLLECT[fee -> expiry cash, basis += fee]
     BUILD --> BUILDER[builder fee -> builder code address]
     CONG --> SURPLUS[surcharge -> expiry cash surplus]
-    COLLECT --> RESERVE["rebate reserve = basis x rebate_rate"]
-    RESERVE --> CLAIM[net-losing trader reclaims rebate after all positions close]
+    COLLECT --> RESERVE["rebate reserve = basis x rebate_rate (held in expiry cash)"]
+    RESERVE --> OFFCHAIN[net-losing traders rebated off-chain; residual returns to pool at settlement]
 ```
 
 Cash routing at trade time:
@@ -178,9 +174,9 @@ Cash routing at trade time:
 | Staking discount | reduces the trading fee | (reduces what is charged) | — | — |
 | Builder fee | add-on to trading fee | builder code address | No | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No | No |
-| Trading-loss rebate | funded from trading fees | back to net-losing trader | (drawn from reserve) | No |
+| Trading-loss rebate | funded from trading fees | reserved on-chain; resolved/paid off-chain | (drawn from reserve) | No |
 
-At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is claimed separately once every position in the expiry is closed.
+At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is resolved off-chain rather than claimed on-chain.
 
 ## Related reading
 

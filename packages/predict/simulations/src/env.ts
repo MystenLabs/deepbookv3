@@ -41,7 +41,17 @@ export const REGISTRY_ID = requireEnv("REGISTRY_ID");
 export const ADMIN_CAP_ID = requireEnv("ADMIN_CAP_ID");
 export const PROTOCOL_CONFIG_ID = requireEnv("PROTOCOL_CONFIG_ID");
 export const POOL_VAULT_ID = requireEnv("POOL_VAULT_ID");
-export const PREDICT_MATH_PACKAGE_ID = requireEnv("PREDICT_MATH_PACKAGE_ID");
+// `predict_math` was renamed to `fixed_math` (package + named address).
+export const FIXED_MATH_PACKAGE_ID = requireEnv("FIXED_MATH_PACKAGE_ID");
+// propbook owns the extracted Pyth + Block Scholes feeds; its `OracleRegistry` is
+// created and shared at propbook publish (package init).
+export const PROPBOOK_PACKAGE_ID = requireEnv("PROPBOOK_PACKAGE_ID");
+export const ORACLE_REGISTRY_ID = requireEnv("ORACLE_REGISTRY_ID");
+// propbook `RegistryAdminCap`, minted to the publisher at propbook init. Needed to
+// admin-bind the Pyth + BS feeds to a canonical underlying before market creation.
+export const ORACLE_REGISTRY_ADMIN_CAP_ID = requireEnv("ORACLE_REGISTRY_ADMIN_CAP_ID");
+// STUB Block Scholes signed-data verifier package (mints the verified `Update`).
+export const BLOCK_SCHOLES_ORACLE_PACKAGE_ID = requireEnv("BLOCK_SCHOLES_ORACLE_PACKAGE_ID");
 export const DUSDC_PACKAGE_ID = requireEnv("DUSDC_PACKAGE_ID");
 export const DUSDC_CURRENCY_ID = requireEnv("DUSDC_CURRENCY_ID");
 export const TREASURY_CAP_ID = requireEnv("TREASURY_CAP_ID");

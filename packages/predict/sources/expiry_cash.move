@@ -14,7 +14,6 @@ use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
 
 const EInsufficientCash: u64 = 0;
-const EUnresolvedTradingFeesUnderflow: u64 = 1;
 
 /// Cash and unresolved rebate basis for one expiry market.
 public struct ExpiryCash has store {
@@ -42,6 +41,14 @@ public(package) fun trading_loss_rebate_rate(cash: &ExpiryCash): u64 {
 
 public(package) fun rebate_reserve(cash: &ExpiryCash): u64 {
     cash.config.rebate_reserve_for_fee_basis(cash.unresolved_trading_fees_paid)
+}
+
+/// Return cash free of the unresolved rebate reserve — the balance NAV may value
+/// against. `saturating_sub` is defensive: every trade enforces
+/// `cash >= payout_liability + rebate_reserve` (`assert_backing`), so a quiescent
+/// market always has `cash >= rebate_reserve` and the floor never binds.
+public(package) fun free_cash(cash: &ExpiryCash): u64 {
+    cash.balance().saturating_sub(cash.rebate_reserve())
 }
 
 /// Return payout plus unresolved rebate reserve cash required to keep the expiry backed.
@@ -87,17 +94,4 @@ public(package) fun collect_trade_fee(cash: &mut ExpiryCash, fee: Balance<DUSDC>
         cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid + fee_amount;
     };
     fee_amount
-}
-
-/// Decrement resolved fee basis and return the rebate reserve implied by that basis.
-public(package) fun resolve_rebate_reserve_for_fee_basis(
-    cash: &mut ExpiryCash,
-    trading_fees_paid: u64,
-): u64 {
-    assert!(
-        cash.unresolved_trading_fees_paid >= trading_fees_paid,
-        EUnresolvedTradingFeesUnderflow,
-    );
-    cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid - trading_fees_paid;
-    cash.config.rebate_reserve_for_fee_basis(trading_fees_paid)
 }

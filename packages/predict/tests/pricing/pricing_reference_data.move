@@ -7,7 +7,7 @@
 //   python3 generate_pricing_reference.py
 //
 // Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract
-// and NOT python_replay's fixed-point pricer) for pricing::live_range_probability.
+// and NOT python_replay's fixed-point pricer) for Pricer.range_price.
 // Each point's `tolerance` is the analytic worst-case fixed-point error of UP=Phi(d2),
 // propagated from math.move's documented per-primitive budgets at the TRUE values; see
 // the generator header for the full derivation. The forward priced is the fresh-Pyth
@@ -24,12 +24,11 @@
 #[test_only]
 module deepbook_predict::pricing_reference_data;
 
-use deepbook_predict::{constants, market_oracle::{Self, SVIParams}};
-use predict_math::i64;
+use deepbook_predict::constants;
 
 const ENoSuchScenario: u64 = 0;
 
-/// One independent reference point: pricing::live_range_probability(lower, higher)
+/// One independent reference point: Pricer.range_price(lower, higher)
 /// must be within `tolerance` units of the true-math `reference`.
 public struct RefPoint has copy, drop {
     lower: u64,
@@ -56,10 +55,10 @@ public fun scenario_count(): u64 { 3 }
 /// Worst-case per-endpoint precision budget (units @1e9) over all scenarios/strikes.
 public fun worst_case_budget(): u64 { 2_401 }
 
-/// Oracle creation spot (grid is centered on this); equals the scenario spot.
+/// Scenario spot seeded into the Propbook fixtures.
 public fun creation_spot(s: u64): u64 { spot(s) }
 
-/// Oracle tick size used by every scenario grid.
+/// Market tick size used by every scenario.
 public fun tick_size(_s: u64): u64 { 1_000_000_000 }
 
 /// Real Block Scholes spot (1e9 fixed-point) seeded into the oracle.
@@ -88,32 +87,92 @@ public fun forward(s: u64): u64 {
     }
 }
 
-/// Real SVI params (exact 1e9 integers + sign flags) seeded through the cap path.
-public fun svi(s: u64): SVIParams {
+/// Real SVI `a` (1e9) seeded through the Block Scholes surface update.
+public fun svi_a(s: u64): u64 {
     if (s == 0) {
-        market_oracle::new_svi_params(
-            171_736,
-            7_449_196,
-            i64::from_parts(243_059_022, true),
-            i64::from_parts(1_133_202, false),
-            15_731_214,
-        )
+        171_736
     } else if (s == 1) {
-        market_oracle::new_svi_params(
-            99_272,
-            3_466_091,
-            i64::from_parts(475_372_427, true),
-            i64::from_parts(3_647_706, true),
-            6_351_738,
-        )
+        99_272
     } else if (s == 2) {
-        market_oracle::new_svi_params(
-            54_831,
-            2_366_211,
-            i64::from_parts(298_114_517, true),
-            i64::from_parts(2_324_961, false),
-            5_354_101,
-        )
+        54_831
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `b` (1e9) seeded through the Block Scholes surface update.
+public fun svi_b(s: u64): u64 {
+    if (s == 0) {
+        7_449_196
+    } else if (s == 1) {
+        3_466_091
+    } else if (s == 2) {
+        2_366_211
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `sigma` (1e9) seeded through the Block Scholes surface update.
+public fun svi_sigma(s: u64): u64 {
+    if (s == 0) {
+        15_731_214
+    } else if (s == 1) {
+        6_351_738
+    } else if (s == 2) {
+        5_354_101
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `rho` magnitude (1e9) seeded through the Block Scholes surface update.
+public fun svi_rho_magnitude(s: u64): u64 {
+    if (s == 0) {
+        243_059_022
+    } else if (s == 1) {
+        475_372_427
+    } else if (s == 2) {
+        298_114_517
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Sign flag for real SVI `rho` (true == negative).
+public fun svi_rho_is_negative(s: u64): bool {
+    if (s == 0) {
+        true
+    } else if (s == 1) {
+        true
+    } else if (s == 2) {
+        true
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Real SVI `m` magnitude (1e9) seeded through the Block Scholes surface update.
+public fun svi_m_magnitude(s: u64): u64 {
+    if (s == 0) {
+        1_133_202
+    } else if (s == 1) {
+        3_647_706
+    } else if (s == 2) {
+        2_324_961
+    } else {
+        abort ENoSuchScenario
+    }
+}
+
+/// Sign flag for real SVI `m` (true == negative).
+public fun svi_m_is_negative(s: u64): bool {
+    if (s == 0) {
+        false
+    } else if (s == 1) {
+        true
+    } else if (s == 2) {
+        false
     } else {
         abort ENoSuchScenario
     }

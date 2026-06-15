@@ -6,6 +6,8 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 
 - When the user asks to "review uncommitted changes" or "review uncomitted changes", review the full working-tree diff.
 - For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`.
+- **Deep Predict protocol review.** This flat checklist is the quick pass. For a pre-merge / pre-testnet review of `packages/predict`, use the purpose-built harness: read `.claude/predict-review/00-primer.md` (shared orientation + the finding format) and the relevant lens (`01-invariants`, `02-audit`, `03-oracle`, `04-access-control`, `05-surface-area`, `06-assertions`, `07-lifecycle`). For a full rule audit, follow `rule-auditor.md` (12 read-only rule-family agents over `packages/predict`). Emit findings in the primer's Severity / Location / Claim / Scenario / Impact / Confidence / Recommendation format.
+- Treat design docs (`.redesign/`, `.claude/predict-design/`) as **leads to verify against current HEAD**, not ground truth — verify every load-bearing claim against Move source + git + `sui move test`.
 - Findings should focus on correctness, regressions, missing coverage, and brittle assumptions.
 - Say whether the diff is safe as a standalone PR or only as an intermediate step that requires follow-up work in the same branch.
 

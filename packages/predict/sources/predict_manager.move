@@ -7,14 +7,18 @@
 /// BalanceManager, while positions are tracked by order IDs scoped to an
 /// ExpiryMarket.
 ///
-/// Authorization mirrors BalanceManager: the manager owner can act directly,
-/// or grant `PredictTradeCap`, `PredictDepositCap`, and `PredictWithdrawCap`
-/// to other addresses. `PredictTradeProof` is consumed by predict modules to
-/// authorize a mint/redeem trade and to route the fee deposit/withdraw
-/// through the manager's inner BalanceManager caps. The inner BalanceManager
-/// `DepositCap` and `WithdrawCap` are held by PredictManager itself and never
-/// exposed — all custody operations route through them so the inner
-/// BalanceManager owner check never fires from a cap holder's call.
+/// Authorization separates capital from trading, mirroring BalanceManager.
+/// Capital movement — `deposit` / `withdraw` and the LP supply / withdraw / cancel
+/// flows — is gated by `PredictDepositCap` / `PredictWithdrawCap`; trades
+/// (`mint` / `redeem`) by a `PredictTradeProof`, minted from the owner
+/// (`generate_proof_as_owner`) or a `PredictTradeCap` (`generate_proof_as_trader`).
+/// A trade proof is NOT capital authority: it routes a trade's deposit/withdraw to
+/// the protocol, never to the caller, so it must never gate a standalone withdraw.
+/// The owner mints these caps via the owner-gated `mint_*_cap`; a self-owned composing
+/// vault receives them at creation (`new_self_owned`). The inner BalanceManager
+/// `DepositCap` / `WithdrawCap` are held by PredictManager itself and never exposed —
+/// all custody routes through them, and every capital op first settles any
+/// accumulator-delivered funds into internal custody (the ambient accumulator).
 module deepbook_predict::predict_manager;
 
 use deepbook::{
@@ -30,7 +34,14 @@ use deepbook_predict::{
     predict_withdraw_cap::{Self, PredictWithdrawCap}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, table::{Self, Table}, vec_set::{Self, VecSet}};
+use sui::{
+    accumulator::AccumulatorRoot,
+    balance::{Self, Balance},
+    coin::Coin,
+    derived_object,
+    table::{Self, Table},
+    vec_set::{Self, VecSet}
+};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
@@ -38,7 +49,7 @@ const EInvalidProof: u64 = 2;
 const EInvalidCap: u64 = 3;
 const EMaxCapsReached: u64 = 4;
 const ECapNotInList: u64 = 5;
-const EExpirySummaryHasOpenPositions: u64 = 6;
+const EPositionNotFound: u64 = 6;
 const EPositionAlreadyExists: u64 = 7;
 
 /// Cap-count safety ceiling per manager. Mirrors BalanceManager's MAX_TRADE_CAPS.
@@ -107,10 +118,6 @@ public struct ExpiryTradingSummary has store {
     open_position_count: u64,
     /// Trading fees paid to the pool, excluding builder fees.
     trading_fees_paid: u64,
-    /// DUSDC paid for positions, excluding trading and builder fees.
-    gross_paid_to_expiry: u64,
-    /// DUSDC payout before redeem trading and builder fees are deducted.
-    gross_received_from_expiry: u64,
 }
 
 /// Manager owner and `PredictTradeCap` holders can generate a `PredictTradeProof`.
@@ -163,11 +170,6 @@ public fun trading_fees_paid(self: &PredictManager, expiry_market_id: ID): u64 {
     } else {
         0
     }
-}
-
-/// Return the DUSDC balance held by this PredictManager.
-public fun balance(self: &PredictManager): u64 {
-    self.balance_manager.balance<DUSDC>()
 }
 
 /// Return the manager's active staked DEEP (the amount that earns benefits).
@@ -262,37 +264,38 @@ public fun validate_proof(self: &PredictManager, proof: &PredictTradeProof) {
     assert!(self.id() == proof.predict_manager_id, EInvalidProof);
 }
 
-/// Deposit DUSDC into the manager. Only the manager owner may call.
-public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &mut TxContext) {
-    self.assert_owner(ctx);
-    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
-}
-
-/// Withdraw DUSDC from the manager. Only the manager owner may call.
-public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
-    self.assert_owner(ctx);
-    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
-}
-
-/// Deposit DUSDC using a `PredictDepositCap`.
-public fun deposit_with_cap(
+/// Deposit `T` (DUSDC or PLP) into the manager using a `PredictDepositCap` (held by
+/// the owner or a composing vault). Generic so PLP withdrawn to a wallet or received
+/// by transfer can be re-deposited and then redeemed via `request_withdraw`. Settles
+/// any flush-delivered `T` into custody first — the accumulator is ambient: every
+/// write reconciles delivered funds before proceeding.
+public fun deposit<T>(
     self: &mut PredictManager,
     cap: &PredictDepositCap,
-    coin: Coin<DUSDC>,
-    ctx: &TxContext,
+    root: &AccumulatorRoot,
+    coin: Coin<T>,
+    ctx: &mut TxContext,
 ) {
     self.validate_depositor(cap);
+    self.settle<T>(root, ctx);
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Withdraw DUSDC using a `PredictWithdrawCap`.
-public fun withdraw_with_cap(
+/// Withdraw `amount` of `T` (DUSDC or PLP) using a `PredictWithdrawCap`. Settles
+/// any flush-delivered `T` into custody first, so a withdraw never misses funds
+/// the async-LP flush already delivered. This is the sole capital-out path: a
+/// trade proof must not gate it (that would let a trade-only delegate drain the
+/// manager); withdraw authority is the `PredictWithdrawCap`, held by the owner or
+/// a composing vault.
+public fun withdraw<T>(
     self: &mut PredictManager,
     cap: &PredictWithdrawCap,
+    root: &AccumulatorRoot,
     amount: u64,
     ctx: &mut TxContext,
-): Coin<DUSDC> {
+): Coin<T> {
     self.validate_withdrawer(cap);
+    self.settle<T>(root, ctx);
     self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
@@ -400,14 +403,17 @@ public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
     assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
 }
 
-/// Deposit protocol payouts without requiring any authorization. Used for
-/// settled redemptions, which any caller may trigger.
-public(package) fun deposit_permissionless(
+/// Deposit a typed balance straight into internal custody — no authorization, no
+/// accumulator round-trip. Used where the protocol already holds the funds and no
+/// caller authority is needed: `expiry_market` crediting a settled-redeem payout (any
+/// keeper may trigger it) and `plp` refunding a cancelled LP request into the manager
+/// that owns it (cancel already proved manager ownership).
+public(package) fun deposit_funds<T>(
     self: &mut PredictManager,
-    coin: Coin<DUSDC>,
-    ctx: &TxContext,
+    funds: Balance<T>,
+    ctx: &mut TxContext,
 ) {
-    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, funds.into_coin(ctx), ctx);
 }
 
 /// Deposit DUSDC into the manager using a validated `PredictTradeProof`.
@@ -454,34 +460,12 @@ public(package) fun remove_position(
     order_id: u256,
 ): u256 {
     let key = position_key(expiry_market_id, order_id);
-    assert!(self.positions.contains(key), EInsufficientPosition);
+    assert!(self.positions.contains(key), EPositionNotFound);
     let position_root_id = self.positions.remove(key);
     let summary = self.summary_mut(expiry_market_id);
     assert!(summary.open_position_count > 0, EInsufficientPosition);
     summary.open_position_count = summary.open_position_count - 1;
     position_root_id
-}
-
-/// Record DUSDC paid for positions in an expiry market, excluding fees.
-public(package) fun record_gross_paid_to_expiry(
-    self: &mut PredictManager,
-    expiry_market_id: ID,
-    amount: u64,
-) {
-    if (amount == 0) return;
-    let summary = self.summary_mut(expiry_market_id);
-    summary.gross_paid_to_expiry = summary.gross_paid_to_expiry + amount;
-}
-
-/// Record gross DUSDC payout from an expiry market before fee deductions.
-public(package) fun record_gross_received_from_expiry(
-    self: &mut PredictManager,
-    expiry_market_id: ID,
-    amount: u64,
-) {
-    if (amount == 0) return;
-    let summary = self.summary_mut(expiry_market_id);
-    summary.gross_received_from_expiry = summary.gross_received_from_expiry + amount;
 }
 
 /// Record pool trading fees paid by this manager for one expiry market.
@@ -493,27 +477,6 @@ public(package) fun record_trading_fee_paid(
     if (amount == 0) return;
     let summary = self.summary_mut(expiry_market_id);
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
-}
-
-/// Remove and return aggregate fees and gross profit once all expiry positions are closed.
-public(package) fun resolve_expiry_summary(
-    self: &mut PredictManager,
-    expiry_market_id: ID,
-): (u64, u64) {
-    if (!self.expiry_summaries.contains(expiry_market_id)) return (0, 0);
-
-    assert!(
-        self.expiry_summaries[expiry_market_id].open_position_count == 0,
-        EExpirySummaryHasOpenPositions,
-    );
-    let ExpiryTradingSummary {
-        open_position_count: _,
-        trading_fees_paid,
-        gross_paid_to_expiry,
-        gross_received_from_expiry,
-    } = self.expiry_summaries.remove(expiry_market_id);
-    let gross_profit = gross_received_from_expiry.saturating_sub(gross_paid_to_expiry);
-    (trading_fees_paid, gross_profit)
 }
 
 /// Roll inactive stake into active stake once a new epoch has begun. Idempotent
@@ -540,13 +503,28 @@ public(package) fun remove_all_stake(self: &mut PredictManager): u64 {
 
 // === Private Functions ===
 
+/// Absorb any `T` the async-LP flush delivered to this manager's accumulator
+/// address into internal custody. Lazy like `update_stake`: a zero settled balance
+/// is a clean no-op. The capital ops call it first so a withdraw never misses funds
+/// the flush already delivered.
+public(package) fun settle<T>(
+    self: &mut PredictManager,
+    root: &AccumulatorRoot,
+    ctx: &mut TxContext,
+) {
+    let amount = balance::settled_funds_value<T>(root, self.id.to_address());
+    if (amount == 0) return;
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
+    self
+        .balance_manager
+        .deposit_with_cap(&self.deposit_cap, balance::redeem_funds(withdrawal).into_coin(ctx), ctx);
+}
+
 fun summary_mut(self: &mut PredictManager, expiry_market_id: ID): &mut ExpiryTradingSummary {
     if (!self.expiry_summaries.contains(expiry_market_id)) {
         let summary = ExpiryTradingSummary {
             open_position_count: 0,
             trading_fees_paid: 0,
-            gross_paid_to_expiry: 0,
-            gross_received_from_expiry: 0,
         };
         self.expiry_summaries.add(expiry_market_id, summary);
     };
@@ -569,7 +547,9 @@ fun validate_depositor(self: &PredictManager, deposit_cap: &PredictDepositCap) {
     assert!(self.allow_listed.contains(object::borrow_id(deposit_cap)), EInvalidCap);
 }
 
-fun validate_withdrawer(self: &PredictManager, withdraw_cap: &PredictWithdrawCap) {
+/// Abort unless `withdraw_cap` is allow-listed on this manager. Package API so
+/// `plp` can authorize LP cancel, which proves withdraw authority over the manager.
+public(package) fun validate_withdrawer(self: &PredictManager, withdraw_cap: &PredictWithdrawCap) {
     assert!(self.allow_listed.contains(object::borrow_id(withdraw_cap)), EInvalidCap);
 }
 
@@ -610,4 +590,14 @@ fun mint_withdraw_cap_internal(
     self.allow_listed.insert(cap.id());
     account_events::emit_predict_withdraw_cap_minted(manager_id, cap.id());
     cap
+}
+
+// === Test-Only Functions ===
+
+/// Return this manager's internal custody balance of `T` (DUSDC or PLP),
+/// excluding funds the async-LP flush delivered to the accumulator but not yet
+/// settled in. Test-only: production money paths settle, then read internal custody.
+#[test_only]
+public fun internal_balance<T>(self: &PredictManager): u64 {
+    self.balance_manager.balance<T>()
 }

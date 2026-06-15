@@ -18,7 +18,7 @@ from sim_artifacts import (
     load_records,
 )
 
-POS_INF_STRIKE = 18_446_744_073_709_551_615
+POS_INF_TICK = (1 << 24) - 1
 
 
 def to_price(value: int | None) -> float | None:
@@ -28,12 +28,15 @@ def to_price(value: int | None) -> float | None:
 
 
 def finite_order_strike(update: dict[str, Any]) -> int | None:
-    lower = int_or_none(update.get("lower_strike"))
-    higher = int_or_none(update.get("higher_strike"))
-    if lower is not None and lower != 0 and lower != POS_INF_STRIKE:
-        return lower
-    if higher is not None and higher != POS_INF_STRIKE:
-        return higher
+    # The OrderMinted event carries absolute ticks; the finite side's raw strike is
+    # tick * tick_size (tick size == FLOAT_SCALING in the harness). The open ends
+    # (lower_tick 0 = -inf, higher_tick POS_INF_TICK = +inf) have no finite strike.
+    lower_tick = int_or_none(update.get("lower_tick"))
+    higher_tick = int_or_none(update.get("higher_tick"))
+    if lower_tick is not None and lower_tick != 0:
+        return lower_tick * FLOAT_SCALING
+    if higher_tick is not None and higher_tick != POS_INF_TICK:
+        return higher_tick * FLOAT_SCALING
     return None
 
 
@@ -48,7 +51,7 @@ def extract_market_activity(
         x = record_x(record, mode, origin)
         for update in record.get("updates", []):
             update_type = update.get("type")
-            if update_type == "oracle_prices_updated":
+            if update_type == "pyth_feed_updated":
                 spot = to_price(int(update["spot"]))
                 if spot is not None:
                     prices.append((x, spot))

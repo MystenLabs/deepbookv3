@@ -119,8 +119,8 @@ fn minted_event() -> OrderMinted {
         order_id: u256(NONLEV_ID),
         position_root_id: u256(NONLEV_ID),
         owner: OWNER.parse().unwrap(),
-        lower_strike: 95_000_000_000_000,
-        higher_strike: 105_000_000_000_000,
+        lower_tick: 3,
+        higher_tick: 7,
         leverage: 1_000_000_000,
         entry_probability: 450_000_000,
         quantity: NONLEV_QUANTITY,
@@ -191,14 +191,6 @@ fn map_minted_fills_entry_facts_and_decoded_terms() {
     assert_eq!(row.floor_shares, BigDecimal::from(NONLEV_FLOOR));
     assert_eq!(row.quantity, BigDecimal::from(NONLEV_QUANTITY));
     assert_eq!(row.sequence, NONLEV_SEQ as i64);
-    assert_eq!(
-        row.lower_strike,
-        Some(BigDecimal::from(95_000_000_000_000u64))
-    );
-    assert_eq!(
-        row.higher_strike,
-        Some(BigDecimal::from(105_000_000_000_000u64))
-    );
     assert_eq!(row.leverage, Some(1_000_000_000));
     assert_eq!(row.entry_probability, Some(450_000_000));
     assert_eq!(row.net_premium, Some(BigDecimal::from(54_000_000u64)));
@@ -216,7 +208,7 @@ fn map_live_redeemed_partial_close_synthesizes_replacement_row() {
     assert_eq!(closed.status, status::REPLACED);
     assert_eq!(closed.replacement_order_id.as_deref(), Some(LEVERAGED_ID));
     // Entry facts are never carried by redeem events.
-    assert_eq!(closed.lower_strike, None);
+    assert_eq!(closed.leverage, None);
     assert_eq!(closed.net_premium, None);
 
     let replacement = &rows[1];
@@ -232,7 +224,7 @@ fn map_live_redeemed_partial_close_synthesizes_replacement_row() {
     assert_eq!(replacement.opened_at_ms, LEV_OPENED as i64);
     assert_eq!(replacement.sequence, LEV_SEQ as i64);
     // Entry facts stay NULL on replacement rows (join position_root_id).
-    assert_eq!(replacement.lower_strike, None);
+    assert_eq!(replacement.net_premium, None);
     assert_eq!(replacement.leverage, None);
     assert_eq!(
         (
@@ -310,10 +302,7 @@ fn fold_mint_and_partial_close_in_one_batch() {
     assert_eq!(root.status, status::REPLACED);
     assert_eq!(root.replacement_order_id.as_deref(), Some(LEVERAGED_ID));
     assert_eq!(root.net_premium, Some(BigDecimal::from(54_000_000u64)));
-    assert_eq!(
-        root.lower_strike,
-        Some(BigDecimal::from(95_000_000_000_000u64))
-    );
+    assert_eq!(root.leverage, Some(1_000_000_000));
     assert_eq!(
         (root.checkpoint, root.tx_index, root.event_index),
         (10, 2, 5)
@@ -399,10 +388,153 @@ fn fold_replay_of_identical_batch_is_idempotent() {
     assert_eq!(sort(once), sort(twice));
 }
 
+// === lp_request_state fold/merge ===
+//
+// The async-LP maintained table is keyed by (pool_vault_id, is_supply,
+// request_index); the request carries identity + amount, the fill carries the
+// realized dusdc/shares, and both queues use a per-(vault,is_supply) index
+// counter so the same index can appear in both queues. These pin the in-memory
+// fold that mirrors the SQL upsert (COALESCE write-once, LEAST opened_at_ms,
+// LWW status/triple).
+
+use predict_indexer::handlers::lp_request_state_handler::{
+    fold_rows as lp_fold_rows, map_supply_filled, map_supply_requested, map_withdraw_requested,
+    status as lp_status,
+};
+use predict_indexer::models::{SupplyFilled, SupplyRequested, WithdrawRequested};
+use predict_schema::models::LpRequestState;
+
+const REQUEST_INDEX: u64 = 4;
+
+fn supply_requested_event() -> SupplyRequested {
+    SupplyRequested {
+        pool_vault_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
+        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        recipient: OWNER.parse().unwrap(),
+        index: REQUEST_INDEX,
+        amount: 100_000_000,
+    }
+}
+
+fn supply_filled_event() -> SupplyFilled {
+    SupplyFilled {
+        pool_vault_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
+        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        recipient: OWNER.parse().unwrap(),
+        index: REQUEST_INDEX,
+        dusdc_amount: 100_000_000,
+        shares_minted: 99_000_000,
+    }
+}
+
+#[test]
+fn lp_map_supply_requested_carries_identity_and_amount() {
+    // pool_vault_id reuses MARKET_ID's 0x… literal so the ObjectID round-trips.
+    let row = map_supply_requested(&supply_requested_event(), &meta(10, 2, 3));
+    assert_eq!(row.pool_vault_id, MARKET_ID);
+    assert!(row.is_supply);
+    assert_eq!(row.request_index, REQUEST_INDEX as i64);
+    assert_eq!(row.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(row.recipient.as_deref(), Some(OWNER));
+    assert_eq!(row.requested_amount, Some(BigDecimal::from(100_000_000u64)));
+    assert_eq!(row.status, lp_status::OPEN);
+    assert_eq!(row.filled_dusdc, None);
+    assert_eq!(row.filled_shares, None);
+    assert_eq!(row.opened_at_ms, 1_000_010);
+    assert_eq!(row.updated_at_ms, 1_000_010);
+    assert_eq!((row.checkpoint, row.tx_index, row.event_index), (10, 2, 3));
+}
+
+#[test]
+fn lp_fold_request_then_fill_keeps_amount_and_fills_status() {
+    // Request (older) then fill (newer): write-once amount/identity survive, the
+    // fill's status + realized dusdc/shares win, opened_at_ms stays the request.
+    let values = vec![
+        map_supply_requested(&supply_requested_event(), &meta(10, 2, 3)),
+        map_supply_filled(&supply_filled_event(), &meta(20, 0, 1)),
+    ];
+    let folded = lp_fold_rows(&values);
+    assert_eq!(folded.len(), 1);
+    let row = &folded[0];
+    assert_eq!(row.status, lp_status::FILLED);
+    assert_eq!(row.requested_amount, Some(BigDecimal::from(100_000_000u64)));
+    assert_eq!(row.filled_dusdc, Some(BigDecimal::from(100_000_000u64)));
+    assert_eq!(row.filled_shares, Some(BigDecimal::from(99_000_000u64)));
+    assert_eq!(row.opened_at_ms, 1_000_010);
+    assert_eq!(row.updated_at_ms, 1_000_020);
+    assert_eq!((row.checkpoint, row.tx_index, row.event_index), (20, 0, 1));
+}
+
+#[test]
+fn lp_fold_out_of_order_fill_before_request_backfills_identity() {
+    // Reprocess / out-of-order: the FILL (later triple) appears before the
+    // REQUEST (earlier triple). The fill carries manager/recipient so identity
+    // is backfilled, the requested amount comes from the request, status stays
+    // filled (the later triple), and opened_at_ms = LEAST = the request's ts.
+    let values = vec![
+        map_supply_filled(&supply_filled_event(), &meta(20, 0, 1)),
+        map_supply_requested(&supply_requested_event(), &meta(10, 2, 3)),
+    ];
+    let folded = lp_fold_rows(&values);
+    assert_eq!(folded.len(), 1);
+    let row = &folded[0];
+    assert_eq!(row.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(row.recipient.as_deref(), Some(OWNER));
+    assert_eq!(row.requested_amount, Some(BigDecimal::from(100_000_000u64)));
+    assert_eq!(row.status, lp_status::FILLED);
+    assert_eq!(row.opened_at_ms, 1_000_010);
+    assert_eq!((row.checkpoint, row.tx_index, row.event_index), (20, 0, 1));
+}
+
+#[test]
+fn lp_fold_keys_by_vault_is_supply_and_index() {
+    // The same index in the supply queue and the withdraw queue are distinct
+    // handles (is_supply is part of the key), so they fold to two rows.
+    let mut withdraw = supply_requested_event();
+    withdraw.index = REQUEST_INDEX;
+    let withdraw = WithdrawRequested {
+        pool_vault_id: withdraw.pool_vault_id,
+        predict_manager_id: withdraw.predict_manager_id,
+        recipient: withdraw.recipient,
+        index: withdraw.index,
+        amount: withdraw.amount,
+    };
+
+    let values = vec![
+        map_supply_requested(&supply_requested_event(), &meta(10, 2, 3)),
+        map_withdraw_requested(&withdraw, &meta(10, 2, 4)),
+    ];
+    let mut folded = lp_fold_rows(&values);
+    folded.sort_by_key(|r| r.is_supply);
+    assert_eq!(folded.len(), 2);
+    assert!(!folded[0].is_supply);
+    assert!(folded[1].is_supply);
+    assert_eq!(folded[0].request_index, REQUEST_INDEX as i64);
+    assert_eq!(folded[1].request_index, REQUEST_INDEX as i64);
+}
+
+#[test]
+fn lp_fold_replay_of_identical_batch_is_idempotent() {
+    let values = vec![
+        map_supply_requested(&supply_requested_event(), &meta(10, 2, 3)),
+        map_supply_filled(&supply_filled_event(), &meta(20, 0, 1)),
+    ];
+    let once = lp_fold_rows(&values);
+    let mut replayed = values.clone();
+    replayed.extend(values.clone());
+    let twice = lp_fold_rows(&replayed);
+
+    let sort = |mut v: Vec<LpRequestState>| {
+        v.sort_by(|a, b| (a.is_supply, a.request_index).cmp(&(b.is_supply, b.request_index)));
+        v
+    };
+    assert_eq!(sort(once), sort(twice));
+}
+
 // === commit() against Postgres (TempDb) ===
 //
 // The fold/merge tests above pin the Rust half of the pipeline; these execute
-// the actual multi-row UPSERT SQL (22 positional binds per row, COALESCE
+// the actual multi-row UPSERT SQL (20 positional binds per row, COALESCE
 // write-once columns, `>=`-guarded LWW CASE columns) against a real Postgres
 // so a positional-bind swap or an inverted comparison cannot pass CI.
 //
@@ -453,8 +585,6 @@ fn db_row(
         floor_shares: BigDecimal::from(NONLEV_FLOOR),
         quantity: BigDecimal::from(NONLEV_QUANTITY),
         sequence: NONLEV_SEQ as i64,
-        lower_strike: None,
-        higher_strike: None,
         leverage: None,
         entry_probability: None,
         net_premium: None,

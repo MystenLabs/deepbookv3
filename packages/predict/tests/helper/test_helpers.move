@@ -12,8 +12,13 @@
 module deepbook_predict::test_helpers;
 
 use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
+use propbook::{
+    block_scholes_feed::BlockScholesFeed,
+    pyth_feed::PythFeed,
+    registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
+};
 use std::unit_test::destroy;
-use sui::test_scenario::{Self as test, Scenario};
+use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 // === Bounded assertion (math carve-out) ===
 
@@ -98,4 +103,32 @@ public fun finish_registry_test(scenario: Scenario, registry: Registry, admin_ca
     test::return_shared(registry);
     destroy(admin_cap);
     scenario.end();
+}
+
+/// Admin-bind both already-shared propbook feeds to `propbook_underlying_id()`,
+/// so the production `registry::create_expiry_market` binding check passes. Uses
+/// the propbook `RegistryAdminCap` minted to admin by `propbook_registry::
+/// init_for_testing`. Operates within the CURRENT transaction (sender must be
+/// admin and both feeds must already be shared); the one-shot cap is consumed.
+public fun bind_feeds_to_underlying(scenario: &Scenario, pyth_id: ID, bs_id: ID) {
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
+    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let bs = scenario.take_shared_by_id<BlockScholesFeed>(bs_id);
+    propbook_registry::bind_pyth_to_underlying(
+        &mut oracle_registry,
+        &admin_cap,
+        &pyth,
+        test_constants::propbook_underlying_id(),
+    );
+    propbook_registry::bind_block_scholes_to_underlying(
+        &mut oracle_registry,
+        &admin_cap,
+        &bs,
+        test_constants::propbook_underlying_id(),
+    );
+    return_shared(pyth);
+    return_shared(bs);
+    return_shared(oracle_registry);
+    destroy(admin_cap);
 }

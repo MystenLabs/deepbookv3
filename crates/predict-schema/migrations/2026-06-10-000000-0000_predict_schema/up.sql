@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS order_minted (
     order_id                 TEXT      NOT NULL,
     position_root_id         TEXT      NOT NULL,
     owner                    TEXT      NOT NULL,
-    lower_strike             NUMERIC   NOT NULL,
-    higher_strike            NUMERIC   NOT NULL,
+    lower_tick               BIGINT    NOT NULL, -- u24 absolute tick index; raw strike = tick * MarketCreated.tick_size
+    higher_tick              BIGINT    NOT NULL, -- u24 absolute tick index
     leverage                 BIGINT    NOT NULL,
     entry_probability        BIGINT    NOT NULL,
     quantity                 NUMERIC   NOT NULL,
@@ -221,37 +221,20 @@ CREATE INDEX IF NOT EXISTS idx_predict_withdraw_cap_minted_manager_ts ON predict
 CREATE INDEX IF NOT EXISTS idx_predict_withdraw_cap_minted_cap_id ON predict_withdraw_cap_minted(cap_id);
 
 CREATE TABLE IF NOT EXISTS pricing_config_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    protocol_config_id               TEXT      NOT NULL,
-    pyth_spot_freshness_ms           BIGINT    NOT NULL,
-    block_scholes_prices_freshness_ms BIGINT   NOT NULL,
-    block_scholes_svi_freshness_ms   BIGINT    NOT NULL
+    event_digest                      TEXT      PRIMARY KEY,
+    digest                            TEXT      NOT NULL,
+    sender                            TEXT      NOT NULL,
+    checkpoint                        BIGINT    NOT NULL,
+    tx_index                          BIGINT    NOT NULL,
+    event_index                       BIGINT    NOT NULL,
+    timestamp                         TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    checkpoint_timestamp_ms           BIGINT    NOT NULL,
+    package                           TEXT      NOT NULL,
+    protocol_config_id                TEXT      NOT NULL,
+    pyth_spot_freshness_ms            BIGINT    NOT NULL,
+    block_scholes_surface_freshness_ms BIGINT   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pricing_config_updated_config_ts ON pricing_config_updated(protocol_config_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS fee_config_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    protocol_config_id               TEXT      NOT NULL,
-    protocol_reserve_profit_share    BIGINT    NOT NULL,
-    withdraw_fee_alpha               BIGINT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_fee_config_updated_config_ts ON fee_config_updated(protocol_config_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS risk_config_updated (
     event_digest                     TEXT      PRIMARY KEY,
@@ -264,8 +247,8 @@ CREATE TABLE IF NOT EXISTS risk_config_updated (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     protocol_config_id               TEXT      NOT NULL,
-    valuation_liquidation_budget     BIGINT    NOT NULL,
-    trade_liquidation_budget         BIGINT    NOT NULL
+    trade_liquidation_budget         BIGINT    NOT NULL,
+    protocol_reserve_profit_share    BIGINT    NOT NULL -- 1e9-scaled reserve cut of profit
 );
 CREATE INDEX IF NOT EXISTS idx_risk_config_updated_config_ts ON risk_config_updated(protocol_config_id, checkpoint_timestamp_ms);
 
@@ -306,21 +289,6 @@ CREATE TABLE IF NOT EXISTS strike_exposure_template_config_updated (
     expiry_fee_max_multiplier        BIGINT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_strike_exposure_template_config_updated_config_ts ON strike_exposure_template_config_updated(protocol_config_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS market_oracle_template_config_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    protocol_config_id               TEXT      NOT NULL,
-    settlement_freshness_ms          BIGINT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_market_oracle_template_config_updated_config_ts ON market_oracle_template_config_updated(protocol_config_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS ewma_config_updated (
     event_digest                     TEXT      PRIMARY KEY,
@@ -382,19 +350,14 @@ CREATE TABLE IF NOT EXISTS market_created (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     expiry_market_id                 TEXT      NOT NULL,
-    market_oracle_id                 TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    pyth_source_id                   TEXT      NOT NULL,
-    pyth_lazer_feed_id               BIGINT    NOT NULL,
+    propbook_underlying_id           BIGINT    NOT NULL, -- u32 Propbook underlying; join oracle_bound for the oracle
     expiry                           BIGINT    NOT NULL,
-    min_strike                       NUMERIC   NOT NULL,
-    tick_size                        NUMERIC   NOT NULL,
-    max_strike                       NUMERIC   NOT NULL
+    tick_size                        NUMERIC   NOT NULL  -- raw-price-per-tick; raw strike = order tick * tick_size
 );
 CREATE INDEX IF NOT EXISTS idx_market_created_market_ts ON market_created(expiry_market_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_market_created_market_oracle_id ON market_created(market_oracle_id);
 CREATE INDEX IF NOT EXISTS idx_market_created_pool_vault_id ON market_created(pool_vault_id);
-CREATE INDEX IF NOT EXISTS idx_market_created_pyth_source_id ON market_created(pyth_source_id);
+CREATE INDEX IF NOT EXISTS idx_market_created_propbook_underlying_id ON market_created(propbook_underlying_id);
 
 CREATE TABLE IF NOT EXISTS market_config_snapshot (
     event_digest                     TEXT      PRIMARY KEY,
@@ -407,7 +370,6 @@ CREATE TABLE IF NOT EXISTS market_config_snapshot (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     expiry_market_id                 TEXT      NOT NULL,
-    market_oracle_id                 TEXT      NOT NULL,
     terminal_floor_index             BIGINT    NOT NULL,
     liquidation_ltv                  BIGINT    NOT NULL,
     backing_buffer_lambda            BIGINT    NOT NULL,
@@ -420,22 +382,6 @@ CREATE TABLE IF NOT EXISTS market_config_snapshot (
     trading_loss_rebate_rate         BIGINT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_market_config_snapshot_market_ts ON market_config_snapshot(expiry_market_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_market_config_snapshot_market_oracle_id ON market_config_snapshot(market_oracle_id);
-
-CREATE TABLE IF NOT EXISTS market_oracle_config_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    market_oracle_id                 TEXT      NOT NULL,
-    settlement_freshness_ms          BIGINT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_market_oracle_config_updated_oracle_ts ON market_oracle_config_updated(market_oracle_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS expiry_market_mint_paused_updated (
     event_digest                     TEXT      PRIMARY KEY,
@@ -452,7 +398,10 @@ CREATE TABLE IF NOT EXISTS expiry_market_mint_paused_updated (
 );
 CREATE INDEX IF NOT EXISTS idx_expiry_market_mint_paused_updated_market_ts ON expiry_market_mint_paused_updated(expiry_market_id, checkpoint_timestamp_ms);
 
-CREATE TABLE IF NOT EXISTS block_scholes_prices_updated (
+-- Canonical per-market settlement signal. Settlement is otherwise passive
+-- (expiry_market::ensure_settled flips settlement_price None->Some), so this is
+-- the only way to observe the moment a market settles. Fires exactly once.
+CREATE TABLE IF NOT EXISTS market_settled (
     event_digest                     TEXT      PRIMARY KEY,
     digest                           TEXT      NOT NULL,
     sender                           TEXT      NOT NULL,
@@ -462,113 +411,14 @@ CREATE TABLE IF NOT EXISTS block_scholes_prices_updated (
     timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
-    market_oracle_id                 TEXT      NOT NULL,
-    spot                             NUMERIC   NOT NULL,
-    forward                          NUMERIC   NOT NULL,
-    basis                            NUMERIC   NOT NULL,
-    source_timestamp_ms              BIGINT    NOT NULL,
-    update_timestamp_ms              BIGINT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_block_scholes_prices_updated_oracle_ts ON block_scholes_prices_updated(market_oracle_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS block_scholes_svi_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    market_oracle_id                 TEXT      NOT NULL,
-    a                                NUMERIC   NOT NULL,
-    b                                NUMERIC   NOT NULL,
-    rho                              NUMERIC   NOT NULL,
-    m                                NUMERIC   NOT NULL,
-    sigma                            NUMERIC   NOT NULL,
-    source_timestamp_ms              BIGINT    NOT NULL,
-    update_timestamp_ms              BIGINT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_block_scholes_svi_updated_oracle_ts ON block_scholes_svi_updated(market_oracle_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS pyth_source_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    pyth_source_id                   TEXT      NOT NULL,
-    feed_id                          BIGINT    NOT NULL,
-    spot                             NUMERIC   NOT NULL,
-    source_timestamp_ms              BIGINT    NOT NULL,
-    update_timestamp_ms              BIGINT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_pyth_source_updated_source_ts ON pyth_source_updated(pyth_source_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_pyth_source_updated_feed_id ON pyth_source_updated(feed_id);
-
-CREATE TABLE IF NOT EXISTS market_oracle_settled (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    market_oracle_id                 TEXT      NOT NULL,
+    expiry_market_id                 TEXT      NOT NULL,
+    propbook_underlying_id           BIGINT    NOT NULL, -- u32
     expiry                           BIGINT    NOT NULL,
     settlement_price                 NUMERIC   NOT NULL,
-    spot_source                      SMALLINT  NOT NULL,
-    source_timestamp_ms              BIGINT    NOT NULL,
-    update_timestamp_ms              BIGINT    NOT NULL
+    settled_at_ms                    BIGINT    NOT NULL  -- on-chain landing time
 );
-CREATE INDEX IF NOT EXISTS idx_market_oracle_settled_oracle_ts ON market_oracle_settled(market_oracle_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS supply_executed (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    pool_vault_id                    TEXT      NOT NULL,
-    payment                          NUMERIC   NOT NULL,
-    shares_minted                    NUMERIC   NOT NULL,
-    pool_value_before                NUMERIC   NOT NULL,
-    incentive_value                  NUMERIC   NOT NULL,
-    total_supply_after               NUMERIC   NOT NULL,
-    idle_balance_after               NUMERIC   NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_supply_executed_vault_ts ON supply_executed(pool_vault_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS withdraw_executed (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    pool_vault_id                    TEXT      NOT NULL,
-    shares_burned                    NUMERIC   NOT NULL,
-    payout                           NUMERIC   NOT NULL,
-    withdraw_fee                     NUMERIC   NOT NULL,
-    pool_value_before                NUMERIC   NOT NULL,
-    total_supply_after               NUMERIC   NOT NULL,
-    idle_balance_after               NUMERIC   NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_withdraw_executed_vault_ts ON withdraw_executed(pool_vault_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_market_settled_market_ts ON market_settled(expiry_market_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_market_settled_underlying_ts ON market_settled(propbook_underlying_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS expiry_cash_rebalanced (
     event_digest                     TEXT      PRIMARY KEY,
@@ -588,28 +438,12 @@ CREATE TABLE IF NOT EXISTS expiry_cash_rebalanced (
     expiry_cash_after                NUMERIC   NOT NULL,
     idle_balance_after               NUMERIC   NOT NULL,
     sent_to_expiry_after             NUMERIC   NOT NULL,
-    received_from_expiry_after       NUMERIC   NOT NULL
+    received_from_expiry_after       NUMERIC   NOT NULL,
+    protocol_reserve_balance_after   NUMERIC   NOT NULL,
+    pending_protocol_profit_after    NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_expiry_cash_rebalanced_vault_ts ON expiry_cash_rebalanced(pool_vault_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_expiry_cash_rebalanced_expiry_ts ON expiry_cash_rebalanced(expiry_market_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS expiry_max_funding_updated (
-    event_digest                     TEXT      PRIMARY KEY,
-    digest                           TEXT      NOT NULL,
-    sender                           TEXT      NOT NULL,
-    checkpoint                       BIGINT    NOT NULL,
-    tx_index                         BIGINT    NOT NULL,
-    event_index                      BIGINT    NOT NULL,
-    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms          BIGINT    NOT NULL,
-    package                          TEXT      NOT NULL,
-    pool_vault_id                    TEXT      NOT NULL,
-    expiry_market_id                 TEXT      NOT NULL,
-    max_expiry_funding               NUMERIC   NOT NULL,
-    net_funding                      NUMERIC   NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_expiry_max_funding_updated_vault_ts ON expiry_max_funding_updated(pool_vault_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_expiry_max_funding_updated_expiry_ts ON expiry_max_funding_updated(expiry_market_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS expiry_cash_received (
     event_digest                     TEXT      PRIMARY KEY,
@@ -648,7 +482,8 @@ CREATE TABLE IF NOT EXISTS expiry_profit_materialized (
     protocol_profit                  NUMERIC   NOT NULL,
     idle_balance_after               NUMERIC   NOT NULL,
     protocol_reserve_balance_after   NUMERIC   NOT NULL,
-    profit_basis_after               NUMERIC   NOT NULL
+    profit_basis_after               NUMERIC   NOT NULL,
+    pending_protocol_profit_after    NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_expiry_profit_materialized_vault_ts ON expiry_profit_materialized(pool_vault_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_expiry_profit_materialized_expiry_ts ON expiry_profit_materialized(expiry_market_id, checkpoint_timestamp_ms);
@@ -706,7 +541,11 @@ CREATE TABLE IF NOT EXISTS builder_fees_claimed (
 CREATE INDEX IF NOT EXISTS idx_builder_fees_claimed_code_ts ON builder_fees_claimed(builder_code_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_builder_fees_claimed_owner_ts ON builder_fees_claimed(owner, checkpoint_timestamp_ms);
 
-CREATE TABLE IF NOT EXISTS trading_loss_rebate_claimed (
+-- Async LP supply/withdraw lifecycle: request -> (cancel) -> fill at flush.
+-- `request_index` is the queue handle, unique only within (pool_vault_id,
+-- is_supply): the supply and withdraw queues each have their own monotone index
+-- (lp_book.move), so every key/join carries is_supply.
+CREATE TABLE IF NOT EXISTS supply_requested (
     event_digest                     TEXT      PRIMARY KEY,
     digest                           TEXT      NOT NULL,
     sender                           TEXT      NOT NULL,
@@ -716,15 +555,121 @@ CREATE TABLE IF NOT EXISTS trading_loss_rebate_claimed (
     timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
-    expiry_market_id                 TEXT      NOT NULL,
+    pool_vault_id                    TEXT      NOT NULL,
     predict_manager_id               TEXT      NOT NULL,
-    trading_fees_paid                NUMERIC   NOT NULL,
-    gross_profit                     NUMERIC   NOT NULL,
-    eligible_rebate                  NUMERIC   NOT NULL,
-    rebate_amount                    NUMERIC   NOT NULL
+    recipient                        TEXT      NOT NULL,
+    request_index                    BIGINT    NOT NULL, -- supply-queue handle
+    amount                           NUMERIC   NOT NULL  -- DUSDC escrowed
 );
-CREATE INDEX IF NOT EXISTS idx_trading_loss_rebate_claimed_manager_ts ON trading_loss_rebate_claimed(predict_manager_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_trading_loss_rebate_claimed_expiry_ts ON trading_loss_rebate_claimed(expiry_market_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_requested_vault_ts ON supply_requested(pool_vault_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_requested_manager_ts ON supply_requested(predict_manager_id, checkpoint_timestamp_ms);
+
+CREATE TABLE IF NOT EXISTS withdraw_requested (
+    event_digest                     TEXT      PRIMARY KEY,
+    digest                           TEXT      NOT NULL,
+    sender                           TEXT      NOT NULL,
+    checkpoint                       BIGINT    NOT NULL,
+    tx_index                         BIGINT    NOT NULL,
+    event_index                      BIGINT    NOT NULL,
+    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    checkpoint_timestamp_ms          BIGINT    NOT NULL,
+    package                          TEXT      NOT NULL,
+    pool_vault_id                    TEXT      NOT NULL,
+    predict_manager_id               TEXT      NOT NULL,
+    recipient                        TEXT      NOT NULL,
+    request_index                    BIGINT    NOT NULL, -- withdraw-queue handle
+    amount                           NUMERIC   NOT NULL  -- PLP shares escrowed
+);
+CREATE INDEX IF NOT EXISTS idx_withdraw_requested_vault_ts ON withdraw_requested(pool_vault_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_withdraw_requested_manager_ts ON withdraw_requested(predict_manager_id, checkpoint_timestamp_ms);
+
+CREATE TABLE IF NOT EXISTS request_cancelled (
+    event_digest                     TEXT      PRIMARY KEY,
+    digest                           TEXT      NOT NULL,
+    sender                           TEXT      NOT NULL,
+    checkpoint                       BIGINT    NOT NULL,
+    tx_index                         BIGINT    NOT NULL,
+    event_index                      BIGINT    NOT NULL,
+    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    checkpoint_timestamp_ms          BIGINT    NOT NULL,
+    package                          TEXT      NOT NULL,
+    pool_vault_id                    TEXT      NOT NULL,
+    predict_manager_id               TEXT      NOT NULL,
+    recipient                        TEXT      NOT NULL,
+    request_index                    BIGINT    NOT NULL,
+    amount                           NUMERIC   NOT NULL,
+    is_supply                        BOOLEAN   NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_request_cancelled_vault_ts ON request_cancelled(pool_vault_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_request_cancelled_manager_ts ON request_cancelled(predict_manager_id, checkpoint_timestamp_ms);
+
+CREATE TABLE IF NOT EXISTS supply_filled (
+    event_digest                     TEXT      PRIMARY KEY,
+    digest                           TEXT      NOT NULL,
+    sender                           TEXT      NOT NULL,
+    checkpoint                       BIGINT    NOT NULL,
+    tx_index                         BIGINT    NOT NULL,
+    event_index                      BIGINT    NOT NULL,
+    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    checkpoint_timestamp_ms          BIGINT    NOT NULL,
+    package                          TEXT      NOT NULL,
+    pool_vault_id                    TEXT      NOT NULL,
+    predict_manager_id               TEXT      NOT NULL,
+    recipient                        TEXT      NOT NULL,
+    request_index                    BIGINT    NOT NULL,
+    dusdc_amount                     NUMERIC   NOT NULL,
+    shares_minted                    NUMERIC   NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_supply_filled_vault_ts ON supply_filled(pool_vault_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_filled_manager_ts ON supply_filled(predict_manager_id, checkpoint_timestamp_ms);
+
+CREATE TABLE IF NOT EXISTS withdraw_filled (
+    event_digest                     TEXT      PRIMARY KEY,
+    digest                           TEXT      NOT NULL,
+    sender                           TEXT      NOT NULL,
+    checkpoint                       BIGINT    NOT NULL,
+    tx_index                         BIGINT    NOT NULL,
+    event_index                      BIGINT    NOT NULL,
+    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    checkpoint_timestamp_ms          BIGINT    NOT NULL,
+    package                          TEXT      NOT NULL,
+    pool_vault_id                    TEXT      NOT NULL,
+    predict_manager_id               TEXT      NOT NULL,
+    recipient                        TEXT      NOT NULL,
+    request_index                    BIGINT    NOT NULL,
+    shares_burned                    NUMERIC   NOT NULL,
+    dusdc_amount                     NUMERIC   NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_withdraw_filled_vault_ts ON withdraw_filled(pool_vault_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_withdraw_filled_manager_ts ON withdraw_filled(predict_manager_id, checkpoint_timestamp_ms);
+
+-- One row per LP flush: the frozen mark every fill priced at plus its valuation
+-- breakdown (idle + active-market NAV) and fill counts. The flush IS the
+-- full-pool valuation (PoolValued was folded in here).
+CREATE TABLE IF NOT EXISTS flush_executed (
+    event_digest                     TEXT      PRIMARY KEY,
+    digest                           TEXT      NOT NULL,
+    sender                           TEXT      NOT NULL,
+    checkpoint                       BIGINT    NOT NULL,
+    tx_index                         BIGINT    NOT NULL,
+    event_index                      BIGINT    NOT NULL,
+    timestamp                        TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    checkpoint_timestamp_ms          BIGINT    NOT NULL,
+    package                          TEXT      NOT NULL,
+    pool_vault_id                    TEXT      NOT NULL,
+    epoch                            BIGINT    NOT NULL, -- Sui ctx.epoch()
+    pool_value                       NUMERIC   NOT NULL,
+    total_supply                     NUMERIC   NOT NULL,
+    active_market_nav                NUMERIC   NOT NULL,
+    market_count                     BIGINT    NOT NULL, -- bounded active-set count
+    idle_balance_before              NUMERIC   NOT NULL,
+    supplies_filled                  BIGINT    NOT NULL,
+    withdrawals_filled               BIGINT    NOT NULL,
+    requests_processed               BIGINT    NOT NULL,
+    idle_balance_after               NUMERIC   NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flush_executed_vault_ts ON flush_executed(pool_vault_id, checkpoint_timestamp_ms);
+
 -- Maintained current-state table for order lifecycle (the only indexer-written
 -- state table; all other "latest X" reads are LIMIT-1 index scans over raw
 -- tables). One row per on-chain packed order id; replacement orders get their
@@ -750,15 +695,13 @@ CREATE TABLE IF NOT EXISTS order_state (
     replacement_order_id     TEXT,
     -- Terms decoded from the packed order id (packages/predict/sources/order.move).
     opened_at_ms             BIGINT    NOT NULL, -- u48 in the packed id
-    lower_boundary_index     BIGINT    NOT NULL, -- u24
+    lower_boundary_index     BIGINT    NOT NULL, -- u24 absolute tick (raw strike = tick * MarketCreated.tick_size)
     higher_boundary_index    BIGINT    NOT NULL, -- u24
     floor_shares             NUMERIC   NOT NULL,
     quantity                 NUMERIC   NOT NULL,
     sequence                 BIGINT    NOT NULL, -- u40
     -- Entry facts from the root OrderMinted; NULL on replacement rows (join
     -- position_root_id for the root's entry facts).
-    lower_strike             NUMERIC,
-    higher_strike            NUMERIC,
     leverage                 BIGINT,
     entry_probability        BIGINT,   -- 1e9-scaled
     net_premium              NUMERIC,
@@ -775,6 +718,36 @@ CREATE INDEX IF NOT EXISTS idx_order_state_manager_status_opened ON order_state(
 CREATE INDEX IF NOT EXISTS idx_order_state_market_status ON order_state(expiry_market_id, status);
 CREATE INDEX IF NOT EXISTS idx_order_state_position_root ON order_state(expiry_market_id, position_root_id);
 
+-- Maintained current-state table for async LP requests (set-membership: "open
+-- requests for a manager" cannot be answered per-key from the append-only feeds).
+-- One row per (pool_vault_id, is_supply, request_index) — the queue handle is
+-- unique only within (vault, is_supply) since supply and withdraw queues have
+-- independent indexes (lp_book.move). Fill events carry recipient + index, not
+-- the manager id directly, so predict_manager_id is write-once from the Requested
+-- event via COALESCE. Same idempotent/order-independent semantics as order_state.
+CREATE TABLE IF NOT EXISTS lp_request_state (
+    pool_vault_id            TEXT      NOT NULL,
+    is_supply                BOOLEAN   NOT NULL,
+    request_index            BIGINT    NOT NULL,
+    -- Write-once identity/amount from the Requested event.
+    predict_manager_id       TEXT,
+    recipient                TEXT,
+    requested_amount         NUMERIC,  -- DUSDC for supply, PLP shares for withdraw
+    -- open | cancelled | filled
+    status                   TEXT      NOT NULL,
+    -- Fill facts (NULL until filled).
+    filled_dusdc             NUMERIC,
+    filled_shares            NUMERIC,
+    opened_at_ms             BIGINT    NOT NULL,
+    updated_at_ms            BIGINT    NOT NULL,
+    checkpoint               BIGINT    NOT NULL,
+    tx_index                 BIGINT    NOT NULL,
+    event_index              BIGINT    NOT NULL,
+    PRIMARY KEY (pool_vault_id, is_supply, request_index)
+);
+CREATE INDEX IF NOT EXISTS idx_lp_request_state_manager_status ON lp_request_state(predict_manager_id, status, opened_at_ms);
+CREATE INDEX IF NOT EXISTS idx_lp_request_state_vault_status ON lp_request_state(pool_vault_id, status);
+
 -- BRIN timestamp indexes on every raw table feeding a windowed materialized
 -- view below. The MVs filter on bare checkpoint_timestamp_ms (no leading id),
 -- which the id-leading btree indexes cannot serve; the tables are append-only
@@ -784,9 +757,9 @@ CREATE INDEX IF NOT EXISTS idx_order_minted_ts_brin ON order_minted USING brin (
 CREATE INDEX IF NOT EXISTS idx_live_order_redeemed_ts_brin ON live_order_redeemed USING brin (checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_settled_order_redeemed_ts_brin ON settled_order_redeemed USING brin (checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_order_liquidated_ts_brin ON order_liquidated USING brin (checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_supply_executed_ts_brin ON supply_executed USING brin (checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_withdraw_executed_ts_brin ON withdraw_executed USING brin (checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_block_scholes_prices_updated_ts_brin ON block_scholes_prices_updated USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_filled_ts_brin ON supply_filled USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_withdraw_filled_ts_brin ON withdraw_filled USING brin (checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_flush_executed_ts_brin ON flush_executed USING brin (checkpoint_timestamp_ms);
 
 -- Hourly per-market trading activity. The 30-day trailing window plus the
 -- BRIN timestamp indexes above keep the CONCURRENTLY refresh cost bounded by
@@ -846,59 +819,54 @@ GROUP BY expiry_market_id, bucket_ms;
 -- REFRESH MATERIALIZED VIEW CONCURRENTLY requires a unique index.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_market_activity_1h_unique ON market_activity_1h(expiry_market_id, bucket_ms);
 
--- Hourly per-vault LP flows + end-of-bucket supply/idle snapshot (the *_after
--- fields of the last supply/withdraw event in the bucket).
+-- Hourly per-vault LP flows over the async-LP fills, with the end-of-bucket
+-- total-supply / idle snapshot taken from the bucket's last flush_executed
+-- (fills and their flush are emitted in the same flush tx, so every bucket with
+-- fills has a flush in the same bucket).
 CREATE MATERIALIZED VIEW IF NOT EXISTS vault_flows_1h AS
-WITH events AS (
+WITH fills AS (
     SELECT pool_vault_id,
            (checkpoint_timestamp_ms / 3600000) * 3600000 AS bucket_ms,
-           checkpoint, tx_index, event_index,
            'supply' AS kind,
-           payment AS amount_in,
+           dusdc_amount AS amount_in,
            NULL::NUMERIC AS amount_out,
-           shares_minted AS shares_delta,
-           NULL::NUMERIC AS withdraw_fee,
-           total_supply_after,
-           idle_balance_after
-    FROM supply_executed
+           shares_minted AS shares_delta
+    FROM supply_filled
     WHERE checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000
     UNION ALL
     SELECT pool_vault_id,
            (checkpoint_timestamp_ms / 3600000) * 3600000,
-           checkpoint, tx_index, event_index,
            'withdraw',
            NULL,
-           payout,
-           shares_burned,
-           withdraw_fee,
-           total_supply_after,
-           idle_balance_after
-    FROM withdraw_executed
+           dusdc_amount,
+           shares_burned
+    FROM withdraw_filled
     WHERE checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000
 ),
-last_state AS (
+last_flush AS (
     SELECT DISTINCT ON (pool_vault_id, bucket_ms)
-           pool_vault_id, bucket_ms, total_supply_after, idle_balance_after
-    FROM events
+           pool_vault_id,
+           (checkpoint_timestamp_ms / 3600000) * 3600000 AS bucket_ms,
+           total_supply,
+           idle_balance_after
+    FROM flush_executed
+    WHERE checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000
     ORDER BY pool_vault_id, bucket_ms, checkpoint DESC, tx_index DESC, event_index DESC
 )
 SELECT
-    e.pool_vault_id,
-    e.bucket_ms,
-    COUNT(*) FILTER (WHERE e.kind = 'supply')                             AS supply_count,
-    COALESCE(SUM(e.amount_in) FILTER (WHERE e.kind = 'supply'), 0)        AS supply_amount,
-    COALESCE(SUM(e.shares_delta) FILTER (WHERE e.kind = 'supply'), 0)     AS shares_minted,
-    COUNT(*) FILTER (WHERE e.kind = 'withdraw')                           AS withdraw_count,
-    COALESCE(SUM(e.amount_out) FILTER (WHERE e.kind = 'withdraw'), 0)     AS withdraw_amount,
-    COALESCE(SUM(e.shares_delta) FILTER (WHERE e.kind = 'withdraw'), 0)   AS shares_burned,
-    COALESCE(SUM(e.withdraw_fee) FILTER (WHERE e.kind = 'withdraw'), 0)   AS withdraw_fees,
-    -- last_state is unique per (pool_vault_id, bucket_ms), so MAX just picks
-    -- the single joined value.
-    MAX(ls.total_supply_after)                                            AS total_supply_after,
-    MAX(ls.idle_balance_after)                                            AS idle_balance_after
-FROM events e
-JOIN last_state ls USING (pool_vault_id, bucket_ms)
-GROUP BY e.pool_vault_id, e.bucket_ms;
+    f.pool_vault_id,
+    f.bucket_ms,
+    COUNT(*) FILTER (WHERE f.kind = 'supply')                           AS supply_count,
+    COALESCE(SUM(f.amount_in) FILTER (WHERE f.kind = 'supply'), 0)      AS supply_amount,
+    COALESCE(SUM(f.shares_delta) FILTER (WHERE f.kind = 'supply'), 0)   AS shares_minted,
+    COUNT(*) FILTER (WHERE f.kind = 'withdraw')                         AS withdraw_count,
+    COALESCE(SUM(f.amount_out) FILTER (WHERE f.kind = 'withdraw'), 0)   AS withdraw_amount,
+    COALESCE(SUM(f.shares_delta) FILTER (WHERE f.kind = 'withdraw'), 0) AS shares_burned,
+    MAX(lf.total_supply)                                                AS total_supply_after,
+    MAX(lf.idle_balance_after)                                          AS idle_balance_after
+FROM fills f
+LEFT JOIN last_flush lf USING (pool_vault_id, bucket_ms)
+GROUP BY f.pool_vault_id, f.bucket_ms;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_flows_1h_unique ON vault_flows_1h(pool_vault_id, bucket_ms);
 
 -- Hourly per-market liquidation stats. Per-order surplus/gap are computed per
@@ -918,39 +886,6 @@ FROM order_liquidated
 WHERE checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000
 GROUP BY expiry_market_id, bucket_ms;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_liquidation_stats_1h_unique ON liquidation_stats_1h(expiry_market_id, bucket_ms);
-
--- 1-minute OHLC candles over the Block Scholes price feed. Open/close are
--- picked by the (checkpoint, tx_index, event_index) triple, never by a domain
--- timestamp (see .claude/rules/predict-indexer.md deviation 1).
-CREATE MATERIALIZED VIEW IF NOT EXISTS oracle_prices_1m AS
-WITH ranked AS (
-    SELECT market_oracle_id,
-           (checkpoint_timestamp_ms / 60000) * 60000 AS bucket_ms,
-           spot, forward, basis,
-           ROW_NUMBER() OVER (
-               PARTITION BY market_oracle_id, checkpoint_timestamp_ms / 60000
-               ORDER BY checkpoint ASC, tx_index ASC, event_index ASC
-           ) AS rn_open,
-           ROW_NUMBER() OVER (
-               PARTITION BY market_oracle_id, checkpoint_timestamp_ms / 60000
-               ORDER BY checkpoint DESC, tx_index DESC, event_index DESC
-           ) AS rn_close
-    FROM block_scholes_prices_updated
-    WHERE checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000
-)
-SELECT
-    market_oracle_id,
-    bucket_ms,
-    MAX(spot) FILTER (WHERE rn_open = 1)     AS open,
-    MAX(spot)                                AS high,
-    MIN(spot)                                AS low,
-    MAX(spot) FILTER (WHERE rn_close = 1)    AS close,
-    MAX(forward) FILTER (WHERE rn_close = 1) AS forward,
-    MAX(basis) FILTER (WHERE rn_close = 1)   AS basis,
-    COUNT(*)                                 AS update_count
-FROM ranked
-GROUP BY market_oracle_id, bucket_ms;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_oracle_prices_1m_unique ON oracle_prices_1m(market_oracle_id, bucket_ms);
 
 -- Per-position cash flows across the whole replacement chain, keyed by
 -- (expiry_market_id, position_root_id) — root ids are expiry-local like all

@@ -1,0 +1,9 @@
+[package]
+name = "block_scholes_oracle"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+
+[addresses]
+block_scholes_oracle = "0x0"

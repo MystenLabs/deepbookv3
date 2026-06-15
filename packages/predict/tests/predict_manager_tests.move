@@ -1,6 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit coverage for `PredictManager`: DUSDC custody, caps/proofs, position and
+/// trading-fee bookkeeping, and the lazy stake roll.
+///
+/// The accumulator is ambient: every capital op auto-settles flush-delivered funds
+/// from a `sui::accumulator::AccumulatorRoot` before proceeding. That root cannot be
+/// constructed in a Move unit test (private `create`, `@0x0`-only), so the settling
+/// capital entrypoints (`deposit` / `withdraw`) live in the untested outer layer;
+/// these tests drive the root-free pieces (`deposit_funds`,
+/// `withdraw_with_proof`, `internal_balance`).
 #[test_only]
 module deepbook_predict::predict_manager_tests;
 
@@ -16,8 +25,6 @@ const FAKE_EXPIRY_ID_2: address = @0xBABE;
 const ORDER_ID_A: u256 = 42;
 const ORDER_ID_B: u256 = 43;
 const FEE_AMOUNT: u64 = 5_000;
-const CASH_PAID: u64 = 100_000;
-const CASH_RECEIVED: u64 = 60_000;
 const STAKE_AMOUNT: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
 const STAKE_AMOUNT_2: u64 = 30_000_000_000; // 30k DEEP raw
 
@@ -45,7 +52,7 @@ fun fresh_manager_has_alice_owner_and_zero_balance() {
     let manager = create_alice_manager(&mut scenario, registry_id);
 
     assert_eq!(manager.owner(), test_constants::alice());
-    assert_eq!(manager.balance(), 0);
+    assert_eq!(manager.internal_balance<DUSDC>(), 0);
 
     destroy(manager);
     scenario.end();
@@ -65,29 +72,19 @@ fun id_is_stable_across_reads() {
 // === deposit / withdraw ===
 
 #[test]
-fun deposit_increases_balance() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-
-    let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    manager.deposit(coin, scenario.ctx());
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
-
-    destroy(manager);
-    scenario.end();
-}
-
-#[test]
 fun withdraw_decreases_balance_and_returns_coin() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
     let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    manager.deposit(coin, scenario.ctx());
+    manager.deposit_funds(coin.into_balance(), scenario.ctx());
 
-    let withdrawn = manager.withdraw(WITHDRAW_AMOUNT, scenario.ctx());
+    // Withdraw routes through the root-free `withdraw_with_proof` inner; the public
+    // `withdraw` settles first and is untestable (the root can't be constructed).
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    let withdrawn = manager.withdraw_with_proof(&proof, WITHDRAW_AMOUNT, scenario.ctx());
     assert_eq!(withdrawn.value(), WITHDRAW_AMOUNT);
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT - WITHDRAW_AMOUNT);
+    assert_eq!(manager.internal_balance<DUSDC>(), DEPOSIT_AMOUNT - WITHDRAW_AMOUNT);
 
     destroy(manager);
     destroy(withdrawn);
@@ -95,16 +92,16 @@ fun withdraw_decreases_balance_and_returns_coin() {
 }
 
 #[test]
-fun deposit_permissionless_works_without_owner_sender() {
-    // deposit_permissionless uses the manager's stored DepositCap so anyone
-    // can credit the manager (used for protocol-driven payouts).
+fun deposit_funds_credits_without_owner_sender() {
+    // deposit_funds uses the manager's stored DepositCap so anyone can credit the
+    // manager with no caller authority (protocol payouts, LP cancel refunds).
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
     scenario.next_tx(test_constants::bob());
     let coin = coin::mint_for_testing<DUSDC>(DEPOSIT_AMOUNT, scenario.ctx());
-    manager.deposit_permissionless(coin, scenario.ctx());
-    assert_eq!(manager.balance(), DEPOSIT_AMOUNT);
+    manager.deposit_funds(coin.into_balance(), scenario.ctx());
+    assert_eq!(manager.internal_balance<DUSDC>(), DEPOSIT_AMOUNT);
 
     destroy(manager);
     scenario.end();
@@ -207,7 +204,7 @@ fun add_position_duplicate_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = predict_manager::EInsufficientPosition)]
+#[test, expected_failure(abort_code = predict_manager::EPositionNotFound)]
 fun remove_position_that_does_not_exist_aborts() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
@@ -227,131 +224,51 @@ fun expiry_position_count_unknown_expiry_returns_zero() {
     scenario.end();
 }
 
-// === Cash flow recording ===
+// === Trading-fee recording ===
 
 #[test]
-fun record_helpers_accumulate_into_resolved_summary() {
+fun record_trading_fee_paid_accumulates_per_expiry() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
     manager.record_trading_fee_paid(expiry, FEE_AMOUNT);
     manager.record_trading_fee_paid(expiry, FEE_AMOUNT);
-    manager.record_gross_paid_to_expiry(expiry, CASH_RECEIVED);
-    manager.record_gross_paid_to_expiry(expiry, CASH_RECEIVED);
-    manager.record_gross_received_from_expiry(expiry, CASH_PAID);
-    manager.record_gross_received_from_expiry(expiry, CASH_PAID);
+    assert_eq!(manager.trading_fees_paid(expiry), 2 * FEE_AMOUNT);
 
-    let (fees, gross_profit) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees, 2 * FEE_AMOUNT);
-    assert_eq!(gross_profit, 80_000);
+    // A different expiry accumulates independently.
+    let expiry_2 = FAKE_EXPIRY_ID_2.to_id();
+    manager.record_trading_fee_paid(expiry_2, FEE_AMOUNT);
+    assert_eq!(manager.trading_fees_paid(expiry_2), FEE_AMOUNT);
+    assert_eq!(manager.trading_fees_paid(expiry), 2 * FEE_AMOUNT);
 
     destroy(manager);
     scenario.end();
 }
 
 #[test]
-fun record_helpers_zero_amount_is_no_op() {
-    // The record_* helpers short-circuit on amount == 0 and do not even
-    // ensure the expiry summary exists.
+fun record_trading_fee_paid_zero_is_no_op() {
+    // The record helper short-circuits on amount == 0 and does not create a row.
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
     manager.record_trading_fee_paid(expiry, 0);
-    manager.record_gross_paid_to_expiry(expiry, 0);
-    manager.record_gross_received_from_expiry(expiry, 0);
-
     assert_eq!(manager.trading_fees_paid(expiry), 0);
-    let (fees, gross_profit) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees, 0);
-    assert_eq!(gross_profit, 0);
 
     destroy(manager);
     scenario.end();
 }
 
 #[test]
-fun getters_return_zero_for_unknown_expiry() {
+fun trading_fees_paid_unknown_expiry_returns_zero() {
     let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let expiry = FAKE_EXPIRY_ID.to_id();
+    let manager = create_alice_manager(&mut scenario, registry_id);
 
-    assert_eq!(manager.trading_fees_paid(expiry), 0);
-    let (fees, gross_profit) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees, 0);
-    assert_eq!(gross_profit, 0);
+    assert_eq!(manager.trading_fees_paid(FAKE_EXPIRY_ID.to_id()), 0);
 
     destroy(manager);
     scenario.end();
-}
-
-// === resolve_expiry_summary ===
-
-#[test]
-fun resolve_expiry_summary_returns_zeros_for_untouched_expiry() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let expiry = FAKE_EXPIRY_ID.to_id();
-
-    let (fees, gross_profit) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees, 0);
-    assert_eq!(gross_profit, 0);
-
-    destroy(manager);
-    scenario.end();
-}
-
-#[test]
-fun resolve_expiry_summary_returns_fees_and_zero_profit_after_loss() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let expiry = FAKE_EXPIRY_ID.to_id();
-
-    manager.record_trading_fee_paid(expiry, FEE_AMOUNT);
-    manager.record_gross_paid_to_expiry(expiry, CASH_PAID);
-    manager.record_gross_received_from_expiry(expiry, CASH_RECEIVED);
-
-    let (fees, gross_profit) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees, FEE_AMOUNT);
-    assert_eq!(gross_profit, 0);
-
-    // Summary entry has been removed — second call returns zeros.
-    let (fees_again, gross_profit_again) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees_again, 0);
-    assert_eq!(gross_profit_again, 0);
-
-    destroy(manager);
-    scenario.end();
-}
-
-#[test]
-fun resolve_expiry_summary_returns_fees_and_gross_profit() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let expiry = FAKE_EXPIRY_ID.to_id();
-
-    manager.record_trading_fee_paid(expiry, FEE_AMOUNT);
-    manager.record_gross_paid_to_expiry(expiry, CASH_RECEIVED);
-    manager.record_gross_received_from_expiry(expiry, CASH_PAID);
-
-    let (fees, gross_profit) = manager.resolve_expiry_summary(expiry);
-    assert_eq!(fees, FEE_AMOUNT);
-    assert_eq!(gross_profit, 40_000);
-
-    destroy(manager);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = predict_manager::EExpirySummaryHasOpenPositions)]
-fun resolve_expiry_summary_with_open_positions_aborts() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let expiry = FAKE_EXPIRY_ID.to_id();
-
-    manager.add_position(expiry, ORDER_ID_A, ORDER_ID_A);
-    let (_, _) = manager.resolve_expiry_summary(expiry);
-    abort 999
 }
 
 // === assert_owner ===

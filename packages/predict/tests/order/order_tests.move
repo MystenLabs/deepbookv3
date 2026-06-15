@@ -8,7 +8,7 @@
 ///   [200,232) quantity_lots_key = (2^32-1) - quantity_lots   (32b, complement)
 ///   [136,200) floor_shares_key = (2^64-1) - floor_shares   (64b, complement)
 ///   [ 88,136) opened_at_ms (48b)
-///   [ 64, 88) lower_idx (24b)     [40, 64) higher_idx (24b)
+///   [ 64, 88) lower_tick (24b)     [40, 64) higher_tick (24b)
 ///   [  0, 40) sequence (40b)
 /// The exact-id assertions catch field overlap/offset/truncation bugs; the getter
 /// assertions verify each decode; the abort tests cover all seven guards.
@@ -42,24 +42,21 @@ const NONLEV_SEQ: u64 = 88;
 // === Out-of-range field values for the guard tests ===
 const U48_OVERFLOW: u64 = 1 << 48; // > U48_MASK (opened_at)
 const U40_OVERFLOW: u64 = 1 << 40; // > U40_MASK (sequence)
+const U24_OVERFLOW: u64 = 1 << 24; // > U24_MASK (strike tick == pos_inf_tick)
 const NON_LOT_QUANTITY: u64 = 10_001; // not a multiple of position_lot_size
 const OVER_FLOOR_QUANTITY: u64 = 70_000;
 const OVER_FLOOR_SHARES: u64 = 80_000; // > quantity
 const PRIORITY_LOTS: u64 = 10;
 const PRIORITY_QUANTITY: u64 = 100_000; // 10 * 10_000
-const PRIORITY_HIGHER_BOUNDARY_INDEX: u64 = 2;
+const PRIORITY_HIGHER_TICK: u64 = 2;
 const LOW_FLOOR_SHARES: u64 = 10_000;
 const HIGH_FLOOR_SHARES: u64 = 20_000;
-
-/// Highest boundary index any expiry grid can encode (order.move doc:
-/// `oracle_strike_grid_ticks + 2`). Independent of the contract's private getter.
-fun max_boundary_index(): u64 { constants::oracle_strike_grid_ticks!() + 2 }
 
 // === Exact-pack (independent layout) ===
 
 #[test]
 fun leveraged_order_packs_to_independent_layout() {
-    let o = order::new_from_boundary_indices(
+    let o = order::new_from_ticks(
         LEV_OPENED,
         0,
         LEV_HIGHER,
@@ -72,7 +69,7 @@ fun leveraged_order_packs_to_independent_layout() {
 
 #[test]
 fun nonleveraged_order_packs_to_independent_layout() {
-    let o = order::new_from_boundary_indices(
+    let o = order::new_from_ticks(
         NONLEV_OPENED,
         NONLEV_LOWER,
         NONLEV_HIGHER,
@@ -90,8 +87,8 @@ fun from_order_id_decodes_every_leveraged_field() {
     let o = order::from_order_id(LEVERAGED_ID);
     assert_eq!(o.id(), LEVERAGED_ID);
     assert_eq!(o.opened_at_ms(), LEV_OPENED);
-    assert_eq!(o.lower_boundary_index(), 0);
-    assert_eq!(o.higher_boundary_index(), LEV_HIGHER);
+    assert_eq!(o.lower_tick(), 0);
+    assert_eq!(o.higher_tick(), LEV_HIGHER);
     assert_eq!(o.floor_shares(), LEV_FLOOR);
     assert_eq!(o.quantity_lots(), LEV_QLOTS);
     assert_eq!(o.quantity(), LEV_QUANTITY);
@@ -103,8 +100,8 @@ fun from_order_id_decodes_every_leveraged_field() {
 fun from_order_id_decodes_every_nonleveraged_field() {
     let o = order::from_order_id(NONLEV_ID);
     assert_eq!(o.opened_at_ms(), NONLEV_OPENED);
-    assert_eq!(o.lower_boundary_index(), NONLEV_LOWER);
-    assert_eq!(o.higher_boundary_index(), NONLEV_HIGHER);
+    assert_eq!(o.lower_tick(), NONLEV_LOWER);
+    assert_eq!(o.higher_tick(), NONLEV_HIGHER);
     assert_eq!(o.floor_shares(), 0);
     assert_eq!(o.quantity_lots(), NONLEV_QLOTS);
     assert_eq!(o.quantity(), NONLEV_QUANTITY);
@@ -118,7 +115,7 @@ fun max_quantity_lots_round_trips_through_complement_encoding() {
     // must recover U32_MASK, not wrap.
     let max_lots = ((1u256 << 32) - 1) as u64;
     let max_quantity = max_lots * constants::position_lot_size!();
-    let o = order::new_from_boundary_indices(
+    let o = order::new_from_ticks(
         LEV_OPENED,
         NONLEV_LOWER,
         NONLEV_HIGHER,
@@ -132,18 +129,18 @@ fun max_quantity_lots_round_trips_through_complement_encoding() {
 
 #[test]
 fun larger_floor_shares_sort_before_smaller_floor_shares_for_equal_quantity() {
-    let low_floor = order::new_from_boundary_indices(
+    let low_floor = order::new_from_ticks(
         LEV_OPENED,
         0,
-        PRIORITY_HIGHER_BOUNDARY_INDEX,
+        PRIORITY_HIGHER_TICK,
         LOW_FLOOR_SHARES,
         PRIORITY_QUANTITY,
         1,
     );
-    let high_floor = order::new_from_boundary_indices(
+    let high_floor = order::new_from_ticks(
         LEV_OPENED,
         0,
-        PRIORITY_HIGHER_BOUNDARY_INDEX,
+        PRIORITY_HIGHER_TICK,
         HIGH_FLOOR_SHARES,
         PRIORITY_QUANTITY,
         2,
@@ -157,7 +154,7 @@ fun larger_floor_shares_sort_before_smaller_floor_shares_for_equal_quantity() {
 // === replacement inherits the original terms ===
 
 #[test]
-fun replacement_inherits_open_time_and_boundaries() {
+fun replacement_inherits_open_time_and_ticks() {
     let old = order::from_order_id(LEVERAGED_ID);
     let repl_quantity = 50_000; // < 70_000
     let repl_floor = 30_000;
@@ -165,8 +162,8 @@ fun replacement_inherits_open_time_and_boundaries() {
     let repl = old.replacement(repl_quantity, repl_floor, repl_seq);
     // Inherited terms.
     assert_eq!(repl.opened_at_ms(), LEV_OPENED);
-    assert_eq!(repl.lower_boundary_index(), 0);
-    assert_eq!(repl.higher_boundary_index(), LEV_HIGHER);
+    assert_eq!(repl.lower_tick(), 0);
+    assert_eq!(repl.higher_tick(), LEV_HIGHER);
     // Replaced terms.
     assert_eq!(repl.quantity(), repl_quantity);
     assert_eq!(repl.floor_shares(), repl_floor);
@@ -184,32 +181,32 @@ fun from_order_id_rejects_bits_above_envelope() {
 
 #[test, expected_failure(abort_code = order::EInvalidQuantity)]
 fun new_rejects_non_lot_quantity() {
-    order::new_from_boundary_indices(LEV_OPENED, 0, LEV_HIGHER, 0, NON_LOT_QUANTITY, LEV_SEQ);
+    order::new_from_ticks(LEV_OPENED, 0, LEV_HIGHER, 0, NON_LOT_QUANTITY, LEV_SEQ);
     abort 999
 }
 
 #[test, expected_failure(abort_code = order::EInvalidOpenedAt)]
 fun new_rejects_opened_at_over_u48() {
-    order::new_from_boundary_indices(U48_OVERFLOW, 0, LEV_HIGHER, 0, LEV_QUANTITY, LEV_SEQ);
+    order::new_from_ticks(U48_OVERFLOW, 0, LEV_HIGHER, 0, LEV_QUANTITY, LEV_SEQ);
     abort 999
 }
 
-#[test, expected_failure(abort_code = order::EInvalidBoundaryIndex)]
-fun new_rejects_boundary_index_over_grid_max() {
-    let over = max_boundary_index() + 1;
-    order::new_from_boundary_indices(LEV_OPENED, over, over + 1, 0, LEV_QUANTITY, LEV_SEQ);
+#[test, expected_failure(abort_code = order::EInvalidTick)]
+fun new_rejects_tick_over_u24() {
+    // A tick one past the 24-bit domain (pos_inf_tick is the max encodable tick).
+    order::new_from_ticks(LEV_OPENED, U24_OVERFLOW, U24_OVERFLOW + 1, 0, LEV_QUANTITY, LEV_SEQ);
     abort 999
 }
 
-#[test, expected_failure(abort_code = order::EInvalidBoundaryRange)]
+#[test, expected_failure(abort_code = order::EInvalidRange)]
 fun new_rejects_lower_not_below_higher() {
-    order::new_from_boundary_indices(LEV_OPENED, 7, 5, 0, LEV_QUANTITY, LEV_SEQ);
+    order::new_from_ticks(LEV_OPENED, 7, 5, 0, LEV_QUANTITY, LEV_SEQ);
     abort 999
 }
 
 #[test, expected_failure(abort_code = order::EInvalidFloorShares)]
 fun new_rejects_floor_shares_above_quantity() {
-    order::new_from_boundary_indices(
+    order::new_from_ticks(
         LEV_OPENED,
         0,
         LEV_HIGHER,
@@ -222,6 +219,6 @@ fun new_rejects_floor_shares_above_quantity() {
 
 #[test, expected_failure(abort_code = order::EInvalidSequence)]
 fun new_rejects_sequence_over_u40() {
-    order::new_from_boundary_indices(LEV_OPENED, 0, LEV_HIGHER, 0, LEV_QUANTITY, U40_OVERFLOW);
+    order::new_from_ticks(LEV_OPENED, 0, LEV_HIGHER, 0, LEV_QUANTITY, U40_OVERFLOW);
     abort 999
 }

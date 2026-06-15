@@ -3,8 +3,8 @@
 
 /// Unit tests for the `liquidation_book` active-index and tombstone lifecycle
 /// guards. The book is a pure data structure (no shared protocol state), so
-/// orders are constructed directly via `order::new_from_boundary_indices` with
-/// nonzero `floor_shares` (leveraged) — only leveraged orders are indexed.
+/// orders are constructed directly via `order::new_from_ticks` with nonzero
+/// `floor_shares` (leveraged) — only leveraged orders are indexed.
 #[test_only]
 module deepbook_predict::liquidation_book_tests;
 
@@ -13,9 +13,9 @@ use std::unit_test::{assert_eq, destroy};
 
 const OPENED_AT_MS: u64 = 1_000;
 // Leveraged orders must be semi-infinite (order.move assert_valid_order_shape:
-// lower index 0 or higher index == max), so use an open lower end.
-const LOWER_BOUNDARY_INDEX: u64 = 0;
-const HIGHER_BOUNDARY_INDEX: u64 = 2;
+// lower tick 0 or higher tick == pos_inf_tick), so use an open lower end.
+const LOWER_TICK: u64 = 0;
+const HIGHER_TICK: u64 = 2;
 const SEQUENCE: u64 = 7;
 const PRIORITY_QUANTITY_LOTS: u64 = 10;
 const LOW_FLOOR_SHARES: u64 = 10_000;
@@ -25,10 +25,10 @@ const HIGH_FLOOR_SHARES: u64 = 20_000;
 /// makes it leveraged (the book ignores 1x orders).
 fun leveraged_order(): Order {
     let quantity = constants::position_lot_size!();
-    order::new_from_boundary_indices(
+    order::new_from_ticks(
         OPENED_AT_MS,
-        LOWER_BOUNDARY_INDEX,
-        HIGHER_BOUNDARY_INDEX,
+        LOWER_TICK,
+        HIGHER_TICK,
         quantity / 2, // floor_shares > 0 => leveraged
         quantity,
         SEQUENCE,
@@ -60,12 +60,12 @@ fun remove_uninserted_order_from_nonempty_book_aborts() {
     let mut book = liquidation_book::new(ctx);
     let inserted = leveraged_order();
     book.insert_order(&inserted);
-    // Same boundaries, different sequence => different packed id.
+    // Same ticks, different sequence => different packed id.
     let quantity = constants::position_lot_size!();
-    let missing = order::new_from_boundary_indices(
+    let missing = order::new_from_ticks(
         OPENED_AT_MS,
-        LOWER_BOUNDARY_INDEX,
-        HIGHER_BOUNDARY_INDEX,
+        LOWER_TICK,
+        HIGHER_TICK,
         quantity / 2,
         quantity,
         SEQUENCE + 1,
@@ -118,18 +118,18 @@ fun head_candidate_prefers_higher_floor_for_equal_quantity() {
     let ctx = &mut tx_context::dummy();
     let mut book = liquidation_book::new(ctx);
     let quantity = constants::position_lot_size!() * PRIORITY_QUANTITY_LOTS;
-    let low_floor = order::new_from_boundary_indices(
+    let low_floor = order::new_from_ticks(
         OPENED_AT_MS,
-        LOWER_BOUNDARY_INDEX,
-        HIGHER_BOUNDARY_INDEX,
+        LOWER_TICK,
+        HIGHER_TICK,
         LOW_FLOOR_SHARES,
         quantity,
         SEQUENCE,
     );
-    let high_floor = order::new_from_boundary_indices(
+    let high_floor = order::new_from_ticks(
         OPENED_AT_MS,
-        LOWER_BOUNDARY_INDEX,
-        HIGHER_BOUNDARY_INDEX,
+        LOWER_TICK,
+        HIGHER_TICK,
         HIGH_FLOOR_SHARES,
         quantity,
         SEQUENCE + 1,

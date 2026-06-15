@@ -15,16 +15,14 @@ pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 const PREDICT_PACKAGES_TESTNET: &[&str] = &[];
 const PREDICT_PACKAGES_MAINNET: &[&str] = &[];
 
-/// The Predict modules recognized for tx-filtering (`is_predict_tx`). In M1
-/// only `order_events` is actually ingested; the rest are reserved for later
-/// milestones.
+/// The Predict event modules recognized for address resolution. Oracle events
+/// are emitted by the standalone `propbook` package and indexed by the separate
+/// `oracle-indexer` crate, so they are intentionally not listed here.
 pub const PREDICT_MODULES: &[&str] = &[
     "order_events",
     "account_events",
     "config_events",
-    "oracle_events",
     "vault_events",
-    "claim_events",
 ];
 
 /// Enum representing different module types.

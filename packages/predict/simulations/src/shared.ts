@@ -67,7 +67,9 @@ export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
     step: number;
-    action: ScenarioActionName;
+    // `flush` is the runner-synthesized privileged LP drain — not a CSV row action,
+    // so it widens the trace action set without touching `ScenarioActionName`.
+    action: ScenarioActionName | "flush";
     digest: string;
     wallMs: number;
     gas: GasLike;
@@ -112,10 +114,20 @@ export interface SimState {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    pythSourceId: string;
-    oracleId: string;
-    oracleCapId: string;
+    // propbook feeds replace the in-package oracle + Pyth source. There is no
+    // writer cap anymore (BS surface updates are permissionless via the verified
+    // `Update`).
+    pythFeedId: string;
+    bsFeedId: string;
     managerId: string;
+    // Capital-flow caps for the sender-owned manager. `deposit` is gated by the
+    // deposit cap; the capital-out paths (`request_supply`, `request_withdraw`) are
+    // gated by the withdraw cap.
+    depositCapId: string;
+    withdrawCapId: string;
+    // Sole flush-start authority: the market-deployer MarketLifecycleCap, used to
+    // mint a per-flush lifecycle proof for `plp::start_pool_valuation`.
+    lifecycleCapId: string;
 }
 
 type RawScenarioRow = Record<string, string>;

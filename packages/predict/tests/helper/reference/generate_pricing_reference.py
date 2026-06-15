@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent true-math reference for `pricing::live_range_probability`, driven
+"""Independent true-math reference for `Pricer.range_price`, driven
 from REAL on-chain Block Scholes SVI observations.
 
 Emits the committed Move module `pricing_reference_data.move`, which the exact
@@ -40,8 +40,8 @@ the identical integers (int/1e9 in float64 is exact to ~1e-16, far below the 1e-
 scale). No param is ever rounded, shortened, or re-derived from another column.
 
 The *forward the contract actually prices with* is NOT the raw pushed forward: in
-`pricing::live_inputs` the fresh-Pyth path re-derives it as
-    forward_live = mul(spot, div(forward, spot))            (two predict math floors)
+`pricing::load_live_pricer` the fresh-Pyth path re-derives it as
+    forward_live = mul(spot, div(forward, spot))            (two fixed_math floors)
 This is the dominant production path (Pyth spot fresh). We reproduce that floor
 round-trip below to obtain the byte-identical forward the model prices at, then
 compute the TRUE Phi(d2) from it. The round-trip is INPUT CONSTRUCTION (it builds
@@ -102,8 +102,8 @@ from decimal import Decimal, getcontext
 getcontext().prec = 60
 
 F = 1_000_000_000
-ORACLE_GRID_TICKS = 100_000          # constants::oracle_strike_grid_ticks!()
-ORACLE_TICK_SIZE_UNIT = 10_000       # constants::oracle_tick_size_unit!()
+REFERENCE_GRID_TICKS = 100_000       # Reference ladder width used to choose strikes.
+MARKET_TICK_SIZE_UNIT = 10_000       # constants::market_tick_size_unit!()
 TICK_SIZE = 1_000_000_000            # $1 ticks: spot/tick in (50000, 100000] for ~$75k spot
 CUSHION_UNITS = 2                    # reference integer rounding + 2nd-order propagation
 
@@ -170,17 +170,18 @@ class Scenario:
         # The forward the contract actually prices with (fresh-Pyth round-trip).
         self.forward_live = fp_mul(self.spot, fp_div(self.forward, self.spot))
         self.fwd_f = self.forward_live / F
-        # Centered strike grid (strike_grid::new_centered), tick = TICK_SIZE.
+        # Reference ladder for selecting raw strikes around spot. Production
+        # markets use absolute ticks; this generator emits raw strike points.
         spot_ticks = self.spot // TICK_SIZE
-        if not (ORACLE_GRID_TICKS // 2 < spot_ticks <= ORACLE_GRID_TICKS):
-            raise ValueError(f"{self.digest}: spot_ticks {spot_ticks} out of new_centered window")
-        self.min_strike = (spot_ticks - ORACLE_GRID_TICKS // 2) * TICK_SIZE
-        self.max_strike = self.min_strike + TICK_SIZE * ORACLE_GRID_TICKS
+        if not (REFERENCE_GRID_TICKS // 2 < spot_ticks <= REFERENCE_GRID_TICKS):
+            raise ValueError(f"{self.digest}: spot_ticks {spot_ticks} out of reference window")
+        self.min_strike = (spot_ticks - REFERENCE_GRID_TICKS // 2) * TICK_SIZE
+        self.max_strike = self.min_strike + TICK_SIZE * REFERENCE_GRID_TICKS
 
     def _validate(self):
         assert SVI_SIGMA_MIN <= self.sigma <= SVI_SIGMA_MAX, f"{self.digest}: sigma out of bounds"
         assert self.rho_mag <= F, f"{self.digest}: |rho|>1"
-        assert TICK_SIZE % ORACLE_TICK_SIZE_UNIT == 0
+        assert TICK_SIZE % MARKET_TICK_SIZE_UNIT == 0
 
     # --- true-math pricing from exact reals ---
     def w_of_k(self, k):
@@ -325,7 +326,7 @@ def emit_move(scenarios, scen_points, budget_units):
     w("//   python3 generate_pricing_reference.py")
     w("//")
     w("// Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract")
-    w("// and NOT python_replay's fixed-point pricer) for pricing::live_range_probability.")
+    w("// and NOT python_replay's fixed-point pricer) for Pricer.range_price.")
     w("// Each point's `tolerance` is the analytic worst-case fixed-point error of UP=Phi(d2),")
     w("// propagated from math.move's documented per-primitive budgets at the TRUE values; see")
     w("// the generator header for the full derivation. The forward priced is the fresh-Pyth")
@@ -342,12 +343,11 @@ def emit_move(scenarios, scen_points, budget_units):
     w("#[test_only]")
     w("module deepbook_predict::pricing_reference_data;")
     w("")
-    w("use deepbook_predict::{constants, market_oracle::{Self, SVIParams}};")
-    w("use predict_math::i64;")
+    w("use deepbook_predict::constants;")
     w("")
     w("const ENoSuchScenario: u64 = 0;")
     w("")
-    w("/// One independent reference point: pricing::live_range_probability(lower, higher)")
+    w("/// One independent reference point: Pricer.range_price(lower, higher)")
     w("/// must be within `tolerance` units of the true-math `reference`.")
     w("public struct RefPoint has copy, drop {")
     w("    lower: u64,")
@@ -374,10 +374,10 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// Worst-case per-endpoint precision budget (units @1e9) over all scenarios/strikes.")
     w(f"public fun worst_case_budget(): u64 {{ {fmt_u64(budget_units)} }}")
     w("")
-    w("/// Oracle creation spot (grid is centered on this); equals the scenario spot.")
+    w("/// Scenario spot seeded into the Propbook fixtures.")
     w("public fun creation_spot(s: u64): u64 { spot(s) }")
     w("")
-    w("/// Oracle tick size used by every scenario grid.")
+    w("/// Market tick size used by every scenario.")
     w(f"public fun tick_size(_s: u64): u64 {{ {fmt_u64(TICK_SIZE)} }}")
     w("")
 
@@ -399,26 +399,27 @@ def emit_move(scenarios, scen_points, budget_units):
     emit_u64_selector("spot", [s.spot for s in scenarios], "Real Block Scholes spot (1e9 fixed-point) seeded into the oracle.")
     emit_u64_selector("forward", [s.forward for s in scenarios], "Real Block Scholes forward (1e9) seeded into the oracle (pushed forward).")
 
-    w("/// Real SVI params (exact 1e9 integers + sign flags) seeded through the cap path.")
-    w("public fun svi(s: u64): SVIParams {")
-    for i, s in enumerate(scenarios):
-        rho = f"i64::from_parts({fmt_u64(s.rho_mag)}, {str(s.rho_neg).lower()})"
-        m = f"i64::from_parts({fmt_u64(s.m_mag)}, {str(s.m_neg).lower()})"
-        kw = "if" if i == 0 else "} else if"
-        w(f"    {kw} (s == {i}) {{")
-        # multi-line args so prettier-move leaves it untouched on regeneration
-        w("        market_oracle::new_svi_params(")
-        w(f"            {fmt_u64(s.a)},")
-        w(f"            {fmt_u64(s.b)},")
-        w(f"            {rho},")
-        w(f"            {m},")
-        w(f"            {fmt_u64(s.sigma)},")
-        w("        )")
-    w("    } else {")
-    w("        abort ENoSuchScenario")
-    w("    }")
-    w("}")
-    w("")
+    emit_u64_selector("svi_a", [s.a for s in scenarios], "Real SVI `a` (1e9) seeded through the Block Scholes surface update.")
+    emit_u64_selector("svi_b", [s.b for s in scenarios], "Real SVI `b` (1e9) seeded through the Block Scholes surface update.")
+    emit_u64_selector("svi_sigma", [s.sigma for s in scenarios], "Real SVI `sigma` (1e9) seeded through the Block Scholes surface update.")
+    emit_u64_selector("svi_rho_magnitude", [s.rho_mag for s in scenarios], "Real SVI `rho` magnitude (1e9) seeded through the Block Scholes surface update.")
+
+    def emit_bool_selector(name, values, doc):
+        w(f"/// {doc}")
+        w(f"public fun {name}(s: u64): bool {{")
+        for i, v in enumerate(values):
+            kw = "if" if i == 0 else "} else if"
+            w(f"    {kw} (s == {i}) {{")
+            w(f"        {str(v).lower()}")
+        w("    } else {")
+        w("        abort ENoSuchScenario")
+        w("    }")
+        w("}")
+        w("")
+
+    emit_bool_selector("svi_rho_is_negative", [s.rho_neg for s in scenarios], "Sign flag for real SVI `rho` (true == negative).")
+    emit_u64_selector("svi_m_magnitude", [s.m_mag for s in scenarios], "Real SVI `m` magnitude (1e9) seeded through the Block Scholes surface update.")
+    emit_bool_selector("svi_m_is_negative", [s.m_neg for s in scenarios], "Sign flag for real SVI `m` (true == negative).")
 
     w("/// Reference points for scenario `s` (lower, higher, true-math reference, tolerance).")
     w("public fun points(s: u64): vector<RefPoint> {")

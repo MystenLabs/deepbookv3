@@ -14,8 +14,11 @@ PAGE_CAPACITY = 64
 QUANTITY_LOTS_OFFSET = 200
 FLOOR_SHARES_OFFSET = 136
 OPENED_AT_OFFSET = 88
-LOWER_BOUNDARY_INDEX_OFFSET = 64
-HIGHER_BOUNDARY_INDEX_OFFSET = 40
+# Absolute u24 ticks pack at these offsets (order.move LOWER_TICK_OFFSET /
+# HIGHER_TICK_OFFSET). The grid-relative boundary-index encoding is gone: the
+# order now stores absolute ticks directly.
+LOWER_TICK_OFFSET = 64
+HIGHER_TICK_OFFSET = 40
 
 U24_MASK = (1 << 24) - 1
 U32_MASK = (1 << 32) - 1
@@ -24,39 +27,41 @@ U48_MASK = (1 << 48) - 1
 U64_MASK = (1 << 64) - 1
 
 
-def boundary_index_for_order_side(
+def tick_for_order_side(
     strike: int,
     *,
-    min_strike: int,
     tick_size: int,
-    max_strike: int,
+    pos_inf_tick: int,
     neg_inf: int,
     pos_inf: int,
 ) -> int:
-    total_strikes = (max_strike - min_strike) // tick_size + 1
+    # Absolute tick for an order boundary: raw_strike = tick * tick_size, with tick 0
+    # the neg-inf sentinel (lower side) and pos_inf_tick the pos-inf sentinel (higher
+    # side). Mirrors range_codec / order.move; no centered grid.
     if strike == neg_inf:
         return 0
     if strike == pos_inf:
-        return total_strikes + 1
-    if strike < min_strike or strike > max_strike:
-        raise ValueError("strike out of order grid")
-    relative = strike - min_strike
-    if relative % tick_size != 0:
+        return pos_inf_tick
+    if strike % tick_size != 0:
         raise ValueError("unaligned order strike")
-    return relative // tick_size + 1
+    tick = strike // tick_size
+    if tick <= 0 or tick >= pos_inf_tick:
+        raise ValueError("strike tick outside the finite tick domain")
+    return tick
 
 
 def encode_order_id(
     *,
     opened_at_ms: int,
-    lower_boundary_index: int,
-    higher_boundary_index: int,
-    max_boundary_index: int,
+    lower_tick: int,
+    higher_tick: int,
+    pos_inf_tick: int,
     floor_shares: int,
     quantity: int,
     sequence: int,
     position_lot_size: int,
 ) -> int:
+    # Mirrors order::new / assert_valid_order_shape exactly (absolute u24 ticks).
     quantity_lots = quantity // position_lot_size
     if quantity_lots <= 0 or quantity_lots > U32_MASK or quantity % position_lot_size != 0:
         raise ValueError("invalid order quantity")
@@ -64,21 +69,19 @@ def encode_order_id(
         raise ValueError("invalid floor shares")
     if opened_at_ms > U48_MASK:
         raise ValueError("opened_at_ms does not fit in order id")
-    if lower_boundary_index > U24_MASK or higher_boundary_index > U24_MASK:
-        raise ValueError("boundary index does not fit in order id")
-    if lower_boundary_index > max_boundary_index or higher_boundary_index > max_boundary_index:
-        raise ValueError("boundary index outside protocol grid")
-    if lower_boundary_index >= higher_boundary_index:
-        raise ValueError("invalid boundary range")
-    if lower_boundary_index == 0 and higher_boundary_index == max_boundary_index:
-        raise ValueError("full-open boundary range is invalid")
+    if lower_tick > U24_MASK or higher_tick > U24_MASK:
+        raise ValueError("tick does not fit in order id")
+    if lower_tick > pos_inf_tick or higher_tick > pos_inf_tick:
+        raise ValueError("tick outside protocol domain")
+    if lower_tick >= higher_tick:
+        raise ValueError("invalid tick range")
+    if lower_tick == 0 and higher_tick == pos_inf_tick:
+        raise ValueError("full-open tick range is invalid")
     if sequence > U40_MASK:
         raise ValueError("sequence does not fit in order id")
-    if (
-        floor_shares > 0
-        and lower_boundary_index != 0
-        and higher_boundary_index != max_boundary_index
-    ):
+    # Leveraged orders must have one open boundary (lower == neg-inf OR higher ==
+    # pos-inf), so the floor is one-sided.
+    if floor_shares > 0 and lower_tick != 0 and higher_tick != pos_inf_tick:
         raise ValueError("leveraged orders must have one open boundary")
 
     quantity_lots_key = U32_MASK - quantity_lots
@@ -87,8 +90,8 @@ def encode_order_id(
         (quantity_lots_key << QUANTITY_LOTS_OFFSET)
         | (floor_shares_key << FLOOR_SHARES_OFFSET)
         | (opened_at_ms << OPENED_AT_OFFSET)
-        | (lower_boundary_index << LOWER_BOUNDARY_INDEX_OFFSET)
-        | (higher_boundary_index << HIGHER_BOUNDARY_INDEX_OFFSET)
+        | (lower_tick << LOWER_TICK_OFFSET)
+        | (higher_tick << HIGHER_TICK_OFFSET)
         | sequence
     )
 

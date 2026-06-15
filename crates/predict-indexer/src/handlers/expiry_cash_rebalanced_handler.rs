@@ -22,6 +22,8 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         idle_balance_after: BigDecimal::from(ev.idle_balance_after),
         sent_to_expiry_after: BigDecimal::from(ev.sent_to_expiry_after),
         received_from_expiry_after: BigDecimal::from(ev.received_from_expiry_after),
+        protocol_reserve_balance_after: BigDecimal::from(ev.protocol_reserve_balance_after),
+        pending_protocol_profit_after: BigDecimal::from(ev.pending_protocol_profit_after),
     }
 }
 

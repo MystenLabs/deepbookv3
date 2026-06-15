@@ -18,8 +18,9 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         order_id: ev.order_id.to_string(),
         position_root_id: ev.position_root_id.to_string(),
         owner: ev.owner.to_string(),
-        lower_strike: BigDecimal::from(ev.lower_strike),
-        higher_strike: BigDecimal::from(ev.higher_strike),
+        // u24 absolute tick index; raw strike = tick * MarketCreated.tick_size.
+        lower_tick: ev.lower_tick as i64,
+        higher_tick: ev.higher_tick as i64,
         leverage: ev.leverage as i64,
         entry_probability: ev.entry_probability as i64,
         quantity: BigDecimal::from(ev.quantity),

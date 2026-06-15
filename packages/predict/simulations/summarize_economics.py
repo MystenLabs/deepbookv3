@@ -109,10 +109,10 @@ def update_totals(records: list[dict[str, Any]]) -> dict[str, int]:
                 totals["liquidated_gross_value"] += gross_value
                 totals["liquidation_bad_debt"] += max(0, floor_value - gross_value)
                 totals["liquidation_surplus"] += max(0, gross_value - floor_value)
-            elif update_type == "pool_supply":
-                totals["supply_payment"] += int(update["payment"])
-            elif update_type == "pool_withdraw":
-                totals["withdraw_payout"] += int(update["payout"])
+            elif update_type == "supply_filled":
+                totals["supply_payment"] += int(update["dusdc_amount"])
+            elif update_type == "withdraw_filled":
+                totals["withdraw_payout"] += int(update["dusdc_amount"])
     totals["liquidation_gap"] = totals["liquidation_bad_debt"]
     return dict(totals)
 

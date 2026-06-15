@@ -25,12 +25,14 @@ FLOW_ACTION_LABELS = {
     "redeem": "redeem",
     "supply": "supply",
     "withdraw": "withdraw",
+    "flush": "flush",
 }
 FLOW_ACTION_COLORS = {
     "mint": "#2563eb",
     "redeem": "#7c3aed",
     "supply": "#0891b2",
     "withdraw": "#f97316",
+    "flush": "#dc2626",
 }
 
 LIQUIDATION_ACTION_ORDER = ("mint", "redeem", "supply", "withdraw")
