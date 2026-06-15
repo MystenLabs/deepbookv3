@@ -114,9 +114,11 @@ public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 // === Settlement ===
 
-/// Resolution-feed grid period. Terminal settlement reads the exact Pyth
-/// observation keyed at `market.expiry`, which the off-chain resolution relayer
-/// publishes (via `pyth_feed::insert_at`) only on this millisecond grid.
+/// Resolution-feed grid period. Terminal settlement is an exact whole-millisecond
+/// lookup keyed at `market.expiry`; `pyth_feed::insert_at` accepts only a print
+/// whose signed publisher timestamp is exactly that millisecond. The off-chain
+/// resolution relayer sources that key from Pyth Lazer's exact-timestamp
+/// resolution endpoints and inserts it on this millisecond grid.
 /// `registry::create_expiry_market` requires `expiry % resolution_period_ms!() == 0`
 /// so the settling key is always producible; an off-grid expiry could never settle
 /// and would block the pool flush indefinitely (`plp::value_expiry` aborts on a

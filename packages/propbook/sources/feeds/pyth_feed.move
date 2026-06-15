@@ -127,7 +127,10 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
 }
 
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
-/// source timestamp. This does not mutate `latest`.
+/// source timestamp. Aborts `EInsertTimestampNotExactMillisecond` if the signed
+/// source timestamp is not a whole millisecond, so the exact-history key is an
+/// unambiguous millisecond a consumer can look up by equality. This does not
+/// mutate `latest`.
 public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_insert_read(&update, clock.timestamp_ms());

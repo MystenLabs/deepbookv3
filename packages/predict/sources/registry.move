@@ -275,13 +275,15 @@ public fun register_underlying(
 /// it is not mintable until `plp::rebalance_expiry_cash` funds it.
 ///
 /// `expiry` must fall on the resolution-feed grid (`expiry %
-/// constants::resolution_period_ms!() == 0`). Terminal settlement reads the exact
-/// Pyth observation keyed at `expiry`, which the off-chain resolution relayer
-/// publishes only on that grid; an off-grid expiry could never settle. While a
-/// past-expiry market is awaiting its settling observation it has no solvency-safe
-/// NAV, so the pool flush (`plp::value_expiry`) aborts until the observation lands
-/// — the keeper retries and does not flush while an active market is in that
-/// pending-settlement window (bounded to a few seconds at the grid cadence).
+/// constants::resolution_period_ms!() == 0`). Terminal settlement is an exact
+/// whole-millisecond lookup keyed at `expiry` (`pyth_feed::insert_at` accepts only
+/// a print at exactly that millisecond), which the off-chain resolution relayer
+/// sources from Pyth Lazer's exact-timestamp resolution endpoints and inserts only
+/// on that grid; an off-grid expiry could never settle. While a past-expiry market
+/// is awaiting its settling observation it has no solvency-safe NAV, so the pool
+/// flush (`plp::value_expiry`) aborts until the observation lands — the keeper
+/// retries and does not flush while an active market is in that pending-settlement
+/// window (bounded to a few seconds at the grid cadence).
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
