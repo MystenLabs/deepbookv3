@@ -555,6 +555,8 @@ fn rebalance_row(
         idle_balance_after: bd(idle_after),
         sent_to_expiry_after: bd(50),
         received_from_expiry_after: bd(0),
+        protocol_reserve_balance_after: bd(77),
+        pending_protocol_profit_after: bd(7),
     }
 }
 
@@ -1013,7 +1015,11 @@ async fn vault_state_current_uses_newest_triple_across_tables() {
     // total_supply / pool_value come from the latest flush (the valuation).
     assert_eq!(state["current"]["total_supply"], "111");
     assert_eq!(state["current"]["pool_value"], "1000");
-    assert!(state["current"]["protocol_reserve_balance_after"].is_null());
+    // Reserve and carried cut now reconcile across profit + rebalance; here only the
+    // rebalance carries them, so they surface from it (newest triple).
+    assert_eq!(state["current"]["protocol_reserve_balance_after"], "77");
+    assert_eq!(state["current"]["pending_protocol_profit_after"], "7");
+    // profit_basis_after is still carried only by the profit event (none seeded).
     assert!(state["current"]["profit_basis_after"].is_null());
     assert_eq!(state["latest_flush"]["kind"], "flush_executed");
     assert_eq!(state["latest_cash_rebalance"]["checkpoint"], 20);

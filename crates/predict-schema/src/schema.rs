@@ -455,6 +455,8 @@ diesel::table! {
         idle_balance_after -> Numeric,
         sent_to_expiry_after -> Numeric,
         received_from_expiry_after -> Numeric,
+        protocol_reserve_balance_after -> Numeric,
+        pending_protocol_profit_after -> Numeric,
     }
 }
 
@@ -497,6 +499,7 @@ diesel::table! {
         idle_balance_after -> Numeric,
         protocol_reserve_balance_after -> Numeric,
         profit_basis_after -> Numeric,
+        pending_protocol_profit_after -> Numeric,
     }
 }
 

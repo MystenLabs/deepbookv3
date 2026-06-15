@@ -438,7 +438,9 @@ CREATE TABLE IF NOT EXISTS expiry_cash_rebalanced (
     expiry_cash_after                NUMERIC   NOT NULL,
     idle_balance_after               NUMERIC   NOT NULL,
     sent_to_expiry_after             NUMERIC   NOT NULL,
-    received_from_expiry_after       NUMERIC   NOT NULL
+    received_from_expiry_after       NUMERIC   NOT NULL,
+    protocol_reserve_balance_after   NUMERIC   NOT NULL,
+    pending_protocol_profit_after    NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_expiry_cash_rebalanced_vault_ts ON expiry_cash_rebalanced(pool_vault_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_expiry_cash_rebalanced_expiry_ts ON expiry_cash_rebalanced(expiry_market_id, checkpoint_timestamp_ms);
@@ -480,7 +482,8 @@ CREATE TABLE IF NOT EXISTS expiry_profit_materialized (
     protocol_profit                  NUMERIC   NOT NULL,
     idle_balance_after               NUMERIC   NOT NULL,
     protocol_reserve_balance_after   NUMERIC   NOT NULL,
-    profit_basis_after               NUMERIC   NOT NULL
+    profit_basis_after               NUMERIC   NOT NULL,
+    pending_protocol_profit_after    NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_expiry_profit_materialized_vault_ts ON expiry_profit_materialized(pool_vault_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_expiry_profit_materialized_expiry_ts ON expiry_profit_materialized(expiry_market_id, checkpoint_timestamp_ms);

@@ -340,7 +340,7 @@ fn expiry_market_mint_paused_updated_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn expiry_cash_rebalanced_map() {
-    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN expiry_market_id -> canonical 0x, amount/target_cash/expiry_cash_after/idle_balance_after/sent_to_expiry_after/received_from_expiry_after NUMERIC, to_expiry BOOLEAN between amount and target_cash, tx_index/event_index).
+    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN expiry_market_id -> canonical 0x, amount/target_cash/expiry_cash_after/idle_balance_after/sent_to_expiry_after/received_from_expiry_after/protocol_reserve_balance_after/pending_protocol_profit_after NUMERIC, to_expiry BOOLEAN between amount and target_cash, tx_index/event_index).
 }
 
 #[test]
@@ -352,7 +352,7 @@ fn expiry_cash_received_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn expiry_profit_materialized_map() {
-    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN expiry_market_id -> canonical 0x, lp_profit/protocol_profit/idle_balance_after/protocol_reserve_balance_after/profit_basis_after NUMERIC, tx_index/event_index).
+    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN expiry_market_id -> canonical 0x, lp_profit/protocol_profit/idle_balance_after/protocol_reserve_balance_after/profit_basis_after/pending_protocol_profit_after NUMERIC, tx_index/event_index).
 }
 
 #[test]

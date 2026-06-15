@@ -360,6 +360,8 @@ pub struct ExpiryCashRebalanced {
     pub idle_balance_after: u64,
     pub sent_to_expiry_after: u64,
     pub received_from_expiry_after: u64,
+    pub protocol_reserve_balance_after: u64,
+    pub pending_protocol_profit_after: u64,
 }
 
 impl MoveStruct for ExpiryCashRebalanced {
@@ -394,6 +396,7 @@ pub struct ExpiryProfitMaterialized {
     pub idle_balance_after: u64,
     pub protocol_reserve_balance_after: u64,
     pub profit_basis_after: u64,
+    pub pending_protocol_profit_after: u64,
 }
 
 impl MoveStruct for ExpiryProfitMaterialized {

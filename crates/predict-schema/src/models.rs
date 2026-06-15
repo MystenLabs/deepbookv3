@@ -438,6 +438,8 @@ pub struct ExpiryCashRebalanced {
     pub idle_balance_after: BigDecimal,
     pub sent_to_expiry_after: BigDecimal,
     pub received_from_expiry_after: BigDecimal,
+    pub protocol_reserve_balance_after: BigDecimal,
+    pub pending_protocol_profit_after: BigDecimal,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -478,6 +480,7 @@ pub struct ExpiryProfitMaterialized {
     pub idle_balance_after: BigDecimal,
     pub protocol_reserve_balance_after: BigDecimal,
     pub profit_basis_after: BigDecimal,
+    pub pending_protocol_profit_after: BigDecimal,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]

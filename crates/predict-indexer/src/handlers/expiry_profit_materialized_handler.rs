@@ -20,6 +20,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         idle_balance_after: BigDecimal::from(ev.idle_balance_after),
         protocol_reserve_balance_after: BigDecimal::from(ev.protocol_reserve_balance_after),
         profit_basis_after: BigDecimal::from(ev.profit_basis_after),
+        pending_protocol_profit_after: BigDecimal::from(ev.pending_protocol_profit_after),
     }
 }
 

@@ -836,8 +836,16 @@ impl Reader {
             "total_supply": flush.as_ref().map(|r| r.total_supply.clone()),
             "pool_value": flush.as_ref().map(|r| r.pool_value.clone()),
             "active_market_nav": flush.as_ref().map(|r| r.active_market_nav.clone()),
-            "protocol_reserve_balance_after":
-                profit.as_ref().map(|r| r.protocol_reserve_balance_after.clone()),
+            // The reserve and carried protocol cut move on BOTH terminal
+            // materialization and the rebalance-sweep drain, so reconcile across both.
+            "protocol_reserve_balance_after": newest([
+                keyed!(profit, protocol_reserve_balance_after),
+                keyed!(rebalance, protocol_reserve_balance_after),
+            ]),
+            "pending_protocol_profit_after": newest([
+                keyed!(profit, pending_protocol_profit_after),
+                keyed!(rebalance, pending_protocol_profit_after),
+            ]),
             "profit_basis_after": profit.as_ref().map(|r| r.profit_basis_after.clone()),
         });
 
