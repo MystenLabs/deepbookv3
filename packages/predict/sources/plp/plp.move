@@ -43,11 +43,12 @@ const EExpiryMarketAlreadyValued: u64 = 1;
 const EWrongPoolVault: u64 = 2;
 const EMissingExpiryValuation: u64 = 3;
 const EPackageVersionDisabled: u64 = 9;
-const EBootstrapNavNotEmpty: u64 = 10;
+const ENotBootstrapped: u64 = 10;
 const EPlpPriceBelowCircuitBreaker: u64 = 11;
 const EPlpPriceAboveCircuitBreaker: u64 = 12;
-const EPlpSupplyDust: u64 = 13;
+const EAlreadyBootstrapped: u64 = 13;
 const EPoolNavDust: u64 = 14;
+const EBelowMinBootstrapLiquidity: u64 = 15;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -161,6 +162,11 @@ public fun profit_basis_credits(vault: &PoolVault): u64 {
     vault.expiry_accounting.profit_basis_credits()
 }
 
+/// Return the materialized protocol cut still awaiting a physical move to the reserve.
+public fun pending_protocol_profit(vault: &PoolVault): u64 {
+    vault.expiry_accounting.pending_protocol_profit()
+}
+
 /// Begin a full-pool flush (NAV valuation + LP queue drain) as the protocol
 /// operator (`AdminCap`).
 ///
@@ -238,10 +244,17 @@ public fun value_expiry(
 /// withdrawals), release the valuation lock, consume the potato, and return the
 /// LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV, net of the
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
+///
+/// `supply_budget` / `withdraw_budget` bound how many requests each queue may fill
+/// this flush (`None` = drain it fully); the operator sizes them to the gas left
+/// after valuing the snapshotted markets. The budgets are independent, so a supply
+/// backlog never starves withdrawals.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
+    supply_budget: Option<u64>,
+    withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
 ): u64 {
     vault.assert_version_allowed();
@@ -260,6 +273,7 @@ public fun finish_flush(
         vault.expiry_accounting.profit_basis_debits(),
         config.protocol_reserve_profit_share(),
         total_nav,
+        vault.expiry_accounting.pending_protocol_profit(),
     );
     let total_supply = vault.lp.total_supply();
     assert_plp_price_in_bounds(pool_nav, total_supply);
@@ -270,9 +284,17 @@ public fun finish_flush(
     // valuation, so the single FlushExecuted event carries the priced mark and its
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
-    let (supplies_filled, withdrawals_filled, requests_processed) = vault
+    let (supplies_filled, withdrawals_filled) = vault
         .lp
-        .drain(vault_id, &mut vault.expiry_accounting, pool_nav, total_supply, ctx);
+        .drain(
+            vault_id,
+            &mut vault.expiry_accounting,
+            pool_nav,
+            total_supply,
+            supply_budget,
+            withdraw_budget,
+            ctx,
+        );
     config.end_valuation();
     vault_events::emit_flush_executed(
         vault_id,
@@ -284,7 +306,7 @@ public fun finish_flush(
         idle,
         supplies_filled,
         withdrawals_filled,
-        requests_processed,
+        supplies_filled + withdrawals_filled,
         vault.expiry_accounting.idle_balance(),
     );
     pool_nav
@@ -350,6 +372,24 @@ public fun rebalance_expiry_cash(
     vault.rebalance_expiry_cash_inner(market, config, propbook_registry, pyth, clock);
 }
 
+/// Bootstrap the pool exactly once: permanently lock `payment` DUSDC of minimum
+/// liquidity. Mints matching PLP (1:1) into the book's locked balance — never
+/// withdrawable, so the caller receives no shares — and joins the DUSDC into idle.
+/// This keeps `total_supply > 0` for the life of the pool, making the supply==0
+/// bootstrap branch unreachable and the residual-idle re-bootstrap brick impossible.
+/// Callable only by the operator and only while the pool is pristine
+/// (`total_supply == 0`), so it runs exactly once; all supply/withdraw/flush flows
+/// abort `ENotBootstrapped` until it has.
+public fun lock_capital(vault: &mut PoolVault, _admin_cap: &AdminCap, payment: Coin<DUSDC>) {
+    vault.assert_version_allowed();
+    assert!(vault.lp.total_supply() == 0, EAlreadyBootstrapped);
+    let amount = payment.value();
+    assert!(amount >= constants::min_bootstrap_liquidity!(), EBelowMinBootstrapLiquidity);
+    vault.expiry_accounting.receive_idle(payment.into_balance());
+    vault.lp.mint_locked_liquidity(amount);
+    vault_events::emit_capital_locked(vault.id(), amount);
+}
+
 /// Queue a supply request: escrow `payment` DUSDC and record the requesting manager
 /// as the fill recipient. Routed through `manager` so a composing vault's own
 /// manager — not the tx signer — receives the minted PLP at the next flush. Returns
@@ -362,6 +402,7 @@ public fun request_supply(
 ): u64 {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     let vault_id = vault.id();
     vault.lp.request_supply(vault_id, manager, payment)
 }
@@ -376,6 +417,7 @@ public fun request_withdraw(
 ): u64 {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     let vault_id = vault.id();
     vault.lp.request_withdraw(vault_id, manager, lp)
 }
@@ -492,6 +534,12 @@ public(package) fun rebalance_expiry_cash_inner(
         let returned_cash_amount = vault
             .expiry_accounting
             .receive_expiry_cash(expiry_market_id, returned_cash);
+        // Surplus just returned to idle — realize any protocol cut a prior settled
+        // sweep could not cover because idle was deployed in other active markets.
+        // Drain before emitting so the event's reserve/pending/idle reflect it.
+        vault
+            .protocol_reserve_balance
+            .join(vault.expiry_accounting.realize_pending_protocol_profit());
         vault.emit_expiry_cash_rebalanced(
             market,
             expiry_market_id,
@@ -509,13 +557,17 @@ public(package) fun rebalance_expiry_cash_inner(
 /// not-yet-materialized profit share before terminal materialization and excludes
 /// it from LP value: `exclusion = share * max(0, (credits + active) - debits)`
 /// (live cash returns update credits, but reserve custody waits for terminal
-/// profit).
+/// profit). A cut already materialized but not yet physically moved (idle was
+/// deployed elsewhere) has left that debit-basis exclusion, so the carried
+/// `pending_protocol_profit` is subtracted separately to keep it out of LP value
+/// until it is drained into the reserve.
 public(package) fun lp_pool_value(
     idle_balance: u64,
     profit_basis_credits: u64,
     profit_basis_debits: u64,
     protocol_reserve_profit_share: u64,
     active_expiry_value: u64,
+    pending_protocol_profit: u64,
 ): u64 {
     let gross_pool_value = idle_balance + active_expiry_value;
     let aggregate_credits = profit_basis_credits + active_expiry_value;
@@ -525,16 +577,19 @@ public(package) fun lp_pool_value(
     );
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
     // withdraw idle cash, so when an active mark they withdrew against later
-    // collapses, the exclusion can exceed gross. LP value can never be negative —
-    // floor it at 0, which also prevents the subtraction from underflowing and
-    // bricking all PLP supply/withdraw.
-    gross_pool_value.saturating_sub(exclusion)
+    // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
+    // exceed gross. LP value can never be negative — floor it at 0, which also
+    // prevents the subtraction from underflowing and bricking all PLP supply/withdraw.
+    gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 
 // === Private Functions ===
 
-/// Abort before draining LP requests if the bootstrapped pool is dust-sized or the
-/// frozen mark implies a PLP price outside the executable protocol envelope.
+/// Abort before draining LP requests if the frozen mark implies a PLP price or pool
+/// NAV outside the executable protocol envelope. `total_supply > 0` is guaranteed by
+/// the genesis lock (`lock_capital`) + the `ENotBootstrapped` flush-start gate, so
+/// there is no supply==0 bootstrap branch and `total_supply` can never sit in the
+/// dust band (`min_bootstrap_liquidity >= min_withdraw_request`).
 ///
 /// The price-bound checks use floor-rounded math (`math::div`, and `mul_div_down`
 /// when the drain converts shares↔value) intentionally, so each boundary stays
@@ -542,23 +597,18 @@ public(package) fun lp_pool_value(
 /// the lower-bound check guarantees the real price clears it, and the floored
 /// upper-bound RHS only tightens the cap. The protocol is never short.
 fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
-    if (total_supply == 0) {
-        assert!(pool_nav == 0, EBootstrapNavNotEmpty);
-    } else {
-        assert!(total_supply >= constants::min_withdraw_request!(), EPlpSupplyDust);
-        assert!(
-            pool_nav >= math::mul(constants::min_withdraw_request!(), constants::min_plp_price!()),
-            EPoolNavDust,
-        );
-        assert!(
-            math::div(pool_nav, total_supply) >= constants::min_plp_price!(),
-            EPlpPriceBelowCircuitBreaker,
-        );
-        assert!(
-            pool_nav <= math::mul(total_supply, constants::max_plp_price!()),
-            EPlpPriceAboveCircuitBreaker,
-        );
-    }
+    assert!(
+        pool_nav >= math::mul(constants::min_withdraw_request!(), constants::min_plp_price!()),
+        EPoolNavDust,
+    );
+    assert!(
+        math::div(pool_nav, total_supply) >= constants::min_plp_price!(),
+        EPlpPriceBelowCircuitBreaker,
+    );
+    assert!(
+        pool_nav <= math::mul(total_supply, constants::max_plp_price!()),
+        EPlpPriceAboveCircuitBreaker,
+    );
 }
 
 /// Abort if the running package version is not allowed for this vault.
@@ -609,7 +659,9 @@ fun unregister_settled_expiry(
 }
 
 /// Materialize one terminal expiry's unapplied profit and split it: the protocol
-/// cut is withdrawn from idle into the protocol reserve, the LP cut stays in idle.
+/// cut is realized from idle into the protocol reserve — capped at available idle,
+/// with any remainder carried in `pending_protocol_profit` and realized on a later
+/// sweep — while the LP cut stays in idle.
 fun materialize_expiry_profit(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -621,10 +673,8 @@ fun materialize_expiry_profit(
     };
     let protocol_profit = math::mul(profit, config.protocol_reserve_profit_share());
     let lp_profit = profit - protocol_profit;
-    if (protocol_profit > 0) {
-        let protocol_profit_balance = vault.expiry_accounting.withdraw_idle(protocol_profit);
-        vault.protocol_reserve_balance.join(protocol_profit_balance);
-    };
+    let realized = vault.expiry_accounting.realize_protocol_profit(protocol_profit);
+    vault.protocol_reserve_balance.join(realized);
     vault_events::emit_expiry_profit_materialized(
         vault.id(),
         expiry_market_id,
@@ -633,6 +683,7 @@ fun materialize_expiry_profit(
         vault.expiry_accounting.idle_balance(),
         vault.protocol_reserve_balance.value(),
         vault.expiry_accounting.profit_basis_debits(),
+        vault.expiry_accounting.pending_protocol_profit(),
     );
 }
 
@@ -681,13 +732,17 @@ fun emit_expiry_cash_rebalanced(
         vault.expiry_accounting.idle_balance(),
         sent_to_expiry_after,
         received_from_expiry_after,
+        vault.protocol_reserve_balance.value(),
+        vault.expiry_accounting.pending_protocol_profit(),
     );
 }
 
 /// Engage the valuation lock and snapshot the active expiry set. Shared by both
-/// cap-gated flush entrypoints.
+/// cap-gated flush entrypoints. Gated on a bootstrapped pool so `finish_flush` never
+/// reaches `assert_plp_price_in_bounds` with `total_supply == 0`.
 fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
     vault.assert_version_allowed();
+    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();
     PoolValuation {
         pool_vault_id: vault.id(),

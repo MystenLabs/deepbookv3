@@ -241,7 +241,13 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
 
     let mut valuation = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut valuation, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = valuation.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    let pool_nav = valuation.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
 
     assert_eq!(pool_nav, IDLE_SEED);
     assert_eq!(vault.idle_balance(), IDLE_SEED);
@@ -296,26 +302,11 @@ fun settlement_inside_default_finite_range(): u64 {
     (helpers::strike_tick() + 1) * test_constants::default_tick_size()
 }
 
-fun bootstrap_pool(fx: &mut helpers::Fixture, manager: &PredictManager, amount: u64) {
-    let vault_id = fx.vault_id();
-    fx.scenario_mut().next_tx(manager.owner());
-    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
-    let funds = coin::mint_for_testing<DUSDC>(amount, fx.scenario_mut().ctx());
-    vault.request_supply(manager, &config, funds);
-    return_shared(config);
-    return_shared(vault);
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
-    let valuation = fx.start_flush(&mut config, &vault);
-    let pool_nav = valuation.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
-    assert_eq!(pool_nav, 0);
-    assert_eq!(vault.idle_balance(), amount);
-    assert_eq!(vault.plp_total_supply(), amount);
-    return_shared(config);
-    return_shared(vault);
+/// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP
+/// supply (`idle == total_supply == amount` at a 1.0 mark). `_manager` is retained for
+/// call-site symmetry; the lock is operator-gated and needs no manager.
+fun bootstrap_pool(fx: &mut helpers::Fixture, _manager: &PredictManager, amount: u64) {
+    fx.bootstrap_lock(amount);
 }
 
 fun fund_empty_market(fx: &mut helpers::Fixture, expiry_id: ID) {

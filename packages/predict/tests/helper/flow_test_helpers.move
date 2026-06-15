@@ -542,6 +542,20 @@ public fun load_pricer(
     )
 }
 
+/// Genesis-bootstrap the pool via `plp::lock_capital`: permanently lock `amount`
+/// DUSDC of minimum liquidity. Mints `amount` PLP into the book's locked balance
+/// (delivered to no one) and joins the DUSDC into idle, so `total_supply == idle ==
+/// amount` at a 1.0 mark — identical pool state to the old async bootstrap supply of
+/// `amount`. Must run before any supply/withdraw/flush (those abort `ENotBootstrapped`
+/// until the pool is locked).
+public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let coin = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
+    plp::lock_capital(&mut vault, &self.admin_cap, coin);
+    return_shared(vault);
+}
+
 /// Start a privileged pool-NAV flush as the operator `AdminCap`. The returned hot
 /// potato is threaded through `plp::value_expiry` × N then `plp::finish_flush`.
 public fun start_flush(

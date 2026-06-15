@@ -60,15 +60,17 @@ public(package) macro fun min_supply_request(): u64 { 10_000_000 }
 /// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
 public(package) macro fun min_withdraw_request(): u64 { 1_000_000 }
 
+/// Permanent genesis liquidity locked at the one-time `plp::lock_capital` bootstrap:
+/// 10 DUSDC (6-decimal units). MUST be >= `min_withdraw_request` so `total_supply`
+/// can never re-enter the dust band post-genesis (pinned by a constant-relationship
+/// test); the locked PLP keeps `total_supply > 0` for the life of the pool.
+public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
+
 /// Minimum executable PLP price: 0.01 DUSDC per PLP, in FLOAT_SCALING.
 public(package) macro fun min_plp_price(): u64 { 10_000_000 }
 
 /// Maximum executable PLP price: 100 DUSDC per PLP, in FLOAT_SCALING.
 public(package) macro fun max_plp_price(): u64 { 100_000_000_000 }
-
-/// Max live LP requests (supplies + withdrawals) a single flush processes.
-/// Bounds per-flush gas; the rest carry.
-public(package) macro fun max_requests_per_flush(): u64 { 100 }
 
 // === Leverage ===
 

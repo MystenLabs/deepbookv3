@@ -60,7 +60,13 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    let pool_nav = val.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
 
     // Independent reference: each market's NAV is read DIRECTLY (not via the
     // potato) and summed by hand, then priced by the separately unit-tested
@@ -74,6 +80,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
         vault.profit_basis_debits(),
         config.protocol_reserve_profit_share(),
         nav1 + nav2,
+        vault.pending_protocol_profit(),
     );
     assert_eq!(pool_nav, expected);
     // The orders took effect: each market's NAV is liability-reduced below its
@@ -114,7 +121,13 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    let pool_nav = val.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
@@ -154,7 +167,13 @@ fun empty_pool_valuation_returns_idle() {
 
     // No active markets: start then finish with no value steps returns idle.
     let val = fx.start_flush(&mut config, &vault);
-    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    let pool_nav = val.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
     assert_eq!(pool_nav, idle_seed);
 
     return_shared(config);
@@ -186,7 +205,13 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     // Snapshot held two markets; only one was valued.
-    let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    let _ = val.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
 
     abort 999
 }
@@ -283,7 +308,13 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
 
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
+    let pool_nav = val.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
     assert_eq!(
         pool_nav,
         constants::expiry_cash_floor!() + (IDLE_SEED - constants::expiry_cash_floor!()),
@@ -319,6 +350,7 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
 #[test, expected_failure(abort_code = plp::EWrongPoolVault)]
 fun finish_with_wrong_vault_aborts() {
     let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(constants::min_bootstrap_liquidity!()); // flush start requires a bootstrapped pool
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
@@ -328,7 +360,13 @@ fun finish_with_wrong_vault_aborts() {
     // A second, unrelated vault: finishing against it must fail the binding check.
     let cap = coin::create_treasury_cap_for_testing<PLP>(fx.scenario_mut().ctx());
     let mut wrong_vault = plp::new(cap, fx.scenario_mut().ctx());
-    let _ = val.finish_flush(&mut wrong_vault, &mut config, fx.scenario_mut().ctx());
+    let _ = val.finish_flush(
+        &mut wrong_vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
 
     abort 999
 }
@@ -351,13 +389,20 @@ fun end_valuation_without_start_aborts() {
 fun lp_pool_value_excludes_protocol_share_and_floors_at_zero() {
     // No unrealized profit (credits + active <= debits): full gross is LP value.
     // gross = 100 + 150 = 250; profit = max(0, (0+150) - 200) = 0; exclusion = 0.
-    assert_eq!(plp::lp_pool_value(100, 0, 200, 400_000_000, 150), 250);
+    assert_eq!(plp::lp_pool_value(100, 0, 200, 400_000_000, 150, 0), 250);
     // Unrealized profit excluded at the protocol share.
     // gross = 100 + 100 = 200; profit = (50 + 100) - 0 = 150; exclusion = 150 * 0.5 = 75.
-    assert_eq!(plp::lp_pool_value(100, 50, 0, 500_000_000, 100), 125);
+    assert_eq!(plp::lp_pool_value(100, 50, 0, 500_000_000, 100, 0), 125);
     // Sticky exclusion exceeds gross -> floored at 0.
     // gross = 10; profit = (1000 + 0) - 0 = 1000; exclusion = 1000 -> floored to 0.
-    assert_eq!(plp::lp_pool_value(10, 1000, 0, 1_000_000_000, 0), 0);
+    assert_eq!(plp::lp_pool_value(10, 1000, 0, 1_000_000_000, 0, 0), 0);
+    // Carried pending protocol cut is excluded on top of the unrealized exclusion.
+    // gross = 300 + 100 = 400; profit = (0+100) - 0 = 100; exclusion = 100 * 0.5 = 50;
+    // pending = 40; 400 - 50 - 40 = 310.
+    assert_eq!(plp::lp_pool_value(300, 0, 0, 500_000_000, 100, 40), 310);
+    // Pending alone exceeding gross floors LP value at 0.
+    // gross = 100; exclusion = 0; pending = 150 > gross -> floored to 0.
+    assert_eq!(plp::lp_pool_value(100, 0, 0, 0, 0, 150), 0);
 }
 
 // === protocol_reserve_profit_share config ===
@@ -391,27 +436,11 @@ fun set_protocol_reserve_profit_share_above_max_aborts() {
 
 // === Helpers ===
 
-/// Bootstrap pool idle through the LP queue so nonzero NAV has matching PLP supply.
-fun bootstrap_pool(fx: &mut helpers::Fixture, manager: &PredictManager, amount: u64) {
-    let vault_id = fx.vault_id();
-    fx.scenario_mut().next_tx(manager.owner());
-    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
-    let funds = coin::mint_for_testing<DUSDC>(amount, fx.scenario_mut().ctx());
-    vault.request_supply(manager, &config, funds);
-    return_shared(config);
-    return_shared(vault);
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
-    let valuation = fx.start_flush(&mut config, &vault);
-    let pool_nav = valuation.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
-    assert_eq!(pool_nav, 0);
-    assert_eq!(vault.idle_balance(), amount);
-    assert_eq!(vault.plp_total_supply(), amount);
-    return_shared(config);
-    return_shared(vault);
+/// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP
+/// supply (`idle == total_supply == amount` at a 1.0 mark). `_manager` is retained for
+/// call-site symmetry; the lock is operator-gated and needs no manager.
+fun bootstrap_pool(fx: &mut helpers::Fixture, _manager: &PredictManager, amount: u64) {
+    fx.bootstrap_lock(amount);
 }
 
 /// Create a live market and fund it to the cash floor from idle (no orders).

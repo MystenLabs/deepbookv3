@@ -57,10 +57,15 @@ This is a deliberate audit decision (L8): the flush prices supply and withdraw a
 ```
 gross_pool_value = idle_DUSDC + Σ active_expiry current_nav
 exclusion        = protocol_reserve_profit_share × max(0, (profit_credits + Σ current_nav) − profit_debits)
-pool_nav         = max(0, gross_pool_value − exclusion)
+pool_nav         = max(0, gross_pool_value − exclusion − pending_protocol_profit)
 ```
 
-The **exclusion** is the protocol's share of profit that NAV has priced in but that has not yet been terminally materialized into the reserve (see [Profit materialization](#profit-materialization-at-settlement)). Incentive value is not part of this figure (incentives are out of the pool entirely).
+Both subtracted terms are protocol profit not yet sitting in the reserve, in two phases:
+
+- **`exclusion`** — the protocol's share of *unmaterialized* profit: gain NAV has priced in (via `current_nav`) but that has not yet terminally materialized into the reserve.
+- **`pending_protocol_profit`** — a cut that *has* materialized but whose cash could not yet be moved to the reserve because idle was deployed in other markets; it is carried and realized on a later sweep (see [Profit materialization](#profit-materialization-at-settlement)).
+
+The two are disjoint: the moment a cut materializes it leaves `exclusion` (its profit enters `profit_debits`) and, if not immediately movable, enters `pending_protocol_profit`. Incentive value is not part of this figure (incentives are out of the pool entirely).
 
 `pool_nav` and the PLP `total_supply` are snapshotted **once** and passed to the drain for both queues. This single mark prices supply and withdraw identically:
 
@@ -73,7 +78,7 @@ There is **no band, no separate supply/withdraw pricing, and no optimistic/conse
 flowchart TD
   CAP[AdminCap / MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
   LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
-  EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - pending protocol profit]
+  EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
   NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]
   DRAIN --> SUP[supplies first: mint PLP into idle]
   DRAIN --> WD[then withdrawals FIFO until idle dry]
@@ -166,7 +171,7 @@ The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rat
 
 ## Profit materialization at settlement
 
-Profit is recognized only when it is **cash-backed and irreversible** — when an expiry settles and cash actually flows back to the pool — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the pending-profit exclusion until terminal materialization.
+Profit is recognized only when it is **cash-backed and irreversible** — when an expiry settles and cash actually flows back to the pool — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
 
 The ledger tracks profit per expiry against a **watermark**:
 
@@ -180,7 +185,7 @@ protocol_profit = floor(profit × protocol_reserve_profit_share)
 lp_profit       = profit − protocol_profit
 ```
 
-LP profit stays in idle DUSDC (raising NAV for all holders). Protocol profit is moved out of idle into the protocol reserve, which is excluded from PLP redemption. The cross-expiry `net_losses_to_fill` netting means the protocol only takes a cut of *aggregate* profit after prior losses are recovered — protocol revenue does not accrue while the pool is underwater on net.
+LP profit stays in idle DUSDC (raising NAV for all holders). The protocol cut is realized from idle into the protocol reserve — but only up to the idle actually available. The cash backing a cut may have been swept to idle earlier and redeployed to fund other active markets, so the cut can exceed idle at the instant of settlement; the realizable portion moves immediately and any remainder is carried in `pending_protocol_profit`, drained on a later sweep that refills idle (a settled-market sweep, or a live market returning surplus). Carrying it keeps the settled sweep — and the pool flush that drives it — from ever aborting on the cash move, and the carried amount stays excluded from LP value (above) until it is moved, so LPs are neither over- nor under-credited. Realization is also subordinate to funding: a top-up that backs trader payouts is never starved to pay the protocol. The reserve is excluded from PLP redemption. The cross-expiry `net_losses_to_fill` netting means the protocol only takes a cut of *aggregate* profit after prior losses are recovered — protocol revenue does not accrue while the pool is underwater on net.
 
 ## DEEP staking custody
 

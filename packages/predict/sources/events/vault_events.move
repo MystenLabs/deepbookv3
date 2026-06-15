@@ -23,6 +23,9 @@ public struct ExpiryCashReceived has copy, drop, store {
 
 /// Emitted when an active expiry's cash is rebalanced toward target: a top-up from
 /// idle (`to_expiry = true`) or a surplus-sweep back to idle (`to_expiry = false`).
+/// On a sweep, any carried protocol cut a prior settled sweep could not cover is also
+/// realized from the returned idle into the reserve, so `protocol_reserve_balance_after`
+/// and `pending_protocol_profit_after` report the post-drain state.
 public struct ExpiryCashRebalanced has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -33,10 +36,13 @@ public struct ExpiryCashRebalanced has copy, drop, store {
     idle_balance_after: u64,
     sent_to_expiry_after: u64,
     received_from_expiry_after: u64,
+    protocol_reserve_balance_after: u64,
+    pending_protocol_profit_after: u64,
 }
 
-/// Emitted when a terminal expiry's profit is materialized: the LP cut stays in
-/// idle and the protocol cut is moved into the protocol reserve.
+/// Emitted when a terminal expiry's profit is materialized: the LP cut stays in idle
+/// and the protocol cut is realized into the protocol reserve up to available idle, any
+/// remainder carried in `pending_protocol_profit_after` for a later sweep to realize.
 public struct ExpiryProfitMaterialized has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -45,6 +51,7 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
+    pending_protocol_profit_after: u64,
 }
 
 /// Emitted when a manager stakes DEEP for trading benefits.
@@ -148,6 +155,14 @@ public struct FlushExecuted has copy, drop, store {
     idle_balance_after: u64,
 }
 
+/// Emitted once when the pool is bootstrapped via `plp::lock_capital`: `amount`
+/// DUSDC is permanently locked as minimum liquidity and matching PLP is minted into
+/// the book's locked balance (never withdrawable), so `total_supply` stays > 0.
+public struct CapitalLocked has copy, drop, store {
+    pool_vault_id: ID,
+    amount: u64,
+}
+
 // === Public-Package Functions ===
 
 public(package) fun emit_expiry_cash_received(
@@ -180,6 +195,8 @@ public(package) fun emit_expiry_cash_rebalanced(
     idle_balance_after: u64,
     sent_to_expiry_after: u64,
     received_from_expiry_after: u64,
+    protocol_reserve_balance_after: u64,
+    pending_protocol_profit_after: u64,
 ) {
     event::emit(ExpiryCashRebalanced {
         pool_vault_id,
@@ -191,6 +208,8 @@ public(package) fun emit_expiry_cash_rebalanced(
         idle_balance_after,
         sent_to_expiry_after,
         received_from_expiry_after,
+        protocol_reserve_balance_after,
+        pending_protocol_profit_after,
     });
 }
 
@@ -202,6 +221,7 @@ public(package) fun emit_expiry_profit_materialized(
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
+    pending_protocol_profit_after: u64,
 ) {
     event::emit(ExpiryProfitMaterialized {
         pool_vault_id,
@@ -211,6 +231,7 @@ public(package) fun emit_expiry_profit_materialized(
         idle_balance_after,
         protocol_reserve_balance_after,
         profit_basis_after,
+        pending_protocol_profit_after,
     });
 }
 
@@ -350,4 +371,8 @@ public(package) fun emit_flush_executed(
         requests_processed,
         idle_balance_after,
     });
+}
+
+public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {
+    event::emit(CapitalLocked { pool_vault_id, amount });
 }

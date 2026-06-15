@@ -75,7 +75,8 @@ and contributors. For *how* each mechanism works, follow the links into
   value, never negative.
 - **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP
   supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of the
-  pending-protocol-profit exclusion), computed once in `finish_flush`. Because each
+  protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`),
+  computed once in `finish_flush`. Because each
   `current_nav` is exact, that one mark equals true recoverable value in both
   directions: a supplier prices `=` fair shares (never over-mints to dilute
   incumbents) and a withdrawer draws `=` fair cash. There is **no conservative

@@ -35,6 +35,10 @@ public struct Ledger has store {
     profit_basis_credits: u64,
     /// Aggregate terminal losses that future terminal profits must recover first.
     net_losses_to_fill: u64,
+    /// Protocol profit already materialized into the debit basis but not yet
+    /// physically moved to the reserve because idle was deployed in other active
+    /// markets at materialization. Excluded from LP value until drained.
+    pending_protocol_profit: u64,
 }
 
 /// Durable accounting row for one registered expiry market.
@@ -57,6 +61,7 @@ public(package) fun new(ctx: &mut TxContext): Ledger {
         profit_basis_debits: 0,
         profit_basis_credits: 0,
         net_losses_to_fill: 0,
+        pending_protocol_profit: 0,
     }
 }
 
@@ -75,6 +80,10 @@ public(package) fun profit_basis_debits(ledger: &Ledger): u64 {
 
 public(package) fun profit_basis_credits(ledger: &Ledger): u64 {
     ledger.profit_basis_credits
+}
+
+public(package) fun pending_protocol_profit(ledger: &Ledger): u64 {
+    ledger.pending_protocol_profit
 }
 
 /// Return DUSDC sent to and received from one expiry market.
@@ -206,6 +215,25 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
         ledger.profit_basis_debits = ledger.profit_basis_debits + materialized_profit;
         materialized_profit
     }
+}
+
+/// Realize as much carried protocol profit as idle can cover, splitting it out of
+/// idle for the caller to move into the protocol reserve. The split is capped at
+/// idle so a settled-market sweep can never abort when the cut's cash is
+/// temporarily deployed in other active markets; the uncovered remainder stays in
+/// `pending_protocol_profit` and is realized on a later sweep that refills idle.
+public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balance<DUSDC> {
+    let draw = ledger.pending_protocol_profit.min(ledger.idle_balance.value());
+    ledger.pending_protocol_profit = ledger.pending_protocol_profit - draw;
+    ledger.idle_balance.split(draw)
+}
+
+/// Accrue a freshly materialized protocol cut, then realize what idle can currently
+/// cover. In the common case idle covers the cut, so the full amount is split out
+/// immediately and nothing is carried.
+public(package) fun realize_protocol_profit(ledger: &mut Ledger, amount: u64): Balance<DUSDC> {
+    ledger.pending_protocol_profit = ledger.pending_protocol_profit + amount;
+    ledger.realize_pending_protocol_profit()
 }
 
 /// Return current net DUSDC funded into an expiry (sent minus received, floored).
