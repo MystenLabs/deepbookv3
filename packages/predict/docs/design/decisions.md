@@ -189,8 +189,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `min_strike + index·tick_size`. Collapsing to one representation makes misaligned
   strikes unrepresentable and makes strike analytics feed-global. *Rejected:* keeping
   grid-relative boundary indices, storing raw `u64` strikes in the id (they do not
-  fit), and an opaque id with a separate order table. See
-  [tick range encoding](./tick-range-encoding.md).
+  fit), and an opaque id with a separate order table.
 - **No-spot market creation.** Because the tick domain is absolute, market creation
   reads no live spot — it snapshots the caller-chosen market `tick_size` and starts with zero cash.
   `MarketCreated` carries `tick_size`, not min/max strike. *Rationale:* the only

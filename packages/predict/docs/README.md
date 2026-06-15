@@ -53,13 +53,6 @@ How the protocol is built:
   what capital, the capability and authorization model, and version gating.
 - **[Configuration](./design/configuration.md)** — what is tunable, the
   defaults, how config is snapshotted per expiry, and who can change it.
-- **[Tick range encoding](./design/tick-range-encoding.md)** — the
-  absolute-tick range representation behind public APIs, order IDs, and exposure
-  indexes (entrypoints and events carry the `(lower_tick, higher_tick)` pair; only
-  the order ID packs the ticks).
-- **[Versioning and shared-object loaders](./design/versioning-and-loaders.md)**
-  — the central version authority and checked loader pattern for Predict shared
-  objects.
 - **[Invariants](./design/invariants.md)** — a precise, scannable reference of
   the conditions the protocol always maintains (solvency, floor, NAV,
   settlement, liquidation, rounding).

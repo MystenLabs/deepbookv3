@@ -139,7 +139,7 @@ export function target(module: string, fn: string): `${string}::${string}::${str
 // `i64::from_parts`; the propbook BS update now takes magnitude+sign primitives
 // directly (`block_scholes_oracle::update::new_update`). So there is no
 // `fixedMathTarget` helper. The rename still matters for the localnet publish flow
-// and the named-address dependency (see SIM_STATUS / run.sh).
+// and the named-address dependency (see run.sh).
 
 // propbook owns the extracted Pyth spot feed and Block Scholes surface feed.
 function propbookTarget(module: string, fn: string): `${string}::${string}::${string}` {

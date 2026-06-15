@@ -18,8 +18,7 @@ Some structural constants are real and stable enough to state directly:
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
 - **The discrete leverage set** is exactly {1x, 1.5x, 2x, 2.5x, 3x}, expressed as 1e9-scaled multipliers. The leverage *tiers* (which probabilities permit which leverage) and the leverage floor window are upgrade-required constants, not config fields.
 - **The per-expiry funding cap** (`expiry_max_funding`) and the **maximum active expiry count** are upgrade-required constants, not admin-tunable config. The per-flow funding cap that the pool sync enforces against is read directly from the constant.
-- **Market tick sizes** must be positive, within the protocol's overflow-safe bounds, and equal to the underlying's configured minimum tick size or a 10x multiple above it. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain. See [tick range encoding](./tick-range-encoding.md).
-
+- **Market tick sizes** must be positive, within the protocol's overflow-safe bounds, and equal to the underlying's configured minimum tick size or a 10x multiple above it. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain.
 ## Three classes of configuration
 
 Beyond the tunable/constant split, the admin-tunable layer is organized by *when and where* a value is read. There are three classes.
@@ -94,8 +93,7 @@ Several bounds are tightened on purpose so a single bad admin call cannot quietl
 
 ## Registry tuning: underlying minimum tick size
 
-The `Registry` records admin-approved Propbook underlyings and a per-underlying minimum market `tick_size`. `register_underlying` is `AdminCap`-gated and validates the minimum against the same protocol tick-size bounds used at market creation. A market chooses its concrete `tick_size` at creation, and that value is committed to the `ExpiryMarket`; it must equal the underlying's minimum or a 10x multiple above it. There is no on-chain check that a tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded). See [tick range encoding](./tick-range-encoding.md).
-
+The `Registry` records admin-approved Propbook underlyings and a per-underlying minimum market `tick_size`. `register_underlying` is `AdminCap`-gated and validates the minimum against the same protocol tick-size bounds used at market creation. A market chooses its concrete `tick_size` at creation, and that value is committed to the `ExpiryMarket`; it must equal the underlying's minimum or a 10x multiple above it. There is no on-chain check that a tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded).
 The `Registry` also owns the protocol's version set (below) and the `PauseCap` / `MarketLifecycleCap` allowlists. The oracle/feed objects themselves are external (`propbook`); the registry only records which Propbook underlyings Predict may create markets for and the minimum tick size each underlying permits.
 
 ## Versioning and pause governance
@@ -124,5 +122,4 @@ All admin setters route through their owning module: global protocol policy thro
 - [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how the `PricingConfig` freshness thresholds enter live probability resolution from the propbook feeds.
 - [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the terminal floor index, liquidation LTV, and leverage tiers that `StrikeExposureConfig` governs.
 - [./architecture.md](./architecture.md) — object model, the oracle extraction, and the async NAV/LP layer.
-- [./tick-range-encoding.md](./tick-range-encoding.md) — the tick domain, `tick_size`, and the overflow bound.
 - [../risks.md](../risks.md) — operational and governance risk, including pause/version handling.
