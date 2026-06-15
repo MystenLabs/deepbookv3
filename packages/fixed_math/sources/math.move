@@ -8,6 +8,7 @@
 /// - mul(x, y): 1e9-scaled multiplication, rounded down
 /// - div(x, y): 1e9-scaled division, rounded down
 /// - mul_div_down(x, y, denominator): raw integer x*y/denominator, rounded down
+/// - mul_div_up(x, y, denominator): raw integer x*y/denominator, rounded up
 /// - ln(x): natural logarithm
 /// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
@@ -134,6 +135,15 @@ public fun div(x: u64, y: u64): u64 {
 public fun mul_div_down(x: u64, y: u64, denominator: u64): u64 {
     assert!(denominator > 0, EInputZero);
     (((x as u128) * (y as u128)) / (denominator as u128)) as u64
+}
+
+/// Multiply two raw integer values, divide by a raw denominator, and round up.
+/// `numerator + denominator - 1` cannot overflow u128 for any u64 operands
+/// (max is `(2^64-1)^2 + 2^64 - 2 < u128::MAX`), so no intermediate guard is needed.
+public fun mul_div_up(x: u64, y: u64, denominator: u64): u64 {
+    assert!(denominator > 0, EInputZero);
+    let numerator = (x as u128) * (y as u128);
+    ((numerator + (denominator as u128) - 1) / (denominator as u128)) as u64
 }
 
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).

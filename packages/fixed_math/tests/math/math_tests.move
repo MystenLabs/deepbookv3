@@ -109,6 +109,52 @@ fun mul_div_down_uses_u128_intermediate() {
     assert_eq!(math::mul_div_down(10_000_000_000, 10_000_000_000, 10_000_000_000), 10_000_000_000);
 }
 
+#[test]
+fun mul_div_up_ceils_raw_integer_ratio() {
+    // ceil(10 * 10 / 6) = ceil(16.666...) = 17 (mul_div_down gives 16).
+    assert_eq!(math::mul_div_up(10, 10, 6), 17);
+}
+
+#[test]
+fun mul_div_up_exact_division_does_not_round() {
+    // 10 * 10 / 5 = 20 exactly; a spurious +1 would wrongly return 21.
+    assert_eq!(math::mul_div_up(10, 10, 5), 20);
+}
+
+#[test]
+fun mul_div_up_rounds_smallest_remainder_up() {
+    // ceil(1 * 1 / 2) = ceil(0.5) = 1: the boundary where 1 unit matters.
+    assert_eq!(math::mul_div_up(1, 1, 2), 1);
+}
+
+#[test]
+fun mul_div_up_of_zero_is_zero() {
+    // ceil(0 / 6) = 0: a zero numerator never rounds up to 1.
+    assert_eq!(math::mul_div_up(0, 1_000_000_000, 6), 0);
+}
+
+#[test]
+fun mul_div_up_at_float_scaling_rounds_dust_up() {
+    // ceil(1 * 1 / 1e9) = 1: the live-redeem floor deduction. `mul(1, 1)` rounds
+    // this same sub-unit dust DOWN to 0, so the round-up form is what biases the
+    // deduction toward the pool.
+    assert_eq!(math::mul_div_up(1, 1, float!()), 1);
+    assert_eq!(math::mul(1, 1), 0);
+}
+
+#[test]
+fun mul_div_up_uses_u128_intermediate() {
+    // ceil(10_000_000_000 * 10_000_000_000 / 10_000_000_000) = 10_000_000_000.
+    // The product is 1e20, above u64::MAX, so the helper must widen before multiplying.
+    assert_eq!(math::mul_div_up(10_000_000_000, 10_000_000_000, 10_000_000_000), 10_000_000_000);
+}
+
+#[test, expected_failure(abort_code = math::EInputZero)]
+fun mul_div_up_zero_denominator_aborts() {
+    math::mul_div_up(10, 10, 0);
+    abort 999
+}
+
 // === ln ===
 
 #[test]

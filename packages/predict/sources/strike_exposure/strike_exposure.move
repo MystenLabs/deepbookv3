@@ -296,10 +296,18 @@ public(package) fun close_and_quote_live_order(
     // calculate payout
     let range_probability = pricer.range_price(lower, higher);
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
-    // Live redeem outflow rounds down (user eats <=1 ulp): both terms use
-    // round-down mul, and saturating_sub floors redeem_amount at 0, so the
-    // floor deduction can never underflow it (R1/R2).
-    let removed_floor_amount = math::mul(remove_floor_shares, index_now);
+    // Live redeem outflow rounds toward the pool (R2): the gross rounds DOWN and
+    // the floor deduction (subtrahend) rounds UP, so redeem_amount <= the exact
+    // live value `prob*qty - fs*index` and the user eats <=1 ulp. saturating_sub
+    // floors it at 0 (R1: no underflow). Rounding the deduction up is solvency-safe
+    // here because `removed_floor_amount` backs no stored reserve — unlike the
+    // settled C1 path, where the deduction must round down to stay bit-equal to the
+    // payout tree.
+    let removed_floor_amount = math::mul_div_up(
+        remove_floor_shares,
+        index_now,
+        math::float_scaling!(),
+    );
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount.saturating_sub(removed_floor_amount);
 
