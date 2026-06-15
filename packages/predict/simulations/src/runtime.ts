@@ -252,6 +252,7 @@ export interface FlushParams {
     expiryMarketId: string;
     pythFeedId: string;
     bsFeedId: string;
+    lifecycleCapId: string;
 }
 
 // Convert a raw binary-range strike to the `(lower_tick, higher_tick)` pair the
@@ -351,20 +352,21 @@ function mintDusdc(tx: Transaction, amount: bigint) {
     return coin;
 }
 
-// Run one full-pool flush over the single active market in the same PTB:
-// privileged `start_pool_valuation` (AdminCap) -> one `value_expiry` for our
-// market -> `finish_flush`, which drains the supply/withdraw request queues at the
-// frozen mark. The harness has exactly one expiry market, so the snapshot covers
-// one `value_expiry`. (Multi-market topologies must call `value_expiry` once per
-// active market between start and finish.)
+// Run one full-pool flush over the single active market in the same PTB: the
+// privileged `start_pool_valuation` (started via a market-deployer `MarketLifecycleCap`
+// proof — the sole flush authority) -> one `value_expiry` for our market ->
+// `finish_flush`, which drains the supply/withdraw request queues at the frozen mark.
+// The two `finish_flush` budgets are `None` (drain both queues fully). The harness has
+// exactly one expiry market, so the snapshot covers one `value_expiry`. (Multi-market
+// topologies must call `value_expiry` once per active market between start and finish.)
 function addFlush(tx: Transaction, params: FlushParams): void {
+    const proof = tx.moveCall({
+        target: target("registry", "generate_lifecycle_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+    });
     const valuation = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
-        arguments: [
-            tx.object(params.protocolConfigId),
-            tx.object(params.poolVaultId),
-            tx.object(ADMIN_CAP_ID),
-        ],
+        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId), proof],
     });
     tx.moveCall({
         target: target("plp", "value_expiry"),
@@ -381,7 +383,13 @@ function addFlush(tx: Transaction, params: FlushParams): void {
     });
     tx.moveCall({
         target: target("plp", "finish_flush"),
-        arguments: [valuation, tx.object(params.poolVaultId), tx.object(params.protocolConfigId)],
+        arguments: [
+            valuation,
+            tx.object(params.poolVaultId),
+            tx.object(params.protocolConfigId),
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (drain fully)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (drain fully)
+        ],
     });
 }
 

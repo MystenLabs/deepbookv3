@@ -556,25 +556,19 @@ public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
     return_shared(vault);
 }
 
-/// Start a privileged pool-NAV flush as the operator `AdminCap`. The returned hot
-/// potato is threaded through `plp::value_expiry` × N then `plp::finish_flush`.
+/// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`), the
+/// sole flush-start authority. Acquires the shared `Registry` to mint the lifecycle
+/// proof internally, so callers need not thread it. The returned hot potato is
+/// threaded through `plp::value_expiry` × N then `plp::finish_flush`.
 public fun start_flush(
-    self: &Fixture,
+    self: &mut Fixture,
     config: &mut ProtocolConfig,
     vault: &PoolVault,
 ): PoolValuation {
-    plp::start_pool_valuation(config, vault, &self.admin_cap)
-}
-
-/// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`).
-public fun start_flush_as_deployer(
-    self: &Fixture,
-    registry: &Registry,
-    config: &mut ProtocolConfig,
-    vault: &PoolVault,
-): PoolValuation {
+    let registry = self.scenario.take_shared<Registry>();
     let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
-    plp::start_pool_valuation_as_deployer(config, vault, proof)
+    return_shared(registry);
+    plp::start_pool_valuation(config, vault, proof)
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===

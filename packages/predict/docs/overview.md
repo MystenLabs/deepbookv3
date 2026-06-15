@@ -41,7 +41,7 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 
 Oracle data is **not** a Predict object: the `PythFeed` and `BlockScholesFeed` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed feed objects against Propbook's current canonical bindings for that underlying.
 
-Capabilities are owned objects: `AdminCap` (global policy, also starts the pool flush), `MarketLifecycleCap` (market creation and starting the pool flush as a deployer), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
+Capabilities are owned objects: `AdminCap` (global policy, plus genesis-bootstrapping the pool), `MarketLifecycleCap` (market creation and the sole authority to start the pool flush), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
 
 ## Market and position lifecycle
 
@@ -67,7 +67,7 @@ stateDiagram-v2
 
 ## Liquidity is asynchronous
 
-Liquidity providers do not transact against a live pool price. They **queue** requests: `request_supply` escrows DUSDC and `request_withdraw` escrows PLP, each routed through the LP's manager and cancellable until it is filled. A periodic **flush** then values the whole pool once and settles every queued request at that single frozen mark. The flush is a transaction-local hot potato — `start_pool_valuation` → one `value_expiry` per active market → `finish_flush` — and it is **privileged**: only the operator `AdminCap` or a market deployer may start one, so the mark cannot be timed by an adversary against a manipulated oracle. The mark itself, `pool_nav = idle + Σ current_nav`, is **exact** (each `current_nav` is the true per-expiry recoverable value, with no approximation band), so the one mark that prices both supplies and withdrawals equals true NAV in both directions. Fills are delivered to each manager through the balance accumulator and absorbed lazily on the manager's next capital op. See [liquidity and NAV](./concepts/liquidity-and-nav.md).
+Liquidity providers do not transact against a live pool price. They **queue** requests: `request_supply` escrows DUSDC and `request_withdraw` escrows PLP, each routed through the LP's manager and cancellable until it is filled. A periodic **flush** then values the whole pool once and settles every queued request at that single frozen mark. The flush is a transaction-local hot potato — `start_pool_valuation` → one `value_expiry` per active market → `finish_flush` — and it is **privileged**: only a market deployer's `MarketLifecycleCap` may start one, so the mark cannot be timed by an adversary against a manipulated oracle. The mark itself, `pool_nav = idle + Σ current_nav`, is **exact** (each `current_nav` is the true per-expiry recoverable value, with no approximation band), so the one mark that prices both supplies and withdrawals equals true NAV in both directions. Fills are delivered to each manager through the balance accumulator and absorbed lazily on the manager's next capital op. See [liquidity and NAV](./concepts/liquidity-and-nav.md).
 
 ## Guarantees in plain language
 

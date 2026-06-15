@@ -38,7 +38,6 @@ use deepbook_predict::{
     plp::{Self, PoolVault, PLP},
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
-    registry::Registry,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -238,14 +237,15 @@ fun supply_round_trip_delivers_minted_plp_to_manager() {
 
 #[test]
 fun deployer_cap_can_start_the_privileged_flush() {
-    // The two-entrypoint privileged flush: a market deployer (MarketLifecycleCap)
-    // starts the flush identically to the operator AdminCap path.
+    // The market-deployer MarketLifecycleCap is the sole flush-start authority; this
+    // confirms a deployer-started flush drains a queued supply. (`flush` runs through
+    // `start_flush`, which generates the lifecycle proof.)
     let mut fx = helpers::setup_market_default();
     let manager = fx.create_funded_manager(0);
     fx.bootstrap_lock(min_supply!());
     enqueue_supply(&mut fx, &manager, min_supply!());
 
-    flush_as_deployer(&mut fx);
+    flush(&mut fx);
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
@@ -694,6 +694,7 @@ fun flush(fx: &mut helpers::Fixture) {
 }
 
 /// Run one flush bounding how many supply / withdraw requests each queue may fill.
+/// Started through the sole flush authority, the market-deployer `MarketLifecycleCap`.
 fun flush_with_budgets(
     fx: &mut helpers::Fixture,
     supply_budget: Option<u64>,
@@ -711,24 +712,5 @@ fun flush_with_budgets(
         fx.scenario_mut().ctx(),
     );
     return_shared(config);
-    return_shared(vault);
-}
-
-/// Run one flush started through the market-deployer cap entrypoint.
-fun flush_as_deployer(fx: &mut helpers::Fixture) {
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let registry = fx.scenario_mut().take_shared<Registry>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let val = fx.start_flush_as_deployer(&registry, &mut config, &vault);
-    let _ = val.finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
-    return_shared(config);
-    return_shared(registry);
     return_shared(vault);
 }

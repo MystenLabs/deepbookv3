@@ -167,32 +167,22 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Begin a full-pool flush (NAV valuation + LP queue drain) as the protocol
-/// operator (`AdminCap`).
+/// Begin a full-pool flush (NAV valuation + LP queue drain) as a market deployer,
+/// using a registry-generated `MarketLifecycleProof`. This is the sole flush start:
+/// it is cron-driven and PRIVILEGED, not permissionless (audit L8). Engages the
+/// protocol valuation lock — so no NAV-changing op can interleave between value
+/// steps — and snapshots the active expiry set every `value_expiry` must cover. The
+/// hot potato can only be created here, so gating the start gates the whole flush.
 ///
-/// The flush is cron-driven, not permissionless (audit L8): only the operator
-/// `AdminCap` here, or a market deployer via `start_pool_valuation_as_deployer`, may
-/// start one. Engages the protocol valuation lock — so no NAV-changing op can
-/// interleave between value steps — and snapshots the active expiry set every
-/// `value_expiry` must cover. The hot potato can only be created here, so gating the
-/// start gates the whole flush.
-public fun start_pool_valuation(
-    config: &mut ProtocolConfig,
-    vault: &PoolVault,
-    _admin_cap: &AdminCap,
-): PoolValuation {
-    start_pool_valuation_internal(config, vault)
-}
-
-/// Begin a full-pool flush as a market deployer using a registry-generated
-/// `MarketLifecycleProof`. This is a PRIVILEGED start, not a permissionless one:
-/// the flush prices the pool NAV off the live oracle and `finish_flush` drains the
+/// The flush prices the pool NAV off the live oracle and `finish_flush` drains the
 /// LP queues at that mark, and Pyth updates (`pyth_feed::update`) are permissionless
 /// — so a flush-capable cap-holder who manipulates the live oracle in a preceding
 /// tx, then flushes, could fill their own queued supply/withdraw request at a mark
 /// they chose. The start is therefore gated on both current registry allowlisting
-/// and trust in every flush-capable holder not to manipulate the live oracle.
-public fun start_pool_valuation_as_deployer(
+/// and trust in every flush-capable holder not to manipulate the live oracle. The
+/// revocable `MarketLifecycleCap` (not the root `AdminCap`) carries this authority;
+/// admin retains a break-glass route by minting itself a lifecycle cap.
+public fun start_pool_valuation(
     config: &mut ProtocolConfig,
     vault: &PoolVault,
     lifecycle_proof: MarketLifecycleProof,

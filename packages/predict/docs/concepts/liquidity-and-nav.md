@@ -43,12 +43,9 @@ The potato has no abilities, so the sequence cannot be left half-finished: the o
 
 ### The flush is privileged, not permissionless
 
-Only two cap-holders may **start** a flush, and the hot potato can be created **only** by starting one, so gating the start gates the whole flush:
+Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`), and the hot potato can be created **only** by starting one, so gating the start gates the whole flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
 
-- the operator's `AdminCap`, via `start_pool_valuation`;
-- a market-deployer's `MarketLifecycleCap`, via `start_pool_valuation_as_deployer`.
-
-This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. Both cap-holders are trusted not to manipulate the live oracle, which is the trust that makes the single frozen mark sound.
+This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. The cap-holder is trusted not to manipulate the live oracle, which is the trust that makes the single frozen mark sound.
 
 ### Pool NAV and the single mark
 
@@ -86,7 +83,7 @@ flowchart TD
 
 ### Draining the queues
 
-`drain_lp_requests` processes **supplies first, then withdrawals**, up to a combined cap of `max_requests_per_flush` (**100**) requests per flush:
+`drain_lp_requests` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` drains that queue fully. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
 
 - **Supplies pass (FIFO from the head).** Each request mints `supply_shares(amount, total_supply, pool_nav)` PLP and joins the escrowed DUSDC into idle. A request whose shares round to **zero** (dust) is refunded its DUSDC instead of minting — per-request failure isolation, not an abort that would revert the whole flush.
 - **Withdrawals pass (FIFO until idle is dry).** Each request burns its escrowed PLP and pays `withdraw_dusdc(shares, total_supply, pool_nav)` DUSDC out of idle. A dust request that rounds to zero is refunded its PLP. If idle cannot cover the head request's payout, the drain **stops** and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.

@@ -210,12 +210,12 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   is called once per active market to accumulate `Σ current_nav`, and
   `finish_flush` computes `pool_nav`, then `drain_lp_requests` mints/burns PLP
   and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
-  ≤100 requests per flush, per-request dust refunds). Fills are delivered to each
-  manager through the balance accumulator (`send_funds`); the manager absorbs
-  them lazily on its next capital op. The flush is **privileged** — only the
-  operator `AdminCap` (`start_pool_valuation`) or a market deployer
-  (`start_pool_valuation_as_deployer`) may start one. Code `PoolValuation` (the
-  hot-potato struct), event `FlushExecuted`.
+  up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`, per-request
+  dust refunds). Fills are delivered to each manager through the balance accumulator
+  (`send_funds`); the manager absorbs them lazily on its next capital op. The flush is
+  **privileged** — started only by a market deployer's `MarketLifecycleCap`
+  (`start_pool_valuation`). Code `PoolValuation` (the hot-potato struct), event
+  `FlushExecuted`.
 
 ## Trade lifecycle verbs
 

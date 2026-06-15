@@ -1030,6 +1030,7 @@ async function setupSimulation(
             expiryMarketId,
             pythFeedId,
             bsFeedId,
+            lifecycleCapId,
             expiry: EXPIRY_MS,
             spot: seed.spot,
             forward: seed.forward,
@@ -1052,6 +1053,7 @@ async function setupSimulation(
         pythFeedId,
         bsFeedId,
         managerId,
+        lifecycleCapId,
     };
 
     writeJson(STATE_PATH, state);
@@ -1203,6 +1205,7 @@ async function executeScenario(
                     expiryMarketId: state.expiryMarketId,
                     pythFeedId: state.pythFeedId,
                     bsFeedId: state.bsFeedId,
+                    lifecycleCapId: state.lifecycleCapId,
                     expiry: EXPIRY_MS,
                     spot: oracle.spot,
                     forward: oracle.forward,

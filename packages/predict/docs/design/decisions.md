@@ -231,16 +231,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   supply-mark-≥-true directional invariant is satisfied with equality. *Superseded:*
   the optimistic supply mark + uncertainty-band withdraw fee of the approximate-NAV
   world.
-- **The flush is privileged (cron-driven), not permissionless (audit L8).** Only the
-  operator `AdminCap` (`start_pool_valuation`) or a market-deployer
-  `MarketLifecycleCap` (`start_pool_valuation_as_deployer`) may start a flush. The
-  flush prices off the live oracle and Pyth updates are permissionless, so a
-  flush-capable holder who manipulated the live oracle in a preceding tx could fill
-  their own queued request at a mark they chose. *Rationale:* both cap-holders are
-  tightly held and trusted not to manipulate the oracle; registry-validating the
-  lifecycle cap is impossible here (import cycle) and would only reject a *revoked*
-  cap anyway, so trust — not allowlisting — is the control. NAV manipulation is closed
-  by privileging the start; dilution by the fair FIFO drain at the frozen mark.
+- **The flush is privileged (cron-driven), not permissionless (audit L8).** Only a
+  market-deployer `MarketLifecycleCap` (`start_pool_valuation`) may start a flush; the
+  root-`AdminCap` flush path was removed (the flush is routine maintenance and should
+  not ride the irrevocable root cap — admin keeps break-glass by minting itself a
+  revocable lifecycle cap). The flush prices off the live oracle and Pyth updates are
+  permissionless, so a flush-capable holder who manipulated the live oracle in a
+  preceding tx could fill their own queued request at a mark they chose. *Rationale:*
+  the cap-holder is trusted not to manipulate the oracle, and the cap is revocable
+  (bounded blast radius, better key hygiene than the root cap). NAV manipulation is
+  closed by privileging the start; dilution by the fair FIFO drain at the frozen mark.
   *Rejected:* a permissionless flush.
 - **Cash maintenance is decoupled from the flush potato.** Cash rebalance, the
   settled-market sweep, and liquidation are standalone, permissionless, per-market

@@ -120,6 +120,9 @@ export interface SimState {
     pythFeedId: string;
     bsFeedId: string;
     managerId: string;
+    // Sole flush-start authority: the market-deployer MarketLifecycleCap, used to
+    // mint a per-flush lifecycle proof for `plp::start_pool_valuation`.
+    lifecycleCapId: string;
 }
 
 type RawScenarioRow = Record<string, string>;

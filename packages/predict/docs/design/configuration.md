@@ -111,9 +111,9 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, the `trade_liquidation_budget`, global `trading_paused` |
 | `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
 | `AdminCap` (on `Registry`) | Register a Propbook underlying and its minimum `tick_size`, version enable/disable, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
-| `AdminCap` (on `PoolVault`) | Start the privileged pool flush (`start_pool_valuation`) |
+| `AdminCap` (on `PoolVault`) | Genesis-bootstrap the pool (`lock_capital`) |
 | `PauseCap` (via `Registry`) | Disable a version, force global trading pause, force per-expiry mint pause — all one-way (engage only) |
-| `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also start the privileged pool flush (`start_pool_valuation_as_deployer`). No oracle-write or config authority |
+| `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also the sole authority to start the privileged pool flush (`start_pool_valuation`). No oracle-write or config authority |
 | Permissionless | `sync_*` version mirrors; cash rebalance, settled-market sweep, and liquidation keeper flows (subject to the valuation lock, not the trading pause); LP supply/withdraw requests and their cancellation |
 | Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the per-expiry funding cap and max active expiry count, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
 
