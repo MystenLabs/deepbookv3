@@ -171,7 +171,7 @@ class Generator:
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
             is_up = bool(self.rng.randrange(2))
-            lower, higher = replay.binary_range_bounds(replay.align_strike_to_grid(strike), is_up)
+            lower, higher = replay.binary_range_bounds(replay.align_strike_to_tick(strike), is_up)
             try:
                 entry_probability = replay.compute_range_price(svi, pricing_forward, lower, higher)
                 fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
@@ -257,7 +257,7 @@ class Generator:
         offset_bps = self.rng.randint(-2_500, 2_500)
         strike = forward * (10_000 + offset_bps) // 10_000
         strike = max(replay.ORACLE_MIN_STRIKE, min(replay.ORACLE_MAX_STRIKE, strike))
-        return replay.align_strike_to_grid(strike)
+        return replay.align_strike_to_tick(strike)
 
     def max_leverage_for_probability(self, entry_probability: int) -> int:
         if entry_probability < replay.LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
@@ -510,22 +510,11 @@ def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
 
 def generate_mode(mode: str, source: Path, out: Path | None, source_config: dict[str, Any]) -> Path:
     snapshots = read_snapshots(source)
-    replay.configure_oracle_grid(snapshots[0]["spot"])
+    # No grid to configure: the strike domain is absolute ticks (raw = tick*tick_size)
+    # over a fixed domain known before any row runs, so there is nothing to center on
+    # the first spot. Strikes are selected near the live forward in random_strike.
     generator = Generator(snapshots, config_for_mode(mode, len(snapshots), source_config), source_config)
     rows = generator.generate()
-    # The grid is centered on snapshots[0] above, but every replay (Python and
-    # localnet) re-centers on the first emitted row's spot. They coincide only
-    # because tx=1 is a mint built from snapshots[0]; assert it so a future
-    # change to row ordering can't silently desync the generator's grid from
-    # the grid the replays validate against.
-    centered_spot = snapshots[0]["spot"]
-    first_row_spot = int(rows[0]["spot"])
-    if first_row_spot != centered_spot:
-        raise GenerationError(
-            f"oracle grid centered on snapshot spot {centered_spot} but first "
-            f"emitted row spot is {first_row_spot}; replay would center on a "
-            f"different grid"
-        )
     out_path = out if out is not None else output_path_for_mode(mode)
     write_scenario(out_path, rows)
     print(f"wrote {out_path} rows={len(rows)}")

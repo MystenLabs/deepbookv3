@@ -67,7 +67,9 @@ export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
     step: number;
-    action: ScenarioActionName;
+    // `flush` is the runner-synthesized privileged LP drain — not a CSV row action,
+    // so it widens the trace action set without touching `ScenarioActionName`.
+    action: ScenarioActionName | "flush";
     digest: string;
     wallMs: number;
     gas: GasLike;

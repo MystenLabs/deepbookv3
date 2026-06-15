@@ -100,8 +100,10 @@ interface.
 
 1. Generates fresh localnet genesis.
 2. Starts localnet.
-3. Publishes DeepBook, DUSDC, Predict Math, upstream Wormhole, upstream Pyth
-   Lazer, and Predict.
+3. Publishes DeepBook, DUSDC, Fixed Math, Block Scholes Oracle, upstream
+   Wormhole, upstream Pyth Lazer, Propbook, and Predict. Propbook's package init
+   creates and shares the `OracleRegistry` and mints the `RegistryAdminCap` to the
+   publisher.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
    vault, registers the Propbook underlying + feeds, binds the feeds, applies
    the expiry-fee template config, seeds the Propbook Pyth/Block Scholes feeds,

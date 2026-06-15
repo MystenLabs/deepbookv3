@@ -52,16 +52,18 @@ export interface ExecutionReceipt {
 }
 
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
+const PLP_TYPE = `${PACKAGE_ID}::plp::PLP`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
+// Sui's singleton balance-accumulator root lives at the reserved address 0xacc
+// (object::SUI_ACCUMULATOR_ROOT_OBJECT_ID). The async-LP flush delivers PLP/DUSDC
+// fills to a manager's accumulator; `withdraw_settled<T>` reads through this root.
+const ACCUMULATOR_ROOT_ID = "0xacc";
 // Pyth Lazer feed id (the propbook spot feed key) and the Propbook underlying id.
 // The harness binds one market to one Pyth feed + one BS feed for that underlying,
 // so a single id serves both.
 const PYTH_FEED_ID = 1;
 const BS_UNDERLYING_ID = PYTH_FEED_ID;
-// Quote-asset id recorded in propbook's canonical binding metadata. Predict's
-// binding check ignores it; only needs to be stable for the harness.
-const QUOTE_ASSET_ID = 0;
 // Strike range encoding (range_codec / constants.move): two u24 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -371,6 +373,7 @@ function addFlush(tx: Transaction, params: FlushParams): void {
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
             tx.object(params.bsFeedId),
             tx.object(CLOCK_ID),
@@ -395,6 +398,7 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.object(params.managerId),
             proof,
             tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
             tx.object(params.bsFeedId),
             tx.pure.u64(lowerTick),
@@ -421,6 +425,7 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             tx.object(params.managerId),
             proof,
             tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
             tx.object(params.bsFeedId),
             tx.pure.u256(BigInt(params.orderId)),
@@ -495,7 +500,6 @@ export function bindFeedsToUnderlyingTx(params: {
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.object(params.pythFeedId),
             tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u32(QUOTE_ASSET_ID),
         ],
     });
     tx.moveCall({
@@ -505,7 +509,6 @@ export function bindFeedsToUnderlyingTx(params: {
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.object(params.bsFeedId),
             tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u32(QUOTE_ASSET_ID),
         ],
     });
     return tx;
@@ -610,6 +613,7 @@ export function rebalanceExpiryCashTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
+    pythFeedId: string;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -618,6 +622,9 @@ export function rebalanceExpiryCashTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;
@@ -628,6 +635,7 @@ export function rebalanceExpiryCashTx(params: {
 // accumulator) at the next flush, NOT returned here. Returns no object.
 export function requestSupplyTx(params: {
     poolVaultId: string;
+    protocolConfigId: string;
     managerId: string;
     amount: bigint;
 }): Transaction {
@@ -635,25 +643,44 @@ export function requestSupplyTx(params: {
     const dusdc = mintDusdc(tx, params.amount);
     tx.moveCall({
         target: target("plp", "request_supply"),
-        arguments: [tx.object(params.poolVaultId), tx.object(params.managerId), dusdc],
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.managerId),
+            tx.object(params.protocolConfigId),
+            dusdc,
+        ],
     });
     return tx;
 }
 
-// Queue a withdraw request: escrow `lpCoinId` PLP shares against the manager. The
-// DUSDC fill is delivered at the next flush, NOT returned here.
-export function requestWithdrawTx(params: {
+// Materialize `shares` PLP from the manager's balance accumulator (the async flush
+// delivers PLP fills there, not as a coin), then queue a withdraw request escrowing
+// that PLP. `withdraw_settled<PLP>` first settles delivered funds and is owner-gated,
+// so the sim's sender-owned manager can call it directly. The DUSDC fill is delivered
+// to the manager at the next flush, NOT returned here. One PTB: settle+withdraw+request.
+export function withdrawSettledAndRequestTx(params: {
     poolVaultId: string;
+    protocolConfigId: string;
     managerId: string;
-    lpCoinId: string;
+    shares: bigint;
 }): Transaction {
     const tx = new Transaction();
+    const [lpCoin] = tx.moveCall({
+        target: target("predict_manager", "withdraw_settled"),
+        typeArguments: [PLP_TYPE],
+        arguments: [
+            tx.object(params.managerId),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.pure.u64(params.shares),
+        ],
+    });
     tx.moveCall({
         target: target("plp", "request_withdraw"),
         arguments: [
             tx.object(params.poolVaultId),
             tx.object(params.managerId),
-            tx.object(params.lpCoinId),
+            tx.object(params.protocolConfigId),
+            lpCoin,
         ],
     });
     return tx;

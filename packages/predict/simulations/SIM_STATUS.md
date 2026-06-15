@@ -28,39 +28,74 @@ by a full `run.sh` localnet parity run.
   withdraw-band fee is removed. **`python3 -m py_compile` is clean** for every changed
   file. **`bash -n run.sh` is clean.**
 
-## Remaining — REQUIRES a localnet `run.sh` parity run to confirm
-Flagged in-code with `TODO(sim-parity)`:
-1. **Async LP supply/withdraw + flush cadence.** The sync `supply`/`withdraw` (which
-   returned a PLP coin) became `request_*` + a privileged flush that delivers fills via
-   the balance accumulator (no coin returned). The CSV has no flush row, so the runner
-   must synthesize flush txs; the per-row vs batched cadence, the withdraw-escrow source
-   (the manager holds PLP as accumulator credit, not a coin), and the request-vs-flush
-   balance timing must be reconciled against a real run. `sim.ts::executeRow` currently
-   enqueues `supply` and throws on `withdraw`; the Python mirror models request+flush
-   together — the two are not yet aligned on the flush half.
-2. **Vault bootstrap funding** (`setupSimulation`) — the synchronous vault seed must
-   become `request_supply` + a bootstrap flush (1:1 mint needs empty NAV) +
-   `rebalance_expiry_cash`; ordering vs market creation needs a localnet run.
-3. **Canonical per-row event sequence parity** — the field vocabulary is aligned across
-   both mirrors, but the exact `records[].updates` sequence (LP rows especially) can
-   only be confirmed by diffing a real localnet `local_data.json`.
+## Done + LOCALNET-verified
+- **`run.sh` multi-package publish flow (was item 5).** Rewired and confirmed by a
+  real localnet run: publishes deepbook, dusdc, **fixed_math**, **block_scholes_oracle**,
+  wormhole, pyth_lazer, **propbook**, predict — all link, and `.env.localnet` is written
+  with `FIXED_MATH_PACKAGE_ID`, `BLOCK_SCHOLES_ORACLE_PACKAGE_ID`, `PROPBOOK_PACKAGE_ID`,
+  `ORACLE_REGISTRY_ID`, `ORACLE_REGISTRY_ADMIN_CAP_ID`. Key mechanics learned:
+  - Local deps resolve via the shared `--pubfile-path` ledger (no dep-replacement
+    needed); only the **git** deps (pyth_lazer/wormhole) get `[dep-replacements.sim]`
+    source+address redirection. The old `predict_math` injection was stale debris and
+    is gone.
+  - propbook is **new-style** (no `[addresses]`), so when predict builds it from source
+    for `--build-env sim` it must keep its injected `[environments] sim` +
+    `[dep-replacements.sim]`. Its `Move.toml` restore is therefore **deferred to
+    `cleanup()`**, not done inline (old-style deps like deepbook can restore inline).
+  - propbook init creates+shares `OracleRegistry` and mints `RegistryAdminCap` to the
+    publisher — both extracted from the publish `objectChanges`.
+- **Generator absolute-tick migration (was item 0).** `generate_scenario.py` dropped
+  `configure_oracle_grid` + the grid-centering assert and uses `align_strike_to_tick`.
+  Both normal (1000) and long (12827) scenarios generate and Python-replay clean.
+- **Async-LP bootstrap + batched flush + supply + withdraw (was items 1–2).** Verified
+  end-to-end on a full 1000-row localnet run (`bash run.sh --skip-analysis`):
+  600/600 mints, 50/50 supplies, 50/50 withdraws, 0 skips, 2 flushes (rows 300 & 999),
+  no aborts. Key facts:
+  - Bootstrap (`setupSimulation`): `request_supply(vaultSeed)` → privileged flush
+    (mints PLP 1:1 via the accumulator) → `rebalance_expiry_cash`. Market is registered
+    active at `create_expiry_market` (0 cash), so the bootstrap flush DOES value it.
+  - Flush cadence is **batched**, synthesized by the runner after the rows in
+    `flushCheckpoints()` (default 300, 999; override with `SIM_FLUSH_AFTER`).
+  - Withdraw materializes PLP from the manager's accumulator via
+    `withdraw_settled<PLP>(@0xacc, shares)` then `request_withdraw` in one PTB.
+    **`enable_object_funds_withdraw` IS enabled in localnet genesis** (probed live —
+    withdraws executed, didn't abort).
+  - Withdraw policy is conservative: shares are drawn only against the bootstrap PLP
+    (`availableSettledPlp = vaultSeed`), never crediting batched-flush supplies, so it
+    can never over-withdraw; rows that would exceed it skip-and-log (0 skips at current
+    sizing). Fixed many stale runtime.ts builders along the way (missing
+    `ORACLE_REGISTRY_ID` in mint/redeem/value_expiry; extra `QUOTE_ASSET_ID` in bind;
+    missing `config`/`propbook_registry`/`pyth`/`clock` in request/rebalance).
+
+- **Canonical per-row parity (was item 3) — DONE + verified (`Parity OK`).** Full
+  `bash run.sh` over a fresh 1000-row scenario passes the gate end-to-end:
+  `local_data.json == python_data.json`, then long replay + all charts render. Two
+  HEAD regressions from the parallel agent's commits were fixed first:
+  - `b646cef8` added `create_expiry_market` grid assert (`expiry % 60_000 == 0`); the
+    sim's `EXPIRY_MS = Date.now()+400d` wasn't aligned → setup aborted (MoveAbort 14).
+    Now floored to a 60s multiple (`RESOLUTION_PERIOD_MS`).
+  - `94160f6d` folded `PoolValued` into `FlushExecuted` and replaced
+    `Supply/WithdrawRefunded` with `RequestCancelled`. Dropped the 3 dead sim.ts
+    normalizers; folded the valuation fields into `normalizeFlushExecuted`.
+  - Parity divergence was **LP-only** (all 26 mint/redeem records matched untouched —
+    mint/redeem parity already held). `python_replay` now **bifurcates** the LP path on
+    `exact_time`: the parity path (`exact_time=False`) emits request-only records
+    (`supply_requested`/`withdraw_requested`) mirroring the localnet runner's indices
+    (bootstrap took supply-queue 0) + the conservative withdraw-skip; the long path
+    (`exact_time=True`) keeps the synchronous fill model so the economic charts are
+    unchanged. The flush is runner machinery (not a CSV row) and is not a parity record.
+- **Flush gas on the gas chart.** `runFlush` records a synthetic `flush` trace step
+  (via `execute()` for a gas receipt); `chart_gas.py` has a third flush panel.
+  Flushes are often gas-**negative** (draining queue rows reclaims storage rebate).
+
+## Remaining
 4. **Settlement prefix** — the Python tree stays raw-strike-keyed; the contract uses
    tick-keyed `prefix_limit_tick = ceil(settlement/tick_size)`. On-chain settlement is
-   stubbed (`is_settled()` always false), so this is not localnet-checkable until
-   settlement-v2.
-5. **`run.sh` publish flow is STALE (documented, not blindly rewired).** Before a
-   localnet run it must: rename the `predict_math` publish phase to `fixed_math`; add
-   publish phases for `block_scholes_oracle` and `propbook` (propbook needs the same
-   pyth_lazer/wormhole dep-replacement linking as predict); capture the shared
-   `OracleRegistry` id from propbook's init; rewrite the predict `Move.toml`
-   dep-injection to inject `fixed_math`/`propbook`/`block_scholes_oracle`; and emit the
-   new env vars (`FIXED_MATH_PACKAGE_ID`, `PROPBOOK_PACKAGE_ID`,
-   `BLOCK_SCHOLES_ORACLE_PACKAGE_ID`, `ORACLE_REGISTRY_ID`, and
-   `ORACLE_REGISTRY_ADMIN_CAP_ID` — the propbook `RegistryAdminCap` owned by the
-   publisher, now needed for the `bindFeedsToUnderlyingTx` setup step that
-   canonical-binds both feeds before `create_expiry_market`) that `env.ts` now requires.
+   now implemented (passive, exact-ms Pyth at `market.expiry`), but the sim's far-future
+   expiry is never reached in a run, so `MarketSettled` never fires and this stays
+   un-exercised until a settlement-reaching scenario / settlement-v2.
 
-**Bottom line:** the oracle/creation/mint/redeem/NAV/tick rewire is done and
-mechanically verified; the async-LP flush economics and the run.sh localnet publish
-flow are structurally rewired/documented but parity-unverified — a full localnet
-`run.sh` run is required before the Python replay can be trusted to match the contract.
+**Bottom line:** the full simulation pipeline — multi-package publish, generator
+absolute-tick migration, async-LP bootstrap/flush/supply/withdraw, AND the normal
+localnet/Python parity gate — is localnet-verified end to end at current HEAD. Only the
+settlement-prefix parity (item 4) remains, gated on a settlement-reaching scenario.

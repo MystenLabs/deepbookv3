@@ -2745,6 +2745,17 @@ def replay(
     total_steps = len(rows)
     step_dt = BORROW_STEP_DT_MS if BORROW_STEP_DT_MS else max(1, LEVERAGE_FLOOR_WINDOW_MS // max(1, total_steps))
     derived_expiry_ms = expiry_ms if exact_time and expiry_ms is not None else total_steps * step_dt
+    # Parity-path async-LP request bookkeeping (mirrors the localnet runner). Supply /
+    # withdraw rows only ENQUEUE a request in the parity model; the flush (runner
+    # machinery, not a CSV row) drains them later, so no fill/oracle-refresh update is
+    # emitted per row. The bootstrap supply consumed supply-queue index 0, so scenario
+    # supplies start at 1; withdraws start at 0. Withdraws draw against the bootstrap
+    # PLP only (conservative, matching the runner) and any that exceed it are skipped
+    # with no emitted record (the runner `continue`s).
+    supply_queue_index = 1
+    withdraw_queue_index = 0
+    available_settled_plp = VAULT_SEED
+    lp_request_amounts: dict[str, int] = {}
     for step_index, row in enumerate(rows):
         updates: list[dict[str, Any]] = []
         action = row["action"]
@@ -2768,15 +2779,52 @@ def replay(
                 updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(redeem_order(model, row))
         elif action == "supply":
-            apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = active_order_count(model)
-            pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-            updates.append(supply_update(model, row, pool_value, synced_state))
+            if exact_time:
+                # Long Python-only replay keeps the synchronous fill model so the
+                # economic charts still see LP fills + pool funding.
+                apply_inline_oracle_refresh(model, row, updates)
+                scan_active_count = active_order_count(model)
+                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
+                updates.append(supply_update(model, row, pool_value, synced_state))
+            else:
+                # Parity: request_supply only escrows DUSDC into the queue (no oracle
+                # refresh, no fill). Mirror the localnet request record exactly.
+                ref = row["lpRef"]
+                amount = row["amount"]
+                lp_request_amounts[ref] = amount
+                updates.append(
+                    {
+                        "type": "supply_requested",
+                        "lp_ref": ref,
+                        "index": str(supply_queue_index),
+                        "amount": str(amount),
+                    }
+                )
+                supply_queue_index += 1
         elif action == "withdraw":
-            apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = active_order_count(model)
-            pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-            updates.append(withdraw_update(model, row, pool_value, synced_state))
+            if exact_time:
+                apply_inline_oracle_refresh(model, row, updates)
+                scan_active_count = active_order_count(model)
+                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
+                updates.append(withdraw_update(model, row, pool_value, synced_state))
+            else:
+                # Parity: request_withdraw escrows PLP (materialized from the bootstrap
+                # pool) into the queue. The runner skips — with no record — any withdraw
+                # the bootstrap PLP can't cover; mirror that exactly.
+                ref = row["lpRef"]
+                shares = lp_request_amounts.get(ref, 0)
+                if shares == 0 or shares > available_settled_plp:
+                    continue
+                available_settled_plp -= shares
+                updates.append(
+                    {
+                        "type": "withdraw_requested",
+                        "lp_ref": ref,
+                        "index": str(withdraw_queue_index),
+                        "amount": str(shares),
+                    }
+                )
+                withdraw_queue_index += 1
         else:
             raise ValueError(f"unsupported action {action}")
 

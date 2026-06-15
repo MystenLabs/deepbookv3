@@ -12,6 +12,7 @@ from sim_artifacts import load_json_object, normalized_action, sui
 
 TRADE_ACTIONS = ("mint", "redeem")
 POOL_ACTIONS = ("supply", "withdraw")
+FLUSH_ACTIONS = ("flush",)
 
 
 def load_trace(path: Path) -> dict[str, Any]:
@@ -91,7 +92,7 @@ def render(trace_path: Path, output_path: Path) -> None:
 
     series = extract_series(steps)
 
-    fig, axes = plt.subplots(2, 1, figsize=(13, 8), constrained_layout=True)
+    fig, axes = plt.subplots(3, 1, figsize=(13, 11), constrained_layout=True)
     plot_timeline_panel(
         axes[0],
         series,
@@ -104,7 +105,14 @@ def render(trace_path: Path, output_path: Path) -> None:
         POOL_ACTIONS,
         "Supply And Withdraw Gas\nEach point is one localnet pool transaction.",
     )
-    axes[1].set_xlabel("transaction")
+    plot_timeline_panel(
+        axes[2],
+        series,
+        FLUSH_ACTIONS,
+        "Flush Gas\nEach point is one runner-synthesized privileged LP drain "
+        "(refresh + value_expiry + queue drain).",
+    )
+    axes[2].set_xlabel("transaction")
 
     fig.suptitle("Predict Localnet Gas", fontsize=14, fontweight="bold")
     fig.savefig(output_path, dpi=180)

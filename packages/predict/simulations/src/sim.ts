@@ -43,7 +43,7 @@ import {
     refreshOracleAndRedeemTx,
     registerUnderlyingAndCreateFeedsTx,
     requestSupplyTx,
-    requestWithdrawTx,
+    withdrawSettledAndRequestTx,
     seedOracleTx,
     setTemplateExpiryFeeConfigTx,
     type ExecutionReceipt,
@@ -54,7 +54,14 @@ const DUSDC_DECIMALS = 1_000_000n;
 const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
 const EXPIRY_CASH_FLOOR = 50_000n * DUSDC_DECIMALS;
-const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
+// `create_expiry_market` requires the expiry to land on the 60s settlement-feed grid
+// (`expiry % resolution_period_ms!() == 0`, else EExpiryNotOnResolutionGrid), so the
+// exact-ms settling Pyth observation is producible. Floor the ~400-day expiry to a
+// grid multiple (still far-future, still > clock so EInvalidExpiry holds).
+const RESOLUTION_PERIOD_MS = 60_000n; // constants::resolution_period_ms!()
+const EXPIRY_MS =
+    ((BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n) / RESOLUTION_PERIOD_MS) *
+    RESOLUTION_PERIOD_MS;
 const FLOAT_SCALING = 1_000_000_000n;
 const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
@@ -97,6 +104,16 @@ interface AliasState {
     // flush delivers fills to the manager via the balance accumulator, so no PLP coin
     // is created in the request tx.
     lpRequestIndexByRef: Map<string, bigint>;
+    // Supply DUSDC amount per lp_ref, recorded at the supply row. A withdraw row
+    // fully unwinds its referenced supply, so this is the PLP-share amount it targets
+    // (PLP is ~1:1 with DUSDC near the bootstrap mark).
+    lpAmountByRef: Map<string, bigint>;
+    // PLP shares the manager has materialized (settle-able) and not yet withdrawn.
+    // Seeded with the bootstrap supply (minted 1:1 at setup). Under the batched-flush
+    // cadence, scenario supplies are NOT credited here until/unless a flush mints them,
+    // so withdraws draw against the bootstrap PLP — a deliberately conservative bound
+    // that never over-withdraws (actual settled PLP is always >= this).
+    availableSettledPlp: bigint;
 }
 
 function parseArgs() {
@@ -151,6 +168,8 @@ function initialAliases(): AliasState {
         orderIdsByRef: new Map(),
         orderRefsById: new Map(),
         lpRequestIndexByRef: new Map(),
+        lpAmountByRef: new Map(),
+        availableSettledPlp: 0n,
     };
 }
 
@@ -441,12 +460,12 @@ function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<str
     };
 }
 
-// === Async LP request/flush events (replace the deleted sync SupplyExecuted /
-// WithdrawExecuted). A supply/withdraw is now a two-phase flow: a request row
-// escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
-// queues at one frozen mark, emitting PoolValued + FlushExecuted plus per-request
-// SupplyFilled / WithdrawFilled / SupplyRefunded / WithdrawRefunded. The `index`
-// queue handle replaces the old returned PLP coin object as the request alias key.
+// === Async LP request/flush events. A supply/withdraw is a two-phase flow: a request
+// row escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
+// queues at one frozen mark, emitting per-request SupplyFilled / WithdrawFilled and a
+// single FlushExecuted that carries the frozen valuation (the former PoolValued fields
+// were folded into it). Cancels emit RequestCancelled, which the sim never triggers.
+// The `index` queue handle is the request alias key (no PLP coin is returned).
 
 function normalizeSupplyRequested(event: any, row: ScenarioRow): Record<string, unknown> {
     const json = event.parsedJson ?? {};
@@ -488,41 +507,19 @@ function normalizeWithdrawFilled(event: any): Record<string, unknown> {
     };
 }
 
-function normalizeSupplyRefunded(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "supply_refunded",
-        index: decimal(json.index),
-        dusdc_amount: decimal(json.dusdc_amount),
-    };
-}
-
-function normalizeWithdrawRefunded(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "withdraw_refunded",
-        index: decimal(json.index),
-        plp_amount: decimal(json.plp_amount),
-    };
-}
-
-function normalizePoolValued(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "pool_valued",
-        pool_nav: decimal(json.pool_nav),
-        idle_balance: decimal(json.idle_balance),
-        active_market_nav: decimal(json.active_market_nav),
-        market_count: decimal(json.market_count),
-    };
-}
-
+// FlushExecuted now carries the frozen valuation the former PoolValued event held
+// (pool_value, active_market_nav, market_count, idle_balance_before) plus the drain
+// counts and post-drain idle. Only idle_balance_after feeds tracked state; the rest
+// are observability/parity fields.
 function normalizeFlushExecuted(event: any): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
         type: "flush_executed",
         pool_value: decimal(json.pool_value),
         total_supply: decimal(json.total_supply),
+        active_market_nav: decimal(json.active_market_nav),
+        market_count: decimal(json.market_count),
+        idle_balance_before: decimal(json.idle_balance_before),
         supplies_filled: decimal(json.supplies_filled),
         withdrawals_filled: decimal(json.withdrawals_filled),
         requests_processed: decimal(json.requests_processed),
@@ -599,9 +596,6 @@ function normalizeUpdates(
         else if (name === "WithdrawRequested") updates.push(normalizeWithdrawRequested(event, row));
         else if (name === "SupplyFilled") updates.push(normalizeSupplyFilled(event));
         else if (name === "WithdrawFilled") updates.push(normalizeWithdrawFilled(event));
-        else if (name === "SupplyRefunded") updates.push(normalizeSupplyRefunded(event));
-        else if (name === "WithdrawRefunded") updates.push(normalizeWithdrawRefunded(event));
-        else if (name === "PoolValued") updates.push(normalizePoolValued(event));
         else if (name === "FlushExecuted") updates.push(normalizeFlushExecuted(event));
         else if (name === "ExpiryCashRebalanced")
             updates.push(normalizeExpiryCashRebalanced(event));
@@ -801,6 +795,7 @@ function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: Ali
         const index = requestIndex(receipt, "SupplyRequested");
         if (index === null) throw new Error(`Missing SupplyRequested event for ${row.lpRef}`);
         aliases.lpRequestIndexByRef.set(row.lpRef, index);
+        aliases.lpAmountByRef.set(row.lpRef, row.amount);
     } else if (row.action === "withdraw") {
         const index = requestIndex(receipt, "WithdrawRequested");
         if (index === null) throw new Error(`Missing WithdrawRequested event for ${row.lpRef}`);
@@ -814,6 +809,22 @@ function mintContext(row: MintRow, alignedStrike: bigint): string {
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+// Row counts after which the runner synthesizes a privileged LP flush. Defaults to
+// rows 300 and 999 (the chosen batched cadence); SIM_FLUSH_AFTER="a,b,..." overrides
+// it for fast smoke runs.
+function flushCheckpoints(): Set<number> {
+    const raw = process.env.SIM_FLUSH_AFTER;
+    if (raw) {
+        return new Set(
+            raw
+                .split(",")
+                .map((s) => Number(s.trim()))
+                .filter((n) => Number.isInteger(n) && n > 0),
+        );
+    }
+    return new Set([300, 999]);
 }
 
 function clearOutputArtifacts() {
@@ -998,23 +1009,41 @@ async function setupSimulation(
     await executeAndWait(depositToManagerTx(managerId, capital.managerSeed), "deposit_to_manager");
     console.log(`[${ts()}]   Manager funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
 
-    // TODO(sim-parity): vault bootstrap funding + expiry-cash-floor funding are now
-    // async. The old path supplied the vault synchronously (returned PLP 1:1) then
-    // ran a setup PLP sync to push the cash floor into the expiry. The new model is:
-    //   1. request_supply(vaultSeed) routed through the manager, then a privileged
-    //      flush (start_pool_valuation/value_expiry/finish_flush) that bootstrap-mints
-    //      PLP 1:1 (total_supply==0 requires pool_value==0 — true before any market is
-    //      funded), delivering the PLP to the manager via the accumulator.
-    //   2. rebalance_expiry_cash(market) to push idle -> expiry up to the cash floor.
-    // Both the ordering relative to market creation and the bootstrap-mark invariants
-    // need a localnet run to confirm. Left unfunded here so the dependency on a
-    // localnet-confirmed async bootstrap is explicit rather than guessed. The
-    // single-active-market flush builder is `refreshOracleAndFlushTx`; the cash-floor
-    // primitive is `rebalanceExpiryCashTx`.
-    void rebalanceExpiryCashTx;
-    void requestSupplyTx;
-    void refreshOracleAndFlushTx;
-    console.log(`[${ts()}]   (vault bootstrap funding deferred — see TODO(sim-parity))`);
+    // Vault bootstrap (async): the market is already registered active (with 0 cash)
+    // by create_expiry_market, so the bootstrap flush values it (NAV 0, no orders).
+    //   1. request_supply(vaultSeed) escrows DUSDC against the manager.
+    //   2. a privileged flush bootstrap-mints PLP 1:1 (total_supply==0 / pool_value==0)
+    //      and joins the escrowed DUSDC into idle; the PLP is delivered to the manager
+    //      via the balance accumulator.
+    //   3. rebalance_expiry_cash pushes idle -> expiry up to the cash floor so the
+    //      market is mintable.
+    await executeAndWait(
+        requestSupplyTx({ poolVaultId, protocolConfigId, managerId, amount: capital.vaultSeed }),
+        "bootstrap_request_supply",
+    );
+    console.log(`[${ts()}]   Bootstrap supply queued: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
+
+    await executeAndWait(
+        await refreshOracleAndFlushTx({
+            poolVaultId,
+            protocolConfigId,
+            expiryMarketId,
+            pythFeedId,
+            bsFeedId,
+            expiry: EXPIRY_MS,
+            spot: seed.spot,
+            forward: seed.forward,
+            svi: seed.svi,
+        }),
+        "bootstrap_flush",
+    );
+    console.log(`[${ts()}]   Bootstrap flush: PLP minted 1:1, idle funded`);
+
+    await executeAndWait(
+        rebalanceExpiryCashTx({ poolVaultId, protocolConfigId, expiryMarketId, pythFeedId }),
+        "bootstrap_rebalance_expiry_cash",
+    );
+    console.log(`[${ts()}]   Expiry cash rebalanced toward floor`);
 
     const state: SimState = {
         poolVaultId,
@@ -1089,31 +1118,18 @@ async function executeRow(
         );
     }
 
-    // TODO(sim-parity): supply/withdraw are now ASYNC. A row can only ENQUEUE a
-    // request here (request_supply / request_withdraw); the economic effect (PLP
-    // mint/burn, manager credit) happens at a later privileged flush
-    // (start_pool_valuation -> value_expiry -> finish_flush), which is a separate
-    // PTB and which the contract restricts to the operator AdminCap / lifecycle
-    // cap. The single-PTB-per-row model and the inline oracle-refresh+sync that the
-    // old SupplyExecuted/WithdrawExecuted events produced no longer exist. Two
-    // unresolved questions block a faithful localnet mapping, each needing a real
-    // run to confirm:
-    //   1. Cadence: does each supply/withdraw row trigger its own flush (request +
-    //      flush in adjacent txs), or do requests batch until a periodic flush? The
-    //      generator emits no flush row, so the runner must synthesize flush txs.
-    //   2. Withdraw escrow source: request_withdraw takes a Coin<PLP>, but the
-    //      manager holds PLP fills as balance-accumulator credit (send_funds),
-    //      absorbed lazily — there is no PLP coin object to escrow without first
-    //      extracting it from the manager's BalanceManager.
-    // Until a localnet run resolves both, this enqueues the request (verifiable
-    // structurally) but does NOT drive the row's full economics. The Python mirror
-    // (python_replay supply_update/withdraw_update) still models the OLD synchronous
-    // semantics and must be reworked to the request->flush split in the same pass.
+    // supply/withdraw are ASYNC: a row only ENQUEUES a request; the economic effect
+    // (PLP mint/burn, manager credit) lands at a later privileged flush
+    // (start_pool_valuation -> value_expiry -> finish_flush), synthesized by the
+    // runner at the batched checkpoints (see executeScenario). request_supply escrows
+    // fresh DUSDC; request_withdraw escrows a Coin<PLP> the manager first materializes
+    // from its balance accumulator via withdraw_settled<PLP>.
     if (row.action === "supply") {
         return execute(
             () =>
                 requestSupplyTx({
                     poolVaultId: state.poolVaultId,
+                    protocolConfigId: state.protocolConfigId,
                     managerId: state.managerId,
                     amount: row.amount,
                 }),
@@ -1121,13 +1137,21 @@ async function executeRow(
         );
     }
 
-    // Withdraw needs a Coin<PLP> to escrow; see the TODO(sim-parity) above. The
-    // alias index recorded at supply time is the cancel handle, not a PLP coin, so
-    // this throws until the async PLP-extraction flow is confirmed on localnet.
-    void requestWithdrawTx;
-    throw new Error(
-        `withdraw row ${row.step} (${row.lpRef}) needs the localnet-confirmed async ` +
-            "PLP-escrow flow (see TODO(sim-parity) in executeRow); not runnable yet",
+    // Withdraw fully unwinds its referenced supply. Affordability against the
+    // manager's materialized PLP is pre-checked in executeScenario (skip-and-log when
+    // the batched cadence hasn't minted enough yet), so by here the shares are known
+    // available; decrement the running balance and build settle+request in one PTB.
+    const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
+    aliases.availableSettledPlp -= shares;
+    return execute(
+        () =>
+            withdrawSettledAndRequestTx({
+                poolVaultId: state.poolVaultId,
+                protocolConfigId: state.protocolConfigId,
+                managerId: state.managerId,
+                shares,
+            }),
+        "withdraw",
     );
 }
 
@@ -1154,7 +1178,74 @@ async function executeScenario(
     console.log(`\n[${ts()}] Loaded ${rows.length} executable tx rows (${targetMints} mints)`);
     console.log(`[${ts()}] --- Executing economic replay ---\n`);
 
+    // Batched LP flush cadence: requests accumulate and are drained by a privileged
+    // flush the runner synthesizes after the configured row counts (default rows 300
+    // and 999; override with SIM_FLUSH_AFTER="a,b,..." for fast smoke runs). The
+    // bootstrap supply minted PLP 1:1 at setup, so seed the manager's withdrawable PLP
+    // with it (a conservative lower bound — see AliasState.availableSettledPlp).
+    aliases.availableSettledPlp = capital.vaultSeed;
+    const flushAfter = flushCheckpoints();
+    let skippedWithdraws = 0;
+
+    const runFlush = async (afterRow: number, row: ScenarioRow) => {
+        const oracle = firstOracleData(row);
+        const startedAt = performance.now();
+        // Use `execute` (not `executeAndWait`) so the receipt carries normalized gas;
+        // the flush is recorded as a synthetic `flush` trace step at x = afterRow so
+        // its gas (refresh + value_expiry + LP drain) shows on the gas chart alongside
+        // the trade/pool txs. Refresh is bundled in, matching how mint/redeem gas is
+        // measured.
+        const receipt = await execute(
+            () =>
+                refreshOracleAndFlushTx({
+                    poolVaultId: state.poolVaultId,
+                    protocolConfigId: state.protocolConfigId,
+                    expiryMarketId: state.expiryMarketId,
+                    pythFeedId: state.pythFeedId,
+                    bsFeedId: state.bsFeedId,
+                    expiry: EXPIRY_MS,
+                    spot: oracle.spot,
+                    forward: oracle.forward,
+                    svi: oracle.svi,
+                }),
+            `flush_after_row_${afterRow}`,
+        );
+        const wallMs = performance.now() - startedAt;
+        traceSteps.push({
+            step: afterRow,
+            action: "flush",
+            digest: receipt.digest,
+            wallMs,
+            gas: receipt.gas,
+            events: receipt.events.map((event: any) => ({
+                type: eventName(event),
+                full_type: String(event.type ?? ""),
+                parsedJson: event.parsedJson ?? {},
+            })),
+        });
+        process.stdout.write(
+            `[${ts()}]   -- flush after row ${afterRow} (drained LP queues, gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
+        );
+    };
+
+    let processed = 0;
     for (const row of rows) {
+        processed++;
+        // Withdraw affordability under the batched cadence: a supply's PLP is not
+        // minted until its flush, so a withdraw can reference PLP that does not exist
+        // yet. Skip-and-log instead of aborting, so the run completes and reports how
+        // many withdraws the cadence could actually service.
+        if (row.action === "withdraw") {
+            const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
+            if (shares === 0n || shares > aliases.availableSettledPlp) {
+                skippedWithdraws++;
+                process.stdout.write(
+                    `[${ts()}]   [${row.step}] withdraw SKIPPED (${row.lpRef}: want ${shares} PLP, ${aliases.availableSettledPlp} materialized)\n`,
+                );
+                if (flushAfter.has(processed)) await runFlush(processed, row);
+                continue;
+            }
+        }
         try {
             const startedAt = performance.now();
             const receipt = await executeRow(row, state, aliases);
@@ -1183,6 +1274,12 @@ async function executeScenario(
                 `${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`,
             );
         }
+        if (flushAfter.has(processed)) await runFlush(processed, row);
+    }
+    if (skippedWithdraws > 0) {
+        console.log(
+            `[${ts()}]   ${skippedWithdraws} withdraw row(s) skipped (batched cadence had not materialized enough PLP)`,
+        );
     }
 
     const trace: LocalTraceFile = {

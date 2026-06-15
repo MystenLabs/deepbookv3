@@ -14,7 +14,9 @@ else
 fi
 
 DUSDC_DIR="$PACKAGES_DIR/dusdc"
-PREDICT_MATH_DIR="$PACKAGES_DIR/predict_math"
+FIXED_MATH_DIR="$PACKAGES_DIR/fixed_math"
+BLOCK_SCHOLES_ORACLE_DIR="$PACKAGES_DIR/block_scholes_oracle"
+PROPBOOK_DIR="$PACKAGES_DIR/propbook"
 RUNS_DIR="$SCRIPT_DIR/runs"
 BUILD_ENV="sim"
 SCENARIO_CONFIG="$SCRIPT_DIR/data/scenario_config.json"
@@ -196,10 +198,10 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$PREDICT_MATH_DIR/Move.toml" "$PREDICT_MATH_DIR/Move.lock"; do
+  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$PREDICT_MATH_DIR/Published.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$FIXED_MATH_DIR/Published.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
     if [ -f "$f.bak" ]; then
       mv "$f.bak" "$f"
     fi
@@ -362,7 +364,7 @@ done
   find "$PACKAGES_DIR" -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml "$PREDICT_MATH_DIR/Published.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml "$FIXED_MATH_DIR/Published.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
     [ -f "$f" ] && cp "$f" "$f.bak"
   done
 
@@ -397,18 +399,32 @@ done
 
   mv "$DUSDC_DIR/Move.toml.bak" "$DUSDC_DIR/Move.toml"
 
-  # Publish predict_math
-  echo "==> Phase 2a: Publishing predict_math..."
-  inject_env "$PREDICT_MATH_DIR/Move.toml" "$CHAIN_ID"
-  cp "$PREDICT_MATH_DIR/Move.lock" "$PREDICT_MATH_DIR/Move.lock.bak"
+  # Publish fixed_math (was predict_math; leaf package, no deps)
+  echo "==> Phase 2a: Publishing fixed_math..."
+  inject_env "$FIXED_MATH_DIR/Move.toml" "$CHAIN_ID"
+  cp "$FIXED_MATH_DIR/Move.lock" "$FIXED_MATH_DIR/Move.lock.bak"
 
-  PREDICT_MATH_OUTPUT=$(publish_package "$PREDICT_MATH_DIR" "Predict Math")
-  check_publish "$PREDICT_MATH_OUTPUT" "Predict Math"
+  FIXED_MATH_OUTPUT=$(publish_package "$FIXED_MATH_DIR" "Fixed Math")
+  check_publish "$FIXED_MATH_OUTPUT" "Fixed Math"
 
-  PREDICT_MATH_PACKAGE_ID=$(echo "$PREDICT_MATH_OUTPUT" | extract_published_package_id)
-  echo "    Predict Math: $PREDICT_MATH_PACKAGE_ID"
+  FIXED_MATH_PACKAGE_ID=$(echo "$FIXED_MATH_OUTPUT" | extract_published_package_id)
+  echo "    Fixed Math: $FIXED_MATH_PACKAGE_ID"
 
-  mv "$PREDICT_MATH_DIR/Move.toml.bak" "$PREDICT_MATH_DIR/Move.toml"
+  mv "$FIXED_MATH_DIR/Move.toml.bak" "$FIXED_MATH_DIR/Move.toml"
+
+  # Publish block_scholes_oracle (stub BS signed-data verifier; leaf, no deps).
+  # Consumed by both propbook (block_scholes_feed::update) and predict test fixtures.
+  echo "==> Phase 2a2: Publishing block_scholes_oracle..."
+  inject_env "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$CHAIN_ID"
+  cp "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock.bak"
+
+  BLOCK_SCHOLES_ORACLE_OUTPUT=$(publish_package "$BLOCK_SCHOLES_ORACLE_DIR" "Block Scholes Oracle")
+  check_publish "$BLOCK_SCHOLES_ORACLE_OUTPUT" "Block Scholes Oracle"
+
+  BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$(echo "$BLOCK_SCHOLES_ORACLE_OUTPUT" | extract_published_package_id)
+  echo "    Block Scholes Oracle: $BLOCK_SCHOLES_ORACLE_PACKAGE_ID"
+
+  mv "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml.bak" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml"
 
   # test-publish regenerates `[pinned.sim.*]` entries in predict/Move.lock with
   # instance-specific local paths. Snapshot so cleanup restores it to pristine.
@@ -500,20 +516,22 @@ PY
   echo "    Pyth Lazer: $PYTH_LAZER_PACKAGE_ID"
   echo "    Pyth Lazer State: $PYTH_LAZER_STATE_ID"
 
-  # Publish predict
-  echo "==> Phase 3: Publishing predict..."
-
-  inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
-  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$PREDICT_MATH_DIR" "$PREDICT_MATH_PACKAGE_ID" "$BUILD_ENV" <<'PY'
+  # Publish propbook (owns the extracted Pyth + Block Scholes feeds and the shared
+  # OracleRegistry, created+shared at package init). Like predict it depends on the
+  # git pyth_lazer/wormhole packages, so redirect those to the locally published
+  # copies via [dep-replacements.sim]. Its local deps (fixed_math, block_scholes_oracle)
+  # resolve through the shared pubfile, like deepbook/dusdc.
+  echo "==> Phase 2c: Publishing propbook..."
+  inject_env "$PROPBOOK_DIR/Move.toml" "$CHAIN_ID"
+  cp "$PROPBOOK_DIR/Move.lock" "$PROPBOOK_DIR/Move.lock.bak"
+  python3 - "$PROPBOOK_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
 import pathlib, re, sys
 toml_path = pathlib.Path(sys.argv[1])
 pyth_lazer_path = sys.argv[2]
 pyth_lazer_pkg_id = sys.argv[3]
 wormhole_path = sys.argv[4]
 wormhole_pkg_id = sys.argv[5]
-predict_math_path = sys.argv[6]
-predict_math_pkg_id = sys.argv[7]
-build_env = sys.argv[8]
+build_env = sys.argv[6]
 text = toml_path.read_text()
 text = re.sub(
     r"pyth_lazer = \{ git[^}]*\}",
@@ -527,8 +545,56 @@ text = text.rstrip() + (
     f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
     f'wormhole = {{ local = "{wormhole_path}", '
     f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
-    f'predict_math = {{ local = "{predict_math_path}", '
-    f'published-at = "{predict_math_pkg_id}", original-id = "{predict_math_pkg_id}" }}\n'
+)
+toml_path.write_text(text)
+PY
+
+  PROPBOOK_OUTPUT=$(publish_package "$PROPBOOK_DIR" "Propbook")
+  check_publish "$PROPBOOK_OUTPUT" "Propbook"
+
+  PROPBOOK_PACKAGE_ID=$(echo "$PROPBOOK_OUTPUT" | extract_published_package_id)
+  ORACLE_REGISTRY_ID=$(echo "$PROPBOOK_OUTPUT" | extract_created_object_id "registry::OracleRegistry")
+  ORACLE_REGISTRY_ADMIN_CAP_ID=$(echo "$PROPBOOK_OUTPUT" | extract_created_object_id "registry::RegistryAdminCap")
+
+  echo "    Propbook: $PROPBOOK_PACKAGE_ID"
+  echo "    OracleRegistry: $ORACLE_REGISTRY_ID"
+  echo "    RegistryAdminCap: $ORACLE_REGISTRY_ADMIN_CAP_ID"
+
+  # Do NOT restore propbook/Move.toml here: propbook is a new-style package, and
+  # predict loads it from source for `--build-env sim`, so its `[environments] sim`
+  # and `[dep-replacements.sim]` must stay in place until predict is built. cleanup()
+  # restores it from the .bak at exit. (Old-style deps like deepbook can be restored
+  # inline because they resolve addresses via `[addresses]`, not `[environments]`.)
+
+  # Publish predict
+  echo "==> Phase 3: Publishing predict..."
+
+  # Only the git deps (pyth_lazer/wormhole) need source+address redirection for the
+  # sim env — they mirror predict's [dep-replacements.testnet]. The local deps
+  # (deepbook, dusdc, fixed_math, propbook, block_scholes_oracle, token) resolve
+  # through the shared pubfile, so they are not injected here.
+  inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
+  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
+import pathlib, re, sys
+toml_path = pathlib.Path(sys.argv[1])
+pyth_lazer_path = sys.argv[2]
+pyth_lazer_pkg_id = sys.argv[3]
+wormhole_path = sys.argv[4]
+wormhole_pkg_id = sys.argv[5]
+build_env = sys.argv[6]
+text = toml_path.read_text()
+text = re.sub(
+    r"pyth_lazer = \{ git[^}]*\}",
+    f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
+    text,
+)
+text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
+text = text.rstrip() + (
+    f'\n\n[dep-replacements.{build_env}]\n'
+    f'pyth_lazer = {{ local = "{pyth_lazer_path}", '
+    f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
+    f'wormhole = {{ local = "{wormhole_path}", '
+    f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
 )
 toml_path.write_text(text)
 PY
@@ -557,7 +623,11 @@ REGISTRY_ID=$REGISTRY_ID
 ADMIN_CAP_ID=$ADMIN_CAP_ID
 PROTOCOL_CONFIG_ID=$PROTOCOL_CONFIG_ID
 POOL_VAULT_ID=$POOL_VAULT_ID
-PREDICT_MATH_PACKAGE_ID=$PREDICT_MATH_PACKAGE_ID
+FIXED_MATH_PACKAGE_ID=$FIXED_MATH_PACKAGE_ID
+BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$BLOCK_SCHOLES_ORACLE_PACKAGE_ID
+PROPBOOK_PACKAGE_ID=$PROPBOOK_PACKAGE_ID
+ORACLE_REGISTRY_ID=$ORACLE_REGISTRY_ID
+ORACLE_REGISTRY_ADMIN_CAP_ID=$ORACLE_REGISTRY_ADMIN_CAP_ID
 DUSDC_PACKAGE_ID=$DUSDC_PACKAGE_ID
 DUSDC_CURRENCY_ID=$DUSDC_CURRENCY_ID
 TREASURY_CAP_ID=$TREASURY_CAP_ID
