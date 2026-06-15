@@ -18,17 +18,18 @@ module deepbook_predict::liquidation_boundary_tests;
 use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
 use std::unit_test::{assert_eq, destroy};
 
-/// now (100_000) + leverage_floor_window_ms / 2: floor phase at mint is
+/// now (120_000) + leverage_floor_window_ms / 2: floor phase at mint is
 /// exactly 0.5, so floor_index(open) = 1 + 0.2 * 0.5² = 1.05 exactly.
-const EXPIRY_MS: u64 = 15_768_100_000;
+/// Grid-aligned (`now` + a multiple of the resolution period).
+const EXPIRY_MS: u64 = 15_768_120_000;
 /// Check time T1 = EXPIRY_MS − 0.4 * window: floor phase exactly 0.6, so
 /// floor_index(T1) = 1 + 0.2 * 0.6² = 1.072 exactly — the schedule is
 /// genuinely live between mint and check (1.05 → 1.072).
-const T1_MS: u64 = 3_153_700_000;
-/// Oracle re-seed source timestamps: strictly after the setup's 99_000 seed
+const T1_MS: u64 = 3_153_720_000;
+/// Oracle re-seed source timestamps: strictly after the setup's 119_000 seed
 /// and within every freshness window of the T1 clock.
-const T1_ATM_SOURCE_TS: u64 = 3_153_699_500;
-const T1_DROP_SOURCE_TS: u64 = 3_153_699_700;
+const T1_ATM_SOURCE_TS: u64 = 3_153_719_500;
+const T1_DROP_SOURCE_TS: u64 = 3_153_719_700;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// 84_000 lots, chosen so floor_shares = financed_amount / 1.05 = 200_000_000 is an
 /// EXACT division (no dependence on the floor_shares rounding direction).

@@ -23,8 +23,9 @@ use std::unit_test::destroy;
 use sui::{clock, test_scenario::return_shared};
 
 /// Added to the fixture's `default_expiry_ms` so the second market's expiry is
-/// unique (the fixture already created a market at the default expiry).
-const SECOND_EXPIRY_OFFSET_MS: u64 = 100_000;
+/// unique (the fixture already created a market at the default expiry). A multiple
+/// of the resolution period so the second expiry stays on the settlement grid.
+const SECOND_EXPIRY_OFFSET_MS: u64 = 120_000;
 
 const EUnexpectedSuccess: u64 = 999;
 

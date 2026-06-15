@@ -47,6 +47,8 @@ The remaining risk is liveness, not payout solvency:
 
 - **Exact timestamp data is required.** If Propbook has no normalized Pyth spot exactly at the expiry timestamp, the market remains unsettled. A past-expiry market cannot be live-valued, so a flush that still has that market in the active set aborts until the exact timestamp data is inserted and a normal flow passively settles it.
 - **No substitute mark is safe.** There is no solvency-safe NAV for a past-expiry-but-unsettled market: the one PLP mark prices both supply and withdraw, so it must equal a settlement-dependent true value. Valuing at zero would dilute incumbents on supply; valuing at free cash would overpay withdrawals.
+- **Expiry is grid-aligned on-chain.** `create_expiry_market` requires `expiry % resolution_period_ms!() == 0` (a 60s grid). The off-chain resolution relayer publishes the exact-expiry Pyth spot (via `pyth_feed::insert_at`) only on that grid, so an on-grid expiry can always be settled; an off-grid expiry — which could never receive its settling row and would block the flush permanently — is rejected at creation rather than left as an operator footgun.
+- **Bounded, keeper-managed window.** A market is unsettled only between its expiry and the next resolution insert (seconds at the grid cadence). The flush keeper retries and does not flush while an active market is in that window, so the abort is a transient retry, not a stuck pool. Pool-wide flush liveness therefore depends on the resolution relayer staying live: a prolonged relayer outage blocks LP supply/withdraw for the whole vault until it recovers.
 
 ```mermaid
 stateDiagram-v2

@@ -47,12 +47,14 @@ public fun propbook_underlying_id(): u32 { 42 }
 /// check ignores it; the value only has to be stable for the fixture.
 public fun quote_asset_id(): u32 { 840 }
 
-/// Wall-clock the fixture's `Clock` starts at.
-public fun now_ms(): u64 { 100_000 }
+/// Wall-clock the fixture's `Clock` starts at. Grid-aligned (a multiple of
+/// `constants::resolution_period_ms!()`) so `now + N*period` expiries land on the
+/// settlement grid that `create_expiry_market` enforces.
+public fun now_ms(): u64 { 120_000 }
 
 /// Source timestamp for the bootstrap/live oracle seed (< `now_ms`, within
 /// staleness so updates are accepted).
-public fun live_source_timestamp_ms(): u64 { 99_000 }
+public fun live_source_timestamp_ms(): u64 { 119_000 }
 
 /// Default market tick size. Must be a multiple of `market_tick_size_unit`
 /// (10_000) and small enough that `pos_inf_tick * tick_size` fits in u64; 1e9 is.
@@ -80,10 +82,11 @@ public fun protocol_reserve_share(): u64 { 400_000_000 }
 
 // === Default expiry / trade flow (for `setup_everything`) ===
 
-/// Default expiry for the composite bring-up: ~1 year out (`now + ~365d`), past
-/// the leverage-floor window so the floor schedule is flat and >1x mints are
-/// admissible — the broadly-useful default for flow tests.
-public fun default_expiry_ms(): u64 { 31_536_100_000 }
+/// Default expiry for the composite bring-up: exactly `now + 365d` (the floor
+/// window), so the floor schedule is flat and >1x mints are admissible — the
+/// broadly-useful default for flow tests. Grid-aligned (`now` + a multiple of the
+/// resolution period) so it satisfies `create_expiry_market`'s grid assert.
+public fun default_expiry_ms(): u64 { 31_536_120_000 }
 
 /// Default live price seeded by `prepare_live_oracle` in the composite bring-up;
 /// sits at `min_finite_strike` (≈50% for a `[min_strike, +inf)` range).
@@ -115,10 +118,11 @@ public fun default_manager_deposit(): u64 { 30_000_000_000 }
 /// 1x leverage in FLOAT_SCALING (a flat floor schedule => zero floor shares).
 public fun leverage_one_x(): u64 { math::float_scaling!() }
 
-/// Short expiry (`now + 100s`) used by the lifecycle/payout flow tests: near
+/// Short expiry (`now + 120s`) used by the lifecycle/payout flow tests: near
 /// enough that the leverage floor schedule is non-flat (a 2x order carries a real
-/// floor), unlike the far `default_expiry_ms`.
-public fun short_expiry_ms(): u64 { 200_000 }
+/// floor), unlike the far `default_expiry_ms`. Grid-aligned (`now` + 2 resolution
+/// periods) so it satisfies `create_expiry_market`'s grid assert.
+public fun short_expiry_ms(): u64 { 240_000 }
 
 /// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).
 public fun mint_quantity(): u64 { 1_000_000_000 }

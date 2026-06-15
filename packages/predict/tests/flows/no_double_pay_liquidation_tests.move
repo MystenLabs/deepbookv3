@@ -25,14 +25,14 @@ const MINT_MIN_FEE: u64 = 5_000_000;
 /// mint_deposit − net_premium − fee = 1e9 − 250e6 − 5e6.
 const POST_MINT_BALANCE: u64 = 745_000_000;
 /// financed_amount = entry_value − net_premium = 250_000_000. Floor index at open
-/// (clock 100_000, expiry 200_000, window 31_536_000_000 ms):
-///   phase = floor(31_535_900_000 * 1e9 / 31_536_000_000) = 999_996_829;
-///   phase² = floor(phase * phase / 1e9) = 999_993_658;
-///   premium = floor((1.2e9 − 1e9) * phase² / 1e9) = 199_998_731;
-///   index_open = 1_199_998_731.
-/// floor_shares = floor(250_000_000 * 1e9 / index_open) = 208_333_553
+/// (clock 120_000, expiry 240_000, window 31_536_000_000 ms):
+///   phase = floor(31_535_880_000 * 1e9 / 31_536_000_000) = 999_996_194;
+///   phase² = floor(phase * phase / 1e9) = 999_992_388;
+///   premium = floor((1.2e9 − 1e9) * phase² / 1e9) = 199_998_477;
+///   index_open = 1_199_998_477.
+/// floor_shares = floor(250_000_000 * 1e9 / index_open) = 208_333_597
 /// (same hand-derived value as strike_exposure_c1_tests).
-const FLOOR_SHARES: u64 = 208_333_553;
+const FLOOR_SHARES: u64 = 208_333_597;
 /// floor_at_open = floor(FLOOR_SHARES * index_open / 1e9) = 249_999_999 — the
 /// round-down round-trip loses 1 vs the 250_000_000 seed, so the order's live
 /// backing is quantity − 249_999_999.
@@ -43,9 +43,9 @@ const MINT_REBATE: u64 = 2_500_000;
 /// ~0, far below the liquidation threshold floor(249_999_999 * 1e9 / 0.85e9) =
 /// 294_117_645.
 const DROPPED_SPOT: u64 = 99_000_000_000;
-/// Strictly after the setup's 99_000 source timestamp and <= clock 100_000;
+/// Strictly after the setup's 119_000 source timestamp and <= clock 120_000;
 /// the clock itself never advances, so the floor index stays at index_open.
-const DROPPED_SOURCE_TS: u64 = 99_500;
+const DROPPED_SOURCE_TS: u64 = 119_500;
 
 #[test]
 fun liquidated_order_pays_zero_once_and_only_once() {
@@ -96,7 +96,14 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     // full live terms (liability → 0 exactly), moves no cash, and leaves the
     // holder's manager untouched (tombstone persists until the holder redeems).
     fx.prepare_live_oracle_at(&market, &mut pyth, &mut bs, DROPPED_SPOT, DROPPED_SOURCE_TS);
-    let liquidated = fx.liquidate_order(&config, &oracle_registry, &mut market, &pyth, &bs, order_id);
+    let liquidated = fx.liquidate_order(
+        &config,
+        &oracle_registry,
+        &mut market,
+        &pyth,
+        &bs,
+        order_id,
+    );
     assert!(liquidated);
     helpers::check_market_cash(
         &market,

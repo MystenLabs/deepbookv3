@@ -32,11 +32,7 @@ use deepbook_predict::{
     test_constants
 };
 use fixed_math::math;
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
@@ -45,9 +41,9 @@ const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 const TERMINAL_FLOOR_INDEX: u64 = 1_200_000_000;
 
 /// gap==1 row: tuned so the close/remaining floor-share split loses exactly 1 unit
-/// to round-down `mul` (old_floor_shares = 208_333_553, remove lands at ...504,
-/// mod 5 = 4 > old mod 5 = 3).
-const CLOSE_GAP_ONE: u64 = 400_010_000;
+/// to round-down `mul` (old_floor_shares = 208_333_597, close 400_000_000 →
+/// remove 83_333_438; the round-down split leaves a 1-unit sub-additivity gap).
+const CLOSE_GAP_ONE: u64 = 400_000_000;
 
 /// Double close: 300M then 200M of the 700M survivor exercise sequential survivor
 /// reinsertion (the second close must remove terms the tree actually holds).

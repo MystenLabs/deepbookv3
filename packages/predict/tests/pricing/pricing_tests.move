@@ -38,7 +38,7 @@ const DIVERGED_PYTH_SPOT: u64 = 102_000_000_000;
 /// its `freshness_ts + pyth_budget` boundary stays inside the (longer) Block
 /// Scholes surface window, so the post-staleness fallback is observable rather than
 /// aborting on a stale surface.
-const DIVERGED_PYTH_SOURCE_MS: u64 = 99_500;
+const DIVERGED_PYTH_SOURCE_MS: u64 = 119_500;
 
 #[test]
 fun complementary_ranges_sum_to_one_at_the_forward() {

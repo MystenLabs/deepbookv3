@@ -110,6 +110,17 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
+// === Settlement ===
+
+/// Resolution-feed grid period. Terminal settlement reads the exact Pyth
+/// observation keyed at `market.expiry`, which the off-chain resolution relayer
+/// publishes (via `pyth_feed::insert_at`) only on this millisecond grid.
+/// `registry::create_expiry_market` requires `expiry % resolution_period_ms!() == 0`
+/// so the settling key is always producible; an off-grid expiry could never settle
+/// and would block the pool flush indefinitely (`plp::value_expiry` aborts on a
+/// past-expiry market that has no settling observation yet).
+public(package) macro fun resolution_period_ms(): u64 { 60_000 }
+
 // === Strike Tick Domain ===
 
 /// Bit width of each strike tick field in the packed range key and order ID.

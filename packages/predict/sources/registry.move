@@ -42,6 +42,7 @@ const ELifecycleCapNotValid: u64 = 10;
 const ELifecycleCapNotFound: u64 = 11;
 const EPythFeedNotBoundToUnderlying: u64 = 12;
 const EBlockScholesFeedNotBoundToUnderlying: u64 = 13;
+const EExpiryNotOnResolutionGrid: u64 = 14;
 
 /// Registry-owned config for one admin-approved Propbook underlying.
 public struct UnderlyingConfig has copy, drop, store {
@@ -272,6 +273,15 @@ public fun register_underlying(
 /// Propbook so a Propbook rebind affects existing markets. The market is created
 /// with zero cash and registered with the pool vault as an accounting row only;
 /// it is not mintable until `plp::rebalance_expiry_cash` funds it.
+///
+/// `expiry` must fall on the resolution-feed grid (`expiry %
+/// constants::resolution_period_ms!() == 0`). Terminal settlement reads the exact
+/// Pyth observation keyed at `expiry`, which the off-chain resolution relayer
+/// publishes only on that grid; an off-grid expiry could never settle. While a
+/// past-expiry market is awaiting its settling observation it has no solvency-safe
+/// NAV, so the pool flush (`plp::value_expiry`) aborts until the observation lands
+/// — the keeper retries and does not flush while an active market is in that
+/// pending-settlement window (bounded to a few seconds at the grid cadence).
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -288,6 +298,10 @@ public fun create_expiry_market(
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
+    // Expiry must land on the resolution-feed grid so the exact-ms settling Pyth
+    // observation is always producible; an off-grid expiry could never settle and
+    // would block the pool flush indefinitely.
+    assert!(expiry % constants::resolution_period_ms!() == 0, EExpiryNotOnResolutionGrid);
     let market_key = MarketKey { propbook_underlying_id, expiry };
     let min_tick_size = registry.assert_underlying_registered(propbook_underlying_id);
     assert_market_tick_size(min_tick_size, tick_size);
