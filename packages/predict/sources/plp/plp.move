@@ -203,9 +203,12 @@ public fun start_pool_valuation_as_deployer(
 /// the lock-free inner, so it does not self-abort under the valuation lock.
 ///
 /// Before branching, this passively records terminal settlement from Propbook's
-/// exact Pyth timestamp if available. If no exact spot exists for a past-expiry
-/// market, the live branch still aborts through `current_nav`; there is no
-/// solvency-safe substitute mark for an unsettled expired market.
+/// exact Pyth timestamp if available: a past-expiry market is normally settled here
+/// and swept (contributing 0), so `current_nav` is only reached for a still-live
+/// market. Only in the bounded pending-settlement window (past expiry but the
+/// exact-expiry spot not yet inserted) does the live branch still abort through
+/// `current_nav`; there is no solvency-safe substitute mark for an unsettled expired
+/// market, and the abort clears once anyone lands the exact spot.
 public fun value_expiry(
     valuation: &mut PoolValuation,
     vault: &mut PoolVault,

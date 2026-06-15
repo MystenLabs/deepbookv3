@@ -27,11 +27,16 @@
 /// zero-spot/zero-forward surface upstream (-> `EBlockScholesSurfaceStale`), so those
 /// two conditions are defensive-only and not tested here. `EZeroForward` is reached
 /// via a tiny-forward / large-spot surface (no LOWER basis bound), where the
-/// re-anchored `spot * (forward/spot)` rounds to 0. `EZeroVariance` and
-/// `ECannotBeNegative` in `compute_nd2` are unreachable from the live pricer: the
-/// envelope's `|rho| <= 1` makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0`
-/// always, and with `sigma >= 1e-3` the variance cannot round to 0 without
-/// out-of-envelope inputs; both are defensive fixed-point guards, noted not tested.
+/// re-anchored `spot * (forward/spot)` rounds to 0. `EZeroVariance` is reached by a
+/// degenerate-but-in-envelope surface (`a == 0, b == 0`, so total variance
+/// `a + b*inner == 0`): a/b are bounded only from above, and the `sigma >= 1e-3`
+/// floor bounds the SVI wing parameter, NOT the total variance, so it does not
+/// prevent this. It is the same recoverable fail-closed liveness stop a near-expiry
+/// surface hits as total variance rounds to 0: all quoting (incl. NAV) aborts until
+/// a valid surface is pushed, never a mispricing. `ECannotBeNegative` in
+/// `compute_nd2` is the one genuinely unreachable guard: the envelope's `|rho| <= 1`
+/// makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0` always; it is a
+/// defensive fixed-point guard, noted not tested.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -233,6 +238,40 @@ fun re_anchored_zero_forward_aborts() {
         1, // forward == 1: div(1, 1e17) == 0, so spot * 0 == 0
         default_svi_a(),
         default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+
+    pricer.up_price(test_constants::default_live_price());
+
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    fx.finish();
+    abort EUnexpectedSuccess
+}
+
+// === Deep-math abort (EZeroVariance) ===
+
+/// A degenerate but in-envelope surface (`a == 0, b == 0`) has zero SVI total
+/// variance (`total_var = a + b*inner == 0`). It passes `assert_surface_pricing_safe`
+/// (a/b are bounded only from above), but `compute_nd2` fails closed on the first
+/// finite-strike quote. The `min_svi_sigma` floor does not prevent this: it bounds
+/// the SVI wing parameter, not the total variance. This is the same recoverable
+/// liveness stop a near-expiry surface hits as total variance rounds to 0.
+#[test, expected_failure(abort_code = pricing::EZeroVariance)]
+fun zero_total_variance_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    fx.prepare_real_oracle(
+        &mut bs,
+        &mut pyth,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        0, // svi_a == 0
+        0, // svi_b == 0, so total_var = a + b*inner == 0
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
         false,
