@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS market_created (
     package                          TEXT      NOT NULL,
     expiry_market_id                 TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    propbook_underlying_id           BIGINT    NOT NULL, -- u32 Propbook underlying; join oracle_bound for the oracle
+    propbook_underlying_id           BIGINT    NOT NULL, -- u32 Propbook underlying; join Propbook oracle binding data for the oracle
     expiry                           BIGINT    NOT NULL,
     tick_size                        NUMERIC   NOT NULL  -- raw-price-per-tick; raw strike = order tick * tick_size
 );

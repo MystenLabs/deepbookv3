@@ -4,10 +4,10 @@
 use crate::error::OracleError;
 use crate::metrics::RpcMetrics;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
-use predict_schema::models::{
+use oracle_schema::models::{
     BlockScholesObservation, OracleBound, OracleSourceRegistered, OracleSpot1m, PythObservation,
 };
-use predict_schema::schema;
+use oracle_schema::schema;
 use serde_json::Value;
 
 use diesel_async::RunQueryDsl;

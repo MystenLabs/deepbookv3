@@ -9,7 +9,7 @@ use crate::meta::OracleEventMeta;
 use crate::models::{BlockScholesObservationEvent, ObservationRecorded};
 use crate::traits::MoveStruct;
 use crate::OracleEnv;
-use predict_schema::models::BlockScholesObservation as Row;
+use oracle_schema::models::BlockScholesObservation as Row;
 use sui_indexer_alt_framework::pipeline::Processor;
 use sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint;
 
@@ -67,7 +67,7 @@ impl sui_indexer_alt_framework::postgres::handler::Handler
     ) -> anyhow::Result<usize> {
         use diesel_async::RunQueryDsl;
         Ok(
-            diesel::insert_into(predict_schema::schema::block_scholes_observation::table)
+            diesel::insert_into(oracle_schema::schema::block_scholes_observation::table)
                 .values(values)
                 .on_conflict_do_nothing()
                 .execute(conn)

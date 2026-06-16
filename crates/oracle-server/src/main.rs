@@ -17,9 +17,9 @@ struct Args {
     #[clap(env, long, default_value = "0.0.0.0:9187")]
     metrics_address: SocketAddr,
     #[clap(
-        env,
+        env = "ORACLE_DATABASE_URL",
         long,
-        default_value = "postgres://postgres:postgrespw@localhost:5432/predict"
+        default_value = "postgres://postgres:postgrespw@localhost:5432/propbook"
     )]
     database_url: Url,
     #[clap(env, long, default_value = "https://fullnode.mainnet.sui.io:443")]

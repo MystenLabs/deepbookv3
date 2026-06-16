@@ -10,7 +10,7 @@ use oracle_indexer::materialized_view_refresh::{
     materialized_view_refresh_service, MaterializedViewRefreshMetrics,
 };
 use oracle_indexer::OracleEnv;
-use predict_schema::MIGRATIONS;
+use oracle_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
 use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
@@ -40,9 +40,9 @@ struct Args {
     #[clap(env, long, default_value = "0.0.0.0:9186")]
     metrics_address: SocketAddr,
     #[clap(
-        env,
+        env = "ORACLE_DATABASE_URL",
         long,
-        default_value = "postgres://postgres:postgrespw@localhost:5432/predict"
+        default_value = "postgres://postgres:postgrespw@localhost:5432/propbook"
     )]
     database_url: Url,
     /// Oracle environment.

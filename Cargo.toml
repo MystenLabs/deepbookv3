@@ -8,6 +8,7 @@ members = [
     "crates/predict-schema",
     "crates/predict-indexer",
     "crates/predict-server",
+    "crates/oracle-schema",
     "crates/oracle-indexer",
     "crates/oracle-server",
 ]

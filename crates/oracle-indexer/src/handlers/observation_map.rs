@@ -16,7 +16,7 @@ use crate::meta::OracleEventMeta;
 use crate::models::{BlockScholesObservationEvent, PythObservationEvent, I64};
 use bigdecimal::BigDecimal;
 use move_core_types::language_storage::{StructTag, TypeTag};
-use predict_schema::models::{BlockScholesObservation as BsRow, PythObservation as PythRow};
+use oracle_schema::models::{BlockScholesObservation as BsRow, PythObservation as PythRow};
 
 /// Walk one generic step into a `StructTag`'s first type parameter, returning
 /// the inner `StructTag` when it is a struct type.

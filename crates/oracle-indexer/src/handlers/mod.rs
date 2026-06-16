@@ -16,7 +16,7 @@ pub mod pyth_observation_recorded_handler;
 /// tx-filter differ. The `process` loop iterates
 /// `checkpoint.transactions.iter().enumerate()` to capture `tx_index`, and per
 /// event sets `package` from the event's own type address. The insert target is
-/// `predict_schema::schema::$table`.
+/// `oracle_schema::schema::$table`.
 ///
 /// This is the right tool for the registry events (`OracleSourceRegistered`,
 /// `OracleBound`) which are concrete (non-generic) structs. The observation
@@ -85,7 +85,7 @@ macro_rules! define_oracle_handler {
                 conn: &mut sui_pg_db::Connection<'a>,
             ) -> anyhow::Result<usize> {
                 use diesel_async::RunQueryDsl;
-                Ok(diesel::insert_into(predict_schema::schema::$table::table)
+                Ok(diesel::insert_into(oracle_schema::schema::$table::table)
                     .values(values)
                     .on_conflict_do_nothing()
                     .execute(conn)

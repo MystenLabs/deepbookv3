@@ -5862,7 +5862,7 @@ dependencies = [
  "diesel",
  "diesel-async",
  "move-core-types",
- "predict-schema",
+ "oracle-schema",
  "prometheus",
  "serde",
  "serde_json",
@@ -5880,6 +5880,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-schema"
+version = "0.1.0"
+dependencies = [
+ "bigdecimal",
+ "chrono",
+ "diesel",
+ "diesel_migrations",
+ "serde",
+ "sui-field-count",
+]
+
+[[package]]
 name = "oracle-server"
 version = "0.1.0"
 dependencies = [
@@ -5894,7 +5906,7 @@ dependencies = [
  "futures",
  "governor",
  "http-body-util",
- "predict-schema",
+ "oracle-schema",
  "prometheus",
  "secrecy",
  "serde",

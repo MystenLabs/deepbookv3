@@ -1,14 +1,12 @@
-use crate::schema::block_scholes_observation;
 use crate::schema::{
     builder_code_created, builder_code_set, builder_fees_claimed, deep_staked, deep_unstaked,
     ewma_config_updated, expiry_cash_rebalanced, expiry_cash_received,
     expiry_cash_template_config_updated, expiry_market_mint_paused_updated,
     expiry_profit_materialized, flush_executed, liquidated_order_redeemed, liquidation_stats_1h,
     live_order_redeemed, lp_request_state, market_activity_1h, market_config_snapshot,
-    market_created, market_settled, oracle_bound, oracle_source_registered, oracle_spot_1m,
-    order_liquidated, order_minted, order_state, position_cashflow, predict_deposit_cap_minted,
-    predict_manager_created, predict_trade_cap_minted, predict_withdraw_cap_minted,
-    pricing_config_updated, pyth_observation, request_cancelled, risk_config_updated,
+    market_created, market_settled, order_liquidated, order_minted, order_state, position_cashflow,
+    predict_deposit_cap_minted, predict_manager_created, predict_trade_cap_minted,
+    predict_withdraw_cap_minted, pricing_config_updated, request_cancelled, risk_config_updated,
     settled_order_redeemed, stake_config_updated, strike_exposure_template_config_updated,
     supply_filled, supply_requested, trading_paused_updated, vault_flows_1h, withdraw_filled,
     withdraw_requested,
@@ -797,107 +795,4 @@ pub struct PositionCashflow {
     pub settled_payout: BigDecimal,
     pub settled_quantity_closed: BigDecimal,
     pub liquidated_quantity_closed: BigDecimal,
-}
-
-// Oracle-lane raw models, inserted by the standalone oracle-indexer. As with
-// the predict raw models, the DB-default `timestamp` column is omitted.
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = pyth_observation, primary_key(event_digest))]
-pub struct PythObservation {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub propbook_oracle_id: String,
-    pub pyth_source_id: i64,
-    pub price_magnitude: BigDecimal,
-    pub price_is_negative: bool,
-    pub exponent_magnitude: i32,
-    pub exponent_is_negative: bool,
-    pub source_timestamp_us: BigDecimal,
-    pub normalized_spot: Option<BigDecimal>,
-    pub source_timestamp_ms: i64,
-    pub update_timestamp_ms: i64,
-    pub is_exact: bool,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = block_scholes_observation, primary_key(event_digest))]
-pub struct BlockScholesObservation {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub propbook_oracle_id: String,
-    pub bs_source_id: i64,
-    pub expiry_ms: i64,
-    pub spot: BigDecimal,
-    pub forward: BigDecimal,
-    pub svi_a: BigDecimal,
-    pub svi_b: BigDecimal,
-    pub svi_rho: BigDecimal,
-    pub svi_m: BigDecimal,
-    pub svi_sigma: BigDecimal,
-    pub normalized_spot: Option<BigDecimal>,
-    pub normalized_forward: Option<BigDecimal>,
-    pub source_timestamp_ms: i64,
-    pub update_timestamp_ms: i64,
-    pub is_exact: bool,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = oracle_source_registered, primary_key(event_digest))]
-pub struct OracleSourceRegistered {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub oracle_kind: i16,
-    pub source_id: i64,
-    pub propbook_oracle_id: String,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = oracle_bound, primary_key(event_digest))]
-pub struct OracleBound {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub propbook_underlying_id: i64,
-    pub oracle_kind: i16,
-    pub source_id: i64,
-    pub propbook_oracle_id: String,
-    pub value_kind: i16,
-}
-
-#[derive(Queryable, Selectable, Debug, Serialize)]
-#[diesel(table_name = oracle_spot_1m)]
-pub struct OracleSpot1m {
-    pub propbook_oracle_id: String,
-    pub expiry_ms: i64,
-    pub bucket_ms: i64,
-    pub open: BigDecimal,
-    pub high: BigDecimal,
-    pub low: BigDecimal,
-    pub close: BigDecimal,
-    pub forward: BigDecimal,
-    pub update_count: i64,
 }

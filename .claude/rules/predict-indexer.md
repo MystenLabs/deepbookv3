@@ -3,11 +3,14 @@ paths:
   - "crates/predict-server/**"
   - "crates/predict-indexer/**"
   - "crates/predict-schema/**"
+  - "crates/oracle-server/**"
+  - "crates/oracle-indexer/**"
+  - "crates/oracle-schema/**"
 ---
 
 # Predict Indexer / Server Rules
 
-Read this when editing `crates/predict-schema/**`, `crates/predict-indexer/**`, or `crates/predict-server/**`. These crates index the Predict package's on-chain events into Postgres and serve them over HTTP. They **mirror** the core DeepBook crates (`crates/{schema,indexer,server}`) but are independent and intentionally improve on a few core patterns. When a rule here conflicts with what core does, this file wins **for Predict crates only** — do not change core to match, and do not copy core's known weaknesses forward.
+Read this when editing `crates/predict-schema/**`, `crates/predict-indexer/**`, `crates/predict-server/**`, `crates/oracle-schema/**`, `crates/oracle-indexer/**`, or `crates/oracle-server/**`. These crates index the Predict and Propbook packages' on-chain events into Postgres and serve them over HTTP. They **mirror** the core DeepBook crates (`crates/{schema,indexer,server}`) but are independent and intentionally improve on a few core patterns. When a rule here conflicts with what core does, this file wins **for Predict / Propbook crates only** — do not change core to match, and do not copy core's known weaknesses forward.
 
 Also read `.claude/rules/indexer.md` (shared operational gotchas: migrations can't use `CREATE INDEX CONCURRENTLY`, `IF NOT EXISTS` for idempotency, 3 connection pools, the `to_timestamp()::timestamp` cast).
 
@@ -16,7 +19,10 @@ Also read `.claude/rules/indexer.md` (shared operational gotchas: migrations can
 - `predict-schema` — **lib** crate. Diesel `embed_migrations!`, generated `schema.rs`, `models.rs`. Mirrors `crates/schema`.
 - `predict-indexer` — **binary**. Event handlers, `PredictEventMeta`, `PredictEnv`, the handler macro, `main.rs` bootstrap, materialized-view refresh. Mirrors `crates/indexer`.
 - `predict-server` — **binary**. `Reader`, routes, `/status`, `/health`. Mirrors `crates/server`.
-- Same Postgres DB as core, **separate tables**, separate indexer process, separate watermark namespace (pipeline names are unique). Core crates stay untouched.
+- `oracle-schema` — **lib** crate for Propbook/oracle tables and migrations. Keep oracle migrations here, never in `predict-schema`.
+- `oracle-indexer` — **binary**. Propbook event handlers, `OracleEventMeta`, `OracleEnv`, own materialized-view refresh.
+- `oracle-server` — **binary**. Propbook/oracle HTTP API.
+- Predict and Propbook use **separate Postgres DBs** and separate schema crates. The oracle binaries use `ORACLE_DATABASE_URL` and run `oracle_schema::MIGRATIONS`; they must not run `predict_schema::MIGRATIONS`.
 
 ## Mirror Core Verbatim (do not reinvent)
 
@@ -64,7 +70,7 @@ The framework reprocesses checkpoints **at-least-once** and concurrent pipelines
 - Basic analytics MV tables (vault NAV/PnL timeline, liquidation stats, funding/exposure) live here for quick local/quant tests; the real scale work is ClickHouse, so keep these few and simple.
 - Every MV **must** have a `UNIQUE` index (required for `REFRESH ... CONCURRENTLY`). Register its name in `MATERIALIZED_VIEWS_TO_REFRESH` (`crates/predict-indexer/src/materialized_view_refresh.rs`).
 - Build MVs over the raw tables, ordered by the `(checkpoint, tx_index, event_index)` triple.
-- **Bound every time-bucketed MV to a 30-day trailing window** (`checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000`): `REFRESH` is a full recompute, so an unwindowed MV gets slower forever. Current MVs: `market_activity_1h`, `vault_flows_1h`, `liquidation_stats_1h`, `oracle_prices_1m` (windowed) and `position_cashflow` (keyed by position root, NOT windowed — revisit before mainnet). Bucket with integer math `(checkpoint_timestamp_ms / 3600000) * 3600000`, not `date_trunc`.
+- **Bound every time-bucketed MV to a 30-day trailing window** (`checkpoint_timestamp_ms >= EXTRACT(EPOCH FROM now())::BIGINT * 1000 - 2592000000`): `REFRESH` is a full recompute, so an unwindowed MV gets slower forever. Current Predict MVs: `market_activity_1h`, `vault_flows_1h`, `liquidation_stats_1h` (windowed) and `position_cashflow` (keyed by position root, NOT windowed — revisit before mainnet). Current Propbook MV: `oracle_spot_1m` in `oracle-schema` (windowed). Bucket with integer math, not `date_trunc`.
 
 ## Large tables / aggregation
 
@@ -87,9 +93,9 @@ Pre-deploy, the Predict package address is empty. `PredictEnv::package_addresses
 
 ## Pre-Push Checklist (per crate)
 
-1. `cargo fmt -p predict-schema -p predict-indexer -p predict-server` — CI fails on formatting.
-2. `cargo build -p predict-indexer -p predict-server` — catch compile errors.
-3. `cargo test -p predict-indexer -p predict-server`.
+1. `cargo fmt -p predict-schema -p predict-indexer -p predict-server -p oracle-schema -p oracle-indexer -p oracle-server` — CI fails on formatting.
+2. `cargo build -p predict-indexer -p predict-server -p oracle-indexer -p oracle-server` — catch compile errors.
+3. `cargo test -p predict-schema -p predict-indexer -p predict-server -p oracle-schema -p oracle-indexer -p oracle-server`.
 4. New raw table → confirm: 7-col header + `tx_index` + `event_index`, composite index on `(checkpoint, tx_index, event_index)`, lookup-id indexes, `TEXT` for u256, `NUMERIC` for unbounded u64, and the matching `schema.rs` `table!` block + `models.rs` Insertable (omit the DB-default `timestamp`).
 
 ## Package Config

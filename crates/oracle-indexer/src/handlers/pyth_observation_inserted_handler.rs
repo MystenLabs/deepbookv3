@@ -8,7 +8,7 @@ use crate::meta::OracleEventMeta;
 use crate::models::{ObservationInserted, PythObservationEvent};
 use crate::traits::MoveStruct;
 use crate::OracleEnv;
-use predict_schema::models::PythObservation as Row;
+use oracle_schema::models::PythObservation as Row;
 use sui_indexer_alt_framework::pipeline::Processor;
 use sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint;
 
@@ -64,7 +64,7 @@ impl sui_indexer_alt_framework::postgres::handler::Handler for PythObservationIn
     ) -> anyhow::Result<usize> {
         use diesel_async::RunQueryDsl;
         Ok(
-            diesel::insert_into(predict_schema::schema::pyth_observation::table)
+            diesel::insert_into(oracle_schema::schema::pyth_observation::table)
                 .values(values)
                 .on_conflict_do_nothing()
                 .execute(conn)

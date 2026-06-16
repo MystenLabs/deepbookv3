@@ -1,9 +1,8 @@
--- Oracle-lane tables for the standalone Propbook oracle indexer.
+-- Oracle-lane tables for the standalone Propbook oracle indexer and server.
 --
--- These tables live in the shared `predict` Postgres DB but are written by the
--- separate `oracle-indexer` process (own watermark namespace) and read by
--- `oracle-server`. `embed_migrations!` runs every migration from both indexers;
--- the IF NOT EXISTS guards make that double-run idempotent.
+-- These tables live in the Propbook oracle Postgres DB, separate from the
+-- Predict DB. They are written by the `oracle-indexer` process (own watermark
+-- namespace) and read by `oracle-server`.
 --
 -- Standard 9-column event header (event_digest PK + digest/sender/checkpoint/
 -- tx_index/event_index/timestamp/checkpoint_timestamp_ms/package) mirrors the

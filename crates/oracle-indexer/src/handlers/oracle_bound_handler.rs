@@ -1,6 +1,6 @@
 use crate::meta::OracleEventMeta;
 use crate::models::OracleBound as Ev;
-use predict_schema::models::OracleBound as Row;
+use oracle_schema::models::OracleBound as Row;
 
 pub fn map(ev: &Ev, meta: &OracleEventMeta) -> Row {
     Row {
@@ -28,7 +28,7 @@ crate::define_oracle_handler! {
     name: OracleBoundHandler,
     processor_name: "oracle_bound",
     event_type: crate::models::OracleBound,
-    db_model: predict_schema::models::OracleBound,
+    db_model: oracle_schema::models::OracleBound,
     table: oracle_bound,
     map_event: |event, meta| map(&event, &meta)
 }

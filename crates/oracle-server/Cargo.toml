@@ -7,7 +7,7 @@ publish = false
 edition = "2021"
 
 [dependencies]
-predict-schema = { path = "../predict-schema" }
+oracle-schema = { path = "../oracle-schema" }
 tokio.workspace = true
 futures = "0.3.31"
 clap = { workspace = true, features = ["env"] }

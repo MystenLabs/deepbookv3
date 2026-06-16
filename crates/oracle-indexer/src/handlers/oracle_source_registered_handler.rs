@@ -1,6 +1,6 @@
 use crate::meta::OracleEventMeta;
 use crate::models::OracleSourceRegistered as Ev;
-use predict_schema::models::OracleSourceRegistered as Row;
+use oracle_schema::models::OracleSourceRegistered as Row;
 
 pub fn map(ev: &Ev, meta: &OracleEventMeta) -> Row {
     Row {
@@ -24,7 +24,7 @@ crate::define_oracle_handler! {
     name: OracleSourceRegisteredHandler,
     processor_name: "oracle_source_registered",
     event_type: crate::models::OracleSourceRegistered,
-    db_model: predict_schema::models::OracleSourceRegistered,
+    db_model: oracle_schema::models::OracleSourceRegistered,
     table: oracle_source_registered,
     map_event: |event, meta| map(&event, &meta)
 }

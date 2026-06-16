@@ -31,7 +31,7 @@ sui-types.workspace = true
 move-core-types.workspace = true
 telemetry-subscribers.workspace = true
 
-predict-schema = { path = "../predict-schema" }
+oracle-schema = { path = "../oracle-schema" }
 
 [[bin]]
 name = "oracle-indexer"
