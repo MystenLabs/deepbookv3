@@ -35,8 +35,7 @@ use sui::{
     balance::{Self, Balance},
     clock::Clock,
     coin::{Coin, TreasuryCap},
-    coin_registry,
-    vec_set::{Self, VecSet}
+    coin_registry
 };
 use token::deep::DEEP;
 
@@ -44,7 +43,6 @@ const EExpiryMarketNotActive: u64 = 0;
 const EExpiryMarketAlreadyValued: u64 = 1;
 const EWrongPoolVault: u64 = 2;
 const EMissingExpiryValuation: u64 = 3;
-const EPackageVersionDisabled: u64 = 9;
 const ENotBootstrapped: u64 = 10;
 const EPlpPriceBelowCircuitBreaker: u64 = 11;
 const EPlpPriceAboveCircuitBreaker: u64 = 12;
@@ -68,8 +66,6 @@ public struct PoolVault has key {
     lp: LpBook<PLP>,
     /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
     expiry_accounting: Ledger,
-    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
-    allowed_versions: VecSet<u64>,
 }
 
 /// Transaction-local full-pool NAV valuation hot potato.
@@ -112,11 +108,6 @@ fun init(witness: PLP, ctx: &mut TxContext) {
 /// Return the pool vault object ID.
 public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
-}
-
-/// Return this vault's mirrored set of allowed package versions.
-public fun allowed_versions(vault: &PoolVault): VecSet<u64> {
-    vault.allowed_versions
 }
 
 /// Return DEEP staked by managers and held in custody by the pool.
@@ -189,6 +180,7 @@ public fun start_pool_valuation(
     vault: &PoolVault,
     lifecycle_proof: MarketLifecycleProof,
 ): PoolValuation {
+    config.assert_version();
     lifecycle_proof.destroy_proof();
     start_pool_valuation_internal(config, vault)
 }
@@ -217,6 +209,7 @@ public fun value_expiry(
     bs: &BlockScholesFeed,
     clock: &Clock,
 ) {
+    config.assert_version();
     config.assert_valuation_in_progress();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
@@ -249,7 +242,7 @@ public fun finish_flush(
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
 ): u64 {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_valuation_in_progress();
     valuation.assert_pool_vault(vault);
     assert_all_expected_valued(
@@ -311,10 +304,11 @@ public fun finish_flush(
 public fun stake_deep(
     vault: &mut PoolVault,
     manager: &mut PredictManager,
+    config: &ProtocolConfig,
     deep: Coin<DEEP>,
     ctx: &TxContext,
 ) {
-    vault.assert_version_allowed();
+    config.assert_version();
     manager.assert_owner(ctx);
     manager.update_stake(ctx);
     let amount = deep.value();
@@ -333,9 +327,10 @@ public fun stake_deep(
 public fun unstake_deep(
     vault: &mut PoolVault,
     manager: &mut PredictManager,
+    config: &ProtocolConfig,
     ctx: &mut TxContext,
 ): Coin<DEEP> {
-    vault.assert_version_allowed();
+    config.assert_version();
     manager.assert_owner(ctx);
     let amount = manager.remove_all_stake();
     vault_events::emit_deep_unstaked(vault.id(), manager.id(), amount);
@@ -360,6 +355,7 @@ public fun rebalance_expiry_cash(
     pyth: &PythFeed,
     clock: &Clock,
 ) {
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     vault.rebalance_expiry_cash_inner(market, config, propbook_registry, pyth, clock);
 }
@@ -372,8 +368,13 @@ public fun rebalance_expiry_cash(
 /// Callable only by the operator and only while the pool is pristine
 /// (`total_supply == 0`), so it runs exactly once; all supply/withdraw/flush flows
 /// abort `ENotBootstrapped` until it has.
-public fun lock_capital(vault: &mut PoolVault, _admin_cap: &AdminCap, payment: Coin<DUSDC>) {
-    vault.assert_version_allowed();
+public fun lock_capital(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    payment: Coin<DUSDC>,
+) {
+    config.assert_version();
     assert!(vault.lp.total_supply() == 0, EAlreadyBootstrapped);
     let amount = payment.value();
     assert!(amount >= constants::min_bootstrap_liquidity!(), EBelowMinBootstrapLiquidity);
@@ -397,7 +398,7 @@ public fun request_supply(
     amount: u64,
     ctx: &mut TxContext,
 ): u64 {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     let payment = manager.withdraw<DUSDC>(cap, root, amount, ctx);
@@ -418,7 +419,7 @@ public fun request_withdraw(
     amount: u64,
     ctx: &mut TxContext,
 ): u64 {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     let lp = manager.withdraw<PLP>(cap, root, amount, ctx);
@@ -438,7 +439,7 @@ public fun cancel_supply_request(
     index: u64,
     ctx: &mut TxContext,
 ) {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     manager.validate_withdrawer(cap);
     manager.settle<DUSDC>(root, ctx);
@@ -458,7 +459,7 @@ public fun cancel_withdraw_request(
     index: u64,
     ctx: &mut TxContext,
 ) {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     manager.validate_withdrawer(cap);
     manager.settle<PLP>(root, ctx);
@@ -476,7 +477,6 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         staked_deep: balance::zero(),
         lp: lp_book::new(treasury_cap, ctx),
         expiry_accounting: pool_accounting::new(ctx),
-        allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
 
@@ -488,18 +488,10 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
     id
 }
 
-/// Overwrite this vault's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_pool_vault_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
-    vault.allowed_versions = allowed_versions;
-}
-
 /// Register a freshly created expiry market with the pool as an accounting row.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_expiry_market`.
 public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID) {
-    vault.assert_version_allowed();
     vault.expiry_accounting.register_expiry(expiry_market_id);
 }
 
@@ -507,8 +499,8 @@ public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID)
 /// valuation flush. A settled market is swept (deactivated, free cash returned,
 /// profit materialized) — idempotent, so a second pass is a safe no-op. A live
 /// market is topped up from idle toward target, or has its surplus over target
-/// swept back to idle. The valuation lock is owned by the public wrapper, not
-/// here, so the flush can call this under the lock without self-aborting.
+/// swept back to idle. The valuation lock and version gate are owned by the public
+/// wrappers, not here, so the flush can call this under the lock without self-aborting.
 public(package) fun rebalance_expiry_cash_inner(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -517,8 +509,6 @@ public(package) fun rebalance_expiry_cash_inner(
     pyth: &PythFeed,
     clock: &Clock,
 ): bool {
-    vault.assert_version_allowed();
-    market.assert_version_allowed();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
 
@@ -620,14 +610,6 @@ fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
     assert!(
         pool_nav <= math::mul(total_supply, constants::max_plp_price!()),
         EPlpPriceAboveCircuitBreaker,
-    );
-}
-
-/// Abort if the running package version is not allowed for this vault.
-fun assert_version_allowed(vault: &PoolVault) {
-    assert!(
-        vault.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
     );
 }
 
@@ -753,7 +735,6 @@ fun emit_expiry_cash_rebalanced(
 /// cap-gated flush entrypoints. Gated on a bootstrapped pool so `finish_flush` never
 /// reaches `assert_plp_price_in_bounds` with `total_supply == 0`.
 fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
-    vault.assert_version_allowed();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();
     PoolValuation {

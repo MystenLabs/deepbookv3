@@ -9,13 +9,11 @@
 module deepbook_predict::expiry_market_gate_tests;
 
 use deepbook_predict::{
-    admin,
     constants,
     expiry_market,
     flow_test_helpers as helpers,
     pricing,
     protocol_config,
-    registry::{Self, Registry},
     test_constants
 };
 use propbook::{
@@ -196,7 +194,7 @@ fun mint_while_expiry_mint_paused_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
-    fx.set_expiry_mint_paused(&mut market, true);
+    fx.set_expiry_mint_paused(&mut market, &config, true);
     fx.mint(
         &config,
         &oracle_registry,
@@ -216,39 +214,23 @@ fun mint_while_expiry_mint_paused_aborts() {
     abort 999
 }
 
-/// Minting after the running package version has been disabled in the registry
-/// (and the market's mirrored `allowed_versions` synced) must abort:
-/// `assert_version_allowed` is the first gate in `mint`.
-#[test, expected_failure(abort_code = expiry_market::EPackageVersionDisabled)]
-fun mint_with_current_version_disabled_aborts() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+/// A version-disabled package (watermark pushed above the running `current_version!()`)
+/// must block expiry-market flows. `set_mint_paused` is the reachable public entrypoint
+/// (no AccumulatorRoot, which has no Move test constructor) whose first line is
+/// `config.assert_version()`; the rooted `mint`/`redeem` entrypoints gate identically
+/// but can only be driven through the root-free `*_internal` cores in tests, which no
+/// longer self-gate after the gate moved to the public wrappers.
+#[test, expected_failure(abort_code = protocol_config::EPackageVersionDisabled)]
+fun expiry_market_flow_with_version_disabled_aborts() {
+    let (mut fx, expiry_id, _manager) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let (_pyth, _bs, _oracle_registry, _vault, mut market, mut config) = fx.take_market(expiry_id);
 
-    let admin_cap = admin::new(fx.scenario_mut().ctx());
-    let mut registry = fx.scenario_mut().take_shared<Registry>();
-    registry::enable_version(&mut registry, &admin_cap, constants::current_version!() + 1);
-    registry::disable_version(&mut registry, &admin_cap, constants::current_version!());
-    registry::sync_expiry_market_allowed_versions(&registry, &mut market);
-    sui::test_scenario::return_shared(registry);
-
-    fx.mint(
-        &config,
-        &oracle_registry,
-        &mut manager,
-        &mut market,
-        &pyth,
-        &bs,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
+    protocol_config::set_version_watermark_for_testing(
+        &mut config,
+        constants::current_version!() + 1,
     );
-
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(admin_cap);
-    destroy(manager);
-    fx.finish();
+    fx.set_expiry_mint_paused(&mut market, &config, true);
     abort 999
 }
 

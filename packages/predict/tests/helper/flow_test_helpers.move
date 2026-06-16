@@ -79,14 +79,15 @@ public fun setup_market(tick: u64): Fixture {
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
     config.set_template_min_ask_price(&admin_cap, 0);
-    return_shared(config);
     let mut registry = scenario.take_shared<Registry>();
     registry::register_underlying(
         &mut registry,
+        &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
         tick,
     );
+    return_shared(config);
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth_id = propbook_registry::create_and_share_pyth_feed(
@@ -108,7 +109,14 @@ public fun setup_market(tick: u64): Fixture {
     scenario.next_tx(test_constants::admin());
     test_helpers::bind_feeds_to_underlying(&scenario, pyth_id, bs_id);
     let mut registry = scenario.take_shared<Registry>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
+    let config = scenario.take_shared<ProtocolConfig>();
+    let lifecycle_cap = registry::mint_lifecycle_cap(
+        &mut registry,
+        &config,
+        &admin_cap,
+        scenario.ctx(),
+    );
+    return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
     let vault_id = vault.id();
@@ -199,8 +207,13 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 }
 
 /// Pause / unpause minting for one expiry market through the real admin path.
-public fun set_expiry_mint_paused(self: &Fixture, market: &mut ExpiryMarket, paused: bool) {
-    market.set_mint_paused(&self.admin_cap, paused);
+public fun set_expiry_mint_paused(
+    self: &Fixture,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    paused: bool,
+) {
+    market.set_mint_paused(config, &self.admin_cap, paused);
 }
 
 public fun set_template_zero_min_fee(self: &mut Fixture) {
@@ -268,12 +281,18 @@ public fun create_funded_manager_as(
 ): PredictManager {
     self.scenario.next_tx(owner);
     let mut registry = self.scenario.take_shared<Registry>();
-    let mut manager = registry::create_manager(&mut registry, self.scenario.ctx());
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let mut manager = registry::create_manager(&mut registry, &config, self.scenario.ctx());
     return_shared(registry);
+    return_shared(config);
     manager.deposit_funds(
         coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()).into_balance(),
         self.scenario.ctx(),
     );
+    // Commit the shared-config/registry returns (test_scenario defers them to a tx
+    // boundary) before the caller's `take_market` re-takes the config. Sender stays
+    // `owner`, so a subsequent owner-proof is still valid.
+    self.scenario.next_tx(owner);
     manager
 }
 
@@ -552,9 +571,11 @@ public fun load_pricer(
 public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let config = self.scenario.take_shared<ProtocolConfig>();
     let coin = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
-    plp::lock_capital(&mut vault, &self.admin_cap, coin);
+    plp::lock_capital(&mut vault, &config, &self.admin_cap, coin);
     return_shared(vault);
+    return_shared(config);
 }
 
 /// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`), the

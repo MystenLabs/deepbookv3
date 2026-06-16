@@ -22,7 +22,6 @@ module deepbook_predict::registry_guard_tests;
 
 use deepbook_predict::{
     admin::AdminCap,
-    constants,
     flow_test_helpers,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
@@ -63,11 +62,12 @@ fun create_expiry_market_duplicate_expiry_aborts() {
 
 #[test, expected_failure(abort_code = registry::EUnderlyingNotRegistered)]
 fun create_expiry_market_with_unregistered_underlying_aborts() {
-    let (mut scenario, reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
     let registry_id = reg.id();
     return_shared(reg);
+    return_shared(config);
 
     scenario.next_tx(test_constants::admin());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -76,7 +76,7 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
+    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &config, &admin_cap, scenario.ctx());
     let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
@@ -105,7 +105,7 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
+    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &config, &admin_cap, scenario.ctx());
     let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
@@ -136,7 +136,7 @@ fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &admin_cap, scenario.ctx());
+    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &config, &admin_cap, scenario.ctx());
     let _expiry_id = registry::create_expiry_market(
         &mut reg,
         &mut vault,
@@ -156,17 +156,19 @@ fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
 /// the two real propbook feeds (catalog-only, NOT yet bound to an underlying).
 /// Returns positioned for the caller to bind (or not) then create the market.
 fun setup_registered_feeds(): (Scenario, ID, AdminCap, ID, ID) {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
     registry::register_underlying(
         &mut reg,
+        &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_tick_size(),
     );
     let registry_id = reg.id();
     return_shared(reg);
+    return_shared(config);
 
     scenario.next_tx(test_constants::admin());
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
@@ -205,40 +207,12 @@ fun bind_only_pyth(scenario: &Scenario, pyth_id: ID) {
 // === PauseCap ===
 
 #[test, expected_failure(abort_code = registry::EPauseCapNotValid)]
-fun revoked_pause_cap_cannot_disable_version() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+fun revoked_pause_cap_cannot_pause_trading() {
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_test();
 
     let pause_cap = registry::mint_pause_cap(&mut reg, &admin_cap, scenario.ctx());
     registry::revoke_pause_cap(&mut reg, &admin_cap, object::id(&pause_cap));
-    registry::disable_version_pause_cap(&mut reg, &pause_cap, constants::current_version!());
-    abort 999
-}
-
-// === Version management ===
-
-#[test, expected_failure(abort_code = registry::EVersionAlreadyEnabled)]
-fun enable_version_already_enabled_aborts() {
-    let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
-
-    // The current version is enabled at init.
-    registry::enable_version(&mut reg, &admin_cap, constants::current_version!());
-    abort 999
-}
-
-#[test, expected_failure(abort_code = registry::EVersionNotEnabled)]
-fun disable_version_never_enabled_aborts() {
-    let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
-
-    let never_enabled = constants::current_version!() + 1;
-    registry::disable_version(&mut reg, &admin_cap, never_enabled);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = registry::ECannotDisableLastVersion)]
-fun disable_last_remaining_version_aborts() {
-    let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
-
-    // The init-enabled current version is the only entry in the allowed set.
-    registry::disable_version(&mut reg, &admin_cap, constants::current_version!());
+    // A revoked pause cap can no longer force the trading pause.
+    registry::pause_trading_pause_cap(&mut config, &reg, &pause_cap);
     abort 999
 }

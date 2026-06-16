@@ -13,7 +13,12 @@
 #[test_only]
 module deepbook_predict::predict_manager_tests;
 
-use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
+use deepbook_predict::{
+    predict_manager::{Self, PredictManager},
+    protocol_config,
+    registry,
+    test_constants
+};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, test_scenario::{Self as test, return_shared}};
@@ -39,8 +44,10 @@ fun setup(): (test::Scenario, ID) {
 fun create_alice_manager(scenario: &mut test::Scenario, registry_id: ID): PredictManager {
     scenario.next_tx(test_constants::alice());
     let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let manager = registry::create_manager(&mut reg, scenario.ctx());
+    let config = scenario.take_shared<protocol_config::ProtocolConfig>();
+    let manager = registry::create_manager(&mut reg, &config, scenario.ctx());
     return_shared(reg);
+    return_shared(config);
     manager
 }
 
@@ -477,8 +484,10 @@ fun proof_from_one_manager_does_not_validate_against_another() {
 
     scenario.next_tx(test_constants::bob());
     let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let manager_b = registry::create_manager(&mut reg, scenario.ctx());
+    let config = scenario.take_shared<protocol_config::ProtocolConfig>();
+    let manager_b = registry::create_manager(&mut reg, &config, scenario.ctx());
     return_shared(reg);
+    return_shared(config);
 
     scenario.next_tx(test_constants::alice());
     let proof_a = manager_a.generate_proof_as_owner(scenario.ctx());
@@ -498,8 +507,10 @@ fun cross_manager_proof_validation_aborts() {
 
     scenario.next_tx(test_constants::bob());
     let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let manager_b = registry::create_manager(&mut reg, scenario.ctx());
+    let config = scenario.take_shared<protocol_config::ProtocolConfig>();
+    let manager_b = registry::create_manager(&mut reg, &config, scenario.ctx());
     return_shared(reg);
+    return_shared(config);
 
     scenario.next_tx(test_constants::alice());
     let proof_a = manager_a.generate_proof_as_owner(scenario.ctx());

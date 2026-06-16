@@ -12,8 +12,9 @@ module deepbook_predict::constants;
 
 // === Package Versioning ===
 
-/// Current package version. Bumped on each upgrade and added to the protocol
-/// `allowed_versions` set by admin so version-gated entry points keep working.
+/// Current package version, bumped on each upgrade. Version-gated entry points run
+/// only while `current_version!() >= ProtocolConfig.version_watermark`; admin raises
+/// the watermark (`protocol_config::bump_version_watermark`) to retire older versions.
 public macro fun current_version(): u64 { 1 }
 
 // === Scaling ===

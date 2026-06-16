@@ -265,3 +265,34 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   until the exact timestamp spot exists. Substituting contribute-0 dilutes incumbents
   on supply while free-cash over-pays withdrawals. *Rejected:* an approximate
   substitute mark for the unsettled market.
+
+## Single version watermark on ProtocolConfig (recent)
+
+- **One monotonic watermark replaces the per-object `allowed_versions` set + mirrors.**
+  Versioning collapsed from `Registry.allowed_versions` (authoritative set) plus
+  permissionlessly-synced `ExpiryMarket`/`PoolVault` mirrors to a single
+  `ProtocolConfig.version_watermark`. A gated flow asserts
+  `current_version!() >= version_watermark`. `ProtocolConfig` is threaded into every
+  gated public entrypoint and was already present in nearly all of them, so this
+  removed N copies of one fact, the cross-module gate call, and the `sync_*` surface.
+  *Rejected:* keeping the set-of-versions scheme (non-contiguous support was never
+  used; only a floor is needed) and carrying the watermark on `Registry` (it is not
+  present on the trade/pool hot paths, unlike `ProtocolConfig`).
+- **The setter derives the floor from the running binary, never an input.**
+  `bump_version_watermark` takes no target — it advances the watermark to the
+  compiled-in `current_version!()`. *Rationale:* the floor can only ever move to a
+  version a published binary embeds, so admin can never set it above the running
+  package and brick it; retiring old versions requires executing the bump from the
+  upgraded package. *Rejected:* `set_version_watermark(value)` — an arbitrary value
+  above the current version is a pure footgun (recoverable only by upgrade).
+- **Monotonic, so version-disable is one-way.** The watermark cannot be lowered; a
+  disabled running version is recovered by upgrading, not by re-enabling. The
+  PauseCap version-disable path was removed — reversible emergencies are covered by
+  `trading_paused` / `mint_paused`; PauseCaps keep only those.
+- **Gate placement is uniform: line 1 of every public `&mut` entrypoint, nowhere
+  else.** Internal `*_internal`/`*_inner` cores do not re-gate (the public caller
+  owns it), and the watermark setter + kill switches + revocations are the documented
+  ungated bypasses. *Rationale:* "is this gated?" becomes a one-line grep instead of
+  a delegation trace. The admin `ProtocolConfig` setters and the registry creation
+  entrypoints were brought under the gate; per-user `PredictManager`/`builder_code`
+  custody stays ungated so user exits survive a freeze.

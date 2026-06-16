@@ -28,15 +28,8 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use sui::{
-    accumulator::AccumulatorRoot,
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    vec_set::VecSet
-};
+use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
 
-const EPackageVersionDisabled: u64 = 3;
 const EMintPaused: u64 = 4;
 const EFullCloseRequired: u64 = 5;
 const EProofRequiredForLiveRedeem: u64 = 6;
@@ -60,8 +53,6 @@ public struct ExpiryMarket has key {
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
-    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
-    allowed_versions: VecSet<u64>,
 }
 
 // === Public Functions ===
@@ -173,15 +164,11 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Return this market's mirrored set of allowed package versions.
-public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
-    market.allowed_versions
-}
-
 /// Mint a live position interval against this expiry market.
 ///
-/// Requires the package version to be allowed for this market, per-market mint
-/// pause to be off, trading globally enabled, a valid `PredictTradeProof` for
+/// Requires the running package version to be at or above the protocol version
+/// watermark, per-market mint pause to be off, trading globally enabled, a valid
+/// `PredictTradeProof` for
 /// the manager, a live fresh oracle, enough expiry cash to back the post-mint
 /// max payout and rebate reserve, and leveraged floor terms below this expiry's
 /// liquidation LTV at terminal. Leveraged mints must also satisfy leverage tier
@@ -207,6 +194,7 @@ public fun mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
+    config.assert_version();
     manager.settle<DUSDC>(root, ctx);
     market.mint_internal(
         manager,
@@ -244,6 +232,7 @@ public fun redeem(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    config.assert_version();
     manager.settle<DUSDC>(root, ctx);
     market.redeem_internal(
         manager,
@@ -277,6 +266,7 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    config.assert_version();
     manager.settle<DUSDC>(root, ctx);
     market.redeem_internal(
         manager,
@@ -306,7 +296,7 @@ public fun liquidate(
     budget: u64,
     clock: &Clock,
 ): u64 {
-    market.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     market.run_liquidation_pass(
@@ -326,7 +316,7 @@ public fun liquidate_order(
     order_id: u256,
     clock: &Clock,
 ): bool {
-    market.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
 
@@ -337,21 +327,18 @@ public fun liquidate_order(
 /// Set whether new mints are paused on this expiry market. Admin-only and
 /// version-gated. A `PauseCap` holder can force-engage the pause one-way under a
 /// version freeze via `registry::pause_expiry_market_mint_pause_cap`.
-public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, paused: bool) {
-    market.assert_version_allowed();
+public fun set_mint_paused(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    config.assert_version();
     market.mint_paused = paused;
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
 // === Public-Package Functions ===
-
-/// Abort if the running package version is not allowed for this market.
-public(package) fun assert_version_allowed(market: &ExpiryMarket) {
-    assert!(
-        market.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
-}
 
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
@@ -363,7 +350,6 @@ public(package) fun ensure_settled(
     pyth: &PythFeed,
     clock: &Clock,
 ): bool {
-    market.assert_version_allowed();
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
     assert!(
@@ -387,13 +373,6 @@ public(package) fun ensure_settled(
     true
 }
 
-/// Overwrite this market's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_expiry_market_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
-    market.allowed_versions = allowed_versions;
-}
-
 /// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
 /// `registry::pause_expiry_market_mint_pause_cap`; cannot unpause. Deliberately
 /// not version-gated so the kill switch survives a version freeze.
@@ -404,14 +383,12 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
 
 /// Receive pool-provided cash without interpreting pool allocation policy.
 public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
-    market.assert_version_allowed();
     market.cash.receive(cash);
     market.assert_cash_backing();
 }
 
 /// Release pool cash while preserving expiry-local payout and rebate backing.
 public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    market.assert_version_allowed();
     if (amount == 0) {
         return balance::zero()
     };
@@ -427,7 +404,6 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Returns the released cash and the terminal settlement price used for event
 /// emission by the pool.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
-    market.assert_version_allowed();
     let settlement_price = market.settlement_price();
     let settled_liability = market.materialize_settled_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
@@ -447,7 +423,6 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balan
 /// `tick_size`, and the registry holds no reference after `share_object`.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
-    allowed_versions: VecSet<u64>,
     propbook_underlying_id: u32,
     pool_vault_id: ID,
     expiry: u64,
@@ -478,7 +453,6 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
-        allowed_versions,
     };
     config_events::emit_market_created(
         expiry_market_id,
@@ -554,9 +528,9 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     }
 }
 
-/// Shared redeem dispatch + flow gates (version, valuation lock) behind the public
-/// `redeem` (proof) / `redeem_settled` (none) entrypoints, which only perform the
-/// ambient manager settle before delegating here. `proof` is consumed only on the
+/// Shared redeem dispatch + the valuation-lock gate behind the public
+/// `redeem` (proof) / `redeem_settled` (none) entrypoints, which assert the package
+/// version and perform the ambient manager settle before delegating here. `proof` is consumed only on the
 /// live branch; the settled and liquidated branches drop it, and the live branch
 /// requires `some` else `EProofRequiredForLiveRedeem`. Root-free so this dispatch and
 /// its branch handlers stay unit-testable; the settle reverts atomically on a gate abort.
@@ -573,7 +547,6 @@ public(package) fun redeem_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     let redeemed_order = order::from_order_id(order_id);
     if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
@@ -654,10 +627,10 @@ fun ewma_penalty(
     market.ewma.penalty_fee(config, quantity, ctx)
 }
 
-/// Mint logic + flow gates (version, mint-pause, trading pause, valuation lock)
-/// behind the public `mint` entrypoint, which only performs the ambient manager
-/// settle before delegating here. Root-free so it stays unit-testable; the settle is
-/// reverted atomically if a gate aborts.
+/// Mint logic + flow gates (mint-pause, trading pause, valuation lock) behind the
+/// public `mint` entrypoint, which asserts the package version and performs the
+/// ambient manager settle before delegating here. Root-free so it stays
+/// unit-testable; the settle is reverted atomically if a gate aborts.
 public(package) fun mint_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -673,7 +646,6 @@ public(package) fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_version_allowed();
     assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();

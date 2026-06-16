@@ -63,12 +63,15 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let config = scenario.take_shared<ProtocolConfig>();
     registry::register_underlying(
         &mut registry,
+        &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
         tick,
     );
+    return_shared(config);
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth_id = propbook_registry::create_and_share_pyth_feed(
@@ -95,7 +98,12 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut registry = scenario.take_shared<Registry>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
+    let lifecycle_cap = registry::mint_lifecycle_cap(
+        &mut registry,
+        &config,
+        &admin_cap,
+        scenario.ctx(),
+    );
     let expiry_id = registry::create_expiry_market(
         &mut registry,
         &mut vault,

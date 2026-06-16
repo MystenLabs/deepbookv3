@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry, versioning, and creation entrypoints for the Predict protocol.
+/// Registry and creation entrypoints for the Predict protocol.
 ///
 /// This module creates shared setup objects, stores admin-approved Propbook
 /// underlying configs and the expiry uniqueness index, and exposes
@@ -33,23 +33,12 @@ const EUnderlyingAlreadyRegistered: u64 = 1;
 const EInvalidExpiry: u64 = 2;
 const EMarketAlreadyCreated: u64 = 3;
 const EPauseCapNotValid: u64 = 4;
-const EPackageVersionDisabled: u64 = 5;
-const EVersionAlreadyEnabled: u64 = 6;
-const EVersionNotEnabled: u64 = 7;
-const ECannotDisableLastVersion: u64 = 8;
 const EInvalidMarketTickSize: u64 = 9;
 const ELifecycleCapNotValid: u64 = 10;
 const ELifecycleCapNotFound: u64 = 11;
 const EPythFeedNotBoundToUnderlying: u64 = 12;
 const EBlockScholesFeedNotBoundToUnderlying: u64 = 13;
 const EExpiryNotOnResolutionGrid: u64 = 14;
-
-/// Registry-owned config for one admin-approved Propbook underlying.
-public struct UnderlyingConfig has copy, drop, store {
-    /// Minimum tick size for markets on this underlying. A market may choose this
-    /// value or a 10x multiple above it.
-    min_tick_size: u64,
-}
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's chosen tick size is committed by the first creation.
@@ -61,8 +50,9 @@ public struct MarketKey has copy, drop, store {
 /// Shared registry for underlying admission and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Propbook underlying ID -> admin-approved minimum market tick size.
-    underlying_configs: Table<u32, UnderlyingConfig>,
+    /// Propbook underlying ID -> admin-approved minimum market tick size. A market
+    /// on this underlying may choose this value or a 10x multiple above it.
+    underlying_min_tick_sizes: Table<u32, u64>,
     /// Created markets keyed by `(propbook_underlying_id, expiry)`.
     market_ids: Table<MarketKey, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
@@ -72,9 +62,6 @@ public struct Registry has key {
     /// lifecycle entries (market creation). Admin mints into this set and
     /// revokes from it.
     allowed_lifecycle_caps: VecSet<ID>,
-    /// Package versions currently permitted to mutate per-pool state. Authoritative
-    /// source; pool objects mirror this set and refresh via permissionless sync.
-    allowed_versions: VecSet<u64>,
 }
 
 // === Public Functions ===
@@ -84,17 +71,11 @@ public fun id(registry: &Registry): ID {
     registry.id.to_inner()
 }
 
-/// Return the set of package versions currently permitted to mutate per-pool
-/// state. Pool sync helpers snapshot this; newly-created pools inherit it.
-public fun allowed_versions(registry: &Registry): VecSet<u64> {
-    registry.allowed_versions
-}
-
 /// Return the configured minimum tick size for a Propbook underlying, if
 /// registered.
 public fun underlying_min_tick_size(registry: &Registry, propbook_underlying_id: u32): Option<u64> {
-    if (registry.underlying_configs.contains(propbook_underlying_id)) {
-        option::some(registry.underlying_configs.borrow(propbook_underlying_id).min_tick_size)
+    if (registry.underlying_min_tick_sizes.contains(propbook_underlying_id)) {
+        option::some(*registry.underlying_min_tick_sizes.borrow(propbook_underlying_id))
     } else {
         option::none()
     }
@@ -113,43 +94,6 @@ public fun expiry_market_id(
     } else {
         option::none()
     }
-}
-
-// === Version Management (admin) ===
-
-/// Add `version` to the registry's allowed set.
-///
-/// Not version-gated so admin can re-enable a previously disabled version.
-public fun enable_version(registry: &mut Registry, _admin_cap: &AdminCap, version: u64) {
-    assert!(!registry.allowed_versions.contains(&version), EVersionAlreadyEnabled);
-    registry.allowed_versions.insert(version);
-}
-
-/// Remove `version` from the registry's allowed set.
-///
-/// Not version-gated so admin can revoke a version even after the active
-/// version has been paused. The set may not be left empty.
-public fun disable_version(registry: &mut Registry, _admin_cap: &AdminCap, version: u64) {
-    registry.disable_version_internal(version);
-}
-
-// === Version Sync (permissionless) ===
-//
-// Each shared object that gates flows on a mirrored `allowed_versions` set
-// exposes one `sync_*` entry below. The registry is the source of truth: the
-// caller supplies `&Registry`, and the entry copies its current set into the
-// target. The package-internal `set_allowed_versions` setters on the target
-// modules are not callable from outside the package, so user-supplied
-// `VecSet<u64>` cannot reach a mirror through any other path.
-
-/// Sync an expiry market's `allowed_versions` mirror from the registry.
-public fun sync_expiry_market_allowed_versions(registry: &Registry, market: &mut ExpiryMarket) {
-    market.set_allowed_versions(registry.allowed_versions);
-}
-
-/// Sync a pool vault's `allowed_versions` mirror from the registry.
-public fun sync_pool_vault_allowed_versions(registry: &Registry, vault: &mut PoolVault) {
-    vault.set_allowed_versions(registry.allowed_versions);
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -178,10 +122,11 @@ public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, paus
 /// market-creation authority under a version freeze is the risky direction).
 public fun mint_lifecycle_cap(
     registry: &mut Registry,
+    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
     ctx: &mut TxContext,
 ): MarketLifecycleCap {
-    registry.assert_version_allowed();
+    config.assert_version();
     let cap = market_lifecycle_cap::new(ctx);
     registry.allowed_lifecycle_caps.insert(cap.id());
     cap
@@ -189,8 +134,8 @@ public fun mint_lifecycle_cap(
 
 /// Revoke a previously minted `MarketLifecycleCap` by ID. Admin-only.
 /// Deliberately not version-gated (like pause-cap revocation): revocation is
-/// harm-reducing and must stay available even when per-object version mirrors
-/// transiently disagree with the gates on this cap's lifecycle entries.
+/// harm-reducing and must stay available even when the running package version
+/// is frozen below the protocol watermark.
 public fun revoke_lifecycle_cap(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
@@ -214,13 +159,6 @@ public fun generate_lifecycle_proof(
 }
 
 // === Emergency Pause (PauseCap) ===
-
-/// Disable a package version via a valid `PauseCap`. One-way: admin must
-/// `enable_version` to restore.
-public fun disable_version_pause_cap(registry: &mut Registry, pause_cap: &PauseCap, version: u64) {
-    registry.assert_valid_pause_cap(pause_cap);
-    registry.disable_version_internal(version);
-}
 
 /// Force `trading_paused = true` via a valid `PauseCap`. One-way.
 public fun pause_trading_pause_cap(
@@ -249,17 +187,18 @@ public fun pause_expiry_market_mint_pause_cap(
 /// smallest tick size those markets may choose.
 public fun register_underlying(
     registry: &mut Registry,
+    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
     propbook_underlying_id: u32,
     min_tick_size: u64,
 ) {
-    registry.assert_version_allowed();
+    config.assert_version();
     assert!(
-        !registry.underlying_configs.contains(propbook_underlying_id),
+        !registry.underlying_min_tick_sizes.contains(propbook_underlying_id),
         EUnderlyingAlreadyRegistered,
     );
     config_constants::assert_market_tick_size_bounds(min_tick_size);
-    registry.underlying_configs.add(propbook_underlying_id, UnderlyingConfig { min_tick_size });
+    registry.underlying_min_tick_sizes.add(propbook_underlying_id, min_tick_size);
 }
 
 /// Create the ExpiryMarket for one future expiry on a Propbook underlying.
@@ -296,7 +235,7 @@ public fun create_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    registry.assert_version_allowed();
+    config.assert_version();
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
@@ -319,10 +258,8 @@ public fun create_expiry_market(
         EBlockScholesFeedNotBoundToUnderlying,
     );
     assert!(!registry.market_ids.contains(market_key), EMarketAlreadyCreated);
-    let allowed_versions = registry.allowed_versions;
     let expiry_market_id = expiry_market::create_and_share(
         config,
-        allowed_versions,
         propbook_underlying_id,
         pool_vault.id(),
         expiry,
@@ -336,18 +273,34 @@ public fun create_expiry_market(
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
-public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut TxContext): ID {
+public fun create_builder_code(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    index: u64,
+    ctx: &mut TxContext,
+): ID {
+    config.assert_version();
     builder_code::create_and_share(&mut registry.id, index, ctx)
 }
 
 /// Create a derived PredictManager for the caller.
-public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
+public fun create_manager(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    ctx: &mut TxContext,
+): PredictManager {
+    config.assert_version();
     predict_manager::new(&mut registry.id, ctx)
 }
 
 /// Create and share a derived PredictManager for the caller.
-public fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
-    create_manager(registry, ctx).share();
+public fun create_and_share_manager(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    ctx: &mut TxContext,
+) {
+    config.assert_version();
+    create_manager(registry, config, ctx).share();
 }
 
 /// Create a derived self-owned PredictManager for callers that don't want a
@@ -360,25 +313,15 @@ public fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext
 /// the deepbook side.
 public fun create_self_owned_manager(
     registry: &mut Registry,
+    config: &ProtocolConfig,
     deepbook_registry: &DeepbookRegistry,
     ctx: &mut TxContext,
 ): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
+    config.assert_version();
     predict_manager::new_self_owned(&mut registry.id, deepbook_registry, ctx)
 }
 
 // === Private Functions ===
-
-/// Abort if the running package version is not in the allowed set.
-///
-/// Bypasses are package-internal version-management entries
-/// (`enable_version`, `disable_version`, PauseCap-based disables) so admin
-/// can recover from any disabled state.
-fun assert_version_allowed(registry: &Registry) {
-    assert!(
-        registry.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
-}
 
 /// Package initializer - creates Registry and AdminCap.
 fun init(ctx: &mut TxContext) {
@@ -393,11 +336,10 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
-            underlying_configs: table::new(ctx),
+            underlying_min_tick_sizes: table::new(ctx),
             market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_lifecycle_caps: vec_set::empty(),
-            allowed_versions: vec_set::singleton(constants::current_version!()),
         },
         admin::new(ctx),
     )
@@ -415,8 +357,11 @@ fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
 }
 
 fun assert_underlying_registered(registry: &Registry, propbook_underlying_id: u32): u64 {
-    assert!(registry.underlying_configs.contains(propbook_underlying_id), EUnderlyingNotRegistered);
-    registry.underlying_configs.borrow(propbook_underlying_id).min_tick_size
+    assert!(
+        registry.underlying_min_tick_sizes.contains(propbook_underlying_id),
+        EUnderlyingNotRegistered,
+    );
+    *registry.underlying_min_tick_sizes.borrow(propbook_underlying_id)
 }
 
 fun assert_market_tick_size(min_tick_size: u64, tick_size: u64) {
@@ -427,14 +372,6 @@ fun assert_market_tick_size(min_tick_size: u64, tick_size: u64) {
         allowed = allowed * 10;
     };
     assert!(allowed == tick_size, EInvalidMarketTickSize);
-}
-
-/// Remove a version from the allowed set, enforcing the non-empty invariant.
-/// Shared by the admin `disable_version` and PauseCap `disable_version_pause_cap`.
-fun disable_version_internal(registry: &mut Registry, version: u64) {
-    assert!(registry.allowed_versions.contains(&version), EVersionNotEnabled);
-    assert!(registry.allowed_versions.length() > 1, ECannotDisableLastVersion);
-    registry.allowed_versions.remove(&version);
 }
 
 // === Test-Only Functions ===
