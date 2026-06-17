@@ -5,23 +5,23 @@
 /// (`account_core`) with an owner.
 ///
 /// Value moves only against a movement `Proof`, and a `Proof` is minted only by
-/// the account's owner — an EOA (`owner = Some(sender)`) via `ctx.sender()`, or a
-/// self-owned account (`owner = None`) via its `OwnerCap`. Consumers receive a
-/// proof and spend it; they never mint one, so no caller can move an account's
-/// value without the owner's authorization. `account_core` is the only place
-/// coins move; `account` is the only public surface that mints proofs and moves
-/// value. Account creation goes through `account_registry`, which owns
-/// deterministic ID derivation and slot allocation. Coin reads include funds
-/// delivered to this account's accumulator address, and coin writes first settle
-/// those funds into the vault.
+/// the account's owner: either the transaction sender or an object UID address
+/// passed mutably as ownership proof. Consumers receive a proof and spend it;
+/// they never mint one, so no caller can move an account's value without the owner's
+/// authorization. `account_core` is the only place coins move; `account` is the
+/// only public surface that mints proofs and moves value. Account creation goes
+/// through `account_registry`, which owns deterministic ID derivation and enforces
+/// one account per owner. Coin reads include funds delivered to this account's
+/// accumulator address, and coin writes first settle those funds into the vault.
 ///
 /// Apps also store opaque per-account state through the app-data lane
 /// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
-/// witness type, so apps cannot collide. Mutations require both the app witness
-/// and an owner-minted `Proof`; reads are open.
+/// witness type, so apps cannot collide. Mutations require `Permit<App>`; reads
+/// are open.
 module account::account;
 
 use account::account_core::{Self, Proof, Vault};
+use std::internal::Permit;
 use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object, dynamic_field as df};
 
 use fun df::add as UID.add;
@@ -32,22 +32,14 @@ use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
-const EInvalidOwnerCap: u64 = 1;
 
 // === Structs ===
 /// Shared account: an owner plus a custody `Vault`.
 public struct Account has key {
     id: UID,
-    /// `Some(addr)` => EOA-owned, authority by sender. `None` => self-owned,
-    /// authority by `OwnerCap`.
-    owner: Option<address>,
+    /// EOA address or object-ID-as-address that owns this account.
+    owner: address,
     vault: Vault,
-}
-
-/// Object form of owner authority for a self-owned account.
-public struct OwnerCap has key, store {
-    id: UID,
-    account_id: ID,
 }
 
 /// Dynamic-field key for one app's per-account data slot. The phantom `App` is the
@@ -66,8 +58,9 @@ public fun balance<T>(self: &Account, root: &AccumulatorRoot): u64 {
     self.vault.balance<T>() + balance::settled_funds_value<T>(root, self.id.to_address())
 }
 
-/// Returns the account owner: `Some(addr)` for EOA-owned, `None` for self-owned.
-public fun owner(self: &Account): Option<address> {
+/// Returns the account owner address. This may be an EOA address or an
+/// object-ID-as-address.
+public fun owner(self: &Account): address {
     self.owner
 }
 
@@ -81,23 +74,23 @@ public fun receive_address(self: &Account): address {
     self.id.to_address()
 }
 
-/// Mint a movement proof as the EOA owner.
-public fun generate_proof_as_owner(self: &Account, ctx: &TxContext): Proof {
-    self.assert_owner(ctx);
+/// Mint a movement proof after validating the transaction sender owns the account.
+public fun generate_proof(self: &Account, ctx: &TxContext): Proof {
+    self.assert_owner(ctx.sender());
     self.vault.issue_proof()
 }
 
-/// Mint a movement proof for a self-owned account with its `OwnerCap`.
-public fun generate_proof_with_owner_cap(self: &Account, cap: &OwnerCap): Proof {
-    self.assert_owner_cap(cap);
+/// Mint a movement proof after validating `uid`'s object address owns the account.
+/// The mutable UID borrow proves the caller is executing through the owning
+/// object's module.
+public fun generate_proof_as_object(self: &Account, uid: &mut UID): Proof {
+    self.assert_owner(uid.to_inner().to_address());
     self.vault.issue_proof()
 }
 
 /// Abort unless `proof` was minted for this account. This is the kernel's
-/// per-movement binding check (`account_core::assert_bound`) surfaced for
-/// owner-gated actions that move no value: a `Proof` is the single "may mutate this
-/// account" authority — minted only by the owner — so it gates value movement and
-/// owner-gated state (e.g. app config) with one check.
+/// per-movement binding check (`account_core::assert_bound`) surfaced for callers
+/// that need to validate owner-minted movement authority without moving value.
 public fun assert_proof(self: &Account, proof: &Proof) {
     self.vault.assert_bound(proof);
 }
@@ -132,15 +125,9 @@ public fun settle<T>(self: &mut Account, proof: &Proof, root: &AccumulatorRoot) 
 }
 
 // === App-data Lane ===
-/// Attach an app's `Data` under its witness namespace. Requires a movement
-/// `Proof` and an app witness. Aborts if `App` already has data attached.
-public fun attach<App: drop, Data: store>(
-    self: &mut Account,
-    proof: &Proof,
-    _app: App,
-    data: Data,
-) {
-    self.assert_proof(proof);
+/// Attach an app's `Data` under its witness namespace. Requires `Permit<App>`.
+/// Aborts if `App` already has data attached.
+public fun attach<App, Data: store>(self: &mut Account, _permit: Permit<App>, data: Data) {
     self.id.add(DataKey<App>(), data);
 }
 
@@ -156,21 +143,15 @@ public fun borrow_data<App, Data: store>(self: &Account): &Data {
     self.id.borrow(DataKey<App>())
 }
 
-/// Mutably borrow an app's attached `Data`. Requires a movement `Proof` and an
-/// app witness. Aborts if nothing is attached.
-public fun borrow_data_mut<App: drop, Data: store>(
-    self: &mut Account,
-    proof: &Proof,
-    _app: App,
-): &mut Data {
-    self.assert_proof(proof);
+/// Mutably borrow an app's attached `Data`. Requires `Permit<App>`. Aborts if
+/// nothing is attached.
+public fun borrow_data_mut<App, Data: store>(self: &mut Account, _permit: Permit<App>): &mut Data {
     self.id.borrow_mut(DataKey<App>())
 }
 
-/// Detach and return an app's `Data`. Requires a movement `Proof` and an app
-/// witness. Aborts if nothing is attached.
-public fun detach<App: drop, Data: store>(self: &mut Account, proof: &Proof, _app: App): Data {
-    self.assert_proof(proof);
+/// Detach and return an app's `Data`. Requires `Permit<App>`. Aborts if
+/// nothing is attached.
+public fun detach<App, Data: store>(self: &mut Account, _permit: Permit<App>): Data {
     self.id.remove(DataKey<App>())
 }
 
@@ -186,29 +167,10 @@ public(package) fun new_derived<K: copy + drop + store>(
 ): Account {
     let id = derived_object::claim(parent, key);
     let vault = account_core::new_vault(id.to_inner(), ctx);
-    Account { id, owner: option::some(owner), vault }
-}
-
-/// Create a self-owned account from a registry-derived key.
-public(package) fun new_self_owned_derived<K: copy + drop + store>(
-    parent: &mut UID,
-    key: K,
-    ctx: &mut TxContext,
-): (Account, OwnerCap) {
-    let id = derived_object::claim(parent, key);
-    let account_id = id.to_inner();
-    let vault = account_core::new_vault(account_id, ctx);
-    let account = Account { id, owner: option::none(), vault };
-    let cap = OwnerCap { id: object::new(ctx), account_id };
-
-    (account, cap)
+    Account { id, owner, vault }
 }
 
 // === Private Functions ===
-fun assert_owner(self: &Account, ctx: &TxContext) {
-    assert!(self.owner.contains(&ctx.sender()), EInvalidOwner);
-}
-
-fun assert_owner_cap(self: &Account, cap: &OwnerCap) {
-    assert!(cap.account_id == self.id.to_inner(), EInvalidOwnerCap);
+fun assert_owner(self: &Account, owner: address) {
+    assert!(owner == self.owner, EInvalidOwner);
 }
