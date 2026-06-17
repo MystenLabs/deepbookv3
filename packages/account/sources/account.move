@@ -7,9 +7,9 @@
 /// Owner and object-owner flows load `&mut Account` through this module. App flows
 /// load it through `account_registry`, which checks the app whitelist. Once a
 /// caller has a mutable account reference, value movement needs no extra proof:
-/// the borrow itself is the authority boundary. Coin reads include funds
-/// delivered to this account's accumulator address, and coin writes first settle
-/// those funds into the account.
+/// the borrow itself is the authority boundary. Coin reads and writes operate on
+/// balances already stored in the account; address-delivered funds can be claimed
+/// explicitly with `settle`.
 ///
 /// Apps also store opaque per-account state through the app-data lane
 /// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
@@ -22,7 +22,6 @@ use sui::{
     accumulator::AccumulatorRoot,
     bag::{Self, Bag},
     balance::{Self, Balance},
-    clock::Clock,
     coin::Coin,
     derived_object,
     dynamic_field as df
@@ -46,13 +45,12 @@ public struct AccountWrapper has key {
 }
 
 /// Wrapped account state and custody. Its ID is the canonical account identity,
-/// receive address, and app-data storage root.
+/// address-balance receive address, and app-data storage root.
 public struct Account has store {
     account_id: UID,
     /// EOA address or object-ID-as-address that owns this account.
     owner: address,
     balances: Bag,
-    settlements: Bag,
 }
 
 /// Dynamic-field key for one app's per-account data slot. The phantom `App` is the
@@ -87,10 +85,14 @@ public fun load_account_mut_as_object(self: &mut AccountWrapper, uid: &mut UID):
     &mut self.account
 }
 
-/// Returns the total balance of `T` available to the account, including funds
-/// delivered through the ambient accumulator but not yet settled into the account.
-public fun balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock): u64 {
-    self.stored_balance<T>() + self.unsettled_balance<T>(root, clock)
+/// Returns the stored balance of `T` available to the account.
+public fun balance<T>(self: &Account): u64 {
+    self.stored_balance<T>()
+}
+
+/// Returns settled address-balance funds for `T` claimable into this account.
+public fun claimable<T>(self: &Account, root: &AccumulatorRoot): u64 {
+    balance::settled_funds_value<T>(root, self.account_id.to_address())
 }
 
 /// Returns the account owner address. This may be an EOA address or an
@@ -104,27 +106,28 @@ public fun account_id(self: &Account): ID {
     self.account_id.to_inner()
 }
 
-/// Returns the accumulator receive address for this account.
+/// Returns the address-balance receive address for this account.
 public fun receive_address(self: &Account): address {
     self.account_id.to_address()
 }
 
-/// Deposit `coin` and first settle any accumulator funds for `T` into the account.
-public fun deposit<T>(self: &mut Account, coin: Coin<T>, root: &AccumulatorRoot, clock: &Clock) {
-    self.settle_unchecked<T>(root, clock);
+/// Deposit `coin` into the account.
+public fun deposit<T>(self: &mut Account, coin: Coin<T>) {
     self.deposit_balance(coin.into_balance());
 }
 
-/// Withdraw `amount` of `T` and first settle any accumulator funds for `T`.
-public fun withdraw<T>(
-    self: &mut Account,
-    amount: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<T> {
-    self.settle_unchecked<T>(root, clock);
+/// Withdraw `amount` of `T`.
+public fun withdraw<T>(self: &mut Account, amount: u64, ctx: &mut TxContext): Coin<T> {
     self.withdraw_balance<T>(amount).into_coin(ctx)
+}
+
+/// Claim settled address-balance funds for `T` into account custody.
+public fun settle<T>(self: &mut Account, root: &AccumulatorRoot): u64 {
+    let amount = self.claimable<T>(root);
+    if (amount == 0) return 0;
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.account_id, amount);
+    self.deposit_balance(balance::redeem_funds(withdrawal));
+    amount
 }
 
 // === App-data Lane ===
@@ -177,7 +180,6 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
             account_id,
             owner,
             balances: bag::new(ctx),
-            settlements: bag::new(ctx),
         },
     }
 }
@@ -188,19 +190,6 @@ public(package) fun load_account_mut_unchecked(self: &mut AccountWrapper): &mut 
 }
 
 // === Private Functions ===
-/// Settle any accumulator-delivered funds for `T` into the account. The caller
-/// must have already validated authority.
-fun settle_unchecked<T>(self: &mut Account, root: &AccumulatorRoot, clock: &Clock) {
-    let now = clock.timestamp_ms();
-    if (now == self.last_settlement_ms<T>()) return;
-    self.set_last_settlement_ms<T>(now);
-
-    let amount = balance::settled_funds_value<T>(root, self.account_id.to_address());
-    if (amount == 0) return;
-    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.account_id, amount);
-    self.deposit_balance(balance::redeem_funds(withdrawal));
-}
-
 fun assert_owner(self: &AccountWrapper, owner: address) {
     assert!(owner == self.account.owner, EInvalidOwner);
 }
@@ -212,34 +201,6 @@ fun stored_balance<T>(self: &Account): u64 {
         bal.value()
     } else {
         0
-    }
-}
-
-fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock): u64 {
-    if (clock.timestamp_ms() == self.last_settlement_ms<T>()) {
-        0
-    } else {
-        balance::settled_funds_value<T>(root, self.account_id.to_address())
-    }
-}
-
-fun last_settlement_ms<T>(self: &Account): u64 {
-    let key = CoinKey<T> {};
-    if (self.settlements.contains(key)) {
-        let timestamp: &u64 = &self.settlements[key];
-        *timestamp
-    } else {
-        0
-    }
-}
-
-fun set_last_settlement_ms<T>(self: &mut Account, timestamp: u64) {
-    let key = CoinKey<T> {};
-    if (self.settlements.contains(key)) {
-        let last_settlement_ms: &mut u64 = &mut self.settlements[key];
-        *last_settlement_ms = timestamp;
-    } else {
-        self.settlements.add(key, timestamp);
     }
 }
 

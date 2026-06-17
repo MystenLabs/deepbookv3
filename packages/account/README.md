@@ -25,7 +25,6 @@ public struct Account has store {
     account_id: UID,
     owner: address,
     balances: Bag,
-    settlements: Bag,
 }
 ```
 
@@ -33,10 +32,10 @@ public struct Account has store {
 to load an account. `Account` is embedded inside it and is not a standalone shared
 object.
 
-`Account.account_id()` returns the canonical account ID. This is also the object
-address used for accumulator settlement and the dynamic-field root used for app
-data. `Account.receive_address()` returns the same identity as an address, suitable
-for `balance::send_funds`.
+`Account.account_id()` returns the canonical account ID. This is also the
+dynamic-field root used for app data. `Account.receive_address()` returns the same
+identity as an address, suitable for address-balance delivery with
+`balance::send_funds`.
 
 ### `account::account_registry`
 
@@ -65,15 +64,15 @@ public fun derived_wrapper_id(registry: &AccountRegistry, owner: address): ID
 ```
 
 `derived_address` / `derived_id` are the canonical account identity. Use these for
-events, account-local storage, and accumulator delivery. `derived_wrapper_address` /
-`derived_wrapper_id` identify the shared wrapper object that must be passed to load
-the account.
+events, account-local storage, and address-balance delivery.
+`derived_wrapper_address` / `derived_wrapper_id` identify the shared wrapper object
+that must be passed to load the account.
 
 ## Identity Model
 
 Each owner gets two derived IDs under the registry root:
 
-- canonical account ID: app data root, accumulator receive address, and event
+- canonical account ID: app data root, address-balance receive address, and event
   `account_id`
 - wrapper ID: shared object handle that gates account loading
 
@@ -81,9 +80,8 @@ The canonical account ID is the account's public identity. The wrapper ID is an
 implementation detail needed because Sui shared objects are what transactions pass
 and borrow.
 
-This split keeps LP fills and other accumulator-delivered funds consistent with
-events: when an event emits `account_id`, that ID's address is also where coins are
-delivered.
+This split keeps address-delivered funds consistent with events: when an event
+emits `account_id`, that ID's address is also where coins are delivered.
 
 ## Authority Model
 
@@ -126,42 +124,56 @@ account-level proof. The mutable borrow is the authority boundary.
 
 ## Coin Balances
 
-Account balances are stored per coin type in a `Bag`. The account also supports Sui
-address-balance delivery through the funds accumulator.
+Account balances are stored per coin type in a `Bag`.
 
 Read path:
 
 ```move
-public fun balance<T>(account: &Account, root: &AccumulatorRoot, clock: &Clock): u64
+public fun balance<T>(account: &Account): u64
 ```
 
-This returns stored balance plus unsettled accumulator funds unless this coin type
-has already been settled in the current timestamp.
+This returns the balance already stored inside the account.
+
+Explicit address-balance claim path:
+
+```move
+public fun claimable<T>(account: &Account, root: &AccumulatorRoot): u64
+public fun settle<T>(account: &mut Account, root: &AccumulatorRoot): u64
+```
+
+`claimable` reads settled address-balance funds for the account receive address.
+`settle` withdraws those funds from the address balance and deposits them into
+stored account custody.
 
 Write paths:
 
 ```move
-public fun deposit<T>(
-    account: &mut Account,
-    coin: Coin<T>,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-)
+public fun deposit<T>(account: &mut Account, coin: Coin<T>)
 
 public fun withdraw<T>(
     account: &mut Account,
     amount: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<T>
 ```
 
-Both write paths first passively settle accumulator-delivered funds for `T` into the
-stored balance. Settlement records the last timestamp per coin type in a `Bag`; if
-another parallel transaction tries to settle the same coin in the same timestamp,
-the later transaction skips settlement instead of trying to withdraw the same
-accumulator funds again.
+Both write paths operate only on stored balances. Address-delivered funds sent to
+`receive_address()` are intentionally not folded into `balance`, `deposit`, or
+`withdraw` in the current source; callers explicitly claim them with `settle`.
+
+## Deferred Auto Settlement
+
+Passive accumulator settlement is intentionally removed for now. The current source
+keeps settlement as an explicit direct claim (`settle<T>`) because the Sui
+framework requires callers to thread `AccumulatorRoot` explicitly, which would
+otherwise leak settlement plumbing through every app entrypoint and helper that
+might read or mutate coin balances.
+
+Before mainnet, after Sui exposes the accumulator root through `TxContext`, Account
+will reintroduce passive settlement behind the same account APIs. At that point,
+coin reads and writes can incorporate address-delivered funds without adding an
+explicit `AccumulatorRoot` parameter to Predict, Account, or other ecosystem app
+surfaces.
 
 ## App Data
 

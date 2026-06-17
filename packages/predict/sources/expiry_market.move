@@ -29,7 +29,7 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin};
 
 const EMintPaused: u64 = 4;
 const EFullCloseRequired: u64 = 5;
@@ -184,7 +184,6 @@ public fun mint(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
-    root: &AccumulatorRoot,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -222,12 +221,10 @@ public fun mint(
 
     let (builder_fee_amount, builder_code_id) = market.settle_mint_payment(
         account,
-        root,
         &minted_order,
         net_premium,
         fee_amount,
         penalty_amount,
-        clock,
         ctx,
     );
     order_events::emit_order_minted(
@@ -258,7 +255,6 @@ public fun redeem(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
-    root: &AccumulatorRoot,
     order_id: u256,
     close_quantity: u64,
     clock: &Clock,
@@ -269,7 +265,7 @@ public fun redeem(
     let redeemed_order = order::from_order_id(order_id);
     if (market.ensure_settled(propbook_registry, pyth, clock)) {
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-        market.redeem_settled_internal(account, root, &redeemed_order, clock, ctx);
+        market.redeem_settled_internal(account, &redeemed_order, ctx);
         return (redeemed_order.id(), option::none())
     };
 
@@ -289,7 +285,6 @@ public fun redeem(
         account,
         config,
         &pricer,
-        root,
         &redeemed_order,
         close_quantity,
         clock,
@@ -308,7 +303,6 @@ public fun redeem_settled(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    root: &AccumulatorRoot,
     order_id: u256,
     close_quantity: u64,
     clock: &Clock,
@@ -321,13 +315,7 @@ public fun redeem_settled(
     assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
 
     let account = predict_account::load_account_mut_as_app(account_registry, wrapper);
-    market.redeem_settled_internal(
-        account,
-        root,
-        &redeemed_order,
-        clock,
-        ctx,
-    );
+    market.redeem_settled_internal(account, &redeemed_order, ctx);
     (redeemed_order.id(), option::none())
 }
 
@@ -608,7 +596,6 @@ fun redeem_live_internal(
     account: &mut Account,
     config: &ProtocolConfig,
     pricer: &pricing::Pricer,
-    root: &AccumulatorRoot,
     order: &Order,
     close_quantity: u64,
     clock: &Clock,
@@ -657,12 +644,10 @@ fun redeem_live_internal(
 
     let (builder_fee_amount, penalty_amount, builder_code_id) = market.settle_live_redeem_payment(
         account,
-        root,
         redeem_amount,
         fee_amount,
         penalty_amount,
         close_quantity,
-        clock,
         ctx,
     );
 
@@ -686,9 +671,7 @@ fun redeem_live_internal(
 fun redeem_settled_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    root: &AccumulatorRoot,
     order: &Order,
-    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     let position_root_id = predict_account::remove_position(
@@ -701,7 +684,7 @@ fun redeem_settled_internal(
 
     let settlement = market.settlement_price();
     let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
-    market.settle_settled_redeem_payment(account, root, payout_amount, clock, ctx);
+    market.settle_settled_redeem_payment(account, payout_amount, ctx);
 
     order_events::emit_settled_order_redeemed(
         market.id(),
@@ -722,12 +705,10 @@ fun redeem_settled_internal(
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    root: &AccumulatorRoot,
     order: &Order,
     net_premium: u64,
     fee_amount: u64,
     penalty_amount: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, Option<ID>) {
     let quantity = order.quantity();
@@ -736,7 +717,7 @@ fun settle_mint_payment(
     let withdraw_amount = net_premium + fee_amount + builder_fee_amount + penalty_amount;
 
     predict_account::add_position(account, market.id(), order.id(), order.id(), ctx);
-    let mut payment = account.withdraw<DUSDC>(withdraw_amount, root, clock, ctx).into_balance();
+    let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(copy builder_code_id, builder_fee_payment);
     let fee_payment = payment.split(fee_amount);
@@ -756,12 +737,10 @@ fun settle_mint_payment(
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    root: &AccumulatorRoot,
     redeem_amount: u64,
     fee_amount: u64,
     penalty_amount: u64,
     redeemed_quantity: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64, Option<ID>) {
     let builder_code_id = predict_account::builder_code_id(account);
@@ -783,23 +762,21 @@ fun settle_live_redeem_payment(
     market.cash.receive(payout.split(penalty_amount));
 
     market.assert_cash_backing();
-    account.deposit<DUSDC>(payout.into_coin(ctx), root, clock);
+    account.deposit<DUSDC>(payout.into_coin(ctx));
     (builder_fee_amount, penalty_amount, builder_code_id)
 }
 
 fun settle_settled_redeem_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    root: &AccumulatorRoot,
     payout_amount: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     // A settled losing position pays nothing; `redeem_settled` is permissionless,
     // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
     if (payout_amount > 0) {
         let payout = market.cash.pay_authorized(payout_amount);
-        account.deposit<DUSDC>(payout.into_coin(ctx), root, clock);
+        account.deposit<DUSDC>(payout.into_coin(ctx));
     };
 
     market.assert_cash_backing();

@@ -31,7 +31,7 @@ public fun id(code: &BuilderCode): ID {
     code.id.to_inner()
 }
 
-/// Return the permanent owner that can claim this code's builder fees.
+/// Return the permanent owner of this builder code.
 public fun owner(code: &BuilderCode): address {
     code.owner
 }
@@ -54,11 +54,10 @@ public fun claim_all_builder_fees(
 ): Coin<DUSDC> {
     code.assert_owner(ctx);
     let amount = claimable_builder_fees(root, code);
+    if (amount == 0) return balance::zero<DUSDC>().into_coin(ctx);
     let withdrawal = balance::withdraw_funds_from_object<DUSDC>(&mut code.id, amount);
     let coin = balance::redeem_funds(withdrawal).into_coin(ctx);
-    if (amount > 0) {
-        builder_code_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
-    };
+    builder_code_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
     coin
 }
 
