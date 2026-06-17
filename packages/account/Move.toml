@@ -1,0 +1,9 @@
+[package]
+name = "account"
+edition = "2024"
+version = "0.0.1"
+
+[dependencies]
+
+[addresses]
+account = "0x0"

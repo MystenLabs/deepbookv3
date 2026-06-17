@@ -94,6 +94,12 @@ use_environment = "testnet"
 manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D01C"
 deps = { MoveStdlib = "MoveStdlib" }
 
+[pinned.testnet.account]
+source = { local = "../account" }
+use_environment = "testnet"
+manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
+deps = { std = "MoveStdlib", sui = "Sui" }
+
 [pinned.testnet.block_scholes_oracle]
 source = { local = "../block_scholes_oracle" }
 use_environment = "testnet"
@@ -109,8 +115,8 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.testnet.deepbook_predict]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "00C361D5818B5F3578CCBD9B6AB38ED40154151F550328FADE058F3855B3E1AC"
-deps = { block_scholes_oracle = "block_scholes_oracle", deepbook = "deepbook", dusdc = "dusdc", fixed_math = "fixed_math", propbook = "propbook", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", token = "token", wormhole = "wormhole" }
+manifest_digest = "776580DB175E5C8BE1A913621E61D1DE1198184EA337B3709E25220DFE325E32"
+deps = { account = "account", block_scholes_oracle = "block_scholes_oracle", deepbook = "deepbook", dusdc = "dusdc", fixed_math = "fixed_math", propbook = "propbook", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", token = "token", wormhole = "wormhole" }
 
 [pinned.testnet.dusdc]
 source = { local = "../dusdc" }
@@ -137,7 +143,7 @@ manifest_digest = "F288C113E77B36A432FB5039A19D4903E4D010F3359CFAA71EB297F9F67E3
 deps = { std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
 
 [pinned.testnet.token]
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "9f69985258c18dc45c4a9b0c75e8f493a5b527a3" }
+source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "c44689d2a7732638f1c994e6ab2c473bd8138904" }
 use_environment = "testnet"
 manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
 deps = { std = "MoveStdlib", sui = "Sui" }
