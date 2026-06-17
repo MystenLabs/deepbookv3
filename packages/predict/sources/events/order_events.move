@@ -15,7 +15,7 @@ use sui::event;
 /// Emitted when a live position interval is minted.
 public struct OrderMinted has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle: the original mint's `order_id`, carried
     /// forward unchanged across partial-close replacements. Equals `order_id` here.
@@ -42,7 +42,7 @@ public struct OrderMinted has copy, drop, store {
 /// Emitted when a live position is closed fully or partially.
 public struct LiveOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle, constant across the replacement chain.
     /// On a partial close the replacement inherits this same root.
@@ -65,7 +65,7 @@ public struct LiveOrderRedeemed has copy, drop, store {
 /// Emitted when a settled position is redeemed for terminal payout.
 public struct SettledOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle, constant across the replacement chain.
     position_root_id: u256,
@@ -78,7 +78,7 @@ public struct SettledOrderRedeemed has copy, drop, store {
 /// Emitted when an account clears a liquidated position with zero payout.
 public struct LiquidatedOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle, constant across the replacement chain.
     position_root_id: u256,
@@ -119,7 +119,7 @@ public(package) fun emit_order_minted(
 ) {
     event::emit(OrderMinted {
         expiry_market_id,
-        predict_manager_id: account_id,
+        account_id,
         order_id: order.id(),
         position_root_id: order.id(),
         owner,
@@ -152,7 +152,7 @@ public(package) fun emit_live_order_redeemed(
 ) {
     event::emit(LiveOrderRedeemed {
         expiry_market_id,
-        predict_manager_id: account_id,
+        account_id,
         order_id: order.id(),
         position_root_id,
         owner,
@@ -178,7 +178,7 @@ public(package) fun emit_settled_order_redeemed(
 ) {
     event::emit(SettledOrderRedeemed {
         expiry_market_id,
-        predict_manager_id: account_id,
+        account_id,
         order_id: order.id(),
         position_root_id,
         owner,
@@ -197,7 +197,7 @@ public(package) fun emit_liquidated_order_redeemed(
 ) {
     event::emit(LiquidatedOrderRedeemed {
         expiry_market_id,
-        predict_manager_id: account_id,
+        account_id,
         order_id: order.id(),
         position_root_id,
         owner,

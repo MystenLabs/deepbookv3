@@ -9,7 +9,6 @@
 /// oracle feeds, and user positions stay in their owning modules.
 module deepbook_predict::registry;
 
-use deepbook::registry::Registry as DeepbookRegistry;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
@@ -19,10 +18,6 @@ use deepbook_predict::{
     market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
-    predict_deposit_cap::PredictDepositCap,
-    predict_manager::{Self, PredictManager},
-    predict_trade_cap::PredictTradeCap,
-    predict_withdraw_cap::PredictWithdrawCap,
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
@@ -283,44 +278,6 @@ public fun create_builder_code(
     builder_code::create_and_share(&mut registry.id, index, ctx)
 }
 
-/// Create a derived PredictManager for the caller.
-public fun create_manager(
-    registry: &mut Registry,
-    config: &ProtocolConfig,
-    ctx: &mut TxContext,
-): PredictManager {
-    config.assert_version();
-    predict_manager::new(&mut registry.id, ctx)
-}
-
-/// Create and share a derived PredictManager for the caller.
-public fun create_and_share_manager(
-    registry: &mut Registry,
-    config: &ProtocolConfig,
-    ctx: &mut TxContext,
-) {
-    config.assert_version();
-    create_manager(registry, config, ctx).share();
-}
-
-/// Create a derived self-owned PredictManager for callers that don't want a
-/// deployer-key trust anchor (vaults, structured products). The inner
-/// BalanceManager owner is set to the manager's own ID-as-address, so the
-/// returned caps are the only authority that will ever exist on this manager.
-///
-/// Requires `PredictApp` to be authorized on the deepbook `Registry` via
-/// `deepbook::registry::authorize_app<PredictApp>` — a one-time admin tx on
-/// the deepbook side.
-public fun create_self_owned_manager(
-    registry: &mut Registry,
-    config: &ProtocolConfig,
-    deepbook_registry: &DeepbookRegistry,
-    ctx: &mut TxContext,
-): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
-    config.assert_version();
-    predict_manager::new_self_owned(&mut registry.id, deepbook_registry, ctx)
-}
-
 // === Private Functions ===
 
 /// Package initializer - creates Registry and AdminCap.
@@ -387,6 +344,3 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
 
     registry_id
 }
-
-// `new_for_testing` and `destroy_registry_drop_for_testing` removed: tests use
-// the production-mirroring `init_for_testing` shared-object path instead.

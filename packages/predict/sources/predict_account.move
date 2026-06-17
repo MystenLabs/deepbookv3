@@ -4,11 +4,10 @@
 /// Predict's per-account state, stored as an app-data slot on a shared `Account`
 /// (the `account` package).
 ///
-/// This is the data residue of the former `PredictManager` — open positions,
-/// per-expiry trading summaries, DEEP stake, and sticky builder-code attribution —
-/// with custody and the cap/proof layer removed: DUSDC/PLP/DEEP custody now lives
-/// in `Account`. The `PredictApp` witness namespaces this slot, so only Predict
-/// writes it.
+/// This is Predict's account-local state: open positions, per-expiry trading
+/// summaries, DEEP stake, and sticky builder-code attribution. DUSDC/PLP/DEEP
+/// custody lives in `Account`. The `PredictApp` witness namespaces this slot, so
+/// only Predict writes it.
 ///
 /// Flow-driven state (positions, summaries, stake) is exposed through
 /// `public(package)` primitives that mutate Predict app data directly. User-facing
@@ -17,7 +16,7 @@
 module deepbook_predict::predict_account;
 
 use account::{account::{Account, AccountWrapper}, account_registry::{Self, AccountRegistry}};
-use deepbook_predict::builder_code::BuilderCode;
+use deepbook_predict::{builder_code::BuilderCode, builder_code_events};
 use std::internal::permit;
 use sui::table::{Self, Table};
 
@@ -111,12 +110,19 @@ public fun builder_code_id(account: &Account): Option<ID> {
 /// Set sticky builder-code attribution for future trades. Attaches the Predict
 /// slot if the account has none.
 public fun set_builder_code(account: &mut Account, code: &BuilderCode, ctx: &mut TxContext) {
-    data_mut(account, ctx).builder_code_id = option::some(code.id());
+    let builder_code_id = code.id();
+    data_mut(account, ctx).builder_code_id = option::some(builder_code_id);
+    builder_code_events::emit_builder_code_set(
+        account.id(),
+        account.owner(),
+        option::some(builder_code_id),
+    );
 }
 
 /// Clear sticky builder-code attribution.
 public fun unset_builder_code(account: &mut Account, ctx: &mut TxContext) {
     data_mut(account, ctx).builder_code_id = option::none();
+    builder_code_events::emit_builder_code_set(account.id(), account.owner(), option::none());
 }
 
 // === Public-Package Functions ===

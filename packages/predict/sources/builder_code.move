@@ -8,7 +8,7 @@
 /// balance, and the code owner can later claim those accumulated DUSDC funds.
 module deepbook_predict::builder_code;
 
-use deepbook_predict::account_events;
+use deepbook_predict::builder_code_events;
 use dusdc::dusdc::DUSDC;
 use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object};
 
@@ -57,7 +57,7 @@ public fun claim_all_builder_fees(
     let withdrawal = balance::withdraw_funds_from_object<DUSDC>(&mut code.id, amount);
     let coin = balance::redeem_funds(withdrawal).into_coin(ctx);
     if (amount > 0) {
-        account_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
+        builder_code_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
     };
     coin
 }
@@ -74,7 +74,7 @@ public(package) fun create_and_share(registry_uid: &mut UID, index: u64, ctx: &T
     };
     let id = code.id();
     transfer::share_object(code);
-    account_events::emit_builder_code_created(id, owner, index);
+    builder_code_events::emit_builder_code_created(id, owner, index);
     id
 }
 
