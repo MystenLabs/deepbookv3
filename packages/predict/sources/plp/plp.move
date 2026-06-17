@@ -317,7 +317,7 @@ public fun stake_deep(
     vault.staked_deep.join(deep.into_balance());
     vault_events::emit_deep_staked(
         vault.id(),
-        account.id(),
+        account.account_id(),
         amount,
         predict_account::active_stake(account),
         predict_account::inactive_stake(account),
@@ -339,7 +339,7 @@ public fun unstake_deep(
         let deep = vault.staked_deep.split(amount).into_coin(ctx);
         account.deposit<DEEP>(deep, root, clock);
     };
-    vault_events::emit_deep_unstaked(vault.id(), account.id(), amount);
+    vault_events::emit_deep_unstaked(vault.id(), account.account_id(), amount);
 }
 
 /// Move cash between pool idle liquidity and one expiry market.
@@ -407,7 +407,7 @@ public fun request_supply(
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     let payment = account.withdraw<DUSDC>(amount, root, clock, ctx);
     let vault_id = vault.id();
-    let account_id = account.id();
+    let account_id = account.account_id();
     let recipient = account.receive_address();
     let index = vault.lp.request_supply(account_id, recipient, payment);
     vault_events::emit_supply_requested(vault_id, account_id, recipient, index, amount);
@@ -432,7 +432,7 @@ public fun request_withdraw(
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     let lp = account.withdraw<PLP>(amount, root, clock, ctx);
     let vault_id = vault.id();
-    let account_id = account.id();
+    let account_id = account.account_id();
     let recipient = account.receive_address();
     let index = vault.lp.request_withdraw(account_id, recipient, lp);
     vault_events::emit_withdraw_requested(vault_id, account_id, recipient, index, amount);

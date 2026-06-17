@@ -113,7 +113,7 @@ public fun set_builder_code(account: &mut Account, code: &BuilderCode, ctx: &mut
     let builder_code_id = code.id();
     data_mut(account, ctx).builder_code_id = option::some(builder_code_id);
     builder_code_events::emit_builder_code_set(
-        account.id(),
+        account.account_id(),
         account.owner(),
         option::some(builder_code_id),
     );
@@ -122,7 +122,11 @@ public fun set_builder_code(account: &mut Account, code: &BuilderCode, ctx: &mut
 /// Clear sticky builder-code attribution.
 public fun unset_builder_code(account: &mut Account, ctx: &mut TxContext) {
     data_mut(account, ctx).builder_code_id = option::none();
-    builder_code_events::emit_builder_code_set(account.id(), account.owner(), option::none());
+    builder_code_events::emit_builder_code_set(
+        account.account_id(),
+        account.owner(),
+        option::none(),
+    );
 }
 
 // === Public-Package Functions ===

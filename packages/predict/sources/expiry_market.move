@@ -232,7 +232,7 @@ public fun mint(
     );
     order_events::emit_order_minted(
         market.id(),
-        account.id(),
+        account.account_id(),
         account.owner(),
         builder_code_id,
         &minted_order,
@@ -578,7 +578,7 @@ fun redeem_liquidated_order(
     market.strike_exposure.clear_liquidated_order(order);
     order_events::emit_liquidated_order_redeemed(
         market.id(),
-        account.id(),
+        account.account_id(),
         account.owner(),
         order,
         position_root_id,
@@ -668,7 +668,7 @@ fun redeem_live_internal(
 
     order_events::emit_live_order_redeemed(
         market.id(),
-        account.id(),
+        account.account_id(),
         account.owner(),
         builder_code_id,
         order,
@@ -705,7 +705,7 @@ fun redeem_settled_internal(
 
     order_events::emit_settled_order_redeemed(
         market.id(),
-        account.id(),
+        account.account_id(),
         account.owner(),
         order,
         position_root_id,

@@ -100,7 +100,7 @@ public fun owner(self: &Account): address {
 }
 
 /// Returns the canonical account ID.
-public fun id(self: &Account): ID {
+public fun account_id(self: &Account): ID {
     self.account_id.to_inner()
 }
 
