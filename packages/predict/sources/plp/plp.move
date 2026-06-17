@@ -10,9 +10,9 @@
 /// (initial funding, live rebalance/sweep, and settled-market sweep with terminal
 /// profit materialization). LPs queue supply/withdraw requests routed through a
 /// loaded Account; the daily flush (`finish_flush`) drains them at the frozen pool
-/// NAV, minting/burning PLP and delivering fills to each account's receive address.
-/// Incentives moved to a separate staking contract; DEEP staking is an unrelated
-/// trading feature.
+/// NAV, minting/burning PLP and delivering fills to each account via the balance
+/// accumulator. Incentives moved to a separate staking contract; DEEP staking is an
+/// unrelated trading feature.
 module deepbook_predict::plp;
 
 use account::account::Account;
@@ -30,7 +30,13 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::{Coin, TreasuryCap}, coin_registry};
+use sui::{
+    accumulator::AccumulatorRoot,
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::{Coin, TreasuryCap},
+    coin_registry
+};
 use token::deep::DEEP;
 
 const EExpiryMarketNotActive: u64 = 0;
@@ -300,10 +306,12 @@ public fun stake_deep(
     account: &mut Account,
     config: &ProtocolConfig,
     amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
-    let deep = account.withdraw<DEEP>(amount, ctx);
+    let deep = account.withdraw<DEEP>(amount, root, clock, ctx);
     predict_account::active_stake_mut(account, ctx);
     predict_account::add_inactive_stake(account, amount, ctx);
     vault.staked_deep.join(deep.into_balance());
@@ -321,13 +329,15 @@ public fun unstake_deep(
     vault: &mut PoolVault,
     account: &mut Account,
     config: &ProtocolConfig,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
     let amount = predict_account::remove_all_stake(account, ctx);
     if (amount > 0) {
         let deep = vault.staked_deep.split(amount).into_coin(ctx);
-        account.deposit<DEEP>(deep);
+        account.deposit<DEEP>(deep, root, clock);
     };
     vault_events::emit_deep_unstaked(vault.id(), account.account_id(), amount);
 }
@@ -379,20 +389,23 @@ public fun lock_capital(
 }
 
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
-/// escrow, recording the account's receive address as the fill recipient. The
-/// next flush delivers minted PLP to that receive address. Returns the queue index,
-/// the handle used to cancel before the flush.
+/// escrow, recording the account's receive address as the fill recipient. The pull
+/// auto-settles any flush-delivered DUSDC first. The account receives the minted PLP
+/// at the next flush. Returns the queue index, the handle used to cancel before
+/// the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     account: &mut Account,
     config: &ProtocolConfig,
     amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    let payment = account.withdraw<DUSDC>(amount, ctx);
+    let payment = account.withdraw<DUSDC>(amount, root, clock, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
@@ -403,18 +416,21 @@ public fun request_supply(
 
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
-/// Returns the queue index used to cancel before the flush.
+/// The pull auto-settles any flush-delivered PLP first. Returns the queue index
+/// used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
     account: &mut Account,
     config: &ProtocolConfig,
     amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    let lp = account.withdraw<PLP>(amount, ctx);
+    let lp = account.withdraw<PLP>(amount, root, clock, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
@@ -430,6 +446,8 @@ public fun cancel_supply_request(
     account: &mut Account,
     config: &ProtocolConfig,
     index: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
@@ -437,7 +455,7 @@ public fun cancel_supply_request(
     let vault_id = vault.id();
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
-    account.deposit<DUSDC>(refund.into_coin(ctx));
+    account.deposit<DUSDC>(refund.into_coin(ctx), root, clock);
     vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, true);
 }
 
@@ -448,6 +466,8 @@ public fun cancel_withdraw_request(
     account: &mut Account,
     config: &ProtocolConfig,
     index: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
@@ -455,7 +475,7 @@ public fun cancel_withdraw_request(
     let vault_id = vault.id();
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
-    account.deposit<PLP>(refund.into_coin(ctx));
+    account.deposit<PLP>(refund.into_coin(ctx), root, clock);
     vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, false);
 }
 

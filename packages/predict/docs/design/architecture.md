@@ -63,7 +63,12 @@ The manager exposes three capabilities, all tracked in one `allow_listed` ID set
 
 The inner `BalanceManager`'s own `DepositCap` and `WithdrawCap` are held inside `PredictManager` and never exposed. Every custody operation routes through them, so the inner `BalanceManager`'s owner check never fires from a Predict cap holder's call — the Predict-level cap check is the real gate.
 
-**Auto settlement is deferred.** Account reads and writes currently operate only on balances already stored in account custody. LP fills and builder fees are delivered to receive addresses with `balance::send_funds`, then claimed explicitly with `account::settle<T>` or `builder_code::claim_all_builder_fees`. Predict does not thread `AccumulatorRoot` through trade/PLP entrypoints or helper layers to consume those funds. Before mainnet, once Sui exposes the accumulator root through `TxContext`, Account will reintroduce passive settlement behind the account APIs.
+**Capital ops settle first (ambient accumulator).** Account coin reads and writes
+first sweep funds delivered to the account receive address (`balance::send_funds`)
+into stored account custody, then proceed. Predict threads `AccumulatorRoot` and
+`Clock` through trade and PLP entrypoints so Account can do that settlement at the
+custody boundary. Builder fees remain an explicit claim flow because the builder
+code owner claiming accumulated rewards is the domain action.
 
 ### PredictTradeProof — ephemeral trade authorization
 
@@ -181,7 +186,7 @@ The flush is a transaction-local **hot potato** (`PoolValuation`), assembled in 
 
 1. `start_pool_valuation` (started with a market-deployer `MarketLifecycleCap` proof) engages the valuation lock and snapshots the active-expiry set.
 2. `value_expiry` runs once per snapshotted market: it rebalances that market's cash, then folds the market's NAV (`current_nav`, or 0 for a swept settled market) into the running total, proving the market is in the snapshot and valued exactly once.
-3. `finish_flush` proves every snapshotted market was valued, computes `pool_nav = idle + Σ current_nav` (net of the pending-protocol-profit exclusion priced from the aggregate profit basis), then `drain_lp_requests` mints/burns PLP and delivers fills at that one frozen mark — supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue budgets (`supply_budget`/`withdraw_budget`, `None` = drain fully; independent so a supply backlog can't starve withdrawals), with per-request failure isolation (a degenerate request is refunded rather than aborting the flush). Fills are delivered to the account receive address through `balance::send_funds` and are claimed explicitly with `account::settle<T>`.
+3. `finish_flush` proves every snapshotted market was valued, computes `pool_nav = idle + Σ current_nav` (net of the pending-protocol-profit exclusion priced from the aggregate profit basis), then `drain_lp_requests` mints/burns PLP and delivers fills at that one frozen mark — supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue budgets (`supply_budget`/`withdraw_budget`, `None` = drain fully; independent so a supply backlog can't starve withdrawals), with per-request failure isolation (a degenerate request is refunded rather than aborting the flush). Fills are delivered to the account receive address through `balance::send_funds` and passively settled into account custody by later Account balance operations.
 
 The flush is **privileged**, not permissionless: the hot potato can only be created by a market-deployer `MarketLifecycleCap` (the sole flush authority; the root-`AdminCap` path was removed). The cap-holder is trusted not to manipulate the live oracle before flushing — the single frozen mark prices both supply and withdraw, so it must equal true recoverable value, which `current_nav`'s exactness guarantees. Cash rebalancing, the settled-market sweep, and liquidation are decoupled from the potato: each is a standalone, permissionless, per-market entrypoint, because none needs the exactly-once completeness proof. See [liquidity and NAV](../concepts/liquidity-and-nav.md).
 
