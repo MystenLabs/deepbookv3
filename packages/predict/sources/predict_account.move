@@ -7,7 +7,7 @@
 /// This is the data residue of the former `PredictManager` — open positions,
 /// per-expiry trading summaries, DEEP stake, and sticky builder-code attribution —
 /// with custody and the cap/proof layer removed: DUSDC/PLP/DEEP custody now lives
-/// in `Account.vault`, and authority is the owner's movement `Proof`. The
+/// in `Account`, and authority is the owner's movement `Proof`. The
 /// `PredictApp` witness namespaces this slot, so only Predict reads/writes it.
 ///
 /// Flow-driven state (positions, summaries, stake) is exposed through
@@ -16,7 +16,7 @@
 /// follows the same path.
 module deepbook_predict::predict_account;
 
-use account::{account::Account, account_core::Proof};
+use account::account::{Account, Proof};
 use deepbook_predict::builder_code::BuilderCode;
 use sui::table::{Self, Table};
 

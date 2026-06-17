@@ -1,18 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// A pure, reusable on-chain account: a shared object wrapping a custody `Vault`
-/// (`account_core`) with an owner.
+/// A pure, reusable on-chain account: a shared object wrapping balances with an
+/// owner.
 ///
-/// Value moves only against a movement `Proof`, and a `Proof` is minted only by
-/// the account's owner: either the transaction sender or an object UID address
-/// passed mutably as ownership proof. Consumers receive a proof and spend it;
-/// they never mint one, so no caller can move an account's value without the owner's
-/// authorization. `account_core` is the only place coins move; `account` is the
-/// only public surface that mints proofs and moves value. Account creation goes
-/// through `account_registry`, which owns deterministic ID derivation and enforces
-/// one account per owner. Coin reads include funds delivered to this account's
-/// accumulator address, and coin writes first settle those funds into the vault.
+/// Value moves only against a movement `Proof`, and public proof minting is
+/// routed through owner checks here or authorized-app checks in `account_registry`.
+/// Consumers receive a proof and spend it; they never mint one without passing an
+/// authority boundary. `account` owns deterministic ID derivation, account
+/// construction, custody, and owner proof minting. Account creation goes through
+/// `account_registry`, which owns the shared derivation root and app whitelist.
+/// Coin reads include funds delivered to this account's accumulator address, and
+/// coin writes first settle those funds into the account.
 ///
 /// Apps also store opaque per-account state through the app-data lane
 /// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
@@ -20,9 +19,16 @@
 /// are open.
 module account::account;
 
-use account::account_core::{Self, Proof, Vault};
 use std::internal::Permit;
-use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object, dynamic_field as df};
+use sui::{
+    accumulator::AccumulatorRoot,
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    derived_object,
+    dynamic_field as df
+};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -32,19 +38,31 @@ use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
+const EProofAccountMismatch: u64 = 1;
+const EBalanceTooLow: u64 = 2;
 
 // === Structs ===
-/// Shared account: an owner plus a custody `Vault`.
+/// Shared account: an owner plus custody balances.
 public struct Account has key {
     id: UID,
     /// EOA address or object-ID-as-address that owns this account.
     owner: address,
-    vault: Vault,
+    balances: Bag,
+    settlements: Bag,
+}
+
+/// Ephemeral movement capability. Its existence asserts that an issuer checked
+/// authorization; account only enforces that it is bound to this account.
+public struct Proof has drop {
+    account_id: ID,
 }
 
 /// Dynamic-field key for one app's per-account data slot. The phantom `App` is the
 /// app's witness type, so each app gets a distinct, collision-free namespace.
 public struct DataKey<phantom App>() has copy, drop, store;
+
+/// Per-coin bag key.
+public struct CoinKey<phantom T> has copy, drop, store {}
 
 // === Public Functions ===
 /// Share a newly created account object.
@@ -53,9 +71,9 @@ public fun share(self: Account) {
 }
 
 /// Returns the total balance of `T` available to the account, including funds
-/// delivered through the ambient accumulator but not yet settled into the vault.
-public fun balance<T>(self: &Account, root: &AccumulatorRoot): u64 {
-    self.vault.balance<T>() + balance::settled_funds_value<T>(root, self.id.to_address())
+/// delivered through the ambient accumulator but not yet settled into the account.
+public fun balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock): u64 {
+    self.stored_balance<T>() + self.unsettled_balance<T>(root, clock)
 }
 
 /// Returns the account owner address. This may be an EOA address or an
@@ -77,7 +95,7 @@ public fun receive_address(self: &Account): address {
 /// Mint a movement proof after validating the transaction sender owns the account.
 public fun generate_proof(self: &Account, ctx: &TxContext): Proof {
     self.assert_owner(ctx.sender());
-    self.vault.issue_proof()
+    self.issue_proof_unchecked()
 }
 
 /// Mint a movement proof after validating `uid`'s object address owns the account.
@@ -85,43 +103,42 @@ public fun generate_proof(self: &Account, ctx: &TxContext): Proof {
 /// object's module.
 public fun generate_proof_as_object(self: &Account, uid: &mut UID): Proof {
     self.assert_owner(uid.to_inner().to_address());
-    self.vault.issue_proof()
+    self.issue_proof_unchecked()
 }
 
-/// Abort unless `proof` was minted for this account. This is the kernel's
-/// per-movement binding check (`account_core::assert_bound`) surfaced for callers
-/// that need to validate owner-minted movement authority without moving value.
+/// Abort unless `proof` was minted for this account.
 public fun assert_proof(self: &Account, proof: &Proof) {
-    self.vault.assert_bound(proof);
+    assert!(self.id.to_inner() == proof.account_id, EProofAccountMismatch);
 }
 
 /// Deposit `coin`. Requires a movement `Proof` and first settles any accumulator
-/// funds for `T` into the vault. The proof is taken by reference so one proof can
-/// fund many movements in a PTB.
-public fun deposit<T>(self: &mut Account, proof: &Proof, root: &AccumulatorRoot, coin: Coin<T>) {
-    self.settle<T>(proof, root);
-    self.vault.deposit_with_proof(proof, coin.into_balance());
+/// funds for `T` into the account. The proof is taken by reference so one proof
+/// can fund many movements in a PTB.
+public fun deposit<T>(
+    self: &mut Account,
+    proof: &Proof,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    coin: Coin<T>,
+) {
+    self.assert_proof(proof);
+    self.settle_unchecked<T>(root, clock);
+    self.deposit_balance(coin.into_balance());
 }
 
 /// Withdraw `amount` of `T`. Requires a movement `Proof` and first settles any
-/// accumulator funds for `T` into the vault.
+/// accumulator funds for `T` into the account.
 public fun withdraw<T>(
     self: &mut Account,
     proof: &Proof,
     root: &AccumulatorRoot,
+    clock: &Clock,
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<T> {
-    self.settle<T>(proof, root);
-    self.vault.withdraw_with_proof<T>(proof, amount).into_coin(ctx)
-}
-
-/// Settle any accumulator-delivered funds for `T` into the vault.
-public fun settle<T>(self: &mut Account, proof: &Proof, root: &AccumulatorRoot) {
-    let amount = balance::settled_funds_value<T>(root, self.id.to_address());
-    if (amount == 0) return;
-    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
-    self.vault.deposit_with_proof(proof, balance::redeem_funds(withdrawal));
+    self.assert_proof(proof);
+    self.settle_unchecked<T>(root, clock);
+    self.withdraw_balance<T>(amount).into_coin(ctx)
 }
 
 // === App-data Lane ===
@@ -156,9 +173,9 @@ public fun detach<App, Data: store>(self: &mut Account, _permit: Permit<App>): D
 }
 
 // === Public-Package Functions ===
-/// Create an EOA-owned account from a registry-derived key. The UID is claimed
-/// here because Sui requires key objects to be built in the same function that
-/// obtains their fresh UID.
+/// Create an account from the registry derivation root. The UID is claimed here
+/// because Sui requires key objects to be built in the same function that obtains
+/// their fresh UID.
 public(package) fun new_derived<K: copy + drop + store>(
     parent: &mut UID,
     key: K,
@@ -166,11 +183,89 @@ public(package) fun new_derived<K: copy + drop + store>(
     ctx: &mut TxContext,
 ): Account {
     let id = derived_object::claim(parent, key);
-    let vault = account_core::new_vault(id.to_inner(), ctx);
-    Account { id, owner, vault }
+    Account { id, owner, balances: bag::new(ctx), settlements: bag::new(ctx) }
+}
+
+/// Mint a movement proof after a package-level caller has checked its own
+/// authority. Used by `account_registry` for whitelisted app proof minting.
+public(package) fun issue_proof_unchecked(self: &Account): Proof {
+    Proof { account_id: self.id.to_inner() }
 }
 
 // === Private Functions ===
+/// Settle any accumulator-delivered funds for `T` into the account. The caller
+/// must have already validated authority.
+fun settle_unchecked<T>(self: &mut Account, root: &AccumulatorRoot, clock: &Clock) {
+    let now = clock.timestamp_ms();
+    if (now == self.last_settlement_ms<T>()) return;
+    self.set_last_settlement_ms<T>(now);
+
+    let amount = balance::settled_funds_value<T>(root, self.id.to_address());
+    if (amount == 0) return;
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
+    self.deposit_balance(balance::redeem_funds(withdrawal));
+}
+
 fun assert_owner(self: &Account, owner: address) {
     assert!(owner == self.owner, EInvalidOwner);
+}
+
+fun stored_balance<T>(self: &Account): u64 {
+    let key = CoinKey<T> {};
+    if (self.balances.contains(key)) {
+        let bal: &Balance<T> = &self.balances[key];
+        bal.value()
+    } else {
+        0
+    }
+}
+
+fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock): u64 {
+    if (clock.timestamp_ms() == self.last_settlement_ms<T>()) {
+        0
+    } else {
+        balance::settled_funds_value<T>(root, self.id.to_address())
+    }
+}
+
+fun last_settlement_ms<T>(self: &Account): u64 {
+    let key = CoinKey<T> {};
+    if (self.settlements.contains(key)) {
+        let timestamp: &u64 = &self.settlements[key];
+        *timestamp
+    } else {
+        0
+    }
+}
+
+fun set_last_settlement_ms<T>(self: &mut Account, timestamp: u64) {
+    let key = CoinKey<T> {};
+    if (self.settlements.contains(key)) {
+        let last_settlement_ms: &mut u64 = &mut self.settlements[key];
+        *last_settlement_ms = timestamp;
+    } else {
+        self.settlements.add(key, timestamp);
+    }
+}
+
+fun deposit_balance<T>(self: &mut Account, balance: Balance<T>) {
+    let key = CoinKey<T> {};
+    if (self.balances.contains(key)) {
+        let bal: &mut Balance<T> = &mut self.balances[key];
+        bal.join(balance);
+    } else {
+        self.balances.add(key, balance);
+    }
+}
+
+fun withdraw_balance<T>(self: &mut Account, amount: u64): Balance<T> {
+    let key = CoinKey<T> {};
+    assert!(self.balances.contains(key), EBalanceTooLow);
+    let bal: &mut Balance<T> = &mut self.balances[key];
+    assert!(bal.value() >= amount, EBalanceTooLow);
+    if (bal.value() == amount) {
+        self.balances.remove(key)
+    } else {
+        bal.split(amount)
+    }
 }
