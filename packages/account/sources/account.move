@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// A pure, reusable on-chain account: a shared object wrapping a custody
-/// `Vault` (`account_core`) with an owner.
+/// A pure, reusable on-chain account: a shared object wrapping a custody `Vault`
+/// (`account_core`) with an owner.
 ///
 /// Value moves only against a movement `Proof`, and a `Proof` is minted only by
 /// the account's owner — an EOA (`owner = Some(sender)`) via `ctx.sender()`, or a
@@ -10,8 +10,10 @@
 /// proof and spend it; they never mint one, so no caller can move an account's
 /// value without the owner's authorization. `account_core` is the only place
 /// coins move; `account` is the only public surface that mints proofs and moves
-/// value. Coin reads include funds delivered to this account's accumulator
-/// address, and coin writes first settle those funds into the vault.
+/// value. Account creation goes through `account_registry`, which owns
+/// deterministic ID derivation and slot allocation. Coin reads include funds
+/// delivered to this account's accumulator address, and coin writes first settle
+/// those funds into the vault.
 ///
 /// Apps also store opaque per-account state through the app-data lane
 /// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
@@ -20,7 +22,7 @@
 module account::account;
 
 use account::account_core::{Self, Proof, Vault};
-use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, dynamic_field as df};
+use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object, dynamic_field as df};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -34,7 +36,7 @@ const EInvalidOwnerCap: u64 = 1;
 
 // === Structs ===
 /// Shared account: an owner plus a custody `Vault`.
-public struct Account has key, store {
+public struct Account has key {
     id: UID,
     /// `Some(addr)` => EOA-owned, authority by sender. `None` => self-owned,
     /// authority by `OwnerCap`.
@@ -53,22 +55,9 @@ public struct OwnerCap has key, store {
 public struct DataKey<phantom App>() has copy, drop, store;
 
 // === Public Functions ===
-/// Create an EOA-owned account owned by the transaction sender.
-public fun new(ctx: &mut TxContext): Account {
-    let id = object::new(ctx);
-    let vault = account_core::new_vault(id.to_inner(), ctx);
-    Account { id, owner: option::some(ctx.sender()), vault }
-}
-
-/// Create a self-owned account (no address owner) and its `OwnerCap`.
-public fun new_self_owned(ctx: &mut TxContext): (Account, OwnerCap) {
-    let id = object::new(ctx);
-    let account_id = id.to_inner();
-    let vault = account_core::new_vault(account_id, ctx);
-    let account = Account { id, owner: option::none(), vault };
-    let cap = OwnerCap { id: object::new(ctx), account_id };
-
-    (account, cap)
+/// Share a newly created account object.
+public fun share(self: Account) {
+    transfer::share_object(self);
 }
 
 /// Returns the total balance of `T` available to the account, including funds
@@ -85,6 +74,11 @@ public fun owner(self: &Account): Option<address> {
 /// Returns the account object id.
 public fun id(self: &Account): ID {
     self.id.to_inner()
+}
+
+/// Returns the accumulator receive address for this account.
+public fun receive_address(self: &Account): address {
+    self.id.to_address()
 }
 
 /// Mint a movement proof as the EOA owner.
@@ -178,6 +172,36 @@ public fun borrow_data_mut<App: drop, Data: store>(
 public fun detach<App: drop, Data: store>(self: &mut Account, proof: &Proof, _app: App): Data {
     self.assert_proof(proof);
     self.id.remove(DataKey<App>())
+}
+
+// === Public-Package Functions ===
+/// Create an EOA-owned account from a registry-derived key. The UID is claimed
+/// here because Sui requires key objects to be built in the same function that
+/// obtains their fresh UID.
+public(package) fun new_derived<K: copy + drop + store>(
+    parent: &mut UID,
+    key: K,
+    owner: address,
+    ctx: &mut TxContext,
+): Account {
+    let id = derived_object::claim(parent, key);
+    let vault = account_core::new_vault(id.to_inner(), ctx);
+    Account { id, owner: option::some(owner), vault }
+}
+
+/// Create a self-owned account from a registry-derived key.
+public(package) fun new_self_owned_derived<K: copy + drop + store>(
+    parent: &mut UID,
+    key: K,
+    ctx: &mut TxContext,
+): (Account, OwnerCap) {
+    let id = derived_object::claim(parent, key);
+    let account_id = id.to_inner();
+    let vault = account_core::new_vault(account_id, ctx);
+    let account = Account { id, owner: option::none(), vault };
+    let cap = OwnerCap { id: object::new(ctx), account_id };
+
+    (account, cap)
 }
 
 // === Private Functions ===
