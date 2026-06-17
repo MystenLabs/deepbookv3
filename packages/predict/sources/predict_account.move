@@ -7,16 +7,15 @@
 /// This is the data residue of the former `PredictManager` — open positions,
 /// per-expiry trading summaries, DEEP stake, and sticky builder-code attribution —
 /// with custody and the cap/proof layer removed: DUSDC/PLP/DEEP custody now lives
-/// in `Account`, and authority is the owner's movement `Proof`. The
-/// `PredictApp` witness namespaces this slot, so only Predict reads/writes it.
+/// in `Account`. The `PredictApp` witness namespaces this slot, so only Predict
+/// writes it.
 ///
 /// Flow-driven state (positions, summaries, stake) is exposed through
-/// `public(package)` primitives that take a movement `Proof`; `Account` owns proof
-/// validation at the mutable app-data boundary. The standalone builder-code config
-/// follows the same path.
+/// `public(package)` primitives that mutate Predict app data directly. User-facing
+/// builder-code config still checks an account movement proof at the public boundary.
 module deepbook_predict::predict_account;
 
-use account::account::{Account, Proof};
+use account::{account::{Account, Proof}, account_registry::{Self, AccountRegistry}};
 use deepbook_predict::builder_code::BuilderCode;
 use std::internal::permit;
 use sui::table::{Self, Table};
@@ -52,7 +51,7 @@ public struct PredictData has store {
     /// pooled in `PoolVault`; this is this account's active share.
     active_stake: u64,
     /// DEEP staked this epoch, not yet active; rolls into `active_stake` on the
-    /// first interaction in a later epoch (`update_stake`).
+    /// first discount-bearing interaction in a later epoch (`active_stake_mut`).
     inactive_stake: u64,
     /// Epoch the active/inactive split was last reconciled in.
     stake_epoch: u64,
@@ -119,26 +118,33 @@ public fun set_builder_code(
     code: &BuilderCode,
     ctx: &mut TxContext,
 ) {
-    data_mut(account, proof, ctx).builder_code_id = option::some(code.id());
+    account.assert_proof(proof);
+    data_mut(account, ctx).builder_code_id = option::some(code.id());
 }
 
 /// Clear sticky builder-code attribution. Owner-gated by `proof`.
 public fun unset_builder_code(account: &mut Account, proof: &Proof, ctx: &mut TxContext) {
-    data_mut(account, proof, ctx).builder_code_id = option::none();
+    account.assert_proof(proof);
+    data_mut(account, ctx).builder_code_id = option::none();
 }
 
 // === Public-Package Functions ===
+
+/// Mint Predict's app proof through the account registry whitelist.
+public(package) fun generate_proof_as_app(registry: &AccountRegistry, account: &Account): Proof {
+    account_registry::generate_proof_as_app<PredictApp>(registry, account, permit<PredictApp>())
+}
+
 /// Add an order position keyed to its root order ID. At mint the root equals the
 /// order's own ID; a partial-close replacement passes the parent's root forward.
 public(package) fun add_position(
     account: &mut Account,
-    proof: &Proof,
     expiry_market_id: ID,
     order_id: u256,
     position_root_id: u256,
     ctx: &mut TxContext,
 ) {
-    let d = data_mut(account, proof, ctx);
+    let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(!d.positions.contains(key), EPositionAlreadyExists);
     d.positions.add(key, position_root_id);
@@ -149,12 +155,11 @@ public(package) fun add_position(
 /// Remove an order position and return its root order ID for event attribution.
 public(package) fun remove_position(
     account: &mut Account,
-    proof: &Proof,
     expiry_market_id: ID,
     order_id: u256,
     ctx: &mut TxContext,
 ): u256 {
-    let d = data_mut(account, proof, ctx);
+    let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
     let position_root_id = d.positions.remove(key);
@@ -167,45 +172,37 @@ public(package) fun remove_position(
 /// Record pool trading fees paid for one expiry market.
 public(package) fun record_trading_fee_paid(
     account: &mut Account,
-    proof: &Proof,
     expiry_market_id: ID,
     amount: u64,
     ctx: &mut TxContext,
 ) {
     if (amount == 0) return;
-    let summary = data_mut(account, proof, ctx).summary_mut(expiry_market_id);
+    let summary = data_mut(account, ctx).summary_mut(expiry_market_id);
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
 }
 
-/// Roll inactive stake into active once a new epoch has begun. Idempotent within
-/// an epoch; callers run it before reading `active_stake`.
-public(package) fun update_stake(account: &mut Account, proof: &Proof, ctx: &mut TxContext) {
+/// Roll inactive stake into active if needed, then return the active amount for
+/// protocol execution paths that apply stake discounts.
+public(package) fun active_stake_mut(account: &mut Account, ctx: &mut TxContext): u64 {
     let epoch = ctx.epoch();
-    let d = data_mut(account, proof, ctx);
-    if (d.stake_epoch == epoch) return;
-    d.active_stake = d.active_stake + d.inactive_stake;
-    d.inactive_stake = 0;
-    d.stake_epoch = epoch;
+    let d = data_mut(account, ctx);
+    if (d.stake_epoch != epoch) {
+        d.active_stake = d.active_stake + d.inactive_stake;
+        d.inactive_stake = 0;
+        d.stake_epoch = epoch;
+    };
+    d.active_stake
 }
 
 /// Add freshly staked DEEP as inactive; it activates next epoch.
-public(package) fun add_inactive_stake(
-    account: &mut Account,
-    proof: &Proof,
-    stake: u64,
-    ctx: &mut TxContext,
-) {
-    let d = data_mut(account, proof, ctx);
+public(package) fun add_inactive_stake(account: &mut Account, stake: u64, ctx: &mut TxContext) {
+    let d = data_mut(account, ctx);
     d.inactive_stake = d.inactive_stake + stake;
 }
 
 /// Zero out active and inactive stake and return the combined amount.
-public(package) fun remove_all_stake(
-    account: &mut Account,
-    proof: &Proof,
-    ctx: &mut TxContext,
-): u64 {
-    let d = data_mut(account, proof, ctx);
+public(package) fun remove_all_stake(account: &mut Account, ctx: &mut TxContext): u64 {
+    let d = data_mut(account, ctx);
     let total = d.active_stake + d.inactive_stake;
     d.active_stake = 0;
     d.inactive_stake = 0;
@@ -218,8 +215,7 @@ fun data(account: &Account): &PredictData {
     account.borrow_data<PredictApp, PredictData>()
 }
 
-fun data_mut(account: &mut Account, proof: &Proof, ctx: &mut TxContext): &mut PredictData {
-    account.assert_proof(proof);
+fun data_mut(account: &mut Account, ctx: &mut TxContext): &mut PredictData {
     if (!account.has_data<PredictApp>()) {
         account.attach(permit<PredictApp>(), new_data(ctx));
     };

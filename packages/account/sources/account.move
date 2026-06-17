@@ -117,9 +117,9 @@ public fun assert_proof(self: &Account, proof: &Proof) {
 public fun deposit<T>(
     self: &mut Account,
     proof: &Proof,
+    coin: Coin<T>,
     root: &AccumulatorRoot,
     clock: &Clock,
-    coin: Coin<T>,
 ) {
     self.assert_proof(proof);
     self.settle_unchecked<T>(root, clock);
@@ -131,9 +131,9 @@ public fun deposit<T>(
 public fun withdraw<T>(
     self: &mut Account,
     proof: &Proof,
+    amount: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
-    amount: u64,
     ctx: &mut TxContext,
 ): Coin<T> {
     self.assert_proof(proof);
