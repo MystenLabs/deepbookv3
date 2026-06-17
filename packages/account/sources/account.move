@@ -1,17 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// A pure, reusable on-chain account: a shared object wrapping balances with an
-/// owner.
+/// A pure, reusable on-chain account: a shared wrapper owns the account data and
+/// controls who can borrow it mutably.
 ///
-/// Value moves only against a movement `Proof`, and public proof minting is
-/// routed through owner checks here or authorized-app checks in `account_registry`.
-/// Consumers receive a proof and spend it; they never mint one without passing an
-/// authority boundary. `account` owns deterministic ID derivation, account
-/// construction, custody, and owner proof minting. Account creation goes through
-/// `account_registry`, which owns the shared derivation root and app whitelist.
-/// Coin reads include funds delivered to this account's accumulator address, and
-/// coin writes first settle those funds into the account.
+/// Owner and object-owner flows load `&mut Account` through this module. App flows
+/// load it through `account_registry`, which checks the app whitelist. Once a
+/// caller has a mutable account reference, value movement needs no extra proof:
+/// the borrow itself is the authority boundary. Coin reads include funds
+/// delivered to this account's accumulator address, and coin writes first settle
+/// those funds into the account.
 ///
 /// Apps also store opaque per-account state through the app-data lane
 /// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
@@ -42,19 +40,21 @@ const EProofAccountMismatch: u64 = 1;
 const EBalanceTooLow: u64 = 2;
 
 // === Structs ===
-/// Shared account: an owner plus custody balances.
-public struct Account has key {
+/// Shared account wrapper: owner-gated shell around the reusable account state.
+public struct AccountWrapper has key {
+    id: UID,
+    /// EOA address or object-ID-as-address that owns this account.
+    owner: address,
+    account: Account,
+}
+
+/// Wrapped account state and custody.
+public struct Account has key, store {
     id: UID,
     /// EOA address or object-ID-as-address that owns this account.
     owner: address,
     balances: Bag,
     settlements: Bag,
-}
-
-/// Ephemeral movement capability. Its existence asserts that an issuer checked
-/// authorization; account only enforces that it is bound to this account.
-public struct Proof has drop {
-    account_id: ID,
 }
 
 /// Dynamic-field key for one app's per-account data slot. The phantom `App` is the
@@ -66,8 +66,27 @@ public struct CoinKey<phantom T> has copy, drop, store {}
 
 // === Public Functions ===
 /// Share a newly created account object.
-public fun share(self: Account) {
+public fun share(self: AccountWrapper) {
     transfer::share_object(self);
+}
+
+/// Borrow the wrapped account for read-only use.
+public fun load_account(self: &AccountWrapper): &Account {
+    &self.account
+}
+
+/// Borrow the wrapped account mutably after validating the transaction sender owns it.
+public fun load_account_mut(self: &mut AccountWrapper, ctx: &TxContext): &mut Account {
+    self.assert_owner(ctx.sender());
+    &mut self.account
+}
+
+/// Borrow the wrapped account mutably after validating `uid` owns it.
+/// The mutable UID borrow proves the caller is executing through the owning
+/// object's module.
+public fun load_account_mut_as_object(self: &mut AccountWrapper, uid: &mut UID): &mut Account {
+    self.assert_owner(uid.to_inner().to_address());
+    &mut self.account
 }
 
 /// Returns the total balance of `T` available to the account, including funds
@@ -92,51 +111,20 @@ public fun receive_address(self: &Account): address {
     self.id.to_address()
 }
 
-/// Mint a movement proof after validating the transaction sender owns the account.
-public fun generate_proof(self: &Account, ctx: &TxContext): Proof {
-    self.assert_owner(ctx.sender());
-    self.issue_proof_unchecked()
-}
-
-/// Mint a movement proof after validating `uid`'s object address owns the account.
-/// The mutable UID borrow proves the caller is executing through the owning
-/// object's module.
-public fun generate_proof_as_object(self: &Account, uid: &mut UID): Proof {
-    self.assert_owner(uid.to_inner().to_address());
-    self.issue_proof_unchecked()
-}
-
-/// Abort unless `proof` was minted for this account.
-public fun assert_proof(self: &Account, proof: &Proof) {
-    assert!(self.id.to_inner() == proof.account_id, EProofAccountMismatch);
-}
-
-/// Deposit `coin`. Requires a movement `Proof` and first settles any accumulator
-/// funds for `T` into the account. The proof is taken by reference so one proof
-/// can fund many movements in a PTB.
-public fun deposit<T>(
-    self: &mut Account,
-    proof: &Proof,
-    coin: Coin<T>,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-) {
-    self.assert_proof(proof);
+/// Deposit `coin` and first settle any accumulator funds for `T` into the account.
+public fun deposit<T>(self: &mut Account, coin: Coin<T>, root: &AccumulatorRoot, clock: &Clock) {
     self.settle_unchecked<T>(root, clock);
     self.deposit_balance(coin.into_balance());
 }
 
-/// Withdraw `amount` of `T`. Requires a movement `Proof` and first settles any
-/// accumulator funds for `T` into the account.
+/// Withdraw `amount` of `T` and first settle any accumulator funds for `T`.
 public fun withdraw<T>(
     self: &mut Account,
-    proof: &Proof,
     amount: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<T> {
-    self.assert_proof(proof);
     self.settle_unchecked<T>(root, clock);
     self.withdraw_balance<T>(amount).into_coin(ctx)
 }
@@ -181,15 +169,23 @@ public(package) fun new_derived<K: copy + drop + store>(
     key: K,
     owner: address,
     ctx: &mut TxContext,
-): Account {
+): AccountWrapper {
     let id = derived_object::claim(parent, key);
-    Account { id, owner, balances: bag::new(ctx), settlements: bag::new(ctx) }
+    AccountWrapper {
+        id,
+        owner,
+        account: Account {
+            id: object::new(ctx),
+            owner,
+            balances: bag::new(ctx),
+            settlements: bag::new(ctx),
+        },
+    }
 }
 
-/// Mint a movement proof after a package-level caller has checked its own
-/// authority. Used by `account_registry` for whitelisted app proof minting.
-public(package) fun issue_proof_unchecked(self: &Account): Proof {
-    Proof { account_id: self.id.to_inner() }
+/// Borrow the wrapped account after a package-level caller has checked authority.
+public(package) fun load_account_mut_unchecked(self: &mut AccountWrapper): &mut Account {
+    &mut self.account
 }
 
 // === Private Functions ===
@@ -206,7 +202,7 @@ fun settle_unchecked<T>(self: &mut Account, root: &AccumulatorRoot, clock: &Cloc
     self.deposit_balance(balance::redeem_funds(withdrawal));
 }
 
-fun assert_owner(self: &Account, owner: address) {
+fun assert_owner(self: &AccountWrapper, owner: address) {
     assert!(owner == self.owner, EInvalidOwner);
 }
 

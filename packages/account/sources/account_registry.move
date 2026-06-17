@@ -4,11 +4,11 @@
 /// Shared registry for canonical account creation.
 ///
 /// The registry owns the derivation root and controls the ecosystem app
-/// whitelist. `account::account` owns deterministic account address derivation,
-/// account construction, custody, proof, settlement, and app-data invariants.
+/// whitelist. `account::account` owns deterministic wrapper derivation, account
+/// construction, custody, settlement, and app-data invariants.
 module account::account_registry;
 
-use account::account::{Self, Account, Proof};
+use account::account::{Self, Account, AccountWrapper};
 use std::internal::Permit;
 use sui::{derived_object, dynamic_field as df};
 
@@ -35,7 +35,7 @@ public struct AccountRegistry has key {
 /// registry root.
 public struct AccountKey(address) has copy, drop, store;
 
-/// Dynamic-field key recording that `App` is authorized to mint account proofs.
+/// Dynamic-field key recording that `App` is authorized to mutably load accounts.
 public struct AppKey<phantom App>() has copy, drop, store;
 
 fun init(ctx: &mut TxContext) {
@@ -44,71 +44,71 @@ fun init(ctx: &mut TxContext) {
 }
 
 // === Public Functions ===
-/// Return the deterministic account address for `owner` under this registry.
+/// Return the deterministic account wrapper address for `owner` under this registry.
 public fun derived_address(registry: &AccountRegistry, owner: address): address {
     derived_object::derive_address(registry.id.to_inner(), AccountKey(owner))
 }
 
-/// Return the deterministic account ID for `owner` under this registry.
+/// Return the deterministic account wrapper ID for `owner` under this registry.
 public fun derived_id(registry: &AccountRegistry, owner: address): ID {
     registry.derived_address(owner).to_id()
 }
 
-/// Return whether the derived account has already been claimed.
+/// Return whether the derived account wrapper has already been claimed.
 public fun derived_exists(registry: &AccountRegistry, owner: address): bool {
     derived_object::exists(&registry.id, AccountKey(owner))
 }
 
-/// Create the sender's canonical derived account.
-public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): Account {
+/// Create the sender's canonical derived account wrapper.
+public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
     registry.assert_account_does_not_exist(owner);
     account::new_derived(&mut registry.id, AccountKey(owner), owner, ctx)
 }
 
-/// Create the canonical derived account owned by `owner_uid`'s object address.
+/// Create the canonical derived account wrapper owned by `owner_uid`'s object address.
 public fun new_self_owned(
     registry: &mut AccountRegistry,
     owner_uid: &mut UID,
     ctx: &mut TxContext,
-): Account {
+): AccountWrapper {
     let owner = owner_uid.to_inner().to_address();
     registry.assert_account_does_not_exist(owner);
     account::new_derived(&mut registry.id, AccountKey(owner), owner, ctx)
 }
 
-/// Return whether `App` is authorized for app-driven account proof minting.
+/// Return whether `App` is authorized for app-driven account loading.
 public fun is_app_authorized<App>(registry: &AccountRegistry): bool {
     registry.id.exists_(AppKey<App>())
 }
 
-/// Authorize `App` to mint movement proofs for any account through this registry.
+/// Authorize `App` to mutably load any account through this registry.
 public fun authorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     assert!(!registry.is_app_authorized<App>(), EAppAlreadyAuthorized);
     registry.id.add(AppKey<App>(), true);
 }
 
-/// Remove `App` from the app proof-minting whitelist.
+/// Remove `App` from the app account-loading whitelist.
 public fun deauthorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     registry.assert_app_is_authorized<App>();
     let _authorized: bool = registry.id.remove(AppKey<App>());
 }
 
-/// Assert that `App` is authorized for app-driven account proof minting.
+/// Assert that `App` is authorized for app-driven account loading.
 public fun assert_app_is_authorized<App>(registry: &AccountRegistry) {
     assert!(registry.is_app_authorized<App>(), EAppNotAuthorized);
 }
 
-/// Mint a movement proof for a whitelisted app. The `Permit<App>` proves the
+/// Mutably load an account for a whitelisted app. The `Permit<App>` proves the
 /// caller is the module defining `App`; the registry whitelist decides whether
 /// that app has ecosystem account authority.
-public fun generate_proof_as_app<App>(
+public fun load_account_mut_as_app<App>(
     registry: &AccountRegistry,
-    account: &Account,
+    wrapper: &mut AccountWrapper,
     _permit: Permit<App>,
-): Proof {
+): &mut Account {
     registry.assert_app_is_authorized<App>();
-    account.issue_proof_unchecked()
+    account::load_account_mut_unchecked(wrapper)
 }
 
 // === Private Functions ===

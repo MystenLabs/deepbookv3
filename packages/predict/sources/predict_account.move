@@ -12,10 +12,11 @@
 ///
 /// Flow-driven state (positions, summaries, stake) is exposed through
 /// `public(package)` primitives that mutate Predict app data directly. User-facing
-/// builder-code config still checks an account movement proof at the public boundary.
+/// builder-code config takes an already-loaded account, so the account package
+/// remains the authority boundary.
 module deepbook_predict::predict_account;
 
-use account::{account::{Account, Proof}, account_registry::{Self, AccountRegistry}};
+use account::{account::{Account, AccountWrapper}, account_registry::{Self, AccountRegistry}};
 use deepbook_predict::builder_code::BuilderCode;
 use std::internal::permit;
 use sui::table::{Self, Table};
@@ -107,32 +108,25 @@ public fun builder_code_id(account: &Account): Option<ID> {
     data(account).builder_code_id
 }
 
-/// Set sticky builder-code attribution for future trades. Owner-gated: `proof`
-/// must be bound to `account` (minted by the EOA owner or the self-owned account's
-/// `OwnerCap`), so it works for both account kinds — including self-owned vaults,
-/// which the old manager's sender check could never reach. Attaches the Predict
+/// Set sticky builder-code attribution for future trades. Attaches the Predict
 /// slot if the account has none.
-public fun set_builder_code(
-    account: &mut Account,
-    proof: &Proof,
-    code: &BuilderCode,
-    ctx: &mut TxContext,
-) {
-    account.assert_proof(proof);
+public fun set_builder_code(account: &mut Account, code: &BuilderCode, ctx: &mut TxContext) {
     data_mut(account, ctx).builder_code_id = option::some(code.id());
 }
 
-/// Clear sticky builder-code attribution. Owner-gated by `proof`.
-public fun unset_builder_code(account: &mut Account, proof: &Proof, ctx: &mut TxContext) {
-    account.assert_proof(proof);
+/// Clear sticky builder-code attribution.
+public fun unset_builder_code(account: &mut Account, ctx: &mut TxContext) {
     data_mut(account, ctx).builder_code_id = option::none();
 }
 
 // === Public-Package Functions ===
 
-/// Mint Predict's app proof through the account registry whitelist.
-public(package) fun generate_proof_as_app(registry: &AccountRegistry, account: &Account): Proof {
-    account_registry::generate_proof_as_app<PredictApp>(registry, account, permit<PredictApp>())
+/// Load an account through Predict's app authority in the account registry.
+public(package) fun load_account_mut_as_app(
+    registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+): &mut Account {
+    account_registry::load_account_mut_as_app<PredictApp>(registry, wrapper, permit<PredictApp>())
 }
 
 /// Add an order position keyed to its root order ID. At mint the root equals the
