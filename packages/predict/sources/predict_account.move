@@ -18,6 +18,7 @@ module deepbook_predict::predict_account;
 
 use account::account::{Account, Proof};
 use deepbook_predict::builder_code::BuilderCode;
+use std::internal::permit;
 use sui::table::{Self, Table};
 
 const EPositionAlreadyExists: u64 = 0;
@@ -118,37 +119,15 @@ public fun set_builder_code(
     code: &BuilderCode,
     ctx: &mut TxContext,
 ) {
-    ensure(account, proof, ctx);
-    data_mut(account, proof).builder_code_id = option::some(code.id());
+    data_mut(account, proof, ctx).builder_code_id = option::some(code.id());
 }
 
-/// Clear sticky builder-code attribution. Owner-gated by `proof`; a no-op when the
-/// account holds no Predict state.
-public fun unset_builder_code(account: &mut Account, proof: &Proof) {
-    if (!account.has_data<PredictApp>()) return;
-    data_mut(account, proof).builder_code_id = option::none();
+/// Clear sticky builder-code attribution. Owner-gated by `proof`.
+public fun unset_builder_code(account: &mut Account, proof: &Proof, ctx: &mut TxContext) {
+    data_mut(account, proof, ctx).builder_code_id = option::none();
 }
 
 // === Public-Package Functions ===
-
-/// Attach an empty Predict data slot if the account has none. Idempotent; every
-/// Predict flow calls it before mutating so the slot always exists.
-public(package) fun ensure(account: &mut Account, proof: &Proof, ctx: &mut TxContext) {
-    if (account.has_data<PredictApp>()) return;
-    account.attach(
-        proof,
-        PredictApp(),
-        PredictData {
-            positions: table::new(ctx),
-            expiry_summaries: table::new(ctx),
-            active_stake: 0,
-            inactive_stake: 0,
-            stake_epoch: ctx.epoch(),
-            builder_code_id: option::none(),
-        },
-    );
-}
-
 /// Add an order position keyed to its root order ID. At mint the root equals the
 /// order's own ID; a partial-close replacement passes the parent's root forward.
 public(package) fun add_position(
@@ -157,8 +136,9 @@ public(package) fun add_position(
     expiry_market_id: ID,
     order_id: u256,
     position_root_id: u256,
+    ctx: &mut TxContext,
 ) {
-    let d = data_mut(account, proof);
+    let d = data_mut(account, proof, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(!d.positions.contains(key), EPositionAlreadyExists);
     d.positions.add(key, position_root_id);
@@ -172,8 +152,9 @@ public(package) fun remove_position(
     proof: &Proof,
     expiry_market_id: ID,
     order_id: u256,
+    ctx: &mut TxContext,
 ): u256 {
-    let d = data_mut(account, proof);
+    let d = data_mut(account, proof, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
     let position_root_id = d.positions.remove(key);
@@ -189,31 +170,42 @@ public(package) fun record_trading_fee_paid(
     proof: &Proof,
     expiry_market_id: ID,
     amount: u64,
+    ctx: &mut TxContext,
 ) {
     if (amount == 0) return;
-    let summary = data_mut(account, proof).summary_mut(expiry_market_id);
+    let summary = data_mut(account, proof, ctx).summary_mut(expiry_market_id);
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
 }
 
 /// Roll inactive stake into active once a new epoch has begun. Idempotent within
 /// an epoch; callers run it before reading `active_stake`.
-public(package) fun update_stake(account: &mut Account, proof: &Proof, ctx: &TxContext) {
-    let d = data_mut(account, proof);
-    if (d.stake_epoch == ctx.epoch()) return;
+public(package) fun update_stake(account: &mut Account, proof: &Proof, ctx: &mut TxContext) {
+    let epoch = ctx.epoch();
+    let d = data_mut(account, proof, ctx);
+    if (d.stake_epoch == epoch) return;
     d.active_stake = d.active_stake + d.inactive_stake;
     d.inactive_stake = 0;
-    d.stake_epoch = ctx.epoch();
+    d.stake_epoch = epoch;
 }
 
 /// Add freshly staked DEEP as inactive; it activates next epoch.
-public(package) fun add_inactive_stake(account: &mut Account, proof: &Proof, stake: u64) {
-    let d = data_mut(account, proof);
+public(package) fun add_inactive_stake(
+    account: &mut Account,
+    proof: &Proof,
+    stake: u64,
+    ctx: &mut TxContext,
+) {
+    let d = data_mut(account, proof, ctx);
     d.inactive_stake = d.inactive_stake + stake;
 }
 
 /// Zero out active and inactive stake and return the combined amount.
-public(package) fun remove_all_stake(account: &mut Account, proof: &Proof): u64 {
-    let d = data_mut(account, proof);
+public(package) fun remove_all_stake(
+    account: &mut Account,
+    proof: &Proof,
+    ctx: &mut TxContext,
+): u64 {
+    let d = data_mut(account, proof, ctx);
     let total = d.active_stake + d.inactive_stake;
     d.active_stake = 0;
     d.inactive_stake = 0;
@@ -226,8 +218,23 @@ fun data(account: &Account): &PredictData {
     account.borrow_data<PredictApp, PredictData>()
 }
 
-fun data_mut(account: &mut Account, proof: &Proof): &mut PredictData {
-    account.borrow_data_mut<PredictApp, PredictData>(proof, PredictApp())
+fun data_mut(account: &mut Account, proof: &Proof, ctx: &mut TxContext): &mut PredictData {
+    account.assert_proof(proof);
+    if (!account.has_data<PredictApp>()) {
+        account.attach(permit<PredictApp>(), new_data(ctx));
+    };
+    account.borrow_data_mut<PredictApp, PredictData>(permit<PredictApp>())
+}
+
+fun new_data(ctx: &mut TxContext): PredictData {
+    PredictData {
+        positions: table::new(ctx),
+        expiry_summaries: table::new(ctx),
+        active_stake: 0,
+        inactive_stake: 0,
+        stake_epoch: ctx.epoch(),
+        builder_code_id: option::none(),
+    }
 }
 
 fun position_key(expiry_market_id: ID, order_id: u256): PositionKey {
