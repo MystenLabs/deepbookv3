@@ -454,16 +454,9 @@ public fun cancel_supply_request(
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
     let recipient = account.receive_address();
-    let (request, refund) = vault.lp.cancel_supply_request(recipient, index);
+    let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
     account.deposit<DUSDC>(refund.into_coin(ctx), root, clock);
-    vault_events::emit_request_cancelled(
-        vault_id,
-        request.account_id(),
-        recipient,
-        index,
-        request.amount(),
-        true,
-    );
+    vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, true);
 }
 
 /// Cancel a still-pending withdraw request, refunding its escrowed PLP straight into
@@ -481,16 +474,9 @@ public fun cancel_withdraw_request(
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
     let recipient = account.receive_address();
-    let (request, refund) = vault.lp.cancel_withdraw_request(recipient, index);
+    let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
     account.deposit<PLP>(refund.into_coin(ctx), root, clock);
-    vault_events::emit_request_cancelled(
-        vault_id,
-        request.account_id(),
-        recipient,
-        index,
-        request.amount(),
-        false,
-    );
+    vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, false);
 }
 
 // === Public-Package Functions ===

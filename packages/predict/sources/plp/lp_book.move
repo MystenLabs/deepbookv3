@@ -93,14 +93,6 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
     book.withdraw_queue.pending
 }
 
-public(package) fun account_id(request: &RequestEntry): ID {
-    request.account_id
-}
-
-public(package) fun amount(request: &RequestEntry): u64 {
-    request.amount
-}
-
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
     account_id: ID,
@@ -125,16 +117,18 @@ public(package) fun cancel_supply_request<LP>(
     book: &mut LpBook<LP>,
     recipient: address,
     index: u64,
-): (RequestEntry, Balance<DUSDC>) {
-    book.supply_queue.remove_for_recipient(index, recipient)
+): (ID, u64, Balance<DUSDC>) {
+    let (request, refund) = book.supply_queue.remove_for_recipient(index, recipient);
+    (request.account_id, request.amount, refund)
 }
 
 public(package) fun cancel_withdraw_request<LP>(
     book: &mut LpBook<LP>,
     recipient: address,
     index: u64,
-): (RequestEntry, Balance<LP>) {
-    book.withdraw_queue.remove_for_recipient(index, recipient)
+): (ID, u64, Balance<LP>) {
+    let (request, refund) = book.withdraw_queue.remove_for_recipient(index, recipient);
+    (request.account_id, request.amount, refund)
 }
 
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),

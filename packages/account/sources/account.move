@@ -36,21 +36,19 @@ use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
-const EProofAccountMismatch: u64 = 1;
 const EBalanceTooLow: u64 = 2;
 
 // === Structs ===
 /// Shared account wrapper: owner-gated shell around the reusable account state.
 public struct AccountWrapper has key {
     id: UID,
-    /// EOA address or object-ID-as-address that owns this account.
-    owner: address,
     account: Account,
 }
 
-/// Wrapped account state and custody.
-public struct Account has key, store {
-    id: UID,
+/// Wrapped account state and custody. Its ID is the canonical account identity,
+/// receive address, and app-data storage root.
+public struct Account has store {
+    account_id: UID,
     /// EOA address or object-ID-as-address that owns this account.
     owner: address,
     balances: Bag,
@@ -101,14 +99,14 @@ public fun owner(self: &Account): address {
     self.owner
 }
 
-/// Returns the account object id.
+/// Returns the canonical account ID.
 public fun id(self: &Account): ID {
-    self.id.to_inner()
+    self.account_id.to_inner()
 }
 
 /// Returns the accumulator receive address for this account.
 public fun receive_address(self: &Account): address {
-    self.id.to_address()
+    self.account_id.to_address()
 }
 
 /// Deposit `coin` and first settle any accumulator funds for `T` into the account.
@@ -133,49 +131,50 @@ public fun withdraw<T>(
 /// Attach an app's `Data` under its witness namespace. Requires `Permit<App>`.
 /// Aborts if `App` already has data attached.
 public fun attach<App, Data: store>(self: &mut Account, _permit: Permit<App>, data: Data) {
-    self.id.add(DataKey<App>(), data);
+    self.account_id.add(DataKey<App>(), data);
 }
 
 /// Whether `App` has data attached to this account.
 public fun has_data<App>(self: &Account): bool {
-    self.id.exists_(DataKey<App>())
+    self.account_id.exists_(DataKey<App>())
 }
 
 /// Borrow an app's attached `Data`. Open (no witness): the slot is namespaced by
 /// `App` and on-chain state is public, so composing apps can read it. Aborts if
 /// nothing is attached.
 public fun borrow_data<App, Data: store>(self: &Account): &Data {
-    self.id.borrow(DataKey<App>())
+    self.account_id.borrow(DataKey<App>())
 }
 
 /// Mutably borrow an app's attached `Data`. Requires `Permit<App>`. Aborts if
 /// nothing is attached.
 public fun borrow_data_mut<App, Data: store>(self: &mut Account, _permit: Permit<App>): &mut Data {
-    self.id.borrow_mut(DataKey<App>())
+    self.account_id.borrow_mut(DataKey<App>())
 }
 
 /// Detach and return an app's `Data`. Requires `Permit<App>`. Aborts if
 /// nothing is attached.
 public fun detach<App, Data: store>(self: &mut Account, _permit: Permit<App>): Data {
-    self.id.remove(DataKey<App>())
+    self.account_id.remove(DataKey<App>())
 }
 
 // === Public-Package Functions ===
 /// Create an account from the registry derivation root. The UID is claimed here
 /// because Sui requires key objects to be built in the same function that obtains
 /// their fresh UID.
-public(package) fun new_derived<K: copy + drop + store>(
+public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: copy + drop + store>(
     parent: &mut UID,
-    key: K,
+    wrapper_key: WrapperKey,
+    account_key: AccountKey,
     owner: address,
     ctx: &mut TxContext,
 ): AccountWrapper {
-    let id = derived_object::claim(parent, key);
+    let id = derived_object::claim(parent, wrapper_key);
+    let account_id = derived_object::claim(parent, account_key);
     AccountWrapper {
         id,
-        owner,
         account: Account {
-            id: object::new(ctx),
+            account_id,
             owner,
             balances: bag::new(ctx),
             settlements: bag::new(ctx),
@@ -196,14 +195,14 @@ fun settle_unchecked<T>(self: &mut Account, root: &AccumulatorRoot, clock: &Cloc
     if (now == self.last_settlement_ms<T>()) return;
     self.set_last_settlement_ms<T>(now);
 
-    let amount = balance::settled_funds_value<T>(root, self.id.to_address());
+    let amount = balance::settled_funds_value<T>(root, self.account_id.to_address());
     if (amount == 0) return;
-    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.account_id, amount);
     self.deposit_balance(balance::redeem_funds(withdrawal));
 }
 
 fun assert_owner(self: &AccountWrapper, owner: address) {
-    assert!(owner == self.owner, EInvalidOwner);
+    assert!(owner == self.account.owner, EInvalidOwner);
 }
 
 fun stored_balance<T>(self: &Account): u64 {
@@ -220,7 +219,7 @@ fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock):
     if (clock.timestamp_ms() == self.last_settlement_ms<T>()) {
         0
     } else {
-        balance::settled_funds_value<T>(root, self.id.to_address())
+        balance::settled_funds_value<T>(root, self.account_id.to_address())
     }
 }
 

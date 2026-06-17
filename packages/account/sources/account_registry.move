@@ -32,8 +32,11 @@ public struct AccountRegistry has key {
 }
 
 /// Canonical account derivation key: one account per owner address under this
-/// registry root.
+/// registry root. This derived ID is used for app data, funds settlement, and events.
 public struct AccountKey(address) has copy, drop, store;
+
+/// Derived wrapper object key for the shared object that gates mutable account borrows.
+public struct AccountWrapperKey(address) has copy, drop, store;
 
 /// Dynamic-field key recording that `App` is authorized to mutably load accounts.
 public struct AppKey<phantom App>() has copy, drop, store;
@@ -44,26 +47,47 @@ fun init(ctx: &mut TxContext) {
 }
 
 // === Public Functions ===
-/// Return the deterministic account wrapper address for `owner` under this registry.
+/// Return the deterministic canonical account address for `owner` under this registry.
 public fun derived_address(registry: &AccountRegistry, owner: address): address {
     derived_object::derive_address(registry.id.to_inner(), AccountKey(owner))
 }
 
-/// Return the deterministic account wrapper ID for `owner` under this registry.
+/// Return the deterministic canonical account ID for `owner` under this registry.
 public fun derived_id(registry: &AccountRegistry, owner: address): ID {
     registry.derived_address(owner).to_id()
 }
 
-/// Return whether the derived account wrapper has already been claimed.
+/// Return the deterministic account wrapper address for `owner` under this registry.
+public fun derived_wrapper_address(registry: &AccountRegistry, owner: address): address {
+    derived_object::derive_address(registry.id.to_inner(), AccountWrapperKey(owner))
+}
+
+/// Return the deterministic account wrapper ID for `owner` under this registry.
+public fun derived_wrapper_id(registry: &AccountRegistry, owner: address): ID {
+    registry.derived_wrapper_address(owner).to_id()
+}
+
+/// Return whether the canonical derived account has already been claimed.
 public fun derived_exists(registry: &AccountRegistry, owner: address): bool {
     derived_object::exists(&registry.id, AccountKey(owner))
+}
+
+/// Return whether the derived account wrapper has already been claimed.
+public fun derived_wrapper_exists(registry: &AccountRegistry, owner: address): bool {
+    derived_object::exists(&registry.id, AccountWrapperKey(owner))
 }
 
 /// Create the sender's canonical derived account wrapper.
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
     registry.assert_account_does_not_exist(owner);
-    account::new_derived(&mut registry.id, AccountKey(owner), owner, ctx)
+    account::new_derived(
+        &mut registry.id,
+        AccountWrapperKey(owner),
+        AccountKey(owner),
+        owner,
+        ctx,
+    )
 }
 
 /// Create the canonical derived account wrapper owned by `owner_uid`'s object address.
@@ -74,7 +98,13 @@ public fun new_self_owned(
 ): AccountWrapper {
     let owner = owner_uid.to_inner().to_address();
     registry.assert_account_does_not_exist(owner);
-    account::new_derived(&mut registry.id, AccountKey(owner), owner, ctx)
+    account::new_derived(
+        &mut registry.id,
+        AccountWrapperKey(owner),
+        AccountKey(owner),
+        owner,
+        ctx,
+    )
 }
 
 /// Return whether `App` is authorized for app-driven account loading.
@@ -113,5 +143,8 @@ public fun load_account_mut_as_app<App>(
 
 // === Private Functions ===
 fun assert_account_does_not_exist(registry: &AccountRegistry, owner: address) {
-    assert!(!registry.derived_exists(owner), EAccountAlreadyExists);
+    assert!(
+        !registry.derived_exists(owner) && !registry.derived_wrapper_exists(owner),
+        EAccountAlreadyExists,
+    );
 }
