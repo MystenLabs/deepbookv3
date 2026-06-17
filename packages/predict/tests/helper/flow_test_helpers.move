@@ -505,8 +505,42 @@ public fun mint(
     quantity: u64,
     leverage: u64,
 ): u256 {
+    self.mint_exact_quantity(
+        config,
+        oracle_registry,
+        wrapper,
+        root,
+        market,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        std::u64::max_value!(),
+        std::u64::max_value!(),
+    )
+}
+
+/// Mint one exact-quantity order with explicit total-cost and probability caps.
+public fun mint_exact_quantity(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.mint(
+    market.mint_exact_quantity(
         wrapper,
         auth,
         config,
@@ -517,6 +551,8 @@ public fun mint(
         higher_tick,
         quantity,
         leverage,
+        max_cost,
+        max_probability,
         root,
         &self.clock,
         self.scenario.ctx(),

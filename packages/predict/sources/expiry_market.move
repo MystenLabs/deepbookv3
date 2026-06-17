@@ -35,6 +35,8 @@ const EMintPaused: u64 = 0;
 const EFullCloseRequired: u64 = 1;
 const EMarketNotSettled: u64 = 2;
 const EWrongPythFeed: u64 = 3;
+const EMintCostAboveMax: u64 = 4;
+const EMintProbabilityAboveMax: u64 = 5;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -172,7 +174,7 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Mint a live position interval against this expiry market.
+/// Mint an exact live position quantity against this expiry market.
 ///
 /// Requires the running package version to be at or above the protocol version
 /// watermark, per-market mint pause to be off, trading globally enabled, a valid
@@ -182,9 +184,12 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 /// policy and be above the current liquidation threshold at entry. Mint fees are
 /// paid by routing a withdraw through the loaded account. The position's strike
 /// range is the tick pair `(lower_tick, higher_tick]` (`lower_tick = 0` is
-/// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw strikes
-/// to ticks. Returns the minted order ID for future order-scoped flows.
-public fun mint(
+/// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
+/// strikes to ticks. `max_cost` caps the all-in DUSDC withdrawal, while
+/// `max_probability` caps the quoted per-contract probability before fees.
+/// Callers can pass `std::u64::max_value!()` for either uncapped guard. Returns
+/// the minted order ID for future order-scoped flows.
+public fun mint_exact_quantity(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -196,13 +201,15 @@ public fun mint(
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    market.mint_internal(
+    market.mint_exact_quantity_internal(
         account,
         config,
         propbook_registry,
@@ -212,6 +219,8 @@ public fun mint(
         higher_tick,
         quantity,
         leverage,
+        max_cost,
+        max_probability,
         clock,
         ctx,
     )
@@ -565,7 +574,7 @@ fun ewma_penalty(
     market.ewma.penalty_fee(config, quantity, ctx)
 }
 
-fun mint_internal(
+fun mint_exact_quantity_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
@@ -576,6 +585,8 @@ fun mint_internal(
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
@@ -603,11 +614,19 @@ fun mint_internal(
             leverage,
             clock,
         );
+    assert!(entry_probability <= max_probability, EMintProbabilityAboveMax);
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
-
     let builder_code_id = predict_account::builder_code_id(account);
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
+    let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
+    let trader_fee_amount = fee_amount - fee_subsidy_amount;
+    assert!(
+        net_premium + trader_fee_amount + builder_fee_amount + penalty_amount <= max_cost,
+        EMintCostAboveMax,
+    );
+
     let (builder_fee_amount, fee_incentive_subsidy) = market.settle_mint_payment(
         account,
         &minted_order,
