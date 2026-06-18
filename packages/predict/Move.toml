@@ -4,7 +4,6 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
-deepbook = { local = "../deepbook" }
 fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
 # Reusable on-chain account primitive. Predict's per-account custody (`Account.vault`)
@@ -15,8 +14,8 @@ account = { local = "../account" }
 # and `propbook::block_scholes_feed` for live spot/surface pricing (the former
 # in-package `market_oracle`/`pyth_source` modules were extracted into propbook).
 propbook = { local = "../propbook" }
-# DEEP token, used for staking custody (`registry::stake_deep`). Declared with the
-# same git source as `deepbook`'s dependency so the resolver unifies the package.
+# DEEP token (from the deepbookv3 repo), used for staking custody (`registry::stake_deep`)
+# and DEEP burning via `token::deep::ProtectedTreasury`.
 token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
 # Official Pyth Lazer Sui package — now a transitive dependency through `propbook`
 # (which consumes the verified `pyth_lazer::update::Update`). Kept as a direct dep
