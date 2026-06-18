@@ -8,7 +8,7 @@
 /// construction, custody, settlement, and app-data invariants.
 module account::account_registry;
 
-use account::account::{Self, Account, AccountWrapper};
+use account::account::{Self, AccountWrapper, Auth};
 use std::internal::Permit;
 use sui::{derived_object, dynamic_field as df};
 
@@ -38,7 +38,7 @@ public struct AccountKey(address) has copy, drop, store;
 /// Derived wrapper object key for the shared object that gates mutable account borrows.
 public struct AccountWrapperKey(address) has copy, drop, store;
 
-/// Dynamic-field key recording that `App` is authorized to mutably load accounts.
+/// Dynamic-field key recording that `App` is authorized to generate app auth.
 public struct AppKey<phantom App>() has copy, drop, store;
 
 fun init(ctx: &mut TxContext) {
@@ -107,12 +107,12 @@ public fun new_self_owned(
     )
 }
 
-/// Return whether `App` is authorized for app-driven account loading.
+/// Return whether `App` is authorized for app-driven account access.
 public fun is_app_authorized<App>(registry: &AccountRegistry): bool {
     registry.id.exists_(AppKey<App>())
 }
 
-/// Authorize `App` to mutably load any account through this registry.
+/// Authorize `App` to generate app auth through this registry.
 public fun authorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     assert!(!registry.is_app_authorized<App>(), EAppAlreadyAuthorized);
     registry.id.add(AppKey<App>(), true);
@@ -124,21 +124,16 @@ public fun deauthorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAd
     let _authorized: bool = registry.id.remove(AppKey<App>());
 }
 
-/// Assert that `App` is authorized for app-driven account loading.
+/// Assert that `App` is authorized for app-driven account access.
 public fun assert_app_is_authorized<App>(registry: &AccountRegistry) {
     assert!(registry.is_app_authorized<App>(), EAppNotAuthorized);
 }
 
-/// Mutably load an account for a whitelisted app. The `Permit<App>` proves the
-/// caller is the module defining `App`; the registry whitelist decides whether
-/// that app has ecosystem account authority.
-public fun load_account_mut_as_app<App>(
-    registry: &AccountRegistry,
-    wrapper: &mut AccountWrapper,
-    _permit: Permit<App>,
-): &mut Account {
+/// Generate app authority after checking the registry whitelist. The
+/// `Permit<App>` proves the caller is the module defining `App`.
+public fun generate_auth_as_app<App>(registry: &AccountRegistry, _permit: Permit<App>): Auth {
     registry.assert_app_is_authorized<App>();
-    account::load_account_mut_unchecked(wrapper)
+    account::new_app_auth()
 }
 
 // === Private Functions ===

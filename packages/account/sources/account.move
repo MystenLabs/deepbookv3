@@ -4,12 +4,11 @@
 /// A pure, reusable on-chain account: a shared wrapper owns the account data and
 /// controls who can borrow it mutably.
 ///
-/// Owner and object-owner flows load `&mut Account` through this module. App flows
-/// load it through `account_registry`, which checks the app whitelist. Once a
-/// caller has a mutable account reference, value movement needs no extra proof:
-/// the borrow itself is the authority boundary. Coin reads include funds
-/// delivered to this account's accumulator address, and coin writes first settle
-/// those funds into the account.
+/// Owner, object-owner, and app flows consume an `Auth` hot potato to load
+/// `&mut Account` from the wrapper. Once a caller has a mutable account reference,
+/// value movement needs no extra proof: the borrow itself is the authority
+/// boundary. Coin reads include funds delivered to this account's accumulator
+/// address, and coin writes first settle those funds into the account.
 ///
 /// Apps also store opaque per-account state through the app-data lane
 /// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
@@ -37,6 +36,9 @@ use fun df::remove as UID.remove;
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EBalanceTooLow: u64 = 2;
+const EInvalidAuth: u64 = 3;
+const AUTH_OWNER: u8 = 0;
+const AUTH_APP: u8 = 1;
 
 // === Structs ===
 /// Shared account wrapper: owner-gated shell around the reusable account state.
@@ -62,10 +64,26 @@ public struct DataKey<phantom App>() has copy, drop, store;
 /// Per-coin bag key.
 public struct CoinKey<phantom T> has copy, drop, store {}
 
+/// Hot-potato authority to mutably open an `AccountWrapper`.
+public struct Auth {
+    kind: u8,
+    owner: address,
+}
+
 // === Public Functions ===
 /// Share a newly created account object.
 public fun share(self: AccountWrapper) {
     transfer::share_object(self);
+}
+
+/// Generate owner authority from the transaction sender.
+public fun generate_auth(ctx: &TxContext): Auth {
+    Auth { kind: AUTH_OWNER, owner: ctx.sender() }
+}
+
+/// Generate owner authority from an owning object's UID.
+public fun generate_auth_as_object(uid: &mut UID): Auth {
+    Auth { kind: AUTH_OWNER, owner: uid.to_inner().to_address() }
 }
 
 /// Borrow the wrapped account for read-only use.
@@ -73,17 +91,14 @@ public fun load_account(self: &AccountWrapper): &Account {
     &self.account
 }
 
-/// Borrow the wrapped account mutably after validating the transaction sender owns it.
-public fun load_account_mut(self: &mut AccountWrapper, ctx: &TxContext): &mut Account {
-    self.assert_owner(ctx.sender());
-    &mut self.account
-}
-
-/// Borrow the wrapped account mutably after validating `uid` owns it.
-/// The mutable UID borrow proves the caller is executing through the owning
-/// object's module.
-public fun load_account_mut_as_object(self: &mut AccountWrapper, uid: &mut UID): &mut Account {
-    self.assert_owner(uid.to_inner().to_address());
+/// Borrow the wrapped account mutably by consuming an `Auth` hot potato.
+public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account {
+    let Auth { kind, owner } = auth;
+    if (kind == AUTH_OWNER) {
+        self.assert_owner(owner);
+    } else {
+        assert!(kind == AUTH_APP, EInvalidAuth);
+    };
     &mut self.account
 }
 
@@ -182,9 +197,9 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
     }
 }
 
-/// Borrow the wrapped account after a package-level caller has checked authority.
-public(package) fun load_account_mut_unchecked(self: &mut AccountWrapper): &mut Account {
-    &mut self.account
+/// Mint app authority after the registry has checked its app whitelist.
+public(package) fun new_app_auth(): Auth {
+    Auth { kind: AUTH_APP, owner: @0x0 }
 }
 
 // === Private Functions ===

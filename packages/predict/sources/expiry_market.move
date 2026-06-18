@@ -11,7 +11,7 @@
 /// remain outside this module.
 module deepbook_predict::expiry_market;
 
-use account::{account::{Account, AccountWrapper}, account_registry::AccountRegistry};
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
     config_events,
@@ -169,7 +169,7 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 ///
 /// Requires the running package version to be at or above the protocol version
 /// watermark, per-market mint pause to be off, trading globally enabled, a valid
-/// loaded account, a live fresh oracle, enough expiry cash to back the post-mint
+/// account owner auth, a live fresh oracle, enough expiry cash to back the post-mint
 /// max payout and rebate reserve, and leveraged floor terms below this expiry's
 /// liquidation LTV at terminal. Leveraged mints must also satisfy leverage tier
 /// policy and be above the current liquidation threshold at entry. Mint fees are
@@ -179,7 +179,8 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 /// to ticks. Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -196,6 +197,7 @@ public fun mint(
     assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
+    let account = wrapper.load_account_mut(auth);
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     let active_stake = predict_account::active_stake_mut(account, ctx);
     market
@@ -253,7 +255,8 @@ public fun mint(
 /// present only when a live partial close leaves quantity open.
 public fun redeem(
     market: &mut ExpiryMarket,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -267,8 +270,13 @@ public fun redeem(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let redeemed_order = order::from_order_id(order_id);
-    if (market.ensure_settled(propbook_registry, pyth, clock)) {
+    let account = wrapper.load_account_mut(auth);
+    let is_settled = market.ensure_settled(propbook_registry, pyth, clock);
+    if (is_settled) {
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    };
+
+    if (is_settled) {
         market.redeem_settled_internal(account, &redeemed_order, root, clock, ctx);
         return (redeemed_order.id(), option::none())
     };
@@ -318,9 +326,10 @@ public fun redeem_settled(
     config.assert_not_valuation_in_progress();
     let redeemed_order = order::from_order_id(order_id);
     assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    let auth = predict_account::generate_auth_as_app(account_registry);
+    let account = wrapper.load_account_mut(auth);
     assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
 
-    let account = predict_account::load_account_mut_as_app(account_registry, wrapper);
     market.redeem_settled_internal(
         account,
         &redeemed_order,

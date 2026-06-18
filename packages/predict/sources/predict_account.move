@@ -15,7 +15,7 @@
 /// remains the authority boundary.
 module deepbook_predict::predict_account;
 
-use account::{account::{Account, AccountWrapper}, account_registry::{Self, AccountRegistry}};
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::{Self, AccountRegistry}};
 use deepbook_predict::{builder_code::BuilderCode, builder_code_events};
 use std::internal::permit;
 use sui::table::{Self, Table};
@@ -107,9 +107,15 @@ public fun builder_code_id(account: &Account): Option<ID> {
     data(account).builder_code_id
 }
 
-/// Set sticky builder-code attribution for future trades. Attaches the Predict
-/// slot if the account has none.
-public fun set_builder_code(account: &mut Account, code: &BuilderCode, ctx: &mut TxContext) {
+/// Set sticky builder-code attribution for future trades. Consumes account owner
+/// auth and attaches the Predict slot if the account has none.
+public fun set_builder_code(
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    code: &BuilderCode,
+    ctx: &mut TxContext,
+) {
+    let account = wrapper.load_account_mut(auth);
     let builder_code_id = code.id();
     data_mut(account, ctx).builder_code_id = option::some(builder_code_id);
     builder_code_events::emit_builder_code_set(
@@ -119,8 +125,9 @@ public fun set_builder_code(account: &mut Account, code: &BuilderCode, ctx: &mut
     );
 }
 
-/// Clear sticky builder-code attribution.
-public fun unset_builder_code(account: &mut Account, ctx: &mut TxContext) {
+/// Clear sticky builder-code attribution after consuming account owner auth.
+public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mut TxContext) {
+    let account = wrapper.load_account_mut(auth);
     data_mut(account, ctx).builder_code_id = option::none();
     builder_code_events::emit_builder_code_set(
         account.account_id(),
@@ -131,12 +138,9 @@ public fun unset_builder_code(account: &mut Account, ctx: &mut TxContext) {
 
 // === Public-Package Functions ===
 
-/// Load an account through Predict's app authority in the account registry.
-public(package) fun load_account_mut_as_app(
-    registry: &AccountRegistry,
-    wrapper: &mut AccountWrapper,
-): &mut Account {
-    account_registry::load_account_mut_as_app<PredictApp>(registry, wrapper, permit<PredictApp>())
+/// Generate Predict app authority through the account registry.
+public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
+    account_registry::generate_auth_as_app<PredictApp>(registry, permit<PredictApp>())
 }
 
 /// Add an order position keyed to its root order ID. At mint the root equals the

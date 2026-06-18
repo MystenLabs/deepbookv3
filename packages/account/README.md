@@ -87,39 +87,36 @@ delivered.
 
 ## Authority Model
 
-Account mutation authority is represented by a mutable borrow of `Account`.
+Account mutation authority is represented by an `Auth` hot potato that is consumed
+to borrow `&mut Account` from an `AccountWrapper`.
 
 There is no `Proof`, `DataProof`, `Vault`, or `OwnerCap` in the current model. Those
 were earlier designs and are not part of the source package.
 
-Owner-controlled loading:
+Owner-controlled auth:
 
 ```move
 public fun load_account(wrapper: &AccountWrapper): &Account
-public fun load_account_mut(wrapper: &mut AccountWrapper, ctx: &TxContext): &mut Account
-public fun load_account_mut_as_object(
-    wrapper: &mut AccountWrapper,
-    uid: &mut UID,
-): &mut Account
+public fun generate_auth(ctx: &TxContext): Auth
+public fun generate_auth_as_object(uid: &mut UID): Auth
+public fun load_account_mut(wrapper: &mut AccountWrapper, auth: Auth): &mut Account
 ```
 
-`load_account_mut` checks `ctx.sender() == account.owner`. `load_account_mut_as_object`
-checks that the supplied mutable `UID` belongs to the owner object address, allowing
-contract-owned accounts to act through their own object.
+`generate_auth` proves the transaction sender. `generate_auth_as_object` proves the
+caller has mutable access to an owning object's `UID`. `load_account_mut` consumes
+the auth hot potato and checks it against the wrapper's account owner.
 
-App-controlled loading:
+App-controlled auth:
 
 ```move
-public fun load_account_mut_as_app<App>(
+public fun generate_auth_as_app<App>(
     registry: &AccountRegistry,
-    wrapper: &mut AccountWrapper,
     permit: Permit<App>,
-): &mut Account
+): Auth
 ```
 
 The `Permit<App>` proves the call is executing in the module that defines `App`.
-The registry whitelist decides whether that app is allowed to mutably load ecosystem
-accounts.
+The registry whitelist decides whether that app is allowed to generate app auth.
 
 Once a caller has `&mut Account`, coin movement and app-data mutation need no extra
 account-level proof. The mutable borrow is the authority boundary.
@@ -209,7 +206,8 @@ let wrapper = account_registry::new(registry, ctx);
 account::share(wrapper);
 
 // Later, in a PTB or app entrypoint:
-let account = account::load_account_mut(&mut wrapper, ctx);
+let auth = account::generate_auth(ctx);
+let account = account::load_account_mut(&mut wrapper, auth);
 some_app::do_something(account, ...);
 ```
 
@@ -220,18 +218,16 @@ let wrapper = account_registry::new_self_owned(registry, &mut owner_uid, ctx);
 account::share(wrapper);
 
 // Later, from the owner object's module:
-let account = account::load_account_mut_as_object(&mut wrapper, &mut owner_uid);
+let auth = account::generate_auth_as_object(&mut owner_uid);
+let account = account::load_account_mut(&mut wrapper, auth);
 some_app::do_something(account, ...);
 ```
 
 Whitelisted app:
 
 ```move
-let account = account_registry::load_account_mut_as_app<MyApp>(
-    registry,
-    &mut wrapper,
-    permit<MyApp>(),
-);
+let auth = account_registry::generate_auth_as_app<MyApp>(registry, permit<MyApp>());
+let account = account::load_account_mut(&mut wrapper, auth);
 ```
 
 ## Build

@@ -15,7 +15,7 @@
 /// unrelated trading feature.
 module deepbook_predict::plp;
 
-use account::account::Account;
+use account::account::{AccountWrapper, Auth};
 use deepbook_predict::{
     admin::AdminCap,
     constants,
@@ -303,7 +303,8 @@ public fun finish_flush(
 /// anytime, any number of times.
 public fun stake_deep(
     vault: &mut PoolVault,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
     root: &AccumulatorRoot,
@@ -311,6 +312,7 @@ public fun stake_deep(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
+    let account = wrapper.load_account_mut(auth);
     let deep = account.withdraw<DEEP>(amount, root, clock, ctx);
     predict_account::active_stake_mut(account, ctx);
     predict_account::add_inactive_stake(account, amount, ctx);
@@ -327,13 +329,15 @@ public fun stake_deep(
 /// Withdraw all staked DEEP (active and inactive) at any time, no penalty.
 public fun unstake_deep(
     vault: &mut PoolVault,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
+    let account = wrapper.load_account_mut(auth);
     let amount = predict_account::remove_all_stake(account, ctx);
     if (amount > 0) {
         let deep = vault.staked_deep.split(amount).into_coin(ctx);
@@ -395,7 +399,8 @@ public fun lock_capital(
 /// the flush.
 public fun request_supply(
     vault: &mut PoolVault,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
     root: &AccumulatorRoot,
@@ -405,6 +410,7 @@ public fun request_supply(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    let account = wrapper.load_account_mut(auth);
     let payment = account.withdraw<DUSDC>(amount, root, clock, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
@@ -420,7 +426,8 @@ public fun request_supply(
 /// used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
     root: &AccumulatorRoot,
@@ -430,6 +437,7 @@ public fun request_withdraw(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    let account = wrapper.load_account_mut(auth);
     let lp = account.withdraw<PLP>(amount, root, clock, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
@@ -443,7 +451,8 @@ public fun request_withdraw(
 /// the requesting account. `account` must be the request's recorded recipient.
 public fun cancel_supply_request(
     vault: &mut PoolVault,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     index: u64,
     root: &AccumulatorRoot,
@@ -453,6 +462,7 @@ public fun cancel_supply_request(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
+    let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
     account.deposit<DUSDC>(refund.into_coin(ctx), root, clock);
@@ -463,7 +473,8 @@ public fun cancel_supply_request(
 /// the requesting account. `account` must be the request's recorded recipient.
 public fun cancel_withdraw_request(
     vault: &mut PoolVault,
-    account: &mut Account,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     index: u64,
     root: &AccumulatorRoot,
@@ -473,6 +484,7 @@ public fun cancel_withdraw_request(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
+    let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
     account.deposit<PLP>(refund.into_coin(ctx), root, clock);
