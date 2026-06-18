@@ -46,6 +46,11 @@ fun init(ctx: &mut TxContext) {
     transfer::public_transfer(AccountAdminCap { id: object::new(ctx) }, ctx.sender());
 }
 
+#[test_only]
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(ctx);
+}
+
 // === Public Functions ===
 /// Return the deterministic canonical account address for `owner` under this registry.
 public fun derived_address(registry: &AccountRegistry, owner: address): address {

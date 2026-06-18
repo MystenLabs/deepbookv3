@@ -236,4 +236,16 @@ let account = account::load_account_mut(&mut wrapper, auth);
 sui move build --path packages/account --warnings-are-errors
 ```
 
-The package currently has no dedicated unit tests.
+## Tests
+
+Account has dedicated unit tests in `tests/account_tests.move`. They currently
+require a temporary nightly Sui framework pin because stable/testnet Sui does not
+yet expose the accumulator root constructor used by the tests.
+
+```bash
+sui move test --path packages/account --gas-limit 100000000000
+```
+
+See `ACCUMULATOR_TESTING_STATUS.md` for the current dependency state and the
+remaining accumulator-backed flows that still need stable framework or integration
+coverage before mainnet.
