@@ -2772,11 +2772,13 @@ def replay(
             updates.append(mint_order(model, row, row_timestamp_ms))
         elif action == "redeem":
             apply_inline_oracle_refresh(model, row, updates)
-            ref = row["orderRef"]
             scan_active_count = active_order_count(model)
-            order = model["orders"].get(ref)
-            if order is None or order["status"] != "liquidated":
-                updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
+            # Mirror Move `redeem_internal`: the bounded liquidation pass runs on every
+            # live-market redeem (before the is-liquidated check), so it advances the
+            # passive watermark even when redeeming an already-liquidated order. Skipping
+            # it there silently drifted the watermark vs localnet. Settlement is stubbed
+            # in this model (the market never settles), so the pass is unconditional.
+            updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(redeem_order(model, row))
         elif action == "supply":
             if exact_time:
