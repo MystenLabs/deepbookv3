@@ -21,13 +21,17 @@
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
+use account::{
+    account::{Self, AccountWrapper},
+    account_registry::{Self, AccountRegistry, AccountAdminCap}
+};
 use block_scholes_oracle::update;
 use deepbook_predict::{
     admin::AdminCap,
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
     plp::{Self, PoolVault, PoolValuation},
-    predict_manager::PredictManager,
+    predict_account::{Self, PredictApp},
     pricing,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
@@ -41,7 +45,12 @@ use propbook::{
     registry::{Self as propbook_registry, OracleRegistry}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock::{Self, Clock}, coin, test_scenario::{Self as test, Scenario, return_shared}};
+use sui::{
+    accumulator::{Self, AccumulatorRoot},
+    clock::{Self, Clock},
+    coin,
+    test_scenario::{Self as test, Scenario, return_shared}
+};
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 
@@ -50,7 +59,8 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
 /// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`/
-/// `OracleRegistry` are real shared objects taken per-transaction, not held here.
+/// `OracleRegistry`/`AccountRegistry`/`AccumulatorRoot` are real shared objects taken
+/// per-transaction, not held here.
 public struct Fixture {
     scenario: Scenario,
     admin_cap: AdminCap,
@@ -62,6 +72,15 @@ public struct Fixture {
     tick_size: u64,
 }
 
+/// A trader handle: the canonical `AccountWrapper` ID plus its owner. The wrapper is
+/// a shared object, so a flow test holds this lightweight handle and `take_account`s
+/// the wrapper for the duration of a trade transaction (it cannot survive a
+/// `next_tx`, like every other shared object). Replaces the owned `PredictManager`.
+public struct Trader has copy, drop, store {
+    wrapper_id: ID,
+    owner: address,
+}
+
 /// Stand up a registry + protocol config + an empty PLP vault + the two propbook
 /// feeds (a `PythFeed` and a `BlockScholesFeed`) for the admin-approved `tick`
 /// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
@@ -69,12 +88,24 @@ public struct Fixture {
 /// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
+    // Construct the shared accumulator root and the account registry up front. The
+    // admin is `@0x0`, the sender `accumulator::create_for_testing` requires. The root
+    // is empty (no barrier-settled funds); flows fund accounts through stored balance.
+    accumulator::create_for_testing(scenario.ctx());
+    account_registry::init_for_testing(scenario.ctx());
     plp::init_for_testing(scenario.ctx());
     registry::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
 
     // tx1: configure protocol params, register the underlying, create feeds.
     scenario.next_tx(test_constants::admin());
+    // Whitelist PredictApp on the account registry so permissionless settled-redeem can
+    // generate app auth (`predict_account::generate_auth_as_app`).
+    let account_admin_cap = scenario.take_from_sender<AccountAdminCap>();
+    let mut account_registry = scenario.take_shared<AccountRegistry>();
+    account_registry.authorize_app<PredictApp>(&account_admin_cap);
+    return_shared(account_registry);
+    destroy(account_admin_cap);
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
@@ -137,16 +168,16 @@ public fun setup_pool_with_pyth(): Fixture { setup_market_default() }
 
 /// One-shot composite bring-up over `(expiry_ms, live_price)`: a default market
 /// already past `create_expiry` + `prepare_live_oracle` + test-only cash seeding,
-/// plus a funded alice manager, so a flow test starts at the first interesting
+/// plus a funded alice trader, so a flow test starts at the first interesting
 /// line. The market objects are returned to the shared pool; the caller
-/// `take_market`s them. Returns `(fixture, expiry_id, manager)`.
-public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, PredictManager) {
+/// `take_market`s them. Returns `(fixture, expiry_id, trader)`.
+public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
-/// default manager deposit (used by the smoke + gate tests).
-public fun setup_everything(): (Fixture, ID, PredictManager) {
+/// default trader deposit (used by the smoke + gate tests).
+public fun setup_everything(): (Fixture, ID, Trader) {
     setup_funded_live_market(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
@@ -158,16 +189,16 @@ fun setup_funded_live_market(
     expiry_ms: u64,
     live_price: u64,
     deposit: u64,
-): (Fixture, ID, PredictManager) {
+): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
-    let manager = fx.create_funded_manager(deposit);
+    let trader = fx.create_funded_manager(deposit);
     let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, live_price);
     fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
     return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.scenario.next_tx(test_constants::admin());
-    (fx, expiry_id, manager)
+    (fx, expiry_id, trader)
 }
 
 /// Create the market for `expiry` through the production path, returning its id.
@@ -266,34 +297,65 @@ public fun return_market(
     return_shared(config);
 }
 
-/// Create a fresh trader manager (owned by alice) and fund it with DUSDC. The
+/// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
 /// scenario sender is left as alice so the caller's next mint/redeem generates a
-/// valid owner proof.
-public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
+/// valid owner auth.
+public fun create_funded_manager(self: &mut Fixture, deposit: u64): Trader {
     self.create_funded_manager_as(test_constants::alice(), deposit)
 }
 
-/// `create_funded_manager` for an arbitrary owner, for multi-trader flows.
+/// `create_funded_manager` for an arbitrary owner, for multi-trader flows. Creates the
+/// owner's canonical account through the account registry, shares the wrapper, and
+/// deposits `deposit` DUSDC into the account's stored balance.
 public fun create_funded_manager_as(
     self: &mut Fixture,
     owner: address,
     deposit: u64,
-): PredictManager {
+): Trader {
     self.scenario.next_tx(owner);
-    let mut registry = self.scenario.take_shared<Registry>();
-    let config = self.scenario.take_shared<ProtocolConfig>();
-    let mut manager = registry::create_manager(&mut registry, &config, self.scenario.ctx());
-    return_shared(registry);
-    return_shared(config);
-    manager.deposit_funds(
-        coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()).into_balance(),
-        self.scenario.ctx(),
+    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
+    let wrapper_id = account_registry.derived_wrapper_id(owner);
+    let mut wrapper = account_registry.new(self.scenario.ctx());
+    return_shared(account_registry);
+    let root = self.scenario.take_shared<AccumulatorRoot>();
+    let auth = account::generate_auth(self.scenario.ctx());
+    let acct = wrapper.load_account_mut(auth);
+    acct.deposit<DUSDC>(
+        coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()),
+        &root,
+        &self.clock,
     );
-    // Commit the shared-config/registry returns (test_scenario defers them to a tx
-    // boundary) before the caller's `take_market` re-takes the config. Sender stays
-    // `owner`, so a subsequent owner-proof is still valid.
+    return_shared(root);
+    account::share(wrapper);
+    // Commit the shared returns (test_scenario defers them to a tx boundary) before the
+    // caller's `take_market`/`take_account`. Sender stays `owner`, so a subsequent
+    // owner auth is still valid.
     self.scenario.next_tx(owner);
-    manager
+    Trader { wrapper_id, owner }
+}
+
+/// Take the trader's shared `AccountWrapper` for the duration of a trade transaction.
+public fun take_account(self: &Fixture, trader: &Trader): AccountWrapper {
+    self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id)
+}
+
+/// Take the single shared `AccumulatorRoot`.
+public fun take_root(self: &Fixture): AccumulatorRoot {
+    self.scenario.take_shared<AccumulatorRoot>()
+}
+
+/// Return the wrapper + root taken by `take_account` / `take_root`.
+public fun return_account(wrapper: AccountWrapper, root: AccumulatorRoot) {
+    return_shared(wrapper);
+    return_shared(root);
+}
+
+/// The trader's account owner address.
+public fun owner(trader: &Trader): address { trader.owner }
+
+/// Whether the trader's account holds an open position for `order_id` in `expiry_id`.
+public fun has_position(wrapper: &AccountWrapper, expiry_id: ID, order_id: u256): bool {
+    predict_account::has_position(wrapper.load_account(), expiry_id, order_id)
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
@@ -380,13 +442,15 @@ public fun seed_bs_surface(
     bs.update(bs_update, &self.clock, self.scenario.ctx());
 }
 
-/// Mint one order for `manager` over the tick range `(lower_tick, higher_tick]` and
-/// return its packed order id.
+/// Mint one order for `wrapper`'s account over the tick range `(lower_tick,
+/// higher_tick]` and return its packed order id. Owner auth comes from the current
+/// scenario sender, so the caller must `next_tx(trader.owner)` first.
 public fun mint(
     self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
-    manager: &mut PredictManager,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
@@ -395,10 +459,10 @@ public fun mint(
     quantity: u64,
     leverage: u64,
 ): u256 {
-    let proof = manager.generate_proof_as_owner(self.scenario.ctx());
-    let order_id = market.mint_internal(
-        manager,
-        &proof,
+    let auth = account::generate_auth(self.scenario.ctx());
+    market.mint(
+        wrapper,
+        auth,
         config,
         oracle_registry,
         pyth,
@@ -407,65 +471,70 @@ public fun mint(
         higher_tick,
         quantity,
         leverage,
+        root,
         &self.clock,
         self.scenario.ctx(),
-    );
-    order_id
+    )
 }
 
-/// Close (or partially close) a live order. Returns `(closed_id, replacement_id)`.
+/// Close (or partially close) a live order with owner auth. Returns
+/// `(closed_id, replacement_id)`.
 public fun redeem(
     self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
-    manager: &mut PredictManager,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
-    let proof = manager.generate_proof_as_owner(self.scenario.ctx());
-    let (closed_id, replacement_id) = market.redeem_internal(
-        manager,
-        option::some(proof),
+    let auth = account::generate_auth(self.scenario.ctx());
+    market.redeem(
+        wrapper,
+        auth,
         config,
         oracle_registry,
         pyth,
         bs,
         order_id,
         close_quantity,
+        root,
         &self.clock,
         self.scenario.ctx(),
-    );
-    (closed_id, replacement_id)
+    )
 }
 
-/// Permissionless redeem (no proof): clears an already-liquidated order or a
-/// passively settled order.
+/// Permissionless settled redeem (no owner auth): clears a settled order using app
+/// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
+/// Block Scholes feed.
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
-    manager: &mut PredictManager,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
-    let (closed_id, replacement_id) = market.redeem_internal(
-        manager,
-        option::none(),
+    let account_registry = self.scenario.take_shared<AccountRegistry>();
+    let (closed_id, replacement_id) = market.redeem_settled(
+        &account_registry,
+        wrapper,
         config,
         oracle_registry,
         pyth,
-        bs,
         order_id,
         close_quantity,
+        root,
         &self.clock,
         self.scenario.ctx(),
     );
+    return_shared(account_registry);
     (closed_id, replacement_id)
 }
 
@@ -630,12 +699,12 @@ public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash
     assert_market_backed(market);
 }
 
-// === Manager state-sheet assertions ===
+// === Account state-sheet assertions ===
 
-/// A full expected snapshot of one manager's scalar state plus its per-expiry
+/// A full expected snapshot of one account's scalar state plus its per-expiry
 /// trading state, asserted in one call by `check_manager`.
 public struct ExpectedManagerState has copy, drop {
-    /// Free DUSDC balance (`manager.balance()`).
+    /// Free DUSDC balance (`account.balance<DUSDC>`).
     balance: u64,
     /// Cumulative trading fees paid into the checked expiry.
     fees_paid: u64,
@@ -657,13 +726,22 @@ public fun expected_manager_state(
     ExpectedManagerState { balance, fees_paid, position_count, active_stake, inactive_stake }
 }
 
-/// Assert a manager's full state sheet against `expected` for `expiry_id`.
-public fun check_manager(manager: &PredictManager, expiry_id: ID, expected: ExpectedManagerState) {
-    assert_eq!(manager.internal_balance<DUSDC>(), expected.balance);
-    assert_eq!(manager.trading_fees_paid(expiry_id), expected.fees_paid);
-    assert_eq!(manager.expiry_position_count(expiry_id), expected.position_count);
-    assert_eq!(manager.active_stake(), expected.active_stake);
-    assert_eq!(manager.inactive_stake(), expected.inactive_stake);
+/// Assert an account's full state sheet against `expected` for `expiry_id`. The DUSDC
+/// balance read includes unsettled accumulator funds (zero with the empty test root,
+/// so it equals stored free balance).
+public fun check_manager(
+    self: &Fixture,
+    wrapper: &AccountWrapper,
+    root: &AccumulatorRoot,
+    expiry_id: ID,
+    expected: ExpectedManagerState,
+) {
+    let account = wrapper.load_account();
+    assert_eq!(account.balance<DUSDC>(root, &self.clock), expected.balance);
+    assert_eq!(predict_account::trading_fees_paid(account, expiry_id), expected.fees_paid);
+    assert_eq!(predict_account::expiry_position_count(account, expiry_id), expected.position_count);
+    assert_eq!(predict_account::active_stake(account), expected.active_stake);
+    assert_eq!(predict_account::inactive_stake(account), expected.inactive_stake);
 }
 
 // === Accessors ===
