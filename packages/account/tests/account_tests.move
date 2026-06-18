@@ -6,6 +6,7 @@ module account::account_tests;
 
 use account::{
     account::{Self, AccountWrapper},
+    account_events,
     account_registry::{Self, AccountAdminCap, AccountRegistry}
 };
 use std::{internal::permit, unit_test::{assert_eq, destroy}};
@@ -13,6 +14,7 @@ use sui::{
     accumulator::{Self as accumulator, AccumulatorRoot},
     clock::Clock,
     coin,
+    event,
     object,
     test_scenario::{Self as test, Scenario, return_shared}
 };
@@ -61,6 +63,28 @@ fun registry_creates_one_canonical_account_per_owner() {
     assert!(registry.derived_wrapper_exists(ALICE));
     assert_eq!(registry.derived_address(ALICE).to_id(), account_id);
     assert_eq!(registry.derived_wrapper_address(ALICE).to_id(), wrapper_id);
+
+    account::share(wrapper);
+    return_shared(registry);
+    scenario.end();
+}
+
+#[test]
+fun new_emits_account_created() {
+    let mut scenario = setup();
+    scenario.next_tx(ALICE);
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let account_id = registry.derived_address(ALICE).to_id();
+    let wrapper = registry.new(scenario.ctx());
+
+    // Read events in the same transaction as the emit, before `next_tx` resets the
+    // per-transaction event context. EOA creation => self_owned = false.
+    let events = event::events_by_type<account_events::AccountCreated>();
+    assert_eq!(events.length(), 1);
+    let e = &events[0];
+    assert_eq!(e.created_account_id(), account_id);
+    assert_eq!(e.created_owner(), ALICE);
+    assert!(!e.created_self_owned());
 
     account::share(wrapper);
     return_shared(registry);

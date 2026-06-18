@@ -8,7 +8,7 @@
 /// construction, custody, settlement, and app-data invariants.
 module account::account_registry;
 
-use account::account::{Self, AccountWrapper, Auth};
+use account::{account::{Self, AccountWrapper, Auth}, account_events};
 use std::internal::Permit;
 use sui::{derived_object, dynamic_field as df};
 
@@ -76,13 +76,20 @@ public fun derived_wrapper_exists(registry: &AccountRegistry, owner: address): b
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
     registry.assert_account_does_not_exist(owner);
-    account::new_derived(
+    let wrapper = account::new_derived(
         &mut registry.id,
         AccountWrapperKey(owner),
         AccountKey(owner),
         owner,
         ctx,
-    )
+    );
+    account_events::emit_account_created(
+        wrapper.load_account().account_id(),
+        object::id(&wrapper),
+        owner,
+        false,
+    );
+    wrapper
 }
 
 /// Create the canonical derived account wrapper owned by `owner_uid`'s object address.
@@ -93,13 +100,20 @@ public fun new_self_owned(
 ): AccountWrapper {
     let owner = owner_uid.to_inner().to_address();
     registry.assert_account_does_not_exist(owner);
-    account::new_derived(
+    let wrapper = account::new_derived(
         &mut registry.id,
         AccountWrapperKey(owner),
         AccountKey(owner),
         owner,
         ctx,
-    )
+    );
+    account_events::emit_account_created(
+        wrapper.load_account().account_id(),
+        object::id(&wrapper),
+        owner,
+        true,
+    );
+    wrapper
 }
 
 /// Return whether `App` is authorized for app-driven account access.
