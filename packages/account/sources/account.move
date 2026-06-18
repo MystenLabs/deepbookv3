@@ -176,6 +176,19 @@ public fun deposit_funds<T>(
     wrapper.load_account_mut(auth).deposit(coin, root, clock);
 }
 
+/// PTB-callable withdraw: folds authorize → load → withdraw into one entrypoint
+/// (see `deposit_funds`).
+public fun withdraw_funds<T>(
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<T> {
+    wrapper.load_account_mut(auth).withdraw<T>(amount, root, clock, ctx)
+}
+
 // === App-data Lane ===
 /// Attach an app's `Data` under its witness namespace. Requires `Permit<App>`.
 /// Aborts if `App` already has data attached.
