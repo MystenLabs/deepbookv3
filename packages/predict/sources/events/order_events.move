@@ -9,13 +9,13 @@
 /// the network envelope supplies timestamp and sender, so neither is a field.
 module deepbook_predict::order_events;
 
-use deepbook_predict::{order::Order, predict_manager::PredictManager};
+use deepbook_predict::order::Order;
 use sui::event;
 
 /// Emitted when a live position interval is minted.
 public struct OrderMinted has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle: the original mint's `order_id`, carried
     /// forward unchanged across partial-close replacements. Equals `order_id` here.
@@ -42,7 +42,7 @@ public struct OrderMinted has copy, drop, store {
 /// Emitted when a live position is closed fully or partially.
 public struct LiveOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle, constant across the replacement chain.
     /// On a partial close the replacement inherits this same root.
@@ -65,7 +65,7 @@ public struct LiveOrderRedeemed has copy, drop, store {
 /// Emitted when a settled position is redeemed for terminal payout.
 public struct SettledOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle, constant across the replacement chain.
     position_root_id: u256,
@@ -75,10 +75,10 @@ public struct SettledOrderRedeemed has copy, drop, store {
     payout_amount: u64,
 }
 
-/// Emitted when a manager clears a liquidated position with zero payout.
+/// Emitted when an account clears a liquidated position with zero payout.
 public struct LiquidatedOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     order_id: u256,
     /// Stable economic-position handle, constant across the replacement chain.
     position_root_id: u256,
@@ -88,7 +88,7 @@ public struct LiquidatedOrderRedeemed has copy, drop, store {
 
 /// Emitted once per order removed by liquidation.
 ///
-/// Liquidation is permissionless and does not touch managers, so manager/owner
+/// Liquidation is permissionless and does not touch accounts, so account/owner
 /// are not known here; consumers join `order_id` to `OrderMinted`.
 public struct OrderLiquidated has copy, drop, store {
     expiry_market_id: ID,
@@ -106,7 +106,9 @@ public struct OrderLiquidated has copy, drop, store {
 
 public(package) fun emit_order_minted(
     expiry_market_id: ID,
-    manager: &PredictManager,
+    account_id: ID,
+    owner: address,
+    builder_code_id: Option<ID>,
     order: &Order,
     leverage: u64,
     entry_probability: u64,
@@ -117,10 +119,10 @@ public(package) fun emit_order_minted(
 ) {
     event::emit(OrderMinted {
         expiry_market_id,
-        predict_manager_id: manager.id(),
+        account_id,
         order_id: order.id(),
         position_root_id: order.id(),
-        owner: manager.owner(),
+        owner,
         lower_tick: order.lower_tick(),
         higher_tick: order.higher_tick(),
         leverage,
@@ -130,13 +132,15 @@ public(package) fun emit_order_minted(
         trading_fee,
         builder_fee,
         penalty_fee,
-        builder_code_id: if (builder_fee == 0) option::none() else manager.builder_code_id(),
+        builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
     });
 }
 
 public(package) fun emit_live_order_redeemed(
     expiry_market_id: ID,
-    manager: &PredictManager,
+    account_id: ID,
+    owner: address,
+    builder_code_id: Option<ID>,
     order: &Order,
     position_root_id: u256,
     quantity_closed: u64,
@@ -148,10 +152,10 @@ public(package) fun emit_live_order_redeemed(
 ) {
     event::emit(LiveOrderRedeemed {
         expiry_market_id,
-        predict_manager_id: manager.id(),
+        account_id,
         order_id: order.id(),
         position_root_id,
-        owner: manager.owner(),
+        owner,
         quantity_closed,
         remaining_quantity: order.quantity() - quantity_closed,
         replacement_order_id,
@@ -159,13 +163,14 @@ public(package) fun emit_live_order_redeemed(
         trading_fee,
         builder_fee,
         penalty_fee,
-        builder_code_id: if (builder_fee == 0) option::none() else manager.builder_code_id(),
+        builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
     });
 }
 
 public(package) fun emit_settled_order_redeemed(
     expiry_market_id: ID,
-    manager: &PredictManager,
+    account_id: ID,
+    owner: address,
     order: &Order,
     position_root_id: u256,
     settlement_price: u64,
@@ -173,10 +178,10 @@ public(package) fun emit_settled_order_redeemed(
 ) {
     event::emit(SettledOrderRedeemed {
         expiry_market_id,
-        predict_manager_id: manager.id(),
+        account_id,
         order_id: order.id(),
         position_root_id,
-        owner: manager.owner(),
+        owner,
         quantity_closed: order.quantity(),
         settlement_price,
         payout_amount,
@@ -185,16 +190,17 @@ public(package) fun emit_settled_order_redeemed(
 
 public(package) fun emit_liquidated_order_redeemed(
     expiry_market_id: ID,
-    manager: &PredictManager,
+    account_id: ID,
+    owner: address,
     order: &Order,
     position_root_id: u256,
 ) {
     event::emit(LiquidatedOrderRedeemed {
         expiry_market_id,
-        predict_manager_id: manager.id(),
+        account_id,
         order_id: order.id(),
         position_root_id,
-        owner: manager.owner(),
+        owner,
         quantity_closed: order.quantity(),
     });
 }

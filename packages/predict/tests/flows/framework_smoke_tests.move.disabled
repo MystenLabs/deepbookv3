@@ -15,28 +15,32 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use std::unit_test::{assert_eq, destroy};
+use std::unit_test::assert_eq;
 
 #[test]
 fun setup_everything_check_manager_return_market_smoke() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+
+    // Mint one 1x in-range order through the fixture; the account owner (alice) is
+    // the current sender after `create_funded_manager`, but `setup_everything`
+    // left the sender at admin — re-establish alice for the owner auth.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // Fully-known pre-trade state sheet: only the deposit has moved.
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(test_constants::default_manager_deposit(), 0, 0, 0, 0),
     );
-
-    // Mint one 1x in-range order through the fixture; the manager owner (alice) is
-    // the current sender after `create_funded_manager`, but `setup_everything`
-    // left the sender at admin — re-establish alice for the owner proof.
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -46,15 +50,16 @@ fun setup_everything_check_manager_return_market_smoke() {
         test_constants::leverage_one_x(),
     );
 
-    assert!(manager.has_position(expiry_id, order_id));
-    assert_eq!(manager.expiry_position_count(expiry_id), 1);
+    assert!(helpers::has_position(&wrapper, expiry_id, order_id));
+    assert_eq!(helpers::position_count(&wrapper, expiry_id), 1);
     // A mint charges a non-zero fee and a non-zero net_premium, so the free balance
     // strictly decreases.
-    assert!(manager.trading_fees_paid(expiry_id) > 0);
-    assert!(manager.internal_balance<DUSDC>() < test_constants::default_manager_deposit());
+    assert!(helpers::fees_paid(&wrapper, expiry_id) > 0);
+    assert!(fx.account_balance<DUSDC>(&wrapper, &root) < test_constants::default_manager_deposit());
+
+    helpers::return_account(wrapper, root);
 
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 

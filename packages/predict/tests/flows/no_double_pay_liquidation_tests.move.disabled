@@ -3,7 +3,7 @@
 
 /// L2/L3 liquidation lifecycle: a 2x order is knocked out by a 1% price drop,
 /// and the test pins that liquidation is a pure knockout (liability drops by
-/// exactly the order's backing, no cash moves, the holder's manager is
+/// exactly the order's backing, no cash moves, the holder's account is
 /// untouched), that a second liquidation attempt on the same id returns false
 /// (no double-liquidation), and that the holder's redeem of the tombstone pays
 /// EXACTLY zero with no fee and clears the position (no double-pay) — after
@@ -13,7 +13,7 @@ module deepbook_predict::no_double_pay_liquidation_tests;
 
 use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
 use dusdc::dusdc::DUSDC;
-use std::unit_test::{assert_eq, destroy};
+use std::unit_test::assert_eq;
 
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// 2x ATM mint of quantity 1e9 on [min_strike, +inf): entry_value
@@ -50,18 +50,21 @@ const DROPPED_SOURCE_TS: u64 = 119_500;
 
 #[test]
 fun liquidated_order_pays_zero_once_and_only_once() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // --- Baseline.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
     helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
     );
@@ -71,7 +74,8 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -86,16 +90,17 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         &market,
         helpers::expected_market_cash(cash_after_mint, LIVE_BACKING, MINT_REBATE),
     );
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
     );
-    assert!(manager.has_position(expiry_id, order_id));
+    assert!(helpers::has_position(&wrapper, expiry_id, order_id));
 
     // --- Drop the spot 1% and liquidate. The knockout removes the order's
     // full live terms (liability → 0 exactly), moves no cash, and leaves the
-    // holder's manager untouched (tombstone persists until the holder redeems).
+    // holder's account untouched (tombstone persists until the holder redeems).
     fx.prepare_live_oracle_at(&market, &mut pyth, &mut bs, DROPPED_SPOT, DROPPED_SOURCE_TS);
     let liquidated = fx.liquidate_order(
         &config,
@@ -110,12 +115,13 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         &market,
         helpers::expected_market_cash(cash_after_mint, 0, MINT_REBATE),
     );
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
     );
-    assert!(manager.has_position(expiry_id, order_id));
+    assert!(helpers::has_position(&wrapper, expiry_id, order_id));
 
     // --- A second liquidation attempt on the same id returns false: the
     // tombstoned order is no longer in the active candidate set.
@@ -123,23 +129,25 @@ fun liquidated_order_pays_zero_once_and_only_once() {
 
     // --- The holder clears the tombstone with a full close: exactly zero
     // payout, zero fee, position removed, market sheet bit-identical.
-    let balance_before = manager.internal_balance<DUSDC>();
+    let balance_before = wrapper.load_account().balance<DUSDC>(&root, fx.clock());
     let (closed_id, replacement) = fx.redeem(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
         order_id,
         test_constants::mint_quantity(),
     );
-    assert_eq!(manager.internal_balance<DUSDC>(), balance_before);
+    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, fx.clock()), balance_before);
     assert_eq!(closed_id, order_id);
     assert!(replacement.is_none());
-    assert!(!manager.has_position(expiry_id, order_id));
-    helpers::check_manager(
-        &manager,
+    assert!(!helpers::has_position(&wrapper, expiry_id, order_id));
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 0, 0, 0),
     );
@@ -151,7 +159,8 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     // index entirely — still false, still no state change.
     assert!(!fx.liquidate_order(&config, &oracle_registry, &mut market, &pyth, &bs, order_id));
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }

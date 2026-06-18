@@ -7,6 +7,10 @@ version = "0.0.1"
 deepbook = { local = "../deepbook" }
 fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
+# Reusable on-chain account primitive. Predict's per-account custody (`Account.vault`)
+# and its app-data slot live here; the former PredictManager / cap / proof layer
+# collapses onto it. Declared `local` like the other in-repo packages.
+account = { local = "../account" }
 # Standalone Pyth + Block Scholes oracle feeds. Predict consumes `propbook::pyth_feed`
 # and `propbook::block_scholes_feed` for live spot/surface pricing (the former
 # in-package `market_oracle`/`pyth_source` modules were extracted into propbook).
