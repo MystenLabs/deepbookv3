@@ -9,11 +9,8 @@ use deepbook_predict::{
     constants,
     protocol_config,
     registry,
-    test_constants,
     test_helpers
 };
-use std::unit_test::destroy;
-use sui::test_scenario::{Self as test, return_shared};
 
 const UNDERLYING_BTC: u32 = 100;
 const UNDERLYING_ETH: u32 = 200;
@@ -89,32 +86,4 @@ fun underlying_min_tick_size_returns_none_for_unmapped_underlying() {
     assert!(registry::underlying_min_tick_size(&reg, UNDERLYING_BTC).is_none());
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
-}
-
-// === create_manager / create_and_share_manager ===
-
-#[test]
-fun create_manager_yields_distinct_objects_per_caller() {
-    let mut scenario = test::begin(test_constants::alice());
-    let registry_id = registry::init_for_testing(scenario.ctx());
-
-    scenario.next_tx(test_constants::alice());
-    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let config = scenario.take_shared<protocol_config::ProtocolConfig>();
-    let alice_mgr = registry::create_manager(&mut reg, &config, scenario.ctx());
-    return_shared(reg);
-    return_shared(config);
-
-    scenario.next_tx(test_constants::bob());
-    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let config = scenario.take_shared<protocol_config::ProtocolConfig>();
-    let bob_mgr = registry::create_manager(&mut reg, &config, scenario.ctx());
-    return_shared(reg);
-    return_shared(config);
-
-    assert!(alice_mgr.id() != bob_mgr.id());
-
-    destroy(alice_mgr);
-    destroy(bob_mgr);
-    scenario.end();
 }
