@@ -85,7 +85,7 @@ public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrap
     );
     account_events::emit_account_created(
         wrapper.load_account().account_id(),
-        object::id(&wrapper),
+        wrapper.id(),
         owner,
         false,
     );
@@ -109,7 +109,7 @@ public fun new_self_owned(
     );
     account_events::emit_account_created(
         wrapper.load_account().account_id(),
-        object::id(&wrapper),
+        wrapper.id(),
         owner,
         true,
     );

@@ -77,6 +77,11 @@ public fun share(self: AccountWrapper) {
     transfer::share_object(self);
 }
 
+/// Returns the wrapper object ID.
+public fun id(self: &AccountWrapper): ID {
+    self.id.to_inner()
+}
+
 /// Generate owner authority from the transaction sender.
 public fun generate_auth(ctx: &TxContext): Auth {
     Auth { kind: AUTH_OWNER, owner: ctx.sender() }

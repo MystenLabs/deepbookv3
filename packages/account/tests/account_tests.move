@@ -14,12 +14,7 @@ use account::{
     accumulator_support
 };
 use std::{internal::permit, unit_test::{assert_eq, destroy}};
-use sui::{
-    clock::Clock,
-    coin,
-    object,
-    test_scenario::{Self as test, Scenario, return_shared}
-};
+use sui::{clock::Clock, coin, object, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
@@ -66,7 +61,7 @@ fun registry_creates_one_canonical_account_per_owner() {
     assert_eq!(registry.derived_address(ALICE).to_id(), account_id);
     assert_eq!(registry.derived_wrapper_address(ALICE).to_id(), wrapper_id);
 
-    account::share(wrapper);
+    wrapper.share();
     return_shared(registry);
     scenario.end();
 }
@@ -94,10 +89,10 @@ fun creating_second_account_for_same_owner_aborts() {
     scenario.next_tx(ALICE);
     let mut registry = scenario.take_shared<AccountRegistry>();
     let first = registry.new(scenario.ctx());
-    account::share(first);
+    first.share();
 
     let second = registry.new(scenario.ctx());
-    account::share(second);
+    second.share();
 
     abort 999
 }
@@ -177,7 +172,7 @@ fun object_auth_opens_self_owned_account() {
     let wrapper = registry.new_self_owned(&mut owner.id, scenario.ctx());
 
     assert_eq!(wrapper.load_account().owner(), owner_address);
-    account::share(wrapper);
+    wrapper.share();
     return_shared(registry);
     scenario.next_tx(ADMIN);
 
@@ -278,7 +273,7 @@ fun setup_with_account(owner: address): Scenario {
     scenario.next_tx(owner);
     let mut registry = scenario.take_shared<AccountRegistry>();
     let wrapper = registry.new(scenario.ctx());
-    account::share(wrapper);
+    wrapper.share();
     return_shared(registry);
     scenario.next_tx(ADMIN);
     scenario

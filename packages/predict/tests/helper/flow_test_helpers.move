@@ -112,8 +112,7 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_base_fee(&admin_cap, 1);
     config.set_template_min_ask_price(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
-    registry::register_underlying(
-        &mut registry,
+    registry.register_underlying(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -142,8 +141,7 @@ public fun setup_market(tick: u64): Fixture {
     test_helpers::bind_feeds_to_underlying(&scenario, pyth_id, bs_id);
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(
-        &mut registry,
+    let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
@@ -186,11 +184,7 @@ public fun setup_everything(): (Fixture, ID, Trader) {
     )
 }
 
-fun setup_funded_live_market(
-    expiry_ms: u64,
-    live_price: u64,
-    deposit: u64,
-): (Fixture, ID, Trader) {
+fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
@@ -209,8 +203,7 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry::create_expiry_market(
-        &mut registry,
+    let expiry_id = registry.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -308,11 +301,7 @@ public fun create_funded_manager(self: &mut Fixture, deposit: u64): Trader {
 /// `create_funded_manager` for an arbitrary owner, for multi-trader flows. Creates the
 /// owner's canonical account through the account registry, shares the wrapper, and
 /// deposits `deposit` DUSDC into the account's stored balance.
-public fun create_funded_manager_as(
-    self: &mut Fixture,
-    owner: address,
-    deposit: u64,
-): Trader {
+public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit: u64): Trader {
     self.scenario.next_tx(owner);
     let mut account_registry = self.scenario.take_shared<AccountRegistry>();
     let wrapper_id = account_registry.derived_wrapper_address(owner).to_id();
@@ -327,7 +316,7 @@ public fun create_funded_manager_as(
         &self.clock,
     );
     return_shared(root);
-    account::share(wrapper);
+    wrapper.share();
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
     // caller's `take_market`/`take_account`. Sender stays `owner`, so a subsequent
     // owner auth is still valid.
@@ -361,7 +350,11 @@ public fun has_position(wrapper: &AccountWrapper, expiry_id: ID, order_id: u256)
 
 /// The account's free balance of `T` (stored + unsettled accumulator funds; the latter
 /// is zero with the empty test root, so this equals stored balance).
-public fun account_balance<T>(self: &Fixture, wrapper: &AccountWrapper, root: &AccumulatorRoot): u64 {
+public fun account_balance<T>(
+    self: &Fixture,
+    wrapper: &AccountWrapper,
+    root: &AccumulatorRoot,
+): u64 {
     wrapper.load_account().balance<T>(root, &self.clock)
 }
 
@@ -669,7 +662,7 @@ public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let config = self.scenario.take_shared<ProtocolConfig>();
     let coin = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
-    plp::lock_capital(&mut vault, &config, &self.admin_cap, coin);
+    vault.lock_capital(&config, &self.admin_cap, coin);
     return_shared(vault);
     return_shared(config);
 }

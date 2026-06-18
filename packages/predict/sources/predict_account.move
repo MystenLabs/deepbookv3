@@ -15,7 +15,7 @@
 /// remains the authority boundary.
 module deepbook_predict::predict_account;
 
-use account::{account::{Account, AccountWrapper, Auth}, account_registry::{Self, AccountRegistry}};
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{builder_code::BuilderCode, builder_code_events};
 use std::internal::permit;
 use sui::table::{Self, Table};
@@ -140,7 +140,7 @@ public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mu
 
 /// Generate Predict app authority through the account registry.
 public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
-    account_registry::generate_auth_as_app<PredictApp>(registry, permit<PredictApp>())
+    registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
 }
 
 /// Add an order position keyed to its root order ID. At mint the root equals the

@@ -29,6 +29,6 @@ fun bump_version_watermark_at_current_version_aborts() {
     // At genesis the watermark already equals the running `current_version!()`, so
     // `bump_version_watermark` cannot advance the floor and aborts.
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    protocol_config::bump_version_watermark(&mut config, &admin_cap);
+    config.bump_version_watermark(&admin_cap);
     abort 999
 }

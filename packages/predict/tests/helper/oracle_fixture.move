@@ -64,8 +64,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    registry::register_underlying(
-        &mut registry,
+    registry.register_underlying(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -98,14 +97,12 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut registry = scenario.take_shared<Registry>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(
-        &mut registry,
+    let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
     );
-    let expiry_id = registry::create_expiry_market(
-        &mut registry,
+    let expiry_id = registry.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,

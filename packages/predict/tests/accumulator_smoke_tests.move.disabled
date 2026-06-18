@@ -27,7 +27,7 @@ fun root_constructs_and_funds_stored_balance() {
     let mut registry = scenario.take_shared<AccountRegistry>();
     let wrapper_id = registry.derived_wrapper_address(ALICE).to_id();
     let wrapper = registry.new(scenario.ctx());
-    account::share(wrapper);
+    wrapper.share();
     test::return_shared(registry);
     scenario.next_tx(ALICE);
 

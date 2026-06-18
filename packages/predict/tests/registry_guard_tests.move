@@ -47,7 +47,7 @@ fun claim_builder_fees_by_non_owner_aborts() {
     scenario.next_tx(test_constants::alice());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
     let config = scenario.take_shared<ProtocolConfig>();
-    let code_id = registry::create_builder_code(&mut reg, &config, 0, scenario.ctx());
+    let code_id = reg.create_builder_code(&config, 0, scenario.ctx());
     return_shared(reg);
     return_shared(config);
 
@@ -102,9 +102,8 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &config, &admin_cap, scenario.ctx());
-    let _expiry_id = registry::create_expiry_market(
-        &mut reg,
+    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    let _expiry_id = reg.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -131,9 +130,8 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &config, &admin_cap, scenario.ctx());
-    let _expiry_id = registry::create_expiry_market(
-        &mut reg,
+    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    let _expiry_id = reg.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -162,9 +160,8 @@ fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = registry::mint_lifecycle_cap(&mut reg, &config, &admin_cap, scenario.ctx());
-    let _expiry_id = registry::create_expiry_market(
-        &mut reg,
+    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    let _expiry_id = reg.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -185,8 +182,7 @@ fun setup_registered_feeds(): (Scenario, ID, AdminCap, ID, ID) {
     let (mut scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
-    registry::register_underlying(
-        &mut reg,
+    reg.register_underlying(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -236,8 +232,8 @@ fun bind_only_pyth(scenario: &Scenario, pyth_id: ID) {
 fun revoked_pause_cap_cannot_pause_trading() {
     let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_test();
 
-    let pause_cap = registry::mint_pause_cap(&mut reg, &admin_cap, scenario.ctx());
-    registry::revoke_pause_cap(&mut reg, &admin_cap, object::id(&pause_cap));
+    let pause_cap = reg.mint_pause_cap(&admin_cap, scenario.ctx());
+    reg.revoke_pause_cap(&admin_cap, pause_cap.id());
     // A revoked pause cap can no longer force the trading pause.
     registry::pause_trading_pause_cap(&mut config, &reg, &pause_cap);
     abort 999

@@ -205,32 +205,32 @@ per-account opt-in list.
 EOA-owned account:
 
 ```move
-let wrapper = account_registry::new(registry, ctx);
-account::share(wrapper);
+let wrapper = registry.new(ctx);
+wrapper.share();
 
 // Later, in a PTB or app entrypoint:
 let auth = account::generate_auth(ctx);
-let account = account::load_account_mut(&mut wrapper, auth);
+let account = wrapper.load_account_mut(auth);
 some_app::do_something(account, ...);
 ```
 
 Object-owned account:
 
 ```move
-let wrapper = account_registry::new_self_owned(registry, &mut owner_uid, ctx);
-account::share(wrapper);
+let wrapper = registry.new_self_owned(&mut owner_uid, ctx);
+wrapper.share();
 
 // Later, from the owner object's module:
 let auth = account::generate_auth_as_object(&mut owner_uid);
-let account = account::load_account_mut(&mut wrapper, auth);
+let account = wrapper.load_account_mut(auth);
 some_app::do_something(account, ...);
 ```
 
 Whitelisted app:
 
 ```move
-let auth = account_registry::generate_auth_as_app<MyApp>(registry, permit<MyApp>());
-let account = account::load_account_mut(&mut wrapper, auth);
+let auth = registry.generate_auth_as_app<MyApp>(permit<MyApp>());
+let account = wrapper.load_account_mut(auth);
 ```
 
 ## Build
