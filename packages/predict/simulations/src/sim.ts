@@ -29,18 +29,16 @@ import {
     PROTOCOL_CONFIG_ID,
     address,
     bindFeedsToUnderlyingTx,
+    createAccountTx,
     createExpiryMarketTx,
-    createManagerTx,
-    depositToManagerTx,
-    deriveManagerId,
+    depositToAccountTx,
+    deriveAccountWrapperId,
     execute,
     executeAndWait,
     finalizeDusdcCurrencyRegistrationTx,
     MIN_BOOTSTRAP_LIQUIDITY,
     lockCapitalTx,
-    mintDepositCapTx,
     mintLifecycleCapTx,
-    mintWithdrawCapTx,
     rebalanceExpiryCashTx,
     refreshOracleAndFlushTx,
     refreshOracleAndMintTx,
@@ -105,14 +103,14 @@ interface AliasState {
     orderRefsById: Map<string, string>;
     // LP requests are now keyed by their queue index (the cancel handle returned by
     // request_supply / request_withdraw), not a returned PLP coin object — the async
-    // flush delivers fills to the manager via the balance accumulator, so no PLP coin
+    // flush delivers fills to the account via the balance accumulator, so no PLP coin
     // is created in the request tx.
     lpRequestIndexByRef: Map<string, bigint>;
     // Supply DUSDC amount per lp_ref, recorded at the supply row. A withdraw row
     // fully unwinds its referenced supply, so this is the PLP-share amount it targets
     // (PLP is ~1:1 with DUSDC near the bootstrap mark).
     lpAmountByRef: Map<string, bigint>;
-    // PLP shares the manager has materialized (settle-able) and not yet withdrawn.
+    // PLP shares the account has materialized (settle-able) and not yet withdrawn.
     // Seeded with the bootstrap supply (minted 1:1 at setup). Under the batched-flush
     // cadence, scenario supplies are NOT credited here until/unless a flush mints them,
     // so withdraws draw against the bootstrap PLP — a deliberately conservative bound
@@ -682,12 +680,12 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
         state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
     }
     // NOTE: supply_requested / withdraw_requested escrow funds OUTSIDE the tracked
-    // vault/manager balances (the request queue holds them); they move balances only
+    // vault/account balances (the request queue holds them); they move balances only
     // at the flush. They carry no state delta here.
     // TODO(sim-parity): the async request -> flush split changes WHEN PLP supply and
-    // manager balances move relative to the old synchronous supply/withdraw. The
-    // manager-side credit of a supply fill / withdraw payout now lands via the
-    // balance accumulator (send_funds) and is absorbed lazily on the manager's next
+    // account balances move relative to the old synchronous supply/withdraw. The
+    // account-side credit of a supply fill / withdraw payout now lands via the
+    // balance accumulator (send_funds) and is absorbed lazily on the account's next
     // capital op, NOT in this tx. Confirm the exact manager_balance + PLP-supply
     // timing against a localnet run before trusting LP-row parity.
 }
@@ -1006,40 +1004,27 @@ async function setupSimulation(
     const expiryMarketId: string = expiryMarketChange.objectId;
     console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId}`);
 
-    const managerId = deriveManagerId(address);
-    await executeAndWait(createManagerTx(), "create_manager");
-    console.log(`[${ts()}]   Manager: ${managerId}`);
+    const accountWrapperId = deriveAccountWrapperId(address);
+    await executeAndWait(createAccountTx(), "create_account");
+    console.log(`[${ts()}]   Account: ${accountWrapperId}`);
 
-    // Cap-based capital auth: deposit/request_supply/request_withdraw are no longer
-    // owner-direct — they take a `PredictDepositCap` / `PredictWithdrawCap`. Mint both
-    // (owner-gated; the signer is the owner) and capture their IDs.
-    result = await executeAndWait(mintDepositCapTx(managerId), "mint_deposit_cap");
-    const depositCapChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("PredictDepositCap"),
-    );
-    const depositCapId: string = depositCapChange.objectId;
-    result = await executeAndWait(mintWithdrawCapTx(managerId), "mint_withdraw_cap");
-    const withdrawCapChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("PredictWithdrawCap"),
-    );
-    const withdrawCapId: string = withdrawCapChange.objectId;
-    console.log(`[${ts()}]   Manager caps: deposit=${depositCapId} withdraw=${withdrawCapId}`);
-
+    // Owner auth is minted per-call from the tx sender, so there are no capital caps:
+    // deposit / request_supply / request_withdraw all consume a fresh `Auth` hot potato.
     await executeAndWait(
-        depositToManagerTx(managerId, depositCapId, capital.managerSeed),
-        "deposit_to_manager",
+        depositToAccountTx(accountWrapperId, capital.managerSeed),
+        "deposit_to_account",
     );
-    console.log(`[${ts()}]   Manager funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
+    console.log(`[${ts()}]   Account funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
 
     // Vault bootstrap (async): the market is already registered active (with 0 cash)
     // by create_expiry_market, so the bootstrap flush values it (NAV 0, no orders).
     //   0. lock_capital permanently locks the genesis minimum liquidity so
     //      total_supply > 0; request_supply aborts ENotBootstrapped until it has.
-    //   1. request_supply(vaultSeed) deposits fresh DUSDC into the manager and pulls
-    //      it into queue escrow against the manager.
+    //   1. request_supply(vaultSeed) deposits fresh DUSDC into the account and pulls
+    //      it into queue escrow against the account.
     //   2. a privileged flush bootstrap-mints PLP ~1:1 (genesis total_supply ==
     //      pool_value == min liquidity) and joins the escrowed DUSDC into idle; the
-    //      PLP is delivered to the manager via the balance accumulator.
+    //      PLP is delivered to the account via the balance accumulator.
     //   3. rebalance_expiry_cash pushes idle -> expiry up to the cash floor so the
     //      market is mintable.
     await executeAndWait(lockCapitalTx(poolVaultId), "bootstrap_lock_capital");
@@ -1051,9 +1036,7 @@ async function setupSimulation(
         requestSupplyTx({
             poolVaultId,
             protocolConfigId,
-            managerId,
-            depositCapId,
-            withdrawCapId,
+            wrapperId: accountWrapperId,
             amount: capital.vaultSeed,
         }),
         "bootstrap_request_supply",
@@ -1089,9 +1072,7 @@ async function setupSimulation(
         expiryMarketId,
         pythFeedId,
         bsFeedId,
-        managerId,
-        depositCapId,
-        withdrawCapId,
+        accountWrapperId,
         lifecycleCapId,
     };
 
@@ -1113,7 +1094,7 @@ async function executeRow(
                 refreshOracleAndMintTx({
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
-                    managerId: state.managerId,
+                    wrapperId: state.accountWrapperId,
                     pythFeedId: state.pythFeedId,
                     bsFeedId: state.bsFeedId,
                     expiry: EXPIRY_MS,
@@ -1145,7 +1126,7 @@ async function executeRow(
                 refreshOracleAndRedeemTx({
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
-                    managerId: state.managerId,
+                    wrapperId: state.accountWrapperId,
                     pythFeedId: state.pythFeedId,
                     bsFeedId: state.bsFeedId,
                     expiry: EXPIRY_MS,
@@ -1160,11 +1141,11 @@ async function executeRow(
     }
 
     // supply/withdraw are ASYNC: a row only ENQUEUES a request; the economic effect
-    // (PLP mint/burn, manager credit) lands at a later privileged flush
+    // (PLP mint/burn, account credit) lands at a later privileged flush
     // (start_pool_valuation -> value_expiry -> finish_flush), synthesized by the
     // runner at the batched checkpoints (see executeScenario). request_supply deposits
-    // fresh DUSDC into the manager and pulls it into escrow; request_withdraw pulls PLP
-    // from manager custody, auto-settling any flush-delivered PLP first (no separate
+    // fresh DUSDC into the account and pulls it into escrow; request_withdraw pulls PLP
+    // from account custody, auto-settling any flush-delivered PLP first (no separate
     // withdraw_settled step).
     if (row.action === "supply") {
         return execute(
@@ -1172,9 +1153,7 @@ async function executeRow(
                 requestSupplyTx({
                     poolVaultId: state.poolVaultId,
                     protocolConfigId: state.protocolConfigId,
-                    managerId: state.managerId,
-                    depositCapId: state.depositCapId,
-                    withdrawCapId: state.withdrawCapId,
+                    wrapperId: state.accountWrapperId,
                     amount: row.amount,
                 }),
             "supply",
@@ -1182,7 +1161,7 @@ async function executeRow(
     }
 
     // Withdraw fully unwinds its referenced supply. Affordability against the
-    // manager's materialized PLP is pre-checked in executeScenario (skip-and-log when
+    // account's materialized PLP is pre-checked in executeScenario (skip-and-log when
     // the batched cadence hasn't minted enough yet), so by here the shares are known
     // available; decrement the running balance and enqueue the withdraw request, which
     // auto-settles delivered PLP into custody and pulls `shares`.
@@ -1193,8 +1172,7 @@ async function executeRow(
             requestWithdrawTx({
                 poolVaultId: state.poolVaultId,
                 protocolConfigId: state.protocolConfigId,
-                managerId: state.managerId,
-                withdrawCapId: state.withdrawCapId,
+                wrapperId: state.accountWrapperId,
                 shares,
             }),
         "withdraw",
@@ -1227,7 +1205,7 @@ async function executeScenario(
     // Batched LP flush cadence: requests accumulate and are drained by a privileged
     // flush the runner synthesizes after the configured row counts (default rows 300
     // and 999; override with SIM_FLUSH_AFTER="a,b,..." for fast smoke runs). The
-    // bootstrap supply minted PLP 1:1 at setup, so seed the manager's withdrawable PLP
+    // bootstrap supply minted PLP 1:1 at setup, so seed the account's withdrawable PLP
     // with it (a conservative lower bound — see AliasState.availableSettledPlp).
     aliases.availableSettledPlp = capital.vaultSeed;
     const flushAfter = flushCheckpoints();
