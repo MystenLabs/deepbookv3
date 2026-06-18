@@ -28,12 +28,12 @@ const EUnderlyingAlreadyRegistered: u64 = 1;
 const EInvalidExpiry: u64 = 2;
 const EMarketAlreadyCreated: u64 = 3;
 const EPauseCapNotValid: u64 = 4;
-const EInvalidMarketTickSize: u64 = 9;
-const ELifecycleCapNotValid: u64 = 10;
-const ELifecycleCapNotFound: u64 = 11;
-const EPythFeedNotBoundToUnderlying: u64 = 12;
-const EBlockScholesFeedNotBoundToUnderlying: u64 = 13;
-const EExpiryNotOnResolutionGrid: u64 = 14;
+const EInvalidMarketTickSize: u64 = 5;
+const ELifecycleCapNotValid: u64 = 6;
+const ELifecycleCapNotFound: u64 = 7;
+const EPythFeedNotBoundToUnderlying: u64 = 8;
+const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
+const EExpiryNotOnResolutionGrid: u64 = 10;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's chosen tick size is committed by the first creation.

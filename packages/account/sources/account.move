@@ -36,8 +36,8 @@ use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
-const EBalanceTooLow: u64 = 2;
-const EInvalidAuth: u64 = 3;
+const EBalanceTooLow: u64 = 1;
+const EInvalidAuth: u64 = 2;
 const AUTH_OWNER: u8 = 0;
 const AUTH_APP: u8 = 1;
 
