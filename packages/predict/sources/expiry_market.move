@@ -11,6 +11,7 @@
 /// remain outside this module.
 module deepbook_predict::expiry_market;
 
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
     config_events,
@@ -20,7 +21,7 @@ use deepbook_predict::{
     expiry_cash::{Self, ExpiryCash},
     order::{Self, Order},
     order_events,
-    predict_manager::{PredictManager, PredictTradeProof},
+    predict_account,
     pricing,
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, StrikeExposure}
@@ -28,18 +29,11 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use sui::{
-    accumulator::AccumulatorRoot,
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    vec_set::VecSet
-};
+use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
 
-const EPackageVersionDisabled: u64 = 3;
 const EMintPaused: u64 = 4;
 const EFullCloseRequired: u64 = 5;
-const EProofRequiredForLiveRedeem: u64 = 6;
+const EMarketNotSettled: u64 = 6;
 const EWrongPythFeed: u64 = 7;
 
 /// Per-expiry market state.
@@ -60,8 +54,6 @@ public struct ExpiryMarket has key {
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
-    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
-    allowed_versions: VecSet<u64>,
 }
 
 // === Public Functions ===
@@ -173,44 +165,38 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Return this market's mirrored set of allowed package versions.
-public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
-    market.allowed_versions
-}
-
 /// Mint a live position interval against this expiry market.
 ///
-/// Requires the package version to be allowed for this market, per-market mint
-/// pause to be off, trading globally enabled, a valid `PredictTradeProof` for
-/// the manager, a live fresh oracle, enough expiry cash to back the post-mint
+/// Requires the running package version to be at or above the protocol version
+/// watermark, per-market mint pause to be off, trading globally enabled, a valid
+/// account owner auth, a live fresh oracle, enough expiry cash to back the post-mint
 /// max payout and rebate reserve, and leveraged floor terms below this expiry's
 /// liquidation LTV at terminal. Leveraged mints must also satisfy leverage tier
 /// policy and be above the current liquidation threshold at entry. Mint fees are
-/// paid by routing a withdraw through the manager's trade proof, so the proof is
-/// required even for owner-initiated mints. The position's strike range is the
-/// tick pair `(lower_tick, higher_tick]` (`lower_tick = 0` is `-inf`,
-/// `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw strikes to ticks.
-/// Returns the minted order ID for future order-scoped flows.
+/// paid by routing a withdraw through the loaded account. The position's strike
+/// range is the tick pair `(lower_tick, higher_tick]` (`lower_tick = 0` is
+/// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw strikes
+/// to ticks. Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: &PredictTradeProof,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
-    root: &AccumulatorRoot,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    manager.settle<DUSDC>(root, ctx);
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
     market.mint_internal(
-        manager,
-        proof,
+        account,
         config,
         propbook_registry,
         pyth,
@@ -224,30 +210,29 @@ public fun mint(
     )
 }
 
-/// Redeem an order you hold trade authority over (the manager owner or a
-/// `PredictTradeCap` holder), authorized by a `PredictTradeProof`. Works in any
+/// Redeem an order you hold account authority over. Works in any
 /// order state: a live order is priced and closed (partial or full); a settled
-/// or already-liquidated order is fully closed and the proof is ignored (it has
-/// `drop`). Returns `(closed_order_id, replacement_order_id)`; a replacement is
+/// or already-liquidated order is fully closed. Returns
+/// `(closed_order_id, replacement_order_id)`; a replacement is
 /// present only when a live partial close leaves quantity open.
 public fun redeem(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: PredictTradeProof,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
-    root: &AccumulatorRoot,
     order_id: u256,
     close_quantity: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    manager.settle<DUSDC>(root, ctx);
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
     market.redeem_internal(
-        manager,
-        option::some(proof),
+        account,
         config,
         propbook_registry,
         pyth,
@@ -259,43 +244,43 @@ public fun redeem(
     )
 }
 
-/// Permissionlessly redeem a resolved order without trade authority: a settled
-/// market full close (payout credited to the order's manager) or clearing an
-/// already-liquidated order (no payout). Any caller may run this for keeper
-/// sweeps / cleanup. Aborts with `EProofRequiredForLiveRedeem` if the order is
-/// still live, since closing live risk requires a proof. Requires a full close.
+/// Permissionlessly redeem a settled order without account-owner authority. The
+/// market must be settled already; this flow does not run live pricing,
+/// liquidation, or liquidated-position cleanup. Requires a full close.
 public fun redeem_settled(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    root: &AccumulatorRoot,
     order_id: u256,
     close_quantity: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    manager.settle<DUSDC>(root, ctx);
-    market.redeem_internal(
-        manager,
-        option::none(),
-        config,
-        propbook_registry,
-        pyth,
-        bs,
-        order_id,
-        close_quantity,
-        clock,
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let redeemed_order = order::from_order_id(order_id);
+    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    wrapper.settle<DUSDC>(root, clock);
+    let auth = predict_account::generate_auth_as_app(account_registry);
+    let account = wrapper.load_account_mut(auth);
+    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+
+    market.redeem_settled_internal(
+        account,
+        &redeemed_order,
         ctx,
-    )
+    );
+    (redeemed_order.id(), option::none())
 }
 
 /// Run one bounded liquidation pass over active leveraged orders.
 ///
 /// The liquidation book selects up to `budget` candidates and returns the
-/// number of orders liquidated. It does not touch PredictManagers; users clear
+/// number of orders liquidated. It does not touch accounts; users clear
 /// their liquidated position later through `redeem`, receiving no payout.
 public fun liquidate(
     market: &mut ExpiryMarket,
@@ -306,14 +291,16 @@ public fun liquidate(
     budget: u64,
     clock: &Clock,
 ): u64 {
-    market.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    market.run_liquidation_pass(
-        &pricer,
-        budget,
-        clock,
-    )
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            budget,
+            clock,
+        )
 }
 
 /// Try to liquidate one active leveraged order by ID.
@@ -326,7 +313,7 @@ public fun liquidate_order(
     order_id: u256,
     clock: &Clock,
 ): bool {
-    market.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
 
@@ -337,21 +324,18 @@ public fun liquidate_order(
 /// Set whether new mints are paused on this expiry market. Admin-only and
 /// version-gated. A `PauseCap` holder can force-engage the pause one-way under a
 /// version freeze via `registry::pause_expiry_market_mint_pause_cap`.
-public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, paused: bool) {
-    market.assert_version_allowed();
+public fun set_mint_paused(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    config.assert_version();
     market.mint_paused = paused;
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
 // === Public-Package Functions ===
-
-/// Abort if the running package version is not allowed for this market.
-public(package) fun assert_version_allowed(market: &ExpiryMarket) {
-    assert!(
-        market.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
-}
 
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
@@ -363,7 +347,6 @@ public(package) fun ensure_settled(
     pyth: &PythFeed,
     clock: &Clock,
 ): bool {
-    market.assert_version_allowed();
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
     assert!(
@@ -387,13 +370,6 @@ public(package) fun ensure_settled(
     true
 }
 
-/// Overwrite this market's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_expiry_market_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
-    market.allowed_versions = allowed_versions;
-}
-
 /// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
 /// `registry::pause_expiry_market_mint_pause_cap`; cannot unpause. Deliberately
 /// not version-gated so the kill switch survives a version freeze.
@@ -404,14 +380,12 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
 
 /// Receive pool-provided cash without interpreting pool allocation policy.
 public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
-    market.assert_version_allowed();
     market.cash.receive(cash);
     market.assert_cash_backing();
 }
 
 /// Release pool cash while preserving expiry-local payout and rebate backing.
 public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    market.assert_version_allowed();
     if (amount == 0) {
         return balance::zero()
     };
@@ -427,7 +401,6 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Returns the released cash and the terminal settlement price used for event
 /// emission by the pool.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
-    market.assert_version_allowed();
     let settlement_price = market.settlement_price();
     let settled_liability = market.materialize_settled_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
@@ -447,7 +420,6 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balan
 /// `tick_size`, and the registry holds no reference after `share_object`.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
-    allowed_versions: VecSet<u64>,
     propbook_underlying_id: u32,
     pool_vault_id: ID,
     expiry: u64,
@@ -478,7 +450,6 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
-        allowed_versions,
     };
     config_events::emit_market_created(
         expiry_market_id,
@@ -526,24 +497,6 @@ fun load_live_pricer(
     )
 }
 
-/// Run one expiry-local liquidation pass with the caller-selected budget and
-/// already-loaded live pricer. Version gating lives on the public entrypoints
-/// (`mint`, `redeem`, `liquidate`) that reach this helper.
-fun run_liquidation_pass(
-    market: &mut ExpiryMarket,
-    pricer: &pricing::Pricer,
-    budget: u64,
-    clock: &Clock,
-): u64 {
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            pricer,
-            budget,
-            clock,
-        )
-}
-
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
         math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
@@ -554,86 +507,28 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     }
 }
 
-/// Shared redeem dispatch + flow gates (version, valuation lock) behind the public
-/// `redeem` (proof) / `redeem_settled` (none) entrypoints, which only perform the
-/// ambient manager settle before delegating here. `proof` is consumed only on the
-/// live branch; the settled and liquidated branches drop it, and the live branch
-/// requires `some` else `EProofRequiredForLiveRedeem`. Root-free so this dispatch and
-/// its branch handlers stay unit-testable; the settle reverts atomically on a gate abort.
-public(package) fun redeem_internal(
-    market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: Option<PredictTradeProof>,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    order_id: u256,
-    close_quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): (u256, Option<u256>) {
-    market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    let redeemed_order = order::from_order_id(order_id);
-    if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
-        return (redeemed_order.id(), option::none());
-
-    if (market.ensure_settled(propbook_registry, pyth, clock)) {
-        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-        market.redeem_settled_internal(manager, &redeemed_order, ctx);
-        (redeemed_order.id(), option::none())
-    } else {
-        let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-        market.run_liquidation_pass(
-            &pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
-        if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
-            return (redeemed_order.id(), option::none());
-        assert!(proof.is_some(), EProofRequiredForLiveRedeem);
-        let live_proof = proof.destroy_some();
-        let replacement_order_id = market.redeem_live_internal(
-            manager,
-            &live_proof,
-            config,
-            &pricer,
-            &redeemed_order,
-            close_quantity,
-            clock,
-            ctx,
-        );
-        (redeemed_order.id(), replacement_order_id)
-    }
-}
-
-/// If `order` has been liquidated, clear it (full close) and return `true`;
-/// otherwise leave state untouched and return `false`.
-fun try_redeem_if_liquidated(
-    market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    order: &Order,
-    close_quantity: u64,
-): bool {
-    if (market.strike_exposure.is_liquidated_order(order)) {
-        market.redeem_liquidated_order(manager, order, close_quantity);
-        true
-    } else {
-        false
-    }
-}
-
 fun redeem_liquidated_order(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
+    account: &mut Account,
     order: &Order,
     close_quantity: u64,
+    ctx: &mut TxContext,
 ) {
     assert!(close_quantity == order.quantity(), EFullCloseRequired);
-    let position_root_id = manager.remove_position(market.id(), order.id());
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
     market.strike_exposure.clear_liquidated_order(order);
-    order_events::emit_liquidated_order_redeemed(market.id(), manager, order, position_root_id);
+    order_events::emit_liquidated_order_redeemed(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        order,
+        position_root_id,
+    );
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {
@@ -654,14 +549,9 @@ fun ewma_penalty(
     market.ewma.penalty_fee(config, quantity, ctx)
 }
 
-/// Mint logic + flow gates (version, mint-pause, trading pause, valuation lock)
-/// behind the public `mint` entrypoint, which only performs the ambient manager
-/// settle before delegating here. Root-free so it stays unit-testable; the settle is
-/// reverted atomically if a gate aborts.
-public(package) fun mint_internal(
+fun mint_internal(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: &PredictTradeProof,
+    account: &mut Account,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -673,19 +563,19 @@ public(package) fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_version_allowed();
+    config.assert_version();
     assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    // Proof is validated inside withdraw_with_proof below. Live oracle validation
-    // and liveness are resolved into `pricer` before any trade mutation.
-    manager.update_stake(ctx);
-    market.run_liquidation_pass(
-        &pricer,
-        config.trade_liquidation_budget(),
-        clock,
-    );
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
 
     let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
@@ -698,14 +588,11 @@ public(package) fun mint_internal(
             clock,
         );
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
-    let fee_amount = config
-        .stake_config()
-        .fee_amount_after_discount(raw_fee_amount, manager.active_stake());
+    let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
 
-    let builder_fee_amount = market.settle_mint_payment(
-        manager,
-        proof,
+    let (builder_fee_amount, builder_code_id) = market.settle_mint_payment(
+        account,
         &minted_order,
         net_premium,
         fee_amount,
@@ -714,7 +601,9 @@ public(package) fun mint_internal(
     );
     order_events::emit_order_minted(
         market.id(),
-        manager,
+        account.account_id(),
+        account.owner(),
+        builder_code_id,
         &minted_order,
         leverage,
         entry_probability,
@@ -726,10 +615,54 @@ public(package) fun mint_internal(
     minted_order.id()
 }
 
+fun redeem_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let redeemed_order = order::from_order_id(order_id);
+    if (market.ensure_settled(propbook_registry, pyth, clock)) {
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+        market.redeem_settled_internal(account, &redeemed_order, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+    let replacement_order_id = market.redeem_live_internal(
+        account,
+        config,
+        &pricer,
+        &redeemed_order,
+        close_quantity,
+        clock,
+        ctx,
+    );
+    (redeemed_order.id(), replacement_order_id)
+}
+
 fun redeem_live_internal(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: &PredictTradeProof,
+    account: &mut Account,
     config: &ProtocolConfig,
     pricer: &pricing::Pricer,
     order: &Order,
@@ -737,10 +670,13 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    // Proof is validated inside deposit_with_proof below. Live oracle validation
-    // and liveness are resolved into `pricer` before the live branch mutates.
-    manager.update_stake(ctx);
-    let position_root_id = manager.remove_position(market.id(), order.id());
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
 
     let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
@@ -758,22 +694,25 @@ fun redeem_live_internal(
             clock,
         )
         .min(redeem_amount);
-    let fee_amount = config
-        .stake_config()
-        .fee_amount_after_discount(fee_amount, manager.active_stake());
+    let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
     let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()
     } else {
         let replacement_order_id = resulting_order.id();
-        manager.add_position(market.id(), replacement_order_id, position_root_id);
+        predict_account::add_position(
+            account,
+            market.id(),
+            replacement_order_id,
+            position_root_id,
+            ctx,
+        );
         option::some(replacement_order_id)
     };
 
-    let (builder_fee_amount, penalty_amount) = market.settle_live_redeem_payment(
-        manager,
-        proof,
+    let (builder_fee_amount, penalty_amount, builder_code_id) = market.settle_live_redeem_payment(
+        account,
         redeem_amount,
         fee_amount,
         penalty_amount,
@@ -783,7 +722,9 @@ fun redeem_live_internal(
 
     order_events::emit_live_order_redeemed(
         market.id(),
-        manager,
+        account.account_id(),
+        account.owner(),
+        builder_code_id,
         order,
         position_root_id,
         close_quantity,
@@ -798,20 +739,26 @@ fun redeem_live_internal(
 
 fun redeem_settled_internal(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
+    account: &mut Account,
     order: &Order,
     ctx: &mut TxContext,
 ) {
-    let position_root_id = manager.remove_position(market.id(), order.id());
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
     market.materialize_settled_liability();
 
     let settlement = market.settlement_price();
     let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
-    market.settle_settled_redeem_payment(manager, payout_amount, ctx);
+    market.settle_settled_redeem_payment(account, payout_amount, ctx);
 
     order_events::emit_settled_order_redeemed(
         market.id(),
-        manager,
+        account.account_id(),
+        account.owner(),
         order,
         position_root_id,
         settlement,
@@ -826,30 +773,29 @@ fun redeem_settled_internal(
 /// earns no builder cut.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: &PredictTradeProof,
+    account: &mut Account,
     order: &Order,
     net_premium: u64,
     fee_amount: u64,
     penalty_amount: u64,
     ctx: &mut TxContext,
-): u64 {
+): (u64, Option<ID>) {
     let quantity = order.quantity();
-    let builder_code_id = manager.builder_code_id();
+    let builder_code_id = predict_account::builder_code_id(account);
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
     let withdraw_amount = net_premium + fee_amount + builder_fee_amount + penalty_amount;
 
-    manager.add_position(market.id(), order.id(), order.id());
-    let mut payment = manager.withdraw_with_proof(proof, withdraw_amount, ctx).into_balance();
+    predict_account::add_position(account, market.id(), order.id(), order.id(), ctx);
+    let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
-    send_builder_fee(builder_code_id, builder_fee_payment);
+    send_builder_fee(copy builder_code_id, builder_fee_payment);
     let fee_payment = payment.split(fee_amount);
-    market.collect_trade_fee(manager, fee_payment);
+    market.collect_trade_fee(account, fee_payment, ctx);
     // Remaining balance is the net premium plus the penalty surplus.
     market.cash.receive(payment);
 
     market.assert_cash_backing();
-    builder_fee_amount
+    (builder_fee_amount, builder_code_id)
 }
 
 /// Settle a live redeem and return the builder fee and penalty actually applied.
@@ -859,15 +805,14 @@ fun settle_mint_payment(
 /// capped at the payout left after the fee and builder cut.
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    proof: &PredictTradeProof,
+    account: &mut Account,
     redeem_amount: u64,
     fee_amount: u64,
     penalty_amount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
-): (u64, u64) {
-    let builder_code_id = manager.builder_code_id();
+): (u64, u64, Option<ID>) {
+    let builder_code_id = predict_account::builder_code_id(account);
     let builder_fee_amount = builder_fee_amount(
         &builder_code_id,
         fee_amount,
@@ -880,19 +825,19 @@ fun settle_live_redeem_payment(
     let mut payout = market.cash.pay_authorized(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
-    market.collect_trade_fee(manager, fee);
-    send_builder_fee(builder_code_id, builder_fee);
+    market.collect_trade_fee(account, fee, ctx);
+    send_builder_fee(copy builder_code_id, builder_fee);
     // Penalty surplus stays in expiry cash rather than flowing to the redeemer.
     market.cash.receive(payout.split(penalty_amount));
 
     market.assert_cash_backing();
-    manager.deposit_with_proof(proof, payout.into_coin(ctx), ctx);
-    (builder_fee_amount, penalty_amount)
+    account.deposit<DUSDC>(payout.into_coin(ctx));
+    (builder_fee_amount, penalty_amount, builder_code_id)
 }
 
 fun settle_settled_redeem_payment(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
+    account: &mut Account,
     payout_amount: u64,
     ctx: &mut TxContext,
 ) {
@@ -900,7 +845,7 @@ fun settle_settled_redeem_payment(
     // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
     if (payout_amount > 0) {
         let payout = market.cash.pay_authorized(payout_amount);
-        manager.deposit_funds(payout, ctx);
+        account.deposit<DUSDC>(payout.into_coin(ctx));
     };
 
     market.assert_cash_backing();
@@ -908,12 +853,13 @@ fun settle_settled_redeem_payment(
 
 fun collect_trade_fee(
     market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
+    account: &mut Account,
     fee: Balance<DUSDC>,
+    ctx: &mut TxContext,
 ) {
     let fee_amount = market.cash.collect_trade_fee(fee);
     if (fee_amount == 0) return;
-    manager.record_trading_fee_paid(market.id(), fee_amount);
+    predict_account::record_trading_fee_paid(account, market.id(), fee_amount, ctx);
 }
 
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {

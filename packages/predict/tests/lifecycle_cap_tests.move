@@ -58,29 +58,34 @@ fun generate_proof_with_revoked_lifecycle_cap_aborts() {
 
 #[test, expected_failure(abort_code = registry::ELifecycleCapNotFound)]
 fun revoke_unknown_lifecycle_cap_aborts() {
-    let (_scenario, mut registry, admin_cap) = test_helpers::begin_registry_test();
+    let (_scenario, mut registry, _config, admin_cap) = test_helpers::begin_registry_test();
     // An id that was never minted into the allowlist.
-    registry::revoke_lifecycle_cap(&mut registry, &admin_cap, object::id_from_address(@0xCAFE));
+    registry.revoke_lifecycle_cap(&admin_cap, object::id_from_address(@0xCAFE));
     abort EUnexpectedSuccess
 }
 
 #[test]
 fun destroy_lifecycle_cap_does_not_revoke() {
-    let (mut scenario, mut registry, admin_cap) = test_helpers::begin_registry_test();
-    let cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
-    let other_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
+    let (mut scenario, mut registry, config, admin_cap) = test_helpers::begin_registry_test();
+    let cap = registry.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    let other_cap = registry.mint_lifecycle_cap(
+        &config,
+        &admin_cap,
+        scenario.ctx(),
+    );
     let destroyed_id = cap.id();
     cap.destroy();
     // Destroying the cap object must not touch the registry allowlist: the id is
     // still allow-listed, so revoking it by the copied id succeeds (revoke
     // aborts ELifecycleCapNotFound for ids not in the set).
-    registry::revoke_lifecycle_cap(&mut registry, &admin_cap, destroyed_id);
+    registry.revoke_lifecycle_cap(&admin_cap, destroyed_id);
     // Post-state: revoking the destroyed cap's id leaves other allow-listed
     // caps valid.
-    registry::revoke_lifecycle_cap(&mut registry, &admin_cap, other_cap.id());
+    registry.revoke_lifecycle_cap(&admin_cap, other_cap.id());
     other_cap.destroy();
     destroy(admin_cap);
     return_shared(registry);
+    return_shared(config);
     scenario.end();
 }
 
@@ -90,7 +95,9 @@ fun destroy_lifecycle_cap_does_not_revoke() {
 fun mint_lifecycle_cap(fx: &mut OracleFixture, admin_cap: &AdminCap): MarketLifecycleCap {
     let scenario = fx.scenario_mut();
     let mut registry = scenario.take_shared<Registry>();
-    let cap = registry::mint_lifecycle_cap(&mut registry, admin_cap, scenario.ctx());
+    let config = scenario.take_shared<ProtocolConfig>();
+    let cap = registry.mint_lifecycle_cap(&config, admin_cap, scenario.ctx());
+    return_shared(config);
     return_shared(registry);
     scenario.next_tx(test_constants::admin());
     cap
@@ -100,7 +107,7 @@ fun mint_lifecycle_cap(fx: &mut OracleFixture, admin_cap: &AdminCap): MarketLife
 fun revoke_lifecycle_cap(fx: &mut OracleFixture, admin_cap: &AdminCap, lifecycle_cap_id: ID) {
     let scenario = fx.scenario_mut();
     let mut registry = scenario.take_shared<Registry>();
-    registry::revoke_lifecycle_cap(&mut registry, admin_cap, lifecycle_cap_id);
+    registry.revoke_lifecycle_cap(admin_cap, lifecycle_cap_id);
     return_shared(registry);
     scenario.next_tx(test_constants::admin());
 }
@@ -115,8 +122,7 @@ fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycle
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry::create_expiry_market(
-        &mut registry,
+    let expiry_id = registry.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,

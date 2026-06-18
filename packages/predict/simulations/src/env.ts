@@ -39,6 +39,11 @@ const env = loadEnv();
 export const PACKAGE_ID = requireEnv("PACKAGE_ID");
 export const REGISTRY_ID = requireEnv("REGISTRY_ID");
 export const ADMIN_CAP_ID = requireEnv("ADMIN_CAP_ID");
+// The `account` package (deterministic accounts that replace the predict manager) is
+// published transitively with predict. `PredictApp` is authorized on the registry by
+// run.sh, so only the package + registry ids are needed at runtime.
+export const ACCOUNT_PACKAGE_ID = requireEnv("ACCOUNT_PACKAGE_ID");
+export const ACCOUNT_REGISTRY_ID = requireEnv("ACCOUNT_REGISTRY_ID");
 export const PROTOCOL_CONFIG_ID = requireEnv("PROTOCOL_CONFIG_ID");
 export const POOL_VAULT_ID = requireEnv("POOL_VAULT_ID");
 // `predict_math` was renamed to `fixed_math` (package + named address).

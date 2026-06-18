@@ -11,7 +11,12 @@
 #[test_only]
 module deepbook_predict::test_helpers;
 
-use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
+use deepbook_predict::{
+    admin::AdminCap,
+    protocol_config::ProtocolConfig,
+    registry::Registry,
+    test_constants
+};
 use propbook::{
     block_scholes_feed::BlockScholesFeed,
     pyth_feed::PythFeed,
@@ -89,18 +94,27 @@ public fun take_registry_and_admin(scenario: &mut Scenario, registry_id: ID): (R
 }
 
 /// Begin a scenario-backed registry test transaction and take the real
-/// `Registry` + `AdminCap` created by package-style setup.
-public fun begin_registry_test(): (Scenario, Registry, AdminCap) {
+/// `Registry` + shared `ProtocolConfig` + `AdminCap` created by package-style
+/// setup. `ProtocolConfig` is returned because version-gated registry entrypoints
+/// now take it (the watermark gate lives on the config).
+public fun begin_registry_test(): (Scenario, Registry, ProtocolConfig, AdminCap) {
     let (mut scenario, registry_id) = setup_test();
     scenario.next_tx(test_constants::admin());
     let (registry, admin_cap) = take_registry_and_admin(&mut scenario, registry_id);
+    let config = scenario.take_shared<ProtocolConfig>();
 
-    (scenario, registry, admin_cap)
+    (scenario, registry, config, admin_cap)
 }
 
-/// Return the shared registry and destroy the test-owned admin cap.
-public fun finish_registry_test(scenario: Scenario, registry: Registry, admin_cap: AdminCap) {
+/// Return the shared registry + config and destroy the test-owned admin cap.
+public fun finish_registry_test(
+    scenario: Scenario,
+    registry: Registry,
+    config: ProtocolConfig,
+    admin_cap: AdminCap,
+) {
     test::return_shared(registry);
+    test::return_shared(config);
     destroy(admin_cap);
     scenario.end();
 }

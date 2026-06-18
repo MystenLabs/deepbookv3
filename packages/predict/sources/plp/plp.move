@@ -3,18 +3,19 @@
 
 /// PLP token and pool vault.
 ///
-/// PoolVault owns the PLP treasury cap, the pooled DEEP staked by managers, idle
+/// PoolVault owns the PLP treasury cap, the pooled DEEP staked by accounts, idle
 /// DUSDC, the protocol reserve, per-expiry cash accounting, and the async LP
 /// supply/withdraw queues. It coordinates the full-pool NAV valuation (a hot-potato
 /// aggregation over every active market) and the unified per-market cash flow
 /// (initial funding, live rebalance/sweep, and settled-market sweep with terminal
 /// profit materialization). LPs queue supply/withdraw requests routed through a
-/// PredictManager; the daily flush (`finish_flush`) drains them at the frozen pool
-/// NAV, minting/burning PLP and delivering fills to each manager via the balance
+/// loaded Account; the daily flush (`finish_flush`) drains them at the frozen pool
+/// NAV, minting/burning PLP and delivering fills to each account via the balance
 /// accumulator. Incentives moved to a separate staking contract; DEEP staking is an
 /// unrelated trading feature.
 module deepbook_predict::plp;
 
+use account::account::{AccountWrapper, Auth};
 use deepbook_predict::{
     admin::AdminCap,
     constants,
@@ -22,8 +23,7 @@ use deepbook_predict::{
     lp_book::{Self, LpBook},
     market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
-    predict_manager::PredictManager,
-    predict_withdraw_cap::PredictWithdrawCap,
+    predict_account,
     protocol_config::ProtocolConfig,
     vault_events
 };
@@ -35,8 +35,7 @@ use sui::{
     balance::{Self, Balance},
     clock::Clock,
     coin::{Coin, TreasuryCap},
-    coin_registry,
-    vec_set::{Self, VecSet}
+    coin_registry
 };
 use token::deep::DEEP;
 
@@ -44,7 +43,6 @@ const EExpiryMarketNotActive: u64 = 0;
 const EExpiryMarketAlreadyValued: u64 = 1;
 const EWrongPoolVault: u64 = 2;
 const EMissingExpiryValuation: u64 = 3;
-const EPackageVersionDisabled: u64 = 9;
 const ENotBootstrapped: u64 = 10;
 const EPlpPriceBelowCircuitBreaker: u64 = 11;
 const EPlpPriceAboveCircuitBreaker: u64 = 12;
@@ -61,15 +59,13 @@ public struct PoolVault has key {
     /// Protocol-owned DUSDC (the materialized terminal-profit cut) excluded from
     /// PLP redemption.
     protocol_reserve_balance: Balance<DUSDC>,
-    /// Pooled DEEP staked by all managers for trading benefits. Per-manager
-    /// active/inactive amounts are mirrored on each `PredictManager`.
+    /// Pooled DEEP staked by all accounts for trading benefits. Per-account
+    /// active/inactive amounts are mirrored in Predict account data.
     staked_deep: Balance<DEEP>,
     /// PLP share issuance plus queued supply/withdraw escrow.
     lp: LpBook<PLP>,
     /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
     expiry_accounting: Ledger,
-    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
-    allowed_versions: VecSet<u64>,
 }
 
 /// Transaction-local full-pool NAV valuation hot potato.
@@ -114,12 +110,7 @@ public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
 }
 
-/// Return this vault's mirrored set of allowed package versions.
-public fun allowed_versions(vault: &PoolVault): VecSet<u64> {
-    vault.allowed_versions
-}
-
-/// Return DEEP staked by managers and held in custody by the pool.
+/// Return DEEP staked by accounts and held in custody by the pool.
 public fun staked_deep(vault: &PoolVault): u64 {
     vault.staked_deep.value()
 }
@@ -189,6 +180,7 @@ public fun start_pool_valuation(
     vault: &PoolVault,
     lifecycle_proof: MarketLifecycleProof,
 ): PoolValuation {
+    config.assert_version();
     lifecycle_proof.destroy_proof();
     start_pool_valuation_internal(config, vault)
 }
@@ -217,6 +209,7 @@ public fun value_expiry(
     bs: &BlockScholesFeed,
     clock: &Clock,
 ) {
+    config.assert_version();
     config.assert_valuation_in_progress();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
@@ -249,7 +242,7 @@ public fun finish_flush(
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
 ): u64 {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_valuation_in_progress();
     valuation.assert_pool_vault(vault);
     assert_all_expected_valued(
@@ -305,41 +298,54 @@ public fun finish_flush(
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
-/// amount is recorded as inactive on the manager and activates next epoch
-/// (`PredictManager.update_stake`, run by the trade/claim flows). Callable
+/// amount is recorded as inactive on the account and activates next epoch
+/// (`predict_account::active_stake_mut`, run by trade/claim flows). Callable
 /// anytime, any number of times.
 public fun stake_deep(
     vault: &mut PoolVault,
-    manager: &mut PredictManager,
-    deep: Coin<DEEP>,
-    ctx: &TxContext,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ) {
-    vault.assert_version_allowed();
-    manager.assert_owner(ctx);
-    manager.update_stake(ctx);
-    let amount = deep.value();
-    manager.add_inactive_stake(amount);
+    config.assert_version();
+    wrapper.settle<DEEP>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let deep = account.withdraw<DEEP>(amount, ctx);
+    predict_account::active_stake_mut(account, ctx);
+    predict_account::add_inactive_stake(account, amount, ctx);
     vault.staked_deep.join(deep.into_balance());
     vault_events::emit_deep_staked(
         vault.id(),
-        manager.id(),
+        account.account_id(),
         amount,
-        manager.active_stake(),
-        manager.inactive_stake(),
+        predict_account::active_stake(account),
+        predict_account::inactive_stake(account),
     );
 }
 
 /// Withdraw all staked DEEP (active and inactive) at any time, no penalty.
 public fun unstake_deep(
     vault: &mut PoolVault,
-    manager: &mut PredictManager,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
-): Coin<DEEP> {
-    vault.assert_version_allowed();
-    manager.assert_owner(ctx);
-    let amount = manager.remove_all_stake();
-    vault_events::emit_deep_unstaked(vault.id(), manager.id(), amount);
-    vault.staked_deep.split(amount).into_coin(ctx)
+) {
+    config.assert_version();
+    wrapper.settle<DEEP>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let amount = predict_account::remove_all_stake(account, ctx);
+    if (amount > 0) {
+        let deep = vault.staked_deep.split(amount).into_coin(ctx);
+        account.deposit<DEEP>(deep);
+    };
+    vault_events::emit_deep_unstaked(vault.id(), account.account_id(), amount);
 }
 
 /// Move cash between pool idle liquidity and one expiry market.
@@ -360,6 +366,7 @@ public fun rebalance_expiry_cash(
     pyth: &PythFeed,
     clock: &Clock,
 ) {
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     vault.rebalance_expiry_cash_inner(market, config, propbook_registry, pyth, clock);
 }
@@ -372,8 +379,13 @@ public fun rebalance_expiry_cash(
 /// Callable only by the operator and only while the pool is pristine
 /// (`total_supply == 0`), so it runs exactly once; all supply/withdraw/flush flows
 /// abort `ENotBootstrapped` until it has.
-public fun lock_capital(vault: &mut PoolVault, _admin_cap: &AdminCap, payment: Coin<DUSDC>) {
-    vault.assert_version_allowed();
+public fun lock_capital(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    payment: Coin<DUSDC>,
+) {
+    config.assert_version();
     assert!(vault.lp.total_supply() == 0, EAlreadyBootstrapped);
     let amount = payment.value();
     assert!(amount >= constants::min_bootstrap_liquidity!(), EBelowMinBootstrapLiquidity);
@@ -382,88 +394,107 @@ public fun lock_capital(vault: &mut PoolVault, _admin_cap: &AdminCap, payment: C
     vault_events::emit_capital_locked(vault.id(), amount);
 }
 
-/// Queue a supply request: pull `amount` DUSDC from the manager's internal custody
-/// into queue escrow, recording the manager as the fill recipient. Supplying is a
-/// capital-out move, so it is authorized by a `PredictWithdrawCap` (held by the
-/// owner or a composing vault), and the pull auto-settles any flush-delivered DUSDC
-/// first. The manager receives the minted PLP at the next flush. Returns the queue
-/// index, the handle used to cancel before the flush.
+/// Queue a supply request: pull `amount` DUSDC from account custody into queue
+/// escrow, recording the account's receive address as the fill recipient. The pull
+/// auto-settles any flush-delivered DUSDC first. The account receives the minted PLP
+/// at the next flush. Returns the queue index, the handle used to cancel before
+/// the flush.
 public fun request_supply(
     vault: &mut PoolVault,
-    manager: &mut PredictManager,
-    cap: &PredictWithdrawCap,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
-    root: &AccumulatorRoot,
     amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    let payment = manager.withdraw<DUSDC>(cap, root, amount, ctx);
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let payment = account.withdraw<DUSDC>(amount, ctx);
     let vault_id = vault.id();
-    vault.lp.request_supply(vault_id, manager, payment)
+    let account_id = account.account_id();
+    let recipient = account.receive_address();
+    let index = vault.lp.request_supply(account_id, recipient, payment);
+    vault_events::emit_supply_requested(vault_id, account_id, recipient, index, amount);
+    index
 }
 
-/// Queue a withdraw request: pull `amount` PLP shares from the manager's internal
-/// custody into queue escrow, recording the manager as the fill recipient.
-/// Authorized by a `PredictWithdrawCap`; the pull auto-settles any flush-delivered
-/// PLP first. Returns the queue index used to cancel before the flush.
+/// Queue a withdraw request: pull `amount` PLP shares from account custody into
+/// queue escrow, recording the account's receive address as the fill recipient.
+/// The pull auto-settles any flush-delivered PLP first. Returns the queue index
+/// used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
-    manager: &mut PredictManager,
-    cap: &PredictWithdrawCap,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
-    root: &AccumulatorRoot,
     amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    let lp = manager.withdraw<PLP>(cap, root, amount, ctx);
+    wrapper.settle<PLP>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let lp = account.withdraw<PLP>(amount, ctx);
     let vault_id = vault.id();
-    vault.lp.request_withdraw(vault_id, manager, lp)
+    let account_id = account.account_id();
+    let recipient = account.receive_address();
+    let index = vault.lp.request_withdraw(account_id, recipient, lp);
+    vault_events::emit_withdraw_requested(vault_id, account_id, recipient, index, amount);
+    index
 }
 
 /// Cancel a still-pending supply request, refunding its escrowed DUSDC straight into
-/// the requesting manager. Authorized by a `PredictWithdrawCap` (proves withdraw
-/// authority over the manager); `manager` must be the request's recorded recipient.
+/// the requesting account. `account` must be the request's recorded recipient.
 public fun cancel_supply_request(
     vault: &mut PoolVault,
-    manager: &mut PredictManager,
-    cap: &PredictWithdrawCap,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
-    root: &AccumulatorRoot,
     index: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
-    manager.validate_withdrawer(cap);
-    manager.settle<DUSDC>(root, ctx);
     let vault_id = vault.id();
-    vault.lp.cancel_supply_request(vault_id, manager, index, ctx);
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let recipient = account.receive_address();
+    let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
+    account.deposit<DUSDC>(refund.into_coin(ctx));
+    vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, true);
 }
 
 /// Cancel a still-pending withdraw request, refunding its escrowed PLP straight into
-/// the requesting manager. Authorized by a `PredictWithdrawCap`; `manager` must be
-/// the request's recorded recipient.
+/// the requesting account. `account` must be the request's recorded recipient.
 public fun cancel_withdraw_request(
     vault: &mut PoolVault,
-    manager: &mut PredictManager,
-    cap: &PredictWithdrawCap,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
-    root: &AccumulatorRoot,
     index: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    vault.assert_version_allowed();
+    config.assert_version();
     config.assert_not_valuation_in_progress();
-    manager.validate_withdrawer(cap);
-    manager.settle<PLP>(root, ctx);
     let vault_id = vault.id();
-    vault.lp.cancel_withdraw_request(vault_id, manager, index, ctx);
+    wrapper.settle<PLP>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let recipient = account.receive_address();
+    let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
+    account.deposit<PLP>(refund.into_coin(ctx));
+    vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, false);
 }
 
 // === Public-Package Functions ===
@@ -476,7 +507,6 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         staked_deep: balance::zero(),
         lp: lp_book::new(treasury_cap, ctx),
         expiry_accounting: pool_accounting::new(ctx),
-        allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
 
@@ -488,18 +518,10 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
     id
 }
 
-/// Overwrite this vault's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_pool_vault_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
-    vault.allowed_versions = allowed_versions;
-}
-
 /// Register a freshly created expiry market with the pool as an accounting row.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_expiry_market`.
 public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID) {
-    vault.assert_version_allowed();
     vault.expiry_accounting.register_expiry(expiry_market_id);
 }
 
@@ -507,8 +529,8 @@ public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID)
 /// valuation flush. A settled market is swept (deactivated, free cash returned,
 /// profit materialized) — idempotent, so a second pass is a safe no-op. A live
 /// market is topped up from idle toward target, or has its surplus over target
-/// swept back to idle. The valuation lock is owned by the public wrapper, not
-/// here, so the flush can call this under the lock without self-aborting.
+/// swept back to idle. The valuation lock and version gate are owned by the public
+/// wrappers, not here, so the flush can call this under the lock without self-aborting.
 public(package) fun rebalance_expiry_cash_inner(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -517,8 +539,6 @@ public(package) fun rebalance_expiry_cash_inner(
     pyth: &PythFeed,
     clock: &Clock,
 ): bool {
-    vault.assert_version_allowed();
-    market.assert_version_allowed();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
 
@@ -620,14 +640,6 @@ fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
     assert!(
         pool_nav <= math::mul(total_supply, constants::max_plp_price!()),
         EPlpPriceAboveCircuitBreaker,
-    );
-}
-
-/// Abort if the running package version is not allowed for this vault.
-fun assert_version_allowed(vault: &PoolVault) {
-    assert!(
-        vault.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
     );
 }
 
@@ -753,7 +765,6 @@ fun emit_expiry_cash_rebalanced(
 /// cap-gated flush entrypoints. Gated on a bootstrapped pool so `finish_flush` never
 /// reaches `assert_plp_price_in_bounds` with `total_supply == 0`.
 fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
-    vault.assert_version_allowed();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();
     PoolValuation {

@@ -36,7 +36,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use std::unit_test::{assert_eq, destroy};
+use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
@@ -51,7 +51,7 @@ const UNDERWATER_FORWARD: u64 = 10_000_000_000;
 
 #[test]
 fun empty_live_market_values_at_free_cash() {
-    let (mut fx, expiry_id, manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, _trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
 
@@ -61,20 +61,22 @@ fun empty_live_market_values_at_free_cash() {
     check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[], float!());
 
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun single_one_x_up_order() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -86,21 +88,25 @@ fun single_one_x_up_order() {
 
     check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun single_one_x_down_order_anchored_at_neg_inf() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -113,21 +119,25 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
     check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun two_one_x_orders_same_strike_collapse_to_one_node() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let id1 = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -139,7 +149,8 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
     let id2 = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -153,21 +164,25 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
     // once at P(strike); the aggregate quantity equals the per-order sum.
     check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id1, id2], float!());
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun single_leveraged_order_above_floor() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -181,21 +196,25 @@ fun single_leveraged_order_above_floor() {
     // correction min() picks the floor and the order's net liability is 5e8.
     check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun single_leveraged_order_underwater_nets_to_zero() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -214,21 +233,25 @@ fun single_leveraged_order_underwater_nets_to_zero() {
     assert_eq!(nav, market.cash_balance().saturating_sub(market.rebate_reserve()));
     check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun mixed_one_x_and_leveraged_book() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let up = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -240,7 +263,8 @@ fun mixed_one_x_and_leveraged_book() {
     let down = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -252,7 +276,8 @@ fun mixed_one_x_and_leveraged_book() {
     let leveraged = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -275,8 +300,9 @@ fun mixed_one_x_and_leveraged_book() {
         float!(),
     );
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 

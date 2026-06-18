@@ -12,8 +12,9 @@ module deepbook_predict::constants;
 
 // === Package Versioning ===
 
-/// Current package version. Bumped on each upgrade and added to the protocol
-/// `allowed_versions` set by admin so version-gated entry points keep working.
+/// Current package version, bumped on each upgrade. Version-gated entry points run
+/// only while `current_version!() >= ProtocolConfig.version_watermark`; admin raises
+/// the watermark (`protocol_config::bump_version_watermark`) to retire older versions.
 public macro fun current_version(): u64 { 1 }
 
 // === Scaling ===
@@ -158,13 +159,3 @@ public macro fun pos_inf(): u64 { std::u64::max_value!() }
 /// nonzero tolerance must be sized by the §7 gas/accuracy benchmark before it is
 /// enabled — it is upgrade-required, not admin-tunable.
 public(package) macro fun nav_interpolation_price_tolerance(): u64 { 0 }
-
-// === PredictManager Derivation ===
-
-/// `PredictManagerKey` u64 slot for sender-owned managers created via
-/// `predict_manager::new`.
-public macro fun sender_owned_manager_slot(): u64 { 0 }
-
-/// `PredictManagerKey` u64 slot for self-owned managers created via
-/// `predict_manager::new_self_owned`.
-public macro fun self_owned_manager_slot(): u64 { 1 }

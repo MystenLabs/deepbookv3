@@ -21,19 +21,20 @@
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
+use account::account::AccountWrapper;
 use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     order,
     plp::PoolVault,
-    predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
     test_constants
 };
 use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use std::unit_test::{assert_eq, destroy};
+use std::unit_test::assert_eq;
+use sui::accumulator::AccumulatorRoot;
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
@@ -67,17 +68,20 @@ fun double_partial_close_survivor_reinsertion_stays_backed() {
 /// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /
 /// position assertions. Each row is a self-contained fixture lifecycle.
 fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -103,7 +107,8 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
         let (_closed, replacement) = fx.redeem(
             &config,
             &oracle_registry,
-            &mut manager,
+            &mut wrapper,
+            &root,
             &mut market,
             &pyth,
             &bs,
@@ -111,12 +116,12 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
             closes[i],
         );
         survivor_id = replacement.destroy_some();
-        assert!(manager.has_position(expiry_id, survivor_id));
+        assert!(helpers::has_position(&wrapper, expiry_id, survivor_id));
         helpers::assert_market_backed(&market);
         i = i + 1;
     };
 
-    cleanup(fx, pyth, bs, oracle_registry, vault, market, config, manager);
+    cleanup(fx, pyth, bs, oracle_registry, vault, market, config, wrapper, root);
 }
 
 /// Confirm a single close hits the +1 floor-share sub-additivity gap that
@@ -142,9 +147,10 @@ fun cleanup(
     vault: PoolVault,
     market: ExpiryMarket,
     config: ProtocolConfig,
-    manager: PredictManager,
+    wrapper: AccountWrapper,
+    root: AccumulatorRoot,
 ) {
+    helpers::return_account(wrapper, root);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }

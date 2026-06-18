@@ -8,12 +8,7 @@
 /// delegates request/cancel and frozen-mark queue drains here.
 module deepbook_predict::lp_book;
 
-use deepbook_predict::{
-    constants,
-    pool_accounting::Ledger,
-    predict_manager::PredictManager,
-    vault_events
-};
+use deepbook_predict::{constants, pool_accounting::Ledger, vault_events};
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use sui::{balance::{Self, Balance}, coin::{Coin, TreasuryCap}, table::{Self, Table}};
@@ -40,9 +35,9 @@ public struct LpBook<phantom LP> has store {
 
 public struct RequestEntry has copy, drop, store {
     index: u64,
-    /// Owning manager, carried so a fill can attribute to the manager directly
+    /// Owning account, carried so a fill can attribute to the account directly
     /// rather than only the derived `recipient` address (address is not invertible).
-    manager_id: ID,
+    account_id: ID,
     recipient: address,
     amount: u64,
 }
@@ -100,70 +95,40 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
 
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
-    pool_vault_id: ID,
-    manager: &PredictManager,
+    account_id: ID,
+    recipient: address,
     payment: Coin<DUSDC>,
 ): u64 {
     assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
-    let recipient = manager.id().to_address();
-    let amount = payment.value();
-    let index = book.supply_queue.enqueue(manager.id(), recipient, payment.into_balance());
-    vault_events::emit_supply_requested(pool_vault_id, manager.id(), recipient, index, amount);
-    index
+    book.supply_queue.enqueue(account_id, recipient, payment.into_balance())
 }
 
 public(package) fun request_withdraw<LP>(
     book: &mut LpBook<LP>,
-    pool_vault_id: ID,
-    manager: &PredictManager,
+    account_id: ID,
+    recipient: address,
     lp: Coin<LP>,
 ): u64 {
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
-    let recipient = manager.id().to_address();
-    let amount = lp.value();
-    let index = book.withdraw_queue.enqueue(manager.id(), recipient, lp.into_balance());
-    vault_events::emit_withdraw_requested(pool_vault_id, manager.id(), recipient, index, amount);
-    index
+    book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance())
 }
 
 public(package) fun cancel_supply_request<LP>(
     book: &mut LpBook<LP>,
-    pool_vault_id: ID,
-    manager: &mut PredictManager,
+    recipient: address,
     index: u64,
-    ctx: &mut TxContext,
-) {
-    let recipient = manager.id().to_address();
+): (ID, u64, Balance<DUSDC>) {
     let (request, refund) = book.supply_queue.remove_for_recipient(index, recipient);
-    manager.deposit_funds(refund, ctx);
-    vault_events::emit_request_cancelled(
-        pool_vault_id,
-        manager.id(),
-        recipient,
-        index,
-        request.amount,
-        true,
-    );
+    (request.account_id, request.amount, refund)
 }
 
 public(package) fun cancel_withdraw_request<LP>(
     book: &mut LpBook<LP>,
-    pool_vault_id: ID,
-    manager: &mut PredictManager,
+    recipient: address,
     index: u64,
-    ctx: &mut TxContext,
-) {
-    let recipient = manager.id().to_address();
+): (ID, u64, Balance<LP>) {
     let (request, refund) = book.withdraw_queue.remove_for_recipient(index, recipient);
-    manager.deposit_funds(refund, ctx);
-    vault_events::emit_request_cancelled(
-        pool_vault_id,
-        manager.id(),
-        recipient,
-        index,
-        request.amount,
-        false,
-    );
+    (request.account_id, request.amount, refund)
 }
 
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
@@ -194,7 +159,7 @@ public(package) fun drain<LP>(
         balance::send_funds(shares_minted, request.recipient);
         vault_events::emit_supply_filled(
             pool_vault_id,
-            request.manager_id,
+            request.account_id,
             request.recipient,
             request.index,
             request.amount,
@@ -218,7 +183,7 @@ public(package) fun drain<LP>(
         balance::send_funds(payout_cash, request.recipient);
         vault_events::emit_withdraw_filled(
             pool_vault_id,
-            request.manager_id,
+            request.account_id,
             request.recipient,
             request.index,
             request.amount,
@@ -255,7 +220,7 @@ fun is_empty<T>(queue: &RequestQueue<T>): bool {
 
 fun enqueue<T>(
     queue: &mut RequestQueue<T>,
-    manager_id: ID,
+    account_id: ID,
     recipient: address,
     escrow: Balance<T>,
 ): u64 {
@@ -267,7 +232,7 @@ fun enqueue<T>(
         .pages
         .borrow_mut(page_id)
         .entries
-        .push_back(RequestEntry { index, manager_id, recipient, amount });
+        .push_back(RequestEntry { index, account_id, recipient, amount });
     queue.escrow.join(escrow);
     queue.pending = queue.pending + 1;
     index

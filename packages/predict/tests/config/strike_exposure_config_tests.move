@@ -14,15 +14,19 @@
 /// probability exactly 0 (deep-OTM range), exactly 0.5 (range starting at the
 /// live price), or exactly 1 (live price far above the range start), which the
 /// tests below combine with adversarial leverage/quantity/template values.
+///
+/// The `mint_*` flow tests are disabled on the testnet-framework branch (they need an
+/// AccumulatorRoot; see `tests/helper/accumulator_support.move`), which leaves their
+/// dedicated consts + `setup_live_market_with_templates` unused here.
 #[test_only]
+#[allow(unused_const, unused_function)]
 module deepbook_predict::strike_exposure_config_tests;
 
 use deepbook_predict::{
     admin::{Self, AdminCap},
     config_constants,
     constants,
-    flow_test_helpers::{Self as helpers, Fixture},
-    predict_manager::PredictManager,
+    flow_test_helpers::{Self as helpers, Fixture, Trader},
     protocol_config::{Self, ProtocolConfig},
     strike_exposure_config,
     test_constants
@@ -78,7 +82,7 @@ fun setup_live_market_with_templates(
     min_ask_price: Option<u64>,
     liquidation_ltv: Option<u64>,
     terminal_floor_index: Option<u64>,
-): (Fixture, ID, PredictManager) {
+): (Fixture, ID, Trader) {
     let mut fx = helpers::setup_market_default();
     fx.scenario_mut().next_tx(test_constants::admin());
     let admin_cap = admin::new(fx.scenario_mut().ctx());
@@ -90,13 +94,13 @@ fun setup_live_market_with_templates(
     destroy(admin_cap);
 
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    let manager = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.scenario_mut().next_tx(test_constants::admin());
-    (fx, expiry_id, manager)
+    (fx, expiry_id, trader)
 }
 
 // === EInvalidAskBound (template setter relational guard) ===
@@ -175,21 +179,25 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
 
 // === EAskPriceOutOfBounds (mint admission) ===
 
+/* DISABLED(testnet-fw): needs AccumulatorRoot — nightly create_for_testing is absent on testnet; see accumulator_support.move. Restore the file/test when stable Sui ships it.
 #[test, expected_failure(abort_code = strike_exposure_config::EAskPriceOutOfBounds)]
 fun mint_all_in_price_above_max_ask_aborts() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::default_expiry_ms(),
         DEEP_ITM_LIVE_PRICE,
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // Entry probability saturates to 1.0; the fee floors at the default min
     // fee (0.005), so the all-in price 1.005 exceeds the default max ask 0.99.
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -206,20 +214,23 @@ fun mint_all_in_price_below_min_ask_aborts() {
     // The base fixture floors the min-ask template to 0, which makes the low
     // bound unreachable; restore the production default (0.01) before the
     // market snapshots its config.
-    let (mut fx, expiry_id, mut manager) = setup_live_market_with_templates(
+    let (mut fx, expiry_id, trader) = setup_live_market_with_templates(
         option::some(config_constants::default_min_ask_price!()),
         option::none(),
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // Entry probability saturates to 0; the all-in price is just the min-fee
     // floor (0.005), below the restored min ask (0.01).
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -235,14 +246,17 @@ fun mint_all_in_price_below_min_ask_aborts() {
 
 #[test, expected_failure(abort_code = strike_exposure_config::EInvalidLeverage)]
 fun mint_leverage_outside_tier_set_aborts() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -262,16 +276,19 @@ fun mint_leverage_outside_tier_set_aborts() {
 // quotes saturate to exactly {0, 0.5, 1} — none of which land in [0.1, 0.2).
 #[test, expected_failure(abort_code = strike_exposure_config::EInvalidLeverageTier)]
 fun mint_low_probability_above_one_x_aborts() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // Entry probability 0 (< the 0.1 one-x-only threshold) admits only 1x;
     // 1.5x is a valid tier value, so the tier policy is what aborts.
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -291,14 +308,17 @@ fun mint_low_probability_above_one_x_aborts() {
 // = (2_000_000 - 10_000) / 2 = 995_000 < 1_000_000.
 #[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBelowMinimum)]
 fun mint_net_premium_one_lot_below_minimum_aborts() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -312,16 +332,19 @@ fun mint_net_premium_one_lot_below_minimum_aborts() {
 
 #[test]
 fun mint_net_premium_at_minimum_succeeds() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // Just-inside boundary: net_premium = 2_000_000 / 2 = exactly
     // min_net_premium.
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -330,11 +353,12 @@ fun mint_net_premium_at_minimum_succeeds() {
         2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
     );
-    assert_eq!(manager.expiry_position_count(expiry_id), 1);
+    assert_eq!(helpers::position_count(&wrapper, expiry_id), 1);
     helpers::assert_market_backed(&market);
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
@@ -347,18 +371,21 @@ fun mint_net_premium_at_minimum_succeeds() {
 // the order opens below its own liquidation threshold and is rejected.
 #[test, expected_failure(abort_code = strike_exposure_config::EOrderBelowLiquidationThreshold)]
 fun mint_three_x_at_min_liquidation_ltv_aborts() {
-    let (mut fx, expiry_id, mut manager) = setup_live_market_with_templates(
+    let (mut fx, expiry_id, trader) = setup_live_market_with_templates(
         option::none(),
         option::some(config_constants::min_liquidation_ltv!()),
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -389,18 +416,21 @@ fun mint_three_x_at_min_liquidation_ltv_aborts() {
 //     -> terminal floor >= max terminal: floor terms abort.
 #[test, expected_failure(abort_code = strike_exposure_config::ETerminalFloorExceedsLiquidationLtv)]
 fun mint_terminal_floor_at_liquidation_ltv_aborts() {
-    let (mut fx, expiry_id, mut manager) = setup_live_market_with_templates(
+    let (mut fx, expiry_id, trader) = setup_live_market_with_templates(
         option::none(),
         option::some(LTV_JUST_ABOVE_TWO_AND_HALF_X_FLOOR_SHARE),
         option::some(config_constants::max_terminal_floor_index!()),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -411,6 +441,7 @@ fun mint_terminal_floor_at_liquidation_ltv_aborts() {
     );
     abort 999
 }
+*/
 
 // === Canonical index-term evaluation ===
 
