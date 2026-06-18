@@ -162,6 +162,20 @@ public fun withdraw<T>(
     coin
 }
 
+/// Deposit `coin` into the wrapped account's stored `T` balance from a transaction.
+/// `deposit` borrows `&mut Account`, which a PTB cannot carry across commands out of
+/// `load_account_mut`, so this folds authorize → load → deposit into one entrypoint
+/// (the same shape predict's `mint`/`redeem` use for account-authorized flows).
+public fun deposit_funds<T>(
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    coin: Coin<T>,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+) {
+    wrapper.load_account_mut(auth).deposit(coin, root, clock);
+}
+
 // === App-data Lane ===
 /// Attach an app's `Data` under its witness namespace. Requires `Permit<App>`.
 /// Aborts if `App` already has data attached.
