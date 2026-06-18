@@ -9,7 +9,7 @@
 module account::account_registry;
 
 use account::{account::{Self, AccountWrapper, Auth}, account_events};
-use std::internal::Permit;
+use std::{internal::Permit, type_name};
 use sui::{derived_object, dynamic_field as df};
 
 use fun df::add as UID.add;
@@ -125,12 +125,14 @@ public fun is_app_authorized<App>(registry: &AccountRegistry): bool {
 public fun authorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     assert!(!registry.is_app_authorized<App>(), EAppAlreadyAuthorized);
     registry.id.add(AppKey<App>(), true);
+    account_events::emit_app_authorized(type_name::with_defining_ids<App>().into_string());
 }
 
 /// Remove `App` from the app account-loading whitelist.
 public fun deauthorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     registry.assert_app_is_authorized<App>();
     let _authorized: bool = registry.id.remove(AppKey<App>());
+    account_events::emit_app_deauthorized(type_name::with_defining_ids<App>().into_string());
 }
 
 /// Assert that `App` is authorized for app-driven account access.

@@ -9,7 +9,7 @@ use account::{
     account_events,
     account_registry::{Self, AccountAdminCap, AccountRegistry}
 };
-use std::{internal::permit, unit_test::{assert_eq, destroy}};
+use std::{internal::permit, type_name, unit_test::{assert_eq, destroy}};
 use sui::{
     accumulator::{Self as accumulator, AccumulatorRoot},
     clock::Clock,
@@ -88,6 +88,68 @@ fun new_emits_account_created() {
 
     account::share(wrapper);
     return_shared(registry);
+    scenario.end();
+}
+
+#[test]
+fun authorize_and_deauthorize_emit_events() {
+    let mut scenario = setup();
+    let admin_cap = scenario.take_from_sender<AccountAdminCap>();
+    let mut registry = scenario.take_shared<AccountRegistry>();
+
+    registry.authorize_app<TestApp>(&admin_cap);
+    let authorized = event::events_by_type<account_events::AppAuthorized>();
+    assert_eq!(authorized.length(), 1);
+    assert_eq!(authorized[0].authorized_app(), type_name::with_defining_ids<TestApp>().into_string());
+
+    registry.deauthorize_app<TestApp>(&admin_cap);
+    let deauthorized = event::events_by_type<account_events::AppDeauthorized>();
+    assert_eq!(deauthorized.length(), 1);
+    assert_eq!(deauthorized[0].deauthorized_app(), type_name::with_defining_ids<TestApp>().into_string());
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun custody_emits_deposited_and_withdrawn_and_no_settled_on_empty_root() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(ALICE);
+    let mut wrapper = take_account_wrapper(&scenario, ALICE);
+    let account_id = wrapper.load_account().account_id();
+    let root = scenario.take_shared<AccumulatorRoot>();
+    let mut clock = scenario.take_shared<Clock>();
+    clock.increment_for_testing(1);
+
+    let auth = account::generate_auth(scenario.ctx());
+    let account = wrapper.load_account_mut(auth);
+    account.deposit<TEST_COIN>(
+        coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()),
+        &root,
+        &clock,
+    );
+    let withdrawn = account.withdraw<TEST_COIN>(WITHDRAW_AMOUNT, &root, &clock, scenario.ctx());
+    destroy(withdrawn);
+
+    let deposits = event::events_by_type<account_events::Deposited>();
+    assert_eq!(deposits.length(), 1);
+    assert_eq!(deposits[0].deposited_account_id(), account_id);
+    assert_eq!(deposits[0].deposited_coin_type(), type_name::with_defining_ids<TEST_COIN>().into_string());
+    assert_eq!(deposits[0].deposited_amount(), INITIAL_DEPOSIT);
+    assert_eq!(deposits[0].deposited_new_balance(), INITIAL_DEPOSIT);
+
+    let withdrawals = event::events_by_type<account_events::Withdrawn>();
+    assert_eq!(withdrawals.length(), 1);
+    assert_eq!(withdrawals[0].withdrawn_amount(), WITHDRAW_AMOUNT);
+    assert_eq!(withdrawals[0].withdrawn_new_balance(), POST_WITHDRAW_BALANCE);
+
+    // The empty test root makes settlement a no-op, so no FundsSettled is emitted.
+    assert_eq!(event::events_by_type<account_events::FundsSettled>().length(), 0);
+
+    return_shared(clock);
+    return_shared(root);
+    return_shared(wrapper);
     scenario.end();
 }
 

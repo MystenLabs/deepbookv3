@@ -16,7 +16,8 @@
 /// are open.
 module account::account;
 
-use std::internal::Permit;
+use account::account_events;
+use std::{internal::Permit, type_name};
 use sui::{
     accumulator::AccumulatorRoot,
     bag::{Self, Bag},
@@ -127,7 +128,14 @@ public fun receive_address(self: &Account): address {
 /// Deposit `coin` and first settle any accumulator funds for `T` into the account.
 public fun deposit<T>(self: &mut Account, coin: Coin<T>, root: &AccumulatorRoot, clock: &Clock) {
     self.settle_unchecked<T>(root, clock);
+    let amount = coin.value();
     self.deposit_balance(coin.into_balance());
+    account_events::emit_deposited(
+        self.account_id(),
+        type_name::with_defining_ids<T>().into_string(),
+        amount,
+        self.stored_balance<T>(),
+    );
 }
 
 /// Withdraw `amount` of `T` and first settle any accumulator funds for `T`.
@@ -139,7 +147,14 @@ public fun withdraw<T>(
     ctx: &mut TxContext,
 ): Coin<T> {
     self.settle_unchecked<T>(root, clock);
-    self.withdraw_balance<T>(amount).into_coin(ctx)
+    let coin = self.withdraw_balance<T>(amount).into_coin(ctx);
+    account_events::emit_withdrawn(
+        self.account_id(),
+        type_name::with_defining_ids<T>().into_string(),
+        amount,
+        self.stored_balance<T>(),
+    );
+    coin
 }
 
 // === App-data Lane ===
@@ -214,6 +229,15 @@ fun settle_unchecked<T>(self: &mut Account, root: &AccumulatorRoot, clock: &Cloc
     if (amount == 0) return;
     let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.account_id, amount);
     self.deposit_balance(balance::redeem_funds(withdrawal));
+    // NOTE(barrier): a nonzero settlement needs barrier-delivered funds, which has no
+    // Move test seam — covered by integration, see ACCUMULATOR_TESTING_STATUS.md. The
+    // amount==0 no-emit path IS unit-tested.
+    account_events::emit_funds_settled(
+        self.account_id(),
+        type_name::with_defining_ids<T>().into_string(),
+        amount,
+        self.stored_balance<T>(),
+    );
 }
 
 fun assert_owner(self: &AccountWrapper, owner: address) {
