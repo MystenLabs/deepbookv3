@@ -12,7 +12,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         expiry_market_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         order_id -> Text,
         position_root_id -> Text,
         owner -> Text,
@@ -41,7 +41,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         expiry_market_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         order_id -> Text,
         position_root_id -> Text,
         owner -> Text,
@@ -68,7 +68,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         expiry_market_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         order_id -> Text,
         position_root_id -> Text,
         owner -> Text,
@@ -90,7 +90,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         expiry_market_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         order_id -> Text,
         position_root_id -> Text,
         owner -> Text,
@@ -132,23 +132,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    predict_manager_created (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        tx_index -> Int8,
-        event_index -> Int8,
-        timestamp -> Timestamp,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        predict_manager_id -> Text,
-        balance_manager_id -> Text,
-        owner -> Text,
-    }
-}
-
-diesel::table! {
     builder_code_created (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -176,57 +159,9 @@ diesel::table! {
         timestamp -> Timestamp,
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         owner -> Text,
         builder_code_id -> Nullable<Text>,
-    }
-}
-
-diesel::table! {
-    predict_trade_cap_minted (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        tx_index -> Int8,
-        event_index -> Int8,
-        timestamp -> Timestamp,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        predict_manager_id -> Text,
-        cap_id -> Text,
-    }
-}
-
-diesel::table! {
-    predict_deposit_cap_minted (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        tx_index -> Int8,
-        event_index -> Int8,
-        timestamp -> Timestamp,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        predict_manager_id -> Text,
-        cap_id -> Text,
-    }
-}
-
-diesel::table! {
-    predict_withdraw_cap_minted (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        tx_index -> Int8,
-        event_index -> Int8,
-        timestamp -> Timestamp,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        predict_manager_id -> Text,
-        cap_id -> Text,
     }
 }
 
@@ -515,7 +450,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         amount -> Numeric,
         active_stake_after -> Numeric,
         inactive_stake_after -> Numeric,
@@ -534,7 +469,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         amount -> Numeric,
     }
 }
@@ -568,7 +503,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         recipient -> Text,
         request_index -> Int8,
         amount -> Numeric,
@@ -587,7 +522,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         recipient -> Text,
         request_index -> Int8,
         amount -> Numeric,
@@ -606,7 +541,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         recipient -> Text,
         request_index -> Int8,
         amount -> Numeric,
@@ -626,7 +561,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         recipient -> Text,
         request_index -> Int8,
         dusdc_amount -> Numeric,
@@ -646,7 +581,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_vault_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         recipient -> Text,
         request_index -> Int8,
         shares_burned -> Numeric,
@@ -683,7 +618,7 @@ diesel::table! {
     order_state (expiry_market_id, order_id) {
         expiry_market_id -> Text,
         order_id -> Text,
-        predict_manager_id -> Nullable<Text>,
+        account_id -> Nullable<Text>,
         position_root_id -> Nullable<Text>,
         owner -> Nullable<Text>,
         status -> Text,
@@ -709,7 +644,7 @@ diesel::table! {
         pool_vault_id -> Text,
         is_supply -> Bool,
         request_index -> Int8,
-        predict_manager_id -> Nullable<Text>,
+        account_id -> Nullable<Text>,
         recipient -> Nullable<Text>,
         requested_amount -> Nullable<Numeric>,
         status -> Text,
@@ -774,7 +709,7 @@ diesel::table! {
     position_cashflow (expiry_market_id, position_root_id) {
         expiry_market_id -> Text,
         position_root_id -> Text,
-        predict_manager_id -> Text,
+        account_id -> Text,
         owner -> Text,
         minted_quantity -> Numeric,
         net_premium -> Numeric,
@@ -925,10 +860,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     order_state,
     position_cashflow,
     pyth_observation,
-    predict_deposit_cap_minted,
-    predict_manager_created,
-    predict_trade_cap_minted,
-    predict_withdraw_cap_minted,
     pricing_config_updated,
     request_cancelled,
     risk_config_updated,

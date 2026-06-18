@@ -77,7 +77,7 @@ fn market_settled_map() {
 fn supply_requested_map() {
     let ev = SupplyRequested {
         pool_vault_id: ObjectID::from_hex_literal(VAULT_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: RECIPIENT.parse().unwrap(),
         index: 7,
         amount: 100_000_000,
@@ -85,7 +85,7 @@ fn supply_requested_map() {
     let row = supply_requested_handler::map(&ev, &meta(11, 0, 1));
 
     assert_eq!(row.pool_vault_id, VAULT_ID);
-    assert_eq!(row.predict_manager_id, MANAGER_ID);
+    assert_eq!(row.account_id, MANAGER_ID);
     assert_eq!(row.recipient, RECIPIENT);
     assert_eq!(row.request_index, 7); // event `index` -> request_index BIGINT
     assert_eq!(row.amount, BigDecimal::from(100_000_000u64));
@@ -96,7 +96,7 @@ fn supply_requested_map() {
 fn withdraw_requested_map() {
     let ev = WithdrawRequested {
         pool_vault_id: ObjectID::from_hex_literal(VAULT_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: RECIPIENT.parse().unwrap(),
         index: 8,
         amount: 50_000_000,
@@ -104,7 +104,7 @@ fn withdraw_requested_map() {
     let row = withdraw_requested_handler::map(&ev, &meta(12, 1, 0));
 
     assert_eq!(row.pool_vault_id, VAULT_ID);
-    assert_eq!(row.predict_manager_id, MANAGER_ID);
+    assert_eq!(row.account_id, MANAGER_ID);
     assert_eq!(row.recipient, RECIPIENT);
     assert_eq!(row.request_index, 8);
     assert_eq!(row.amount, BigDecimal::from(50_000_000u64));
@@ -115,7 +115,7 @@ fn withdraw_requested_map() {
 fn request_cancelled_map() {
     let ev = RequestCancelled {
         pool_vault_id: ObjectID::from_hex_literal(VAULT_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: RECIPIENT.parse().unwrap(),
         index: 9,
         amount: 25_000_000,
@@ -124,7 +124,7 @@ fn request_cancelled_map() {
     let row = request_cancelled_handler::map(&ev, &meta(13, 0, 2));
 
     assert_eq!(row.pool_vault_id, VAULT_ID);
-    assert_eq!(row.predict_manager_id, MANAGER_ID);
+    assert_eq!(row.account_id, MANAGER_ID);
     assert_eq!(row.recipient, RECIPIENT);
     assert_eq!(row.request_index, 9);
     assert_eq!(row.amount, BigDecimal::from(25_000_000u64));
@@ -136,7 +136,7 @@ fn request_cancelled_map() {
 fn supply_filled_map() {
     let ev = SupplyFilled {
         pool_vault_id: ObjectID::from_hex_literal(VAULT_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: RECIPIENT.parse().unwrap(),
         index: 7,
         dusdc_amount: 100_000_000,
@@ -145,7 +145,7 @@ fn supply_filled_map() {
     let row = supply_filled_handler::map(&ev, &meta(14, 2, 0));
 
     assert_eq!(row.pool_vault_id, VAULT_ID);
-    assert_eq!(row.predict_manager_id, MANAGER_ID);
+    assert_eq!(row.account_id, MANAGER_ID);
     assert_eq!(row.recipient, RECIPIENT);
     assert_eq!(row.request_index, 7);
     assert_eq!(row.dusdc_amount, BigDecimal::from(100_000_000u64));
@@ -157,7 +157,7 @@ fn supply_filled_map() {
 fn withdraw_filled_map() {
     let ev = WithdrawFilled {
         pool_vault_id: ObjectID::from_hex_literal(VAULT_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: RECIPIENT.parse().unwrap(),
         index: 8,
         shares_burned: 99_000_000,
@@ -166,7 +166,7 @@ fn withdraw_filled_map() {
     let row = withdraw_filled_handler::map(&ev, &meta(15, 0, 0));
 
     assert_eq!(row.pool_vault_id, VAULT_ID);
-    assert_eq!(row.predict_manager_id, MANAGER_ID);
+    assert_eq!(row.account_id, MANAGER_ID);
     assert_eq!(row.recipient, RECIPIENT);
     assert_eq!(row.request_index, 8);
     assert_eq!(row.shares_burned, BigDecimal::from(99_000_000u64));
@@ -358,13 +358,13 @@ fn expiry_profit_materialized_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn deep_staked_map() {
-    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN predict_manager_id -> canonical 0x, amount/active_stake_after/inactive_stake_after NUMERIC, tx_index/event_index).
+    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN account_id -> canonical 0x, amount/active_stake_after/inactive_stake_after NUMERIC, tx_index/event_index).
 }
 
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn deep_unstaked_map() {
-    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN predict_manager_id -> canonical 0x, amount NUMERIC, tx_index/event_index).
+    // TODO(testnet-deploy): assert the Row fields (pool_vault_id THEN account_id -> canonical 0x, amount NUMERIC, tx_index/event_index).
 }
 
 #[test]

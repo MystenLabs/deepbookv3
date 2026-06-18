@@ -115,7 +115,7 @@ fn lot_size_matches_move_constant() {
 fn minted_event() -> OrderMinted {
     OrderMinted {
         expiry_market_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         order_id: u256(NONLEV_ID),
         position_root_id: u256(NONLEV_ID),
         owner: OWNER.parse().unwrap(),
@@ -135,7 +135,7 @@ fn minted_event() -> OrderMinted {
 fn live_redeemed_event(replacement: Option<&str>) -> LiveOrderRedeemed {
     LiveOrderRedeemed {
         expiry_market_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         order_id: u256(NONLEV_ID),
         position_root_id: u256(NONLEV_ID),
         owner: OWNER.parse().unwrap(),
@@ -164,7 +164,7 @@ fn order_liquidated_event() -> OrderLiquidated {
 fn liquidated_redeemed_event() -> LiquidatedOrderRedeemed {
     LiquidatedOrderRedeemed {
         expiry_market_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         order_id: u256(NONLEV_ID),
         position_root_id: u256(NONLEV_ID),
         owner: OWNER.parse().unwrap(),
@@ -180,7 +180,7 @@ fn map_minted_fills_entry_facts_and_decoded_terms() {
 
     assert_eq!(row.order_id, NONLEV_ID);
     assert_eq!(row.expiry_market_id, MARKET_ID);
-    assert_eq!(row.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(row.account_id.as_deref(), Some(MANAGER_ID));
     assert_eq!(row.position_root_id.as_deref(), Some(NONLEV_ID));
     assert_eq!(row.owner.as_deref(), Some(OWNER));
     assert_eq!(row.status, status::OPEN);
@@ -215,7 +215,7 @@ fn map_live_redeemed_partial_close_synthesizes_replacement_row() {
     assert_eq!(replacement.order_id, LEVERAGED_ID);
     assert_eq!(replacement.status, status::OPEN);
     assert_eq!(replacement.replacement_order_id, None);
-    assert_eq!(replacement.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(replacement.account_id.as_deref(), Some(MANAGER_ID));
     assert_eq!(replacement.position_root_id.as_deref(), Some(NONLEV_ID));
     assert_eq!(replacement.owner.as_deref(), Some(OWNER));
     // Contract terms come from the replacement's own packed id.
@@ -248,7 +248,7 @@ fn map_live_redeemed_full_close_yields_single_closed_row() {
 fn map_order_liquidated_has_no_identity() {
     let row = map_order_liquidated(&order_liquidated_event(), &meta(30, 1, 0));
     assert_eq!(row.status, status::LIQUIDATED);
-    assert_eq!(row.predict_manager_id, None);
+    assert_eq!(row.account_id, None);
     assert_eq!(row.position_root_id, None);
     assert_eq!(row.owner, None);
     assert_eq!(row.expiry_market_id, MARKET_ID);
@@ -260,7 +260,7 @@ fn map_settled_and_liquidated_redeemed_statuses() {
     let settled = map_settled_redeemed(
         &predict_indexer::models::SettledOrderRedeemed {
             expiry_market_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
-            predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+            account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
             order_id: u256(NONLEV_ID),
             position_root_id: u256(NONLEV_ID),
             owner: OWNER.parse().unwrap(),
@@ -323,7 +323,7 @@ fn fold_is_order_independent_for_out_of_order_batches() {
     assert_eq!(folded.len(), 1);
     let row = &folded[0];
     assert_eq!(row.status, status::LIQUIDATED);
-    assert_eq!(row.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(row.account_id.as_deref(), Some(MANAGER_ID));
     assert_eq!(row.owner.as_deref(), Some(OWNER));
     assert_eq!(row.net_premium, Some(BigDecimal::from(54_000_000u64)));
     assert_eq!((row.checkpoint, row.tx_index, row.event_index), (30, 1, 0));
@@ -409,7 +409,7 @@ const REQUEST_INDEX: u64 = 4;
 fn supply_requested_event() -> SupplyRequested {
     SupplyRequested {
         pool_vault_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: OWNER.parse().unwrap(),
         index: REQUEST_INDEX,
         amount: 100_000_000,
@@ -419,7 +419,7 @@ fn supply_requested_event() -> SupplyRequested {
 fn supply_filled_event() -> SupplyFilled {
     SupplyFilled {
         pool_vault_id: ObjectID::from_hex_literal(MARKET_ID).unwrap(),
-        predict_manager_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
+        account_id: ObjectID::from_hex_literal(MANAGER_ID).unwrap(),
         recipient: OWNER.parse().unwrap(),
         index: REQUEST_INDEX,
         dusdc_amount: 100_000_000,
@@ -434,7 +434,7 @@ fn lp_map_supply_requested_carries_identity_and_amount() {
     assert_eq!(row.pool_vault_id, MARKET_ID);
     assert!(row.is_supply);
     assert_eq!(row.request_index, REQUEST_INDEX as i64);
-    assert_eq!(row.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(row.account_id.as_deref(), Some(MANAGER_ID));
     assert_eq!(row.recipient.as_deref(), Some(OWNER));
     assert_eq!(row.requested_amount, Some(BigDecimal::from(100_000_000u64)));
     assert_eq!(row.status, lp_status::OPEN);
@@ -478,7 +478,7 @@ fn lp_fold_out_of_order_fill_before_request_backfills_identity() {
     let folded = lp_fold_rows(&values);
     assert_eq!(folded.len(), 1);
     let row = &folded[0];
-    assert_eq!(row.predict_manager_id.as_deref(), Some(MANAGER_ID));
+    assert_eq!(row.account_id.as_deref(), Some(MANAGER_ID));
     assert_eq!(row.recipient.as_deref(), Some(OWNER));
     assert_eq!(row.requested_amount, Some(BigDecimal::from(100_000_000u64)));
     assert_eq!(row.status, lp_status::FILLED);
@@ -494,7 +494,7 @@ fn lp_fold_keys_by_vault_is_supply_and_index() {
     withdraw.index = REQUEST_INDEX;
     let withdraw = WithdrawRequested {
         pool_vault_id: withdraw.pool_vault_id,
-        predict_manager_id: withdraw.predict_manager_id,
+        account_id: withdraw.account_id,
         recipient: withdraw.recipient,
         index: withdraw.index,
         amount: withdraw.amount,
@@ -574,7 +574,7 @@ fn db_row(
     OrderState {
         expiry_market_id: market.to_string(),
         order_id: order_id.to_string(),
-        predict_manager_id: None,
+        account_id: None,
         position_root_id: None,
         owner: None,
         status: st.to_string(),

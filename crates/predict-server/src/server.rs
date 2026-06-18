@@ -33,8 +33,7 @@ use sui_sdk::SuiClientBuilder;
 
 pub const STATUS_PATH: &str = "/status";
 pub const MARKET_ORDERS_PATH: &str = "/markets/:expiry_market_id/orders";
-pub const MANAGER_ORDERS_PATH: &str = "/managers/:predict_manager_id/orders";
-pub const MANAGERS_PATH: &str = "/managers";
+pub const MANAGER_ORDERS_PATH: &str = "/managers/:account_id/orders";
 pub const MARKETS_PATH: &str = "/markets";
 // Async-LP request/fill/flush feeds. Oracle feeds (prices/SVI/sources) live in
 // the separate oracle service, keyed by propbook_oracle_id.
@@ -46,16 +45,16 @@ pub const VAULT_FLUSHES_PATH: &str = "/vaults/:pool_vault_id/flushes";
 pub const VAULT_PROFIT_PATH: &str = "/vaults/:pool_vault_id/profit";
 pub const VAULT_CASH_REBALANCES_PATH: &str = "/vaults/:pool_vault_id/cash-rebalances";
 pub const VAULT_CASH_RECEIPTS_PATH: &str = "/vaults/:pool_vault_id/cash-receipts";
-pub const MANAGER_STAKING_PATH: &str = "/managers/:predict_manager_id/staking";
-pub const MANAGER_LP_REQUESTS_PATH: &str = "/managers/:predict_manager_id/lp-requests";
+pub const MANAGER_STAKING_PATH: &str = "/managers/:account_id/staking";
+pub const MANAGER_LP_REQUESTS_PATH: &str = "/managers/:account_id/lp-requests";
 pub const BUILDER_CODE_FEES_PATH: &str = "/builder-codes/:builder_code_id/fees";
 // Composed current-state lookups (top-1 index scans over raw tables).
 pub const MARKET_STATE_PATH: &str = "/markets/:expiry_market_id/state";
 pub const VAULT_STATE_PATH: &str = "/vaults/:pool_vault_id/state";
-pub const MANAGER_STATE_PATH: &str = "/managers/:predict_manager_id/state";
+pub const MANAGER_STATE_PATH: &str = "/managers/:account_id/state";
 pub const CONFIG_PATH: &str = "/config";
 // order_state-backed position queries.
-pub const MANAGER_POSITIONS_PATH: &str = "/managers/:predict_manager_id/positions";
+pub const MANAGER_POSITIONS_PATH: &str = "/managers/:account_id/positions";
 pub const MARKET_OPEN_INTEREST_PATH: &str = "/markets/:expiry_market_id/open-interest";
 // Materialized-view feeds.
 pub const MARKET_ACTIVITY_PATH: &str = "/markets/:expiry_market_id/activity";
@@ -187,7 +186,6 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route(STATUS_PATH, get(status))
         .route(MARKET_ORDERS_PATH, get(market_orders))
         .route(MANAGER_ORDERS_PATH, get(manager_orders))
-        .route(MANAGERS_PATH, get(managers))
         .route(MARKETS_PATH, get(markets))
         .route(VAULT_SUPPLY_REQUESTS_PATH, get(vault_supply_requests))
         .route(VAULT_WITHDRAW_REQUESTS_PATH, get(vault_withdraw_requests))
@@ -376,31 +374,14 @@ async fn market_orders(
 
 /// Interleaved order feed for a manager, timestamp-windowed newest-first.
 async fn manager_orders(
-    Path(predict_manager_id): Path<String>,
+    Path(account_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
     let data = state
         .reader
         .get_manager_orders(
-            predict_manager_id,
-            params.start_time_ms(),
-            params.end_time_ms(),
-            params.limit(),
-        )
-        .await?;
-    Ok(Json(data))
-}
-
-/// `predict_manager_created` list, optionally filtered by `?owner`.
-async fn managers(
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
-    let data = state
-        .reader
-        .get_managers(
-            params.get("owner").cloned(),
+            account_id,
             params.start_time_ms(),
             params.end_time_ms(),
             params.limit(),
@@ -532,7 +513,7 @@ async fn vault_profit(
 /// `lp_request_state` rows for one manager, windowed by `opened_at_ms`
 /// (`?start_time`/`?end_time`, unix seconds). `?status` defaults to `open`.
 async fn manager_lp_requests(
-    Path(predict_manager_id): Path<String>,
+    Path(account_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
@@ -543,7 +524,7 @@ async fn manager_lp_requests(
     let data = state
         .reader
         .get_manager_lp_requests(
-            predict_manager_id,
+            account_id,
             status,
             params.start_time_ms(),
             params.end_time_ms(),
@@ -592,14 +573,14 @@ async fn vault_cash_receipts(
 /// Interleaved DEEP staking feed (`deep_staked` + `deep_unstaked`) for one
 /// manager.
 async fn manager_staking(
-    Path(predict_manager_id): Path<String>,
+    Path(account_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
     let data = state
         .reader
         .get_manager_staking(
-            predict_manager_id,
+            account_id,
             params.start_time_ms(),
             params.end_time_ms(),
             params.limit(),
@@ -646,12 +627,10 @@ async fn vault_state(
 
 /// Composed current state for one manager (creation row, latest builder code).
 async fn manager_state(
-    Path(predict_manager_id): Path<String>,
+    Path(account_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, PredictError> {
-    Ok(Json(
-        state.reader.get_manager_state(predict_manager_id).await?,
-    ))
+    Ok(Json(state.reader.get_manager_state(account_id).await?))
 }
 
 /// Latest value of every protocol-config event.
@@ -666,7 +645,7 @@ async fn protocol_config(
 /// each row carries a `"root"` object with the root order's entry facts when
 /// the row is a replacement.
 async fn manager_positions(
-    Path(predict_manager_id): Path<String>,
+    Path(account_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
@@ -677,7 +656,7 @@ async fn manager_positions(
     let data = state
         .reader
         .get_manager_positions(
-            predict_manager_id,
+            account_id,
             status,
             params.start_time_ms(),
             params.end_time_ms(),

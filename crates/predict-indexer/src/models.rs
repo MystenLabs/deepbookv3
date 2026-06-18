@@ -18,7 +18,7 @@ use sui_types::base_types::ObjectID;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderMinted {
     pub expiry_market_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub order_id: U256,
     pub position_root_id: U256,
     pub owner: Address,
@@ -43,7 +43,7 @@ impl MoveStruct for OrderMinted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveOrderRedeemed {
     pub expiry_market_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub order_id: U256,
     pub position_root_id: U256,
     pub owner: Address,
@@ -66,7 +66,7 @@ impl MoveStruct for LiveOrderRedeemed {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettledOrderRedeemed {
     pub expiry_market_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub order_id: U256,
     pub position_root_id: U256,
     pub owner: Address,
@@ -84,7 +84,7 @@ impl MoveStruct for SettledOrderRedeemed {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiquidatedOrderRedeemed {
     pub expiry_market_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub order_id: U256,
     pub position_root_id: U256,
     pub owner: Address,
@@ -112,19 +112,6 @@ impl MoveStruct for OrderLiquidated {
     const NAME: &'static str = "OrderLiquidated";
 }
 
-/// Emitted when a derived PredictManager is created.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictManagerCreated {
-    pub predict_manager_id: ObjectID,
-    pub balance_manager_id: ObjectID,
-    pub owner: Address,
-}
-
-impl MoveStruct for PredictManagerCreated {
-    const MODULE: &'static str = "account_events";
-    const NAME: &'static str = "PredictManagerCreated";
-}
-
 /// Emitted when a derived BuilderCode is created.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuilderCodeCreated {
@@ -134,57 +121,21 @@ pub struct BuilderCodeCreated {
 }
 
 impl MoveStruct for BuilderCodeCreated {
-    const MODULE: &'static str = "account_events";
+    const MODULE: &'static str = "builder_code_events";
     const NAME: &'static str = "BuilderCodeCreated";
 }
 
-/// Emitted when a manager owner changes sticky builder-code attribution.
+/// Emitted when an account owner changes sticky builder-code attribution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuilderCodeSet {
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub owner: Address,
     pub builder_code_id: Option<ObjectID>,
 }
 
 impl MoveStruct for BuilderCodeSet {
-    const MODULE: &'static str = "account_events";
+    const MODULE: &'static str = "builder_code_events";
     const NAME: &'static str = "BuilderCodeSet";
-}
-
-/// Emitted when a `PredictTradeCap` is minted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictTradeCapMinted {
-    pub predict_manager_id: ObjectID,
-    pub cap_id: ObjectID,
-}
-
-impl MoveStruct for PredictTradeCapMinted {
-    const MODULE: &'static str = "account_events";
-    const NAME: &'static str = "PredictTradeCapMinted";
-}
-
-/// Emitted when a `PredictDepositCap` is minted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictDepositCapMinted {
-    pub predict_manager_id: ObjectID,
-    pub cap_id: ObjectID,
-}
-
-impl MoveStruct for PredictDepositCapMinted {
-    const MODULE: &'static str = "account_events";
-    const NAME: &'static str = "PredictDepositCapMinted";
-}
-
-/// Emitted when a `PredictWithdrawCap` is minted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredictWithdrawCapMinted {
-    pub predict_manager_id: ObjectID,
-    pub cap_id: ObjectID,
-}
-
-impl MoveStruct for PredictWithdrawCapMinted {
-    const MODULE: &'static str = "account_events";
-    const NAME: &'static str = "PredictWithdrawCapMinted";
 }
 
 /// Emitted when quote-freshness config changes.
@@ -408,7 +359,7 @@ impl MoveStruct for ExpiryProfitMaterialized {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeepStaked {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub amount: u64,
     pub active_stake_after: u64,
     pub inactive_stake_after: u64,
@@ -423,7 +374,7 @@ impl MoveStruct for DeepStaked {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeepUnstaked {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub amount: u64,
 }
 
@@ -436,7 +387,7 @@ impl MoveStruct for DeepUnstaked {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupplyRequested {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub recipient: Address,
     pub index: u64,
     pub amount: u64,
@@ -451,7 +402,7 @@ impl MoveStruct for SupplyRequested {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawRequested {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub recipient: Address,
     pub index: u64,
     pub amount: u64,
@@ -466,7 +417,7 @@ impl MoveStruct for WithdrawRequested {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestCancelled {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub recipient: Address,
     pub index: u64,
     pub amount: u64,
@@ -482,7 +433,7 @@ impl MoveStruct for RequestCancelled {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupplyFilled {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub recipient: Address,
     pub index: u64,
     pub dusdc_amount: u64,
@@ -498,7 +449,7 @@ impl MoveStruct for SupplyFilled {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawFilled {
     pub pool_vault_id: ObjectID,
-    pub predict_manager_id: ObjectID,
+    pub account_id: ObjectID,
     pub recipient: Address,
     pub index: u64,
     pub shares_burned: u64,
@@ -540,6 +491,6 @@ pub struct BuilderFeesClaimed {
 }
 
 impl MoveStruct for BuilderFeesClaimed {
-    const MODULE: &'static str = "account_events";
+    const MODULE: &'static str = "builder_code_events";
     const NAME: &'static str = "BuilderFeesClaimed";
 }

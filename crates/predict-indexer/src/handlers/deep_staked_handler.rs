@@ -14,7 +14,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
         pool_vault_id: ev.pool_vault_id.to_string(),
-        predict_manager_id: ev.predict_manager_id.to_string(),
+        account_id: ev.account_id.to_string(),
         amount: BigDecimal::from(ev.amount),
         active_stake_after: BigDecimal::from(ev.active_stake_after),
         inactive_stake_after: BigDecimal::from(ev.inactive_stake_after),

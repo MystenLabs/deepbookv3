@@ -14,7 +14,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
         expiry_market_id: ev.expiry_market_id.to_string(),
-        predict_manager_id: ev.predict_manager_id.to_string(),
+        account_id: ev.account_id.to_string(),
         order_id: ev.order_id.to_string(),
         position_root_id: ev.position_root_id.to_string(),
         owner: ev.owner.to_string(),

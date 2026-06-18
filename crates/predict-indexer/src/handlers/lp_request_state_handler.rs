@@ -46,7 +46,7 @@ fn base_row(
         pool_vault_id,
         is_supply,
         request_index: index as i64,
-        predict_manager_id: None,
+        account_id: None,
         recipient: None,
         requested_amount: None,
         status: st.to_string(),
@@ -68,7 +68,7 @@ pub fn map_supply_requested(ev: &SupplyRequested, meta: &PredictEventMeta) -> Ro
         status::OPEN,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.recipient = Some(ev.recipient.to_string());
     row.requested_amount = Some(BigDecimal::from(ev.amount));
     row
@@ -82,7 +82,7 @@ pub fn map_withdraw_requested(ev: &WithdrawRequested, meta: &PredictEventMeta) -
         status::OPEN,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.recipient = Some(ev.recipient.to_string());
     row.requested_amount = Some(BigDecimal::from(ev.amount));
     row
@@ -96,7 +96,7 @@ pub fn map_request_cancelled(ev: &RequestCancelled, meta: &PredictEventMeta) -> 
         status::CANCELLED,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.recipient = Some(ev.recipient.to_string());
     row.requested_amount = Some(BigDecimal::from(ev.amount));
     row
@@ -110,7 +110,7 @@ pub fn map_supply_filled(ev: &SupplyFilled, meta: &PredictEventMeta) -> Row {
         status::FILLED,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.recipient = Some(ev.recipient.to_string());
     row.filled_dusdc = Some(BigDecimal::from(ev.dusdc_amount));
     row.filled_shares = Some(BigDecimal::from(ev.shares_minted));
@@ -125,7 +125,7 @@ pub fn map_withdraw_filled(ev: &WithdrawFilled, meta: &PredictEventMeta) -> Row 
         status::FILLED,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.recipient = Some(ev.recipient.to_string());
     row.filled_dusdc = Some(BigDecimal::from(ev.dusdc_amount));
     row.filled_shares = Some(BigDecimal::from(ev.shares_burned));
@@ -141,7 +141,7 @@ fn triple(row: &Row) -> (i64, i64, i64) {
 /// `opened_at_ms` is the earliest, mutable columns take the later event.
 pub fn merge_rows(earlier: Row, later: Row) -> Row {
     Row {
-        predict_manager_id: earlier.predict_manager_id.or(later.predict_manager_id),
+        account_id: earlier.account_id.or(later.account_id),
         recipient: earlier.recipient.or(later.recipient),
         requested_amount: earlier.requested_amount.or(later.requested_amount),
         filled_dusdc: earlier.filled_dusdc.or(later.filled_dusdc),
@@ -177,14 +177,14 @@ pub fn fold_rows(values: &[Row]) -> Vec<Row> {
 const UPSERT_PREFIX: &str = r#"
 INSERT INTO lp_request_state (
     pool_vault_id, is_supply, request_index,
-    predict_manager_id, recipient, requested_amount,
+    account_id, recipient, requested_amount,
     status, filled_dusdc, filled_shares,
     opened_at_ms, updated_at_ms, checkpoint, tx_index, event_index
 ) VALUES "#;
 
 const UPSERT_SUFFIX: &str = r#"
 ON CONFLICT (pool_vault_id, is_supply, request_index) DO UPDATE SET
-    predict_manager_id = COALESCE(lp_request_state.predict_manager_id, EXCLUDED.predict_manager_id),
+    account_id = COALESCE(lp_request_state.account_id, EXCLUDED.account_id),
     recipient          = COALESCE(lp_request_state.recipient, EXCLUDED.recipient),
     requested_amount   = COALESCE(lp_request_state.requested_amount, EXCLUDED.requested_amount),
     filled_dusdc       = COALESCE(lp_request_state.filled_dusdc, EXCLUDED.filled_dusdc),
@@ -311,7 +311,7 @@ impl sui_indexer_alt_framework::postgres::handler::Handler for LpRequestStateHan
                     .bind::<Text, _>(&row.pool_vault_id)
                     .bind::<Bool, _>(row.is_supply)
                     .bind::<BigInt, _>(row.request_index)
-                    .bind::<Nullable<Text>, _>(&row.predict_manager_id)
+                    .bind::<Nullable<Text>, _>(&row.account_id)
                     .bind::<Nullable<Text>, _>(&row.recipient)
                     .bind::<Nullable<Numeric>, _>(&row.requested_amount)
                     .bind::<Text, _>(&row.status)

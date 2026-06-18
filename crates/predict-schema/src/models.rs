@@ -6,12 +6,10 @@ use crate::schema::{
     expiry_profit_materialized, flush_executed, liquidated_order_redeemed, liquidation_stats_1h,
     live_order_redeemed, lp_request_state, market_activity_1h, market_config_snapshot,
     market_created, market_settled, oracle_bound, oracle_source_registered, oracle_spot_1m,
-    order_liquidated, order_minted, order_state, position_cashflow, predict_deposit_cap_minted,
-    predict_manager_created, predict_trade_cap_minted, predict_withdraw_cap_minted,
-    pricing_config_updated, pyth_observation, request_cancelled, risk_config_updated,
-    settled_order_redeemed, stake_config_updated, strike_exposure_template_config_updated,
-    supply_filled, supply_requested, trading_paused_updated, vault_flows_1h, withdraw_filled,
-    withdraw_requested,
+    order_liquidated, order_minted, order_state, position_cashflow, pricing_config_updated,
+    pyth_observation, request_cancelled, risk_config_updated, settled_order_redeemed,
+    stake_config_updated, strike_exposure_template_config_updated, supply_filled, supply_requested,
+    trading_paused_updated, vault_flows_1h, withdraw_filled, withdraw_requested,
 };
 use bigdecimal::BigDecimal;
 use diesel::{Identifiable, Insertable, Queryable, Selectable};
@@ -30,7 +28,7 @@ pub struct OrderMinted {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub expiry_market_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub order_id: String,
     pub position_root_id: String,
     pub owner: String,
@@ -58,7 +56,7 @@ pub struct LiveOrderRedeemed {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub expiry_market_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub order_id: String,
     pub position_root_id: String,
     pub owner: String,
@@ -84,7 +82,7 @@ pub struct SettledOrderRedeemed {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub expiry_market_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub order_id: String,
     pub position_root_id: String,
     pub owner: String,
@@ -105,7 +103,7 @@ pub struct LiquidatedOrderRedeemed {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub expiry_market_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub order_id: String,
     pub position_root_id: String,
     pub owner: String,
@@ -129,22 +127,6 @@ pub struct OrderLiquidated {
     pub gross_value: BigDecimal,
     pub floor_amount: BigDecimal,
     pub liquidation_ltv: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = predict_manager_created, primary_key(event_digest))]
-pub struct PredictManagerCreated {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub predict_manager_id: String,
-    pub balance_manager_id: String,
-    pub owner: String,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -174,54 +156,9 @@ pub struct BuilderCodeSet {
     pub event_index: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub owner: String,
     pub builder_code_id: Option<String>,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = predict_trade_cap_minted, primary_key(event_digest))]
-pub struct PredictTradeCapMinted {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub predict_manager_id: String,
-    pub cap_id: String,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = predict_deposit_cap_minted, primary_key(event_digest))]
-pub struct PredictDepositCapMinted {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub predict_manager_id: String,
-    pub cap_id: String,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = predict_withdraw_cap_minted, primary_key(event_digest))]
-pub struct PredictWithdrawCapMinted {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub tx_index: i64,
-    pub event_index: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub predict_manager_id: String,
-    pub cap_id: String,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -495,7 +432,7 @@ pub struct DeepStaked {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub amount: BigDecimal,
     pub active_stake_after: BigDecimal,
     pub inactive_stake_after: BigDecimal,
@@ -513,7 +450,7 @@ pub struct DeepUnstaked {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub amount: BigDecimal,
 }
 
@@ -545,7 +482,7 @@ pub struct SupplyRequested {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub recipient: String,
     pub request_index: i64,
     pub amount: BigDecimal,
@@ -563,7 +500,7 @@ pub struct WithdrawRequested {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub recipient: String,
     pub request_index: i64,
     pub amount: BigDecimal,
@@ -581,7 +518,7 @@ pub struct RequestCancelled {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub recipient: String,
     pub request_index: i64,
     pub amount: BigDecimal,
@@ -600,7 +537,7 @@ pub struct SupplyFilled {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub recipient: String,
     pub request_index: i64,
     pub dusdc_amount: BigDecimal,
@@ -619,7 +556,7 @@ pub struct WithdrawFilled {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_vault_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub recipient: String,
     pub request_index: i64,
     pub shares_burned: BigDecimal,
@@ -684,7 +621,7 @@ pub mod lp_request_status {
 pub struct OrderState {
     pub expiry_market_id: String,
     pub order_id: String,
-    pub predict_manager_id: Option<String>,
+    pub account_id: Option<String>,
     pub position_root_id: Option<String>,
     pub owner: Option<String>,
     pub status: String,
@@ -718,7 +655,7 @@ pub struct LpRequestState {
     pub pool_vault_id: String,
     pub is_supply: bool,
     pub request_index: i64,
-    pub predict_manager_id: Option<String>,
+    pub account_id: Option<String>,
     pub recipient: Option<String>,
     pub requested_amount: Option<BigDecimal>,
     pub status: String,
@@ -786,7 +723,7 @@ pub struct LiquidationStats1h {
 pub struct PositionCashflow {
     pub expiry_market_id: String,
     pub position_root_id: String,
-    pub predict_manager_id: String,
+    pub account_id: String,
     pub owner: String,
     pub minted_quantity: BigDecimal,
     pub net_premium: BigDecimal,

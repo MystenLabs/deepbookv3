@@ -21,10 +21,6 @@ use predict_indexer::handlers::market_settled_handler::MarketSettledHandler;
 use predict_indexer::handlers::order_liquidated_handler::OrderLiquidatedHandler;
 use predict_indexer::handlers::order_minted_handler::OrderMintedHandler;
 use predict_indexer::handlers::order_state_handler::OrderStateHandler;
-use predict_indexer::handlers::predict_deposit_cap_minted_handler::PredictDepositCapMintedHandler;
-use predict_indexer::handlers::predict_manager_created_handler::PredictManagerCreatedHandler;
-use predict_indexer::handlers::predict_trade_cap_minted_handler::PredictTradeCapMintedHandler;
-use predict_indexer::handlers::predict_withdraw_cap_minted_handler::PredictWithdrawCapMintedHandler;
 use predict_indexer::handlers::pricing_config_updated_handler::PricingConfigUpdatedHandler;
 use predict_indexer::handlers::request_cancelled_handler::RequestCancelledHandler;
 use predict_indexer::handlers::risk_config_updated_handler::RiskConfigUpdatedHandler;
@@ -173,30 +169,14 @@ async fn main() -> Result<(), anyhow::Error> {
                     .concurrent_pipeline(OrderStateHandler::new(env), Default::default())
                     .await?;
 
-                // Accounts, caps, builder codes.
-                indexer
-                    .concurrent_pipeline(PredictManagerCreatedHandler::new(env), Default::default())
-                    .await?;
+                // Builder codes. (Account creation + the former trade/deposit/withdraw
+                // caps were removed by the account rewire — accounts are now owned by the
+                // `account` package and indexed by its own suite.)
                 indexer
                     .concurrent_pipeline(BuilderCodeCreatedHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(BuilderCodeSetHandler::new(env), Default::default())
-                    .await?;
-                indexer
-                    .concurrent_pipeline(PredictTradeCapMintedHandler::new(env), Default::default())
-                    .await?;
-                indexer
-                    .concurrent_pipeline(
-                        PredictDepositCapMintedHandler::new(env),
-                        Default::default(),
-                    )
-                    .await?;
-                indexer
-                    .concurrent_pipeline(
-                        PredictWithdrawCapMintedHandler::new(env),
-                        Default::default(),
-                    )
                     .await?;
                 indexer
                     .concurrent_pipeline(BuilderFeesClaimedHandler::new(env), Default::default())

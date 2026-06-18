@@ -44,7 +44,7 @@ fn base_row(order_id: U256, expiry_market_id: String, st: &str, meta: &PredictEv
     Row {
         expiry_market_id,
         order_id: order_id.to_string(),
-        predict_manager_id: None,
+        account_id: None,
         position_root_id: None,
         owner: None,
         status: st.to_string(),
@@ -72,7 +72,7 @@ pub fn map_minted(ev: &OrderMinted, meta: &PredictEventMeta) -> Row {
         status::OPEN,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.position_root_id = Some(ev.position_root_id.to_string());
     row.owner = Some(ev.owner.to_string());
     row.leverage = Some(ev.leverage as i64);
@@ -92,7 +92,7 @@ pub fn map_live_redeemed(ev: &LiveOrderRedeemed, meta: &PredictEventMeta) -> Vec
     };
 
     let mut closed = base_row(ev.order_id, market.clone(), closed_status, meta);
-    closed.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    closed.account_id = Some(ev.account_id.to_string());
     closed.position_root_id = Some(ev.position_root_id.to_string());
     closed.owner = Some(ev.owner.to_string());
     closed.replacement_order_id = ev.replacement_order_id.map(|id| id.to_string());
@@ -100,7 +100,7 @@ pub fn map_live_redeemed(ev: &LiveOrderRedeemed, meta: &PredictEventMeta) -> Vec
     let mut rows = vec![closed];
     if let Some(replacement_id) = ev.replacement_order_id {
         let mut replacement = base_row(replacement_id, market, status::OPEN, meta);
-        replacement.predict_manager_id = Some(ev.predict_manager_id.to_string());
+        replacement.account_id = Some(ev.account_id.to_string());
         replacement.position_root_id = Some(ev.position_root_id.to_string());
         replacement.owner = Some(ev.owner.to_string());
         rows.push(replacement);
@@ -115,7 +115,7 @@ pub fn map_settled_redeemed(ev: &SettledOrderRedeemed, meta: &PredictEventMeta) 
         status::SETTLED_REDEEMED,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.position_root_id = Some(ev.position_root_id.to_string());
     row.owner = Some(ev.owner.to_string());
     row
@@ -128,7 +128,7 @@ pub fn map_liquidated_redeemed(ev: &LiquidatedOrderRedeemed, meta: &PredictEvent
         status::LIQUIDATED_REDEEMED,
         meta,
     );
-    row.predict_manager_id = Some(ev.predict_manager_id.to_string());
+    row.account_id = Some(ev.account_id.to_string());
     row.position_root_id = Some(ev.position_root_id.to_string());
     row.owner = Some(ev.owner.to_string());
     row
@@ -154,7 +154,7 @@ fn triple(row: &Row) -> (i64, i64, i64) {
 /// first non-null value, mutable columns take the later event's values.
 pub fn merge_rows(earlier: Row, later: Row) -> Row {
     Row {
-        predict_manager_id: earlier.predict_manager_id.or(later.predict_manager_id),
+        account_id: earlier.account_id.or(later.account_id),
         position_root_id: earlier.position_root_id.or(later.position_root_id),
         owner: earlier.owner.or(later.owner),
         replacement_order_id: earlier.replacement_order_id.or(later.replacement_order_id),
@@ -198,7 +198,7 @@ pub fn fold_rows(values: &[Row]) -> Vec<Row> {
 /// column list and ON CONFLICT clause are each written exactly once.
 const UPSERT_PREFIX: &str = r#"
 INSERT INTO order_state (
-    expiry_market_id, order_id, predict_manager_id, position_root_id, owner,
+    expiry_market_id, order_id, account_id, position_root_id, owner,
     status, replacement_order_id,
     opened_at_ms, lower_boundary_index, higher_boundary_index, floor_shares, quantity, sequence,
     leverage, entry_probability, net_premium,
@@ -207,7 +207,7 @@ INSERT INTO order_state (
 
 const UPSERT_SUFFIX: &str = r#"
 ON CONFLICT (expiry_market_id, order_id) DO UPDATE SET
-    predict_manager_id   = COALESCE(order_state.predict_manager_id, EXCLUDED.predict_manager_id),
+    account_id   = COALESCE(order_state.account_id, EXCLUDED.account_id),
     position_root_id     = COALESCE(order_state.position_root_id, EXCLUDED.position_root_id),
     owner                = COALESCE(order_state.owner, EXCLUDED.owner),
     replacement_order_id = COALESCE(order_state.replacement_order_id, EXCLUDED.replacement_order_id),
@@ -339,7 +339,7 @@ impl sui_indexer_alt_framework::postgres::handler::Handler for OrderStateHandler
                 query = query
                     .bind::<Text, _>(&row.expiry_market_id)
                     .bind::<Text, _>(&row.order_id)
-                    .bind::<Nullable<Text>, _>(&row.predict_manager_id)
+                    .bind::<Nullable<Text>, _>(&row.account_id)
                     .bind::<Nullable<Text>, _>(&row.position_root_id)
                     .bind::<Nullable<Text>, _>(&row.owner)
                     .bind::<Text, _>(&row.status)

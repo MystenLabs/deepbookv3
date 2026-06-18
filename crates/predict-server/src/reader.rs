@@ -12,10 +12,9 @@ use predict_schema::models::{
     ExpiryMarketMintPausedUpdated, ExpiryProfitMaterialized, FlushExecuted,
     LiquidatedOrderRedeemed, LiquidationStats1h, LiveOrderRedeemed, LpRequestState,
     MarketActivity1h, MarketConfigSnapshot, MarketCreated, MarketSettled, OrderLiquidated,
-    OrderMinted, OrderState, PositionCashflow, PredictManagerCreated, PricingConfigUpdated,
-    RiskConfigUpdated, SettledOrderRedeemed, StakeConfigUpdated,
-    StrikeExposureTemplateConfigUpdated, SupplyFilled, SupplyRequested, TradingPausedUpdated,
-    VaultFlows1h, WithdrawFilled, WithdrawRequested,
+    OrderMinted, OrderState, PositionCashflow, PricingConfigUpdated, RiskConfigUpdated,
+    SettledOrderRedeemed, StakeConfigUpdated, StrikeExposureTemplateConfigUpdated, SupplyFilled,
+    SupplyRequested, TradingPausedUpdated, VaultFlows1h, WithdrawFilled, WithdrawRequested,
 };
 use predict_schema::schema;
 use serde_json::{json, Value};
@@ -339,12 +338,12 @@ impl Reader {
     }
 
     /// Interleaved order feed for a single manager: merges the 4 order tables
-    /// that carry `predict_manager_id` (excludes `order_liquidated`, which has
+    /// that carry `account_id` (excludes `order_liquidated`, which has
     /// no manager column) within `[start_time_ms, end_time_ms]`, newest first
     /// by `(checkpoint_timestamp_ms, checkpoint, tx_index, event_index)`.
     pub async fn get_manager_orders(
         &self,
-        predict_manager_id: String,
+        account_id: String,
         start_time_ms: i64,
         end_time_ms: i64,
         limit: i64,
@@ -356,8 +355,8 @@ impl Reader {
             conn,
             order_minted,
             OrderMinted,
-            predict_manager_id,
-            predict_manager_id.clone(),
+            account_id,
+            account_id.clone(),
             start_time_ms,
             end_time_ms,
             limit
@@ -366,8 +365,8 @@ impl Reader {
             conn,
             live_order_redeemed,
             LiveOrderRedeemed,
-            predict_manager_id,
-            predict_manager_id.clone(),
+            account_id,
+            account_id.clone(),
             start_time_ms,
             end_time_ms,
             limit
@@ -376,8 +375,8 @@ impl Reader {
             conn,
             settled_order_redeemed,
             SettledOrderRedeemed,
-            predict_manager_id,
-            predict_manager_id.clone(),
+            account_id,
+            account_id.clone(),
             start_time_ms,
             end_time_ms,
             limit
@@ -386,37 +385,14 @@ impl Reader {
             conn,
             liquidated_order_redeemed,
             LiquidatedOrderRedeemed,
-            predict_manager_id,
-            predict_manager_id.clone(),
+            account_id,
+            account_id.clone(),
             start_time_ms,
             end_time_ms,
             limit
         )?);
 
         Ok(merge_feed(merged, limit))
-    }
-
-    /// `predict_manager_created` list, newest-first. Optionally filtered by
-    /// `owner` when present.
-    pub async fn get_managers(
-        &self,
-        owner: Option<String>,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        limit: i64,
-    ) -> Result<Vec<Value>, PredictError> {
-        let mut conn = self.db.connect().await?;
-        let _guard = self.metrics.db_latency.start_timer();
-        feed_page_opt!(
-            conn,
-            predict_manager_created,
-            PredictManagerCreated,
-            owner,
-            owner,
-            start_time_ms,
-            end_time_ms,
-            limit
-        )
     }
 
     /// `market_created` list (no id filter), newest-first.
@@ -577,7 +553,7 @@ impl Reader {
     /// timestamps), newest-opened first. Mirrors `get_manager_positions`.
     pub async fn get_manager_lp_requests(
         &self,
-        predict_manager_id: String,
+        account_id: String,
         status: String,
         start_time_ms: i64,
         end_time_ms: i64,
@@ -587,7 +563,7 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let rows: Vec<LpRequestState> = schema::lp_request_state::table
-            .filter(schema::lp_request_state::predict_manager_id.eq(predict_manager_id))
+            .filter(schema::lp_request_state::account_id.eq(account_id))
             .filter(schema::lp_request_state::status.eq(status))
             .filter(schema::lp_request_state::opened_at_ms.between(start_time_ms, end_time_ms))
             .order_by((
@@ -647,12 +623,12 @@ impl Reader {
     }
 
     /// Interleaved DEEP staking feed for one manager: merges `deep_staked` +
-    /// `deep_unstaked` filtered by `predict_manager_id` within the window,
+    /// `deep_unstaked` filtered by `account_id` within the window,
     /// newest-first by `(checkpoint_timestamp_ms, checkpoint, tx_index,
     /// event_index)`.
     pub async fn get_manager_staking(
         &self,
-        predict_manager_id: String,
+        account_id: String,
         start_time_ms: i64,
         end_time_ms: i64,
         limit: i64,
@@ -664,8 +640,8 @@ impl Reader {
             conn,
             deep_staked,
             DeepStaked,
-            predict_manager_id,
-            predict_manager_id.clone(),
+            account_id,
+            account_id.clone(),
             start_time_ms,
             end_time_ms,
             limit
@@ -674,8 +650,8 @@ impl Reader {
             conn,
             deep_unstaked,
             DeepUnstaked,
-            predict_manager_id,
-            predict_manager_id.clone(),
+            account_id,
+            account_id.clone(),
             start_time_ms,
             end_time_ms,
             limit
@@ -895,33 +871,23 @@ impl Reader {
         }))
     }
 
-    /// Composed current state for one manager: the creation row plus the
-    /// latest builder-code assignment.
-    pub async fn get_manager_state(
-        &self,
-        predict_manager_id: String,
-    ) -> Result<Value, PredictError> {
+    /// Composed Predict-side current state for one account: the latest builder-code
+    /// assignment. Account creation/custody now lives in the `account` package and is
+    /// served by its own indexer suite, not here.
+    pub async fn get_manager_state(&self, account_id: String) -> Result<Value, PredictError> {
         let mut conn = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        let created = latest_row!(
-            conn,
-            predict_manager_created,
-            PredictManagerCreated,
-            predict_manager_id,
-            predict_manager_id.clone()
-        );
         let builder_code = latest_row!(
             conn,
             builder_code_set,
             BuilderCodeSet,
-            predict_manager_id,
-            predict_manager_id.clone()
+            account_id,
+            account_id.clone()
         );
 
         Ok(json!({
-            "predict_manager_id": predict_manager_id,
-            "manager": created,
+            "account_id": account_id,
             "builder_code": builder_code,
         }))
     }
@@ -935,7 +901,7 @@ impl Reader {
     /// the order_state pipeline), `null` when the row is its own root.
     pub async fn get_manager_positions(
         &self,
-        predict_manager_id: String,
+        account_id: String,
         status: String,
         start_time_ms: i64,
         end_time_ms: i64,
@@ -945,7 +911,7 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let rows: Vec<OrderState> = schema::order_state::table
-            .filter(schema::order_state::predict_manager_id.eq(predict_manager_id))
+            .filter(schema::order_state::account_id.eq(account_id))
             .filter(schema::order_state::status.eq(status))
             .filter(schema::order_state::opened_at_ms.between(start_time_ms, end_time_ms))
             .order_by((

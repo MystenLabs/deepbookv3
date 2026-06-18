@@ -40,9 +40,9 @@ and return JSON.
 | `/markets` | `market_created` |
 | `/markets/:expiry_market_id/orders` | all 5 order tables, interleaved |
 | `/managers?owner=` | `predict_manager_created` |
-| `/managers/:predict_manager_id/orders` | 4 manager-scoped order tables, interleaved (excludes `order_liquidated`, which carries no manager) |
-| `/managers/:predict_manager_id/staking` | `deep_staked` + `deep_unstaked`, interleaved |
-| `/managers/:predict_manager_id/rebates` | `trading_loss_rebate_claimed` |
+| `/managers/:account_id/orders` | 4 manager-scoped order tables, interleaved (excludes `order_liquidated`, which carries no manager) |
+| `/managers/:account_id/staking` | `deep_staked` + `deep_unstaked`, interleaved |
+| `/managers/:account_id/rebates` | `trading_loss_rebate_claimed` |
 | `/oracles/:market_oracle_id/prices` | `block_scholes_prices_updated` |
 | `/oracles/:market_oracle_id/svi` | `block_scholes_svi_updated` |
 | `/oracles/:market_oracle_id/settlements` | `market_oracle_settled` |
@@ -69,7 +69,7 @@ bounded top-1 index scan.
   latest_withdrawal, latest_cash_rebalance, latest_cash_receipt,
   latest_profit}`. `current` picks each `*_after` field from the newest event
   (by triple) among the tables that carry it.
-- `/managers/:predict_manager_id/state` → `{manager, builder_code}`.
+- `/managers/:account_id/state` → `{manager, builder_code}`.
 - `/config` → latest row of each protocol-config event:
   `{pricing, fee, risk, expiry_cash_template, strike_exposure_template,
   market_oracle_template, ewma, stake, trading_paused}`.
@@ -84,7 +84,7 @@ indices, `floor_shares`, `quantity`, `sequence`). Entry facts (strikes,
 leverage, `entry_probability`, `net_premium`) live on the **root** row only;
 replacement rows have them `null`.
 
-- `/managers/:predict_manager_id/positions?status=open&limit=` → rows ordered
+- `/managers/:account_id/positions?status=open&limit=` → rows ordered
   by `opened_at_ms` desc. Each row carries `"root"`: the root order's entry
   facts when the row is a replacement, else `null`.
   Note: "claimable after settlement" is **derived**, not a status — an `open`

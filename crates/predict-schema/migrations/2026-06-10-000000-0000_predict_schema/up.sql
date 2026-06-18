@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS order_minted (
     checkpoint_timestamp_ms  BIGINT    NOT NULL,
     package                  TEXT      NOT NULL,
     expiry_market_id         TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
+    account_id       TEXT      NOT NULL,
     order_id                 TEXT      NOT NULL,
     position_root_id         TEXT      NOT NULL,
     owner                    TEXT      NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS order_minted (
     builder_code_id          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_order_minted_expiry_market_ts ON order_minted(expiry_market_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_order_minted_manager_ts ON order_minted(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_order_minted_manager_ts ON order_minted(account_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_order_minted_order_id ON order_minted(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_minted_position_root ON order_minted(position_root_id);
 
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS live_order_redeemed (
     checkpoint_timestamp_ms  BIGINT    NOT NULL,
     package                  TEXT      NOT NULL,
     expiry_market_id         TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
+    account_id       TEXT      NOT NULL,
     order_id                 TEXT      NOT NULL,
     position_root_id         TEXT      NOT NULL,
     owner                    TEXT      NOT NULL,
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS live_order_redeemed (
     builder_code_id          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_live_redeemed_expiry_market_ts ON live_order_redeemed(expiry_market_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_live_redeemed_manager_ts ON live_order_redeemed(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_live_redeemed_manager_ts ON live_order_redeemed(account_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_live_redeemed_position_root ON live_order_redeemed(position_root_id);
 
 CREATE TABLE IF NOT EXISTS settled_order_redeemed (
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS settled_order_redeemed (
     checkpoint_timestamp_ms  BIGINT    NOT NULL,
     package                  TEXT      NOT NULL,
     expiry_market_id         TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
+    account_id       TEXT      NOT NULL,
     order_id                 TEXT      NOT NULL,
     position_root_id         TEXT      NOT NULL,
     owner                    TEXT      NOT NULL,
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS settled_order_redeemed (
     payout_amount            NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_settled_redeemed_expiry_market_ts ON settled_order_redeemed(expiry_market_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_settled_redeemed_manager_ts ON settled_order_redeemed(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_settled_redeemed_manager_ts ON settled_order_redeemed(account_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_settled_redeemed_position_root ON settled_order_redeemed(position_root_id);
 
 CREATE TABLE IF NOT EXISTS liquidated_order_redeemed (
@@ -91,14 +91,14 @@ CREATE TABLE IF NOT EXISTS liquidated_order_redeemed (
     checkpoint_timestamp_ms  BIGINT    NOT NULL,
     package                  TEXT      NOT NULL,
     expiry_market_id         TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
+    account_id       TEXT      NOT NULL,
     order_id                 TEXT      NOT NULL,
     position_root_id         TEXT      NOT NULL,
     owner                    TEXT      NOT NULL,
     quantity_closed          NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_liq_redeemed_expiry_market_ts ON liquidated_order_redeemed(expiry_market_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_liq_redeemed_manager_ts ON liquidated_order_redeemed(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_liq_redeemed_manager_ts ON liquidated_order_redeemed(account_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_liq_redeemed_position_root ON liquidated_order_redeemed(position_root_id);
 
 CREATE TABLE IF NOT EXISTS order_liquidated (
@@ -120,24 +120,6 @@ CREATE TABLE IF NOT EXISTS order_liquidated (
 );
 CREATE INDEX IF NOT EXISTS idx_order_liquidated_expiry_market_ts ON order_liquidated(expiry_market_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_order_liquidated_order_id ON order_liquidated(order_id);
-
-CREATE TABLE IF NOT EXISTS predict_manager_created (
-    event_digest             TEXT      PRIMARY KEY,
-    digest                   TEXT      NOT NULL,
-    sender                   TEXT      NOT NULL,
-    checkpoint               BIGINT    NOT NULL,
-    tx_index                 BIGINT    NOT NULL,
-    event_index              BIGINT    NOT NULL,
-    timestamp                TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms  BIGINT    NOT NULL,
-    package                  TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
-    balance_manager_id       TEXT      NOT NULL,
-    owner                    TEXT      NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_predict_manager_created_owner_ts ON predict_manager_created(owner, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_predict_manager_created_manager_id ON predict_manager_created(predict_manager_id);
-CREATE INDEX IF NOT EXISTS idx_predict_manager_created_balance_manager_id ON predict_manager_created(balance_manager_id);
 
 CREATE TABLE IF NOT EXISTS builder_code_created (
     event_digest             TEXT      PRIMARY KEY,
@@ -166,59 +148,11 @@ CREATE TABLE IF NOT EXISTS builder_code_set (
     timestamp                TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     checkpoint_timestamp_ms  BIGINT    NOT NULL,
     package                  TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
+    account_id       TEXT      NOT NULL,
     owner                    TEXT      NOT NULL,
     builder_code_id          TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_builder_code_set_manager_ts ON builder_code_set(predict_manager_id, checkpoint_timestamp_ms);
-
-CREATE TABLE IF NOT EXISTS predict_trade_cap_minted (
-    event_digest             TEXT      PRIMARY KEY,
-    digest                   TEXT      NOT NULL,
-    sender                   TEXT      NOT NULL,
-    checkpoint               BIGINT    NOT NULL,
-    tx_index                 BIGINT    NOT NULL,
-    event_index              BIGINT    NOT NULL,
-    timestamp                TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms  BIGINT    NOT NULL,
-    package                  TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
-    cap_id                   TEXT      NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_predict_trade_cap_minted_manager_ts ON predict_trade_cap_minted(predict_manager_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_predict_trade_cap_minted_cap_id ON predict_trade_cap_minted(cap_id);
-
-CREATE TABLE IF NOT EXISTS predict_deposit_cap_minted (
-    event_digest             TEXT      PRIMARY KEY,
-    digest                   TEXT      NOT NULL,
-    sender                   TEXT      NOT NULL,
-    checkpoint               BIGINT    NOT NULL,
-    tx_index                 BIGINT    NOT NULL,
-    event_index              BIGINT    NOT NULL,
-    timestamp                TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms  BIGINT    NOT NULL,
-    package                  TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
-    cap_id                   TEXT      NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_predict_deposit_cap_minted_manager_ts ON predict_deposit_cap_minted(predict_manager_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_predict_deposit_cap_minted_cap_id ON predict_deposit_cap_minted(cap_id);
-
-CREATE TABLE IF NOT EXISTS predict_withdraw_cap_minted (
-    event_digest             TEXT      PRIMARY KEY,
-    digest                   TEXT      NOT NULL,
-    sender                   TEXT      NOT NULL,
-    checkpoint               BIGINT    NOT NULL,
-    tx_index                 BIGINT    NOT NULL,
-    event_index              BIGINT    NOT NULL,
-    timestamp                TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms  BIGINT    NOT NULL,
-    package                  TEXT      NOT NULL,
-    predict_manager_id       TEXT      NOT NULL,
-    cap_id                   TEXT      NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_predict_withdraw_cap_minted_manager_ts ON predict_withdraw_cap_minted(predict_manager_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_predict_withdraw_cap_minted_cap_id ON predict_withdraw_cap_minted(cap_id);
+CREATE INDEX IF NOT EXISTS idx_builder_code_set_account_ts ON builder_code_set(account_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS pricing_config_updated (
     event_digest                      TEXT      PRIMARY KEY,
@@ -499,12 +433,12 @@ CREATE TABLE IF NOT EXISTS deep_staked (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     amount                           NUMERIC   NOT NULL,
     active_stake_after               NUMERIC   NOT NULL,
     inactive_stake_after             NUMERIC   NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_deep_staked_manager_ts ON deep_staked(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_deep_staked_manager_ts ON deep_staked(account_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_deep_staked_vault_ts ON deep_staked(pool_vault_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS deep_unstaked (
@@ -518,10 +452,10 @@ CREATE TABLE IF NOT EXISTS deep_unstaked (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     amount                           NUMERIC   NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_deep_unstaked_manager_ts ON deep_unstaked(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_deep_unstaked_manager_ts ON deep_unstaked(account_id, checkpoint_timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_deep_unstaked_vault_ts ON deep_unstaked(pool_vault_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS builder_fees_claimed (
@@ -556,13 +490,13 @@ CREATE TABLE IF NOT EXISTS supply_requested (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     recipient                        TEXT      NOT NULL,
     request_index                    BIGINT    NOT NULL, -- supply-queue handle
     amount                           NUMERIC   NOT NULL  -- DUSDC escrowed
 );
 CREATE INDEX IF NOT EXISTS idx_supply_requested_vault_ts ON supply_requested(pool_vault_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_supply_requested_manager_ts ON supply_requested(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_requested_manager_ts ON supply_requested(account_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS withdraw_requested (
     event_digest                     TEXT      PRIMARY KEY,
@@ -575,13 +509,13 @@ CREATE TABLE IF NOT EXISTS withdraw_requested (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     recipient                        TEXT      NOT NULL,
     request_index                    BIGINT    NOT NULL, -- withdraw-queue handle
     amount                           NUMERIC   NOT NULL  -- PLP shares escrowed
 );
 CREATE INDEX IF NOT EXISTS idx_withdraw_requested_vault_ts ON withdraw_requested(pool_vault_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_withdraw_requested_manager_ts ON withdraw_requested(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_withdraw_requested_manager_ts ON withdraw_requested(account_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS request_cancelled (
     event_digest                     TEXT      PRIMARY KEY,
@@ -594,14 +528,14 @@ CREATE TABLE IF NOT EXISTS request_cancelled (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     recipient                        TEXT      NOT NULL,
     request_index                    BIGINT    NOT NULL,
     amount                           NUMERIC   NOT NULL,
     is_supply                        BOOLEAN   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_request_cancelled_vault_ts ON request_cancelled(pool_vault_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_request_cancelled_manager_ts ON request_cancelled(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_request_cancelled_manager_ts ON request_cancelled(account_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS supply_filled (
     event_digest                     TEXT      PRIMARY KEY,
@@ -614,14 +548,14 @@ CREATE TABLE IF NOT EXISTS supply_filled (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     recipient                        TEXT      NOT NULL,
     request_index                    BIGINT    NOT NULL,
     dusdc_amount                     NUMERIC   NOT NULL,
     shares_minted                    NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_supply_filled_vault_ts ON supply_filled(pool_vault_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_supply_filled_manager_ts ON supply_filled(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_supply_filled_manager_ts ON supply_filled(account_id, checkpoint_timestamp_ms);
 
 CREATE TABLE IF NOT EXISTS withdraw_filled (
     event_digest                     TEXT      PRIMARY KEY,
@@ -634,14 +568,14 @@ CREATE TABLE IF NOT EXISTS withdraw_filled (
     checkpoint_timestamp_ms          BIGINT    NOT NULL,
     package                          TEXT      NOT NULL,
     pool_vault_id                    TEXT      NOT NULL,
-    predict_manager_id               TEXT      NOT NULL,
+    account_id               TEXT      NOT NULL,
     recipient                        TEXT      NOT NULL,
     request_index                    BIGINT    NOT NULL,
     shares_burned                    NUMERIC   NOT NULL,
     dusdc_amount                     NUMERIC   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_withdraw_filled_vault_ts ON withdraw_filled(pool_vault_id, checkpoint_timestamp_ms);
-CREATE INDEX IF NOT EXISTS idx_withdraw_filled_manager_ts ON withdraw_filled(predict_manager_id, checkpoint_timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_withdraw_filled_manager_ts ON withdraw_filled(account_id, checkpoint_timestamp_ms);
 
 -- One row per LP flush: the frozen mark every fill priced at plus its valuation
 -- breakdown (idle + active-market NAV) and fill counts. The flush IS the
@@ -687,7 +621,7 @@ CREATE TABLE IF NOT EXISTS order_state (
     expiry_market_id         TEXT      NOT NULL,
     order_id                 TEXT      NOT NULL,
     -- NULL until an owner-carrying event lands (OrderLiquidated carries none).
-    predict_manager_id       TEXT,
+    account_id       TEXT,
     position_root_id         TEXT,
     owner                    TEXT,
     -- open | replaced | closed | liquidated | liquidated_redeemed | settled_redeemed
@@ -714,7 +648,7 @@ CREATE TABLE IF NOT EXISTS order_state (
 );
 -- Covers the /managers/:id/positions sort (opened_at_ms DESC, sequence DESC)
 -- so the windowed page is a backward index range scan, not a fetch-and-sort.
-CREATE INDEX IF NOT EXISTS idx_order_state_manager_status_opened ON order_state(predict_manager_id, status, opened_at_ms, sequence);
+CREATE INDEX IF NOT EXISTS idx_order_state_manager_status_opened ON order_state(account_id, status, opened_at_ms, sequence);
 CREATE INDEX IF NOT EXISTS idx_order_state_market_status ON order_state(expiry_market_id, status);
 CREATE INDEX IF NOT EXISTS idx_order_state_position_root ON order_state(expiry_market_id, position_root_id);
 
@@ -723,14 +657,14 @@ CREATE INDEX IF NOT EXISTS idx_order_state_position_root ON order_state(expiry_m
 -- One row per (pool_vault_id, is_supply, request_index) — the queue handle is
 -- unique only within (vault, is_supply) since supply and withdraw queues have
 -- independent indexes (lp_book.move). Fill events carry recipient + index, not
--- the manager id directly, so predict_manager_id is write-once from the Requested
+-- the manager id directly, so account_id is write-once from the Requested
 -- event via COALESCE. Same idempotent/order-independent semantics as order_state.
 CREATE TABLE IF NOT EXISTS lp_request_state (
     pool_vault_id            TEXT      NOT NULL,
     is_supply                BOOLEAN   NOT NULL,
     request_index            BIGINT    NOT NULL,
     -- Write-once identity/amount from the Requested event.
-    predict_manager_id       TEXT,
+    account_id       TEXT,
     recipient                TEXT,
     requested_amount         NUMERIC,  -- DUSDC for supply, PLP shares for withdraw
     -- open | cancelled | filled
@@ -745,7 +679,7 @@ CREATE TABLE IF NOT EXISTS lp_request_state (
     event_index              BIGINT    NOT NULL,
     PRIMARY KEY (pool_vault_id, is_supply, request_index)
 );
-CREATE INDEX IF NOT EXISTS idx_lp_request_state_manager_status ON lp_request_state(predict_manager_id, status, opened_at_ms);
+CREATE INDEX IF NOT EXISTS idx_lp_request_state_manager_status ON lp_request_state(account_id, status, opened_at_ms);
 CREATE INDEX IF NOT EXISTS idx_lp_request_state_vault_status ON lp_request_state(pool_vault_id, status);
 
 -- BRIN timestamp indexes on every raw table feeding a windowed materialized
@@ -897,7 +831,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS position_cashflow AS
 SELECT
     m.expiry_market_id,
     m.position_root_id,
-    m.predict_manager_id,
+    m.account_id,
     m.owner,
     m.quantity                                            AS minted_quantity,
     m.net_premium,

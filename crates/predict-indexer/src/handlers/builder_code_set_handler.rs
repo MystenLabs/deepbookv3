@@ -12,7 +12,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         event_index: meta.event_index(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
-        predict_manager_id: ev.predict_manager_id.to_string(),
+        account_id: ev.account_id.to_string(),
         owner: ev.owner.to_string(),
         builder_code_id: ev.builder_code_id.map(|id| id.to_string()),
     }

@@ -20,7 +20,7 @@ const PREDICT_PACKAGES_MAINNET: &[&str] = &[];
 /// `oracle-indexer` crate, so they are intentionally not listed here.
 pub const PREDICT_MODULES: &[&str] = &[
     "order_events",
-    "account_events",
+    "builder_code_events",
     "config_events",
     "vault_events",
 ];
