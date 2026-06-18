@@ -2,8 +2,26 @@
 name = "deepbook_predict"
 edition = "2024.beta"
 version = "0.0.1"
+# `implicit-dependencies = false` + an explicit `override` framework pin is REQUIRED
+# for the test suite, not a preference. Every trade/PLP flow now takes
+# `&sui::accumulator::AccumulatorRoot`, whose only constructor is the `#[test_only]`
+# `sui::accumulator::create_for_testing` — a symbol the repo-standard testnet
+# framework does not expose, and a dependency's test code cannot reach it either
+# (framework `#[test_only]`s are stripped for transitive deps). Predict's own root
+# test code can call it only when Predict's CANONICAL framework carries it. `account`
+# already pins this nightly main commit; pinning the same rev here with `override =
+# true` makes nightly the canonical `sui`/`std` that Predict (and `account`) bind to.
+# The other in-repo deps (deepbook/propbook/dusdc/...) keep the repo-standard testnet
+# framework (`Sui_1` in the lock); both are `0x2` with identical manifest digests, so
+# their types link. This is a deliberate, isolated dual-pin — not resolver churn.
+# Temporary — drop the override and `implicit-dependencies` line, restoring the
+# implicit testnet framework, once a stable Sui release ships an accumulator test
+# constructor (see packages/account/ACCUMULATOR_TESTING_STATUS.md).
+implicit-dependencies = false
 
 [dependencies]
+sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "2e196df64878a6ee6786cf739474e8bf4a85f726", override = true }
+std = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "2e196df64878a6ee6786cf739474e8bf4a85f726", override = true }
 deepbook = { local = "../deepbook" }
 fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
