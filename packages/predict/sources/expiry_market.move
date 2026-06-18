@@ -635,12 +635,8 @@ fun redeem_internal(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let redeemed_order = order::from_order_id(order_id);
-    let is_settled = market.ensure_settled(propbook_registry, pyth, clock);
-    if (is_settled) {
+    if (market.ensure_settled(propbook_registry, pyth, clock)) {
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-    };
-
-    if (is_settled) {
         market.redeem_settled_internal(account, &redeemed_order, root, clock, ctx);
         return (redeemed_order.id(), option::none())
     };
