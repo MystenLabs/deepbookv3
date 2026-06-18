@@ -3,7 +3,7 @@
 
 /// L2/L3 liquidation lifecycle: a 2x order is knocked out by a 1% price drop,
 /// and the test pins that liquidation is a pure knockout (liability drops by
-/// exactly the order's backing, no cash moves, the holder's manager is
+/// exactly the order's backing, no cash moves, the holder's account is
 /// untouched), that a second liquidation attempt on the same id returns false
 /// (no double-liquidation), and that the holder's redeem of the tombstone pays
 /// EXACTLY zero with no fee and clears the position (no double-pay) — after
@@ -100,7 +100,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
 
     // --- Drop the spot 1% and liquidate. The knockout removes the order's
     // full live terms (liability → 0 exactly), moves no cash, and leaves the
-    // holder's manager untouched (tombstone persists until the holder redeems).
+    // holder's account untouched (tombstone persists until the holder redeems).
     fx.prepare_live_oracle_at(&market, &mut pyth, &mut bs, DROPPED_SPOT, DROPPED_SOURCE_TS);
     let liquidated = fx.liquidate_order(
         &config,
