@@ -358,6 +358,32 @@ public fun has_position(wrapper: &AccountWrapper, expiry_id: ID, order_id: u256)
     predict_account::has_position(wrapper.load_account(), expiry_id, order_id)
 }
 
+/// The account's free balance of `T` (stored + unsettled accumulator funds; the latter
+/// is zero with the empty test root, so this equals stored balance).
+public fun account_balance<T>(self: &Fixture, wrapper: &AccountWrapper, root: &AccumulatorRoot): u64 {
+    wrapper.load_account().balance<T>(root, &self.clock)
+}
+
+/// Open position count for the trader's account in `expiry_id`.
+public fun position_count(wrapper: &AccountWrapper, expiry_id: ID): u64 {
+    predict_account::expiry_position_count(wrapper.load_account(), expiry_id)
+}
+
+/// Cumulative trading fees the trader's account paid into `expiry_id`.
+public fun fees_paid(wrapper: &AccountWrapper, expiry_id: ID): u64 {
+    predict_account::trading_fees_paid(wrapper.load_account(), expiry_id)
+}
+
+/// Active (this-epoch-effective) DEEP stake on the trader's account.
+public fun active_stake(wrapper: &AccountWrapper): u64 {
+    predict_account::active_stake(wrapper.load_account())
+}
+
+/// Inactive (next-epoch) DEEP stake on the trader's account.
+public fun inactive_stake(wrapper: &AccountWrapper): u64 {
+    predict_account::inactive_stake(wrapper.load_account())
+}
+
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
     market.receive_cash_for_testing(coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx()));
 }

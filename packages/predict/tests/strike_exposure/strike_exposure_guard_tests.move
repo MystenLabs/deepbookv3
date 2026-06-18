@@ -11,14 +11,17 @@ use deepbook_predict::{constants, flow_test_helpers as helpers, strike_exposure,
 /// path (one extra position lot above the minted quantity).
 #[test, expected_failure(abort_code = strike_exposure::EInvalidCloseQuantity)]
 fun redeem_above_order_quantity_aborts() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -30,7 +33,8 @@ fun redeem_above_order_quantity_aborts() {
     fx.redeem(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
