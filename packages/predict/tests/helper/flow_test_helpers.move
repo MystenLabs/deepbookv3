@@ -314,7 +314,7 @@ public fun create_funded_manager_as(
 ): Trader {
     self.scenario.next_tx(owner);
     let mut account_registry = self.scenario.take_shared<AccountRegistry>();
-    let wrapper_id = account_registry.derived_wrapper_id(owner);
+    let wrapper_id = account_registry.derived_wrapper_address(owner).to_id();
     let mut wrapper = account_registry.new(self.scenario.ctx());
     return_shared(account_registry);
     let root = self.scenario.take_shared<AccumulatorRoot>();

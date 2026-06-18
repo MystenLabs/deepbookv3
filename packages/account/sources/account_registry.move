@@ -57,19 +57,9 @@ public fun derived_address(registry: &AccountRegistry, owner: address): address 
     derived_object::derive_address(registry.id.to_inner(), AccountKey(owner))
 }
 
-/// Return the deterministic canonical account ID for `owner` under this registry.
-public fun derived_id(registry: &AccountRegistry, owner: address): ID {
-    registry.derived_address(owner).to_id()
-}
-
 /// Return the deterministic account wrapper address for `owner` under this registry.
 public fun derived_wrapper_address(registry: &AccountRegistry, owner: address): address {
     derived_object::derive_address(registry.id.to_inner(), AccountWrapperKey(owner))
-}
-
-/// Return the deterministic account wrapper ID for `owner` under this registry.
-public fun derived_wrapper_id(registry: &AccountRegistry, owner: address): ID {
-    registry.derived_wrapper_address(owner).to_id()
 }
 
 /// Return whether the canonical derived account has already been claimed.

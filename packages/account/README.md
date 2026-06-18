@@ -55,19 +55,17 @@ public fun new_self_owned(
 
 The returned wrapper must be shared with `account::share`.
 
-The registry exposes both derived identities:
+The registry exposes both derived addresses:
 
 ```move
 public fun derived_address(registry: &AccountRegistry, owner: address): address
-public fun derived_id(registry: &AccountRegistry, owner: address): ID
 public fun derived_wrapper_address(registry: &AccountRegistry, owner: address): address
-public fun derived_wrapper_id(registry: &AccountRegistry, owner: address): ID
 ```
 
-`derived_address` / `derived_id` are the canonical account identity. Use these for
-events, account-local storage, and accumulator delivery. `derived_wrapper_address` /
-`derived_wrapper_id` identify the shared wrapper object that must be passed to load
-the account.
+`derived_address` is the canonical account identity. Use it for events,
+account-local storage, and accumulator delivery. `derived_wrapper_address`
+identifies the shared wrapper object that must be passed to load the account.
+Call `.to_id()` on either address when an object ID is needed.
 
 ## Identity Model
 
@@ -84,6 +82,11 @@ and borrow.
 This split keeps LP fills and other accumulator-delivered funds consistent with
 events: when an event emits `account_id`, that ID's address is also where coins are
 delivered.
+
+The wrapper model intentionally serializes mutable access to one account: two
+transactions that both need the same `AccountWrapper` cannot mutate that account in
+parallel. Independent accounts still execute independently, and app state stays
+co-located with custody for account-level invariants.
 
 ## Authority Model
 

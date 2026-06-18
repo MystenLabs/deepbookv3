@@ -44,8 +44,8 @@ public struct OwnerObject has key {
 fun registry_creates_one_canonical_account_per_owner() {
     let mut scenario = setup();
     let mut registry = scenario.take_shared<AccountRegistry>();
-    let account_id = registry.derived_id(ALICE);
-    let wrapper_id = registry.derived_wrapper_id(ALICE);
+    let account_id = registry.derived_address(ALICE).to_id();
+    let wrapper_id = registry.derived_wrapper_address(ALICE).to_id();
 
     assert!(!registry.derived_exists(ALICE));
     assert!(!registry.derived_wrapper_exists(ALICE));
@@ -59,8 +59,8 @@ fun registry_creates_one_canonical_account_per_owner() {
     assert_eq!(account.receive_address(), account_id.to_address());
     assert!(registry.derived_exists(ALICE));
     assert!(registry.derived_wrapper_exists(ALICE));
-    assert_eq!(registry.derived_id(ALICE), account_id);
-    assert_eq!(registry.derived_wrapper_id(ALICE), wrapper_id);
+    assert_eq!(registry.derived_address(ALICE).to_id(), account_id);
+    assert_eq!(registry.derived_wrapper_address(ALICE).to_id(), wrapper_id);
 
     account::share(wrapper);
     return_shared(registry);
@@ -148,7 +148,7 @@ fun object_auth_opens_self_owned_account() {
     let mut registry = scenario.take_shared<AccountRegistry>();
     let mut owner = OwnerObject { id: object::new(scenario.ctx()) };
     let owner_address = owner.id.to_inner().to_address();
-    let wrapper_id = registry.derived_wrapper_id(owner_address);
+    let wrapper_id = registry.derived_wrapper_address(owner_address).to_id();
     let wrapper = registry.new_self_owned(&mut owner.id, scenario.ctx());
 
     assert_eq!(wrapper.load_account().owner(), owner_address);
@@ -178,7 +178,7 @@ fun authorized_app_auth_opens_account_and_data_lane() {
     scenario.next_tx(ADMIN);
 
     let registry = scenario.take_shared<AccountRegistry>();
-    let wrapper_id = registry.derived_wrapper_id(ALICE);
+    let wrapper_id = registry.derived_wrapper_address(ALICE).to_id();
     let auth = registry.generate_auth_as_app<TestApp>(permit<TestApp>());
     return_shared(registry);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -204,7 +204,7 @@ fun authorized_app_auth_opens_account_and_data_lane() {
 fun unauthorized_app_auth_aborts() {
     let scenario = setup_with_account(ALICE);
     let registry = scenario.take_shared<AccountRegistry>();
-    let wrapper_id = registry.derived_wrapper_id(ALICE);
+    let wrapper_id = registry.derived_wrapper_address(ALICE).to_id();
     let auth = registry.generate_auth_as_app<TestApp>(permit<TestApp>());
 
     return_shared(registry);
@@ -261,7 +261,7 @@ fun setup_with_account(owner: address): Scenario {
 
 fun take_account_wrapper(scenario: &Scenario, owner: address): AccountWrapper {
     let registry = scenario.take_shared<AccountRegistry>();
-    let wrapper_id = registry.derived_wrapper_id(owner);
+    let wrapper_id = registry.derived_wrapper_address(owner).to_id();
     return_shared(registry);
     scenario.take_shared_by_id<AccountWrapper>(wrapper_id)
 }
