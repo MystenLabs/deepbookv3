@@ -16,10 +16,10 @@ const ALICE: address = @0xA;
 #[test]
 fun root_constructs_and_funds_stored_balance() {
     let mut scenario = test::begin(@0x0);
-    // Predict's canonical Sui is the nightly override, so Predict's own root test code
-    // constructs the shared AccumulatorRoot directly. It cannot be funded without the
-    // system settlement barrier (see ACCUMULATOR_TESTING_STATUS.md); flows that read
-    // stored balance only (empty-root settle is a no-op) are fully testable.
+    // Disabled on the stable/testnet framework: this helper can construct the shared
+    // AccumulatorRoot only on the nightly verification path or after stable Sui exposes
+    // the test constructor. Even then, the root is empty; unit tests cannot populate
+    // real barrier-settled funds (see ACCUMULATOR_TESTING_STATUS.md).
     accumulator_support::create_shared_root(&mut scenario);
     account_registry::init_for_testing(scenario.ctx());
     scenario.next_tx(ALICE);

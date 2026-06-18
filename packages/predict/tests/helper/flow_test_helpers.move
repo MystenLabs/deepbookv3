@@ -60,8 +60,9 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
 /// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`/
-/// `OracleRegistry`/`AccountRegistry`/`AccumulatorRoot` are real shared objects taken
-/// per-transaction, not held here.
+/// `OracleRegistry`/`AccountRegistry` are real shared objects taken per-transaction,
+/// not held here. `AccumulatorRoot` follows the same pattern only on root-enabled
+/// test paths; this stable-framework branch leaves the root seam as a no-op.
 public struct Fixture {
     scenario: Scenario,
     admin_cap: AdminCap,
@@ -89,9 +90,10 @@ public struct Trader has copy, drop, store {
 /// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
-    // Construct the shared accumulator root and the account registry up front. The
-    // admin is `@0x0`, the sender `accumulator::create_for_testing` requires. The root
-    // is empty (no barrier-settled funds); flows fund accounts through stored balance.
+    // Ask the accumulator seam to construct the shared root up front. On this
+    // stable-framework branch the seam is a no-op and the root-dependent flow files
+    // are disabled; on the nightly/stable-constructor path it creates an empty root
+    // and flows fund accounts through stored balance.
     accumulator_support::create_shared_root(&mut scenario);
     account_registry::init_for_testing(scenario.ctx());
     plp::init_for_testing(scenario.ctx());
@@ -329,7 +331,7 @@ public fun take_account(self: &Fixture, trader: &Trader): AccountWrapper {
     self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id)
 }
 
-/// Take the single shared `AccumulatorRoot`.
+/// Take the single shared `AccumulatorRoot` on root-enabled test paths.
 public fun take_root(self: &Fixture): AccumulatorRoot {
     accumulator_support::take_root(&self.scenario)
 }

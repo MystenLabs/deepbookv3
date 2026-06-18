@@ -1,8 +1,9 @@
 # Account Accumulator Testing Status
 
 This note captures the current state of the Account package around Sui
-accumulator support, the temporary dependency choice, and the flows we still
-cannot prove with package-local Move unit tests.
+accumulator support, the stable-framework PR choice, the optional nightly
+verification path, and the flows we still cannot prove with package-local Move
+unit tests.
 
 ## Current State
 
@@ -28,34 +29,53 @@ Predict currently relies on two address-balance paths:
 - Builder-code fees are sent to the `BuilderCode` object address and claimed with
   `builder_code::claim_all_builder_fees`.
 
-## Temporary Sui Dependency
+## Current Dependency Choice
 
 The current stable/testnet framework lock used by this repo does not expose
-`sui::accumulator::create_for_testing`. That `#[test_only]` shim — a wrapper around
-the private genesis constructor — is the only path that builds an `AccumulatorRoot`,
-and it ships only in a newer (nightly) framework. Without it, package-local tests
-cannot construct an `AccumulatorRoot` at all.
+`sui::accumulator::create_for_testing`. That `#[test_only]` shim, a wrapper around
+the private genesis constructor, is the only path that builds an
+`AccumulatorRoot`, and it ships only in a newer nightly framework. Without it,
+package-local tests cannot construct an `AccumulatorRoot` at all.
+
+This PR intentionally keeps the Move manifests on the repo-standard testnet
+framework:
+
+- `packages/account/Move.toml` has no explicit Sui framework dependency.
+- `packages/predict/Move.toml` keeps the implicit framework dependencies and has
+  no `implicit-dependencies = false`, no explicit `sui` / `std` entries, and no
+  framework `override = true`.
+- `packages/account/Move.lock` and `packages/predict/Move.lock` pin a single
+  testnet framework revision (`718ae563a42fb4ba0d055588f81c704dcef58c25`).
+
+The tradeoff is explicit test fragmentation: the shared
+`accumulator_support::create_shared_root` helper is a no-op on this branch, the
+root-dependent Predict flow files are renamed `*.move.disabled`, and the mixed
+Account/Predict test files keep their AccumulatorRoot-dependent cases
+block-commented.
+
+## Nightly Verification Path
+
+The alternate development setup that re-enables the empty-root unit tests is:
 
 ### Account (old-style manifest)
 
 `account` has an `[addresses]` block, so it is an old-style package and can pin the
-framework directly. `packages/account/Move.toml` explicitly pins Sui to a nightly
-main commit:
+framework directly:
 
 ```toml
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "2e196df64878a6ee6786cf739474e8bf4a85f726" }
 ```
 
-### Predict (new-style manifest) — `implicit-dependencies = false` + `override`
+### Predict (new-style manifest) - `implicit-dependencies = false` + `override`
 
 `predict` is a new-style package (no `[addresses]`, forced by its transitive
-new-style `pyth_lazer`/`propbook` deps), so it cannot pin a system framework in
-`[dependencies]` or `[dep-replacements]` ("`Sui` is a legacy system name"). It is
+new-style `pyth_lazer` / `propbook` deps), so it cannot pin a system framework in
+`[dependencies]` or `[dep-replacements]` (`Sui` is a legacy system name). It is
 also not enough for `account` to carry the nightly framework: a dependency's
-test-only code (and the framework `#[test_only]`s it calls) is stripped when the
+test-only code, and the framework `#[test_only]`s it calls, are stripped when the
 dependency is built for a dependent, so Predict tests cannot reach
-`create_for_testing` through `account`. Predict's OWN canonical framework must carry
-the constructor. The mechanism that works:
+`create_for_testing` through `account`. Predict's own canonical framework must
+carry the constructor. The mechanism that works is:
 
 ```toml
 [package]
@@ -66,27 +86,33 @@ sui = { git = "...sui.git", subdir = "crates/sui-framework/packages/sui-framewor
 std = { git = "...sui.git", subdir = "crates/sui-framework/packages/move-stdlib",   rev = "2e196df6...", override = true }
 ```
 
-This makes nightly the canonical `sui`/`std` that Predict (and `account`) bind to, so
-Predict's root test code can call `accumulator::create_for_testing` directly. The
-other in-repo deps (deepbook/propbook/dusdc/fixed_math/block_scholes_oracle) keep the
-repo-standard testnet framework (`Sui_1` in the lock); both revisions are `0x2` with
-identical manifest digests, so their types link. The split is a deliberate, isolated
-dual-pin, not resolver churn.
+This makes nightly the canonical `sui` / `std` that Predict and `account` bind to,
+so Predict's root test code can call `accumulator::create_for_testing` directly.
+The other in-repo deps keep the repo-standard testnet framework (`Sui_1` in the
+lock). Both revisions are `0x2` with identical manifest digests, so their types
+link. The split is a deliberate, isolated dual-pin.
 
-### Reverting before mainnet
+That path is useful for development verification, but it is not the dependency
+shape landed by this clean PR. It also still creates only an empty
+`AccumulatorRoot`; it does not make package-local unit tests able to populate the
+system settlement barrier.
 
-These are temporary development dependencies. Once a stable Sui release exposes an
-accumulator test constructor, we should:
+## When Stable Support Lands
 
-1. Drop Account's explicit Sui pin and Predict's `implicit-dependencies = false` +
-   `sui`/`std` overrides, restoring the implicit testnet framework everywhere.
-2. Regenerate Account and downstream package lockfiles from that stable release.
-3. Confirm a single framework revision across Predict's lockfile.
-4. Re-run Account tests and the relevant Predict build/test suites.
+Once a stable Sui release exposes an accumulator test constructor, we should:
+
+1. Restore the real body of both `accumulator_support::create_shared_root`
+   helpers (`accumulator::create_for_testing(scenario.ctx())`).
+2. Rename the Predict `*.move.disabled` files back to `*.move` and uncomment the
+   root-dependent cases in mixed test files.
+3. Regenerate Account and downstream package lockfiles from the stable release.
+4. Confirm Predict's lockfile still has a single framework revision.
+5. Re-run Account tests and the relevant Predict build/test suites.
 
 ## What Is Tested Now
 
-`packages/account/tests/account_tests.move` currently covers:
+On the stable/testnet framework branch, `packages/account/tests/account_tests.move`
+currently covers:
 
 - one canonical account per owner;
 - canonical account ID, wrapper ID, owner, and receive-address derivation;
@@ -96,27 +122,29 @@ accumulator test constructor, we should:
 - self-owned account auth from mutable owner `UID`;
 - app whitelist authorization and deauthorization errors;
 - whitelisted app auth using `Permit<App>`;
-- app data attach, read, mutable read, detach, and namespace separation;
-- direct Account coin deposit / withdraw with `AccumulatorRoot` and `Clock`
-  threaded through the public APIs;
-- insufficient stored balance aborts.
+- app data attach, read, mutable read, detach, and namespace separation.
 
-The tests verify that Account's public coin APIs are shaped correctly around
-`AccumulatorRoot`, but they do not verify nonzero accumulator settlement.
+The Account coin deposit / withdraw tests are disabled on this branch because
+they need a constructible `AccumulatorRoot`. The source still threads
+`AccumulatorRoot` and `Clock` through the public coin APIs, but current
+package-local stable-framework tests cannot execute those APIs.
 
-## What Predict Can Now Test (empty root)
+## What Nightly Empty-Root Tests Can Cover
 
-With the `override` framework pin above, Predict tests construct an **empty**
+With the nightly override path above, Predict tests construct an empty
 `AccumulatorRoot` directly (`accumulator::create_for_testing`). Every flow whose
-funds move through the account's **stored** balance — the empty-root settle is a
-no-op — is therefore unit-testable end to end: account creation/deposit, mint,
-live and settled redeem (paid from stored balance), liquidation cleanup, fee and
-penalty accounting, and the PLP genesis lock / flush / valuation paths that read
-stored balance. These are covered by the Predict flow suite.
+funds move through the account's stored balance, where the empty-root settle is a
+no-op, is unit-testable end to end: account creation/deposit, mint, live and
+settled redeem, liquidation cleanup, fee and penalty accounting, and the PLP
+genesis lock / flush / valuation paths that read stored balance.
+
+Those Predict flow files remain disabled in this stable-framework PR. Run the
+nightly verification branch/path when you need that broader empty-root unit-test
+signal before stable Sui exposes the constructor.
 
 ## Flows Not Tested Yet
 
-The remaining gap is specifically the **nonzero** address-balance (barrier) path,
+The remaining gap is specifically the nonzero address-balance (barrier) path,
 which an empty root cannot exercise:
 
 - `balance::send_funds<T>(..., account.receive_address())` becoming visible in
@@ -134,12 +162,13 @@ which an empty root cannot exercise:
 - Builder-code fee visibility and claims after Predict sends builder fees to a
   builder-code object address.
 
-The blocker is not Account source structure. We can create `AccumulatorRoot` with
-the nightly framework, but external package tests cannot populate it the same way
-the system settlement barrier does. The relevant settlement functions live in
-`sui::accumulator_settlement`, are not public to Account, and are system-gated.
-Advancing a unit-test scenario through `@0x0` after `balance::send_funds` did not
-make `settled_funds_value` observe the sent funds.
+The blocker is not Account source structure. Even with the nightly framework, unit
+tests can create only an empty `AccumulatorRoot`; external package tests cannot
+populate it the same way the system settlement barrier does. The relevant
+settlement functions live in `sui::accumulator_settlement`, are not public to
+Account, and are system-gated. Advancing a unit-test scenario through `@0x0`
+after `balance::send_funds` did not make `settled_funds_value` observe the sent
+funds.
 
 ## How To Close The Gap
 
@@ -154,22 +183,16 @@ Once that exists, add focused tests for Account's nonzero settlement behavior
 first, then cover the Predict surfaces that depend on it: PLP fill/refund delivery
 to Account and builder-code fee claiming.
 
-## Account events + indexer suite
+## Events
 
-`account::account_events` emits the account-domain events (lifecycle:
-`AccountCreated`, `AppAuthorized`, `AppDeauthorized`; custody: `Deposited`,
-`Withdrawn`, `FundsSettled`), indexed by the standalone `account-{schema,
-indexer,server}` crates (separate tables / watermark namespace / process from
-Predict). See `crates/account-server/API.md` for the served endpoints.
+`account::account_events` emits the account-domain events: lifecycle
+(`AccountCreated`, `AppAuthorized`, `AppDeauthorized`) and custody (`Deposited`,
+`Withdrawn`, `FundsSettled`). The Move tests on this branch assert
+`AccountCreated`, `AppAuthorized`, and `AppDeauthorized`. `Deposited`,
+`Withdrawn`, and zero-amount `FundsSettled` assertions are part of the disabled
+root-dependent Account tests.
 
-The Move tests in `account_tests.move` assert `AccountCreated`,
-`AppAuthorized`/`AppDeauthorized`, `Deposited`, and `Withdrawn` fire with the
-expected fields (all reachable against the empty test root). **Nonzero
-`FundsSettled` emission stays in the deferred-coverage gap above** — it needs
-barrier-delivered funds, the same system-settlement path no Move unit test can
-populate. A deposit/withdraw against the empty root settles nothing, so it emits
-zero `FundsSettled` (asserted). The Rust side covers `FundsSettled`'s decode →
-row mapping and its fold into `account_balance` regardless
-(`crates/account-indexer/tests/`), so the only untested link is the on-chain
-emission of a nonzero settlement — closed by the same localnet/integration work
-the gap above describes.
+Nonzero `FundsSettled` emission stays in the deferred-coverage gap above because
+it needs barrier-delivered funds, the same system-settlement path no Move unit
+test can populate. The account indexer/server work is intentionally outside this
+clean Move-only PR, so event indexing coverage belongs to that follow-up branch.

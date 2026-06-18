@@ -3,8 +3,8 @@
 
 /// Account-domain events: canonical-account lifecycle, app-whitelist governance,
 /// and per-coin custody movement. Emitted by the modules that own each transition
-/// (`account_registry` for lifecycle, `account` for custody), and indexed by the
-/// standalone `account-indexer` crate. This is the package's only event surface.
+/// (`account_registry` for lifecycle, `account` for custody). This is the
+/// package's only event surface; indexing lives in follow-up account indexer work.
 module account::account_events;
 
 use std::ascii::String;

@@ -241,14 +241,16 @@ sui move build --path packages/account --warnings-are-errors
 
 ## Tests
 
-Account has dedicated unit tests in `tests/account_tests.move`. They currently
-require a temporary nightly Sui framework pin because stable/testnet Sui does not
-yet expose the accumulator root constructor used by the tests.
+Account has dedicated unit tests in `tests/account_tests.move`. This PR keeps the
+package on the repo-standard stable/testnet Sui framework, which does not yet
+expose the accumulator root constructor used by the custody tests. The
+root-dependent deposit/withdraw cases are therefore disabled on this branch.
 
 ```bash
 sui move test --path packages/account --gas-limit 100000000000
 ```
 
-See `ACCUMULATOR_TESTING_STATUS.md` for the current dependency state and the
-remaining accumulator-backed flows that still need stable framework or integration
-coverage before mainnet.
+See `ACCUMULATOR_TESTING_STATUS.md` for the current dependency choice, the
+nightly verification path that can re-enable empty-root tests, and the remaining
+accumulator-backed flows that still need stable framework or integration coverage
+before mainnet.

@@ -4,12 +4,11 @@
 /// Guard coverage for the registry's creation/version/pause abort codes and the
 /// builder-code owner guard.
 ///
-/// `builder_code::ENotOwner` is exercised below: `claim_all_builder_fees` runs
-/// `assert_owner` as its first line, before touching any accumulator funds, so a
-/// non-owner caller aborts against an EMPTY `AccumulatorRoot` (constructed with
-/// `accumulator::create_for_testing`). The non-zero builder-fee CLAIM itself —
-/// fees delivered to the builder-code object address through the system settlement
-/// barrier — still needs integration coverage; see
+/// `builder_code::ENotOwner` is covered by the disabled root-dependent test below
+/// once an empty `AccumulatorRoot` can be constructed: `claim_all_builder_fees`
+/// runs `assert_owner` before touching accumulator funds. The non-zero builder-fee
+/// claim itself, where fees are delivered to the builder-code object address
+/// through the system settlement barrier, still needs integration coverage; see
 /// `packages/account/ACCUMULATOR_TESTING_STATUS.md`.
 #[test_only]
 module deepbook_predict::registry_guard_tests;
