@@ -193,59 +193,21 @@ public fun mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    config.assert_version();
-    assert!(!market.mint_paused, EMintPaused);
-    config.assert_trading_allowed();
-    config.assert_not_valuation_in_progress();
     let account = wrapper.load_account_mut(auth);
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            &pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
-
-    let (minted_order, entry_probability, net_premium) = market
-        .strike_exposure
-        .allocate_mint_order(
-            &pricer,
-            lower_tick,
-            higher_tick,
-            quantity,
-            leverage,
-            clock,
-        );
-    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
-    let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
-
-    let (builder_fee_amount, builder_code_id) = market.settle_mint_payment(
+    market.mint_internal(
         account,
-        &minted_order,
-        net_premium,
-        fee_amount,
-        penalty_amount,
+        config,
+        propbook_registry,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
         root,
         clock,
         ctx,
-    );
-    order_events::emit_order_minted(
-        market.id(),
-        account.account_id(),
-        account.owner(),
-        builder_code_id,
-        &minted_order,
-        leverage,
-        entry_probability,
-        net_premium,
-        fee_amount,
-        builder_fee_amount,
-        penalty_amount,
-    );
-    minted_order.id()
+    )
 }
 
 /// Redeem an order you hold account authority over. Works in any
@@ -267,43 +229,19 @@ public fun redeem(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    let redeemed_order = order::from_order_id(order_id);
     let account = wrapper.load_account_mut(auth);
-    let is_settled = market.ensure_settled(propbook_registry, pyth, clock);
-    if (is_settled) {
-        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-    };
-
-    if (is_settled) {
-        market.redeem_settled_internal(account, &redeemed_order, root, clock, ctx);
-        return (redeemed_order.id(), option::none())
-    };
-
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            &pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
-    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
-        return (redeemed_order.id(), option::none())
-    };
-    let replacement_order_id = market.redeem_live_internal(
+    market.redeem_internal(
         account,
         config,
-        &pricer,
-        &redeemed_order,
+        propbook_registry,
+        pyth,
+        bs,
+        order_id,
         close_quantity,
         root,
         clock,
         ctx,
-    );
-    (redeemed_order.id(), replacement_order_id)
+    )
 }
 
 /// Permissionlessly redeem a settled order without account-owner authority. The
@@ -610,6 +548,126 @@ fun ewma_penalty(
 ): u64 {
     market.ewma.update(config, clock, ctx);
     market.ewma.penalty_fee(config, quantity, ctx)
+}
+
+fun mint_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    config.assert_version();
+    assert!(!market.mint_paused, EMintPaused);
+    config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+
+    let (minted_order, entry_probability, net_premium) = market
+        .strike_exposure
+        .allocate_mint_order(
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            clock,
+        );
+    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
+
+    let (builder_fee_amount, builder_code_id) = market.settle_mint_payment(
+        account,
+        &minted_order,
+        net_premium,
+        fee_amount,
+        penalty_amount,
+        root,
+        clock,
+        ctx,
+    );
+    order_events::emit_order_minted(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        builder_code_id,
+        &minted_order,
+        leverage,
+        entry_probability,
+        net_premium,
+        fee_amount,
+        builder_fee_amount,
+        penalty_amount,
+    );
+    minted_order.id()
+}
+
+fun redeem_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    order_id: u256,
+    close_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let redeemed_order = order::from_order_id(order_id);
+    let is_settled = market.ensure_settled(propbook_registry, pyth, clock);
+    if (is_settled) {
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    };
+
+    if (is_settled) {
+        market.redeem_settled_internal(account, &redeemed_order, root, clock, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+    let replacement_order_id = market.redeem_live_internal(
+        account,
+        config,
+        &pricer,
+        &redeemed_order,
+        close_quantity,
+        root,
+        clock,
+        ctx,
+    );
+    (redeemed_order.id(), replacement_order_id)
 }
 
 fun redeem_live_internal(
