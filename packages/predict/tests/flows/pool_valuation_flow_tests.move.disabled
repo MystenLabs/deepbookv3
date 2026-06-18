@@ -21,7 +21,6 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     plp::{Self, PoolVault, PLP},
-    predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
@@ -41,12 +40,12 @@ const IDLE_SEED: u64 = 1_200_000_000_000;
 #[test]
 fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut fx = helpers::setup_market_default();
-    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
-    fund_market_with_order(&mut fx, &mut manager, e1);
-    fund_market_with_order(&mut fx, &mut manager, e2);
+    fund_market_with_order(&mut fx, &trader, e1);
+    fund_market_with_order(&mut fx, &trader, e2);
 
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
@@ -95,15 +94,14 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     return_shared(vault);
     return_shared(m1);
     return_shared(m2);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
     fund_empty_market(&mut fx, e1);
@@ -150,7 +148,6 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     return_shared(vault);
     return_shared(m1);
     return_shared(m2);
-    destroy(manager);
     fx.finish();
 }
 
@@ -158,8 +155,8 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
 fun empty_pool_valuation_returns_idle() {
     let idle_seed = constants::min_supply_request!();
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, idle_seed);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, idle_seed);
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
@@ -178,7 +175,6 @@ fun empty_pool_valuation_returns_idle() {
 
     return_shared(config);
     return_shared(vault);
-    destroy(manager);
     fx.finish();
 }
 
@@ -187,8 +183,8 @@ fun empty_pool_valuation_returns_idle() {
 #[test, expected_failure(abort_code = plp::EMissingExpiryValuation)]
 fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
     fund_empty_market(&mut fx, e1);
@@ -219,8 +215,8 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
 #[test, expected_failure(abort_code = plp::EExpiryMarketAlreadyValued)]
 fun value_expiry_aborts_on_double_value() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
@@ -243,8 +239,8 @@ fun value_expiry_aborts_on_double_value() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun mint_during_valuation_aborts() {
     let mut fx = helpers::setup_market_default();
-    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -253,12 +249,15 @@ fun mint_during_valuation_aborts() {
     let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     config.begin_valuation();
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -274,8 +273,8 @@ fun mint_during_valuation_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun rebalance_during_valuation_aborts() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
@@ -294,8 +293,8 @@ fun rebalance_during_valuation_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun create_expiry_market_during_valuation_aborts() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
 
     // Engage the valuation lock on the shared config, then attempt to create a market:
     // create_expiry_market is an active-set mutation, so it must abort under the lock.
@@ -312,8 +311,8 @@ fun create_expiry_market_during_valuation_aborts() {
 #[test]
 fun valuation_flow_releases_lock_and_mint_succeeds() {
     let mut fx = helpers::setup_market_default();
-    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -323,6 +322,8 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
@@ -340,11 +341,12 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
 
     // Lock released by finish: the same mint that would have aborted mid-flow now
     // succeeds, adding a position.
-    let count_before = manager.expiry_position_count(market.id());
+    let count_before = helpers::position_count(&wrapper, market.id());
     fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -353,15 +355,15 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    assert_eq!(manager.expiry_position_count(market.id()), count_before + 1);
+    assert_eq!(helpers::position_count(&wrapper, market.id()), count_before + 1);
 
+    helpers::return_account(wrapper, root);
     return_shared(config);
     return_shared(pyth);
     return_shared(bs);
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
-    destroy(manager);
     fx.finish();
 }
 
@@ -455,9 +457,9 @@ fun set_protocol_reserve_profit_share_above_max_aborts() {
 // === Helpers ===
 
 /// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP
-/// supply (`idle == total_supply == amount` at a 1.0 mark). `_manager` is retained for
-/// call-site symmetry; the lock is operator-gated and needs no manager.
-fun bootstrap_pool(fx: &mut helpers::Fixture, _manager: &PredictManager, amount: u64) {
+/// supply (`idle == total_supply == amount` at a 1.0 mark). The lock is
+/// operator-gated and needs no trader account.
+fun bootstrap_pool(fx: &mut helpers::Fixture, amount: u64) {
     fx.bootstrap_lock(amount);
 }
 
@@ -478,15 +480,18 @@ fun fund_empty_market(fx: &mut helpers::Fixture, e: ID) {
 }
 
 /// Prepare + fund an already-created market and mint one 1x ATM up order into it.
-fun fund_market_with_order(fx: &mut helpers::Fixture, manager: &mut PredictManager, e: ID) {
+fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, e: ID) {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
+    let mut wrapper = fx.take_account(trader);
+    let root = fx.take_root();
     fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
     fx.mint(
         &config,
         &oracle_registry,
-        manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -495,5 +500,6 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, manager: &mut PredictManag
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
+    helpers::return_account(wrapper, root);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
 }

@@ -251,6 +251,21 @@ print(published[-1]["packageId"])
 '
 }
 
+# `--with-unpublished-dependencies` publishes deps in the same tx, so the predict
+# publish emits several `published` changes. `published[-1]` is predict (the root);
+# find a transitive dep (e.g. the account package) by a module it declares.
+extract_published_package_id_by_module() {
+  python3 -c '
+import json, sys
+needle = sys.argv[1]
+data = json.load(sys.stdin)
+for change in data.get("objectChanges", []):
+    if change.get("type") == "published" and needle in change.get("modules", []):
+        print(change["packageId"])
+        break
+' "$1"
+}
+
 extract_created_object_id() {
   python3 -c '
 import json, sys
@@ -608,11 +623,34 @@ PY
   PROTOCOL_CONFIG_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "protocol_config::ProtocolConfig")
   POOL_VAULT_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "plp::PoolVault")
 
+  # The account package is published transitively with predict
+  # (`--with-unpublished-dependencies`); its init shares an `AccountRegistry` and
+  # transfers an `AccountAdminCap` to the publisher.
+  ACCOUNT_PACKAGE_ID=$(echo "$PREDICT_OUTPUT" | extract_published_package_id_by_module "account_registry")
+  ACCOUNT_REGISTRY_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "account_registry::AccountRegistry")
+  ACCOUNT_ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "account_registry::AccountAdminCap")
+
   echo "    Predict: $PACKAGE_ID"
   echo "    Registry: $REGISTRY_ID"
   echo "    AdminCap: $ADMIN_CAP_ID"
   echo "    ProtocolConfig: $PROTOCOL_CONFIG_ID"
   echo "    PoolVault: $POOL_VAULT_ID"
+  echo "    Account: $ACCOUNT_PACKAGE_ID"
+  echo "    AccountRegistry: $ACCOUNT_REGISTRY_ID"
+  echo "    AccountAdminCap: $ACCOUNT_ADMIN_CAP_ID"
+
+  # Whitelist predict's `PredictApp` so its account-authorized flows can mint app auth
+  # (mirrors flow_test_helpers' setup_market). AccountRegistry is shared; the admin cap
+  # is owned by the publisher.
+  sui_client call \
+    --package "$ACCOUNT_PACKAGE_ID" \
+    --module account_registry \
+    --function authorize_app \
+    --type-args "${PACKAGE_ID}::predict_account::PredictApp" \
+    --args "$ACCOUNT_REGISTRY_ID" "$ACCOUNT_ADMIN_CAP_ID" \
+    --gas-budget 1000000000 \
+    --json >/dev/null
+  echo "    PredictApp authorized on AccountRegistry"
 
   mv "$PREDICT_DIR/Move.toml.bak" "$PREDICT_DIR/Move.toml"
 
@@ -623,6 +661,9 @@ REGISTRY_ID=$REGISTRY_ID
 ADMIN_CAP_ID=$ADMIN_CAP_ID
 PROTOCOL_CONFIG_ID=$PROTOCOL_CONFIG_ID
 POOL_VAULT_ID=$POOL_VAULT_ID
+ACCOUNT_PACKAGE_ID=$ACCOUNT_PACKAGE_ID
+ACCOUNT_REGISTRY_ID=$ACCOUNT_REGISTRY_ID
+ACCOUNT_ADMIN_CAP_ID=$ACCOUNT_ADMIN_CAP_ID
 FIXED_MATH_PACKAGE_ID=$FIXED_MATH_PACKAGE_ID
 BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$BLOCK_SCHOLES_ORACLE_PACKAGE_ID
 PROPBOOK_PACKAGE_ID=$PROPBOOK_PACKAGE_ID

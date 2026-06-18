@@ -23,12 +23,12 @@ The protocol is constructed at package publish: the `registry` module's `init` c
 
 | Object | Module | Owns / holds | Created |
 | --- | --- | --- | --- |
-| `Registry` | `registry` | Admin-approved Propbook underlying configs (minimum tick size), expiry uniqueness index, the authoritative `allowed_versions` set, allowed `PauseCap` and `MarketLifecycleCap` IDs | package init |
-| `ProtocolConfig` | `protocol_config` | All admin-tunable config structs, the `trading_paused` flag, the transaction-local valuation lock | package init |
+| `Registry` | `registry` | Admin-approved Propbook underlying configs (minimum tick size), expiry uniqueness index, allowed `PauseCap` and `MarketLifecycleCap` IDs | package init |
+| `ProtocolConfig` | `protocol_config` | All admin-tunable config structs, the `trading_paused` flag, the monotonic version watermark, the transaction-local valuation lock | package init |
 | `PoolVault` | `plp` | Idle LP-owned DUSDC, protocol-reserve DUSDC, custody of staked DEEP, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply DUSDC escrow, withdraw PLP escrow) | package init |
 | `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree + liquidation book), embedded `ExpiryCash` DUSDC custody, EWMA gas-price stats, Propbook underlying ID, tick size | per underlying and expiry |
 
-The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Propbook underlying ID, one `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair, and holds the single authoritative `allowed_versions` set that the gated objects mirror. It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in `PredictManager`. It records which Propbook underlyings Predict will build markets on and the minimum tick size each may use; source IDs and canonical oracle object IDs live in `propbook`.
+The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Propbook underlying ID and one `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair (the version watermark lives on `ProtocolConfig`, not here). It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in `PredictManager`. It records which Propbook underlyings Predict will build markets on and the minimum tick size each may use; source IDs and canonical oracle object IDs live in `propbook`.
 
 `ProtocolConfig` is a separate shared object from `Registry`. It owns the global flow gates — `trading_paused` (blocks new risk creation) and `valuation_in_progress` (a transaction-local lock held while a full-pool NAV valuation is assembled) — and the admin-tunable config structs. Two of those are *template* configs (`StrikeExposureConfig`, `ExpiryCashConfig`): their current values are snapshotted into each new `ExpiryMarket` at creation, so changing a template affects only future expiries, not live ones. See [configuration](./configuration.md).
 
@@ -42,7 +42,7 @@ DUSDC is the protocol's settlement currency and has 6 decimals. Custody is parti
 - **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus the unresolved rebate reserve; the market re-asserts this backing invariant after every cash movement.
 - **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). The vault also custodies all staked DEEP. DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting manager's internal custody under its `PredictWithdrawCap` — until the next flush drains them.
 
-Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' net premiums and fees flow from a `PredictManager` into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into a `PredictManager`; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to managers through the balance accumulator. Builder fees are the one outflow that leaves this mesh entirely (see below).
+Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' net premiums and fees flow from account custody into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into account custody; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees are the one outflow that leaves this mesh entirely (see below).
 
 ## PredictManager and its capabilities
 
@@ -63,7 +63,12 @@ The manager exposes three capabilities, all tracked in one `allow_listed` ID set
 
 The inner `BalanceManager`'s own `DepositCap` and `WithdrawCap` are held inside `PredictManager` and never exposed. Every custody operation routes through them, so the inner `BalanceManager`'s owner check never fires from a Predict cap holder's call — the Predict-level cap check is the real gate.
 
-**Capital ops settle first (ambient accumulator).** Every deposit, withdraw, and LP supply/withdraw request first sweeps any funds the LP flush delivered to the manager's accumulator address (`balance::send_funds`) into the inner `BalanceManager`, then proceeds — so delivered fills are spendable as if already in custody, with no separate settle step. The shared `AccumulatorRoot` is threaded through these entrypoints purely for that sweep.
+**Capital ops settle first (ambient accumulator).** Account coin reads and writes
+first sweep funds delivered to the account receive address (`balance::send_funds`)
+into stored account custody, then proceed. Predict threads `AccumulatorRoot` and
+`Clock` through trade and PLP entrypoints so Account can do that settlement at the
+custody boundary. Builder fees remain an explicit claim flow because the builder
+code owner claiming accumulated rewards is the domain action.
 
 ### PredictTradeProof — ephemeral trade authorization
 
@@ -78,7 +83,7 @@ The proof is used by `mint` (which borrows it) and consumed by the live branch o
 | `AdminCap` | `admin` | global policy: all admin-tunable config, version enable/disable, mint pause/unpause, market-lifecycle caps, pause caps, underlying minimum tick sizes; also genesis-bootstraps the pool (`plp::lock_capital`) | one, minted at init, transferred to deployer (multisig) |
 | `MarketLifecycleCap` | `market_lifecycle_cap` | create expiry markets (`registry::create_expiry_market`); also the **sole** authority to start the privileged pool flush (`plp::start_pool_valuation`) | minted and revoked by `AdminCap` against the `Registry` allowlist |
 | `PauseCap` | `registry` | emergency kill switch: disable a version, force `trading_paused = true`, force per-market mint pause | minted/revoked by `AdminCap`; cannot unpause anything |
-| `BuilderCode` | `builder_code` | claim accumulated builder fees | derived shared object; permanent owner |
+| `BuilderCode` | `builder_code` | builder-fee attribution identity | derived shared object; permanent owner |
 
 **`AdminCap` is a dependency-leaf.** Modules that own admin-tunable state accept the `AdminCap` directly as a parameter rather than routing the mutation through `Registry`. `protocol_config` setters, `expiry_market::set_mint_paused`, and registry-owned flows all take `&AdminCap`. The cap is passed as an unused reference (`_admin_cap`); holding it is the authorization. `Registry` only owns flows that are genuinely registry-scoped: version management, `PauseCap` and `MarketLifecycleCap` lifecycle, uniqueness-indexed creation (`create_expiry_market`), and Propbook underlying admission/minimum tick size.
 
@@ -86,7 +91,7 @@ The proof is used by `mint` (which borrows it) and consumed by the live branch o
 
 **`PauseCap` is the emergency brake.** `AdminCap` mints `PauseCap`s into the registry's `allowed_pause_caps` set for trusted operators. A valid `PauseCap` can disable a package version, force global trading pause, or force per-market mint pause — all one-way. Unpausing always requires `AdminCap`. The pause-cap mint and the version-disable paths intentionally bypass the version gate, so the kill switch stays available even when admin has misconfigured versions.
 
-**`BuilderCode` attributes builder fees.** It is a derived shared object claimed from the registry per `(owner, index)` pair, with a permanent owner. A `PredictManager` can set a sticky `builder_code_id`; trades then add a builder fee (bounded by a per-quantity rate cap — see [fees and rebates](../concepts/fees-and-rebates.md)) and route it to the code's address. Custody uses Sui's accumulator-address mechanism: builder fees are sent to the `BuilderCode` object's address (`balance::send_funds`), accrue against the shared `AccumulatorRoot`, and the owner later withdraws the settled funds with `claim_all_builder_fees`. This keeps builder fees out of the pool/expiry custody mesh entirely.
+**`BuilderCode` attributes builder fees.** It is a derived shared object claimed from the registry per `(owner, index)` pair, with a permanent owner. A Predict account can set a sticky `builder_code_id`; trades then add a builder fee (bounded by a per-quantity rate cap — see [fees and rebates](../concepts/fees-and-rebates.md)) and route it to the code's address. The owner claims accumulated builder fees explicitly with `claim_all_builder_fees`. This keeps builder fees out of the pool/expiry custody mesh entirely.
 
 ## Capability and ownership diagram
 
@@ -181,7 +186,7 @@ The flush is a transaction-local **hot potato** (`PoolValuation`), assembled in 
 
 1. `start_pool_valuation` (started with a market-deployer `MarketLifecycleCap` proof) engages the valuation lock and snapshots the active-expiry set.
 2. `value_expiry` runs once per snapshotted market: it rebalances that market's cash, then folds the market's NAV (`current_nav`, or 0 for a swept settled market) into the running total, proving the market is in the snapshot and valued exactly once.
-3. `finish_flush` proves every snapshotted market was valued, computes `pool_nav = idle + Σ current_nav` (net of the pending-protocol-profit exclusion priced from the aggregate profit basis), then `drain_lp_requests` mints/burns PLP and delivers fills at that one frozen mark — supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue budgets (`supply_budget`/`withdraw_budget`, `None` = drain fully; independent so a supply backlog can't starve withdrawals), with per-request failure isolation (a degenerate request is refunded rather than aborting the flush). Fills are delivered to each manager through the balance accumulator (`balance::send_funds`), which the manager absorbs lazily on its next capital op.
+3. `finish_flush` proves every snapshotted market was valued, computes `pool_nav = idle + Σ current_nav` (net of the pending-protocol-profit exclusion priced from the aggregate profit basis), then `drain_lp_requests` mints/burns PLP and delivers fills at that one frozen mark — supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue budgets (`supply_budget`/`withdraw_budget`, `None` = drain fully; independent so a supply backlog can't starve withdrawals), with per-request failure isolation (a degenerate request is refunded rather than aborting the flush). Fills are delivered to the account receive address through `balance::send_funds` and passively settled into account custody by later Account balance operations.
 
 The flush is **privileged**, not permissionless: the hot potato can only be created by a market-deployer `MarketLifecycleCap` (the sole flush authority; the root-`AdminCap` path was removed). The cap-holder is trusted not to manipulate the live oracle before flushing — the single frozen mark prices both supply and withdraw, so it must equal true recoverable value, which `current_nav`'s exactness guarantees. Cash rebalancing, the settled-market sweep, and liquidation are decoupled from the potato: each is a standalone, permissionless, per-market entrypoint, because none needs the exactly-once completeness proof. See [liquidity and NAV](../concepts/liquidity-and-nav.md).
 
@@ -193,11 +198,13 @@ There is deliberately no standalone public settle entrypoint. `redeem` / `redeem
 
 ## Version gating
 
-Package upgrades are gated by a single authoritative set, `Registry.allowed_versions`, which lists the package versions permitted to mutate state. At publish it contains the current version; admin adds versions with `enable_version` and removes them with `disable_version`, which refuses to leave the set empty.
+Package upgrades are gated by a single monotonic **version watermark** stored on `ProtocolConfig` (`version_watermark`). Every gated flow asserts `current_version!() >= protocol_config.version_watermark`; everything below the watermark is dead. `current_version!()` is an upgrade-required code constant bumped on each upgrade, and the watermark is the runtime floor.
 
-Because Sui shared objects are read and mutated independently, each gated Predict shared object — `ExpiryMarket` and `PoolVault` — carries its own mirror of `allowed_versions`. The mirror is refreshed permissionlessly: the registry exposes one `sync_*` entry per gated object type (`sync_expiry_market_allowed_versions`, `sync_pool_vault_allowed_versions`) that copies the registry's current set into the target. The underlying `set_allowed_versions` setters are package-internal and reachable only through those sync entries, so a user cannot inject an arbitrary version set into a mirror. Every mutating flow asserts the running package version is in its object's mirror before mutating; `ProtocolConfig.assert_trading_allowed` deliberately omits the version check, leaving it to each per-object flow that already mirrors the set. Version management itself (enable/disable, including the `PauseCap` disable) bypasses the gate so admin can always recover from a disabled state. The external propbook feeds carry their *own* version and forward-only `migrate`; Predict does not gate them, so there is no oracle/Pyth-source version sync.
+`ProtocolConfig` is threaded into every version-gated public entrypoint, and `config.assert_version()` is its first line. There are no per-object version sets and no sync entrypoints: one central watermark replaces the former `Registry.allowed_versions` set and its `ExpiryMarket`/`PoolVault` mirrors. (`assert_trading_allowed` still omits the version check — version and trading-pause are independent gates that each public flow applies as needed.)
 
-A `PauseCap` can disable a version one-way, which is the fastest kill switch: disabling the active version halts every gated flow at once until admin re-enables a version.
+Raising the floor is admin-only and footgun-free: `protocol_config::bump_version_watermark` takes no target — it sets the watermark to the running `current_version!()`. Because that value is whatever package binary is executing, the floor can only ever advance to a version a published binary actually embeds; admin can never set it above the running package and brick it, and retiring old versions requires executing the bump against the upgraded package. The watermark is monotonic (it cannot be lowered), so a disabled running version is recovered by upgrading, not by lowering the floor. The setter itself, the `PauseCap` / `MarketLifecycleCap` mint-and-revoke entries, and all reads are deliberately ungated. The external propbook feeds carry their *own* version and forward-only `migrate`; Predict does not gate them.
+
+Reversible emergency stops are separate from the watermark: `trading_paused` (global) and per-expiry `mint_paused`, both admin-settable and `PauseCap`-forceable one-way.
 
 ## Where this leads
 

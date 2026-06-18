@@ -10,8 +10,6 @@ use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket},
     flow_test_helpers as helpers,
     plp::PoolVault,
-    predict_manager::PredictManager,
-    pricing,
     protocol_config::ProtocolConfig,
     test_constants
 };
@@ -21,7 +19,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::unit_test::assert_eq;
 use sui::{coin, test_scenario::return_shared};
 
 const SECOND_SOURCE_ID: u32 = 2;
@@ -38,19 +36,25 @@ const REBATE_AFTER_MINT: u64 = 2_500_000;
 /// seeded + mint principal + fee - full settled payout.
 const CASH_AFTER_WINNING_REDEEM: u64 = 299_505_000_000;
 
-#[test, expected_failure(abort_code = pricing::ELivePricingExpired)]
+/// At expiry with no exact Propbook spot recorded, the market cannot settle, so the
+/// permissionless `redeem_settled` aborts on its settled-state precondition rather
+/// than mispricing against a missing terminal.
+#[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
 fun passive_settlement_requires_exact_expiry_spot() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -64,10 +68,10 @@ fun passive_settlement_requires_exact_expiry_spot() {
     fx.redeem_settled(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
-        &bs,
         order_id,
         test_constants::mint_quantity(),
     );
@@ -102,17 +106,20 @@ fun passive_settlement_with_wrong_pyth_feed_aborts() {
 #[test]
 fun passive_settled_redeem_pays_terminal_payout() {
     let settlement_price = settlement_inside_default_finite_range();
-    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -121,8 +128,9 @@ fun passive_settled_redeem_pays_terminal_payout() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
     );
@@ -133,15 +141,16 @@ fun passive_settled_redeem_pays_terminal_payout() {
     fx.redeem_settled(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
-        &bs,
         order_id,
         test_constants::mint_quantity(),
     );
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(
             POST_SETTLED_REDEEM_BALANCE,
@@ -156,25 +165,29 @@ fun passive_settled_redeem_pays_terminal_payout() {
         helpers::expected_market_cash(CASH_AFTER_WINNING_REDEEM, 0, REBATE_AFTER_MINT),
     );
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
     let settlement_price = settlement_inside_default_finite_range();
-    let (mut fx, expiry_id, mut manager) = helpers::setup_live_market(
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
     let (mut pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     let order_id = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -199,29 +212,31 @@ fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
     fx.redeem_settled(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
-        &bs,
         order_id,
         test_constants::mint_quantity(),
     );
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(POST_SETTLED_REDEEM_BALANCE, MINT_MIN_FEE, 0, 0, 0),
     );
 
+    helpers::return_account(wrapper, root);
+
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun passive_settled_market_sweep_unblocks_pool_valuation() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     fund_empty_market(&mut fx, expiry_id);
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
@@ -259,15 +274,14 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
-    destroy(manager);
     fx.finish();
 }
 
 #[test]
 fun passive_settled_standalone_rebalance_sweeps_market() {
     let mut fx = helpers::setup_market_default();
-    let manager = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, &manager, IDLE_SEED);
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     fund_empty_market(&mut fx, expiry_id);
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
@@ -294,7 +308,6 @@ fun passive_settled_standalone_rebalance_sweeps_market() {
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
-    destroy(manager);
     fx.finish();
 }
 
@@ -303,9 +316,9 @@ fun settlement_inside_default_finite_range(): u64 {
 }
 
 /// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP
-/// supply (`idle == total_supply == amount` at a 1.0 mark). `_manager` is retained for
-/// call-site symmetry; the lock is operator-gated and needs no manager.
-fun bootstrap_pool(fx: &mut helpers::Fixture, _manager: &PredictManager, amount: u64) {
+/// supply (`idle == total_supply == amount` at a 1.0 mark). The lock is operator-gated
+/// and needs no trader account.
+fun bootstrap_pool(fx: &mut helpers::Fixture, amount: u64) {
     fx.bootstrap_lock(amount);
 }
 

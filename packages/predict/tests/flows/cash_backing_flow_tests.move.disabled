@@ -12,7 +12,6 @@ module deepbook_predict::cash_backing_flow_tests;
 
 use deepbook_predict::{config_constants, constants, flow_test_helpers as helpers, test_constants};
 use fixed_math::math;
-use std::unit_test::destroy;
 
 /// Both mints quote the exact ATM digital: forward == min_strike, so
 /// UP(min_strike) = Φ(0) = 0.5 exactly (the SVI wing rounds to zero), and the
@@ -38,17 +37,20 @@ const REBATE_AFTER_CLOSE: u64 = 8_750_000;
 
 #[test]
 fun cash_sheet_exact_after_every_flow() {
-    let (mut fx, expiry_id, mut manager) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
 
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
     let deposit = test_constants::default_manager_deposit();
     helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(deposit, 0, 0, 0, 0),
     );
@@ -59,7 +61,8 @@ fun cash_sheet_exact_after_every_flow() {
     let order1 = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -76,8 +79,9 @@ fun cash_sheet_exact_after_every_flow() {
             REBATE_AFTER_MINT1,
         ),
     );
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(
             deposit - MINT1_PRINCIPAL - MINT1_FEE,
@@ -94,7 +98,8 @@ fun cash_sheet_exact_after_every_flow() {
     let order2 = fx.mint(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -118,8 +123,9 @@ fun cash_sheet_exact_after_every_flow() {
         ),
     );
     let balance_after_mints = deposit - MINT1_PRINCIPAL - MINT1_FEE - MINT2_PRINCIPAL - MINT2_FEE;
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(
             balance_after_mints,
@@ -138,7 +144,8 @@ fun cash_sheet_exact_after_every_flow() {
     let (_closed_id, replacement) = fx.redeem(
         &config,
         &oracle_registry,
-        &mut manager,
+        &mut wrapper,
+        &root,
         &mut market,
         &pyth,
         &bs,
@@ -157,8 +164,9 @@ fun cash_sheet_exact_after_every_flow() {
         ),
     );
     let balance_after_close = balance_after_mints + CLOSE_NET_PAYOUT;
-    helpers::check_manager(
-        &manager,
+    fx.check_manager(
+        &wrapper,
+        &root,
         expiry_id,
         helpers::expected_manager_state(
             balance_after_close,
@@ -168,11 +176,11 @@ fun cash_sheet_exact_after_every_flow() {
             0,
         ),
     );
-    assert!(manager.has_position(expiry_id, order1b));
-    assert!(manager.has_position(expiry_id, order2));
+    assert!(helpers::has_position(&wrapper, expiry_id, order1b));
+    assert!(helpers::has_position(&wrapper, expiry_id, order2));
 
+    helpers::return_account(wrapper, root);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
-    destroy(manager);
     fx.finish();
 }
 

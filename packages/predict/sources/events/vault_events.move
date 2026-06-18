@@ -54,30 +54,30 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     pending_protocol_profit_after: u64,
 }
 
-/// Emitted when a manager stakes DEEP for trading benefits.
+/// Emitted when an account stakes DEEP for trading benefits.
 public struct DeepStaked has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     amount: u64,
-    /// Manager active/inactive stake after the deposit. Freshly staked DEEP is
+    /// Account active/inactive stake after the deposit. Freshly staked DEEP is
     /// inactive until it rolls active in a later epoch, so both are reported.
     active_stake_after: u64,
     inactive_stake_after: u64,
 }
 
-/// Emitted when a manager unstakes all of its DEEP (active and inactive).
+/// Emitted when an account unstakes all of its DEEP (active and inactive).
 public struct DeepUnstaked has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     amount: u64,
 }
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
-/// will be delivered to `recipient` (the manager's address) at a later flush.
+/// will be delivered to `recipient` (the account's receive address) at a later flush.
 /// `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
@@ -87,7 +87,7 @@ public struct SupplyRequested has copy, drop, store {
 /// DUSDC will be delivered to `recipient` at a later flush.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
@@ -95,10 +95,10 @@ public struct WithdrawRequested has copy, drop, store {
 
 /// Emitted when an LP cancels a still-pending request before it is flushed: the
 /// escrow (`amount` of DUSDC if `is_supply`, else PLP) is refunded straight into the
-/// requesting manager.
+/// requesting account.
 public struct RequestCancelled has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
@@ -106,12 +106,12 @@ public struct RequestCancelled has copy, drop, store {
 }
 
 /// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
-/// `shares_minted` PLP were delivered to `recipient`. `predict_manager_id` is the
-/// owning manager (carried from the queued request so the fill is self-contained;
-/// `recipient` is its derived address).
+/// `shares_minted` PLP were delivered to `recipient`. `account_id` is the
+/// owning account (carried from the queued request so the fill is self-contained;
+/// `recipient` is its receive address).
 public struct SupplyFilled has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     dusdc_amount: u64,
@@ -119,11 +119,11 @@ public struct SupplyFilled has copy, drop, store {
 }
 
 /// Emitted when a withdraw request fills: `shares_burned` PLP were burned and
-/// `dusdc_amount` was delivered to `recipient` from pool idle. `predict_manager_id`
-/// is the owning manager (carried from the queued request).
+/// `dusdc_amount` was delivered to `recipient` from pool idle. `account_id`
+/// is the owning account (carried from the queued request).
 public struct WithdrawFilled has copy, drop, store {
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     shares_burned: u64,
@@ -237,38 +237,38 @@ public(package) fun emit_expiry_profit_materialized(
 
 public(package) fun emit_deep_staked(
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     amount: u64,
     active_stake_after: u64,
     inactive_stake_after: u64,
 ) {
     event::emit(DeepStaked {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         amount,
         active_stake_after,
         inactive_stake_after,
     });
 }
 
-public(package) fun emit_deep_unstaked(pool_vault_id: ID, predict_manager_id: ID, amount: u64) {
+public(package) fun emit_deep_unstaked(pool_vault_id: ID, account_id: ID, amount: u64) {
     event::emit(DeepUnstaked {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         amount,
     });
 }
 
 public(package) fun emit_supply_requested(
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
 ) {
     event::emit(SupplyRequested {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         recipient,
         index,
         amount,
@@ -277,14 +277,14 @@ public(package) fun emit_supply_requested(
 
 public(package) fun emit_withdraw_requested(
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
 ) {
     event::emit(WithdrawRequested {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         recipient,
         index,
         amount,
@@ -293,7 +293,7 @@ public(package) fun emit_withdraw_requested(
 
 public(package) fun emit_request_cancelled(
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
@@ -301,7 +301,7 @@ public(package) fun emit_request_cancelled(
 ) {
     event::emit(RequestCancelled {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         recipient,
         index,
         amount,
@@ -311,7 +311,7 @@ public(package) fun emit_request_cancelled(
 
 public(package) fun emit_supply_filled(
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     dusdc_amount: u64,
@@ -319,7 +319,7 @@ public(package) fun emit_supply_filled(
 ) {
     event::emit(SupplyFilled {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         recipient,
         index,
         dusdc_amount,
@@ -329,7 +329,7 @@ public(package) fun emit_supply_filled(
 
 public(package) fun emit_withdraw_filled(
     pool_vault_id: ID,
-    predict_manager_id: ID,
+    account_id: ID,
     recipient: address,
     index: u64,
     shares_burned: u64,
@@ -337,7 +337,7 @@ public(package) fun emit_withdraw_filled(
 ) {
     event::emit(WithdrawFilled {
         pool_vault_id,
-        predict_manager_id,
+        account_id,
         recipient,
         index,
         shares_burned,

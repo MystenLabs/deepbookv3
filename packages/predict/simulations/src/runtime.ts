@@ -4,6 +4,8 @@ import { Transaction } from "@mysten/sui/transactions";
 import { deriveObjectID } from "@mysten/sui/utils";
 
 import {
+    ACCOUNT_PACKAGE_ID,
+    ACCOUNT_REGISTRY_ID,
     ADMIN_CAP_ID,
     BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
     DUSDC_CURRENCY_ID,
@@ -56,7 +58,7 @@ const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
 // Sui's singleton balance-accumulator root lives at the reserved address 0xacc
 // (object::SUI_ACCUMULATOR_ROOT_OBJECT_ID). The async-LP flush delivers PLP/DUSDC
-// fills to a manager's accumulator; every manager capital op (mint/redeem settle,
+// fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
 // Pyth Lazer feed id (the propbook spot feed key) and the Propbook underlying id.
@@ -137,6 +139,20 @@ async function getTransactionBlockWithRetry(digest: string): Promise<any> {
 
 export function target(module: string, fn: string): `${string}::${string}::${string}` {
     return `${PACKAGE_ID}::${module}::${fn}`;
+}
+
+// The `account` package owns the deterministic account wrapper that replaced the
+// predict manager. Its ids differ from the predict package id.
+function accountTarget(module: string, fn: string): `${string}::${string}::${string}` {
+    return `${ACCOUNT_PACKAGE_ID}::${module}::${fn}`;
+}
+
+// Owner authority is a hot potato minted from the tx sender (`ctx` is implicit in a
+// PTB) and consumed by the very next account-loading call (`load_account_mut` inside
+// `deposit_funds` / `mint` / `redeem` / `request_supply` / `request_withdraw`). The
+// harness signer owns every account it creates, so this always resolves to owner auth.
+function generateAuth(tx: Transaction) {
+    return tx.moveCall({ target: accountTarget("account", "generate_auth"), arguments: [] });
 }
 
 // Note: `predict_math` was renamed to `fixed_math`, but the harness no longer makes
@@ -231,7 +247,7 @@ interface OracleRefreshParams {
 interface MintParams {
     expiryMarketId: string;
     protocolConfigId: string;
-    managerId: string;
+    wrapperId: string;
     pythFeedId: string;
     bsFeedId: string;
     strike: bigint;
@@ -243,7 +259,7 @@ interface MintParams {
 interface RedeemParams {
     expiryMarketId: string;
     protocolConfigId: string;
-    managerId: string;
+    wrapperId: string;
     pythFeedId: string;
     bsFeedId: string;
     orderId: string;
@@ -400,55 +416,52 @@ function addFlush(tx: Transaction, params: FlushParams): void {
 
 function addMint(tx: Transaction, params: MintParams): void {
     const { lowerTick, higherTick } = binaryRangeTicks(params.strike, params.isUp);
-    const proof = tx.moveCall({
-        target: target("predict_manager", "generate_proof_as_owner"),
-        arguments: [tx.object(params.managerId)],
-    });
+    const auth = generateAuth(tx);
     tx.moveCall({
         target: target("expiry_market", "mint"),
         arguments: [
             tx.object(params.expiryMarketId),
-            tx.object(params.managerId),
-            proof,
+            tx.object(params.wrapperId),
+            auth,
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
             tx.object(params.bsFeedId),
-            // `mint` ambient-settles the manager (`settle<DUSDC>`) before charging the
-            // premium, so it reads the singleton AccumulatorRoot at 0xacc.
-            tx.object(ACCUMULATOR_ROOT_ID),
             tx.pure.u64(lowerTick),
             tx.pure.u64(higherTick),
             tx.pure.u64(params.quantity),
             tx.pure.u64(params.leverage),
+            // `mint` loads the account and ambient-settles it (`settle<DUSDC>`) before
+            // charging the premium, so it reads the singleton AccumulatorRoot at 0xacc.
+            // `root` now follows `leverage` (was right after the BS feed).
+            tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
     });
 }
 
 function addRedeem(tx: Transaction, params: RedeemParams): void {
-    // The sim always acts as the manager owner, so it uses the authorized
-    // `redeem` with a proof. Works for live redeems (proof consumed) and
-    // settled / liquidated redeems (proof dropped).
-    const proof = tx.moveCall({
-        target: target("predict_manager", "generate_proof_as_owner"),
-        arguments: [tx.object(params.managerId)],
-    });
+    // The sim always acts as the account owner, so it uses the owner-authorized
+    // `redeem` (auth consumed). It works in any order state: live (priced + closed),
+    // settled, or liquidated — so the harness never needs the permissionless
+    // `redeem_settled` (app-auth) path.
+    const auth = generateAuth(tx);
     tx.moveCall({
         target: target("expiry_market", "redeem"),
         arguments: [
             tx.object(params.expiryMarketId),
-            tx.object(params.managerId),
-            proof,
+            tx.object(params.wrapperId),
+            auth,
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
             tx.object(params.bsFeedId),
-            // `redeem` ambient-settles the manager (`settle<DUSDC>`) before crediting
-            // the payout, so it reads the singleton AccumulatorRoot at 0xacc.
-            tx.object(ACCUMULATOR_ROOT_ID),
             tx.pure.u256(BigInt(params.orderId)),
             tx.pure.u64(params.closeQuantity),
+            // `redeem` loads the account and ambient-settles it (`settle<DUSDC>`) before
+            // crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
+            // `root` now follows `close_quantity` (was right after the BS feed).
+            tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
     });
@@ -470,7 +483,9 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
     // lives on Registry, its sole gating call site being create_expiry_market).
     const cap = tx.moveCall({
         target: target("registry", "mint_lifecycle_cap"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID)],
+        // `mint_lifecycle_cap(registry, config, admin_cap, ctx)` — the mint is version-
+        // gated, so it reads the protocol config.
+        arguments: [tx.object(REGISTRY_ID), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
     return tx;
@@ -484,8 +499,10 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number, tickSize: big
     const tx = new Transaction();
     tx.moveCall({
         target: target("registry", "register_underlying"),
+        // `register_underlying(registry, config, admin_cap, underlying_id, min_tick)`.
         arguments: [
             tx.object(REGISTRY_ID),
+            tx.object(PROTOCOL_CONFIG_ID),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u32(BS_UNDERLYING_ID),
             tx.pure.u64(tickSize),
@@ -649,70 +666,71 @@ export function rebalanceExpiryCashTx(params: {
     return tx;
 }
 
-// Queue a supply request: pull `amount` DUSDC from the manager's internal custody
-// into queue escrow, recording the manager as the fill recipient. `request_supply`
-// no longer takes a coin — it is authorized by a `PredictWithdrawCap` (capital-out)
-// and pulls from custody. To keep supply as a fresh external-capital injection
-// (matching the old escrow-a-fresh-coin model), deposit `amount` fresh DUSDC into the
-// manager first, then request_supply pulls exactly that. The minted PLP is delivered
-// to the manager (via the balance accumulator) at the next flush, NOT returned here.
+// Queue a supply request: `request_supply` pulls `amount` DUSDC from the account's
+// custody into queue escrow, recording the account as the fill recipient. To keep
+// supply a fresh external-capital injection (matching the old escrow-a-fresh-coin
+// model), deposit `amount` fresh DUSDC into the account first (separate owner auth),
+// then request_supply pulls exactly that. The minted PLP is delivered to the account
+// (via the balance accumulator) at the next flush, NOT returned here.
 export function requestSupplyTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
-    managerId: string;
-    depositCapId: string;
-    withdrawCapId: string;
+    wrapperId: string;
     amount: bigint;
 }): Transaction {
     const tx = new Transaction();
     const dusdc = mintDusdc(tx, params.amount);
+    const depositAuth = generateAuth(tx);
     tx.moveCall({
-        target: target("predict_manager", "deposit"),
+        target: accountTarget("account", "deposit_funds"),
         typeArguments: [DUSDC_TYPE],
         arguments: [
-            tx.object(params.managerId),
-            tx.object(params.depositCapId),
-            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(params.wrapperId),
+            depositAuth,
             dusdc,
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
         ],
     });
+    const supplyAuth = generateAuth(tx);
     tx.moveCall({
         target: target("plp", "request_supply"),
         arguments: [
             tx.object(params.poolVaultId),
-            tx.object(params.managerId),
-            tx.object(params.withdrawCapId),
+            tx.object(params.wrapperId),
+            supplyAuth,
             tx.object(params.protocolConfigId),
-            tx.object(ACCUMULATOR_ROOT_ID),
             tx.pure.u64(params.amount),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;
 }
 
-// Queue a withdraw request: pull `shares` PLP from the manager's internal custody
-// into queue escrow. `request_withdraw` is authorized by a `PredictWithdrawCap` and
-// the pull auto-settles any flush-delivered PLP first (the async flush delivers PLP
-// fills to the manager's accumulator), so no separate materialization step exists —
-// there is no `withdraw_settled` entrypoint. The DUSDC fill is delivered to the
-// manager at the next flush, NOT returned here.
+// Queue a withdraw request: `request_withdraw` pulls `shares` PLP from the account's
+// custody into queue escrow. The pull auto-settles any flush-delivered PLP first (the
+// async flush delivers PLP fills to the account's accumulator), so no separate
+// materialization step exists — there is no `withdraw_settled` entrypoint. The DUSDC
+// fill is delivered to the account at the next flush, NOT returned here.
 export function requestWithdrawTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
-    managerId: string;
-    withdrawCapId: string;
+    wrapperId: string;
     shares: bigint;
 }): Transaction {
     const tx = new Transaction();
+    const auth = generateAuth(tx);
     tx.moveCall({
         target: target("plp", "request_withdraw"),
         arguments: [
             tx.object(params.poolVaultId),
-            tx.object(params.managerId),
-            tx.object(params.withdrawCapId),
+            tx.object(params.wrapperId),
+            auth,
             tx.object(params.protocolConfigId),
-            tx.object(ACCUMULATOR_ROOT_ID),
             tx.pure.u64(params.shares),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;
@@ -730,71 +748,59 @@ export async function refreshOracleAndFlushTx(
     return tx;
 }
 
-export function createManagerTx(): Transaction {
+// Create the sender's canonical derived account wrapper and share it. `new` derives
+// the wrapper at a deterministic address (see `deriveAccountWrapperId`); `share`
+// publishes the shared object the trade flows borrow against.
+export function createAccountTx(): Transaction {
     const tx = new Transaction();
+    const wrapper = tx.moveCall({
+        target: accountTarget("account_registry", "new"),
+        arguments: [tx.object(ACCOUNT_REGISTRY_ID)],
+    });
     tx.moveCall({
-        target: target("registry", "create_and_share_manager"),
-        arguments: [tx.object(REGISTRY_ID)],
+        target: accountTarget("account", "share"),
+        arguments: [wrapper],
+    });
+    return tx;
+}
+
+// Deposit `amount` fresh DUSDC into the account's stored balance via the PTB-callable
+// `deposit_funds` (folds owner authorize -> load -> deposit). Ambient-settles delivered
+// DUSDC (reads the AccumulatorRoot) before crediting.
+export function depositToAccountTx(wrapperId: string, amount: bigint): Transaction {
+    const tx = new Transaction();
+    const coin = mintDusdc(tx, amount);
+    const auth = generateAuth(tx);
+    tx.moveCall({
+        target: accountTarget("account", "deposit_funds"),
+        typeArguments: [DUSDC_TYPE],
+        arguments: [
+            tx.object(wrapperId),
+            auth,
+            coin,
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
     });
     return tx;
 }
 
 // === Derived object IDs ===
 
-const PredictManagerKeyBcs = bcs.struct("PredictManagerKey", {
+// `AccountWrapperKey(address)` — a one-field positional struct, so its BCS is just the
+// owner's 32-byte address. The wrapper is a derived object of the account registry, so
+// its id is `derive_address(ACCOUNT_REGISTRY_ID, AccountWrapperKey(owner))`.
+const AccountWrapperKeyBcs = bcs.struct("AccountWrapperKey", {
     pos0: bcs.Address,
-    pos1: bcs.u64(),
 });
 
-export function deriveManagerId(owner: string, index: bigint = 0n): string {
-    const key = PredictManagerKeyBcs.serialize({ pos0: owner, pos1: index }).toBytes();
-    return deriveObjectID(REGISTRY_ID, `${PACKAGE_ID}::predict_manager::PredictManagerKey`, key);
-}
-
-export function depositToManagerTx(
-    managerId: string,
-    depositCapId: string,
-    amount: bigint,
-): Transaction {
-    const tx = new Transaction();
-    const coin = mintDusdc(tx, amount);
-    // `deposit<T>` is now generic and cap-gated: it takes a `PredictDepositCap` and
-    // ambient-settles delivered `T` (reads the AccumulatorRoot) before crediting.
-    tx.moveCall({
-        target: target("predict_manager", "deposit"),
-        typeArguments: [DUSDC_TYPE],
-        arguments: [
-            tx.object(managerId),
-            tx.object(depositCapId),
-            tx.object(ACCUMULATOR_ROOT_ID),
-            coin,
-        ],
-    });
-    return tx;
-}
-
-// Mint a `PredictDepositCap` / `PredictWithdrawCap` for the sender-owned manager and
-// transfer it to the sender. Both are owner-gated mints; the harness signer is the
-// manager owner. The deposit cap gates `deposit`; the withdraw cap gates the
-// capital-out paths (`withdraw`, `request_supply`, `request_withdraw`).
-export function mintDepositCapTx(managerId: string): Transaction {
-    const tx = new Transaction();
-    const cap = tx.moveCall({
-        target: target("predict_manager", "mint_deposit_cap"),
-        arguments: [tx.object(managerId)],
-    });
-    tx.transferObjects([cap], tx.pure.address(address));
-    return tx;
-}
-
-export function mintWithdrawCapTx(managerId: string): Transaction {
-    const tx = new Transaction();
-    const cap = tx.moveCall({
-        target: target("predict_manager", "mint_withdraw_cap"),
-        arguments: [tx.object(managerId)],
-    });
-    tx.transferObjects([cap], tx.pure.address(address));
-    return tx;
+export function deriveAccountWrapperId(owner: string): string {
+    const key = AccountWrapperKeyBcs.serialize({ pos0: owner }).toBytes();
+    return deriveObjectID(
+        ACCOUNT_REGISTRY_ID,
+        `${ACCOUNT_PACKAGE_ID}::account_registry::AccountWrapperKey`,
+        key,
+    );
 }
 
 // Genesis bootstrap: permanently lock `MIN_BOOTSTRAP_LIQUIDITY` DUSDC so the pool's
@@ -806,7 +812,8 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     const coin = mintDusdc(tx, MIN_BOOTSTRAP_LIQUIDITY);
     tx.moveCall({
         target: target("plp", "lock_capital"),
-        arguments: [tx.object(poolVaultId), tx.object(ADMIN_CAP_ID), coin],
+        // `lock_capital(vault, config, admin_cap, payment)`.
+        arguments: [tx.object(poolVaultId), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID), coin],
     });
     return tx;
 }
