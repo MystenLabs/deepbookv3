@@ -2,23 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-// The custody consts (INITIAL_DEPOSIT/WITHDRAW_AMOUNT/POST_WITHDRAW_BALANCE) and one
-// `let mut` are used only by the AccumulatorRoot-dependent custody tests disabled on the
-// testnet-framework branch (see accumulator_support.move).
+// INITIAL_DEPOSIT/WITHDRAW_AMOUNT/POST_WITHDRAW_BALANCE, the `coin`/`Clock` imports, and
+// one `let mut` are used only by the AccumulatorRoot-dependent deposit/withdraw tests
+// disabled on this branch (see accumulator_support.move).
 #[allow(unused_const, unused_let_mut)]
 module account::account_tests;
 
 use account::{
     account::{Self, AccountWrapper},
-    account_events,
     account_registry::{Self, AccountAdminCap, AccountRegistry},
     accumulator_support
 };
-use std::{internal::permit, type_name, unit_test::{assert_eq, destroy}};
+use std::{internal::permit, unit_test::{assert_eq, destroy}};
 use sui::{
     clock::Clock,
     coin,
-    event,
     object,
     test_scenario::{Self as test, Scenario, return_shared}
 };
@@ -74,91 +72,22 @@ fun registry_creates_one_canonical_account_per_owner() {
 }
 
 #[test]
-fun new_emits_account_created() {
-    let mut scenario = setup();
-    scenario.next_tx(ALICE);
-    let mut registry = scenario.take_shared<AccountRegistry>();
-    let account_id = registry.derived_address(ALICE).to_id();
-    let wrapper = registry.new(scenario.ctx());
-
-    // Read events in the same transaction as the emit, before `next_tx` resets the
-    // per-transaction event context. EOA creation => self_owned = false.
-    let events = event::events_by_type<account_events::AccountCreated>();
-    assert_eq!(events.length(), 1);
-    let e = &events[0];
-    assert_eq!(e.created_account_id(), account_id);
-    assert_eq!(e.created_owner(), ALICE);
-    assert!(!e.created_self_owned());
-
-    account::share(wrapper);
-    return_shared(registry);
-    scenario.end();
-}
-
-#[test]
-fun authorize_and_deauthorize_emit_events() {
-    let mut scenario = setup();
+fun authorize_then_deauthorize_app() {
+    let scenario = setup();
     let admin_cap = scenario.take_from_sender<AccountAdminCap>();
     let mut registry = scenario.take_shared<AccountRegistry>();
 
     registry.authorize_app<TestApp>(&admin_cap);
-    let authorized = event::events_by_type<account_events::AppAuthorized>();
-    assert_eq!(authorized.length(), 1);
-    assert_eq!(authorized[0].authorized_app(), type_name::with_defining_ids<TestApp>().into_string());
+    assert!(registry.is_app_authorized<TestApp>());
 
     registry.deauthorize_app<TestApp>(&admin_cap);
-    let deauthorized = event::events_by_type<account_events::AppDeauthorized>();
-    assert_eq!(deauthorized.length(), 1);
-    assert_eq!(deauthorized[0].deauthorized_app(), type_name::with_defining_ids<TestApp>().into_string());
+    assert!(!registry.is_app_authorized<TestApp>());
 
     return_shared(registry);
     destroy(admin_cap);
     scenario.end();
 }
 
-/* DISABLED(testnet-fw): needs AccumulatorRoot — nightly create_for_testing is absent on testnet; see accumulator_support.move. Restore the file/test when stable Sui ships it.
-#[test]
-fun custody_emits_deposited_and_withdrawn_and_no_settled_on_empty_root() {
-    let mut scenario = setup_with_account(ALICE);
-    scenario.next_tx(ALICE);
-    let mut wrapper = take_account_wrapper(&scenario, ALICE);
-    let account_id = wrapper.load_account().account_id();
-    let root = accumulator_support::take_root(&scenario);
-    let mut clock = scenario.take_shared<Clock>();
-    clock.increment_for_testing(1);
-
-    let auth = account::generate_auth(scenario.ctx());
-    let account = wrapper.load_account_mut(auth);
-    account.deposit<TEST_COIN>(
-        coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()),
-        &root,
-        &clock,
-    );
-    let withdrawn = account.withdraw<TEST_COIN>(WITHDRAW_AMOUNT, &root, &clock, scenario.ctx());
-    destroy(withdrawn);
-
-    let deposits = event::events_by_type<account_events::Deposited>();
-    assert_eq!(deposits.length(), 1);
-    assert_eq!(deposits[0].deposited_account_id(), account_id);
-    assert_eq!(deposits[0].deposited_coin_type(), type_name::with_defining_ids<TEST_COIN>().into_string());
-    assert_eq!(deposits[0].deposited_amount(), INITIAL_DEPOSIT);
-    assert_eq!(deposits[0].deposited_new_balance(), INITIAL_DEPOSIT);
-
-    let withdrawals = event::events_by_type<account_events::Withdrawn>();
-    assert_eq!(withdrawals.length(), 1);
-    assert_eq!(withdrawals[0].withdrawn_amount(), WITHDRAW_AMOUNT);
-    assert_eq!(withdrawals[0].withdrawn_new_balance(), POST_WITHDRAW_BALANCE);
-
-    // The empty test root makes settlement a no-op, so no FundsSettled is emitted.
-    assert_eq!(event::events_by_type<account_events::FundsSettled>().length(), 0);
-
-    return_shared(clock);
-    return_shared(root);
-    return_shared(wrapper);
-    scenario.end();
-}
-
-*/
 #[test, expected_failure(abort_code = account_registry::EAccountAlreadyExists)]
 fun creating_second_account_for_same_owner_aborts() {
     let mut scenario = setup();

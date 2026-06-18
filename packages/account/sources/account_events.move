@@ -29,15 +29,6 @@ public(package) fun emit_account_created(
     event::emit(AccountCreated { account_id, wrapper_id, owner, self_owned });
 }
 
-#[test_only]
-public fun created_account_id(self: &AccountCreated): ID { self.account_id }
-
-#[test_only]
-public fun created_owner(self: &AccountCreated): address { self.owner }
-
-#[test_only]
-public fun created_self_owned(self: &AccountCreated): bool { self.self_owned }
-
 /// An app witness type was added to the registry's mutable-load whitelist.
 public struct AppAuthorized has copy, drop {
     /// Fully-qualified `App` witness type name.
@@ -56,12 +47,6 @@ public(package) fun emit_app_authorized(app: String) {
 public(package) fun emit_app_deauthorized(app: String) {
     event::emit(AppDeauthorized { app });
 }
-
-#[test_only]
-public fun authorized_app(self: &AppAuthorized): String { self.app }
-
-#[test_only]
-public fun deauthorized_app(self: &AppDeauthorized): String { self.app }
 
 /// `amount` of `coin_type` was deposited into the account; `new_balance` is the
 /// resulting stored balance of that coin.
@@ -107,21 +92,3 @@ public(package) fun emit_funds_settled(
 ) {
     event::emit(FundsSettled { account_id, coin_type, amount, new_balance });
 }
-
-#[test_only]
-public fun deposited_account_id(self: &Deposited): ID { self.account_id }
-
-#[test_only]
-public fun deposited_coin_type(self: &Deposited): String { self.coin_type }
-
-#[test_only]
-public fun deposited_amount(self: &Deposited): u64 { self.amount }
-
-#[test_only]
-public fun deposited_new_balance(self: &Deposited): u64 { self.new_balance }
-
-#[test_only]
-public fun withdrawn_amount(self: &Withdrawn): u64 { self.amount }
-
-#[test_only]
-public fun withdrawn_new_balance(self: &Withdrawn): u64 { self.new_balance }
