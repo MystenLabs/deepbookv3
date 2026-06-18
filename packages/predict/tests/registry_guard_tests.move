@@ -1,27 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Guard coverage for the registry's creation/version/pause abort codes plus
-/// `predict_manager::EMaxCapsReached`.
+/// Guard coverage for the registry's creation/version/pause abort codes and the
+/// builder-code owner guard.
 ///
-/// Not covered here:
-/// - `builder_code::ENotOwner` is only reachable through
-///   `claim_all_builder_fees`, which takes `&sui::accumulator::AccumulatorRoot`.
-///   At the pinned framework rev that object is created exclusively by the
-///   system (`sui::accumulator::create` is private and requires sender `@0x0`)
-///   and has no `#[test_only]` constructor or `test_scenario` provisioning, so
-///   the path cannot be exercised in a Move unit test.
-/// - `predict_manager::EMaxCapsReached` requires `MAX_CAPS` (1000) prior cap
-///   mints on one manager. Each mint inserts into the `allow_listed` `VecSet`
-///   (a linear scan), so filling the set costs quadratic gas and exceeds the
-///   suite's standard `--gas-limit 100000000000` before the guard can fire
-///   (verified empirically: 750 mints fit, 1000 run out of gas inside
-///   `vec_set::insert`).
+/// `builder_code::ENotOwner` is exercised below: `claim_all_builder_fees` runs
+/// `assert_owner` as its first line, before touching any accumulator funds, so a
+/// non-owner caller aborts against an EMPTY `AccumulatorRoot` (constructed with
+/// `accumulator::create_for_testing`). The non-zero builder-fee CLAIM itself —
+/// fees delivered to the builder-code object address through the system settlement
+/// barrier — still needs integration coverage; see
+/// `packages/account/ACCUMULATOR_TESTING_STATUS.md`.
 #[test_only]
 module deepbook_predict::registry_guard_tests;
 
 use deepbook_predict::{
     admin::AdminCap,
+    builder_code::{Self, BuilderCode},
     flow_test_helpers,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
@@ -35,10 +30,38 @@ use propbook::{
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::destroy;
-use sui::{clock, test_scenario::{Scenario, return_shared}};
+use sui::{accumulator::{Self, AccumulatorRoot}, clock, test_scenario::{Scenario, return_shared}};
 
 /// A Propbook underlying id the registry never approves.
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
+
+// === builder_code owner guard ===
+
+#[test, expected_failure(abort_code = builder_code::ENotOwner)]
+fun claim_builder_fees_by_non_owner_aborts() {
+    let (mut scenario, registry_id) = test_helpers::setup_test();
+
+    // Alice creates a builder code: its owner is the sender.
+    scenario.next_tx(test_constants::alice());
+    let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
+    let config = scenario.take_shared<ProtocolConfig>();
+    let code_id = registry::create_builder_code(&mut reg, &config, 0, scenario.ctx());
+    return_shared(reg);
+    return_shared(config);
+
+    // An empty accumulator root suffices: `claim_all_builder_fees` runs `assert_owner`
+    // before reading any settled funds.
+    scenario.next_tx(test_constants::admin());
+    accumulator::create_for_testing(scenario.ctx());
+
+    // Bob is not the owner, so the owner guard aborts.
+    scenario.next_tx(test_constants::bob());
+    let mut code = scenario.take_shared_by_id<BuilderCode>(code_id);
+    let root = scenario.take_shared<AccumulatorRoot>();
+    let coin = code.claim_all_builder_fees(&root, scenario.ctx());
+    destroy(coin);
+    abort 999
+}
 
 // === create_expiry_market ===
 
