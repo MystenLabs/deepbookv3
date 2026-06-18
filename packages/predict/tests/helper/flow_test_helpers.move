@@ -309,15 +309,11 @@ public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit:
     let wrapper_id = account_registry.derived_wrapper_address(owner).to_id();
     let mut wrapper = account_registry.new(self.scenario.ctx());
     return_shared(account_registry);
-    let root = accumulator_support::take_root(&self.scenario);
     let auth = account::generate_auth(self.scenario.ctx());
     let acct = wrapper.load_account_mut(auth);
-    acct.deposit<DUSDC>(
-        coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()),
-        &root,
-        &self.clock,
-    );
-    return_shared(root);
+    // Pure stored-balance deposit (no accumulator settle), so test funding needs no
+    // `AccumulatorRoot` — the barrier-delivered settle path is exercised by the localnet sim.
+    acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
     // caller's `take_market`/`take_account`. Sender stays `owner`, so a subsequent

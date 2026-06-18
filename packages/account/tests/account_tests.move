@@ -55,7 +55,9 @@ fun registry_creates_one_canonical_account_per_owner() {
 
     assert_eq!(account.owner(), ALICE);
     assert_eq!(account.account_id(), account_id);
-    assert_eq!(account.receive_address(), account_id.to_address());
+    // Funds receive/settle at the wrapper address now (a real shared input object),
+    // not the nested account_id.
+    assert_eq!(account.receive_address(), wrapper_id.to_address());
     assert!(registry.derived_exists(ALICE));
     assert!(registry.derived_wrapper_exists(ALICE));
     assert_eq!(registry.derived_address(ALICE).to_id(), account_id);

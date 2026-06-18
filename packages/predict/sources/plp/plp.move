@@ -312,8 +312,9 @@ public fun stake_deep(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
+    wrapper.settle<DEEP>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let deep = account.withdraw<DEEP>(amount, root, clock, ctx);
+    let deep = account.withdraw<DEEP>(amount, ctx);
     predict_account::active_stake_mut(account, ctx);
     predict_account::add_inactive_stake(account, amount, ctx);
     vault.staked_deep.join(deep.into_balance());
@@ -337,11 +338,12 @@ public fun unstake_deep(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
+    wrapper.settle<DEEP>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let amount = predict_account::remove_all_stake(account, ctx);
     if (amount > 0) {
         let deep = vault.staked_deep.split(amount).into_coin(ctx);
-        account.deposit<DEEP>(deep, root, clock);
+        account.deposit<DEEP>(deep);
     };
     vault_events::emit_deep_unstaked(vault.id(), account.account_id(), amount);
 }
@@ -410,8 +412,9 @@ public fun request_supply(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let payment = account.withdraw<DUSDC>(amount, root, clock, ctx);
+    let payment = account.withdraw<DUSDC>(amount, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
@@ -437,8 +440,9 @@ public fun request_withdraw(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    wrapper.settle<PLP>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let lp = account.withdraw<PLP>(amount, root, clock, ctx);
+    let lp = account.withdraw<PLP>(amount, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
@@ -462,10 +466,11 @@ public fun cancel_supply_request(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
+    wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
-    account.deposit<DUSDC>(refund.into_coin(ctx), root, clock);
+    account.deposit<DUSDC>(refund.into_coin(ctx));
     vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, true);
 }
 
@@ -484,10 +489,11 @@ public fun cancel_withdraw_request(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
+    wrapper.settle<PLP>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
-    account.deposit<PLP>(refund.into_coin(ctx), root, clock);
+    account.deposit<PLP>(refund.into_coin(ctx));
     vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, false);
 }
 

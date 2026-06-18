@@ -54,6 +54,11 @@ public struct Account has store {
     account_id: UID,
     /// EOA address or object-ID-as-address that owns this account.
     owner: address,
+    /// The wrapper object's address: the accumulator/funds-receive anchor. Funds are
+    /// delivered here and settled out via `&mut AccountWrapper.id` — a real shared
+    /// object the runtime can authenticate, unlike the nested `account_id` UID, which
+    /// can never back an address-balance withdrawal.
+    receive_address: address,
     balances: Bag,
     settlements: Bag,
 }
@@ -125,14 +130,42 @@ public fun account_id(self: &Account): ID {
     self.account_id.to_inner()
 }
 
-/// Returns the accumulator receive address for this account.
+/// Returns the accumulator receive address for this account (the wrapper address).
 public fun receive_address(self: &Account): address {
-    self.account_id.to_address()
+    self.receive_address
 }
 
-/// Deposit `coin` and first settle any accumulator funds for `T` into the account.
-public fun deposit<T>(self: &mut Account, coin: Coin<T>, root: &AccumulatorRoot, clock: &Clock) {
-    self.settle_unchecked<T>(root, clock);
+/// Fold any accumulator-delivered funds for `T` (sent to this account's receive
+/// address) into stored balance. Withdrawing the address balance uses `&mut wrapper.id`
+/// — a real shared object the runtime authenticates as a transaction input. Each
+/// public flow that touches `T` settles at its boundary, where the wrapper is in
+/// scope, so the deep `&mut Account` custody ops below stay pure stored-balance.
+///
+/// Permissionless: it only consolidates the account's own funds and moves nothing out,
+/// so it needs no `Auth`; pulling funds out still requires `load_account_mut(auth)`.
+public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock: &Clock) {
+    let now = clock.timestamp_ms();
+    if (now == wrapper.account.last_settlement_ms<T>()) return;
+    wrapper.account.set_last_settlement_ms<T>(now);
+
+    let amount = balance::settled_funds_value<T>(root, wrapper.id.to_address());
+    if (amount == 0) return;
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut wrapper.id, amount);
+    wrapper.account.deposit_balance(balance::redeem_funds(withdrawal));
+    // NOTE(barrier): a nonzero settlement needs barrier-delivered funds, which has no
+    // Move test seam — covered by the localnet simulation, see ACCUMULATOR_TESTING_STATUS.md.
+    account_events::emit_funds_settled(
+        wrapper.account.account_id(),
+        type_name::with_defining_ids<T>().into_string(),
+        amount,
+        wrapper.account.stored_balance<T>(),
+    );
+}
+
+/// Deposit `coin` into the wrapped account's stored `T` balance. Pure stored-balance:
+/// callers settle accumulator funds at the flow boundary via `settle` (the deep
+/// `&mut Account` here cannot reach the wrapper id needed to authenticate a settle).
+public fun deposit<T>(self: &mut Account, coin: Coin<T>) {
     let amount = coin.value();
     self.deposit_balance(coin.into_balance());
     account_events::emit_deposited(
@@ -143,15 +176,9 @@ public fun deposit<T>(self: &mut Account, coin: Coin<T>, root: &AccumulatorRoot,
     );
 }
 
-/// Withdraw `amount` of `T` and first settle any accumulator funds for `T`.
-public fun withdraw<T>(
-    self: &mut Account,
-    amount: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<T> {
-    self.settle_unchecked<T>(root, clock);
+/// Withdraw `amount` of `T` from stored balance. Pure stored-balance (see `deposit`):
+/// callers settle accumulator funds at the flow boundary via `settle` first.
+public fun withdraw<T>(self: &mut Account, amount: u64, ctx: &mut TxContext): Coin<T> {
     let coin = self.withdraw_balance<T>(amount).into_coin(ctx);
     account_events::emit_withdrawn(
         self.account_id(),
@@ -164,8 +191,8 @@ public fun withdraw<T>(
 
 /// Deposit `coin` into the wrapped account's stored `T` balance from a transaction.
 /// `deposit` borrows `&mut Account`, which a PTB cannot carry across commands out of
-/// `load_account_mut`, so this folds authorize → load → deposit into one entrypoint
-/// (the same shape predict's `mint`/`redeem` use for account-authorized flows).
+/// `load_account_mut`, so this folds settle → authorize → load → deposit into one
+/// entrypoint (the same shape predict's `mint`/`redeem` use for account-authorized flows).
 public fun deposit_funds<T>(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -173,11 +200,12 @@ public fun deposit_funds<T>(
     root: &AccumulatorRoot,
     clock: &Clock,
 ) {
-    wrapper.load_account_mut(auth).deposit(coin, root, clock);
+    wrapper.settle<T>(root, clock);
+    wrapper.load_account_mut(auth).deposit(coin);
 }
 
-/// PTB-callable withdraw: folds authorize → load → withdraw into one entrypoint
-/// (see `deposit_funds`).
+/// PTB-callable withdraw: folds settle → authorize → load → withdraw into one
+/// entrypoint (see `deposit_funds`).
 public fun withdraw_funds<T>(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -186,7 +214,8 @@ public fun withdraw_funds<T>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<T> {
-    wrapper.load_account_mut(auth).withdraw<T>(amount, root, clock, ctx)
+    wrapper.settle<T>(root, clock);
+    wrapper.load_account_mut(auth).withdraw<T>(amount, ctx)
 }
 
 // === App-data Lane ===
@@ -234,13 +263,14 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
     let id = derived_object::claim(parent, wrapper_key);
     let account_id = derived_object::claim(parent, account_key);
     AccountWrapper {
-        id,
         account: Account {
             account_id,
             owner,
+            receive_address: id.to_address(),
             balances: bag::new(ctx),
             settlements: bag::new(ctx),
         },
+        id,
     }
 }
 
@@ -250,28 +280,6 @@ public(package) fun new_app_auth(): Auth {
 }
 
 // === Private Functions ===
-/// Settle any accumulator-delivered funds for `T` into the account. The caller
-/// must have already validated authority.
-fun settle_unchecked<T>(self: &mut Account, root: &AccumulatorRoot, clock: &Clock) {
-    let now = clock.timestamp_ms();
-    if (now == self.last_settlement_ms<T>()) return;
-    self.set_last_settlement_ms<T>(now);
-
-    let amount = balance::settled_funds_value<T>(root, self.account_id.to_address());
-    if (amount == 0) return;
-    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.account_id, amount);
-    self.deposit_balance(balance::redeem_funds(withdrawal));
-    // NOTE(barrier): a nonzero settlement needs barrier-delivered funds, which has no
-    // Move test seam — covered by integration, see ACCUMULATOR_TESTING_STATUS.md. The
-    // amount==0 no-emit path IS unit-tested.
-    account_events::emit_funds_settled(
-        self.account_id(),
-        type_name::with_defining_ids<T>().into_string(),
-        amount,
-        self.stored_balance<T>(),
-    );
-}
-
 fun assert_owner(self: &AccountWrapper, owner: address) {
     assert!(owner == self.account.owner, EInvalidOwner);
 }
@@ -290,7 +298,7 @@ fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock):
     if (clock.timestamp_ms() == self.last_settlement_ms<T>()) {
         0
     } else {
-        balance::settled_funds_value<T>(root, self.account_id.to_address())
+        balance::settled_funds_value<T>(root, self.receive_address)
     }
 }
 
