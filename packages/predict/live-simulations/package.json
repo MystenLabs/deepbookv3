@@ -1,0 +1,17 @@
+{
+  "name": "predict-live-simulations",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Random-trade integration simulation against the deployed testnet predict stack.",
+  "scripts": {
+    "sim": "tsx src/sim.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "2.12.1",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}
