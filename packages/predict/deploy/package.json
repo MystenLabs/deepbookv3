@@ -1,0 +1,12 @@
+{
+  "name": "predict-deploy",
+  "private": true,
+  "description": "Testnet deploy script for the predict package (publish + link deps + configure).",
+  "scripts": {
+    "deploy:testnet": "tsx deploy-testnet.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0"
+  }
+}

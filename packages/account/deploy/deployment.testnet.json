@@ -1,0 +1,7 @@
+{
+  "network": "testnet",
+  "deployer": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+  "account_package_id": "0x81d130039818bff52b60132564e888bf23fee75c062977947293a69a10673f91",
+  "account_registry_shared_object_id": "0xcfe69eb0c62685df57b404b37eb88cead047b2a733bbf56244b7cc5546b3356c",
+  "account_admin_cap_object_id": "0x78140ee6c39869ccbe4fe0007b48c5f8138982bb5842be6df8d34d8decc010b3"
+}

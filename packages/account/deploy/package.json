@@ -1,0 +1,12 @@
+{
+  "name": "account-deploy",
+  "private": true,
+  "description": "Testnet deploy script for the account package.",
+  "scripts": {
+    "deploy:testnet": "tsx deploy-testnet.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0"
+  }
+}

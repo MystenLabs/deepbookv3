@@ -1,0 +1,12 @@
+{
+  "name": "propbook-deploy",
+  "private": true,
+  "description": "Testnet deploy script for the propbook oracle stack (publish + create + bind).",
+  "scripts": {
+    "deploy:testnet": "tsx deploy-testnet.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0"
+  }
+}

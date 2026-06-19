@@ -1,0 +1,32 @@
+{
+  "network": "testnet",
+  "deployer": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+  "dependencies": {
+    "dusdc_package_id": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
+    "deep_token_package_id": "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
+    "fixed_math_package_id": "0xab488e225566fcea39a504dfc7bf98c12e9bc99fa5d3684bf6dff5f83807e938",
+    "block_scholes_oracle_package_id": "0x7ad752f3cf2f8c2c92dab8f53e49b7d4dba4b92b5b56de113e55d55cb4c89a15",
+    "propbook_package_id": "0xd848f191f5b3619d96e98063d8a3e6b15489b1671118da4ab71938170bcdf892",
+    "pyth_lazer_package_id": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+    "wormhole_package_id": "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2",
+    "oracle_registry_shared_object_id": "0x6c66d10d196eb1b611b6a5ac01362c1edd3f908c9076ef0e7bf61fd54b1a39f6",
+    "pyth_feed_shared_object_id": "0x2b7b2854cf24273ee30b6ffd5f98bc249f3567da02be3e0fb0b14817a58d7322",
+    "block_scholes_feed_shared_object_id": "0x06759be7ee0ff532ff5d4c57fb256537bdbd980e5d1f35767681afa6220e026a",
+    "account_package_id": "0x81d130039818bff52b60132564e888bf23fee75c062977947293a69a10673f91"
+  },
+  "predict_package_id": "0x43737bd2f1cb10c90d0073260f6ba38cf8447c826617dd7c90003453af2fe290",
+  "registry_shared_object_id": "0x5ba6737f91db3b02048dd405728b87397dbecf2f1aa5f066d057b44c9532cc35",
+  "protocol_config_shared_object_id": "0x8e0e803ee566c51e00d993a873325e9c2be4eb8ac8a0a94c44d8ad0a619ff2d6",
+  "pool_vault_shared_object_id": "0xd361c91ad5fa12e9cef187a587fd498b9a9d12e3cc8d05056b97c2a0c3ce6b20",
+  "admin_cap_object_id": "0xfabfaee17942c990f89294c4b045cd678ec9593f5efba883eb422f470dafd6ef",
+  "predict_app_authorized": true,
+  "freshness_relaxed": true,
+  "underlying_registered": true,
+  "min_tick_size": 1000000000,
+  "bootstrapped": true,
+  "bootstrap_locked_dusdc": 60000000000,
+  "market_lifecycle_cap_object_id": "0x77e2c6fd655349a54edb463d89582f3db1ab400f7bedf4e29a39380371d1d32c",
+  "markets": {
+    "1781837460000": "0xc3221b54ace22a32a1871b15d81a3867b30cfd9b2386360b81beb81be501ce6a"
+  }
+}
