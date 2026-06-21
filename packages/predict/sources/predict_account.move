@@ -78,7 +78,7 @@ public fun expiry_position_count(account: &Account, expiry_market_id: ID): u64 {
     }
 }
 
-/// Return aggregate pool trading fees paid for one expiry market.
+/// Return aggregate pool trading fees this account paid for one expiry market.
 public fun trading_fees_paid(account: &Account, expiry_market_id: ID): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     let d = data(account);
@@ -177,7 +177,7 @@ public(package) fun remove_position(
     position_root_id
 }
 
-/// Record pool trading fees paid for one expiry market.
+/// Record pool trading fees paid by this account for one expiry market.
 public(package) fun record_trading_fee_paid(
     account: &mut Account,
     expiry_market_id: ID,

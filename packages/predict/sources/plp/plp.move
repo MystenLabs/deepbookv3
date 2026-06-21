@@ -4,15 +4,16 @@
 /// PLP token and pool vault.
 ///
 /// PoolVault owns the PLP treasury cap, the pooled DEEP staked by accounts, idle
-/// DUSDC, the protocol reserve, per-expiry cash accounting, and the async LP
-/// supply/withdraw queues. It coordinates the full-pool NAV valuation (a hot-potato
-/// aggregation over every active market) and the unified per-market cash flow
-/// (initial funding, live rebalance/sweep, and settled-market sweep with terminal
-/// profit materialization). LPs queue supply/withdraw requests routed through a
-/// loaded Account; the daily flush (`finish_flush`) drains them at the frozen pool
-/// NAV, minting/burning PLP and delivering fills to each account via the balance
-/// accumulator. Incentives moved to a separate staking contract; DEEP staking is an
-/// unrelated trading feature.
+/// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
+/// accounting, and the async LP supply/withdraw queues. It coordinates the
+/// full-pool NAV valuation (a hot-potato aggregation over every active market) and
+/// the unified per-market cash flow (initial funding, live rebalance/sweep, and
+/// settled-market sweep with terminal profit materialization). LPs queue
+/// supply/withdraw requests routed through a loaded Account; the daily flush
+/// (`finish_flush`) drains them at the frozen pool NAV, minting/burning PLP and
+/// delivering fills to each account via the balance accumulator. PLP incentives
+/// moved to a separate staking contract; DEEP staking is an unrelated trading
+/// feature.
 module deepbook_predict::plp;
 
 use account::account::{AccountWrapper, Auth};
@@ -49,6 +50,7 @@ const EPlpPriceAboveCircuitBreaker: u64 = 12;
 const EAlreadyBootstrapped: u64 = 13;
 const EPoolNavDust: u64 = 14;
 const EBelowMinBootstrapLiquidity: u64 = 15;
+const EBelowMinFeeIncentiveSponsorship: u64 = 16;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -59,6 +61,8 @@ public struct PoolVault has key {
     /// Protocol-owned DUSDC (the materialized terminal-profit cut) excluded from
     /// PLP redemption.
     protocol_reserve_balance: Balance<DUSDC>,
+    /// Sponsor-funded DUSDC reserved for taker fee sponsorship, excluded from PLP NAV.
+    fee_incentive_reserve: Balance<DUSDC>,
     /// Pooled DEEP staked by all accounts for trading benefits. Per-account
     /// active/inactive amounts are mirrored in Predict account data.
     staked_deep: Balance<DEEP>,
@@ -123,6 +127,11 @@ public fun idle_balance(vault: &PoolVault): u64 {
 /// Return protocol-owned DUSDC excluded from PLP redemption.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
+}
+
+/// Return sponsor-funded DUSDC available for future fee-incentive allocation.
+public fun fee_incentive_reserve(vault: &PoolVault): u64 {
+    vault.fee_incentive_reserve.value()
 }
 
 /// Return the total PLP share supply outstanding.
@@ -371,6 +380,31 @@ public fun rebalance_expiry_cash(
     vault.rebalance_expiry_cash_inner(market, config, propbook_registry, pyth, clock);
 }
 
+/// Sponsor taker fee incentives with DUSDC. Anyone may contribute; the payment
+/// joins a pool-level reserve that is excluded from PLP NAV and later allocated to
+/// expiry markets by the normal rebalance flow.
+public fun sponsor_fee_incentives(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    payment: Coin<DUSDC>,
+    ctx: &TxContext,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let amount = payment.value();
+    assert!(
+        amount >= constants::min_fee_incentive_sponsorship!(),
+        EBelowMinFeeIncentiveSponsorship,
+    );
+    vault.fee_incentive_reserve.join(payment.into_balance());
+    vault_events::emit_fee_incentives_sponsored(
+        vault.id(),
+        ctx.sender(),
+        amount,
+        vault.fee_incentive_reserve.value(),
+    );
+}
+
 /// Bootstrap the pool exactly once: permanently lock `payment` DUSDC of minimum
 /// liquidity. Mints matching PLP (1:1) into the book's locked balance — never
 /// withdrawable, so the caller receives no shares — and joins the DUSDC into idle.
@@ -504,6 +538,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
     PoolVault {
         id: object::new(ctx),
         protocol_reserve_balance: balance::zero(),
+        fee_incentive_reserve: balance::zero(),
         staked_deep: balance::zero(),
         lp: lp_book::new(treasury_cap, ctx),
         expiry_accounting: pool_accounting::new(ctx),
@@ -546,6 +581,8 @@ public(package) fun rebalance_expiry_cash_inner(
         vault.unregister_settled_expiry(market, config);
         return true
     };
+
+    vault.sync_fee_incentives(market, expiry_market_id);
 
     let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
     if (cash_balance < target_cash) {
@@ -617,6 +654,53 @@ public(package) fun lp_pool_value(
 
 // === Private Functions ===
 
+fun fee_incentive_live_target(): u64 {
+    math::mul(
+        constants::expiry_max_funding!(),
+        constants::fee_incentive_live_target_rate!(),
+    )
+}
+
+fun fee_incentive_lifetime_cap(): u64 {
+    math::mul(
+        constants::expiry_max_funding!(),
+        constants::fee_incentive_lifetime_cap_rate!(),
+    )
+}
+
+fun sync_fee_incentives(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    expiry_market_id: ID,
+) {
+    let requested_allocation = fee_incentive_live_target()
+        .saturating_sub(market.fee_incentive_balance())
+        .min(vault.fee_incentive_reserve.value());
+    if (requested_allocation == 0) return;
+
+    let (allocation, allocated_after) = vault
+        .expiry_accounting
+        .record_fee_incentives_allocated_up_to(
+            expiry_market_id,
+            fee_incentive_lifetime_cap(),
+            requested_allocation,
+        );
+    if (allocation == 0) return;
+
+    let incentives = vault
+        .fee_incentive_reserve
+        .split(allocation);
+    market.receive_fee_incentives(incentives);
+    vault_events::emit_fee_incentives_allocated(
+        vault.id(),
+        expiry_market_id,
+        allocation,
+        vault.fee_incentive_reserve.value(),
+        market.fee_incentive_balance(),
+        allocated_after,
+    );
+}
+
 /// Abort before draining LP requests if the frozen mark implies a PLP price or pool
 /// NAV outside the executable protocol envelope. `total_supply > 0` is guaranteed by
 /// the genesis lock (`lock_capital`) + the `ENotBootstrapped` flush-start gate, so
@@ -659,11 +743,10 @@ fun expiry_rebalance_cash_terms(market: &ExpiryMarket): (u64, u64, u64) {
     (market.cash_balance(), target_cash, sweep_threshold_cash)
 }
 
-/// Settled-market sweep: deactivate the expiry, return its free cash to idle, and
-/// materialize its terminal profit. Idempotent — a settled market already swept
-/// returns zero cash and recognizes no further profit, so a second pass is a
-/// no-op. Emits only when something actually moved (cash returned or it was still
-/// active).
+/// Settled-market sweep: deactivate the expiry, return its free cash to idle,
+/// materialize its terminal profit, and return unused fee incentives to the pool
+/// reserve. Idempotent — a settled market already swept returns zero cash and
+/// recognizes no further profit, so a second pass is a no-op.
 fun unregister_settled_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -676,9 +759,20 @@ fun unregister_settled_expiry(
         .expiry_accounting
         .receive_expiry_cash(expiry_market_id, returned_cash);
     vault.materialize_expiry_profit(config, expiry_market_id);
+    let returned_incentives = market.release_fee_incentives();
+    let returned_incentive_amount = returned_incentives.value();
+    vault.fee_incentive_reserve.join(returned_incentives);
 
     if (deactivated || returned_cash_amount > 0) {
         vault.emit_expiry_cash_received(market, returned_cash_amount, settlement_price);
+    };
+    if (returned_incentive_amount > 0) {
+        vault_events::emit_fee_incentives_returned(
+            vault.id(),
+            expiry_market_id,
+            returned_incentive_amount,
+            vault.fee_incentive_reserve.value(),
+        );
     };
 }
 

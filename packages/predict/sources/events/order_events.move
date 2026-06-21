@@ -32,7 +32,10 @@ public struct OrderMinted has copy, drop, store {
     quantity: u64,
     /// Net premium the user paid into LP backing, in DUSDC base units.
     net_premium: u64,
+    /// Full trading fee collected by the expiry, including any sponsor-paid subsidy.
     trading_fee: u64,
+    /// Portion of `trading_fee` paid from expiry-local fee incentives.
+    fee_incentive_subsidy: u64,
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
@@ -114,6 +117,7 @@ public(package) fun emit_order_minted(
     entry_probability: u64,
     net_premium: u64,
     trading_fee: u64,
+    fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
 ) {
@@ -130,6 +134,7 @@ public(package) fun emit_order_minted(
         quantity: order.quantity(),
         net_premium,
         trading_fee,
+        fee_incentive_subsidy,
         builder_fee,
         penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
