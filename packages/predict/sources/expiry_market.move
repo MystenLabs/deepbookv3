@@ -3,91 +3,59 @@
 
 /// Per-expiry Predict market.
 ///
-/// An ExpiryMarket is the hot shared object for one expiry. It owns the
-/// expiry-local DUSDC allocation, strike exposure state, fee balance, trade execution,
-/// valuation witness, and settlement compaction state. Pool-wide PLP
-/// accounting and allocation coordination remain outside this module.
+/// An ExpiryMarket is the hot shared object for one expiry. It owns trade
+/// execution, strike exposure state, and an embedded expiry-cash custody
+/// component, plus local sponsor-funded fee incentives. Live oracle validation is
+/// delegated to `pricing::load_live_pricer`; this module owns market flow policy
+/// and then passes loaded `Pricer` snapshots into exposure business logic.
+/// Pool-wide PLP accounting and profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
 
-use deepbook::math;
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
+    admin::AdminCap,
+    config_events,
     constants,
-    market_oracle::MarketOracle,
-    predict_manager::PredictManager,
+    ewma::{Self, EwmaState},
+    ewma_config::EwmaConfig,
+    expiry_cash::{Self, ExpiryCash},
+    order::{Self, Order},
+    order_events,
+    predict_account,
     pricing,
     protocol_config::ProtocolConfig,
-    pyth_source::PythSource,
-    range_key::{Self, RangeKey},
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, clock::Clock, event, vec_set::VecSet};
+use fixed_math::math;
+use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
+use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
 
-const EWrongMarketOracle: u64 = 0;
-const EWrongPythSource: u64 = 1;
-const EValuationExceedsCash: u64 = 2;
-const EAllocationBelowMaxPayout: u64 = 3;
-const EZeroQuantity: u64 = 5;
-const EMarketCompacted: u64 = 6;
-const EMarketNotCompacted: u64 = 7;
-const EInsufficientLpCash: u64 = 8;
-const ECompactedLiabilityUnderflow: u64 = 9;
-const EZeroAllocatedCapital: u64 = 10;
-const EInvalidTickSize: u64 = 11;
-const EInvalidStrikeGrid: u64 = 12;
-const ESettledLiabilityUnderflow: u64 = 16;
-const ECompactedLiabilityMismatch: u64 = 17;
-const EInsufficientFeeBalance: u64 = 18;
-const ECompactedRebateLiabilityUnderflow: u64 = 19;
-const EPackageVersionDisabled: u64 = 20;
-const EMintPaused: u64 = 21;
-const EInvalidQuantity: u64 = 22;
+const EMintPaused: u64 = 4;
+const EFullCloseRequired: u64 = 5;
+const EMarketNotSettled: u64 = 6;
+const EWrongPythFeed: u64 = 7;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
     id: UID,
-    market_oracle_id: ID,
-    pyth_lazer_feed_id: u32,
+    /// Propbook underlying this market was created for.
+    propbook_underlying_id: u32,
     expiry: u64,
-    /// Settlement loss rebate rate snapshotted from fee config at creation.
-    settlement_loss_rebate_rate: u64,
-    /// Active risk budget assigned by the pool.
-    allocated_capital: u64,
-    /// LP-owned DUSDC backing this expiry's liability.
-    lp_cash_balance: Balance<DUSDC>,
-    /// Unified fee cash used for settlement loss rebates until compaction.
-    fee_balance: Balance<DUSDC>,
-    /// Exposure state before compaction; none after compaction.
-    strike_exposure: Option<StrikeExposure>,
-    /// Post-compaction settlement facts and remaining escrow liabilities.
-    compacted_state: Option<CompactedState>,
-    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
-    allowed_versions: VecSet<u64>,
-    /// When true, `mint` aborts. Other flows (redeem, settle, compact) unaffected.
+    /// Terminal settlement price once exact Propbook expiry data has been recorded.
+    settlement_price: Option<u64>,
+    /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
+    cash: ExpiryCash,
+    /// Sponsor-funded DUSDC available to subsidize this market's taker fees.
+    fee_incentive_balance: Balance<DUSDC>,
+    /// Exposure lifecycle state for this expiry's strike ticks.
+    strike_exposure: StrikeExposure,
+    /// Smoothed gas-price stats backing the congestion trade penalty.
+    ewma: EwmaState,
+    /// When true, new mints on this expiry abort. Other flows stay available.
+    /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
+    /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
-}
-
-/// Settlement facts retained after strike exposure state is compacted.
-public struct CompactedState has copy, drop, store {
-    settlement: u64,
-    payout_liability: u64,
-    rebate_liability: u64,
-}
-
-/// Transaction-local valuation produced by an expiry market.
-public struct ExpiryValuation {
-    /// Expiry market that produced this valuation.
-    expiry_market_id: ID,
-    /// LP NAV contribution for this expiry.
-    value: u64,
-}
-
-/// Emitted whenever a trade fee is accrued for an expiry market.
-public struct FeeAccrued has copy, drop, store {
-    expiry_market_id: ID,
-    total_fee: u64,
-    builder_fee: u64,
-    builder_code_id: Option<ID>,
 }
 
 // === Public Functions ===
@@ -97,14 +65,9 @@ public fun id(market: &ExpiryMarket): ID {
     market.id.to_inner()
 }
 
-/// Return the market oracle this expiry market is paired with.
-public fun market_oracle_id(market: &ExpiryMarket): ID {
-    market.market_oracle_id
-}
-
-/// Return the Pyth Lazer feed id snapshotted at market creation.
-public fun pyth_lazer_feed_id(market: &ExpiryMarket): u32 {
-    market.pyth_lazer_feed_id
+/// Return the Propbook underlying this market was created for.
+public fun propbook_underlying_id(market: &ExpiryMarket): u32 {
+    market.propbook_underlying_id
 }
 
 /// Return the expiry timestamp in milliseconds.
@@ -112,69 +75,96 @@ public fun expiry(market: &ExpiryMarket): u64 {
     market.expiry
 }
 
-/// Return the DUSDC capital currently allocated to this expiry.
-public fun allocated_capital(market: &ExpiryMarket): u64 {
-    market.allocated_capital
+/// Return DUSDC currently held by this expiry.
+public fun cash_balance(market: &ExpiryMarket): u64 {
+    market.cash.balance()
 }
 
-/// Return LP-owned DUSDC currently held by this expiry.
-public fun lp_cash_balance(market: &ExpiryMarket): u64 {
-    market.lp_cash_balance.value()
+/// Return DUSDC reserved for unresolved trading loss rebates.
+public fun rebate_reserve(market: &ExpiryMarket): u64 {
+    market.cash.rebate_reserve()
 }
 
-/// Return DUSDC fees held by this expiry.
-public fun fee_balance(market: &ExpiryMarket): u64 {
-    market.fee_balance.value()
+/// Return sponsor-funded DUSDC available to subsidize this market's taker fees.
+public fun fee_incentive_balance(market: &ExpiryMarket): u64 {
+    market.fee_incentive_balance.value()
 }
 
-/// Return the settlement loss rebate rate snapshotted for this expiry.
-public fun settlement_loss_rebate_rate(market: &ExpiryMarket): u64 {
-    market.settlement_loss_rebate_rate
+/// Return the trading loss rebate rate snapshotted for this expiry.
+public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
+    market.cash.trading_loss_rebate_rate()
 }
 
-/// Return the expiry-local worst-case payout.
-public fun max_payout(market: &ExpiryMarket): u64 {
-    if (market.is_compacted()) {
-        market.compacted_state.borrow().payout_liability
-    } else {
-        market.strike_exposure.borrow().max_payout()
-    }
+/// Return the terminal floor index snapshotted for this expiry.
+public fun terminal_floor_index(market: &ExpiryMarket): u64 {
+    market.strike_exposure.terminal_floor_index()
 }
 
-/// Return allocated capital not needed for worst-case payout backing.
-public fun free_capital(market: &ExpiryMarket): u64 {
-    let allocated_capital = market.allocated_capital();
-    let max_payout = market.max_payout();
-    if (allocated_capital > max_payout) {
-        allocated_capital - max_payout
-    } else {
-        0
-    }
+/// Return the liquidation LTV snapshotted for this expiry.
+public fun liquidation_ltv(market: &ExpiryMarket): u64 {
+    market.strike_exposure.liquidation_ltv()
 }
 
-/// Return DUSDC allocation that can leave while preserving risk and cash backing.
-public fun returnable_capital(market: &ExpiryMarket): u64 {
-    let max_payout = market.max_payout();
-    let risk_free = market.free_capital();
-    let lp_cash_balance = market.lp_cash_balance.value();
-    let cash_free = if (lp_cash_balance > max_payout) {
-        lp_cash_balance - max_payout
-    } else {
-        0
-    };
-    risk_free.min(cash_free)
+/// Return the backing-buffer lambda snapshotted for this expiry.
+public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
+    market.strike_exposure.backing_buffer_lambda()
 }
 
-/// Return current expiry utilization as max payout over allocated capital.
-public(package) fun utilization(market: &ExpiryMarket): u64 {
-    let allocated_capital = market.allocated_capital;
-    assert!(allocated_capital > 0, EZeroAllocatedCapital);
-    math::div(market.max_payout(), allocated_capital)
+/// Return the trade-fee ramp window snapshotted for this expiry.
+public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.expiry_fee_window_ms()
 }
 
-/// Return true once strike exposure state has been compacted after settlement.
-public fun is_compacted(market: &ExpiryMarket): bool {
-    market.compacted_state.is_some()
+/// Return the trade-fee ramp max multiplier snapshotted for this expiry.
+public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
+    market.strike_exposure.expiry_fee_max_multiplier()
+}
+
+/// Return the strike tick size snapshotted for this expiry. Raw strikes are
+/// derived off-chain / by the SDK as `tick * tick_size`.
+public fun tick_size(market: &ExpiryMarket): u64 {
+    market.strike_exposure.tick_size()
+}
+
+/// Return buffered live reserve, or exact remaining settled payout liability once materialized.
+public fun payout_liability(market: &ExpiryMarket): u64 {
+    market.strike_exposure.payout_liability()
+}
+
+/// Return this expiry market's exact live NAV: free cash minus the exact
+/// per-order live liability, floored at zero. This is structurally the live
+/// primitive — a past-expiry or stale market aborts here, and an empty or
+/// order-free live market returns free cash (zero liability).
+///
+/// A pure read with no backing assert: backing is owned by the payout-tree reserve
+/// and proven on every trade, and the `max(0, ·)` cash floor marks a degenerate
+/// (underwater) market at 0 — the correct per-market limited-recourse value, never
+/// negative. `pricing::load_live_pricer` binds the passed propbook feeds to this
+/// market's current Propbook registry mapping, rejects a past-expiry market, and
+/// gates surface freshness.
+///
+/// A past-expiry market that has not settled aborts here. There is no solvency-safe
+/// NAV for an unsettled past-expiry market: the flush uses one mark for both supply
+/// and withdraw, so the mark must equal the settlement-dependent true value. Flows
+/// that branch on settlement call `ensure_settled` first, using Propbook's exact
+/// Pyth timestamp at expiry; if no exact spot exists yet, the live-pricing liveness
+/// abort remains the correct failure mode.
+public fun current_nav(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    clock: &Clock,
+): u64 {
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let liability = market.strike_exposure.exact_live_liability(&pricer, clock);
+    // Floor at 0 rather than abort: a degenerate underwater market marks at 0, and
+    // partial-close `walk_linear` survivors can leave residual ulp dust that makes
+    // liability exceed free cash by ~1-2 ulp/order, biasing the supply mark down by
+    // that dust. Intentional per ROUNDING_POLICY R1/R2 (liveness; the supply mark
+    // never *over*-counts TRUE, so incumbents are never diluted).
+    market.cash.free_cash().saturating_sub(liability)
 }
 
 /// Return whether minting is currently paused on this expiry market.
@@ -182,590 +172,349 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Return this market's mirrored set of allowed package versions.
-public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
-    market.allowed_versions
-}
-
-/// Refresh this market's mirrored `allowed_versions`. Permissionless: callers
-/// pass `registry.allowed_versions()` as the source of truth.
-public fun update_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
-    market.allowed_versions = allowed_versions;
-}
-
-/// Construct a range key for this expiry market.
-public fun range_key(market: &ExpiryMarket, lower_strike: u64, higher_strike: u64): RangeKey {
-    range_key::new(market.market_oracle_id, lower_strike, higher_strike)
-}
-
-/// Produce this expiry's valuation witness for a full-pool valuation.
-///
-/// Requires the protocol valuation lock, aborts while the oracle is expired but
-/// unsettled, and does not mutate expiry or oracle state.
-public fun read_valuation(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): ExpiryValuation {
-    config.assert_valuation_in_progress();
-    let (option_value, rebate_liability) = market.current_liabilities(
-        config,
-        market_oracle,
-        pyth,
-        clock,
-    );
-    let lp_cash_balance = market.lp_cash_balance.value();
-    let fee_balance = market.fee_balance.value();
-    assert!(lp_cash_balance >= option_value, EValuationExceedsCash);
-    assert!(fee_balance >= rebate_liability, EInsufficientFeeBalance);
-    let lp_fee_surplus = lp_fee_surplus_value(config, fee_balance - rebate_liability);
-    ExpiryValuation {
-        expiry_market_id: market.id(),
-        value: lp_cash_balance - option_value + lp_fee_surplus,
-    }
-}
-
 /// Mint a live position interval against this expiry market.
 ///
-/// Requires the package version to be allowed for this market, per-market mint
-/// pause to be off, trading globally enabled, manager ownership, a live fresh
-/// oracle, and enough expiry allocation to back the post-mint max payout.
+/// Requires the running package version to be at or above the protocol version
+/// watermark, per-market mint pause to be off, trading globally enabled, a valid
+/// account owner auth, a live fresh oracle, enough expiry cash to back the post-mint
+/// max payout and rebate reserve, and leveraged floor terms below this expiry's
+/// liquidation LTV at terminal. Leveraged mints must also satisfy leverage tier
+/// policy and be above the current liquidation threshold at entry. Mint fees are
+/// paid by routing a withdraw through the loaded account. The position's strike
+/// range is the tick pair `(lower_tick, higher_tick]` (`lower_tick = 0` is
+/// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw strikes
+/// to ticks. Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
-    manager: &mut PredictManager,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
     quantity: u64,
+    leverage: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
-    market.assert_version_allowed();
-    market.assert_mint_not_paused();
-    config.assert_trading_allowed();
-    market.mint_internal(config, manager, market_oracle, pyth, key, quantity, clock, ctx);
+): u256 {
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    market.mint_internal(
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        clock,
+        ctx,
+    )
 }
 
-/// Redeem a live, settled, or compacted position interval.
-///
-/// Live redeems require manager ownership and fresh oracle data. Settled and
-/// compacted redeems are permissionless and pay into the manager balance.
+/// Redeem an order you hold account authority over. Works in any
+/// order state: a live order is priced and closed (partial or full); a settled
+/// or already-liquidated order is fully closed. Returns
+/// `(closed_order_id, replacement_order_id)`; a replacement is
+/// present only when a live partial close leaves quantity open.
 public fun redeem(
     market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     config: &ProtocolConfig,
-    manager: &mut PredictManager,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    order_id: u256,
+    close_quantity: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
-    market.assert_version_allowed();
+): (u256, Option<u256>) {
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    market.redeem_internal(
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        bs,
+        order_id,
+        close_quantity,
+        clock,
+        ctx,
+    )
+}
+
+/// Permissionlessly redeem a settled order without account-owner authority. The
+/// market must be settled already; this flow does not run live pricing,
+/// liquidation, or liquidated-position cleanup. Requires a full close.
+public fun redeem_settled(
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    config.assert_version();
     config.assert_not_valuation_in_progress();
-    if (market.is_compacted()) {
-        market.redeem_compacted_internal(manager, key, quantity, ctx);
-    } else {
-        market.assert_market_oracle(market_oracle);
-        if (market_oracle.is_settled()) {
-            market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
-        } else {
-            market.redeem_live_internal(
-                config,
-                manager,
-                market_oracle,
-                pyth,
-                key,
-                quantity,
-                clock,
-                ctx,
-            );
-        }
-    }
+    let redeemed_order = order::from_order_id(order_id);
+    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    wrapper.settle<DUSDC>(root, clock);
+    let auth = predict_account::generate_auth_as_app(account_registry);
+    let account = wrapper.load_account_mut(auth);
+    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+
+    market.redeem_settled_internal(
+        account,
+        &redeemed_order,
+        ctx,
+    );
+    (redeemed_order.id(), option::none())
+}
+
+/// Run one bounded liquidation pass over active leveraged orders.
+///
+/// The liquidation book selects up to `budget` candidates and returns the
+/// number of orders liquidated. It does not touch accounts; users clear
+/// their liquidated position later through `redeem`, receiving no payout.
+public fun liquidate(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    budget: u64,
+    clock: &Clock,
+): u64 {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            budget,
+            clock,
+        )
+}
+
+/// Try to liquidate one active leveraged order by ID.
+public fun liquidate_order(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    order_id: u256,
+    clock: &Clock,
+): bool {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+
+    let order = order::from_order_id(order_id);
+    market.strike_exposure.liquidate_live_order(&pricer, &order, clock)
+}
+
+/// Set whether new mints are paused on this expiry market. Admin-only and
+/// version-gated. A `PauseCap` holder can force-engage the pause one-way under a
+/// version freeze via `registry::pause_expiry_market_mint_pause_cap`.
+public fun set_mint_paused(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    config.assert_version();
+    market.mint_paused = paused;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
 // === Public-Package Functions ===
 
-/// Create and share a funded expiry market for one market oracle.
-///
-/// The market snapshots the Pyth feed ID, initializes strike exposure state, and
-/// takes custody of the pool-provided allocation as LP cash.
-public(package) fun create_and_share(
-    market_oracle_id: ID,
-    pyth_lazer_feed_id: u32,
-    config: &ProtocolConfig,
-    allocation: Balance<DUSDC>,
-    expiry: u64,
-    min_strike: u64,
-    tick_size: u64,
-    allowed_versions: VecSet<u64>,
-    ctx: &mut TxContext,
-): ID {
-    assert_valid_strike_grid(min_strike, tick_size);
-    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
-    let allocated_capital = allocation.value();
-    let market = ExpiryMarket {
-        id: object::new(ctx),
-        market_oracle_id,
-        pyth_lazer_feed_id,
-        expiry,
-        settlement_loss_rebate_rate: config.fee_config().settlement_loss_rebate_rate(),
-        allocated_capital,
-        lp_cash_balance: allocation,
-        fee_balance: balance::zero(),
-        strike_exposure: option::some(strike_exposure::new(ctx, tick_size, min_strike, max_strike)),
-        compacted_state: option::none(),
-        allowed_versions,
-        mint_paused: false,
-    };
-    let id = market.id();
-    transfer::share_object(market);
-    id
-}
-
-/// Add pool-provided DUSDC to this live expiry's allocation and LP cash.
-public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Balance<DUSDC>) {
-    market.assert_version_allowed();
-    market.assert_not_compacted();
-    let amount = allocation.value();
-    market.allocated_capital = market.allocated_capital + amount;
-    market.lp_cash_balance.join(allocation);
-}
-
-/// Return free DUSDC allocation from this expiry to the pool.
-///
-/// Aborts if the requested amount would reduce allocation or cash below the
-/// expiry's current worst-case payout backing.
-public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    market.assert_version_allowed();
-    assert!(amount <= market.returnable_capital(), EAllocationBelowMaxPayout);
-
-    market.allocated_capital = market.allocated_capital - amount;
-    market.lp_cash_balance.split(amount)
-}
-
-/// Consume an expiry valuation and return its market ID and value.
-public(package) fun unpack(valuation: ExpiryValuation): (ID, u64) {
-    let ExpiryValuation {
-        expiry_market_id,
-        value,
-    } = valuation;
-    (expiry_market_id, value)
-}
-
-/// Assert that strike grid creation parameters are valid.
-public(package) fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
-    assert!(tick_size > 0, EInvalidTickSize);
-    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
-    assert!(min_strike > 0, EInvalidStrikeGrid);
-    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-    let ticks = constants::oracle_strike_grid_ticks!();
-    assert!(ticks > 0, EInvalidStrikeGrid);
-    let _max_strike = min_strike + tick_size * ticks;
-}
-
-/// Assert that a market oracle belongs to this expiry market.
-public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &MarketOracle) {
-    assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
-}
-
-/// Abort if the running package version is not allowed for this market.
-public(package) fun assert_version_allowed(market: &ExpiryMarket) {
+/// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
+/// at this market's expiry timestamp. Returns whether the market is settled after
+/// the attempt. This is the canonical passive settlement gate used immediately
+/// before settlement-dependent branching.
+public(package) fun ensure_settled(
+    market: &mut ExpiryMarket,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+): bool {
+    if (market.is_settled()) return true;
+    if (clock.timestamp_ms() < market.expiry) return false;
     assert!(
-        market.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
+        propbook_registry
+            .propbook_pyth_id_for_underlying(market.propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
     );
+
+    let read = pyth.normalized_spot_at(market.expiry);
+    if (read.is_none()) return false;
+    let settlement_price = read.destroy_some().read_value();
+    market.settlement_price = option::some(settlement_price);
+    config_events::emit_market_settled(
+        market.id(),
+        market.propbook_underlying_id,
+        market.expiry,
+        settlement_price,
+        clock.timestamp_ms(),
+    );
+    true
 }
 
-/// Set per-market mint pause (used by AdminCap admin path on registry).
-public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
-    market.mint_paused = paused;
-}
-
-/// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
+/// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
+/// `registry::pause_expiry_market_mint_pause_cap`; cannot unpause. Deliberately
+/// not version-gated so the kill switch survives a version freeze.
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), true);
 }
 
-/// Compact settled expiry state and return surplus cash to the pool.
-///
-/// Consumes strike exposure state, leaves only settled liability backing in the
-/// expiry, leaves only settlement loss rebate liability in the fee balance, and
-/// returns all other cash to the pool.
-public(package) fun compact_settled(
-    market: &mut ExpiryMarket,
-    market_oracle: &MarketOracle,
-): (Balance<DUSDC>, Balance<DUSDC>) {
-    market.assert_version_allowed();
-    market.assert_market_oracle(market_oracle);
-    market.assert_not_compacted();
-
-    let settlement = pricing::settlement_price(market_oracle);
-    let (settled_liability, losing_fee_basis) = market
-        .strike_exposure
-        .borrow()
-        .settled_values(settlement);
-    let rebate_liability = market.rebate_liability(losing_fee_basis);
-    assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
-    assert!(market.fee_balance.value() >= rebate_liability, EInsufficientFeeBalance);
-    assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
-
-    let exposure = market.strike_exposure.extract();
-    let compacted_payout_liability = exposure.into_settled_liability(settlement);
-    assert!(compacted_payout_liability == settled_liability, ECompactedLiabilityMismatch);
-    let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
-    let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
-    let returned_fee_amount = market.fee_balance.value() - rebate_liability;
-    let returned_fees = market.fee_balance.split(returned_fee_amount);
-
-    market.allocated_capital = 0;
-    market.compacted_state =
-        option::some(CompactedState {
-            settlement,
-            payout_liability: settled_liability,
-            rebate_liability,
-        });
+/// Receive pool-provided cash without interpreting pool allocation policy.
+public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
+    market.cash.receive(cash);
     market.assert_cash_backing();
+}
 
-    (returned_cash, returned_fees)
+/// Receive sponsor-funded fee incentives allocated by the pool vault.
+public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<DUSDC>) {
+    market.fee_incentive_balance.join(incentives);
+}
+
+/// Release all unused local fee incentives back to the pool reserve.
+public(package) fun release_fee_incentives(market: &mut ExpiryMarket): Balance<DUSDC> {
+    let amount = market.fee_incentive_balance.value();
+    if (amount == 0) return balance::zero();
+    market.fee_incentive_balance.split(amount)
+}
+
+/// Release pool cash while preserving expiry-local payout and rebate backing.
+public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    if (amount == 0) {
+        return balance::zero()
+    };
+    let payout_liability = market.payout_liability();
+    let released_cash = market.cash.release_surplus(amount, payout_liability);
+    market.assert_cash_backing();
+    released_cash
+}
+
+/// Materialize this expiry's settled payout liability and release every unit of
+/// cash above it back to the pool. Used by the settled-market sweep, which then
+/// deactivates the expiry and materializes its profit.
+/// Returns the released cash and the terminal settlement price used for event
+/// emission by the pool.
+public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
+    let settlement_price = market.settlement_price();
+    let settled_liability = market.materialize_settled_liability();
+    let reserved_cash = settled_liability + market.cash.rebate_reserve();
+    market.cash.assert_backing(settled_liability);
+
+    let returned_cash_amount = market.cash.balance() - reserved_cash;
+    (market.release_pool_cash(returned_cash_amount), settlement_price)
+}
+
+/// Create and share a zero-cash expiry market for one Propbook underlying.
+///
+/// The market snapshots the underlying, tick size, and per-market config and
+/// starts with zero expiry cash; it needs no live spot at creation (strikes are
+/// absolute ticks, so there is no grid to center). Current oracle object IDs stay
+/// in Propbook and are resolved on every priced flow. The `MarketCreated` event
+/// is emitted here rather than in `registry`: the market owns the snapshotted
+/// `tick_size`, and the registry holds no reference after `share_object`.
+public(package) fun create_and_share(
+    config: &ProtocolConfig,
+    propbook_underlying_id: u32,
+    pool_vault_id: ID,
+    expiry: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+): ID {
+    let id = object::new(ctx);
+    let expiry_market_id = id.to_inner();
+    let cash_config = config.expiry_cash_config_snapshot();
+    let strike_exposure_config = config.strike_exposure_config_snapshot();
+    config_events::emit_market_config_snapshot(
+        expiry_market_id,
+        &strike_exposure_config,
+        &cash_config,
+    );
+    let market = ExpiryMarket {
+        id,
+        propbook_underlying_id,
+        expiry,
+        settlement_price: option::none(),
+        cash: expiry_cash::new(cash_config),
+        fee_incentive_balance: balance::zero(),
+        strike_exposure: strike_exposure::new(
+            expiry_market_id,
+            expiry,
+            tick_size,
+            strike_exposure_config,
+            ctx,
+        ),
+        ewma: ewma::new(ctx),
+        mint_paused: false,
+    };
+    config_events::emit_market_created(
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        expiry,
+        market.tick_size(),
+    );
+    transfer::share_object(market);
+    expiry_market_id
 }
 
 // === Private Functions ===
 
-fun current_liabilities(
+fun is_settled(market: &ExpiryMarket): bool {
+    market.settlement_price.is_some()
+}
+
+fun settlement_price(market: &ExpiryMarket): u64 {
+    market.settlement_price.destroy_some()
+}
+
+/// Cache terminal payout liability in strike exposure if it has not already been cached.
+fun materialize_settled_liability(market: &mut ExpiryMarket): u64 {
+    let settlement = market.settlement_price();
+    market.strike_exposure.materialize_settled_liability(settlement)
+}
+
+fun load_live_pricer(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
     clock: &Clock,
-): (u64, u64) {
-    market.assert_market_oracle(market_oracle);
-    market.assert_pyth_feed(pyth);
-    market_oracle.assert_not_pending_settlement(clock);
-
-    if (market.is_compacted()) {
-        let compacted_state = market.compacted_state.borrow();
-        return (compacted_state.payout_liability, compacted_state.rebate_liability)
-    };
-
-    let strike_exposure = market.strike_exposure.borrow();
-    if (market_oracle.is_settled()) {
-        let settlement = pricing::settlement_price(market_oracle);
-        let (settled_value, losing_fee_basis) = strike_exposure.settled_values(settlement);
-        (settled_value, market.rebate_liability(losing_fee_basis))
-    } else {
-        let (minted_min_strike, minted_max_strike) = strike_exposure.minted_strike_range();
-        if (minted_min_strike == 0 && minted_max_strike == 0) return (0, 0);
-
-        let (grid_min, grid_tick, grid_max) = strike_exposure.strike_grid();
-        let curve = pricing::build_live_curve(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            clock,
-            grid_min,
-            grid_tick,
-            grid_max,
-            minted_min_strike,
-            minted_max_strike,
-        );
-        let (live_value, max_losing_fee_basis) = strike_exposure.live_values(&curve);
-        (live_value, market.rebate_liability(max_losing_fee_basis))
-    }
-}
-
-fun mint_internal(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    manager: &mut PredictManager,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    manager.assert_owner(ctx);
-    market.assert_market_oracle(market_oracle);
-    market.assert_pyth_feed(pyth);
-    market_oracle.assert_pyth_source(pyth);
-    market_oracle.assert_active(clock);
-    pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
-    market.assert_range_key_matches(&key);
-    market.assert_not_compacted();
-    assert_valid_quantity(quantity);
-
-    // Quote before recording exposure so the fee basis stored with the position
-    // matches the exact fee charged for this mint.
-    let (principal_amount, fee_amount) = market.quote_mint_amounts(
-        config,
-        market_oracle,
-        pyth,
-        key,
-        quantity,
-        clock,
-    );
-    let builder_code_id = manager.builder_code_id();
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let payment_amount = principal_amount + fee_amount + builder_fee_amount;
-
-    market
-        .strike_exposure
-        .borrow_mut()
-        .insert_range(
-            key.lower_strike(),
-            key.higher_strike(),
-            quantity,
-            fee_amount,
-        );
-    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
-
-    manager.increase_position(key, quantity, fee_amount);
-    let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
-    let builder_fee_payment = payment.split(builder_fee_amount);
-    let fee_payment = payment.split(fee_amount);
-    market.fee_balance.join(fee_payment);
-    send_builder_fee(builder_code_id, builder_fee_payment);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
-    market.lp_cash_balance.join(payment);
-    market.assert_cash_backing();
-}
-
-fun redeem_live_internal(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    manager: &mut PredictManager,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    manager.assert_owner(ctx);
-    market.assert_pyth_feed(pyth);
-    market_oracle.assert_pyth_source(pyth);
-    market_oracle.assert_active(clock);
-    pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
-    market.assert_range_key_matches(&key);
-    market.assert_not_compacted();
-    assert_valid_quantity(quantity);
-    let removed_fee_basis = manager.decrease_position(key, quantity);
-
-    // Live redeem quotes intentionally use post-removal liability for utilization fees.
-    market
-        .strike_exposure
-        .borrow_mut()
-        .remove_range(
-            key.lower_strike(),
-            key.higher_strike(),
-            quantity,
-            removed_fee_basis,
-        );
-
-    let (principal_amount, fee_amount) = market.quote_live_redeem_amounts(
-        config,
-        market_oracle,
-        pyth,
-        key,
-        quantity,
-        clock,
-    );
-    let builder_code_id = manager.builder_code_id();
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity).min(
-        principal_amount - fee_amount,
-    );
-
-    let mut payout = market.dispense_lp_cash(principal_amount);
-    let fee = payout.split(fee_amount);
-    let builder_fee = payout.split(builder_fee_amount);
-    market.fee_balance.join(fee);
-    send_builder_fee(builder_code_id, builder_fee);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
-    market.assert_cash_backing();
-    manager.deposit(payout.into_coin(ctx), ctx);
-}
-
-fun redeem_settled_internal(
-    market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    market_oracle: &MarketOracle,
-    key: RangeKey,
-    quantity: u64,
-    ctx: &mut TxContext,
-) {
-    market.assert_range_key_matches(&key);
-    market.assert_not_compacted();
-    assert_valid_quantity(quantity);
-
-    let settlement = pricing::settlement_price(market_oracle);
-    let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
-    let (current_liability, _) = market.strike_exposure.borrow().settled_values(settlement);
-    assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
-    assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
-
-    let removed_fee_basis = manager.decrease_position(key, quantity);
-    let rebate = if (range_loses(settlement, &key)) {
-        market.rebate_liability(removed_fee_basis)
-    } else {
-        0
-    };
-    assert!(market.fee_balance.value() >= rebate, EInsufficientFeeBalance);
-
-    market
-        .strike_exposure
-        .borrow_mut()
-        .remove_range(
-            key.lower_strike(),
-            key.higher_strike(),
-            quantity,
-            removed_fee_basis,
-        );
-    let mut payout = market.dispense_lp_cash(payout_amount);
-    payout.join(market.dispense_fee_cash(rebate));
-    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
-}
-
-fun redeem_compacted_internal(
-    market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    key: RangeKey,
-    quantity: u64,
-    ctx: &mut TxContext,
-) {
-    market.assert_range_key_matches(&key);
-    assert!(market.is_compacted(), EMarketNotCompacted);
-    assert_valid_quantity(quantity);
-
-    let (settlement, current_payout_liability, current_rebate_liability) = {
-        let compacted_state = market.compacted_state.borrow();
-        (
-            compacted_state.settlement,
-            compacted_state.payout_liability,
-            compacted_state.rebate_liability,
-        )
-    };
-    let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
-    assert!(current_payout_liability >= payout_amount, ECompactedLiabilityUnderflow);
-    assert!(market.lp_cash_balance.value() >= current_payout_liability, EInsufficientLpCash);
-
-    let removed_fee_basis = manager.decrease_position(key, quantity);
-    let rebate = if (range_loses(settlement, &key)) {
-        market.rebate_liability(removed_fee_basis)
-    } else {
-        0
-    };
-    assert!(current_rebate_liability >= rebate, ECompactedRebateLiabilityUnderflow);
-    assert!(market.fee_balance.value() >= current_rebate_liability, EInsufficientFeeBalance);
-
-    let compacted_state = market.compacted_state.borrow_mut();
-    compacted_state.payout_liability = current_payout_liability - payout_amount;
-    compacted_state.rebate_liability = current_rebate_liability - rebate;
-    let mut payout = market.dispense_lp_cash(payout_amount);
-    payout.join(market.dispense_fee_cash(rebate));
-    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
-}
-
-fun quote_mint_amounts(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
+): pricing::Pricer {
+    pricing::load_live_pricer(
         config.pricing_config(),
-        market_oracle,
+        propbook_registry,
+        market.propbook_underlying_id,
         pyth,
+        bs,
+        market.expiry,
         clock,
-        &key,
-        market.max_payout(),
-        market.allocated_capital,
-    );
-    (math::mul(fair_price, quantity), math::mul(fee_rate, quantity))
-}
-
-fun quote_live_redeem_amounts(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (fair_price, fee_rate) = pricing::quote_live_range(
-        config.pricing_config(),
-        market_oracle,
-        pyth,
-        clock,
-        &key,
-        market.max_payout(),
-        market.allocated_capital,
-    );
-    let principal_amount = math::mul(fair_price, quantity);
-    let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
-    (principal_amount, fee_amount)
-}
-
-fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    assert!(market.lp_cash_balance.value() >= amount, EInsufficientLpCash);
-    market.lp_cash_balance.split(amount)
-}
-
-fun dispense_fee_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    assert!(market.fee_balance.value() >= amount, EInsufficientFeeBalance);
-    market.fee_balance.split(amount)
-}
-
-fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
-    assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
-}
-
-fun assert_range_key_matches(market: &ExpiryMarket, key: &RangeKey) {
-    assert!(key.oracle_id() == market.market_oracle_id, EWrongMarketOracle);
-}
-
-fun assert_valid_quantity(quantity: u64) {
-    assert!(quantity > 0, EZeroQuantity);
-    assert!(quantity % constants::position_lot_size!() == 0, EInvalidQuantity);
-}
-
-fun emit_fee_accrued(
-    market: &ExpiryMarket,
-    total_fee: u64,
-    builder_fee: u64,
-    builder_code_id: Option<ID>,
-) {
-    if (total_fee == 0 && builder_fee == 0) return;
-
-    event::emit(FeeAccrued {
-        expiry_market_id: market.id(),
-        total_fee,
-        builder_fee,
-        builder_code_id,
-    });
-}
-
-fun assert_cash_backing(market: &ExpiryMarket) {
-    assert!(market.lp_cash_balance.value() >= market.max_payout(), EInsufficientLpCash);
-}
-
-fun assert_not_compacted(market: &ExpiryMarket) {
-    assert!(!market.is_compacted(), EMarketCompacted);
-}
-
-fun assert_mint_not_paused(market: &ExpiryMarket) {
-    assert!(!market.mint_paused, EMintPaused);
-}
-
-fun rebate_liability(market: &ExpiryMarket, losing_fee_basis: u64): u64 {
-    math::mul(losing_fee_basis, market.settlement_loss_rebate_rate)
+    )
 }
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
@@ -778,6 +527,374 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     }
 }
 
+fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
+    math::mul(fee_amount, constants::fee_incentive_subsidy_rate!())
+        .min(fee_amount)
+        .min(market.fee_incentive_balance.value())
+}
+
+fun redeem_liquidated_order(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    order: &Order,
+    close_quantity: u64,
+    ctx: &mut TxContext,
+) {
+    assert!(close_quantity == order.quantity(), EFullCloseRequired);
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
+    market.strike_exposure.clear_liquidated_order(order);
+    order_events::emit_liquidated_order_redeemed(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        order,
+        position_root_id,
+    );
+}
+
+fun assert_cash_backing(market: &ExpiryMarket) {
+    market.cash.assert_backing(market.payout_liability());
+}
+
+/// Fold the current gas price into this market's EWMA and return the congestion
+/// surcharge (in DUSDC) for `quantity`, zero unless the penalty is enabled and
+/// gas is a high outlier. Mutates the smoothed estimate on every trade.
+fun ewma_penalty(
+    market: &mut ExpiryMarket,
+    config: &EwmaConfig,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): u64 {
+    market.ewma.update(config, clock, ctx);
+    market.ewma.penalty_fee(config, quantity, ctx)
+}
+
+fun mint_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    config.assert_version();
+    assert!(!market.mint_paused, EMintPaused);
+    config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+
+    let (minted_order, entry_probability, net_premium) = market
+        .strike_exposure
+        .allocate_mint_order(
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            clock,
+        );
+    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
+
+    let builder_code_id = predict_account::builder_code_id(account);
+    let (builder_fee_amount, fee_incentive_subsidy) = market.settle_mint_payment(
+        account,
+        &minted_order,
+        net_premium,
+        fee_amount,
+        penalty_amount,
+        ctx,
+    );
+    order_events::emit_order_minted(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        builder_code_id,
+        &minted_order,
+        leverage,
+        entry_probability,
+        net_premium,
+        fee_amount,
+        fee_incentive_subsidy,
+        builder_fee_amount,
+        penalty_amount,
+    );
+    minted_order.id()
+}
+
+fun redeem_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let redeemed_order = order::from_order_id(order_id);
+    if (market.ensure_settled(propbook_registry, pyth, clock)) {
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+        market.redeem_settled_internal(account, &redeemed_order, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+    let replacement_order_id = market.redeem_live_internal(
+        account,
+        config,
+        &pricer,
+        &redeemed_order,
+        close_quantity,
+        clock,
+        ctx,
+    );
+    (redeemed_order.id(), replacement_order_id)
+}
+
+fun redeem_live_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    pricer: &pricing::Pricer,
+    order: &Order,
+    close_quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Option<u256> {
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
+
+    let (resulting_order, redeem_amount, range_probability) = market
+        .strike_exposure
+        .close_and_quote_live_order(
+            pricer,
+            order,
+            close_quantity,
+            clock,
+        );
+    let fee_amount = market
+        .strike_exposure
+        .trading_fee(
+            range_probability,
+            close_quantity,
+            clock,
+        )
+        .min(redeem_amount);
+    let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
+
+    let replacement_order_id = if (resulting_order.id() == order.id()) {
+        option::none()
+    } else {
+        let replacement_order_id = resulting_order.id();
+        predict_account::add_position(
+            account,
+            market.id(),
+            replacement_order_id,
+            position_root_id,
+            ctx,
+        );
+        option::some(replacement_order_id)
+    };
+
+    let builder_code_id = predict_account::builder_code_id(account);
+    let (builder_fee_amount, penalty_amount) = market.settle_live_redeem_payment(
+        account,
+        redeem_amount,
+        fee_amount,
+        penalty_amount,
+        close_quantity,
+        ctx,
+    );
+
+    order_events::emit_live_order_redeemed(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        builder_code_id,
+        order,
+        position_root_id,
+        close_quantity,
+        replacement_order_id,
+        redeem_amount,
+        fee_amount,
+        builder_fee_amount,
+        penalty_amount,
+    );
+    replacement_order_id
+}
+
+fun redeem_settled_internal(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    order: &Order,
+    ctx: &mut TxContext,
+) {
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
+    market.materialize_settled_liability();
+
+    let settlement = market.settlement_price();
+    let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
+    market.settle_settled_redeem_payment(account, payout_amount, ctx);
+
+    order_events::emit_settled_order_redeemed(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        order,
+        position_root_id,
+        settlement,
+        payout_amount,
+    );
+}
+
+/// Settle a mint payment and return the builder fee and fee incentive subsidy.
+///
+/// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
+/// into expiry cash as surplus: it is not part of the rebate fee basis and
+/// earns no builder cut. Fee incentives subsidize only the trader-paid portion
+/// of the trading fee; the expiry still collects the full fee amount.
+fun settle_mint_payment(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    order: &Order,
+    net_premium: u64,
+    fee_amount: u64,
+    penalty_amount: u64,
+    ctx: &mut TxContext,
+): (u64, u64) {
+    let quantity = order.quantity();
+    let builder_code_id = predict_account::builder_code_id(account);
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
+    let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
+    let trader_fee_amount = fee_amount - fee_subsidy_amount;
+    let withdraw_amount = net_premium + trader_fee_amount + builder_fee_amount + penalty_amount;
+
+    predict_account::add_position(account, market.id(), order.id(), order.id(), ctx);
+    let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
+    let builder_fee_payment = payment.split(builder_fee_amount);
+    send_builder_fee(copy builder_code_id, builder_fee_payment);
+    let mut fee_payment = payment.split(trader_fee_amount);
+    fee_payment.join(market.fee_incentive_balance.split(fee_subsidy_amount));
+    market.collect_trade_fee(account, fee_payment, trader_fee_amount, ctx);
+    // Remaining balance is the net premium plus the penalty surplus.
+    market.cash.receive(payment);
+
+    market.assert_cash_backing();
+    (builder_fee_amount, fee_subsidy_amount)
+}
+
+/// Settle a live redeem and return the builder fee and penalty actually applied.
+///
+/// The EWMA penalty is withheld from the payout and kept in expiry cash
+/// as surplus. Like the trading fee it comes out of `redeem_amount`, so it is
+/// capped at the payout left after the fee and builder cut.
+fun settle_live_redeem_payment(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    redeem_amount: u64,
+    fee_amount: u64,
+    penalty_amount: u64,
+    redeemed_quantity: u64,
+    ctx: &mut TxContext,
+): (u64, u64) {
+    let builder_code_id = predict_account::builder_code_id(account);
+    let builder_fee_amount = builder_fee_amount(
+        &builder_code_id,
+        fee_amount,
+        redeemed_quantity,
+    ).min(
+        redeem_amount - fee_amount,
+    );
+    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+
+    let mut payout = market.cash.pay_authorized(redeem_amount);
+    let fee = payout.split(fee_amount);
+    let builder_fee = payout.split(builder_fee_amount);
+    market.collect_trade_fee(account, fee, fee_amount, ctx);
+    send_builder_fee(copy builder_code_id, builder_fee);
+    // Penalty surplus stays in expiry cash rather than flowing to the redeemer.
+    market.cash.receive(payout.split(penalty_amount));
+
+    market.assert_cash_backing();
+    account.deposit<DUSDC>(payout.into_coin(ctx));
+    (builder_fee_amount, penalty_amount)
+}
+
+fun settle_settled_redeem_payment(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    payout_amount: u64,
+    ctx: &mut TxContext,
+) {
+    // A settled losing position pays nothing; `redeem_settled` is permissionless,
+    // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
+    if (payout_amount > 0) {
+        let payout = market.cash.pay_authorized(payout_amount);
+        account.deposit<DUSDC>(payout.into_coin(ctx));
+    };
+
+    market.assert_cash_backing();
+}
+
+fun collect_trade_fee(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    fee: Balance<DUSDC>,
+    trader_fee_amount: u64,
+    ctx: &mut TxContext,
+) {
+    market.cash.collect_trade_fee(fee);
+    predict_account::record_trading_fee_paid(account, market.id(), trader_fee_amount, ctx);
+}
+
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
@@ -787,10 +904,9 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     balance::send_funds(fee, builder_code_id.to_address());
 }
 
-fun lp_fee_surplus_value(config: &ProtocolConfig, fee_surplus: u64): u64 {
-    math::mul(fee_surplus, config.fee_config().lp_fee_share())
-}
+// === Test-Only Functions ===
 
-fun range_loses(settlement: u64, key: &RangeKey): bool {
-    !(settlement > key.lower_strike() && settlement <= key.higher_strike())
+#[test_only]
+public fun receive_cash_for_testing(market: &mut ExpiryMarket, funds: Coin<DUSDC>) {
+    market.cash.receive(funds.into_balance());
 }

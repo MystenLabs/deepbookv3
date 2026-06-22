@@ -1,112 +1,113 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Constants and validation helpers for admin-tunable config.
+/// Constants and validation helpers for admin-tunable policy.
 ///
-/// Default values seed stored config objects at creation. Bounds define the hard
-/// envelope admin setters can tune within. Changing a bound requires a package
-/// upgrade.
+/// Default values seed stored policy state at creation. Bounds define the hard
+/// envelope admin setters can tune within. Changing a bound requires a package upgrade.
 module deepbook_predict::config_constants;
 
-const EInvalidMaxTotalExposurePct: u64 = 0;
-const EInvalidBaseFee: u64 = 1;
-const EInvalidMinFee: u64 = 2;
-const EInvalidUtilizationMultiplier: u64 = 3;
-const EInvalidMinAskPrice: u64 = 4;
-const EInvalidMaxAskPrice: u64 = 5;
-const EInvalidPythSpotFreshnessMs: u64 = 6;
-const EInvalidBlockScholesPricesFreshnessMs: u64 = 7;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
-const EInvalidLpFeeShare: u64 = 9;
-const EInvalidProtocolFeeShare: u64 = 10;
-const EInvalidInsuranceFeeShare: u64 = 11;
-const EInvalidSettlementFreshnessMs: u64 = 12;
-const EInvalidMaxSpotDeviation: u64 = 13;
-const EInvalidMaxBasisDeviation: u64 = 14;
-const EInvalidMinBasis: u64 = 15;
-const EInvalidMaxBasis: u64 = 16;
-const EInvalidExpiryAllocation: u64 = 17;
-const EInvalidGrowUtilizationThreshold: u64 = 18;
-const EInvalidShrinkUtilizationThreshold: u64 = 19;
-const EInvalidGrowFactor: u64 = 20;
-const EInvalidShrinkFactor: u64 = 21;
-const EInvalidSettlementLossRebateRate: u64 = 22;
+const EInvalidBaseFee: u64 = 0;
+const EInvalidMinFee: u64 = 1;
+const EInvalidMinAskPrice: u64 = 2;
+const EInvalidMaxAskPrice: u64 = 3;
+const EInvalidPythSpotFreshnessMs: u64 = 4;
+const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
+const EInvalidProtocolReserveProfitShare: u64 = 7;
+const EInvalidTradingLossRebateRate: u64 = 14;
+const EInvalidTerminalFloorIndex: u64 = 15;
+const EInvalidExpiryFeeWindowMs: u64 = 16;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
+const EInvalidLowerBenefitPower: u64 = 18;
+const EInvalidUpperBenefitPower: u64 = 19;
+const EInvalidBenefitPowers: u64 = 20;
+const EInvalidTradeLiquidationBudget: u64 = 22;
+const EInvalidLiquidationLtv: u64 = 23;
+const EInvalidMarketTickSize: u64 = 24;
+const EInvalidEwmaAlpha: u64 = 26;
+const EInvalidEwmaZScoreThreshold: u64 = 27;
+const EInvalidEwmaPenaltyRate: u64 = 28;
+const EInvalidBackingBufferLambda: u64 = 29;
 
-// === Pool Risk ===
+// === Fees ===
 
-public(package) macro fun default_max_total_exposure_pct(): u64 { 800_000_000 }
-public(package) macro fun min_max_total_exposure_pct(): u64 { 1 }
-public(package) macro fun max_max_total_exposure_pct(): u64 {
-    deepbook_predict::constants::float_scaling!()
+/// Merged protocol + insurance reserve share of materialized terminal profit, in
+/// FLOAT_SCALING. The complement accrues to LPs.
+public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
+public(package) macro fun max_protocol_reserve_profit_share(): u64 {
+    fixed_math::math::float_scaling!()
 }
 
-public(package) fun assert_max_total_exposure_pct(value: u64) {
+public(package) fun assert_protocol_reserve_profit_share(value: u64) {
     assert!(
-        value >= min_max_total_exposure_pct!() && value <= max_max_total_exposure_pct!(),
-        EInvalidMaxTotalExposurePct,
+        value >= min_protocol_reserve_profit_share!()
+            && value <= max_protocol_reserve_profit_share!(),
+        EInvalidProtocolReserveProfitShare,
     );
 }
 
-public(package) macro fun default_allocation(): u64 { 50_000_000_000 }
-public(package) macro fun min_allocation(): u64 { 50_000_000_000 }
-public(package) macro fun max_allocation(): u64 { 250_000_000_000 }
+// === Trade Liquidation ===
 
-public(package) fun assert_expiry_allocation(value: u64) {
-    assert!(value >= min_allocation!() && value <= max_allocation!(), EInvalidExpiryAllocation);
+public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
+public(package) macro fun min_trade_liquidation_budget(): u64 { 24 }
+public(package) macro fun max_trade_liquidation_budget(): u64 {
+    3_000
 }
 
-public(package) macro fun default_grow_utilization_threshold(): u64 { 800_000_000 }
-public(package) macro fun min_grow_utilization_threshold(): u64 { 0 }
-public(package) macro fun max_grow_utilization_threshold(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
-
-public(package) fun assert_grow_utilization_threshold(value: u64) {
+public(package) fun assert_trade_liquidation_budget(value: u64) {
     assert!(
-        value >= min_grow_utilization_threshold!() && value <= max_grow_utilization_threshold!(),
-        EInvalidGrowUtilizationThreshold,
+        value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
+        EInvalidTradeLiquidationBudget,
     );
 }
 
-public(package) macro fun default_shrink_utilization_threshold(): u64 { 300_000_000 }
-public(package) macro fun min_shrink_utilization_threshold(): u64 { 0 }
-public(package) macro fun max_shrink_utilization_threshold(): u64 {
-    deepbook_predict::constants::float_scaling!()
+// === Floor Index, Backing, and Liquidation ===
+
+public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
+public(package) macro fun min_terminal_floor_index(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun max_terminal_floor_index(): u64 {
+    2 * fixed_math::math::float_scaling!()
 }
 
-public(package) fun assert_shrink_utilization_threshold(value: u64) {
+public(package) fun assert_terminal_floor_index(value: u64) {
     assert!(
-        value >= min_shrink_utilization_threshold!()
-            && value <= max_shrink_utilization_threshold!(),
-        EInvalidShrinkUtilizationThreshold,
+        value >= min_terminal_floor_index!() && value <= max_terminal_floor_index!(),
+        EInvalidTerminalFloorIndex,
     );
 }
 
-public(package) macro fun default_grow_factor(): u64 { 2_000_000_000 }
-public(package) macro fun min_grow_factor(): u64 {
-    deepbook_predict::constants::float_scaling!() + 1
-}
-public(package) macro fun max_grow_factor(): u64 { 10_000_000_000 }
+public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
+public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
+public(package) macro fun max_liquidation_ltv(): u64 { 950_000_000 }
 
-public(package) fun assert_grow_factor(value: u64) {
-    assert!(value >= min_grow_factor!() && value <= max_grow_factor!(), EInvalidGrowFactor);
-}
-
-public(package) macro fun default_shrink_factor(): u64 { 500_000_000 }
-public(package) macro fun min_shrink_factor(): u64 { 0 }
-public(package) macro fun max_shrink_factor(): u64 {
-    deepbook_predict::constants::float_scaling!() - 1
+public(package) fun assert_liquidation_ltv(value: u64) {
+    assert!(
+        value >= min_liquidation_ltv!() && value <= max_liquidation_ltv!(),
+        EInvalidLiquidationLtv,
+    );
 }
 
-public(package) fun assert_shrink_factor(value: u64) {
-    assert!(value >= min_shrink_factor!() && value <= max_shrink_factor!(), EInvalidShrinkFactor);
+public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
+public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
+public(package) macro fun max_backing_buffer_lambda(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_backing_buffer_lambda(value: u64) {
+    assert!(
+        value >= min_backing_buffer_lambda!() && value <= max_backing_buffer_lambda!(),
+        EInvalidBackingBufferLambda,
+    );
 }
 
 // === Pricing ===
 
 public(package) macro fun default_base_fee(): u64 { 20_000_000 }
 public(package) macro fun min_base_fee(): u64 { 1 }
-public(package) macro fun max_base_fee(): u64 { deepbook_predict::constants::float_scaling!() }
+public(package) macro fun max_base_fee(): u64 { fixed_math::math::float_scaling!() }
 
 public(package) fun assert_base_fee(value: u64) {
     assert!(value >= min_base_fee!() && value <= max_base_fee!(), EInvalidBaseFee);
@@ -114,27 +115,64 @@ public(package) fun assert_base_fee(value: u64) {
 
 public(package) macro fun default_min_fee(): u64 { 5_000_000 }
 public(package) macro fun min_min_fee(): u64 { 0 }
-public(package) macro fun max_min_fee(): u64 { deepbook_predict::constants::float_scaling!() }
+public(package) macro fun max_min_fee(): u64 { fixed_math::math::float_scaling!() }
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
 }
 
-public(package) macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
-public(package) macro fun min_utilization_multiplier(): u64 { 0 }
-public(package) macro fun max_utilization_multiplier(): u64 { 10_000_000_000 }
+/// Window before expiry over which trade fees ramp up to the per-expiry max
+/// multiplier. Five minutes is the shortest admin-tunable window.
+public(package) macro fun default_expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
+public(package) macro fun min_expiry_fee_window_ms(): u64 { 5 * 60 * 1000 }
+public(package) macro fun max_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::ms_per_year!()
+}
 
-public(package) fun assert_utilization_multiplier(value: u64) {
+public(package) fun assert_expiry_fee_window_ms(value: u64) {
     assert!(
-        value >= min_utilization_multiplier!() && value <= max_utilization_multiplier!(),
-        EInvalidUtilizationMultiplier,
+        value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
+        EInvalidExpiryFeeWindowMs,
+    );
+}
+
+/// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
+/// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
+public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
+    10 * fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
+    assert!(
+        value >= min_expiry_fee_max_multiplier!() && value <= max_expiry_fee_max_multiplier!(),
+        EInvalidExpiryFeeMaxMultiplier,
+    );
+}
+
+public(package) fun assert_market_tick_size_bounds(value: u64) {
+    assert!(
+        value > 0 && value % deepbook_predict::constants::market_tick_size_unit!() == 0,
+        EInvalidMarketTickSize,
+    );
+    // Prevent raw-strike multiplication overflow: the maximum finite strike is
+    // `pos_inf_tick * tick_size`, which must fit in `u64`. Pure market bound;
+    // normal market tick sizes are far below it.
+    assert!(
+        value <= std::u64::max_value!() / deepbook_predict::constants::pos_inf_tick!(),
+        EInvalidMarketTickSize,
     );
 }
 
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
 public(package) macro fun min_min_ask_price(): u64 { 0 }
 public(package) macro fun max_min_ask_price(): u64 {
-    deepbook_predict::constants::float_scaling!() - 1
+    fixed_math::math::float_scaling!() - 1
 }
 
 public(package) fun assert_min_ask_price(value: u64) {
@@ -144,7 +182,7 @@ public(package) fun assert_min_ask_price(value: u64) {
 public(package) macro fun default_max_ask_price(): u64 { 990_000_000 }
 public(package) macro fun min_max_ask_price(): u64 { 0 }
 public(package) macro fun max_max_ask_price(): u64 {
-    deepbook_predict::constants::float_scaling!() - 1
+    fixed_math::math::float_scaling!() - 1
 }
 
 public(package) fun assert_max_ask_price(value: u64) {
@@ -162,129 +200,127 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-public(package) macro fun default_block_scholes_prices_freshness_ms(): u64 { 3_000 }
-public(package) macro fun min_block_scholes_prices_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_prices_freshness_ms(): u64 { 60_000 }
+// One Block Scholes surface row carries spot + forward + SVI written together, so
+// a single freshness window covers the whole surface (was a separate price and
+// SVI window before the oracle moved to per-expiry surfaces).
+public(package) macro fun default_block_scholes_surface_freshness_ms(): u64 { 3_000 }
+public(package) macro fun min_block_scholes_surface_freshness_ms(): u64 { 1 }
+public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 { 60_000 }
 
-public(package) fun assert_block_scholes_prices_freshness_ms(value: u64) {
+public(package) fun assert_block_scholes_surface_freshness_ms(value: u64) {
     assert!(
-        value >= min_block_scholes_prices_freshness_ms!()
-            && value <= max_block_scholes_prices_freshness_ms!(),
-        EInvalidBlockScholesPricesFreshnessMs,
+        value >= min_block_scholes_surface_freshness_ms!()
+            && value <= max_block_scholes_surface_freshness_ms!(),
+        EInvalidBlockScholesSurfaceFreshnessMs,
     );
 }
 
-public(package) macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
-public(package) macro fun min_block_scholes_svi_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 { 60_000 }
+// === EWMA Penalty ===
 
-public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
+/// Smoothing factor for the gas-price EWMA in FLOAT_SCALING. ~1% reacts slowly,
+/// mirroring DeepBook core. Bounded below float_scaling so `1 - alpha` stays positive.
+public(package) macro fun default_ewma_alpha(): u64 { 10_000_000 }
+public(package) macro fun min_ewma_alpha(): u64 { 1 }
+public(package) macro fun max_ewma_alpha(): u64 { 100_000_000 }
+
+public(package) fun assert_ewma_alpha(value: u64) {
+    assert!(value >= min_ewma_alpha!() && value <= max_ewma_alpha!(), EInvalidEwmaAlpha);
+}
+
+/// Standard deviations above the smoothed mean required before the penalty fires,
+/// in FLOAT_SCALING (3 sigma by default). The min is one sigma so the penalty
+/// cannot be tuned to surcharge near-average gas; the max keeps a single admin
+/// call from raising the bar so high the penalty can never trigger.
+public(package) macro fun default_ewma_z_score_threshold(): u64 { 3_000_000_000 }
+public(package) macro fun min_ewma_z_score_threshold(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun max_ewma_z_score_threshold(): u64 { 10_000_000_000 }
+
+public(package) fun assert_ewma_z_score_threshold(value: u64) {
     assert!(
-        value >= min_block_scholes_svi_freshness_ms!()
-            && value <= max_block_scholes_svi_freshness_ms!(),
-        EInvalidBlockScholesSVIFreshnessMs,
+        value >= min_ewma_z_score_threshold!() && value <= max_ewma_z_score_threshold!(),
+        EInvalidEwmaZScoreThreshold,
+    );
+}
+
+/// Per-unit fee added to a penalized trade, in FLOAT_SCALING (10 bps by default,
+/// capped at 20 bps to bound how punitive the surcharge can be made).
+public(package) macro fun default_ewma_penalty_rate(): u64 { 1_000_000 }
+public(package) macro fun min_ewma_penalty_rate(): u64 { 0 }
+public(package) macro fun max_ewma_penalty_rate(): u64 { 2_000_000 }
+
+public(package) fun assert_ewma_penalty_rate(value: u64) {
+    assert!(
+        value >= min_ewma_penalty_rate!() && value <= max_ewma_penalty_rate!(),
+        EInvalidEwmaPenaltyRate,
     );
 }
 
 // === Fees ===
 
-public(package) macro fun default_lp_fee_share(): u64 { 600_000_000 }
-public(package) macro fun min_lp_fee_share(): u64 { 0 }
-public(package) macro fun max_lp_fee_share(): u64 { deepbook_predict::constants::float_scaling!() }
-
-public(package) fun assert_lp_fee_share(value: u64) {
-    assert!(value >= min_lp_fee_share!() && value <= max_lp_fee_share!(), EInvalidLpFeeShare);
-}
-
-public(package) macro fun default_protocol_fee_share(): u64 { 200_000_000 }
-public(package) macro fun min_protocol_fee_share(): u64 { 0 }
-public(package) macro fun max_protocol_fee_share(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
-
-public(package) fun assert_protocol_fee_share(value: u64) {
-    assert!(
-        value >= min_protocol_fee_share!() && value <= max_protocol_fee_share!(),
-        EInvalidProtocolFeeShare,
-    );
-}
-
-public(package) macro fun default_insurance_fee_share(): u64 { 200_000_000 }
-public(package) macro fun min_insurance_fee_share(): u64 { 0 }
-public(package) macro fun max_insurance_fee_share(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
-
-public(package) fun assert_insurance_fee_share(value: u64) {
-    assert!(
-        value >= min_insurance_fee_share!() && value <= max_insurance_fee_share!(),
-        EInvalidInsuranceFeeShare,
-    );
-}
-
-public(package) macro fun default_settlement_loss_rebate_rate(): u64 {
+public(package) macro fun default_trading_loss_rebate_rate(): u64 {
     500_000_000
 }
-public(package) macro fun min_settlement_loss_rebate_rate(): u64 { 0 }
-public(package) macro fun max_settlement_loss_rebate_rate(): u64 {
-    deepbook_predict::constants::float_scaling!()
+public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
+public(package) macro fun max_trading_loss_rebate_rate(): u64 {
+    fixed_math::math::float_scaling!()
 }
 
-public(package) fun assert_settlement_loss_rebate_rate(value: u64) {
+public(package) fun assert_trading_loss_rebate_rate(value: u64) {
     assert!(
-        value >= min_settlement_loss_rebate_rate!()
-            && value <= max_settlement_loss_rebate_rate!(),
-        EInvalidSettlementLossRebateRate,
+        value >= min_trading_loss_rebate_rate!()
+            && value <= max_trading_loss_rebate_rate!(),
+        EInvalidTradingLossRebateRate,
     );
 }
 
-// === Market Oracle ===
+// === Staking ===
 
-public(package) macro fun default_settlement_freshness_ms(): u64 { 3_000 }
-public(package) macro fun min_settlement_freshness_ms(): u64 { 1 }
-public(package) macro fun max_settlement_freshness_ms(): u64 { 60_000 }
+/// Active stake at the benefit-curve kink: half of max benefits. Default 100k
+/// DEEP, admin-tunable 10k..1M.
+public(package) macro fun default_lower_benefit_power(): u64 {
+    100_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun min_lower_benefit_power(): u64 {
+    10_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun max_lower_benefit_power(): u64 {
+    1_000_000 * deepbook_predict::constants::deep_decimals!()
+}
 
-public(package) fun assert_settlement_freshness_ms(value: u64) {
+/// Active stake for full (max) benefits. Default 1.1M DEEP, admin-tunable
+/// 100k..50M.
+public(package) macro fun default_upper_benefit_power(): u64 {
+    1_100_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun min_upper_benefit_power(): u64 {
+    100_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun max_upper_benefit_power(): u64 {
+    50_000_000 * deepbook_predict::constants::deep_decimals!()
+}
+
+public(package) fun assert_lower_benefit_power(value: u64) {
     assert!(
-        value >= min_settlement_freshness_ms!() && value <= max_settlement_freshness_ms!(),
-        EInvalidSettlementFreshnessMs,
+        value >= min_lower_benefit_power!() && value <= max_lower_benefit_power!(),
+        EInvalidLowerBenefitPower,
     );
 }
 
-public(package) macro fun default_max_spot_deviation(): u64 { 20_000_000 }
-public(package) macro fun min_max_spot_deviation(): u64 { 1 }
-public(package) macro fun max_max_spot_deviation(): u64 { 100_000_000 }
-
-public(package) fun assert_max_spot_deviation(value: u64) {
+public(package) fun assert_upper_benefit_power(value: u64) {
     assert!(
-        value >= min_max_spot_deviation!() && value <= max_max_spot_deviation!(),
-        EInvalidMaxSpotDeviation,
+        value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
+        EInvalidUpperBenefitPower,
     );
 }
 
-public(package) macro fun default_max_basis_deviation(): u64 { 20_000_000 }
-public(package) macro fun min_max_basis_deviation(): u64 { 1 }
-public(package) macro fun max_max_basis_deviation(): u64 { 100_000_000 }
-
-public(package) fun assert_max_basis_deviation(value: u64) {
-    assert!(
-        value >= min_max_basis_deviation!() && value <= max_max_basis_deviation!(),
-        EInvalidMaxBasisDeviation,
-    );
-}
-
-public(package) macro fun default_min_basis(): u64 { 900_000_000 }
-public(package) macro fun min_min_basis(): u64 { 500_000_000 }
-public(package) macro fun max_min_basis(): u64 { 2_000_000_000 }
-
-public(package) fun assert_min_basis(value: u64) {
-    assert!(value >= min_min_basis!() && value <= max_min_basis!(), EInvalidMinBasis);
-}
-
-public(package) macro fun default_max_basis(): u64 { 1_100_000_000 }
-public(package) macro fun min_max_basis(): u64 { 500_000_000 }
-public(package) macro fun max_max_basis(): u64 { 2_000_000_000 }
-
-public(package) fun assert_max_basis(value: u64) {
-    assert!(value >= min_max_basis!() && value <= max_max_basis!(), EInvalidMaxBasis);
+/// Validate both benefit thresholds together. The upper segment must require
+/// strictly more stake than the lower one: `upper - lower > lower`, i.e.
+/// `upper > 2 * lower` (which also guarantees `upper > lower`, so the curve's
+/// `upper - lower` denominator is positive).
+public(package) fun assert_benefit_powers(lower: u64, upper: u64) {
+    assert_lower_benefit_power(lower);
+    assert_upper_benefit_power(upper);
+    assert!(upper > 2 * lower, EInvalidBenefitPowers);
 }

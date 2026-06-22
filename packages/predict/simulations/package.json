@@ -3,10 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "scripts": {
-    "analyze": "python3 visualize.py"
-  },
   "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
     "@mysten/sui": "^2.5.0",
     "tsx": "^4.21.0"
   }

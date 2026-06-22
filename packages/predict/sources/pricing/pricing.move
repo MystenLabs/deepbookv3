@@ -1,332 +1,237 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pricing, fees, quotes, and valuation curves for Predict markets.
+/// Pricing for Predict markets.
 ///
-/// This module is the app-facing read layer for oracle data. It resolves
-/// market oracle and Pyth source state on demand, computes SVI prices, applies
-/// fees, and builds valuation curves. It does not mutate oracle, pool, expiry, or
-/// position state.
+/// This module is the app-facing read layer for oracle data. It reads the
+/// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
+/// range prices. It does not mutate feed, pool, expiry, or position state, and it
+/// owns the live pricing boundary: current Propbook feed binding, pre-expiry
+/// market liveness, feed freshness, and Predict's pricing-safe surface envelope.
 module deepbook_predict::pricing;
 
-use deepbook::math;
-use deepbook_predict::{
-    constants,
-    i64,
-    market_oracle::{MarketOracle, SVIParams},
-    math as predict_math,
-    pricing_config::PricingConfig,
-    pyth_source::PythSource,
-    range_key::RangeKey
+use deepbook_predict::{constants, pricing_config::PricingConfig};
+use fixed_math::{i64, math};
+use propbook::{
+    block_scholes_feed::{Self as block_scholes_feed, BlockScholesFeed, SVIParams},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
 };
 use sui::clock::Clock;
 
-const EAskPriceOutOfBounds: u64 = 1;
-const EZeroForward: u64 = 2;
-const ECannotBeNegative: u64 = 3;
-const EZeroVariance: u64 = 4;
-const EInvalidRange: u64 = 5;
-const ERangePriceUnderflow: u64 = 6;
-const EInvalidLiveFairPrice: u64 = 9;
-const EInvalidCurveRange: u64 = 11;
-const EBlockScholesPriceStale: u64 = 12;
-const EBlockScholesSVIStale: u64 = 13;
-const EInvalidStrikeRatio: u64 = 14;
-
-/// Curve sample point with strike and one-sided UP price.
-public struct CurvePoint has copy, drop, store {
-    strike: u64,
-    up_price: u64,
+/// Value snapshot of live oracle inputs for one or more price calculations.
+public struct Pricer has copy, drop {
+    forward: u64,
+    svi: SVIParams,
 }
 
-// === Public Functions ===
+const EZeroForward: u64 = 0;
+const ECannotBeNegative: u64 = 1;
+const EZeroVariance: u64 = 2;
+const EInvalidRange: u64 = 3;
+const EBlockScholesSurfaceStale: u64 = 5;
+const EBlockScholesSurfaceInvalid: u64 = 6;
+const EPythSpotInvalid: u64 = 7;
+const EWrongPythFeed: u64 = 8;
+const EWrongBlockScholesFeed: u64 = 9;
+const ELivePricingExpired: u64 = 10;
 
-/// Return terminal settlement price, aborting if the market is unsettled.
-public fun settlement_price(market: &MarketOracle): u64 {
-    market.settlement_price()
-}
+/// Predict's private pricing envelope for raw propbook surfaces. These are not
+/// oracle-source validity rules; they only bound the SVI inputs tightly enough
+/// that Predict's fixed-point pricing math remains live and meaningful.
+macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
+// max_pricing_spot * max_pricing_basis / float_scaling == u64::max by
+// construction: the re-anchored forward (spot * basis) can't overflow u64.
+macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+macro fun min_svi_sigma(): u64 { 1_000_000 }
+macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public-Package Functions ===
 
-public(package) fun strike(point: &CurvePoint): u64 {
-    point.strike
-}
-
-public(package) fun up_price(point: &CurvePoint): u64 {
-    point.up_price
-}
-
-/// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
-public(package) fun build_live_curve(
+/// Validate the current live pricing boundary and snapshot oracle inputs for
+/// `expiry`'s repeated quote calculations.
+///
+/// This is the only path from raw Propbook oracle objects into Predict business
+/// logic. It first checks that `pyth` and `bs` are the current canonical Propbook
+/// oracles for `propbook_underlying_id`, then rejects past-expiry markets, then
+/// reads live oracle inputs under Predict's freshness and pricing-safe envelope.
+public(package) fun load_live_pricer(
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    expiry: u64,
     clock: &Clock,
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
-    min_strike: u64,
-    max_strike: u64,
-): vector<CurvePoint> {
-    let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
+): Pricer {
+    assert_current_oracles(propbook_registry, propbook_underlying_id, pyth, bs);
+    assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
+    let (forward, svi) = live_inputs(config, pyth, bs, expiry, clock);
+    Pricer { forward, svi }
 }
 
-/// Quote a live range from current oracle state and capacity utilization.
-public(package) fun quote_live_range(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
-    let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    let fair_price = compute_range_price(
-        forward,
-        &svi,
-        key.lower_strike(),
-        key.higher_strike(),
-    );
-    (fair_price, quote_fee_rate(config, fair_price, liability, balance))
+/// Return the current UP tail price for one strike.
+public(package) fun up_price(pricer: &Pricer, strike: u64): u64 {
+    compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
-/// Quote a live mint range and abort unless the all-in mint price is allowed.
-public(package) fun quote_mint_live_range(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
-    let (fair_price, fee_rate) = quote_live_range(
-        config,
-        market,
-        pyth,
-        clock,
-        key,
-        liability,
-        balance,
-    );
-    let ask_price = fair_price + fee_rate;
-    assert!(
-        ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
-        EAskPriceOutOfBounds,
-    );
-    (fair_price, fee_rate)
-}
-
-/// Abort unless the live oracle inputs needed for a quote are currently usable.
-public(package) fun assert_live_oracle_fresh(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    clock: &Clock,
-) {
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
-}
-
-/// Return settled payout for a range position at a terminal settlement price.
-public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quantity: u64): u64 {
-    math::mul(
-        compute_settled_range_price(settlement, key.lower_strike(), key.higher_strike()),
-        quantity,
-    )
+/// Return the current raw probability for a live range.
+public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
 // === Private Functions ===
 
+fun assert_current_oracles(
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+) {
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
+    );
+    assert!(
+        propbook_registry
+            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+            .contains(&bs.id()),
+        EWrongBlockScholesFeed,
+    );
+}
+
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
-/// Fresh Pyth spot is canonical for spot; forward is then derived from the
-/// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
-/// fresh Block Scholes forward. SVI must be fresh either way.
-fun resolve_live_inputs(
+/// Fresh Pyth spot is canonical for spot; forward is then derived from this
+/// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
+/// spot, pricing falls back to the Block Scholes forward. The Block Scholes
+/// surface (basis + forward + SVI) must be fresh and inside Predict's
+/// pricing-safe envelope either way.
+fun live_inputs(
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    expiry: u64,
     clock: &Clock,
 ): (u64, SVIParams) {
-    market.assert_pyth_source(pyth);
-    market.assert_active(clock);
-    assert_live_oracle_fresh(config, market, clock);
+    let surface_read = bs.normalized_surface(expiry);
+    assert!(surface_read.is_some(), EBlockScholesSurfaceStale);
+    let surface_read = surface_read.destroy_some();
+    assert!(
+        timestamp_is_fresh(
+            surface_read.read_source_timestamp_ms(),
+            config.block_scholes_surface_freshness_ms(),
+            clock,
+        ),
+        EBlockScholesSurfaceStale,
+    );
+    let surface = surface_read.read_value();
+    let bs_spot = block_scholes_feed::surface_spot(&surface);
+    let bs_forward = block_scholes_feed::surface_forward(&surface);
+    let svi = block_scholes_feed::surface_svi(&surface);
+    assert_surface_pricing_safe(bs_spot, bs_forward, &svi);
 
-    let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
-        math::mul(pyth.spot(), market.block_scholes_basis())
+    let pyth_spot = pyth.normalized_spot();
+    let forward = if (
+        pyth_spot.is_some()
+            && timestamp_is_fresh(
+                pyth_spot.borrow().read_source_timestamp_ms(),
+                config.pyth_spot_freshness_ms(),
+                clock,
+            )
+    ) {
+        let spot = pyth_spot.destroy_some().read_value();
+        assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
+        // Re-anchored forward = spot * (bs_forward / bs_spot) is intentionally
+        // NOT re-bounded to max_pricing_spot: with basis up to max_pricing_basis
+        // (100x), a legitimate contango forward exceeds the spot ceiling. The two
+        // envelope ceilings are co-designed so spot * basis <= u64::max (no
+        // overflow), and compute_nd2's deep-tail saturations keep pricing live
+        // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
+        // reads (R1 liveness).
+        math::mul(spot, math::div(bs_forward, bs_spot))
     } else {
-        market.block_scholes_forward()
+        bs_forward
     };
 
-    (forward, market.block_scholes_svi())
+    (forward, svi)
 }
 
-/// Compute the settled price for the range `(lower, higher]`.
-fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
+fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
+    let now = clock.timestamp_ms();
+    timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
+}
+
+fun assert_surface_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
+    assert!(spot > 0 && forward > 0, EBlockScholesSurfaceInvalid);
+    assert!(forward <= max_pricing_spot!(), EBlockScholesSurfaceInvalid);
+    assert!(
+        ((forward as u128) * (math::float_scaling!() as u128)) / (spot as u128)
+            <= (max_pricing_basis!() as u128),
+        EBlockScholesSurfaceInvalid,
+    );
+    assert!(svi.a() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.b() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesSurfaceInvalid);
+    assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesSurfaceInvalid);
+    assert!(
+        svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
+        EBlockScholesSurfaceInvalid,
+    );
+}
+
+/// Compute the fair price for the range `(lower, higher]`.
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
     assert!(lower < higher, EInvalidRange);
-    if (settlement > lower && settlement <= higher) constants::float_scaling!() else 0
-}
 
-fun block_scholes_price_is_fresh(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    clock: &Clock,
-): bool {
-    let now = clock.timestamp_ms();
-    let timestamp = market.block_scholes_price_freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config
-        .block_scholes_prices_freshness_ms()
-}
-
-fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
-    let now = clock.timestamp_ms();
-    let timestamp = market.block_scholes_svi_freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config
-        .block_scholes_svi_freshness_ms()
-}
-
-fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
-    let now = clock.timestamp_ms();
-    let timestamp = pyth.freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms()
-}
-
-fun build_curve(
-    forward: u64,
-    svi: &SVIParams,
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
-    min_strike: u64,
-    max_strike: u64,
-): vector<CurvePoint> {
-    assert_curve_range(grid_min, grid_tick, grid_max, min_strike, max_strike);
-
-    if (min_strike == max_strike) {
-        let price = compute_up_price(forward, svi, min_strike);
-        return vector[
-            CurvePoint {
-                strike: min_strike,
-                up_price: price,
-            },
-        ]
-    };
-
-    let price_lo = compute_up_price(forward, svi, min_strike);
-    let price_hi = compute_up_price(forward, svi, max_strike);
-    let mut points = vector[
-        CurvePoint {
-            strike: min_strike,
-            up_price: price_lo,
-        },
-        CurvePoint {
-            strike: max_strike,
-            up_price: price_hi,
-        },
-    ];
-
-    let curve_samples = constants::curve_samples!();
-    let mut cur_samples = 2;
-    while (cur_samples < curve_samples) {
-        let (found, idx) = find_gap(&points, grid_tick);
-        if (!found) break;
-
-        let strike_lo = points[idx].strike;
-        let strike_hi = points[idx + 1].strike;
-        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
-        let price = compute_up_price(forward, svi, mid_strike);
-        insert_asc(
-            &mut points,
-            CurvePoint {
-                strike: mid_strike,
-                up_price: price,
-            },
-        );
-        cur_samples = cur_samples + 1;
-    };
-
-    points
+    let lower_up_price = compute_up_price(svi, forward, lower);
+    let higher_up_price = compute_up_price(svi, forward, higher);
+    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
+    // inversion should price 0, not abort a legitimate mint/redeem.
+    lower_up_price.saturating_sub(higher_up_price)
 }
 
 /// Compute the fair UP tail price for `strike`.
-fun compute_up_price(forward: u64, svi: &SVIParams, strike: u64): u64 {
+fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
     if (strike == constants::neg_inf!()) {
-        return constants::float_scaling!()
+        return math::float_scaling!()
     };
     if (strike == constants::pos_inf!()) {
         return 0
     };
 
-    compute_nd2(forward, svi, strike)
-}
-
-/// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
-
-    let lower_up_price = compute_up_price(forward, svi, lower);
-    let higher_up_price = compute_up_price(forward, svi, higher);
-    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
-
-    lower_up_price - higher_up_price
-}
-
-fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
-    let price_fee = price_fee_rate(config, fair_price);
-    let utilization_fee = utilization_fee_rate(config, liability, balance);
-    price_fee + utilization_fee
-}
-
-fun price_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
-    let raw_fee = raw_bernoulli_fee_rate(config, fair_price);
-    let min_fee = config.min_fee();
-    if (raw_fee > min_fee) raw_fee else min_fee
-}
-
-fun raw_bernoulli_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
-    assert!(fair_price <= constants::float_scaling!(), EInvalidLiveFairPrice);
-    if (fair_price == 0 || fair_price == constants::float_scaling!()) return 0;
-
-    let complement = constants::float_scaling!() - fair_price;
-    let variance = math::mul(fair_price, complement);
-    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
-    math::mul(config.base_fee(), bernoulli_factor)
-}
-
-fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): u64 {
-    if (balance == 0 || liability == 0) return 0;
-
-    let util = if (liability >= balance) {
-        constants::float_scaling!()
-    } else {
-        math::div(liability, balance)
-    };
-    let util_sq = math::mul(util, util);
-    math::mul(
-        config.base_fee(),
-        math::mul(config.utilization_multiplier(), util_sq),
-    )
+    compute_nd2(svi, forward, strike)
 }
 
 /// Binary pricing from SVI total variance:
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-fun compute_nd2(forward: u64, svi_params: &SVIParams, strike: u64): u64 {
+fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    let strike_ratio = math::div(strike, forward);
-    assert!(strike_ratio > 0, EInvalidStrikeRatio);
-    let k = predict_math::ln(strike_ratio);
+    // strike / forward in 1e9 fixed point, computed in u128 so both deep tails
+    // saturate instead of underflowing to 0 (which would abort) or wrapping the u64
+    // cast. Reaching either tail needs the forward to leave the entire encodable
+    // strike ladder by orders of magnitude; saturating keeps NAV / redeem /
+    // liquidation reads live there rather than aborting the whole market.
+    let strike_ratio_scaled =
+        ((strike as u128) * (math::float_scaling!() as u128)) / (forward as u128);
+    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
+    if (strike_ratio_scaled == 0) return math::float_scaling!();
+    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
+    if (strike_ratio_scaled > (std::u64::max_value!() as u128)) return 0;
+    let strike_ratio = strike_ratio_scaled as u64;
+    let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
     let sigma = svi_params.sigma();
     let sigma_squared = math::mul(sigma, sigma);
     let sqrt_input = k_minus_m_squared + sigma_squared;
-    let sq = predict_math::sqrt(sqrt_input, constants::float_scaling!());
+    let sq = math::sqrt(sqrt_input, math::float_scaling!());
     let sq_i64 = i64::from_u64(sq);
 
     let rho = svi_params.rho();
@@ -340,73 +245,12 @@ fun compute_nd2(forward: u64, svi_params: &SVIParams, strike: u64): u64 {
     let total_var = a + wing_var;
     assert!(total_var > 0, EZeroVariance);
 
-    let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
+    let sqrt_var = math::sqrt(total_var, math::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
     let half_var_i64 = i64::from_u64(total_var / 2);
     let d2_numerator = k.add(&half_var_i64);
     let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
     let d2 = d2.neg();
 
-    predict_math::normal_cdf(&d2)
-}
-
-fun assert_curve_range(
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
-    min_strike: u64,
-    max_strike: u64,
-) {
-    assert!(grid_tick > 0, EInvalidCurveRange);
-    assert!(min_strike <= max_strike, EInvalidCurveRange);
-    assert!(min_strike >= grid_min && min_strike <= grid_max, EInvalidCurveRange);
-    assert!(max_strike >= grid_min && max_strike <= grid_max, EInvalidCurveRange);
-    assert!((min_strike - grid_min) % grid_tick == 0, EInvalidCurveRange);
-    assert!((max_strike - grid_min) % grid_tick == 0, EInvalidCurveRange);
-}
-
-/// Insert a new curve point while preserving ascending strike order.
-fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
-    points.push_back(new_point);
-    let mut i = points.length() - 1;
-    while (i > 0) {
-        if (points[i - 1].strike <= points[i].strike) break;
-        points.swap(i - 1, i);
-        i = i - 1;
-    };
-}
-
-/// Pick the next adjacent gap to bisect based on endpoint UP-price difference.
-fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
-    let len = points.length();
-    let mut best_idx = len;
-    let mut best_price_diff = 0;
-
-    let mut i = 0;
-    while (i + 1 < len) {
-        let lo = &points[i];
-        let hi = &points[i + 1];
-
-        if (hi.strike - lo.strike <= grid_tick) {
-            i = i + 1;
-            continue
-        };
-
-        // `points` is strike-sorted, and UP price is monotone non-increasing in strike.
-        assert!(lo.up_price >= hi.up_price, ERangePriceUnderflow);
-        let price_diff = lo.up_price - hi.up_price;
-        if (price_diff > best_price_diff) {
-            best_idx = i;
-            best_price_diff = price_diff;
-        };
-
-        i = i + 1;
-    };
-
-    (best_idx != len, best_idx)
-}
-
-/// Round a strike down to the nearest tick boundary.
-fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
-    grid_min + (strike - grid_min) / grid_tick * grid_tick
+    math::normal_cdf(&d2)
 }

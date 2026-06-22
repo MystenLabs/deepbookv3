@@ -1,62 +1,62 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry and admin entrypoints for the Predict protocol.
+/// Registry and creation entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects, stores uniqueness indexes for
-/// Pyth sources and expiries, and exposes admin/governance entrypoints. Runtime
-/// pool accounting, expiry risk, oracle state, and user positions stay in their
-/// owning modules.
+/// This module creates shared setup objects, stores admin-approved Propbook
+/// underlying configs and the expiry uniqueness index, and exposes
+/// registry-owned governance entrypoints. Runtime pool accounting, expiry risk,
+/// oracle feeds, and user positions stay in their owning modules.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
+    admin::{Self, AdminCap},
     builder_code,
+    config_constants,
     constants,
     expiry_market::{Self, ExpiryMarket},
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
+    pause_cap::{Self, PauseCap},
     plp::PoolVault,
-    predict_manager::{Self, PredictManager},
-    protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource}
+    protocol_config::{Self, ProtocolConfig}
 };
+use propbook::registry::OracleRegistry;
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
-const EFeedIdMismatch: u64 = 2;
-const EPythSourceAlreadyCreated: u64 = 3;
-const EInvalidExpiry: u64 = 4;
-const EExpiryMarketAlreadyCreated: u64 = 5;
-const EPauseCapNotValid: u64 = 6;
-const EPackageVersionDisabled: u64 = 7;
-const EVersionAlreadyEnabled: u64 = 8;
-const EVersionNotEnabled: u64 = 9;
-const ECannotDisableLastVersion: u64 = 10;
+const EUnderlyingNotRegistered: u64 = 0;
+const EUnderlyingAlreadyRegistered: u64 = 1;
+const EInvalidExpiry: u64 = 2;
+const EMarketAlreadyCreated: u64 = 3;
+const EPauseCapNotValid: u64 = 4;
+const EInvalidMarketTickSize: u64 = 5;
+const ELifecycleCapNotValid: u64 = 6;
+const ELifecycleCapNotFound: u64 = 7;
+const EPythFeedNotBoundToUnderlying: u64 = 8;
+const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
+const EExpiryNotOnResolutionGrid: u64 = 10;
 
-/// Capability for admin operations.
-/// Created during package init, transferred to deployer (multisig).
-public struct AdminCap has key, store {
-    id: UID,
+/// Market uniqueness key. Predict permits one market per Propbook underlying and
+/// expiry; the market's chosen tick size is committed by the first creation.
+public struct MarketKey has copy, drop, store {
+    propbook_underlying_id: u32,
+    expiry: u64,
 }
 
-/// Capability for emergency pause operations. Admin can mint these for
-/// trusted operators; holders can disable versions, pause global trading,
-/// and pause per-market minting. Cannot unpause anything.
-public struct PauseCap has key, store {
-    id: UID,
-}
-
-/// Shared registry for source and expiry uniqueness.
+/// Shared registry for underlying admission and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Pyth Lazer feed ID -> shared PythSource ID.
-    pyth_source_ids: Table<u32, ID>,
-    /// Created expiry markets keyed by expiry timestamp.
-    expiry_market_ids: Table<u64, ID>,
+    /// Propbook underlying ID -> admin-approved minimum market tick size. A market
+    /// on this underlying may choose this value or a 10x multiple above it.
+    underlying_min_tick_sizes: Table<u32, u64>,
+    /// Created markets keyed by `(propbook_underlying_id, expiry)`.
+    market_ids: Table<MarketKey, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
     /// Admin mints into this set and revokes from it.
     allowed_pause_caps: VecSet<ID>,
-    /// Package versions currently permitted to mutate per-pool state. Authoritative
-    /// source; pool objects mirror this set and refresh via permissionless sync.
-    allowed_versions: VecSet<u64>,
+    /// IDs of `MarketLifecycleCap` objects currently authorized for market
+    /// lifecycle entries (market creation). Admin mints into this set and
+    /// revokes from it.
+    allowed_lifecycle_caps: VecSet<ID>,
 }
 
 // === Public Functions ===
@@ -66,193 +66,29 @@ public fun id(registry: &Registry): ID {
     registry.id.to_inner()
 }
 
-/// Return the set of package versions currently permitted to mutate per-pool
-/// state. Pool sync helpers snapshot this; newly-created pools inherit it.
-public fun allowed_versions(registry: &Registry): VecSet<u64> {
-    registry.allowed_versions
+/// Return the configured minimum tick size for a Propbook underlying, if
+/// registered.
+public fun underlying_min_tick_size(registry: &Registry, propbook_underlying_id: u32): Option<u64> {
+    if (registry.underlying_min_tick_sizes.contains(propbook_underlying_id)) {
+        option::some(*registry.underlying_min_tick_sizes.borrow(propbook_underlying_id))
+    } else {
+        option::none()
+    }
 }
 
-/// Abort if the running package version is not in the allowed set.
-///
-/// Bypasses are package-internal version-management entries
-/// (`enable_version`, `disable_version`, PauseCap-based disables) so admin
-/// can recover from any disabled state.
-public(package) fun assert_version_allowed(registry: &Registry) {
-    assert!(
-        registry.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
-}
-
-/// Set the base fee multiplier.
-public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
-    config.set_base_fee(fee);
-}
-
-/// Set the minimum fee floor.
-public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
-    config.set_min_fee(fee);
-}
-
-/// Set the utilization multiplier.
-public fun set_utilization_multiplier(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    multiplier: u64,
-) {
-    config.set_utilization_multiplier(multiplier);
-}
-
-/// Set the global minimum allowed mint price.
-public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_min_ask_price(value);
-}
-
-/// Set the global maximum allowed mint price.
-public fun set_max_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_max_ask_price(value);
-}
-
-/// Set the live Pyth spot freshness threshold.
-public fun set_pyth_spot_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_pyth_spot_freshness_ms(value);
-}
-
-/// Set the live Block Scholes spot/forward freshness threshold.
-public fun set_block_scholes_prices_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_block_scholes_prices_freshness_ms(value);
-}
-
-/// Set the live Block Scholes SVI freshness threshold.
-public fun set_block_scholes_svi_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_block_scholes_svi_freshness_ms(value);
-}
-
-/// Set the current fee surplus distribution shares used during compaction.
-public fun set_fee_shares(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
-) {
-    config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
-}
-
-/// Set the settlement loss rebate rate template used by future expiry markets.
-public fun set_template_settlement_loss_rebate_rate(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_template_settlement_loss_rebate_rate(value);
-}
-
-/// Set the maximum total exposure percentage.
-public fun set_max_total_exposure_pct(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    pct: u64,
-) {
-    config.set_max_total_exposure_pct(pct);
-}
-
-/// Set the current DUSDC allocation for new expiry markets.
-public fun set_expiry_allocation(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    allocation: u64,
-) {
-    config.set_expiry_allocation(allocation);
-}
-
-/// Set the utilization threshold that enables expiry allocation growth.
-public fun set_grow_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.set_grow_utilization_threshold(threshold);
-}
-
-/// Set the utilization threshold that enables expiry allocation shrink.
-public fun set_shrink_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.set_shrink_utilization_threshold(threshold);
-}
-
-/// Set the allocation growth target multiplier.
-public fun set_grow_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.set_grow_factor(factor);
-}
-
-/// Set the allocation shrink target multiplier.
-public fun set_shrink_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.set_shrink_factor(factor);
-}
-
-/// Set the settlement freshness threshold template used by future market oracles.
-public fun set_market_oracle_template_settlement_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_market_oracle_template_settlement_freshness_ms(value);
-}
-
-/// Set basis guard bounds template used by future market oracles.
-public fun set_market_oracle_template_basis_bounds(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    config.set_market_oracle_template_basis_bounds(
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
-    );
-}
-
-/// Set whether trading is paused.
-public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
-    config.set_trading_paused(paused);
-}
-
-// === Version Management (admin) ===
-
-/// Add `version` to the registry's allowed set.
-///
-/// Not version-gated so admin can re-enable a previously disabled version.
-public fun enable_version(registry: &mut Registry, _admin_cap: &AdminCap, version: u64) {
-    assert!(!registry.allowed_versions.contains(&version), EVersionAlreadyEnabled);
-    registry.allowed_versions.insert(version);
-}
-
-/// Remove `version` from the registry's allowed set.
-///
-/// Not version-gated so admin can revoke a version even after the active
-/// version has been paused. The set may not be left empty.
-public fun disable_version(registry: &mut Registry, _admin_cap: &AdminCap, version: u64) {
-    registry.disable_version_internal(version);
+/// Return the expiry market ID for `(propbook_underlying_id, expiry)`, if one
+/// has been created.
+public fun expiry_market_id(
+    registry: &Registry,
+    propbook_underlying_id: u32,
+    expiry: u64,
+): Option<ID> {
+    let key = MarketKey { propbook_underlying_id, expiry };
+    if (registry.market_ids.contains(key)) {
+        option::some(*registry.market_ids.borrow(key))
+    } else {
+        option::none()
+    }
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -264,9 +100,9 @@ public fun mint_pause_cap(
     _admin_cap: &AdminCap,
     ctx: &mut TxContext,
 ): PauseCap {
-    let id = object::new(ctx);
-    registry.allowed_pause_caps.insert(id.to_inner());
-    PauseCap { id }
+    let cap = pause_cap::new(ctx);
+    registry.allowed_pause_caps.insert(cap.id());
+    cap
 }
 
 /// Revoke a previously minted `PauseCap` by ID. Admin-only.
@@ -275,25 +111,54 @@ public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, paus
     registry.allowed_pause_caps.remove(&pause_cap_id);
 }
 
-/// Destroy a `PauseCap` the holder no longer needs.
-public fun destroy_pause_cap(cap: PauseCap) {
-    let PauseCap { id } = cap;
-    id.delete();
+// === MarketLifecycleCap Lifecycle (admin) ===
+
+/// Mint a new `MarketLifecycleCap`. Admin-only and version-gated (granting
+/// market-creation authority under a version freeze is the risky direction).
+public fun mint_lifecycle_cap(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): MarketLifecycleCap {
+    config.assert_version();
+    let cap = market_lifecycle_cap::new(ctx);
+    registry.allowed_lifecycle_caps.insert(cap.id());
+    cap
+}
+
+/// Revoke a previously minted `MarketLifecycleCap` by ID. Admin-only.
+/// Deliberately not version-gated (like pause-cap revocation): revocation is
+/// harm-reducing and must stay available even when the running package version
+/// is frozen below the protocol watermark.
+public fun revoke_lifecycle_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    lifecycle_cap_id: ID,
+) {
+    // Distinct from the gate code so expected_failure tests that revoke first
+    // stay pinned to the create gate under test.
+    assert!(registry.allowed_lifecycle_caps.contains(&lifecycle_cap_id), ELifecycleCapNotFound);
+    registry.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
+}
+
+/// Generate a transaction-local proof that `lifecycle_cap` is currently
+/// allowlisted. Consumers take the proof by value so a revoked lifecycle cap
+/// cannot authorize cross-module lifecycle actions.
+public fun generate_lifecycle_proof(
+    registry: &Registry,
+    lifecycle_cap: &MarketLifecycleCap,
+): MarketLifecycleProof {
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
+    lifecycle_cap.new_proof()
 }
 
 // === Emergency Pause (PauseCap) ===
 
-/// Disable a package version via a valid `PauseCap`. One-way: admin must
-/// `enable_version` to restore.
-public fun disable_version_pause_cap(registry: &mut Registry, version: u64, pause_cap: &PauseCap) {
-    registry.assert_valid_pause_cap(pause_cap);
-    registry.disable_version_internal(version);
-}
-
 /// Force `trading_paused = true` via a valid `PauseCap`. One-way.
 public fun pause_trading_pause_cap(
-    registry: &Registry,
     config: &mut ProtocolConfig,
+    registry: &Registry,
     pause_cap: &PauseCap,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
@@ -301,154 +166,116 @@ public fun pause_trading_pause_cap(
 }
 
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
-/// One-way; admin's `set_expiry_market_mint_paused` is needed to unpause.
+/// One-way; admin's `expiry_market::set_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(
-    registry: &Registry,
     market: &mut ExpiryMarket,
+    registry: &Registry,
     pause_cap: &PauseCap,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
     market.pause_mint();
 }
 
-// === Per-Market Mint Pause (admin) ===
-
-/// Set `mint_paused` on a single expiry market. Admin can pause or unpause.
-public fun set_expiry_market_mint_paused(
-    market: &mut ExpiryMarket,
-    _admin_cap: &AdminCap,
-    paused: bool,
-) {
-    market.set_mint_paused(paused);
-}
-
-/// Create a shared Pyth source for one admin-approved Lazer feed.
-///
-/// The registry enforces one source object per feed ID.
-public fun create_pyth_source(
+/// Record admin approval of one Propbook underlying and its minimum market tick
+/// size. Source IDs and canonical oracle object IDs remain owned by Propbook;
+/// this row only gates which underlyings Predict will build markets on and the
+/// smallest tick size those markets may choose.
+public fun register_underlying(
     registry: &mut Registry,
+    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
-    pyth_lazer_feed_id: u32,
-    ctx: &mut TxContext,
-): ID {
-    registry.assert_version_allowed();
-    assert!(!registry.pyth_source_ids.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
-    let pyth_source_id = pyth_source::create_and_share(
-        pyth_lazer_feed_id,
-        registry.allowed_versions,
-        ctx,
+    propbook_underlying_id: u32,
+    min_tick_size: u64,
+) {
+    config.assert_version();
+    assert!(
+        !registry.underlying_min_tick_sizes.contains(propbook_underlying_id),
+        EUnderlyingAlreadyRegistered,
     );
-    registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);
-    pyth_source_id
+    config_constants::assert_market_tick_size_bounds(min_tick_size);
+    registry.underlying_min_tick_sizes.add(propbook_underlying_id, min_tick_size);
 }
 
-/// Admin-only creation of a new MarketOracleCap.
-public fun create_market_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleCap {
-    market_oracle::create_cap(ctx)
-}
-
-/// Register an additional MarketOracleCap as authorized to update a market oracle.
-public fun register_market_oracle_cap(
-    market: &mut MarketOracle,
-    _admin_cap: &AdminCap,
-    cap: &MarketOracleCap,
-) {
-    market.register_cap(cap);
-}
-
-/// Revoke a MarketOracleCap's authorization on a market oracle.
-public fun unregister_market_oracle_cap(
-    market: &mut MarketOracle,
-    _admin_cap: &AdminCap,
-    cap_id: ID,
-) {
-    market.unregister_cap(cap_id);
-}
-
-/// Cap holder voluntarily removes its own cap from a market oracle.
-public fun self_unregister_market_oracle_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    market.self_unregister_cap(cap);
-}
-
-/// Destroy a MarketOracleCap the holder no longer needs.
-public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
-    cap.destroy_cap();
-}
-
-/// Create the MarketOracle and ExpiryMarket objects for one future expiry.
+/// Create the ExpiryMarket for one future expiry on a Propbook underlying.
 ///
-/// The registry enforces one market per expiry, validates the registered Pyth
-/// source, allocates initial pool capital, and registers the expiry as active.
+/// The registry enforces one market per `(propbook_underlying_id, expiry)`, that
+/// the underlying is admin-approved for Predict, that the chosen tick size is a
+/// valid 10x multiple of the underlying's minimum, and — via Propbook's
+/// admin-gated canonical binding — that both required oracle kinds are currently
+/// bound for the underlying. The market snapshots only the underlying and its
+/// tick size; priced flows resolve the current canonical oracle object IDs from
+/// Propbook so a Propbook rebind affects existing markets. The market is created
+/// with zero cash and registered with the pool vault as an accounting row only;
+/// it is not mintable until `plp::rebalance_expiry_cash` funds it.
+///
+/// `expiry` must fall on the resolution-feed grid (`expiry %
+/// constants::resolution_period_ms!() == 0`). Terminal settlement is an exact
+/// whole-millisecond lookup keyed at `expiry` (`pyth_feed::insert_at` accepts only
+/// a print at exactly that millisecond), which the off-chain resolution relayer
+/// sources from Pyth Lazer's exact-timestamp resolution endpoints and inserts only
+/// on that grid; an off-grid expiry could never settle. While a past-expiry market
+/// is awaiting its settling observation it has no solvency-safe NAV, so the pool
+/// flush (`plp::value_expiry`) aborts until the observation lands — the keeper
+/// retries and does not flush while an active market is in that pending-settlement
+/// window (bounded to a few seconds at the grid cadence).
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
-    pyth: &PythSource,
-    cap: &MarketOracleCap,
+    propbook_registry: &OracleRegistry,
+    lifecycle_cap: &MarketLifecycleCap,
+    propbook_underlying_id: u32,
     expiry: u64,
-    min_strike: u64,
     tick_size: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): (ID, ID) {
-    registry.assert_version_allowed();
+): ID {
+    config.assert_version();
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
-    let pyth_lazer_feed_id = pyth.feed_id();
-    assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
-    assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
-    expiry_market::assert_valid_strike_grid(min_strike, tick_size);
-    assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
-    let allowed_versions = registry.allowed_versions;
-    let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
-    let market_oracle_id = market_oracle::create_and_share(
-        pyth,
-        config.market_oracle_config(),
-        cap,
-        expiry,
-        allowed_versions,
-        ctx,
+    // Expiry must land on the resolution-feed grid so the exact-ms settling Pyth
+    // observation is always producible; an off-grid expiry could never settle and
+    // would block the pool flush indefinitely.
+    assert!(expiry % constants::resolution_period_ms!() == 0, EExpiryNotOnResolutionGrid);
+    let market_key = MarketKey { propbook_underlying_id, expiry };
+    let min_tick_size = registry.assert_underlying_registered(propbook_underlying_id);
+    assert_market_tick_size(min_tick_size, tick_size);
+    assert!(
+        propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
+        EPythFeedNotBoundToUnderlying,
     );
+    assert!(
+        propbook_registry
+            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+            .is_some(),
+        EBlockScholesFeedNotBoundToUnderlying,
+    );
+    assert!(!registry.market_ids.contains(market_key), EMarketAlreadyCreated);
     let expiry_market_id = expiry_market::create_and_share(
-        market_oracle_id,
-        pyth_lazer_feed_id,
         config,
-        allocation,
+        propbook_underlying_id,
+        pool_vault.id(),
         expiry,
-        min_strike,
         tick_size,
-        allowed_versions,
         ctx,
     );
-    pool_vault.register_expiry_market(expiry_market_id);
-    registry.expiry_market_ids.add(expiry, expiry_market_id);
+    pool_vault.register_expiry(expiry_market_id);
+    registry.market_ids.add(market_key, expiry_market_id);
 
-    (expiry_market_id, market_oracle_id)
+    expiry_market_id
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
-public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut TxContext): ID {
+public fun create_builder_code(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    index: u64,
+    ctx: &mut TxContext,
+): ID {
+    config.assert_version();
     builder_code::create_and_share(&mut registry.id, index, ctx)
-}
-
-/// Create a derived PredictManager for the caller.
-public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
-    let allowed_versions = registry.allowed_versions;
-    predict_manager::new(&mut registry.id, allowed_versions, ctx)
-}
-
-/// Create and share a derived PredictManager for the caller.
-entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
-    create_manager(registry, ctx).share();
-}
-
-/// Return the shared PythSource ID for a feed, if it has been created.
-public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
-    if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
-        option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
-    } else {
-        option::none()
-    }
 }
 
 // === Private Functions ===
@@ -458,7 +285,7 @@ fun init(ctx: &mut TxContext) {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
+    transfer::public_transfer(admin_cap, ctx.sender());
 }
 
 /// Construct registry and admin cap during package init or tests.
@@ -466,28 +293,42 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
-            pyth_source_ids: table::new(ctx),
-            expiry_market_ids: table::new(ctx),
+            underlying_min_tick_sizes: table::new(ctx),
+            market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
-            allowed_versions: vec_set::singleton(constants::current_version!()),
+            allowed_lifecycle_caps: vec_set::empty(),
         },
-        AdminCap {
-            id: object::new(ctx),
-        },
+        admin::new(ctx),
     )
 }
 
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
-    assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+    assert!(registry.allowed_pause_caps.contains(&pause_cap.id()), EPauseCapNotValid);
 }
 
-/// Remove a version from the allowed set, enforcing the non-empty invariant.
-/// Shared by the admin `disable_version` and PauseCap `disable_version_pause_cap`.
-fun disable_version_internal(registry: &mut Registry, version: u64) {
-    assert!(registry.allowed_versions.contains(&version), EVersionNotEnabled);
-    assert!(registry.allowed_versions.length() > 1, ECannotDisableLastVersion);
-    registry.allowed_versions.remove(&version);
+/// Abort unless the supplied `MarketLifecycleCap` was minted by admin and not
+/// revoked.
+fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
+    assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
+}
+
+fun assert_underlying_registered(registry: &Registry, propbook_underlying_id: u32): u64 {
+    assert!(
+        registry.underlying_min_tick_sizes.contains(propbook_underlying_id),
+        EUnderlyingNotRegistered,
+    );
+    *registry.underlying_min_tick_sizes.borrow(propbook_underlying_id)
+}
+
+fun assert_market_tick_size(min_tick_size: u64, tick_size: u64) {
+    config_constants::assert_market_tick_size_bounds(tick_size);
+    assert!(tick_size >= min_tick_size, EInvalidMarketTickSize);
+    let mut allowed = min_tick_size;
+    while (allowed < tick_size) {
+        allowed = allowed * 10;
+    };
+    assert!(allowed == tick_size, EInvalidMarketTickSize);
 }
 
 // === Test-Only Functions ===
@@ -499,34 +340,7 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     let registry_id = registry.id();
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
+    transfer::public_transfer(admin_cap, ctx.sender());
 
     registry_id
-}
-
-#[test_only]
-/// Create an admin cap for tests.
-public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
-    AdminCap { id: object::new(ctx) }
-}
-
-#[test_only]
-/// Return a Registry + AdminCap without sharing or storing the registry.
-/// Use this when a test wants direct access without `test_scenario`.
-public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
-    new_registry_and_admin_cap(ctx)
-}
-
-#[test_only]
-public fun destroy_registry_for_testing(registry: Registry) {
-    let Registry {
-        id,
-        pyth_source_ids,
-        expiry_market_ids,
-        allowed_pause_caps: _,
-        allowed_versions: _,
-    } = registry;
-    id.delete();
-    pyth_source_ids.destroy_empty();
-    expiry_market_ids.destroy_empty();
 }

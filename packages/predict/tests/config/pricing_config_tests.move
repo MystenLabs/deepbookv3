@@ -5,33 +5,95 @@
 module deepbook_predict::pricing_config_tests;
 
 use deepbook_predict::{config_constants, pricing_config};
-use std::unit_test::assert_eq;
+use std::unit_test::{assert_eq, destroy};
+
+const VALID_PYTH_SPOT_FRESHNESS_MS: u64 = 5_000;
+const VALID_BLOCK_SCHOLES_SURFACE_FRESHNESS_MS: u64 = 4_000;
+const FRESHNESS_ABOVE_MAX: u64 = 60_001;
+
+// === Construction and getters ===
 
 #[test]
-fun defaults_expose_fee_terms() {
+fun defaults_match_config_constants() {
     let config = pricing_config::new();
-
-    assert_eq!(config.base_fee(), config_constants::default_base_fee!());
-    assert_eq!(config.min_fee(), config_constants::default_min_fee!());
     assert_eq!(
-        config.utilization_multiplier(),
-        config_constants::default_utilization_multiplier!(),
+        config.pyth_spot_freshness_ms(),
+        config_constants::default_pyth_spot_freshness_ms!(),
     );
-    assert_eq!(config.min_ask_price(), config_constants::default_min_ask_price!());
-    assert_eq!(config.max_ask_price(), config_constants::default_max_ask_price!());
-    config.destroy_for_testing();
+    assert_eq!(
+        config.block_scholes_surface_freshness_ms(),
+        config_constants::default_block_scholes_surface_freshness_ms!(),
+    );
+    destroy(config);
+}
+
+// === set_pyth_spot_freshness_ms ===
+
+#[test]
+fun set_pyth_spot_freshness_ms_updates() {
+    let mut config = pricing_config::new();
+    config.set_pyth_spot_freshness_ms(VALID_PYTH_SPOT_FRESHNESS_MS);
+    assert_eq!(config.pyth_spot_freshness_ms(), VALID_PYTH_SPOT_FRESHNESS_MS);
+    destroy(config);
 }
 
 #[test]
-fun setters_update_fee_terms() {
+fun set_pyth_spot_freshness_ms_accepts_endpoints() {
     let mut config = pricing_config::new();
+    config.set_pyth_spot_freshness_ms(1);
+    assert_eq!(config.pyth_spot_freshness_ms(), 1);
+    config.set_pyth_spot_freshness_ms(60_000);
+    assert_eq!(config.pyth_spot_freshness_ms(), 60_000);
+    destroy(config);
+}
 
-    config.set_base_fee(30_000_000);
-    config.set_min_fee(2_000_000);
-    config.set_utilization_multiplier(3_000_000_000);
+#[test, expected_failure(abort_code = config_constants::EInvalidPythSpotFreshnessMs)]
+fun set_pyth_spot_freshness_ms_zero_aborts() {
+    let mut config = pricing_config::new();
+    config.set_pyth_spot_freshness_ms(0);
+    abort 999
+}
 
-    assert_eq!(config.base_fee(), 30_000_000);
-    assert_eq!(config.min_fee(), 2_000_000);
-    assert_eq!(config.utilization_multiplier(), 3_000_000_000);
-    config.destroy_for_testing();
+#[test, expected_failure(abort_code = config_constants::EInvalidPythSpotFreshnessMs)]
+fun set_pyth_spot_freshness_ms_above_max_aborts() {
+    let mut config = pricing_config::new();
+    config.set_pyth_spot_freshness_ms(FRESHNESS_ABOVE_MAX);
+    abort 999
+}
+
+// === set_block_scholes_surface_freshness_ms ===
+
+#[test]
+fun set_block_scholes_surface_freshness_ms_updates() {
+    let mut config = pricing_config::new();
+    config.set_block_scholes_surface_freshness_ms(VALID_BLOCK_SCHOLES_SURFACE_FRESHNESS_MS);
+    assert_eq!(
+        config.block_scholes_surface_freshness_ms(),
+        VALID_BLOCK_SCHOLES_SURFACE_FRESHNESS_MS,
+    );
+    destroy(config);
+}
+
+#[test]
+fun set_block_scholes_surface_freshness_ms_accepts_endpoints() {
+    let mut config = pricing_config::new();
+    config.set_block_scholes_surface_freshness_ms(1);
+    assert_eq!(config.block_scholes_surface_freshness_ms(), 1);
+    config.set_block_scholes_surface_freshness_ms(60_000);
+    assert_eq!(config.block_scholes_surface_freshness_ms(), 60_000);
+    destroy(config);
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidBlockScholesSurfaceFreshnessMs)]
+fun set_block_scholes_surface_freshness_ms_zero_aborts() {
+    let mut config = pricing_config::new();
+    config.set_block_scholes_surface_freshness_ms(0);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidBlockScholesSurfaceFreshnessMs)]
+fun set_block_scholes_surface_freshness_ms_above_max_aborts() {
+    let mut config = pricing_config::new();
+    config.set_block_scholes_surface_freshness_ms(FRESHNESS_ABOVE_MAX);
+    abort 999
 }

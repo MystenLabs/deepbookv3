@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" role="img" aria-labelledby="wg-title wg-desc" font-family="Inter, system-ui, -apple-system, Segoe UI, sans-serif">
+  <title id="wg-title">How leverage splits the contract</title>
+  <desc id="wg-desc">A leveraged contract's notional payout is split into a floor wedge and a user wedge. At mint, the financed amount covers most of the entry value and the user pays only the remainder. At winning settlement, the floor has accrued slightly and the user keeps the rest of the notional.</desc>
+
+  <rect width="720" height="420" fill="#ffffff"/>
+
+  <text x="60" y="48" fill="#0f172a" font-size="15" font-weight="600">how leverage splits the contract</text>
+  <text x="60" y="68" fill="#64748b" font-size="12">Example: 3x leverage at entry probability 60%, max floor premium 20%. Units are % of quantity.</text>
+
+  <text x="100" y="118" fill="#475569" font-size="12" font-weight="600">At mint - contract worth 60 of quantity 100</text>
+
+  <g font-size="11" fill="#475569" text-anchor="middle">
+    <text x="100" y="142">0</text>
+    <text x="308" y="142">40</text>
+    <text x="412" y="142">60</text>
+    <text x="620" y="142">100</text>
+  </g>
+
+  <rect x="100" y="150" width="208" height="56" fill="#f59e0b"/>
+  <rect x="308" y="150" width="104" height="56" fill="#0f766e"/>
+  <rect x="412" y="150" width="208" height="56" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.25" stroke-dasharray="5 4"/>
+
+  <g font-size="11" font-weight="600" text-anchor="middle">
+    <text x="204" y="226" fill="#92400e">financed amount (financing)</text>
+    <text x="360" y="226" fill="#0f766e">user pays</text>
+    <text x="516" y="226" fill="#64748b">unrealized upside</text>
+  </g>
+
+  <text x="100" y="282" fill="#475569" font-size="12" font-weight="600">At winning settlement - contract pays full quantity</text>
+
+  <g font-size="11" fill="#475569" text-anchor="middle">
+    <text x="100" y="306">0</text>
+    <text x="350" y="306">48</text>
+    <text x="620" y="306">100</text>
+  </g>
+
+  <rect x="100" y="314" width="250" height="56" fill="#f59e0b"/>
+  <rect x="350" y="314" width="270" height="56" fill="#0f766e"/>
+
+  <g font-size="11" font-weight="600" text-anchor="middle">
+    <text x="225" y="390" fill="#92400e">terminal floor</text>
+    <text x="485" y="390" fill="#0f766e">user payout</text>
+  </g>
+
+  <g stroke="#94a3b8" stroke-width="1" fill="none">
+    <path d="M 308 210 L 308 250 L 350 250 L 350 312" stroke-dasharray="3 3"/>
+  </g>
+  <text x="356" y="246" fill="#64748b" font-size="10" font-weight="600">floor accrues 40 to 48</text>
+</svg>

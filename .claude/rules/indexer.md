@@ -7,6 +7,8 @@ paths:
 
 # Indexer Development Rules
 
+> **Scope:** this file covers the CORE crates (`crates/{server,indexer,schema}`). The globs above do **NOT** cover the sibling PREDICT crates `crates/predict-{server,indexer,schema}` — for those, read `.claude/rules/predict-indexer.md` first (it intentionally improves on a few core patterns), then this file for the shared operational gotchas.
+
 **Update this file** when you discover new indexer insights, performance issues, or debugging tips during sessions.
 
 ## Codebase Structure
@@ -30,7 +32,7 @@ Before committing/pushing Rust changes or creating a PR, always run:
 
 ## Performance-Critical Endpoints
 
-### /ticker Endpoint (server.rs:659-734)
+### /ticker Endpoint (`ticker` in `crates/server/src/server.rs`)
 Heavy operations that can cause 504 timeouts:
 1. `fetch_historical_volume()` called twice (base and quote) - scans 24h of `order_fills`
 2. Complex DISTINCT ON query for last prices
@@ -109,14 +111,6 @@ Usually caused by:
 2. Large time range queries (24h default)
 3. Sequential queries that could be parallelized
 
-### TransactionExpiration Enum Error
-SDK v2.1.0+ uses `ValidDuring` (enum value 2) by default. Older tools may not recognize it.
-Fix: Set explicit epoch-based expiration before building transaction:
-```typescript
-const { epoch } = await client.getLatestSuiSystemState();
-tx.setExpiration({ Epoch: Number(epoch) + 5 });
-```
-
 ### PostgreSQL Function Type Mismatch
 PostgreSQL function matching requires **exact parameter types**. `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` are different types.
 
@@ -130,7 +124,7 @@ to_timestamp($3)::timestamp
 ```
 
 ### Default Limit of 1
-The `ParameterUtil` trait (`server.rs:1893-1897`) defaults to `limit=1` when not provided. This affects 24 endpoints:
+The `ParameterUtil` trait in `crates/server/src/server.rs` defaults to `limit=1` when not provided. This affects 24 endpoints:
 - `order_updates`, `trades`, `margin_manager_created`, `loan_borrowed`, `loan_repaid`, `liquidation`, `asset_supplied`, `asset_withdrawn`, `deepbook_pool_updated`, `interest_params_updated`, `margin_pool_config_updated`, `maintainer_cap_updated`, `maintainer_fees_withdrawn`, `protocol_fees_withdrawn`, `supplier_cap_minted`, `supply_referral_minted`, `pause_cap_updated`, `protocol_fees_increased`, `referral_fees_claimed`, `referral_fee_events`, `deepbook_pool_registered`, `deepbook_pool_updated_registry`, `deepbook_pool_config_updated`, `collateral_events`
 
 ### No Pagination on /margin_manager_states
@@ -139,8 +133,8 @@ Returns ALL rows without limit. Can cause timeouts/memory issues with large tabl
 ## Connection Pools
 
 The server creates **3 separate connection pools**:
-1. **Reader** (`server.rs:151`) - API read queries
-2. **Writer** (`server.rs:158`) - Admin writes
-3. **margin_db** (`server.rs:286`) - Margin poller
+1. **Reader** - API read queries
+2. **Writer** - Admin writes
+3. **margin_db** - Margin poller
 
 Each pool has its own connections. Monitor total connections if experiencing pool exhaustion.

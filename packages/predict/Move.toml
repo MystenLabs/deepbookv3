@@ -4,14 +4,29 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
-deepbook = { local = "../deepbook" }
+fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
-# Official Pyth Lazer Sui package. Used by `pyth_source::update_from_lazer` to
-# consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
-# package-scoped, so the Move type system enforces "this value came from
-# Pyth's verifier." Use `rev = "sui-testnet"` for testnet because Wormhole is
-# custom-deployed there.
+# Reusable on-chain account primitive. Predict's per-account custody (`Account.vault`)
+# and its app-data slot live here; the former PredictManager / cap / proof layer
+# collapses onto it. Declared `local` like the other in-repo packages.
+account = { local = "../account" }
+# Standalone Pyth + Block Scholes oracle feeds. Predict consumes `propbook::pyth_feed`
+# and `propbook::block_scholes_feed` for live spot/surface pricing (the former
+# in-package `market_oracle`/`pyth_source` modules were extracted into propbook).
+propbook = { local = "../propbook" }
+# DEEP token (from the deepbookv3 repo), used for staking custody (`registry::stake_deep`)
+# and DEEP burning via `token::deep::ProtectedTreasury`.
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
+# Official Pyth Lazer Sui package — now a transitive dependency through `propbook`
+# (which consumes the verified `pyth_lazer::update::Update`). Kept as a direct dep
+# so the publishable root declares the `dep-replacements` linking below. Use
+# `rev = "sui-testnet"` for testnet because Wormhole is custom-deployed there.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+# The stub Block Scholes verifier. Predict SOURCE does not use it (the BS surface
+# is read through `propbook::block_scholes_feed`), but the test fixtures construct a
+# verified `update::Update` via its public `new_update` to seed surfaces. Declared
+# with the same `local` source propbook uses so the resolver unifies the package.
+block_scholes_oracle = { local = "../block_scholes_oracle" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
 # for typechecking only; `dep-replacements` tells `sui client publish` to link
