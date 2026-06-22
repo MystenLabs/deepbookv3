@@ -1511,3 +1511,28 @@ public fun execute_conditional_orders_v2_for_test<BaseAsset, QuoteAsset>(
         scenario.ctx(),
     )
 }
+
+public fun execute_conditional_orders_v3_for_test<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    max_orders_to_execute: u64,
+    clock: &Clock,
+): vector<deepbook::order_info::OrderInfo> {
+    mm.execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_price_info_object,
+        quote_price_info_object,
+        registry,
+        max_orders_to_execute,
+        clock,
+        scenario.ctx(),
+    )
+}

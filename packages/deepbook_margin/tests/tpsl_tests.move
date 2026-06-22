@@ -4227,3 +4227,256 @@ fun test_tpsl_mixed_orders_some_cancelled_some_executed() {
     return_shared(deepbook_registry);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+// === v3 conditional execution: deleverage so stops fire in the danger band ===
+
+#[test]
+fun execute_conditional_orders_v3_stop_loss_deleverages_in_danger_band() {
+    // Alice opens a leveraged position at SUI=$2: 1000 SUI collateral + 8000 USDC
+    // borrowed, risk_ratio = 1.25 (the borrow floor). SUI falls to $0.95,
+    // dropping the ratio to ~1.119 — the danger band (above liquidation 1.10,
+    // below borrow 1.25). Her market stop-loss fires: v3 sells SUI and repays the
+    // loan, so the deleveraged ratio clears the gate and the order executes and is
+    // removed. The v2 path aborts on this exact setup (paired test below).
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        usdc_pool_id,
+        sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    setup_orderbook_liquidity_low_bids<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(1000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    // Borrow 8000 USDC: ratio = (1000*2 + 8000) / 8000 = 1.25 at SUI=$2.
+    mm.borrow_quote<SUI, USDC>(
+        &margin_registry,
+        &mut usdc_pool,
+        &sui_price_high,
+        &usdc_price,
+        &pool,
+        8000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let condition = tpsl::new_condition(true, 1_500_000); // trigger_below $1.50
+    let pending_order = tpsl::new_pending_market_order(
+        1,
+        constants::self_matching_allowed(),
+        150 * test_constants::sui_multiplier(), // sell 150 SUI (< 200 bid liquidity)
+        false, // is_bid = false (sell)
+        false, // pay_with_deep
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared_2!(mm, pool);
+    return_shared(usdc_pool);
+    return_shared(margin_registry);
+
+    scenario.next_tx(test_constants::user2());
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 95, &clock); // $0.95
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &clock,
+    );
+
+    let mut sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    let debt_before = mm.borrowed_quote_shares();
+    assert!(debt_before > 0);
+
+    let order_infos = test_helpers::execute_conditional_orders_v3_for_test<SUI, USDC>(
+        &mut scenario,
+        &mut sui_pool,
+        &mut usdc_pool,
+        &mut mm,
+        &mut pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+    );
+
+    // The stop-loss fired, v3 repaid the loan with the proceeds (debt reduced),
+    // and the order was removed from the queue — no stuck retry (#8, #10).
+    assert!(order_infos.length() == 1);
+    assert!(mm.borrowed_quote_shares() < debt_before);
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy(order_infos);
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
+    destroy_2!(sui_price_low, usdc_price);
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_manager::EInsufficientRiskRatioAfterTrade)]
+fun execute_conditional_orders_v2_stop_loss_aborts_in_danger_band() {
+    // Same danger-band setup as the v3 test above, but executed through v2: the
+    // stop-loss sells without repaying, so the post-fill ratio (~1.119) stays
+    // below the borrow floor and the v2 gate aborts the whole txn.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        usdc_pool_id,
+        sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    setup_orderbook_liquidity_low_bids<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(1000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<SUI, USDC>(
+        &margin_registry,
+        &mut usdc_pool,
+        &sui_price_high,
+        &usdc_price,
+        &pool,
+        8000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let condition = tpsl::new_condition(true, 1_500_000);
+    let pending_order = tpsl::new_pending_market_order(
+        1,
+        constants::self_matching_allowed(),
+        150 * test_constants::sui_multiplier(),
+        false,
+        false,
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared_2!(mm, pool);
+    return_shared(usdc_pool);
+    return_shared(margin_registry);
+
+    scenario.next_tx(test_constants::user2());
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 95, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &clock,
+    );
+
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
+        &mut pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+    );
+    destroy(order_infos);
+
+    abort 999
+}
