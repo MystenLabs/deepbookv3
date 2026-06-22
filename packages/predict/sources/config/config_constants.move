@@ -13,21 +13,21 @@ const EInvalidMinAskPrice: u64 = 2;
 const EInvalidMaxAskPrice: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
-const EInvalidProtocolReserveProfitShare: u64 = 7;
-const EInvalidTradingLossRebateRate: u64 = 14;
-const EInvalidTerminalFloorIndex: u64 = 15;
-const EInvalidExpiryFeeWindowMs: u64 = 16;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
-const EInvalidLowerBenefitPower: u64 = 18;
-const EInvalidUpperBenefitPower: u64 = 19;
-const EInvalidBenefitPowers: u64 = 20;
-const EInvalidTradeLiquidationBudget: u64 = 22;
-const EInvalidLiquidationLtv: u64 = 23;
-const EInvalidMarketTickSize: u64 = 24;
-const EInvalidEwmaAlpha: u64 = 26;
-const EInvalidEwmaZScoreThreshold: u64 = 27;
-const EInvalidEwmaPenaltyRate: u64 = 28;
-const EInvalidBackingBufferLambda: u64 = 29;
+const EInvalidProtocolReserveProfitShare: u64 = 6;
+const EInvalidTradingLossRebateRate: u64 = 7;
+const EInvalidTerminalFloorIndex: u64 = 8;
+const EInvalidExpiryFeeWindowMs: u64 = 9;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
+const EInvalidLowerBenefitPower: u64 = 11;
+const EInvalidUpperBenefitPower: u64 = 12;
+const EInvalidBenefitPowers: u64 = 13;
+const EInvalidTradeLiquidationBudget: u64 = 14;
+const EInvalidLiquidationLtv: u64 = 15;
+const EInvalidMarketTickSize: u64 = 16;
+const EInvalidEwmaAlpha: u64 = 17;
+const EInvalidEwmaZScoreThreshold: u64 = 18;
+const EInvalidEwmaPenaltyRate: u64 = 19;
+const EInvalidBackingBufferLambda: u64 = 20;
 
 // === Fees ===
 
@@ -123,10 +123,14 @@ public(package) fun assert_min_fee(value: u64) {
 
 /// Window before expiry over which trade fees ramp up to the per-expiry max
 /// multiplier. Five minutes is the shortest admin-tunable window.
-public(package) macro fun default_expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
-public(package) macro fun min_expiry_fee_window_ms(): u64 { 5 * 60 * 1000 }
+public(package) macro fun default_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::one_day_ms!()
+}
+public(package) macro fun min_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::five_minutes_ms!()
+}
 public(package) macro fun max_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::ms_per_year!()
+    deepbook_predict::constants::one_year_ms!()
 }
 
 public(package) fun assert_expiry_fee_window_ms(value: u64) {
@@ -191,7 +195,9 @@ public(package) fun assert_max_ask_price(value: u64) {
 
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
-public(package) macro fun max_pyth_spot_freshness_ms(): u64 { 60_000 }
+public(package) macro fun max_pyth_spot_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
 
 public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     assert!(
@@ -205,7 +211,9 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
 // SVI window before the oracle moved to per-expiry surfaces).
 public(package) macro fun default_block_scholes_surface_freshness_ms(): u64 { 3_000 }
 public(package) macro fun min_block_scholes_surface_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 { 60_000 }
+public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
 
 public(package) fun assert_block_scholes_surface_freshness_ms(value: u64) {
     assert!(

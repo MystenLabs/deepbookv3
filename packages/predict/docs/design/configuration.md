@@ -17,8 +17,8 @@ Some structural constants are real and stable enough to state directly:
 - **DUSDC settlement asset has 6 decimals**; contract quantities are 6-decimal quote units, so `1_000_000` is one contract.
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
 - **The discrete leverage set** is exactly {1x, 1.5x, 2x, 2.5x, 3x}, expressed as 1e9-scaled multipliers. The leverage *tiers* (which probabilities permit which leverage) and the leverage floor window are upgrade-required constants, not config fields.
-- **The per-expiry funding cap** (`expiry_max_funding`) and the **maximum active expiry count** are upgrade-required constants, not admin-tunable config. The per-flow funding cap that the pool sync enforces against is read directly from the constant.
-- **Market tick sizes** must be positive, within the protocol's overflow-safe bounds, and equal to the underlying's configured minimum tick size or a 10x multiple above it. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain.
+- **The minimum per-expiry allocation cap** is an upgrade-required floor. The actual per-expiry cap is admin-tuned per cadence and snapshotted into pool accounting when a market is created.
+- **Market tick sizes** are admin-tuned per cadence and must be positive and within the protocol's overflow-safe bounds. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain.
 ## Three classes of configuration
 
 Beyond the tunable/constant split, the admin-tunable layer is organized by *when and where* a value is read. There are three classes.
@@ -91,10 +91,10 @@ Defaults are applied only in the module that constructs the config; runtime logi
 
 Several bounds are tightened on purpose so a single bad admin call cannot quietly disable a safety mechanism: the expiry-fee max multiplier floors at 1x (the ramp can never reduce fees below base); the EWMA z-score threshold floors at one sigma and is capped so it cannot be set so high the penalty never fires; the EWMA penalty rate is capped to bound how punitive the surcharge can be. For the concrete defaults and envelopes, see the source `config_constants` module; this document deliberately does not hardcode numbers that drift.
 
-## Registry tuning: underlying minimum tick size
+## Registry tuning: underlyings and cadences
 
-The `Registry` records admin-approved Propbook underlyings and a per-underlying minimum market `tick_size`. `register_underlying` is `AdminCap`-gated and validates the minimum against the same protocol tick-size bounds used at market creation. A market chooses its concrete `tick_size` at creation, and that value is committed to the `ExpiryMarket`; it must equal the underlying's minimum or a 10x multiple above it. There is no on-chain check that a tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded).
-The `Registry` also owns the `PauseCap` / `MarketLifecycleCap` allowlists; the protocol version watermark lives on `ProtocolConfig` (below). The oracle/feed objects themselves are external (`propbook`); the registry only records which Propbook underlyings Predict may create markets for and the minimum tick size each underlying permits.
+The `Registry` records admin-approved Propbook underlyings and owns cadence deployment config through its `MarketManager`. `register_underlying` is `AdminCap`-gated and records which Propbook underlyings Predict may create markets for. `set_cadence_config` is also `AdminCap`-gated and sets a cadence's `tick_size`, `max_expiry_allocation`, and `window_size` together. A zeroed cadence is disabled; an enabled cadence's tick size and allocation cap are snapshotted into each created market. There is no on-chain check that a cadence tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded).
+The `Registry` also owns the `PauseCap` / `MarketLifecycleCap` allowlists; the protocol version watermark lives on `ProtocolConfig` (below). The oracle/feed objects themselves are external (`propbook`); the registry only records which Propbook underlyings Predict may create markets for and the cadence policies used to create them.
 
 ## Versioning and pause governance
 
@@ -108,14 +108,14 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | --- | --- |
 | `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, the `trade_liquidation_budget`, global `trading_paused`, the version watermark (`bump_version_watermark`) |
 | `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
-| `AdminCap` (on `Registry`) | Register a Propbook underlying and its minimum `tick_size`, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
+| `AdminCap` (on `Registry`) | Register a Propbook underlying, set cadence deployment configs, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
 | `AdminCap` (on `PoolVault`) | Genesis-bootstrap the pool (`lock_capital`) |
 | `PauseCap` (via `Registry`) | Force global trading pause, force per-expiry mint pause — both one-way (engage only) |
 | `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also the sole authority to start the privileged pool flush (`start_pool_valuation`). No oracle-write or config authority |
 | Permissionless | Cash rebalance, settled-market sweep, and liquidation keeper flows (subject to the valuation lock, not the trading pause); LP supply/withdraw requests and their cancellation |
-| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the per-expiry funding cap and max active expiry count, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
+| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the minimum per-expiry allocation cap, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
 
-All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (pause caps, lifecycle caps, uniqueness, underlying admission/minimum tick size) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
+All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (pause caps, lifecycle caps, uniqueness, underlying admission, and cadence deployment policy) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
 
 ## Related reading
 

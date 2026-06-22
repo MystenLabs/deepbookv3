@@ -29,12 +29,12 @@ const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
-const EBlockScholesSurfaceStale: u64 = 5;
-const EBlockScholesSurfaceInvalid: u64 = 6;
-const EPythSpotInvalid: u64 = 7;
-const EWrongPythFeed: u64 = 8;
-const EWrongBlockScholesFeed: u64 = 9;
-const ELivePricingExpired: u64 = 10;
+const EBlockScholesSurfaceStale: u64 = 4;
+const EBlockScholesSurfaceInvalid: u64 = 5;
+const EPythSpotInvalid: u64 = 6;
+const EWrongPythFeed: u64 = 7;
+const EWrongBlockScholesFeed: u64 = 8;
+const ELivePricingExpired: u64 = 9;
 
 /// Predict's private pricing envelope for raw propbook surfaces. These are not
 /// oracle-source validity rules; they only bound the SVI inputs tightly enough

@@ -8,7 +8,7 @@
 #[test_only]
 module deepbook_predict::test_constants;
 
-use deepbook_predict::constants;
+use deepbook_predict::{constants, market_manager};
 use fixed_math::math;
 
 // === Test Addresses ===
@@ -61,6 +61,20 @@ public fun live_source_timestamp_ms(): u64 { 119_000 }
 /// Strikes are absolute ticks: `raw_strike = tick * tick_size`.
 public fun default_tick_size(): u64 { 1_000_000_000 }
 
+/// Default cadence used by fixtures that need an exact explicit expiry. The test
+/// clock is positioned one period before the target expiry before creation.
+public fun default_cadence_id(): u8 { market_manager::cadence_one_minute!() }
+
+/// Period for `default_cadence_id`.
+public fun default_cadence_period_ms(): u64 { constants::one_minute_ms!() }
+
+/// Default cadence window. With the test clock positioned one period before the
+/// target expiry, a one-slot window admits exactly that next expiry.
+public fun default_cadence_window_size(): u64 { 1 }
+
+/// Default per-expiry allocation cap used by test market cadence configs.
+public fun default_max_expiry_allocation(): u64 { 250_000_000_000 }
+
 /// The canonical finite strike tick the flow tests mint against. With the default
 /// 1e9 tick size it maps to the raw strike `100e9` (`default_strike_tick *
 /// default_tick_size`), the strike of `default_live_price` (≈50% for a
@@ -85,7 +99,7 @@ public fun protocol_reserve_share(): u64 { 400_000_000 }
 /// Default expiry for the composite bring-up: exactly `now + 365d` (the floor
 /// window), so the floor schedule is flat and >1x mints are admissible — the
 /// broadly-useful default for flow tests. Grid-aligned (`now` + a multiple of the
-/// resolution period) so it satisfies `create_expiry_market`'s grid assert.
+/// resolution period) so exact settlement inserts are representable.
 public fun default_expiry_ms(): u64 { 31_536_120_000 }
 
 /// Default live price seeded by `prepare_live_oracle` in the composite bring-up;
@@ -121,7 +135,7 @@ public fun leverage_one_x(): u64 { math::float_scaling!() }
 /// Short expiry (`now + 120s`) used by the lifecycle/payout flow tests: near
 /// enough that the leverage floor schedule is non-flat (a 2x order carries a real
 /// floor), unlike the far `default_expiry_ms`. Grid-aligned (`now` + 2 resolution
-/// periods) so it satisfies `create_expiry_market`'s grid assert.
+/// periods) so exact settlement inserts are representable.
 public fun short_expiry_ms(): u64 { 240_000 }
 
 /// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).

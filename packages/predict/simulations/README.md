@@ -64,10 +64,12 @@ interface.
 -   `data/scenario_dataset.csv`: ignored local source data with paired SVI/price
     snapshots.
 -   `data/scenario_config.json`: source expiry/settlement values, normal/long
-    capital sizing, mint spend ranges, fee-ramp settings, and protocol knobs.
-    Localnet setup applies the normal capital sizing and Pyth fee-ramp settings;
-    other protocol values in this file mirror Move defaults for parity and are
-    consumed directly by the generator and Python replay.
+    capital sizing, mint spend ranges, fee-ramp settings, cadence allocation,
+    normal-run terminal-floor setup, and protocol knobs. Localnet setup applies
+    the normal capital sizing, cadence allocation, Pyth fee-ramp settings, and
+    flat normal-run terminal floor; other protocol values in this file mirror
+    Move defaults for parity and are consumed directly by the generator and
+    Python replay.
 -   `data/generate_scenario.py`: random normal/long scenario generator.
 -   `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
     follow-up analysis questions (economics).
@@ -106,10 +108,11 @@ interface.
    publisher.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
    vault, registers the Propbook underlying + feeds, binds the feeds, applies
-   the expiry-fee template config, seeds the Propbook Pyth/Block Scholes feeds,
-   and creates the expiry market. Market creation reads no spot; a setup-only
-   rebalance then funds the expiry to the protocol cash floor before scenario
-   rows start.
+   the expiry-fee template config, applies the flat normal-run terminal floor,
+   enables the one-month market cadence, creates the next cadence expiry market,
+   then seeds the Propbook Pyth/Block Scholes feeds for the emitted market
+   expiry. Market creation reads no spot; a setup-only rebalance then funds the
+   expiry to the protocol cash floor before scenario rows start.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
@@ -177,12 +180,14 @@ The harness intentionally uses two time models.
 
 Normal localnet/Python parity uses synthetic localnet time. The localnet runner
 cannot advance the Sui `Clock` through a 24-hour source window without waiting
-in real time, so it creates an expiry roughly 400 days after the run starts and
-submits oracle updates with monotonic source timestamps derived from the
-localnet `Clock`. It does not use CSV source timestamps for localnet oracle
-freshness. The normal Python replay matches this parity role by using CSV
-transaction order, not exact source timestamps, for floor-index and fee-ramp
-math.
+in real time, so it creates the next one-month cadence expiry and submits oracle
+updates with monotonic source timestamps derived from the localnet `Clock`. It
+does not use CSV source timestamps for localnet oracle freshness. To keep this
+single-market parity path focused on live transaction accounting rather than
+near-expiry floor growth, localnet setup snapshots a flat terminal floor index
+for the market and the normal Python replay mirrors that value. The cadence
+expiry sits outside the normal fee-ramp window, so normal replay leaves the fee
+ramp inactive rather than using exact source timestamps.
 
 Long Python replay uses the source timestamps. The scenario generator writes
 `replay_timestamp_ms` from `price_checkpoint_timestamp_ms`,
@@ -201,13 +206,15 @@ normal localnet/Python = parity under synthetic localnet time
 long Python = real timestamp economic analysis
 ```
 
-Expiry market creation uses the Propbook underlying's approved minimum tick size
-and snapshots the concrete `tick_size`; it does not derive a centered grid from
-the first spot. The generator, Python replay, and localnet runner all use
-absolute ticks (`raw_strike = tick * tick_size`) and the finite tick domain
+Expiry market creation goes through the registry's cadence config. The localnet
+setup enables the one-month cadence with `tick_size`, `max_expiry_allocation`,
+and `window_size`, then snapshots the configured tick size and allocation into
+the created market. It does not derive a centered grid from the first spot. The
+generator, Python replay, and localnet runner all use absolute ticks
+(`raw_strike = tick * tick_size`) and the finite tick domain
 `1..pos_inf_tick - 1`. To cover a higher spot or wider strike set, raise the
-market tick size in the underlying-registration setup and both replay mirrors
-together so the three layers stay on the same absolute tick scale.
+cadence tick size in localnet setup and both replay mirrors together so the
+three layers stay on the same absolute tick scale.
 
 ## Outputs
 

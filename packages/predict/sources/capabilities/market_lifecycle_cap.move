@@ -8,7 +8,7 @@
 /// actions.
 module deepbook_predict::market_lifecycle_cap;
 
-/// Capability authorized for market lifecycle operations (market creation).
+/// Capability authorized for privileged market lifecycle operations.
 public struct MarketLifecycleCap has key, store {
     id: UID,
 }

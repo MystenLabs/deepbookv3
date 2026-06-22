@@ -51,8 +51,9 @@ public struct OracleFixture {
 }
 
 /// Stand up a registry + config + the two propbook feeds + an `ExpiryMarket` for
-/// `expiry`, with the admin-approved `tick` size. No live spot is read at creation
-/// (absolute ticks); seed live data with `prepare_live_oracle`/`prepare_real_oracle`.
+/// `expiry`, using the default cadence with the supplied `tick` size. No live spot
+/// is read at creation (absolute ticks); seed live data with
+/// `prepare_live_oracle`/`prepare_real_oracle`.
 public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
@@ -64,11 +65,14 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    registry.register_underlying(
+    registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
+    registry.set_cadence_config(
         &config,
         &admin_cap,
-        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
         tick,
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_cadence_window_size(),
     );
     return_shared(config);
     return_shared(registry);
@@ -97,6 +101,8 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut registry = scenario.take_shared<Registry>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
+    let mut creation_clock = clock::create_for_testing(scenario.ctx());
+    creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
@@ -108,11 +114,11 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        expiry,
-        tick,
-        &clock,
+        test_constants::default_cadence_id(),
+        &creation_clock,
         scenario.ctx(),
     );
+    creation_clock.destroy_for_testing();
     return_shared(config);
     return_shared(oracle_registry);
     return_shared(registry);

@@ -114,6 +114,9 @@ export interface SimState {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
+    // Expiry timestamp chosen on-chain by the registry cadence manager and emitted
+    // in MarketCreated. Stored as a decimal string so state.json stays plain JSON.
+    expiryMs: string;
     // propbook feeds replace the in-package oracle + Pyth source. There is no
     // writer cap anymore (BS surface updates are permissionless via the verified
     // `Update`).

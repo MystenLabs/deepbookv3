@@ -38,18 +38,14 @@ public macro fun min_net_premium(): u64 { 1_000_000 }
 // === Pool Funding ===
 
 /// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
-public(package) macro fun expiry_cash_floor(): u64 { 50_000_000_000 }
-
-/// Maximum active expiries that can be registered to the pool at once.
-public(package) macro fun max_active_expiry_markets(): u64 { 10 }
+public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 
-/// Global cap on net DUSDC the pool may have funded into any one expiry.
-/// Per-expiry tuning is deferred to B-rest; main carried this as a per-expiry
-/// admin config, dissolved here into a single upgrade-required risk cap.
-public(package) macro fun expiry_max_funding(): u64 { 250_000_000_000 }
+/// Minimum per-expiry allocation cap an enabled cadence may configure:
+/// 10,000 whole DUSDC in 6-decimal quote units.
+public(package) macro fun min_expiry_allocation(): u64 { 10_000_000_000 }
 
 // === Async LP Requests ===
 // Minimums and the per-flush cap are upgrade-required for now. A per-vault
@@ -73,10 +69,36 @@ public(package) macro fun min_plp_price(): u64 { 10_000_000 }
 /// Maximum executable PLP price: 100 DUSDC per PLP, in FLOAT_SCALING.
 public(package) macro fun max_plp_price(): u64 { 100_000_000_000 }
 
+// === Time Constants ===
+
+/// Milliseconds in one minute.
+public(package) macro fun one_minute_ms(): u64 { 60_000 }
+
+/// Milliseconds in five minutes.
+public(package) macro fun five_minutes_ms(): u64 { 5 * one_minute_ms!() }
+
+/// Milliseconds in one hour.
+public(package) macro fun one_hour_ms(): u64 { 60 * one_minute_ms!() }
+
+/// Milliseconds in one day.
+public(package) macro fun one_day_ms(): u64 { 24 * one_hour_ms!() }
+
+/// Milliseconds in one week.
+public(package) macro fun one_week_ms(): u64 { 7 * one_day_ms!() }
+
+/// Milliseconds in one fixed 30-day month; this is not a calendar month.
+public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
+
+/// Milliseconds in a 365-day year.
+public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
+
+/// Milliseconds in a 365-day year.
+public(package) macro fun ms_per_year(): u64 { one_year_ms!() }
+
 // === Leverage ===
 
 /// Window before expiry over which the leverage floor index rises.
-public(package) macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
+public(package) macro fun leverage_floor_window_ms(): u64 { one_year_ms!() }
 
 /// Entry probability below which only 1x mints are allowed.
 public(package) macro fun leverage_one_x_only_price_threshold(): u64 { 100_000_000 }
@@ -113,19 +135,14 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 /// Fraction of the post-staking trading fee paid by sponsor-funded incentives.
 public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
 
-/// Fraction of normal expiry funding an expiry can hold in live fee incentives.
+/// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.
 public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
 
-/// Fraction of normal expiry funding an expiry can receive over its lifetime.
+/// Fraction of the expiry allocation cap an expiry can receive over its lifetime.
 public(package) macro fun fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
 
 /// Minimum DUSDC a single fee-incentive sponsorship may contribute.
 public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
-
-// === Time Constants ===
-
-/// Milliseconds in a 365-day year.
-public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 // === Settlement ===
 
@@ -134,11 +151,12 @@ public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 /// whose signed publisher timestamp is exactly that millisecond. The off-chain
 /// resolution relayer sources that key from Pyth Lazer's exact-timestamp
 /// resolution endpoints and inserts it on this millisecond grid.
-/// `registry::create_expiry_market` requires `expiry % resolution_period_ms!() == 0`
-/// so the settling key is always producible; an off-grid expiry could never settle
-/// and would block the pool flush indefinitely (`plp::value_expiry` aborts on a
-/// past-expiry market that has no settling observation yet).
-public(package) macro fun resolution_period_ms(): u64 { 60_000 }
+/// Cadence periods are multiples of this value, so cadence-created expiries stay
+/// on a settling key the relayer can produce. An off-grid expiry could never settle
+/// and would block the pool flush indefinitely
+/// (`plp::value_expiry` aborts on a past-expiry market that has no settling
+/// observation yet).
+public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 
 // === Strike Tick Domain ===
 

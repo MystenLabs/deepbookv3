@@ -60,9 +60,9 @@ DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
 INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
-EXPIRY_CASH_FLOOR = 50_000 * DUSDC_DECIMALS
+EXPIRY_CASH_FLOOR = 10_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
-MAX_EXPIRY_FUNDING = 250_000 * DUSDC_DECIMALS
+MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
 TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
@@ -77,9 +77,9 @@ TERMINAL_REBATE_FRACTION = 0
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
-# Floor-index model for Python-only observability. Normal parity replay keeps a
-# flat index to match localnet's far-future expiry; long replay uses source
-# timestamps and settlement data from scenario_config.json.
+# Floor-index model for Python-only observability. Normal parity replay uses the
+# flat simulation template floor index; long replay uses source timestamps and
+# settlement data from scenario_config.json.
 LEVERAGE_FLOOR_WINDOW_MS = 31_536_000_000  # 365 days, core/constants.move
 LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD = 100_000_000  # 0.10, core/constants.move
 LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD = 200_000_000  # 0.20, core/constants.move
@@ -162,6 +162,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global CURVE_SAMPLES
     global PROTOCOL_RESERVE_PROFIT_SHARE
     global TRADING_LOSS_REBATE_RATE
+    global MAX_EXPIRY_ALLOCATION
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
@@ -206,6 +207,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
     )
+    MAX_EXPIRY_ALLOCATION = _config_int(
+        config,
+        "protocol",
+        "max_expiry_allocation",
+        MAX_EXPIRY_ALLOCATION,
+    )
     BACKING_BUFFER_LAMBDA = _config_int(
         config,
         "protocol",
@@ -231,12 +238,19 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "leverage_floor_window_ms",
         LEVERAGE_FLOOR_WINDOW_MS,
     )
-    MAX_EXPIRY_FLOOR_PREMIUM = _config_int(
+    configured_floor_premium = _config_int(
         config,
         "protocol",
         "max_expiry_floor_premium",
         MAX_EXPIRY_FLOOR_PREMIUM,
     )
+    normal_terminal_floor_index = _config_int(
+        config,
+        "protocol",
+        "normal_terminal_floor_index",
+        FLOAT_SCALING,
+    )
+    MAX_EXPIRY_FLOOR_PREMIUM = configured_floor_premium if long_run else normal_terminal_floor_index - FLOAT_SCALING
     LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv", LIQUIDATION_LTV)
     TERMINAL_FLOOR_INDEX = FLOAT_SCALING + MAX_EXPIRY_FLOOR_PREMIUM
 
@@ -1208,7 +1222,7 @@ def expiry_net_funding(state: dict[str, int]) -> int:
 
 
 def available_expiry_funding(state: dict[str, int]) -> int:
-    return max(0, MAX_EXPIRY_FUNDING - expiry_net_funding(state))
+    return max(0, MAX_EXPIRY_ALLOCATION - expiry_net_funding(state))
 
 
 def live_backing_reserve(model: dict[str, Any]) -> int:
