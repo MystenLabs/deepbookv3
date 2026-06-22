@@ -3,59 +3,41 @@
 
 /// Registry and creation entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects, stores admin-approved Propbook
-/// underlying configs and the expiry uniqueness index, and exposes
-/// registry-owned governance entrypoints. Runtime pool accounting, expiry risk,
-/// oracle feeds, and user positions stay in their owning modules.
+/// This module creates shared setup objects, owns registry-level capabilities,
+/// and exposes registry-owned governance/creation entrypoints. Market identity,
+/// cadence policy, underlying watermarks, and market uniqueness live in the
+/// embedded `market_manager`. Runtime pool accounting, expiry risk, oracle feeds,
+/// and user positions stay in their owning modules.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
-    config_constants,
-    constants,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
+    market_manager::{Self, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
-use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
+use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
-const EUnderlyingNotRegistered: u64 = 0;
-const EUnderlyingAlreadyRegistered: u64 = 1;
-const EInvalidExpiry: u64 = 2;
-const EMarketAlreadyCreated: u64 = 3;
 const EPauseCapNotValid: u64 = 4;
-const EInvalidMarketTickSize: u64 = 5;
 const ELifecycleCapNotValid: u64 = 6;
 const ELifecycleCapNotFound: u64 = 7;
-const EPythFeedNotBoundToUnderlying: u64 = 8;
-const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
-const EExpiryNotOnResolutionGrid: u64 = 10;
 
-/// Market uniqueness key. Predict permits one market per Propbook underlying and
-/// expiry; the market's chosen tick size is committed by the first creation.
-public struct MarketKey has copy, drop, store {
-    propbook_underlying_id: u32,
-    expiry: u64,
-}
-
-/// Shared registry for underlying admission and expiry uniqueness.
+/// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
     id: UID,
-    /// Propbook underlying ID -> admin-approved minimum market tick size. A market
-    /// on this underlying may choose this value or a 10x multiple above it.
-    underlying_min_tick_sizes: Table<u32, u64>,
-    /// Created markets keyed by `(propbook_underlying_id, expiry)`.
-    market_ids: Table<MarketKey, ID>,
+    /// Market identity, cadence deployment terms, underlying watermarks, and uniqueness.
+    market_manager: MarketManager,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
     /// Admin mints into this set and revokes from it.
     allowed_pause_caps: VecSet<ID>,
-    /// IDs of `MarketLifecycleCap` objects currently authorized for market
-    /// lifecycle entries (market creation). Admin mints into this set and
-    /// revokes from it.
+    /// IDs of `MarketLifecycleCap` objects currently authorized for privileged
+    /// lifecycle entries such as market creation and full-pool valuation. Admin
+    /// mints into this set and revokes from it.
     allowed_lifecycle_caps: VecSet<ID>,
 }
 
@@ -66,16 +48,6 @@ public fun id(registry: &Registry): ID {
     registry.id.to_inner()
 }
 
-/// Return the configured minimum tick size for a Propbook underlying, if
-/// registered.
-public fun underlying_min_tick_size(registry: &Registry, propbook_underlying_id: u32): Option<u64> {
-    if (registry.underlying_min_tick_sizes.contains(propbook_underlying_id)) {
-        option::some(*registry.underlying_min_tick_sizes.borrow(propbook_underlying_id))
-    } else {
-        option::none()
-    }
-}
-
 /// Return the expiry market ID for `(propbook_underlying_id, expiry)`, if one
 /// has been created.
 public fun expiry_market_id(
@@ -83,12 +55,12 @@ public fun expiry_market_id(
     propbook_underlying_id: u32,
     expiry: u64,
 ): Option<ID> {
-    let key = MarketKey { propbook_underlying_id, expiry };
-    if (registry.market_ids.contains(key)) {
-        option::some(*registry.market_ids.borrow(key))
-    } else {
-        option::none()
-    }
+    registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
+}
+
+/// Return `(tick_size, expiry_max_allocation, window_size)` for a cadence.
+public fun cadence_config(registry: &Registry, cadence_id: u8): (u64, u64, u64) {
+    registry.market_manager.cadence_config(cadence_id)
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -113,8 +85,8 @@ public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, paus
 
 // === MarketLifecycleCap Lifecycle (admin) ===
 
-/// Mint a new `MarketLifecycleCap`. Admin-only and version-gated (granting
-/// market-creation authority under a version freeze is the risky direction).
+/// Mint a new `MarketLifecycleCap`. Admin-only and version-gated because
+/// granting privileged lifecycle authority under a version freeze is risky.
 public fun mint_lifecycle_cap(
     registry: &mut Registry,
     config: &ProtocolConfig,
@@ -176,48 +148,49 @@ public fun pause_expiry_market_mint_pause_cap(
     market.pause_mint();
 }
 
-/// Record admin approval of one Propbook underlying and its minimum market tick
-/// size. Source IDs and canonical oracle object IDs remain owned by Propbook;
-/// this row only gates which underlyings Predict will build markets on and the
-/// smallest tick size those markets may choose.
+/// Record admin approval of one Propbook underlying. Source IDs and canonical
+/// oracle object IDs remain owned by Propbook; this row only gates which
+/// underlyings Predict will build markets on and stores deployment watermarks.
 public fun register_underlying(
     registry: &mut Registry,
     config: &ProtocolConfig,
     _admin_cap: &AdminCap,
     propbook_underlying_id: u32,
-    min_tick_size: u64,
 ) {
     config.assert_version();
-    assert!(
-        !registry.underlying_min_tick_sizes.contains(propbook_underlying_id),
-        EUnderlyingAlreadyRegistered,
-    );
-    config_constants::assert_market_tick_size_bounds(min_tick_size);
-    registry.underlying_min_tick_sizes.add(propbook_underlying_id, min_tick_size);
+    registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
-/// Create the ExpiryMarket for one future expiry on a Propbook underlying.
+/// Set all deployment terms for one cadence. Passing zero for all three values
+/// disables the cadence; otherwise all values must be nonzero and valid.
+public fun set_cadence_config(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    cadence_id: u8,
+    tick_size: u64,
+    expiry_max_allocation: u64,
+    window_size: u64,
+) {
+    config.assert_version();
+    registry
+        .market_manager
+        .set_cadence_config(cadence_id, tick_size, expiry_max_allocation, window_size);
+}
+
+/// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
 ///
-/// The registry enforces one market per `(propbook_underlying_id, expiry)`, that
-/// the underlying is admin-approved for Predict, that the chosen tick size is a
-/// valid 10x multiple of the underlying's minimum, and — via Propbook's
-/// admin-gated canonical binding — that both required oracle kinds are currently
-/// bound for the underlying. The market snapshots only the underlying and its
-/// tick size; priced flows resolve the current canonical oracle object IDs from
+/// Requires an allowlisted `MarketLifecycleCap`. The market manager enforces one
+/// market per `(propbook_underlying_id, expiry)`, that the underlying is
+/// admin-approved for Predict, that the cadence is enabled and inside its
+/// deployment window, that lower-rank cadences do not overlap enabled higher-rank
+/// cadences, and — via Propbook's admin-gated canonical binding — that both
+/// required oracle kinds are currently bound for the underlying. The market
+/// snapshots the cadence tick size, while pool accounting snapshots the cadence
+/// allocation cap. Priced flows resolve current canonical oracle object IDs from
 /// Propbook so a Propbook rebind affects existing markets. The market is created
-/// with zero cash and registered with the pool vault as an accounting row only;
-/// it is not mintable until `plp::rebalance_expiry_cash` funds it.
-///
-/// `expiry` must fall on the resolution-feed grid (`expiry %
-/// constants::resolution_period_ms!() == 0`). Terminal settlement is an exact
-/// whole-millisecond lookup keyed at `expiry` (`pyth_feed::insert_at` accepts only
-/// a print at exactly that millisecond), which the off-chain resolution relayer
-/// sources from Pyth Lazer's exact-timestamp resolution endpoints and inserts only
-/// on that grid; an off-grid expiry could never settle. While a past-expiry market
-/// is awaiting its settling observation it has no solvency-safe NAV, so the pool
-/// flush (`plp::value_expiry`) aborts until the observation lands — the keeper
-/// retries and does not flush while an active market is in that pending-settlement
-/// window (bounded to a few seconds at the grid cadence).
+/// with zero cash and registered with the pool vault as an accounting row only; it
+/// is not mintable until `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -225,8 +198,7 @@ public fun create_expiry_market(
     propbook_registry: &OracleRegistry,
     lifecycle_cap: &MarketLifecycleCap,
     propbook_underlying_id: u32,
-    expiry: u64,
-    tick_size: u64,
+    cadence_id: u8,
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
@@ -234,25 +206,9 @@ public fun create_expiry_market(
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
-    assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
-    // Expiry must land on the resolution-feed grid so the exact-ms settling Pyth
-    // observation is always producible; an off-grid expiry could never settle and
-    // would block the pool flush indefinitely.
-    assert!(expiry % constants::resolution_period_ms!() == 0, EExpiryNotOnResolutionGrid);
-    let market_key = MarketKey { propbook_underlying_id, expiry };
-    let min_tick_size = registry.assert_underlying_registered(propbook_underlying_id);
-    assert_market_tick_size(min_tick_size, tick_size);
-    assert!(
-        propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
-        EPythFeedNotBoundToUnderlying,
-    );
-    assert!(
-        propbook_registry
-            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
-            .is_some(),
-        EBlockScholesFeedNotBoundToUnderlying,
-    );
-    assert!(!registry.market_ids.contains(market_key), EMarketAlreadyCreated);
+    let (expiry, tick_size, expiry_max_allocation) = registry
+        .market_manager
+        .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
     let expiry_market_id = expiry_market::create_and_share(
         config,
         propbook_underlying_id,
@@ -261,8 +217,10 @@ public fun create_expiry_market(
         tick_size,
         ctx,
     );
-    pool_vault.register_expiry(expiry_market_id);
-    registry.market_ids.add(market_key, expiry_market_id);
+    pool_vault.register_expiry(expiry_market_id, expiry_max_allocation);
+    registry
+        .market_manager
+        .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
 
     expiry_market_id
 }
@@ -293,8 +251,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
-            underlying_min_tick_sizes: table::new(ctx),
-            market_ids: table::new(ctx),
+            market_manager: market_manager::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_lifecycle_caps: vec_set::empty(),
         },
@@ -311,24 +268,6 @@ fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
 /// revoked.
 fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
-}
-
-fun assert_underlying_registered(registry: &Registry, propbook_underlying_id: u32): u64 {
-    assert!(
-        registry.underlying_min_tick_sizes.contains(propbook_underlying_id),
-        EUnderlyingNotRegistered,
-    );
-    *registry.underlying_min_tick_sizes.borrow(propbook_underlying_id)
-}
-
-fun assert_market_tick_size(min_tick_size: u64, tick_size: u64) {
-    config_constants::assert_market_tick_size_bounds(tick_size);
-    assert!(tick_size >= min_tick_size, EInvalidMarketTickSize);
-    let mut allowed = min_tick_size;
-    while (allowed < tick_size) {
-        allowed = allowed * 10;
-    };
-    assert!(allowed == tick_size, EInvalidMarketTickSize);
 }
 
 // === Test-Only Functions ===

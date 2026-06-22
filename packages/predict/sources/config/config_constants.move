@@ -123,10 +123,14 @@ public(package) fun assert_min_fee(value: u64) {
 
 /// Window before expiry over which trade fees ramp up to the per-expiry max
 /// multiplier. Five minutes is the shortest admin-tunable window.
-public(package) macro fun default_expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
-public(package) macro fun min_expiry_fee_window_ms(): u64 { 5 * 60 * 1000 }
+public(package) macro fun default_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::one_day_ms!()
+}
+public(package) macro fun min_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::five_minutes_ms!()
+}
 public(package) macro fun max_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::ms_per_year!()
+    deepbook_predict::constants::one_year_ms!()
 }
 
 public(package) fun assert_expiry_fee_window_ms(value: u64) {
@@ -191,7 +195,9 @@ public(package) fun assert_max_ask_price(value: u64) {
 
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
-public(package) macro fun max_pyth_spot_freshness_ms(): u64 { 60_000 }
+public(package) macro fun max_pyth_spot_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
 
 public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     assert!(
@@ -205,7 +211,9 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
 // SVI window before the oracle moved to per-expiry surfaces).
 public(package) macro fun default_block_scholes_surface_freshness_ms(): u64 { 3_000 }
 public(package) macro fun min_block_scholes_surface_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 { 60_000 }
+public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
 
 public(package) fun assert_block_scholes_surface_freshness_ms(value: u64) {
     assert!(

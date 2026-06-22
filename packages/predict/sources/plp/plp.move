@@ -556,8 +556,12 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
 /// Register a freshly created expiry market with the pool as an accounting row.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_expiry_market`.
-public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID) {
-    vault.expiry_accounting.register_expiry(expiry_market_id);
+public(package) fun register_expiry(
+    vault: &mut PoolVault,
+    expiry_market_id: ID,
+    expiry_max_allocation: u64,
+) {
+    vault.expiry_accounting.register_expiry(expiry_market_id, expiry_max_allocation);
 }
 
 /// Lock-free per-market cash flow shared by the public entrypoint and the
@@ -587,14 +591,10 @@ public(package) fun rebalance_expiry_cash_inner(
     let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
     if (cash_balance < target_cash) {
         let requested_top_up = target_cash - cash_balance;
-        let funding_room = vault
-            .expiry_accounting
-            .available_expiry_funding(expiry_market_id, constants::expiry_max_funding!());
+        let funding_room = vault.expiry_accounting.available_expiry_funding(expiry_market_id);
         let top_up = requested_top_up.min(vault.expiry_accounting.idle_balance()).min(funding_room);
         if (top_up > 0) {
-            let cash = vault
-                .expiry_accounting
-                .send_expiry_cash(expiry_market_id, constants::expiry_max_funding!(), top_up);
+            let cash = vault.expiry_accounting.send_expiry_cash(expiry_market_id, top_up);
             market.receive_pool_cash(cash);
             vault.emit_expiry_cash_rebalanced(market, expiry_market_id, top_up, true, target_cash);
         };
@@ -654,26 +654,12 @@ public(package) fun lp_pool_value(
 
 // === Private Functions ===
 
-fun fee_incentive_live_target(): u64 {
-    math::mul(
-        constants::expiry_max_funding!(),
+fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
+    let expiry_max_allocation = vault.expiry_accounting.expiry_max_allocation(expiry_market_id);
+    let requested_allocation = math::mul(
+        expiry_max_allocation,
         constants::fee_incentive_live_target_rate!(),
     )
-}
-
-fun fee_incentive_lifetime_cap(): u64 {
-    math::mul(
-        constants::expiry_max_funding!(),
-        constants::fee_incentive_lifetime_cap_rate!(),
-    )
-}
-
-fun sync_fee_incentives(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    expiry_market_id: ID,
-) {
-    let requested_allocation = fee_incentive_live_target()
         .saturating_sub(market.fee_incentive_balance())
         .min(vault.fee_incentive_reserve.value());
     if (requested_allocation == 0) return;
@@ -682,14 +668,15 @@ fun sync_fee_incentives(
         .expiry_accounting
         .record_fee_incentives_allocated_up_to(
             expiry_market_id,
-            fee_incentive_lifetime_cap(),
+            math::mul(
+                expiry_max_allocation,
+                constants::fee_incentive_lifetime_cap_rate!(),
+            ),
             requested_allocation,
         );
     if (allocation == 0) return;
 
-    let incentives = vault
-        .fee_incentive_reserve
-        .split(allocation);
+    let incentives = vault.fee_incentive_reserve.split(allocation);
     market.receive_fee_incentives(incentives);
     vault_events::emit_fee_incentives_allocated(
         vault.id(),
