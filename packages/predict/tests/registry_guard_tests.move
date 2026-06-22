@@ -231,7 +231,11 @@ fun create_expiry_market_skips_higher_rank_overlap() {
     );
 
     assert!(
-        reg.expiry_market_id(test_constants::propbook_underlying_id(), constants::five_minutes_ms!())
+        reg
+            .expiry_market_id(
+                test_constants::propbook_underlying_id(),
+                constants::five_minutes_ms!(),
+            )
             .is_none(),
     );
     assert_market_id(&reg, constants::five_minutes_ms!() + constants::one_minute_ms!(), first_id);
