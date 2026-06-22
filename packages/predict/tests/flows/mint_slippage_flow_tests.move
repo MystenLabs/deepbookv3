@@ -6,6 +6,7 @@
 module deepbook_predict::mint_slippage_flow_tests;
 
 use deepbook_predict::{constants, expiry_market, flow_test_helpers as helpers, test_constants};
+use std::unit_test::assert_eq;
 
 /// ATM 1x UP over the default short-expiry fixture:
 /// net_premium = floor(0.5 * 1_000_000_000) = 500_000_000
@@ -13,7 +14,8 @@ use deepbook_predict::{constants, expiry_market, flow_test_helpers as helpers, t
 /// no builder fee and EWMA penalty disabled, so all-in cost is 505_000_000.
 const ATM_ENTRY_PROBABILITY: u64 = 500_000_000;
 const ONE_X_MINT_COST: u64 = 505_000_000;
-const POST_FULL_MINT_BALANCE: u64 = 495_000_000;
+const ONE_X_MINT_FEE: u64 = 5_000_000;
+const ONE_X_MINT_REBATE_RESERVE: u64 = 2_500_000;
 
 #[test]
 fun mint_exact_quantity_accepts_exact_slippage_guards() {
@@ -24,13 +26,11 @@ fun mint_exact_quantity_accepts_exact_slippage_guards() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
 
-    let order_id = fx.mint_exact_quantity(
+    let order_id = fx.mint_exact_quantity_without_root(
         &config,
         &oracle_registry,
         &mut wrapper,
-        &root,
         &mut market,
         &pyth,
         &bs,
@@ -43,15 +43,18 @@ fun mint_exact_quantity_accepts_exact_slippage_guards() {
     );
 
     assert!(helpers::has_position(&wrapper, expiry_id, order_id));
-    helpers::check_manager(
-        &fx,
-        &wrapper,
-        &root,
-        expiry_id,
-        helpers::expected_manager_state(POST_FULL_MINT_BALANCE, 5_000_000, 1, 0, 0),
+    assert_eq!(helpers::fees_paid(&wrapper, expiry_id), ONE_X_MINT_FEE);
+    assert_eq!(helpers::position_count(&wrapper, expiry_id), 1);
+    helpers::check_market_cash(
+        &market,
+        helpers::expected_market_cash(
+            test_constants::default_seeded_expiry_cash() + ONE_X_MINT_COST,
+            test_constants::mint_quantity(),
+            ONE_X_MINT_REBATE_RESERVE,
+        ),
     );
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_without_root(wrapper);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.finish();
 }
@@ -65,13 +68,11 @@ fun mint_exact_quantity_aborts_above_max_cost() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
 
-    fx.mint_exact_quantity(
+    fx.mint_exact_quantity_without_root(
         &config,
         &oracle_registry,
         &mut wrapper,
-        &root,
         &mut market,
         &pyth,
         &bs,
@@ -83,7 +84,7 @@ fun mint_exact_quantity_aborts_above_max_cost() {
         std::u64::max_value!(),
     );
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_without_root(wrapper);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.finish();
     abort 999
@@ -98,13 +99,11 @@ fun mint_exact_quantity_aborts_above_max_probability() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
 
-    fx.mint_exact_quantity(
+    fx.mint_exact_quantity_without_root(
         &config,
         &oracle_registry,
         &mut wrapper,
-        &root,
         &mut market,
         &pyth,
         &bs,
@@ -116,7 +115,7 @@ fun mint_exact_quantity_aborts_above_max_probability() {
         ATM_ENTRY_PROBABILITY - 1,
     );
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_without_root(wrapper);
     helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.finish();
     abort 999

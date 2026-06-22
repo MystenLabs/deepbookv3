@@ -366,6 +366,12 @@ public fun return_account(wrapper: AccountWrapper, root: AccumulatorRoot) {
     return_shared(root);
 }
 
+/// Return only the shared wrapper for tests that exercise stored-balance paths
+/// without an `AccumulatorRoot`.
+public fun return_account_without_root(wrapper: AccountWrapper) {
+    return_shared(wrapper);
+}
+
 /// The trader's account owner address.
 public fun owner(trader: &Trader): address { trader.owner }
 
@@ -554,6 +560,42 @@ public fun mint_exact_quantity(
         max_cost,
         max_probability,
         root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// Mint one exact-quantity order directly against stored account balance. This is
+/// only for stable-framework tests that cannot construct an `AccumulatorRoot`.
+public fun mint_exact_quantity_without_root(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    let account = wrapper.load_account_mut(auth);
+    market.mint_exact_quantity_for_testing(
+        account,
+        config,
+        oracle_registry,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        max_cost,
+        max_probability,
         &self.clock,
         self.scenario.ctx(),
     )

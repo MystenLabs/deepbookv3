@@ -920,6 +920,42 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
 
 // === Test-Only Functions ===
 
+/// Test seam for stored-balance trade flow coverage on the stable framework, where
+/// `AccumulatorRoot` cannot be constructed in Move tests.
+#[test_only]
+public fun mint_exact_quantity_for_testing(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    market.mint_exact_quantity_internal(
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        max_cost,
+        max_probability,
+        clock,
+        ctx,
+    )
+}
+
 #[test_only]
 public fun receive_cash_for_testing(market: &mut ExpiryMarket, funds: Coin<DUSDC>) {
     market.cash.receive(funds.into_balance());
