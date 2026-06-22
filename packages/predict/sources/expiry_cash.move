@@ -51,11 +51,6 @@ public(package) fun free_cash(cash: &ExpiryCash): u64 {
     cash.balance().saturating_sub(cash.rebate_reserve())
 }
 
-/// Return payout plus unresolved rebate reserve cash required to keep the expiry backed.
-public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64 {
-    payout_liability + cash.rebate_reserve()
-}
-
 /// Abort unless current cash covers payout liability plus unresolved rebate reserve.
 public(package) fun assert_backing(cash: &ExpiryCash, payout_liability: u64) {
     assert!(cash.balance() >= cash.required_cash(payout_liability), EInsufficientCash);
@@ -87,11 +82,12 @@ public(package) fun pay_authorized(cash: &mut ExpiryCash, amount: u64): Balance<
 }
 
 /// Join trade-fee cash and add nonzero fees to unresolved rebate basis.
-public(package) fun collect_trade_fee(cash: &mut ExpiryCash, fee: Balance<DUSDC>): u64 {
+public(package) fun collect_trade_fee(cash: &mut ExpiryCash, fee: Balance<DUSDC>) {
     let fee_amount = fee.value();
     cash.cash_balance.join(fee);
-    if (fee_amount > 0) {
-        cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid + fee_amount;
-    };
-    fee_amount
+    cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid + fee_amount;
+}
+
+fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64 {
+    payout_liability + cash.rebate_reserve()
 }

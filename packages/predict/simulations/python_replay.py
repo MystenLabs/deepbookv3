@@ -1541,6 +1541,7 @@ def order_minted_update(
         "quantity": str(mint["quantity"]),
         "contribution": str(terms["contribution"]),
         "trading_fee": str(fee_amount),
+        "fee_incentive_subsidy": "0",
         "builder_fee": "0",
         "penalty_fee": "0",
     }
@@ -1550,10 +1551,13 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
     if update["type"] == "order_minted":
         contribution = int(update["contribution"])
         trading_fee = int(update["trading_fee"])
+        fee_incentive_subsidy = int(update.get("fee_incentive_subsidy", 0))
         builder_fee = int(update["builder_fee"])
         penalty_fee = int(update["penalty_fee"])
         quantity = int(update["quantity"])
-        state["manager_balance"] -= contribution + trading_fee + builder_fee + penalty_fee
+        state["manager_balance"] -= (
+            contribution + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
+        )
         state["expiry_cash_balance"] += contribution + trading_fee + penalty_fee
         state["expiry_unresolved_trading_fees"] += trading_fee
         state["open_order_count"] += 1
@@ -1939,7 +1943,9 @@ def apply_manager_summary_update(summary: dict[str, int], update: dict[str, Any]
     update_type = update["type"]
     if update_type == "order_minted":
         summary["gross_paid_to_expiry"] += int(update["contribution"])
-        summary["trading_fees_paid"] += int(update["trading_fee"])
+        summary["trading_fees_paid"] += int(update["trading_fee"]) - int(
+            update.get("fee_incentive_subsidy", 0)
+        )
     elif update_type == "live_order_redeemed":
         summary["gross_received_from_expiry"] += int(update["redeem_amount"])
         summary["trading_fees_paid"] += int(update["trading_fee"])

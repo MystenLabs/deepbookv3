@@ -398,6 +398,7 @@ function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unkn
         quantity: decimal(json.quantity),
         contribution: decimal(json.net_premium),
         trading_fee: decimal(json.trading_fee),
+        fee_incentive_subsidy: decimal(json.fee_incentive_subsidy ?? 0),
         builder_fee: decimal(json.builder_fee),
         penalty_fee: decimal(json.penalty_fee),
     };
@@ -612,10 +613,12 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     if (update.type === "order_minted") {
         const contribution = BigInt(decimal(update.contribution));
         const tradingFee = BigInt(decimal(update.trading_fee));
+        const feeIncentiveSubsidy = BigInt(decimal(update.fee_incentive_subsidy ?? 0));
         const builderFee = BigInt(decimal(update.builder_fee));
         const penaltyFee = BigInt(decimal(update.penalty_fee));
         const quantity = BigInt(decimal(update.quantity));
-        state.managerBalance -= contribution + tradingFee + builderFee + penaltyFee;
+        state.managerBalance -=
+            contribution + (tradingFee - feeIncentiveSubsidy) + builderFee + penaltyFee;
         state.expiryCashBalance += contribution + tradingFee + penaltyFee;
         state.expiryUnresolvedTradingFees += tradingFee;
         state.openOrderCount += 1n;

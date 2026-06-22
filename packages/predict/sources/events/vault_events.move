@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault events for Predict: DEEP staking, expiry cash/profit, and the async
-/// LP supply/withdraw request → flush lifecycle (the flush event carries the
-/// full-pool valuation it priced fills at).
+/// Pool-vault events for Predict: DEEP staking, expiry cash/profit, fee
+/// incentives, and the async LP supply/withdraw request → flush lifecycle (the
+/// flush event carries the full-pool valuation it priced fills at).
 module deepbook_predict::vault_events;
 
 use sui::event;
@@ -161,6 +161,34 @@ public struct FlushExecuted has copy, drop, store {
 public struct CapitalLocked has copy, drop, store {
     pool_vault_id: ID,
     amount: u64,
+}
+
+/// Emitted when a sponsor contributes DUSDC to the pool-level fee incentive reserve.
+public struct FeeIncentivesSponsored has copy, drop, store {
+    pool_vault_id: ID,
+    sponsor: address,
+    amount: u64,
+    reserve_after: u64,
+}
+
+/// Emitted when pool-level sponsor funds are allocated into an expiry's local
+/// fee-incentive balance.
+public struct FeeIncentivesAllocated has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    pool_reserve_after: u64,
+    expiry_incentive_balance_after: u64,
+    expiry_incentives_allocated_after: u64,
+}
+
+/// Emitted when a settled expiry returns unused local fee incentives to the
+/// pool-level reserve.
+public struct FeeIncentivesReturned has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    pool_reserve_after: u64,
 }
 
 // === Public-Package Functions ===
@@ -375,4 +403,50 @@ public(package) fun emit_flush_executed(
 
 public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {
     event::emit(CapitalLocked { pool_vault_id, amount });
+}
+
+public(package) fun emit_fee_incentives_sponsored(
+    pool_vault_id: ID,
+    sponsor: address,
+    amount: u64,
+    reserve_after: u64,
+) {
+    event::emit(FeeIncentivesSponsored {
+        pool_vault_id,
+        sponsor,
+        amount,
+        reserve_after,
+    });
+}
+
+public(package) fun emit_fee_incentives_allocated(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    pool_reserve_after: u64,
+    expiry_incentive_balance_after: u64,
+    expiry_incentives_allocated_after: u64,
+) {
+    event::emit(FeeIncentivesAllocated {
+        pool_vault_id,
+        expiry_market_id,
+        amount,
+        pool_reserve_after,
+        expiry_incentive_balance_after,
+        expiry_incentives_allocated_after,
+    });
+}
+
+public(package) fun emit_fee_incentives_returned(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    pool_reserve_after: u64,
+) {
+    event::emit(FeeIncentivesReturned {
+        pool_vault_id,
+        expiry_market_id,
+        amount,
+        pool_reserve_after,
+    });
 }

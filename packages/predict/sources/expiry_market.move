@@ -5,10 +5,10 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns trade
 /// execution, strike exposure state, and an embedded expiry-cash custody
-/// component. Live oracle validation is delegated to `pricing::load_live_pricer`;
-/// this module owns market flow policy and then passes loaded `Pricer` snapshots
-/// into exposure business logic. Pool-wide PLP accounting and profit accounting
-/// remain outside this module.
+/// component, plus local sponsor-funded fee incentives. Live oracle validation is
+/// delegated to `pricing::load_live_pricer`; this module owns market flow policy
+/// and then passes loaded `Pricer` snapshots into exposure business logic.
+/// Pool-wide PLP accounting and profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
 
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
@@ -46,6 +46,8 @@ public struct ExpiryMarket has key {
     settlement_price: Option<u64>,
     /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
     cash: ExpiryCash,
+    /// Sponsor-funded DUSDC available to subsidize this market's taker fees.
+    fee_incentive_balance: Balance<DUSDC>,
     /// Exposure lifecycle state for this expiry's strike ticks.
     strike_exposure: StrikeExposure,
     /// Smoothed gas-price stats backing the congestion trade penalty.
@@ -81,6 +83,11 @@ public fun cash_balance(market: &ExpiryMarket): u64 {
 /// Return DUSDC reserved for unresolved trading loss rebates.
 public fun rebate_reserve(market: &ExpiryMarket): u64 {
     market.cash.rebate_reserve()
+}
+
+/// Return sponsor-funded DUSDC available to subsidize this market's taker fees.
+public fun fee_incentive_balance(market: &ExpiryMarket): u64 {
+    market.fee_incentive_balance.value()
 }
 
 /// Return the trading loss rebate rate snapshotted for this expiry.
@@ -384,6 +391,18 @@ public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<D
     market.assert_cash_backing();
 }
 
+/// Receive sponsor-funded fee incentives allocated by the pool vault.
+public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<DUSDC>) {
+    market.fee_incentive_balance.join(incentives);
+}
+
+/// Release all unused local fee incentives back to the pool reserve.
+public(package) fun release_fee_incentives(market: &mut ExpiryMarket): Balance<DUSDC> {
+    let amount = market.fee_incentive_balance.value();
+    if (amount == 0) return balance::zero();
+    market.fee_incentive_balance.split(amount)
+}
+
 /// Release pool cash while preserving expiry-local payout and rebate backing.
 public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
     if (amount == 0) {
@@ -403,7 +422,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
     let settlement_price = market.settlement_price();
     let settled_liability = market.materialize_settled_liability();
-    let reserved_cash = market.cash.required_cash(settled_liability);
+    let reserved_cash = settled_liability + market.cash.rebate_reserve();
     market.cash.assert_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
@@ -441,6 +460,7 @@ public(package) fun create_and_share(
         expiry,
         settlement_price: option::none(),
         cash: expiry_cash::new(cash_config),
+        fee_incentive_balance: balance::zero(),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
             expiry,
@@ -505,6 +525,12 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     } else {
         0
     }
+}
+
+fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
+    math::mul(fee_amount, constants::fee_incentive_subsidy_rate!())
+        .min(fee_amount)
+        .min(market.fee_incentive_balance.value())
 }
 
 fun redeem_liquidated_order(
@@ -591,7 +617,8 @@ fun mint_internal(
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
 
-    let (builder_fee_amount, builder_code_id) = market.settle_mint_payment(
+    let builder_code_id = predict_account::builder_code_id(account);
+    let (builder_fee_amount, fee_incentive_subsidy) = market.settle_mint_payment(
         account,
         &minted_order,
         net_premium,
@@ -609,6 +636,7 @@ fun mint_internal(
         entry_probability,
         net_premium,
         fee_amount,
+        fee_incentive_subsidy,
         builder_fee_amount,
         penalty_amount,
     );
@@ -711,7 +739,8 @@ fun redeem_live_internal(
         option::some(replacement_order_id)
     };
 
-    let (builder_fee_amount, penalty_amount, builder_code_id) = market.settle_live_redeem_payment(
+    let builder_code_id = predict_account::builder_code_id(account);
+    let (builder_fee_amount, penalty_amount) = market.settle_live_redeem_payment(
         account,
         redeem_amount,
         fee_amount,
@@ -766,11 +795,12 @@ fun redeem_settled_internal(
     );
 }
 
-/// Settle a mint payment and return the builder fee paid.
+/// Settle a mint payment and return the builder fee and fee incentive subsidy.
 ///
 /// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
 /// into expiry cash as surplus: it is not part of the rebate fee basis and
-/// earns no builder cut.
+/// earns no builder cut. Fee incentives subsidize only the trader-paid portion
+/// of the trading fee; the expiry still collects the full fee amount.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -779,23 +809,26 @@ fun settle_mint_payment(
     fee_amount: u64,
     penalty_amount: u64,
     ctx: &mut TxContext,
-): (u64, Option<ID>) {
+): (u64, u64) {
     let quantity = order.quantity();
     let builder_code_id = predict_account::builder_code_id(account);
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let withdraw_amount = net_premium + fee_amount + builder_fee_amount + penalty_amount;
+    let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
+    let trader_fee_amount = fee_amount - fee_subsidy_amount;
+    let withdraw_amount = net_premium + trader_fee_amount + builder_fee_amount + penalty_amount;
 
     predict_account::add_position(account, market.id(), order.id(), order.id(), ctx);
     let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(copy builder_code_id, builder_fee_payment);
-    let fee_payment = payment.split(fee_amount);
-    market.collect_trade_fee(account, fee_payment, ctx);
+    let mut fee_payment = payment.split(trader_fee_amount);
+    fee_payment.join(market.fee_incentive_balance.split(fee_subsidy_amount));
+    market.collect_trade_fee(account, fee_payment, trader_fee_amount, ctx);
     // Remaining balance is the net premium plus the penalty surplus.
     market.cash.receive(payment);
 
     market.assert_cash_backing();
-    (builder_fee_amount, builder_code_id)
+    (builder_fee_amount, fee_subsidy_amount)
 }
 
 /// Settle a live redeem and return the builder fee and penalty actually applied.
@@ -811,7 +844,7 @@ fun settle_live_redeem_payment(
     penalty_amount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
-): (u64, u64, Option<ID>) {
+): (u64, u64) {
     let builder_code_id = predict_account::builder_code_id(account);
     let builder_fee_amount = builder_fee_amount(
         &builder_code_id,
@@ -825,14 +858,14 @@ fun settle_live_redeem_payment(
     let mut payout = market.cash.pay_authorized(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
-    market.collect_trade_fee(account, fee, ctx);
+    market.collect_trade_fee(account, fee, fee_amount, ctx);
     send_builder_fee(copy builder_code_id, builder_fee);
     // Penalty surplus stays in expiry cash rather than flowing to the redeemer.
     market.cash.receive(payout.split(penalty_amount));
 
     market.assert_cash_backing();
     account.deposit<DUSDC>(payout.into_coin(ctx));
-    (builder_fee_amount, penalty_amount, builder_code_id)
+    (builder_fee_amount, penalty_amount)
 }
 
 fun settle_settled_redeem_payment(
@@ -855,11 +888,11 @@ fun collect_trade_fee(
     market: &mut ExpiryMarket,
     account: &mut Account,
     fee: Balance<DUSDC>,
+    trader_fee_amount: u64,
     ctx: &mut TxContext,
 ) {
-    let fee_amount = market.cash.collect_trade_fee(fee);
-    if (fee_amount == 0) return;
-    predict_account::record_trading_fee_paid(account, market.id(), fee_amount, ctx);
+    market.cash.collect_trade_fee(fee);
+    predict_account::record_trading_fee_paid(account, market.id(), trader_fee_amount, ctx);
 }
 
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {

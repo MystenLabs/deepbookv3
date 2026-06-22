@@ -6,9 +6,10 @@
 /// This module owns pool idle DUSDC custody, the durable set of expiries
 /// registered to a pool, the active expiry index used for valuation, DUSDC sent
 /// from the main pool into each expiry, DUSDC received back from each expiry,
-/// terminal cash watermarks, and per-expiry net funding cap checks. It does not
-/// classify expiry-local liabilities or apply PLP reserve policy; PoolVault uses
-/// the aggregate profit basis to price PLP and decide protocol reserve transfers.
+/// lifetime fee-incentive allocations, terminal cash watermarks, and per-expiry
+/// cap checks. It does not classify expiry-local liabilities or apply PLP reserve
+/// policy; PoolVault uses the aggregate profit basis to price PLP and decide
+/// protocol reserve transfers.
 module deepbook_predict::pool_accounting;
 
 use deepbook_predict::constants;
@@ -47,6 +48,8 @@ public struct RegisteredExpiry has store {
     sent_to_expiry: u64,
     /// DUSDC returned from this expiry to the main pool.
     received_from_expiry: u64,
+    /// Lifetime sponsor-funded fee incentives allocated to this expiry.
+    fee_incentives_allocated: u64,
     /// True once this expiry has started terminal profit/loss accounting.
     terminal_accounting_started: bool,
     /// Received amount already consumed by terminal accounting.
@@ -124,6 +127,7 @@ public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
             RegisteredExpiry {
                 sent_to_expiry: 0,
                 received_from_expiry: 0,
+                fee_incentives_allocated: 0,
                 terminal_accounting_started: false,
                 terminal_received_watermark: 0,
             },
@@ -166,6 +170,25 @@ public(package) fun send_expiry_cash(
     if (amount == 0) return balance::zero();
     ledger.record_sent_to_expiry(expiry_market_id, max_expiry_funding, amount);
     ledger.idle_balance.split(amount)
+}
+
+/// Record up to `requested_amount` of sponsor-funded fee incentives under the
+/// expiry lifetime cap. Returns the amount recorded and lifetime allocated total
+/// after the update.
+public(package) fun record_fee_incentives_allocated_up_to(
+    ledger: &mut Ledger,
+    expiry_market_id: ID,
+    max_fee_incentives: u64,
+    requested_amount: u64,
+): (u64, u64) {
+    ledger.assert_registered_expiry(expiry_market_id);
+    let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
+    assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
+    let amount = requested_amount.min(
+        max_fee_incentives.saturating_sub(flow.fee_incentives_allocated),
+    );
+    flow.fee_incentives_allocated = flow.fee_incentives_allocated + amount;
+    (amount, flow.fee_incentives_allocated)
 }
 
 /// Receive DUSDC returned from an expiry.

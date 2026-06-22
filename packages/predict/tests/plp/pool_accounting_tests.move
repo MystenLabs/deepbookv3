@@ -18,6 +18,9 @@ use sui::balance;
 
 const EXPIRY_A: address = @0xA;
 const EXPIRY_B: address = @0xB;
+const FEE_INCENTIVE_CAP: u64 = 100;
+const FIRST_FEE_INCENTIVE_ALLOCATION: u64 = 40;
+const OVER_CAP_FEE_INCENTIVE_REQUEST: u64 = 80;
 
 #[test]
 fun send_and_receive_track_profit_basis() {
@@ -42,6 +45,40 @@ fun send_and_receive_track_profit_basis() {
     let (sent, received) = ledger.expiry_flow_amounts(id);
     assert_eq!(sent, 700);
     assert_eq!(received, 250);
+
+    destroy(ledger);
+}
+
+#[test]
+fun fee_incentives_allocate_up_to_lifetime_cap() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id);
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        id,
+        FEE_INCENTIVE_CAP,
+        FIRST_FEE_INCENTIVE_ALLOCATION,
+    );
+    assert_eq!(allocated, FIRST_FEE_INCENTIVE_ALLOCATION);
+    assert_eq!(allocated_after, FIRST_FEE_INCENTIVE_ALLOCATION);
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        id,
+        FEE_INCENTIVE_CAP,
+        OVER_CAP_FEE_INCENTIVE_REQUEST,
+    );
+    assert_eq!(allocated, FEE_INCENTIVE_CAP - FIRST_FEE_INCENTIVE_ALLOCATION);
+    assert_eq!(allocated_after, FEE_INCENTIVE_CAP);
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        id,
+        FEE_INCENTIVE_CAP,
+        FIRST_FEE_INCENTIVE_ALLOCATION,
+    );
+    assert_eq!(allocated, 0);
+    assert_eq!(allocated_after, FEE_INCENTIVE_CAP);
 
     destroy(ledger);
 }
@@ -127,6 +164,23 @@ fun funding_after_terminal_accounting_started_aborts() {
     // Latch terminal accounting, then attempt to fund the expiry again.
     ledger.materialize_expiry_profit(id);
     destroy(ledger.send_expiry_cash(id, 1000, 100));
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::ETerminalAccountingStarted)]
+fun fee_incentive_allocation_after_terminal_accounting_started_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id);
+
+    ledger.materialize_expiry_profit(id);
+    ledger.record_fee_incentives_allocated_up_to(
+        id,
+        FEE_INCENTIVE_CAP,
+        FIRST_FEE_INCENTIVE_ALLOCATION,
+    );
 
     abort 999
 }

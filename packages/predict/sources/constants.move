@@ -108,6 +108,20 @@ public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
 /// Maximum all-in builder fee rate per traded quantity.
 public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
+// === Fee Incentives ===
+
+/// Fraction of the post-staking trading fee paid by sponsor-funded incentives.
+public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
+
+/// Fraction of normal expiry funding an expiry can hold in live fee incentives.
+public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
+
+/// Fraction of normal expiry funding an expiry can receive over its lifetime.
+public(package) macro fun fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
+
+/// Minimum DUSDC a single fee-incentive sponsorship may contribute.
+public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
+
 // === Time Constants ===
 
 /// Milliseconds in a 365-day year.
