@@ -20,6 +20,7 @@ const EInvalidFeeProbability: u64 = 4;
 const ENetPremiumBelowMinimum: u64 = 5;
 const EInvalidLeverageTier: u64 = 6;
 const EInvalidLeverage: u64 = 7;
+const ENetPremiumBudgetTooHigh: u64 = 8;
 
 const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 const LEVERAGE_ONE_AND_HALF_X: u64 = 1_500_000_000;
@@ -158,17 +159,14 @@ public(package) fun trading_fee(
     math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
-/// Assert mint price, leverage, and net-premium policy and return derived mint economics.
-///
-/// Returns `(net_premium, financed_amount)`.
-public(package) fun assert_mint_admission_policy(
+/// Assert that a mint quote clears ask-price bounds and uses an allowed leverage tier.
+public(package) fun assert_mint_price_and_leverage_policy(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
     opened_at_ms: u64,
     entry_probability: u64,
-    quantity: u64,
     leverage: u64,
-): (u64, u64) {
+) {
     let fee_rate = config.fee_rate(expiry_ms, entry_probability, opened_at_ms);
     let execution_price = entry_probability + fee_rate;
     assert!(
@@ -189,6 +187,42 @@ public(package) fun assert_mint_admission_policy(
     } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
         assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
     };
+}
+
+/// Return the largest raw quantity whose derived net premium is at most `net_premium`.
+public(package) fun max_quantity_for_net_premium(
+    entry_probability: u64,
+    net_premium: u64,
+    leverage: u64,
+): u64 {
+    if (entry_probability == 0 || net_premium == 0) return 0;
+
+    let scaling = math::float_scaling!();
+    assert!(net_premium < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
+    assert!(net_premium + 1 <= std::u64::max_value!() / leverage, ENetPremiumBudgetTooHigh);
+    let max_entry_value = ((net_premium + 1) * leverage - 1) / scaling;
+    assert!(max_entry_value < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
+    assert!(max_entry_value + 1 <= std::u64::max_value!() / scaling, ENetPremiumBudgetTooHigh);
+    ((max_entry_value + 1) * scaling - 1) / entry_probability
+}
+
+/// Assert mint price, leverage, and net-premium policy and return derived mint economics.
+///
+/// Returns `(net_premium, financed_amount)`.
+public(package) fun assert_mint_admission_policy(
+    config: &StrikeExposureConfig,
+    expiry_ms: u64,
+    opened_at_ms: u64,
+    entry_probability: u64,
+    quantity: u64,
+    leverage: u64,
+): (u64, u64) {
+    config.assert_mint_price_and_leverage_policy(
+        expiry_ms,
+        opened_at_ms,
+        entry_probability,
+        leverage,
+    );
 
     let entry_value = math::mul(entry_probability, quantity);
     let net_premium = math::div(entry_value, leverage);

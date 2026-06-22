@@ -24,7 +24,8 @@ use deepbook_predict::{
     predict_account,
     pricing,
     protocol_config::ProtocolConfig,
-    strike_exposure::{Self, StrikeExposure}
+    strike_exposure::{Self, StrikeExposure},
+    strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
@@ -37,6 +38,7 @@ const EMarketNotSettled: u64 = 2;
 const EWrongPythFeed: u64 = 3;
 const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
+const EMintQuantityBelowMin: u64 = 6;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -209,18 +211,98 @@ public fun mint_exact_quantity(
 ): u256 {
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    market.mint_exact_quantity_internal(
+    config.assert_version();
+    assert!(!market.mint_paused, EMintPaused);
+    config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+
+    market.mint_prepared_exact_quantity(
         account,
         config,
-        propbook_registry,
-        pyth,
-        bs,
+        &pricer,
+        active_stake,
         lower_tick,
         higher_tick,
         quantity,
         leverage,
         max_cost,
         max_probability,
+        clock,
+        ctx,
+    )
+}
+
+/// Mint the largest lot-rounded live position whose net premium fits inside
+/// `amount`, aborting if the resulting quantity is below `min_quantity`.
+///
+/// Fees, builder fees, and EWMA congestion penalties are charged on top of
+/// `amount`. The sizing budget is first capped to the account's available DUSDC
+/// after settlement; fees still require additional available DUSDC at payment
+/// time. Any unspent premium dust remains in the account because order quantity
+/// must be an integer number of `position_lot_size` lots.
+public fun mint_exact_amount(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    amount: u64,
+    min_quantity: u64,
+    leverage: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    wrapper.settle<DUSDC>(root, clock);
+    let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
+    let account = wrapper.load_account_mut(auth);
+    config.assert_version();
+    assert!(!market.mint_paused, EMintPaused);
+    config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
+    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            &pricer,
+            config.trade_liquidation_budget(),
+            clock,
+        );
+
+    let quantity = market.max_mint_quantity_for_amount(
+        &pricer,
+        lower_tick,
+        higher_tick,
+        amount,
+        leverage,
+        clock,
+    );
+    assert!(quantity >= min_quantity, EMintQuantityBelowMin);
+    market.mint_prepared_exact_quantity(
+        account,
+        config,
+        &pricer,
+        active_stake,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        std::u64::max_value!(),
+        std::u64::max_value!(),
         clock,
         ctx,
     )
@@ -574,13 +656,12 @@ fun ewma_penalty(
     market.ewma.penalty_fee(config, quantity, ctx)
 }
 
-fun mint_exact_quantity_internal(
+fun mint_prepared_exact_quantity(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    pricer: &pricing::Pricer,
+    active_stake: u64,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -590,24 +671,10 @@ fun mint_exact_quantity_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    config.assert_version();
-    assert!(!market.mint_paused, EMintPaused);
-    config.assert_trading_allowed();
-    config.assert_not_valuation_in_progress();
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            &pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
-
     let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
         .allocate_mint_order(
-            &pricer,
+            pricer,
             lower_tick,
             higher_tick,
             quantity,
@@ -650,6 +717,33 @@ fun mint_exact_quantity_internal(
         penalty_amount,
     );
     minted_order.id()
+}
+
+fun max_mint_quantity_for_amount(
+    market: &ExpiryMarket,
+    pricer: &pricing::Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    amount: u64,
+    leverage: u64,
+    clock: &Clock,
+): u64 {
+    let entry_probability = market
+        .strike_exposure
+        .quote_mint_entry_probability(
+            pricer,
+            lower_tick,
+            higher_tick,
+            leverage,
+            clock,
+        );
+    let quantity = strike_exposure_config::max_quantity_for_net_premium(
+        entry_probability,
+        amount,
+        leverage,
+    );
+    let lots = (quantity / constants::position_lot_size!()).min(order::max_quantity_lots());
+    lots * constants::position_lot_size!()
 }
 
 fun redeem_internal(

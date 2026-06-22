@@ -559,6 +559,41 @@ public fun mint_exact_quantity(
     )
 }
 
+/// Mint the largest lot-rounded order that fits inside a fixed net premium amount.
+public fun mint_exact_amount(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    amount: u64,
+    min_quantity: u64,
+    leverage: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market.mint_exact_amount(
+        wrapper,
+        auth,
+        config,
+        oracle_registry,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        amount,
+        min_quantity,
+        leverage,
+        root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
 /// Close (or partially close) a live order with owner auth. Returns
 /// `(closed_id, replacement_id)`.
 public fun redeem(
