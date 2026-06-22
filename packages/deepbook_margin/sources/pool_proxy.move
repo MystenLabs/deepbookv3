@@ -299,13 +299,17 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     } else {
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
-    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
+    let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
 
+    // Reduce-only. The ask (closing a long) may sell up to the full base the
+    // manager holds, so a long can be fully unwound — selling base can only
+    // shrink base exposure, never flip it short. The bid (covering a short)
+    // stays capped at the net short (`base_debt - base_asset`): buying past it
+    // would flip the short into a fresh long, i.e. open exposure rather than
+    // reduce it. The monotonic risk-ratio check below guards value leak.
     assert!(
         (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
-            (!is_bid && quote_debt > quote_asset && math::mul(quantity, price) <= quote_debt - quote_asset),
+            (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
 
@@ -355,7 +359,16 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     order_info
 }
 
-/// Places a reduce-only market order in the pool. Used when margin trading is disabled.
+/// Places a reduce-only market order in the pool. Used when margin trading is
+/// disabled.
+///
+/// Superseded by `place_reduce_only_market_order_and_repay_loan`. A market
+/// (taker) fill always pays the spread, which lowers the oracle-valued
+/// `risk_ratio` while the debt is unchanged, so the swap-only monotonic check
+/// here rejects essentially every taker fill. The `_and_repay` variant
+/// deleverages with the proceeds so the net-state ratio actually improves. Kept
+/// callable for existing integrators; its symmetric net-debt cap is retained as
+/// legacy (the live entries cap the ask on gross base held instead).
 public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -479,9 +492,9 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     } else {
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
-    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
+    let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
 
-    let (effective_price, quote_quantity) = calculate_effective_price(
+    let (effective_price, _) = calculate_effective_price(
         pool,
         quantity,
         is_bid,
@@ -489,11 +502,15 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // Reduce-only: a bid buys back at most the net base debt; an ask sells for
-    // at most the net quote debt.
+    // Reduce-only. The ask (closing a long) may sell up to the full base the
+    // manager holds — selling can only shrink base exposure, never flip it
+    // short — so a long fully closes and the repay absorbs any proceeds past the
+    // debt. The bid (covering a short) stays capped at the net short
+    // (`base_debt - base_asset`) so buying back can't overshoot into a fresh
+    // long. The net-state monotonic check below guards value leak.
     assert!(
         (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
-            (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
+            (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
 
