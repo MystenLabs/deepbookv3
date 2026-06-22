@@ -491,21 +491,20 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
     return tx;
 }
 
-// Admin-approve one Propbook underlying for Predict (recording the minimum market
-// tick size) AND permissionlessly create the two propbook feeds the market binds
-// to: the global Pyth spot feed and the per-underlying Block Scholes surface feed.
-// Both create calls register into the shared propbook `OracleRegistry`.
-export function registerUnderlyingAndCreateFeedsTx(feedId: number, tickSize: bigint): Transaction {
+// Admin-approve one Propbook underlying for Predict AND permissionlessly create
+// the two propbook feeds the market binds to: the global Pyth spot feed and the
+// per-underlying Block Scholes surface feed. Both create calls register into the
+// shared propbook `OracleRegistry`.
+export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: target("registry", "register_underlying"),
-        // `register_underlying(registry, config, admin_cap, underlying_id, min_tick)`.
+        // `register_underlying(registry, config, admin_cap, underlying_id)`.
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(tickSize),
         ],
     });
     tx.moveCall({
@@ -515,6 +514,30 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number, tickSize: big
     tx.moveCall({
         target: propbookTarget("registry", "create_and_share_block_scholes_feed"),
         arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
+    });
+    return tx;
+}
+
+// Enable one registry-owned market cadence. Tick size and allocation cap are
+// snapshotted into future markets created from this cadence.
+export function setCadenceConfigTx(params: {
+    cadenceId: number;
+    tickSize: bigint;
+    expiryMaxAllocation: bigint;
+    windowSize: bigint;
+}): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("registry", "set_cadence_config"),
+        arguments: [
+            tx.object(REGISTRY_ID),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u8(params.cadenceId),
+            tx.pure.u64(params.tickSize),
+            tx.pure.u64(params.expiryMaxAllocation),
+            tx.pure.u64(params.windowSize),
+        ],
     });
     return tx;
 }
@@ -575,6 +598,22 @@ export function setTemplateExpiryFeeConfigTx(
     return tx;
 }
 
+export function setTemplateTerminalFloorIndexTx(
+    protocolConfigId: string,
+    terminalFloorIndex: bigint,
+): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_template_terminal_floor_index"),
+        arguments: [
+            tx.object(protocolConfigId),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u64(terminalFloorIndex),
+        ],
+    });
+    return tx;
+}
+
 export function updatePythTrustedSignerTx(): Transaction {
     const tx = new Transaction();
     const vaaBytes = updateTrustedSignerVaaFromConfig(localPythConfig());
@@ -621,8 +660,7 @@ export function createExpiryMarketTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     lifecycleCapId: string;
-    expiry: bigint;
-    tickSize: bigint;
+    cadenceId: number;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -634,8 +672,7 @@ export function createExpiryMarketTx(params: {
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.lifecycleCapId),
             tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(params.expiry),
-            tx.pure.u64(params.tickSize),
+            tx.pure.u8(params.cadenceId),
             tx.object(CLOCK_ID),
         ],
     });

@@ -47,7 +47,9 @@ import {
     requestSupplyTx,
     requestWithdrawTx,
     seedOracleTx,
+    setCadenceConfigTx,
     setTemplateExpiryFeeConfigTx,
+    setTemplateTerminalFloorIndexTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
 } from "./runtime.js";
@@ -55,17 +57,13 @@ import {
 const DUSDC_DECIMALS = 1_000_000n;
 const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
-const EXPIRY_CASH_FLOOR = 50_000n * DUSDC_DECIMALS;
-// `create_expiry_market` requires the expiry to land on the 60s settlement-feed grid
-// (`expiry % resolution_period_ms!() == 0`, else EExpiryNotOnResolutionGrid), so the
-// exact-ms settling Pyth observation is producible. Floor the ~400-day expiry to a
-// grid multiple (still far-future, still > clock so EInvalidExpiry holds).
-const RESOLUTION_PERIOD_MS = 60_000n; // constants::resolution_period_ms!()
-const EXPIRY_MS =
-    ((BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n) / RESOLUTION_PERIOD_MS) *
-    RESOLUTION_PERIOD_MS;
+const EXPIRY_CASH_FLOOR = 10_000n * DUSDC_DECIMALS;
 const FLOAT_SCALING = 1_000_000_000n;
 const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
+const DEFAULT_SIM_TERMINAL_FLOOR_INDEX = FLOAT_SCALING;
+const SIM_CADENCE_ONE_MONTH = 5;
+const SIM_CADENCE_WINDOW_SIZE = 1n;
+const DEFAULT_EXPIRY_MAX_ALLOCATION = 250_000n * DUSDC_DECIMALS;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
@@ -758,6 +756,14 @@ function requestIndex(receipt: ExecutionReceipt, name: string): bigint | null {
     return json.index === undefined ? null : BigInt(decimal(json.index));
 }
 
+function eventDecimalField(receipt: ExecutionReceipt, name: string, field: string): string {
+    const event = findEvent(receipt.events, name);
+    if (!event) throw new Error(`Missing ${name} event`);
+    const json = event.parsedJson ?? {};
+    if (json[field] === undefined) throw new Error(`Missing ${name}.${field}`);
+    return decimal(json[field]);
+}
+
 function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: AliasState) {
     if (row.action === "oracle_mint_ptb") {
         const orderId = eventOrderId(receipt, "OrderMinted");
@@ -907,6 +913,16 @@ async function setupSimulation(
         "expiry_fee_window_ms",
         DEFAULT_EXPIRY_FEE_WINDOW_MS,
     );
+    const terminalFloorIndex = protocolConfigValue(
+        scenarioConfig,
+        "normal_terminal_floor_index",
+        DEFAULT_SIM_TERMINAL_FLOOR_INDEX,
+    );
+    const expiryMaxAllocation = protocolConfigValue(
+        scenarioConfig,
+        "expiry_max_allocation",
+        DEFAULT_EXPIRY_MAX_ALLOCATION,
+    );
 
     let result = await executeAndWait(
         finalizeDusdcCurrencyRegistrationTx(),
@@ -937,7 +953,7 @@ async function setupSimulation(
     // (Pyth spot + Block Scholes surface). Both feed objects are shared; capture
     // their IDs.
     result = await executeAndWait(
-        registerUnderlyingAndCreateFeedsTx(1, ORACLE_TICK_SIZE),
+        registerUnderlyingAndCreateFeedsTx(1),
         "register_underlying_and_create_feeds",
     );
     const pythFeedChange = result.objectChanges.find(
@@ -969,35 +985,34 @@ async function setupSimulation(
         `[${ts()}]   Expiry fee ramp: window_ms=${expiryFeeWindowMs} max_multiplier=${expiryFeeMaxMultiplier}`,
     );
 
-    await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
-    console.log(`[${ts()}]   Pyth trusted signer configured`);
-
-    // Seed the Block Scholes surface + Pyth spot for the market's expiry so pricing
-    // (mint admission, flush NAV valuation) has a fresh surface to read. Market
-    // creation reads NO spot now (absolute ticks), but the surface must exist before
-    // the first priced op.
     await executeAndWait(
-        await seedOracleTx({
-            pythFeedId,
-            bsFeedId,
-            expiry: EXPIRY_MS,
-            spot: seed.spot,
-            forward: seed.forward,
-            svi: seed.svi,
+        setTemplateTerminalFloorIndexTx(protocolConfigId, terminalFloorIndex),
+        "set_template_terminal_floor_index",
+    );
+    console.log(`[${ts()}]   Terminal floor index: ${terminalFloorIndex}`);
+
+    await executeAndWait(
+        setCadenceConfigTx({
+            cadenceId: SIM_CADENCE_ONE_MONTH,
+            tickSize: ORACLE_TICK_SIZE,
+            expiryMaxAllocation,
+            windowSize: SIM_CADENCE_WINDOW_SIZE,
         }),
-        "seed_oracle_surface",
+        "set_cadence_config",
     );
     console.log(
-        `[${ts()}]   Oracle seeded: spot=${seed.spot} forward=${seed.forward} tick=$${scaledUsd(ORACLE_TICK_SIZE)}`,
+        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} allocation=${expiryMaxAllocation / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
     );
+
+    await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
+    console.log(`[${ts()}]   Pyth trusted signer configured`);
 
     result = await executeAndWait(
         createExpiryMarketTx({
             poolVaultId,
             protocolConfigId,
             lifecycleCapId,
-            expiry: EXPIRY_MS,
-            tickSize: ORACLE_TICK_SIZE,
+            cadenceId: SIM_CADENCE_ONE_MONTH,
         }),
         "create_expiry_market",
     );
@@ -1005,7 +1020,26 @@ async function setupSimulation(
         (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket"),
     );
     const expiryMarketId: string = expiryMarketChange.objectId;
-    console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId}`);
+    const expiryMsString = eventDecimalField(result, "MarketCreated", "expiry");
+    const expiryMs = BigInt(expiryMsString);
+    console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId} expiry=${expiryMsString}`);
+
+    // Seed the Block Scholes surface + Pyth spot for the on-chain cadence-created
+    // expiry so pricing (mint admission, flush NAV valuation) has a fresh surface.
+    await executeAndWait(
+        await seedOracleTx({
+            pythFeedId,
+            bsFeedId,
+            expiry: expiryMs,
+            spot: seed.spot,
+            forward: seed.forward,
+            svi: seed.svi,
+        }),
+        "seed_oracle_surface",
+    );
+    console.log(
+        `[${ts()}]   Oracle seeded: expiry=${expiryMsString} spot=${seed.spot} forward=${seed.forward} tick=$${scaledUsd(ORACLE_TICK_SIZE)}`,
+    );
 
     const accountWrapperId = deriveAccountWrapperId(address);
     await executeAndWait(createAccountTx(), "create_account");
@@ -1054,7 +1088,7 @@ async function setupSimulation(
             pythFeedId,
             bsFeedId,
             lifecycleCapId,
-            expiry: EXPIRY_MS,
+            expiry: expiryMs,
             spot: seed.spot,
             forward: seed.forward,
             svi: seed.svi,
@@ -1073,6 +1107,7 @@ async function setupSimulation(
         poolVaultId,
         protocolConfigId,
         expiryMarketId,
+        expiryMs: expiryMsString,
         pythFeedId,
         bsFeedId,
         accountWrapperId,
@@ -1100,7 +1135,7 @@ async function executeRow(
                     wrapperId: state.accountWrapperId,
                     pythFeedId: state.pythFeedId,
                     bsFeedId: state.bsFeedId,
-                    expiry: EXPIRY_MS,
+                    expiry: BigInt(state.expiryMs),
                     strike: alignedStrike,
                     isUp: row.isUp,
                     quantity: row.quantity,
@@ -1132,7 +1167,7 @@ async function executeRow(
                     wrapperId: state.accountWrapperId,
                     pythFeedId: state.pythFeedId,
                     bsFeedId: state.bsFeedId,
-                    expiry: EXPIRY_MS,
+                    expiry: BigInt(state.expiryMs),
                     orderId,
                     closeQuantity: row.closeQuantity,
                     spot: row.oracleRefresh.spot,
@@ -1231,7 +1266,7 @@ async function executeScenario(
                     pythFeedId: state.pythFeedId,
                     bsFeedId: state.bsFeedId,
                     lifecycleCapId: state.lifecycleCapId,
-                    expiry: EXPIRY_MS,
+                    expiry: BigInt(state.expiryMs),
                     spot: oracle.spot,
                     forward: oracle.forward,
                     svi: oracle.svi,

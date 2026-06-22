@@ -177,6 +177,13 @@ public fun set_cadence_config(
     registry
         .market_manager
         .set_cadence_config(cadence_id, tick_size, expiry_max_allocation, window_size);
+    config_events::emit_cadence_config_updated(
+        registry.id(),
+        cadence_id,
+        tick_size,
+        expiry_max_allocation,
+        window_size,
+    );
 }
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.

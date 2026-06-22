@@ -73,6 +73,15 @@ public struct TradingPausedUpdated has copy, drop, store {
     paused: bool,
 }
 
+/// Emitted when registry-owned market deployment cadence config changes.
+public struct CadenceConfigUpdated has copy, drop, store {
+    registry_id: ID,
+    cadence_id: u8,
+    tick_size: u64,
+    expiry_max_allocation: u64,
+    window_size: u64,
+}
+
 /// Emitted when a new expiry market is created.
 public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
@@ -197,6 +206,22 @@ public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: 
     event::emit(TradingPausedUpdated {
         protocol_config_id,
         paused,
+    });
+}
+
+public(package) fun emit_cadence_config_updated(
+    registry_id: ID,
+    cadence_id: u8,
+    tick_size: u64,
+    expiry_max_allocation: u64,
+    window_size: u64,
+) {
+    event::emit(CadenceConfigUpdated {
+        registry_id,
+        cadence_id,
+        tick_size,
+        expiry_max_allocation,
+        window_size,
     });
 }
 
