@@ -23,9 +23,9 @@ use deepbook_predict::{
 use propbook::registry::OracleRegistry;
 use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
-const EPauseCapNotValid: u64 = 4;
-const ELifecycleCapNotValid: u64 = 6;
-const ELifecycleCapNotFound: u64 = 7;
+const EPauseCapNotValid: u64 = 0;
+const ELifecycleCapNotValid: u64 = 1;
+const ELifecycleCapNotFound: u64 = 2;
 
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {

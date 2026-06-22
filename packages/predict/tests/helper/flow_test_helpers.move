@@ -71,7 +71,6 @@ public struct Fixture {
     vault_id: ID,
     pyth_id: ID,
     bs_id: ID,
-    tick_size: u64,
 }
 
 /// A trader handle: the canonical `AccountWrapper` ID plus its owner. The wrapper is
@@ -84,7 +83,7 @@ public struct Trader has copy, drop, store {
 }
 
 /// Stand up a registry + protocol config + an empty PLP vault + the two propbook
-/// feeds (a `PythFeed` and a `BlockScholesFeed`) for the admin-approved `tick`
+/// feeds (a `PythFeed` and a `BlockScholesFeed`) for the default cadence's `tick`
 /// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
 /// admissible. Creation reads no spot (strikes are absolute ticks), so no spot is
 /// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
@@ -114,11 +113,14 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_base_fee(&admin_cap, 1);
     config.set_template_min_ask_price(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
-    registry.register_underlying(
+    registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
+    registry.set_cadence_config(
         &config,
         &admin_cap,
-        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
         tick,
+        test_constants::default_expiry_max_allocation(),
+        test_constants::default_cadence_window_size(),
     );
     return_shared(config);
     return_shared(registry);
@@ -156,7 +158,7 @@ public fun setup_market(tick: u64): Fixture {
 
     scenario.next_tx(test_constants::admin());
 
-    Fixture { scenario, admin_cap, lifecycle_cap, clock, vault_id, pyth_id, bs_id, tick_size: tick }
+    Fixture { scenario, admin_cap, lifecycle_cap, clock, vault_id, pyth_id, bs_id }
 }
 
 /// `setup_market` with the default tick size.
@@ -205,14 +207,40 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
+    let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
+    creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
     let expiry_id = registry.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        expiry,
-        self.tick_size,
+        test_constants::default_cadence_id(),
+        &creation_clock,
+        self.scenario.ctx(),
+    );
+    creation_clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(registry);
+    return_shared(vault);
+    self.scenario.next_tx(test_constants::admin());
+    expiry_id
+}
+
+public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): ID {
+    self.scenario.next_tx(test_constants::admin());
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let expiry_id = registry.create_expiry_market(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &self.lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        cadence_id,
         &self.clock,
         self.scenario.ctx(),
     );
@@ -807,7 +835,6 @@ public fun finish(self: Fixture) {
         vault_id: _,
         pyth_id: _,
         bs_id: _,
-        tick_size: _,
     } = self;
     lifecycle_cap.destroy();
     destroy(admin_cap);

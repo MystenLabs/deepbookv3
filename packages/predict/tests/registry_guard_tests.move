@@ -17,7 +17,9 @@ use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
     builder_code::{Self, BuilderCode},
+    constants,
     flow_test_helpers,
+    market_manager,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
@@ -34,6 +36,7 @@ use sui::{clock, test_scenario::{Scenario, return_shared}};
 
 /// A Propbook underlying id the registry never approves.
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
+const START_OF_TIME_MS: u64 = 0;
 
 // === builder_code owner guard ===
 
@@ -67,30 +70,85 @@ fun claim_builder_fees_by_non_owner_aborts() {
 */
 // === create_expiry_market ===
 
-#[test, expected_failure(abort_code = registry::EInvalidExpiry)]
-fun create_expiry_market_with_expiry_at_now_aborts() {
+#[test, expected_failure(abort_code = market_manager::ECadenceDisabled)]
+fun create_expiry_market_with_disabled_cadence_aborts() {
     let mut fx = flow_test_helpers::setup_market_default();
 
-    // Boundary: expiry == clock.timestamp_ms() fails the strict `expiry > now`.
-    let _expiry_id = fx.create_expiry(test_constants::now_ms());
+    let _expiry_id = fx.create_next_expiry_for_cadence(market_manager::cadence_five_minute!());
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EMarketAlreadyCreated)]
+#[test, expected_failure(abort_code = market_manager::EMarketAlreadyCreated)]
 fun create_expiry_market_duplicate_expiry_aborts() {
-    let mut fx = flow_test_helpers::setup_market_default();
+    let (mut scenario, registry_id, admin_cap, pyth_id, bs_id) = setup_registered_feeds();
 
-    let _expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    let _dup_id = fx.create_expiry(test_constants::default_expiry_ms());
+    scenario.next_tx(test_constants::admin());
+    test_helpers::bind_feeds_to_underlying(&scenario, pyth_id, bs_id);
+
+    scenario.next_tx(test_constants::admin());
+    let mut daily_clock = clock::create_for_testing(scenario.ctx());
+    let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let oracle_registry = scenario.take_shared<OracleRegistry>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_day!(),
+        test_constants::default_tick_size(),
+        test_constants::default_expiry_max_allocation(),
+        test_constants::default_cadence_window_size(),
+    );
+    daily_clock.set_for_testing(constants::one_week_ms!() - constants::one_day_ms!());
+    let _daily_id = reg.create_expiry_market(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_day!(),
+        &daily_clock,
+        scenario.ctx(),
+    );
+    daily_clock.destroy_for_testing();
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_week!(),
+        test_constants::default_tick_size(),
+        test_constants::default_expiry_max_allocation(),
+        test_constants::default_cadence_window_size(),
+    );
+    let mut weekly_clock = clock::create_for_testing(scenario.ctx());
+    weekly_clock.set_for_testing(START_OF_TIME_MS);
+    let _weekly_id = reg.create_expiry_market(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_week!(),
+        &weekly_clock,
+        scenario.ctx(),
+    );
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EUnderlyingNotRegistered)]
+#[test, expected_failure(abort_code = market_manager::EUnderlyingNotRegistered)]
 fun create_expiry_market_with_unregistered_underlying_aborts() {
-    let (mut scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
     let registry_id = reg.id();
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        test_constants::default_cadence_id(),
+        test_constants::default_tick_size(),
+        test_constants::default_expiry_max_allocation(),
+        test_constants::default_cadence_window_size(),
+    );
     return_shared(reg);
     return_shared(config);
 
@@ -108,15 +166,14 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
         &oracle_registry,
         &lifecycle_cap,
         UNREGISTERED_UNDERLYING_ID,
-        test_constants::default_expiry_ms(),
-        test_constants::default_tick_size(),
+        test_constants::default_cadence_id(),
         &clock,
         scenario.ctx(),
     );
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EPythFeedNotBoundToUnderlying)]
+#[test, expected_failure(abort_code = market_manager::EPythFeedNotBoundToUnderlying)]
 fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     // Pyth source approved + feeds created, but nothing is bound to the underlying,
     // so the Pyth canonical-binding check (after the approval gate) fails first.
@@ -136,15 +193,14 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
         &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        test_constants::default_expiry_ms(),
-        test_constants::default_tick_size(),
+        test_constants::default_cadence_id(),
         &clock,
         scenario.ctx(),
     );
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EBlockScholesFeedNotBoundToUnderlying)]
+#[test, expected_failure(abort_code = market_manager::EBlockScholesFeedNotBoundToUnderlying)]
 fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
     // Only the Pyth feed is bound to the underlying; the BS check then fails.
     let (mut scenario, registry_id, admin_cap, pyth_id, _bs_id) = setup_registered_feeds();
@@ -166,26 +222,28 @@ fun create_expiry_market_with_unbound_block_scholes_feed_aborts() {
         &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        test_constants::default_expiry_ms(),
-        test_constants::default_tick_size(),
+        test_constants::default_cadence_id(),
         &clock,
         scenario.ctx(),
     );
     abort 999
 }
 
-/// Init all registries, approve the canonical underlying + tick size, and create
+/// Init all registries, approve the canonical underlying + default cadence, and create
 /// the two real propbook feeds (catalog-only, NOT yet bound to an underlying).
 /// Returns positioned for the caller to bind (or not) then create the market.
 fun setup_registered_feeds(): (Scenario, ID, AdminCap, ID, ID) {
     let (mut scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
-    reg.register_underlying(
+    reg.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
+    reg.set_cadence_config(
         &config,
         &admin_cap,
-        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
+        test_constants::default_expiry_max_allocation(),
+        test_constants::default_cadence_window_size(),
     );
     let registry_id = reg.id();
     return_shared(reg);

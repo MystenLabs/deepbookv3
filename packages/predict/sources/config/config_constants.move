@@ -13,21 +13,21 @@ const EInvalidMinAskPrice: u64 = 2;
 const EInvalidMaxAskPrice: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
-const EInvalidProtocolReserveProfitShare: u64 = 7;
-const EInvalidTradingLossRebateRate: u64 = 14;
-const EInvalidTerminalFloorIndex: u64 = 15;
-const EInvalidExpiryFeeWindowMs: u64 = 16;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
-const EInvalidLowerBenefitPower: u64 = 18;
-const EInvalidUpperBenefitPower: u64 = 19;
-const EInvalidBenefitPowers: u64 = 20;
-const EInvalidTradeLiquidationBudget: u64 = 22;
-const EInvalidLiquidationLtv: u64 = 23;
-const EInvalidMarketTickSize: u64 = 24;
-const EInvalidEwmaAlpha: u64 = 26;
-const EInvalidEwmaZScoreThreshold: u64 = 27;
-const EInvalidEwmaPenaltyRate: u64 = 28;
-const EInvalidBackingBufferLambda: u64 = 29;
+const EInvalidProtocolReserveProfitShare: u64 = 6;
+const EInvalidTradingLossRebateRate: u64 = 7;
+const EInvalidTerminalFloorIndex: u64 = 8;
+const EInvalidExpiryFeeWindowMs: u64 = 9;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
+const EInvalidLowerBenefitPower: u64 = 11;
+const EInvalidUpperBenefitPower: u64 = 12;
+const EInvalidBenefitPowers: u64 = 13;
+const EInvalidTradeLiquidationBudget: u64 = 14;
+const EInvalidLiquidationLtv: u64 = 15;
+const EInvalidMarketTickSize: u64 = 16;
+const EInvalidEwmaAlpha: u64 = 17;
+const EInvalidEwmaZScoreThreshold: u64 = 18;
+const EInvalidEwmaPenaltyRate: u64 = 19;
+const EInvalidBackingBufferLambda: u64 = 20;
 
 // === Fees ===
 

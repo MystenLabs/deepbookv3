@@ -17,12 +17,12 @@ const EUnderlyingAlreadyRegistered: u64 = 1;
 const ECadenceDisabled: u64 = 2;
 const EMarketAlreadyCreated: u64 = 3;
 const EInvalidCadence: u64 = 4;
-const ECadenceWindowExceeded: u64 = 6;
-const EHigherRankCadenceOverlap: u64 = 7;
-const EInvalidDeploymentExpiry: u64 = 8;
-const EInvalidCadenceConfig: u64 = 9;
-const EPythFeedNotBoundToUnderlying: u64 = 10;
-const EBlockScholesFeedNotBoundToUnderlying: u64 = 11;
+const ECadenceWindowExceeded: u64 = 5;
+const EHigherRankCadenceOverlap: u64 = 6;
+const EInvalidDeploymentExpiry: u64 = 7;
+const EInvalidCadenceConfig: u64 = 8;
+const EPythFeedNotBoundToUnderlying: u64 = 9;
+const EBlockScholesFeedNotBoundToUnderlying: u64 = 10;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size and allocation cap are committed by creation.

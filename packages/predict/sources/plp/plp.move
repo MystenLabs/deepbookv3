@@ -44,13 +44,13 @@ const EExpiryMarketNotActive: u64 = 0;
 const EExpiryMarketAlreadyValued: u64 = 1;
 const EWrongPoolVault: u64 = 2;
 const EMissingExpiryValuation: u64 = 3;
-const ENotBootstrapped: u64 = 10;
-const EPlpPriceBelowCircuitBreaker: u64 = 11;
-const EPlpPriceAboveCircuitBreaker: u64 = 12;
-const EAlreadyBootstrapped: u64 = 13;
-const EPoolNavDust: u64 = 14;
-const EBelowMinBootstrapLiquidity: u64 = 15;
-const EBelowMinFeeIncentiveSponsorship: u64 = 16;
+const ENotBootstrapped: u64 = 4;
+const EPlpPriceBelowCircuitBreaker: u64 = 5;
+const EPlpPriceAboveCircuitBreaker: u64 = 6;
+const EAlreadyBootstrapped: u64 = 7;
+const EPoolNavDust: u64 = 8;
+const EBelowMinBootstrapLiquidity: u64 = 9;
+const EBelowMinFeeIncentiveSponsorship: u64 = 10;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}

@@ -22,11 +22,6 @@ use propbook::registry::OracleRegistry;
 use std::unit_test::destroy;
 use sui::{clock, test_scenario::return_shared};
 
-/// Added to the fixture's `default_expiry_ms` so the second market's expiry is
-/// unique (the fixture already created a market at the default expiry). A multiple
-/// of the resolution period so the second expiry stays on the settlement grid.
-const SECOND_EXPIRY_OFFSET_MS: u64 = 120_000;
-
 const EUnexpectedSuccess: u64 = 999;
 
 // === Lifecycle-cap allowlist gates ===
@@ -112,8 +107,8 @@ fun revoke_lifecycle_cap(fx: &mut OracleFixture, admin_cap: &AdminCap, lifecycle
     scenario.next_tx(test_constants::admin());
 }
 
-/// Create a second expiry market (the fixture already created one at the default
-/// expiry) through the production registry path, with a caller-chosen lifecycle cap.
+/// Attempt market creation through the production registry path with a
+/// caller-chosen lifecycle cap. Revoked-cap tests abort before cadence logic.
 fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycleCap): ID {
     let scenario = fx.scenario_mut();
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -128,8 +123,7 @@ fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycle
         &oracle_registry,
         lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        test_constants::default_expiry_ms() + SECOND_EXPIRY_OFFSET_MS,
-        test_constants::default_tick_size(),
+        test_constants::default_cadence_id(),
         &clock,
         scenario.ctx(),
     );

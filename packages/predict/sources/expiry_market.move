@@ -31,10 +31,10 @@ use fixed_math::math;
 use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
 
-const EMintPaused: u64 = 4;
-const EFullCloseRequired: u64 = 5;
-const EMarketNotSettled: u64 = 6;
-const EWrongPythFeed: u64 = 7;
+const EMintPaused: u64 = 0;
+const EFullCloseRequired: u64 = 1;
+const EMarketNotSettled: u64 = 2;
+const EWrongPythFeed: u64 = 3;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {

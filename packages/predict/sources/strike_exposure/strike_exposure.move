@@ -25,7 +25,7 @@ use deepbook_predict::{
 use fixed_math::math;
 use sui::clock::Clock;
 
-const EInvalidCloseQuantity: u64 = 1;
+const EInvalidCloseQuantity: u64 = 0;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {

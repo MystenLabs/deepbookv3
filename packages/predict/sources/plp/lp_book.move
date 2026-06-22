@@ -14,10 +14,10 @@ use fixed_math::math;
 use sui::{balance::{Self, Balance}, coin::{Coin, TreasuryCap}, table::{Self, Table}};
 
 const ERequestNotFound: u64 = 0;
-const EBelowMinSupplyRequest: u64 = 4;
-const EBelowMinWithdrawRequest: u64 = 5;
-const ENotRequestOwner: u64 = 6;
-const EInvalidDrainMark: u64 = 8;
+const EBelowMinSupplyRequest: u64 = 1;
+const EBelowMinWithdrawRequest: u64 = 2;
+const ENotRequestOwner: u64 = 3;
+const EInvalidDrainMark: u64 = 4;
 
 const PAGE_CAPACITY: u64 = 64;
 
