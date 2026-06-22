@@ -434,13 +434,10 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balan
 /// The market snapshots the underlying, tick size, and per-market config and
 /// starts with zero expiry cash; it needs no live spot at creation (strikes are
 /// absolute ticks, so there is no grid to center). Current oracle object IDs stay
-/// in Propbook and are resolved on every priced flow. The `MarketCreated` event
-/// is emitted here rather than in `registry`: the market owns the snapshotted
-/// `tick_size`, and the registry holds no reference after `share_object`.
+/// in Propbook and are resolved on every priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     propbook_underlying_id: u32,
-    pool_vault_id: ID,
     expiry: u64,
     tick_size: u64,
     ctx: &mut TxContext,
@@ -471,13 +468,6 @@ public(package) fun create_and_share(
         ewma: ewma::new(ctx),
         mint_paused: false,
     };
-    config_events::emit_market_created(
-        expiry_market_id,
-        pool_vault_id,
-        propbook_underlying_id,
-        expiry,
-        market.tick_size(),
-    );
     transfer::share_object(market);
     expiry_market_id
 }

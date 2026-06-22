@@ -47,7 +47,7 @@ public struct CadenceConfig has copy, drop, store {
     tick_size: u64,
     /// DUSDC pool allocation cap snapshotted into pool accounting for each created expiry.
     expiry_max_allocation: u64,
-    /// Number of future cadence slots that permissionless deployment may keep filled.
+    /// Number of future cadence slots that deployment may keep filled.
     /// Zero disables this cadence.
     window_size: u64,
 }

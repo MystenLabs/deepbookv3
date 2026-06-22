@@ -151,9 +151,9 @@ public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
 /// whose signed publisher timestamp is exactly that millisecond. The off-chain
 /// resolution relayer sources that key from Pyth Lazer's exact-timestamp
 /// resolution endpoints and inserts it on this millisecond grid.
-/// Cadence periods are multiples of this value, so permissionless cadence-created
-/// expiries stay on a settling key the relayer can produce. An off-grid expiry
-/// could never settle and would block the pool flush indefinitely
+/// Cadence periods are multiples of this value, so cadence-created expiries stay
+/// on a settling key the relayer can produce. An off-grid expiry could never settle
+/// and would block the pool flush indefinitely
 /// (`plp::value_expiry` aborts on a past-expiry market that has no settling
 /// observation yet).
 public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }

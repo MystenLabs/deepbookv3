@@ -13,6 +13,7 @@ module deepbook_predict::registry;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
+    config_events,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
     market_manager::{Self, MarketManager},
@@ -209,10 +210,10 @@ public fun create_expiry_market(
     let (expiry, tick_size, expiry_max_allocation) = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
+    let pool_vault_id = pool_vault.id();
     let expiry_market_id = expiry_market::create_and_share(
         config,
         propbook_underlying_id,
-        pool_vault.id(),
         expiry,
         tick_size,
         ctx,
@@ -221,6 +222,14 @@ public fun create_expiry_market(
     registry
         .market_manager
         .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
+    config_events::emit_market_created(
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        expiry_max_allocation,
+    );
 
     expiry_market_id
 }

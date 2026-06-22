@@ -34,8 +34,8 @@ and contributors. For *how* each mechanism works, follow the links into
   idempotent), which is always ≤ the settlement floor (hence ≤ the live reserve).
 - **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
   market that never receives another top-up still pays every settlement winner
-  in full. The per-expiry funding cap (`max_expiry_funding`) is enforced on
-  every funding move as a ceiling, and the pool sync tops every market up toward
+  in full. The per-expiry allocation cap snapshotted at market creation is enforced
+  on every funding move as a ceiling, and the pool sync tops every market up toward
   its reserve target before an LP withdrawal pays out.
 - **Custody.** DUSDC lives in exactly three places: a trader's `PredictManager`
   (inner `BalanceManager`), each expiry's `ExpiryCash`, and the pool ledger's idle

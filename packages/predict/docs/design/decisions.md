@@ -105,9 +105,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   it did not provide).
 - **No pool funding-cap earmark.** Each market's own cash covers its reserve, so
   solvency is self-contained per expiry at the floor and the pool owes no
-  standing backing to live markets. `max_expiry_funding` remains the per-flow
-  funding ceiling, and the pool sync tops every market toward its reserve
-  target before an LP withdrawal pays out. *Superseded:* the idle earmark
+  standing backing to live markets. The snapshotted per-expiry allocation cap remains
+  the per-flow funding ceiling, and the pool sync tops every market toward its
+  reserve target before an LP withdrawal pays out. *Superseded:* the idle earmark
   (`idle ≥ Σ active (max_funding − net_funding)`), which pinned the full cap of
   pool capital per active market regardless of book shape and whose backing
   duty became void under the settlement-floor guarantee.
@@ -191,9 +191,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   grid-relative boundary indices, storing raw `u64` strikes in the id (they do not
   fit), and an opaque id with a separate order table.
 - **No-spot market creation.** Because the tick domain is absolute, market creation
-  reads no live spot — it snapshots the caller-chosen market `tick_size` and starts with zero cash.
-  `MarketCreated` carries `tick_size`, not min/max strike. *Rationale:* the only
-  reason creation needed a fresh spot was to center the deleted grid; a market simply
+  reads no live spot — it snapshots the cadence `tick_size` and starts with zero cash.
+  `MarketCreated` carries `tick_size` and `expiry_max_allocation`, not min/max strike.
+  *Rationale:* the only reason creation needed a fresh spot was to center the deleted grid; a market simply
   cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
   re-adding a creation-time spot read purely to sanity-check the tick size against the
   asset's price scale — the tick size is sized operationally and a mismatch fails
