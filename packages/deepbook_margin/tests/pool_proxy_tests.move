@@ -5662,14 +5662,16 @@ fun place_reduce_only_market_order_v1_aborts() {
     abort 999
 }
 
-// === Post-trade solvency regression test ===
+// === Post-trade open-floor (min_open_risk_ratio) tests ===
 //
 // Borrow USDC against USDT collateral right at `min_borrow_risk_ratio` (1.25,
 // the borrow floor in test config), then sell the borrowed USDC against the
-// standard orderbook bid (0.99). The 1% adverse fill drops `risk_ratio` from
-// 1.25 to ~1.24, breaching the floor; the v2 invariant aborts.
-#[test, expected_failure(abort_code = pool_proxy::EInsufficientRiskRatioAfterTrade)]
-fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_aborts() {
+// standard orderbook bid (0.99). The 1% adverse fill drops `risk_ratio` to
+// 1.2475 — below the borrow floor but above the default `min_open_risk_ratio`
+// (midpoint of liquidation 1.10 and min_borrow 1.25 = 1.175, in test config).
+// The opening trade is allowed, so a max-leverage open can absorb its own spread.
+#[test]
+fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_ok() {
     let (
         mut scenario,
         clock,
@@ -5739,6 +5741,121 @@ fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_aborts() {
     // Pre-trade asset: 400 USDC + 100 USDT = 500 USDC-equiv, debt 400.
     // Post-trade: 300 USDC + 199 USDT = 499 USDC-equiv, debt 400,
     // risk_ratio = 499/400 = 1.2475 < 1.25. Aborts.
+    let _ = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        990_000_000,
+        100 * test_constants::usdc_multiplier(),
+        false, // is_bid = false (sell)
+        true, // pay_with_deep
+        2_000_000,
+        &clock,
+    );
+
+    // Post-trade risk_ratio = 499/400 = 1.2475: below the 1.25 borrow floor,
+    // above the 1.175 open floor, so the opening order is accepted.
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let rr = mm.risk_ratio(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+    assert_eq!(rr, 1_247_500_000);
+    assert!(rr < registry.min_borrow_risk_ratio(pool_id));
+    assert!(rr >= registry.min_open_risk_ratio(pool_id));
+
+    return_shared_3!(mm, pool, quote_pool);
+    return_shared(base_pool);
+    destroy_2!(usdc_price, usdt_price);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+// Same scenario, but the admin sets `min_open_risk_ratio` to the borrow floor
+// (the strict opt-out), so the 1.2475 fill is now below the open floor and the
+// opening order aborts. Exercises the override setter and the abort path.
+#[test, expected_failure(abort_code = pool_proxy::EInsufficientRiskRatioAfterTrade)]
+fun place_limit_order_v2_adverse_fill_aborts_with_strict_open_floor() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    // Raise the open floor to the borrow floor: no slippage headroom.
+    let borrow_floor = registry.min_borrow_risk_ratio(pool_id);
+    registry.set_min_open_risk_ratio<USDC, USDT>(
+        &_admin_cap,
+        &pool,
+        borrow_floor,
+        &clock,
+    );
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(100 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.deposit<USDC, USDT, DEEP>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<DEEP>(100 * test_constants::deep_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        400 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
     let _ = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
@@ -5904,6 +6021,169 @@ fun set_max_order_ttl_within_bounds_ok() {
     destroy(maintainer_cap);
     destroy(clock);
     scenario.end();
+}
+
+#[test]
+fun min_open_risk_ratio_defaults_to_midpoint() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let registry = scenario.take_shared<MarginRegistry>();
+    // Default = midpoint of liquidation (1.10) and min_borrow (1.25) = 1.175.
+    assert_eq!(registry.min_open_risk_ratio(pool_id), 1_175_000_000);
+
+    return_shared(registry);
+    destroy(admin_cap);
+    destroy(maintainer_cap);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun set_min_open_risk_ratio_within_band_ok() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // 1.20 is within (liquidation 1.10, min_borrow 1.25].
+    registry.set_min_open_risk_ratio<USDC, USDT>(&admin_cap, &pool, 1_200_000_000, &clock);
+    assert_eq!(registry.min_open_risk_ratio(pool_id), 1_200_000_000);
+
+    // Update again to exercise the mutable path, not just first-insert.
+    registry.set_min_open_risk_ratio<USDC, USDT>(&admin_cap, &pool, 1_150_000_000, &clock);
+    assert_eq!(registry.min_open_risk_ratio(pool_id), 1_150_000_000);
+
+    return_shared_2!(registry, pool);
+    destroy(admin_cap);
+    destroy(maintainer_cap);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = margin_registry::EInvalidRiskParam)]
+fun set_min_open_risk_ratio_too_low_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Equal to liquidation (1.10) is not strictly above it: out of band.
+    registry.set_min_open_risk_ratio<USDC, USDT>(&admin_cap, &pool, 1_100_000_000, &clock);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = margin_registry::EInvalidRiskParam)]
+fun set_min_open_risk_ratio_too_high_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Above the borrow floor (1.25): out of band.
+    registry.set_min_open_risk_ratio<USDC, USDT>(&admin_cap, &pool, 1_250_000_001, &clock);
+
+    abort 999
 }
 
 #[test]

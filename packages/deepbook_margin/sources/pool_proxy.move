@@ -21,9 +21,10 @@ const EPoolNotEnabledForMarginTrading: u64 = 2;
 const ENotReduceOnlyOrder: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
 const ENoLiquidityInOrderbook: u64 = 5;
-/// Post-trade risk ratio dropped below `min_borrow_risk_ratio`.
-/// Raised by the v2 order placement entries when the manager would be left
-/// in a state borrowing would be forbidden from.
+/// Post-trade risk ratio dropped below `min_open_risk_ratio` (the opening
+/// solvency floor between liquidation and the borrow floor). Raised by the v2
+/// order placement entries when an opening trade would leave the manager in the
+/// liquidatable zone.
 const EInsufficientRiskRatioAfterTrade: u64 = 6;
 /// Reduce-only fill leaked value to the counterparty: the manager's
 /// risk_ratio after the trade is lower than before. Reduce-only orders must
@@ -140,10 +141,11 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 // Each v2 entry mirrors its v1 counterpart and additionally recomputes
 // `risk_ratio` after the order settles (using Pyth via the public
 // `MarginManager::risk_ratio` helper). For non-reduce-only entries the
-// post-trade ratio must be at least `min_borrow_risk_ratio` — same threshold
-// the borrow path enforces, so trading cannot push a manager below where
-// borrowing was already forbidden. Skipped when the manager has no debt
-// (nothing to be insolvent against).
+// post-trade ratio must be at least `min_open_risk_ratio` — a floor between
+// liquidation and the borrow floor, so a max-leverage open can absorb the
+// opening trade's spread (which lands the ratio just under `min_borrow`)
+// without aborting, while staying above the liquidatable zone. Skipped when
+// the manager has no debt (nothing to be insolvent against).
 //
 // For reduce-only entries the post-trade ratio must be `>= risk_ratio_before`
 // (monotonic improvement). The borrow-floor check would trap users in the
@@ -821,10 +823,12 @@ fun calculate_effective_price<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Asserts the manager remains above the borrow-floor risk ratio after a
+/// Asserts the manager remains solvent after an opening (risk-increasing)
 /// trade. Skipped when the manager has no debt (nothing to be insolvent
-/// against). Threshold reuses `min_borrow_risk_ratio` so trading cannot push
-/// a manager below the level borrowing is already gated at.
+/// against). Threshold is `min_open_risk_ratio` — between liquidation and the
+/// borrow floor — so a max-leverage open can absorb the opening trade's spread
+/// (which lands the ratio just under `min_borrow`) without aborting, while
+/// staying above the liquidatable zone.
 fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -852,7 +856,7 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
         clock,
     );
     assert!(
-        risk_ratio_after >= registry.min_borrow_risk_ratio(pool.id()),
+        risk_ratio_after >= registry.min_open_risk_ratio(pool.id()),
         EInsufficientRiskRatioAfterTrade,
     );
 }
