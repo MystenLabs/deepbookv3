@@ -18,11 +18,10 @@ const ECadenceDisabled: u64 = 2;
 const EMarketAlreadyCreated: u64 = 3;
 const EInvalidCadence: u64 = 4;
 const ECadenceWindowExceeded: u64 = 5;
-const EHigherRankCadenceOverlap: u64 = 6;
-const EInvalidDeploymentExpiry: u64 = 7;
-const EInvalidCadenceConfig: u64 = 8;
-const EPythFeedNotBoundToUnderlying: u64 = 9;
-const EBlockScholesFeedNotBoundToUnderlying: u64 = 10;
+const EInvalidDeploymentExpiry: u64 = 6;
+const EInvalidCadenceConfig: u64 = 7;
+const EPythFeedNotBoundToUnderlying: u64 = 8;
+const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size and allocation cap are committed by creation.
@@ -109,8 +108,8 @@ public(package) fun cadence_config(manager: &MarketManager, cadence_id: u8): (u6
 /// Return the next expiry, tick size, and allocation cap for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
-/// slot after the current clock time, then it must fit inside the cadence window. Lower-rank
-/// cadences may not deploy an expiry aligned to an enabled higher-rank cadence.
+/// slot after the current clock time. Reserved higher-rank cadence slots are skipped,
+/// and the selected expiry must still fit inside the cadence window.
 public(package) fun next_deployable_market(
     manager: &MarketManager,
     propbook_registry: &OracleRegistry,
@@ -127,25 +126,31 @@ public(package) fun next_deployable_market(
     let period_ms = cadence_period_ms(cadence_id);
     let watermark_candidate = underlying.last_deployed_expiries[cadence_index] + period_ms;
     let next_future_candidate = ((now_ms / period_ms) + 1) * period_ms;
-    let expiry = watermark_candidate.max(next_future_candidate);
+    let mut expiry = watermark_candidate.max(next_future_candidate);
     let window_end = now_ms + cadence.window_size * period_ms;
 
-    assert!(expiry <= window_end, ECadenceWindowExceeded);
-    assert!(!manager.has_higher_rank_overlap(cadence_id, expiry), EHigherRankCadenceOverlap);
-    let key = MarketKey { propbook_underlying_id, expiry };
-    assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
-    assert!(
-        propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
-        EPythFeedNotBoundToUnderlying,
-    );
-    assert!(
-        propbook_registry
-            .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
-            .is_some(),
-        EBlockScholesFeedNotBoundToUnderlying,
-    );
+    while (expiry <= window_end) {
+        if (manager.has_higher_rank_overlap(cadence_id, expiry)) {
+            expiry = expiry + period_ms;
+        } else {
+            let key = MarketKey { propbook_underlying_id, expiry };
+            assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
+            assert!(
+                propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
+                EPythFeedNotBoundToUnderlying,
+            );
+            assert!(
+                propbook_registry
+                    .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+                    .is_some(),
+                EBlockScholesFeedNotBoundToUnderlying,
+            );
 
-    (expiry, cadence.tick_size, cadence.max_expiry_allocation)
+            return (expiry, cadence.tick_size, cadence.max_expiry_allocation)
+        }
+    };
+
+    abort ECadenceWindowExceeded
 }
 
 public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {

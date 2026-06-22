@@ -188,8 +188,71 @@ fun create_expiry_market_after_window_full_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_manager::EHigherRankCadenceOverlap)]
-fun create_expiry_market_lower_rank_overlap_aborts() {
+#[test]
+fun create_expiry_market_skips_higher_rank_overlap() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        mut clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        market_manager::cadence_five_minute!(),
+        test_constants::default_tick_size(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_cadence_window_size(),
+    );
+    clock.set_for_testing(constants::five_minutes_ms!() - constants::one_minute_ms!());
+
+    let first_id = create_one_minute_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        &clock,
+        &mut scenario,
+    );
+    let second_id = create_one_minute_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        &clock,
+        &mut scenario,
+    );
+
+    assert!(
+        reg.expiry_market_id(test_constants::propbook_underlying_id(), constants::five_minutes_ms!())
+            .is_none(),
+    );
+    assert_market_id(&reg, constants::five_minutes_ms!() + constants::one_minute_ms!(), first_id);
+    assert_market_id(
+        &reg,
+        constants::five_minutes_ms!() + 2 * constants::one_minute_ms!(),
+        second_id,
+    );
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = market_manager::ECadenceWindowExceeded)]
+fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
     let (
         mut scenario,
         mut reg,
