@@ -168,8 +168,18 @@ public struct WithdrawCollateralEvent has copy, drop {
 }
 
 // === Functions - Take Profit Stop Loss ===
-/// Add a conditional order.
-/// Specifies the conditions under which the order is triggered and the pending order to be placed.
+/// Add a conditional order (take-profit / stop-loss). Specifies the condition
+/// under which it triggers and the pending order to place when it does.
+///
+/// Lifetime: the conditional order itself is never clamped — it rests in the
+/// queue until it triggers or is cancelled. A *market* pending order
+/// (`tpsl::new_pending_market_order`) has no expiry, so it is the "until
+/// cancelled" stop: it waits indefinitely and, when triggered, fires and
+/// deleverages via `execute_conditional_orders_v3` (so it can protect even in
+/// the danger band). A *limit* pending order is intentionally transient — when
+/// it triggers, the resting order it places is clamped to `max_order_ttl_ms`
+/// (default 3 days) by `clamp_expire_timestamp`, the same stale-price guard as
+/// any margin limit order. For a permanent stop, use a market pending order.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
