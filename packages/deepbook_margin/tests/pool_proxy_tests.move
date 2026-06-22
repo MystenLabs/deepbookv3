@@ -6463,3 +6463,112 @@ fun place_limit_order_v2_no_debt_at_oracle_price_ok() {
     return_shared_2!(mm, pool);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
+
+// #3: a manager with already-borrowed *free* funds, sitting in the
+// [min_open, min_borrow) band, can still place a normal order — the post-trade
+// floor is `min_open`, not `min_borrow`. Deposit 100 USDC, borrow 400 USDT
+// (ratio 1.25 at $1), then use the free USDT to market-buy 100 USDC. The buy
+// pays the $1.01 ask, landing risk_ratio at 1.2475 — below the borrow floor but
+// above the open floor — so it is accepted. Under the old min_borrow gate this
+// aborted (the #3 regression).
+#[test]
+fun place_market_order_v2_with_free_borrowed_funds_in_band_ok() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.deposit<USDC, USDT, DEEP>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<DEEP>(100 * test_constants::deep_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    // Borrow 400 USDT: ratio = (100 + 400) / 400 = 1.25 at $1.
+    mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        400 * test_constants::usdt_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Use the free borrowed USDT to market-buy 100 USDC — no new borrow.
+    let order_info = test_helpers::place_market_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::self_matching_allowed(),
+        100 * test_constants::usdc_multiplier(),
+        true, // is_bid = true (buy)
+        true, // pay_with_deep
+        &clock,
+    );
+    destroy(order_info);
+
+    // Post-trade risk_ratio = (200 + 299) / 400 = 1.2475: in the band, accepted.
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let rr = mm.risk_ratio(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+    assert_eq!(rr, 1_247_500_000);
+    assert!(rr < registry.min_borrow_risk_ratio(pool_id));
+    assert!(rr >= registry.min_open_risk_ratio(pool_id));
+
+    destroy_2!(usdc_price, usdt_price);
+    return_shared_3!(mm, pool, quote_pool);
+    return_shared(base_pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
