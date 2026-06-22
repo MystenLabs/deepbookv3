@@ -192,7 +192,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   fit), and an opaque id with a separate order table.
 - **No-spot market creation.** Because the tick domain is absolute, market creation
   reads no live spot — it snapshots the cadence `tick_size` and starts with zero cash.
-  `MarketCreated` carries `tick_size` and `expiry_max_allocation`, not min/max strike.
+  `MarketCreated` carries `tick_size` and `max_expiry_allocation`, not min/max strike.
   *Rationale:* the only reason creation needed a fresh spot was to center the deleted grid; a market simply
   cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
   re-adding a creation-time spot read purely to sanity-check the tick size against the

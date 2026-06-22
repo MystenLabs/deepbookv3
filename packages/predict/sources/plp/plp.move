@@ -559,9 +559,9 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
 public(package) fun register_expiry(
     vault: &mut PoolVault,
     expiry_market_id: ID,
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
 ) {
-    vault.expiry_accounting.register_expiry(expiry_market_id, expiry_max_allocation);
+    vault.expiry_accounting.register_expiry(expiry_market_id, max_expiry_allocation);
 }
 
 /// Lock-free per-market cash flow shared by the public entrypoint and the
@@ -655,9 +655,9 @@ public(package) fun lp_pool_value(
 // === Private Functions ===
 
 fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
-    let expiry_max_allocation = vault.expiry_accounting.expiry_max_allocation(expiry_market_id);
+    let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
     let requested_allocation = math::mul(
-        expiry_max_allocation,
+        max_expiry_allocation,
         constants::fee_incentive_live_target_rate!(),
     )
         .saturating_sub(market.fee_incentive_balance())
@@ -669,7 +669,7 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
         .record_fee_incentives_allocated_up_to(
             expiry_market_id,
             math::mul(
-                expiry_max_allocation,
+                max_expiry_allocation,
                 constants::fee_incentive_lifetime_cap_rate!(),
             ),
             requested_allocation,

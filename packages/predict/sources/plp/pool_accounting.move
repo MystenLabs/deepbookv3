@@ -43,7 +43,7 @@ public struct Ledger has store {
 /// Durable accounting row for one registered expiry market.
 public struct RegisteredExpiry has store {
     /// DUSDC pool allocation cap snapshotted when this expiry was created.
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
     /// DUSDC sent from the main pool into this expiry.
     sent_to_expiry: u64,
     /// DUSDC returned from this expiry to the main pool.
@@ -97,9 +97,9 @@ public(package) fun expiry_flow_amounts(ledger: &Ledger, expiry_market_id: ID): 
 }
 
 /// Return the DUSDC pool allocation cap snapshotted for one expiry.
-public(package) fun expiry_max_allocation(ledger: &Ledger, expiry_market_id: ID): u64 {
+public(package) fun max_expiry_allocation(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
-    ledger.registered_expiries.borrow(expiry_market_id).expiry_max_allocation
+    ledger.registered_expiries.borrow(expiry_market_id).max_expiry_allocation
 }
 
 /// Return remaining net DUSDC the pool may fund into one expiry under its
@@ -107,7 +107,7 @@ public(package) fun expiry_max_allocation(ledger: &Ledger, expiry_market_id: ID)
 public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
-    flow.expiry_max_allocation.saturating_sub(flow_net_funding(flow))
+    flow.max_expiry_allocation.saturating_sub(flow_net_funding(flow))
 }
 
 /// Abort unless this expiry is registered to the pool.
@@ -120,7 +120,7 @@ public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: 
 public(package) fun register_expiry(
     ledger: &mut Ledger,
     expiry_market_id: ID,
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
 ) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
     ledger.active_expiry_markets.push_back(expiry_market_id);
@@ -129,7 +129,7 @@ public(package) fun register_expiry(
         .add(
             expiry_market_id,
             RegisteredExpiry {
-                expiry_max_allocation,
+                max_expiry_allocation,
                 sent_to_expiry: 0,
                 received_from_expiry: 0,
                 fee_incentives_allocated: 0,
@@ -267,7 +267,7 @@ fun record_sent_to_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
     let current_net_funding = flow_net_funding(flow);
-    assert!(current_net_funding + amount <= flow.expiry_max_allocation, EMaxExpiryFundingExceeded);
+    assert!(current_net_funding + amount <= flow.max_expiry_allocation, EMaxExpiryFundingExceeded);
     flow.sent_to_expiry = flow.sent_to_expiry + amount;
     ledger.profit_basis_debits = ledger.profit_basis_debits + amount;
 }

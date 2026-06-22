@@ -62,7 +62,7 @@ MANAGER_SEED = 500_000 * DUSDC_DECIMALS
 INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 EXPIRY_CASH_FLOOR = 10_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
-EXPIRY_MAX_ALLOCATION = 250_000 * DUSDC_DECIMALS
+MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
 TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
@@ -162,7 +162,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global CURVE_SAMPLES
     global PROTOCOL_RESERVE_PROFIT_SHARE
     global TRADING_LOSS_REBATE_RATE
-    global EXPIRY_MAX_ALLOCATION
+    global MAX_EXPIRY_ALLOCATION
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
@@ -207,11 +207,11 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
     )
-    EXPIRY_MAX_ALLOCATION = _config_int(
+    MAX_EXPIRY_ALLOCATION = _config_int(
         config,
         "protocol",
-        "expiry_max_allocation",
-        EXPIRY_MAX_ALLOCATION,
+        "max_expiry_allocation",
+        MAX_EXPIRY_ALLOCATION,
     )
     BACKING_BUFFER_LAMBDA = _config_int(
         config,
@@ -1222,7 +1222,7 @@ def expiry_net_funding(state: dict[str, int]) -> int:
 
 
 def available_expiry_funding(state: dict[str, int]) -> int:
-    return max(0, EXPIRY_MAX_ALLOCATION - expiry_net_funding(state))
+    return max(0, MAX_EXPIRY_ALLOCATION - expiry_net_funding(state))
 
 
 def live_backing_reserve(model: dict[str, Any]) -> int:

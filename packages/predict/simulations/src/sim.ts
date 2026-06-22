@@ -63,7 +63,7 @@ const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
 const DEFAULT_SIM_TERMINAL_FLOOR_INDEX = FLOAT_SCALING;
 const SIM_CADENCE_ONE_MONTH = 5;
 const SIM_CADENCE_WINDOW_SIZE = 1n;
-const DEFAULT_EXPIRY_MAX_ALLOCATION = 250_000n * DUSDC_DECIMALS;
+const DEFAULT_MAX_EXPIRY_ALLOCATION = 250_000n * DUSDC_DECIMALS;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
@@ -918,10 +918,10 @@ async function setupSimulation(
         "normal_terminal_floor_index",
         DEFAULT_SIM_TERMINAL_FLOOR_INDEX,
     );
-    const expiryMaxAllocation = protocolConfigValue(
+    const maxExpiryAllocation = protocolConfigValue(
         scenarioConfig,
-        "expiry_max_allocation",
-        DEFAULT_EXPIRY_MAX_ALLOCATION,
+        "max_expiry_allocation",
+        DEFAULT_MAX_EXPIRY_ALLOCATION,
     );
 
     let result = await executeAndWait(
@@ -995,13 +995,13 @@ async function setupSimulation(
         setCadenceConfigTx({
             cadenceId: SIM_CADENCE_ONE_MONTH,
             tickSize: ORACLE_TICK_SIZE,
-            expiryMaxAllocation,
+            maxExpiryAllocation,
             windowSize: SIM_CADENCE_WINDOW_SIZE,
         }),
         "set_cadence_config",
     );
     console.log(
-        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} allocation=${expiryMaxAllocation / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
+        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
     );
 
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");

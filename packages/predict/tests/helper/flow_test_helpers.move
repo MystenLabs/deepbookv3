@@ -119,7 +119,7 @@ public fun setup_market(tick: u64): Fixture {
         &admin_cap,
         test_constants::default_cadence_id(),
         tick,
-        test_constants::default_expiry_max_allocation(),
+        test_constants::default_max_expiry_allocation(),
         test_constants::default_cadence_window_size(),
     );
     return_shared(config);

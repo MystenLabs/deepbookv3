@@ -207,7 +207,7 @@ long Python = real timestamp economic analysis
 ```
 
 Expiry market creation goes through the registry's cadence config. The localnet
-setup enables the one-month cadence with `tick_size`, `expiry_max_allocation`,
+setup enables the one-month cadence with `tick_size`, `max_expiry_allocation`,
 and `window_size`, then snapshots the configured tick size and allocation into
 the created market. It does not derive a centered grid from the first spot. The
 generator, Python replay, and localnet runner all use absolute ticks

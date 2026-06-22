@@ -73,7 +73,7 @@ public fun default_cadence_period_ms(): u64 { constants::one_minute_ms!() }
 public fun default_cadence_window_size(): u64 { 1 }
 
 /// Default per-expiry allocation cap used by test market cadence configs.
-public fun default_expiry_max_allocation(): u64 { 250_000_000_000 }
+public fun default_max_expiry_allocation(): u64 { 250_000_000_000 }
 
 /// The canonical finite strike tick the flow tests mint against. With the default
 /// 1e9 tick size it maps to the raw strike `100e9` (`default_strike_tick *

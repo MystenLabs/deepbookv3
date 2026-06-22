@@ -35,7 +35,7 @@
         "curve_samples": "50",
         "protocol_reserve_profit_share": "400000000",
         "trading_loss_rebate_rate": "500000000",
-        "expiry_max_allocation": "250000000000",
+        "max_expiry_allocation": "250000000000",
         "expiry_fee_window_ms": "86400000",
         "expiry_fee_max_multiplier": "2000000000",
         "leverage_floor_window_ms": "31536000000",

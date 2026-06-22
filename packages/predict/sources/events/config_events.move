@@ -78,7 +78,7 @@ public struct CadenceConfigUpdated has copy, drop, store {
     registry_id: ID,
     cadence_id: u8,
     tick_size: u64,
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
     window_size: u64,
 }
 
@@ -92,7 +92,7 @@ public struct MarketCreated has copy, drop, store {
     /// Raw-price-per-tick factor; indexers/SDKs derive raw strikes as `tick * tick_size`.
     tick_size: u64,
     /// DUSDC pool allocation cap snapshotted for this expiry.
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
 }
 
 /// Emitted alongside `MarketCreated` with the per-market policy snapshotted into
@@ -213,14 +213,14 @@ public(package) fun emit_cadence_config_updated(
     registry_id: ID,
     cadence_id: u8,
     tick_size: u64,
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
     window_size: u64,
 ) {
     event::emit(CadenceConfigUpdated {
         registry_id,
         cadence_id,
         tick_size,
-        expiry_max_allocation,
+        max_expiry_allocation,
         window_size,
     });
 }
@@ -231,7 +231,7 @@ public(package) fun emit_market_created(
     propbook_underlying_id: u32,
     expiry: u64,
     tick_size: u64,
-    expiry_max_allocation: u64,
+    max_expiry_allocation: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -239,7 +239,7 @@ public(package) fun emit_market_created(
         propbook_underlying_id,
         expiry,
         tick_size,
-        expiry_max_allocation,
+        max_expiry_allocation,
     });
 }
 

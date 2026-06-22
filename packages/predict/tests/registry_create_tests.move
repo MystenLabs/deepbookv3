@@ -11,8 +11,8 @@ const UNDERLYING_BTC: u32 = 100;
 const UNDERLYING_ETH: u32 = 200;
 const BTC_TICK_SIZE: u64 = 1_000_000_000;
 const ETH_TICK_SIZE: u64 = 100_000_000;
-const BTC_EXPIRY_MAX_ALLOCATION: u64 = 250_000_000_000;
-const ETH_EXPIRY_MAX_ALLOCATION: u64 = 100_000_000_000;
+const BTC_MAX_EXPIRY_ALLOCATION: u64 = 250_000_000_000;
+const ETH_MAX_EXPIRY_ALLOCATION: u64 = 100_000_000_000;
 const WINDOW_SIZE_THREE: u64 = 3;
 const DISABLED_VALUE: u64 = 0;
 const INVALID_CADENCE_ID: u8 = 6;
@@ -34,14 +34,14 @@ fun register_underlying_allows_distinct_underlyings() {
         &admin_cap,
         market_manager::cadence_one_day!(),
         ETH_TICK_SIZE,
-        ETH_EXPIRY_MAX_ALLOCATION,
+        ETH_MAX_EXPIRY_ALLOCATION,
         WINDOW_SIZE_THREE,
     );
-    let (tick_size, expiry_max_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
         market_manager::cadence_one_day!(),
     );
     assert_eq!(tick_size, ETH_TICK_SIZE);
-    assert_eq!(expiry_max_allocation, ETH_EXPIRY_MAX_ALLOCATION);
+    assert_eq!(max_expiry_allocation, ETH_MAX_EXPIRY_ALLOCATION);
     assert_eq!(window_size, WINDOW_SIZE_THREE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -71,11 +71,11 @@ fun register_underlying_with_current_version_disabled_aborts() {
 fun cadence_config_initializes_disabled() {
     let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    let (tick_size, expiry_max_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
         market_manager::cadence_one_minute!(),
     );
     assert_eq!(tick_size, DISABLED_VALUE);
-    assert_eq!(expiry_max_allocation, DISABLED_VALUE);
+    assert_eq!(max_expiry_allocation, DISABLED_VALUE);
     assert_eq!(window_size, DISABLED_VALUE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -90,14 +90,14 @@ fun set_cadence_config_updates_all_terms() {
         &admin_cap,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
-        BTC_EXPIRY_MAX_ALLOCATION,
+        BTC_MAX_EXPIRY_ALLOCATION,
         WINDOW_SIZE_THREE,
     );
-    let (tick_size, expiry_max_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
         market_manager::cadence_one_minute!(),
     );
     assert_eq!(tick_size, BTC_TICK_SIZE);
-    assert_eq!(expiry_max_allocation, BTC_EXPIRY_MAX_ALLOCATION);
+    assert_eq!(max_expiry_allocation, BTC_MAX_EXPIRY_ALLOCATION);
     assert_eq!(window_size, WINDOW_SIZE_THREE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -112,7 +112,7 @@ fun set_cadence_config_can_disable_cadence() {
         &admin_cap,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
-        BTC_EXPIRY_MAX_ALLOCATION,
+        BTC_MAX_EXPIRY_ALLOCATION,
         WINDOW_SIZE_THREE,
     );
     reg.set_cadence_config(
@@ -123,11 +123,11 @@ fun set_cadence_config_can_disable_cadence() {
         DISABLED_VALUE,
         DISABLED_VALUE,
     );
-    let (tick_size, expiry_max_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
         market_manager::cadence_one_minute!(),
     );
     assert_eq!(tick_size, DISABLED_VALUE);
-    assert_eq!(expiry_max_allocation, DISABLED_VALUE);
+    assert_eq!(max_expiry_allocation, DISABLED_VALUE);
     assert_eq!(window_size, DISABLED_VALUE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -142,7 +142,7 @@ fun set_cadence_config_invalid_cadence_id_aborts() {
         &admin_cap,
         INVALID_CADENCE_ID,
         BTC_TICK_SIZE,
-        BTC_EXPIRY_MAX_ALLOCATION,
+        BTC_MAX_EXPIRY_ALLOCATION,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess
@@ -157,7 +157,7 @@ fun set_cadence_config_unaligned_tick_size_aborts() {
         &admin_cap,
         market_manager::cadence_one_minute!(),
         INVALID_TICK_SIZE,
-        BTC_EXPIRY_MAX_ALLOCATION,
+        BTC_MAX_EXPIRY_ALLOCATION,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess
@@ -187,7 +187,7 @@ fun set_cadence_config_partial_disable_aborts() {
         &admin_cap,
         market_manager::cadence_one_minute!(),
         DISABLED_VALUE,
-        BTC_EXPIRY_MAX_ALLOCATION,
+        BTC_MAX_EXPIRY_ALLOCATION,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess

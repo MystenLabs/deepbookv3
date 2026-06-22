@@ -523,7 +523,7 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
 export function setCadenceConfigTx(params: {
     cadenceId: number;
     tickSize: bigint;
-    expiryMaxAllocation: bigint;
+    maxExpiryAllocation: bigint;
     windowSize: bigint;
 }): Transaction {
     const tx = new Transaction();
@@ -535,7 +535,7 @@ export function setCadenceConfigTx(params: {
             tx.object(ADMIN_CAP_ID),
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
-            tx.pure.u64(params.expiryMaxAllocation),
+            tx.pure.u64(params.maxExpiryAllocation),
             tx.pure.u64(params.windowSize),
         ],
     });
