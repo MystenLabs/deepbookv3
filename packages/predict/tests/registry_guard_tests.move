@@ -207,6 +207,7 @@ fun create_expiry_market_skips_higher_rank_overlap() {
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     clock.set_for_testing(constants::five_minutes_ms!() - constants::one_minute_ms!());
@@ -274,6 +275,7 @@ fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     clock.set_for_testing(constants::five_minutes_ms!() - constants::one_minute_ms!());
@@ -310,6 +312,7 @@ fun create_expiry_market_duplicate_expiry_aborts() {
         market_manager::cadence_one_day!(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     daily_clock.set_for_testing(constants::one_week_ms!() - constants::one_day_ms!());
@@ -330,6 +333,7 @@ fun create_expiry_market_duplicate_expiry_aborts() {
         market_manager::cadence_one_week!(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     let mut weekly_clock = clock::create_for_testing(scenario.ctx());
@@ -359,6 +363,7 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     return_shared(reg);
@@ -455,6 +460,7 @@ fun setup_registered_feeds(): (Scenario, ID, AdminCap, ID, ID) {
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     let registry_id = reg.id();
@@ -507,6 +513,7 @@ fun setup_bound_creation_context(
         market_manager::cadence_one_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         window_size,
     );
     let mut clock = clock::create_for_testing(scenario.ctx());

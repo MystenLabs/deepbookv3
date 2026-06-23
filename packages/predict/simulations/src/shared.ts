@@ -67,9 +67,9 @@ export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
     step: number;
-    // `flush` is the runner-synthesized privileged LP drain — not a CSV row action,
-    // so it widens the trace action set without touching `ScenarioActionName`.
-    action: ScenarioActionName | "flush";
+    // Synthetic runner maintenance txs are not CSV row actions, so they widen
+    // the trace action set without touching `ScenarioActionName`.
+    action: ScenarioActionName | "flush" | "rebalance_expiry_cash";
     digest: string;
     wallMs: number;
     gas: GasLike;
@@ -128,6 +128,8 @@ export interface SimState {
     // Sole flush-start authority: the market-deployer MarketLifecycleCap, used to
     // mint a per-flush lifecycle proof for `plp::start_pool_valuation`.
     lifecycleCapId: string;
+    // Per-cadence initial expiry cash target snapshotted into pool accounting.
+    initialExpiryCash: string;
 }
 
 type RawScenarioRow = Record<string, string>;

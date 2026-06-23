@@ -560,8 +560,11 @@ public(package) fun register_expiry(
     vault: &mut PoolVault,
     expiry_market_id: ID,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
 ) {
-    vault.expiry_accounting.register_expiry(expiry_market_id, max_expiry_allocation);
+    vault
+        .expiry_accounting
+        .register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
 }
 
 /// Lock-free per-market cash flow shared by the public entrypoint and the
@@ -588,7 +591,9 @@ public(package) fun rebalance_expiry_cash_inner(
 
     vault.sync_fee_incentives(market, expiry_market_id);
 
-    let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
+    let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
+    let (cash_balance, target_cash, sweep_threshold_cash) =
+        expiry_rebalance_cash_terms(market, initial_expiry_cash);
     if (cash_balance < target_cash) {
         let requested_top_up = target_cash - cash_balance;
         let funding_room = vault.expiry_accounting.available_expiry_funding(expiry_market_id);
@@ -717,16 +722,18 @@ fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
 /// Current cash, the target cash to hold, and the upper sweep band for one expiry.
 ///
 /// `required_cash` is payout liability plus rebate reserve; `target_cash` adds one
-/// buffer above it and `sweep_threshold_cash` adds two, both floored at
-/// `expiry_cash_floor`. Below target the pool tops up to target; above the sweep
-/// band it returns the excess over target.
-fun expiry_rebalance_cash_terms(market: &ExpiryMarket): (u64, u64, u64) {
+/// buffer above it and `sweep_threshold_cash` adds two, both floored at the
+/// per-expiry initial cash target. Below target the pool tops up to target; above
+/// the sweep band it returns the excess over target.
+fun expiry_rebalance_cash_terms(
+    market: &ExpiryMarket,
+    initial_expiry_cash: u64,
+): (u64, u64, u64) {
     let required_cash = market.payout_liability() + market.rebate_reserve();
     let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
-    let target_cash = (required_cash + target_buffer).max(constants::expiry_cash_floor!());
-    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
-        constants::expiry_cash_floor!(),
-    );
+    let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
+    let sweep_threshold_cash =
+        (required_cash + target_buffer + target_buffer).max(initial_expiry_cash);
     (market.cash_balance(), target_cash, sweep_threshold_cash)
 }
 

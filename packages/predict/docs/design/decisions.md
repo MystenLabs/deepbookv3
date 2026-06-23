@@ -11,15 +11,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Leverage is a deterministic floor, not a debt overlay.** A position is one
   binary (digital) contract whose live value is `range-probability value − a
-  deterministic, time-varying floor`, floored at 0 (1× = zero floor); the floor is
+  static floor`, floored at 0 (1× = zero floor); the floor is
   limited-recourse to its own order. *Rejected:* a borrow-index / normalized-debt
   overlay (leverage as a separable debt) and utilization-based borrow rates — the
-  floor model keeps one contract with a time-varying floor, with no separate debt
-  to track, price, or liquidate.
-- **Time-only floor schedule.** The floor index rises deterministically with time
-  (quadratic ramp) toward a terminal value, independent of spot. *Rejected:*
-  double-sided range leverage and spot-dependent rates — double-sided leverage is
-  non-monotonic in spot, so there is no exact global liquidation index.
+  floor model keeps one contract with a static per-order floor, with no separate
+  debt to track, price, or liquidate.
+- **Static per-order floor.** The floor is snapshotted as `floor_shares` at mint
+  and is independent of time, spot, and later admission-policy changes. Leveraged
+  orders can use the same generic `(lower_tick, higher_tick]` range shape as 1x
+  orders; liquidation remains mark-based against the order's current range value.
+  *Rejected:* spot-dependent rates.
 - **Pure knock-out liquidation.** A leveraged order is removed without paying the
   holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
   persists until the holder redeems and clears it. *Rejected:* residual-paying
@@ -36,17 +37,18 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Data structures
 
 - **The order id is a packed `u256` — the single on-chain term store.** It packs
-  the durable post-mint terms (quantity, floor shares, opened-at, two strike
-  ticks, sequence); there is no separate order table. It is self-authenticating,
+  the durable post-mint terms (quantity, floor shares, two strike ticks,
+  sequence); there is no separate order table. It is self-authenticating,
   costs zero per-order storage, and doubles as the liquidation sort key.
   *Rejected:* unpacking to a sequence + `Table<u64, Order>`.
-- **Mint-admission policy is kept out of the order id.** Leverage tiers and price
+- **Mint-admission policy is kept out of the order id.** Admission caps and price
   thresholds live in config, not in order decoding, so a future policy change can
   never retroactively invalidate an existing packed id.
 - **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
-  (terminal-payout + live-backing prefixes) and a flat liquidation book coexist;
-  the exact live NAV is read by decomposing the per-order liability across the two
-  (`Σ qty·P` over the tree minus the leveraged floor-correction scan over the book).
+  (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
+  book coexist; the exact live NAV is read by decomposing the per-order liability
+  across the two (`Σ qty·P` over the tree minus the leveraged floor-correction
+  scan over the book).
   *Superseded:* a dense paged NAV matrix (`{quantity, floor_shares}` with
   strike-weighted prefix sums), which existed only to make every LP supply/withdraw
   a cheap synchronous read. It and its whole mitigation stack (the valuation
@@ -60,11 +62,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   an ascending id sort is largest-quantity-first with no decode. *Rejected:* a
   two-level skip-tree with slack certificates; a bucketed leverage book.
 - **Liquidation priority is largest-quantity-first, not most-under-floor-first.**
-  The sort key lives in the immutable packed id, and an order's floor deficit is
-  time-varying — it cannot be a static key. Largest-first is the best feasible
-  static proxy for the quantity that matters (how much a stale order can
+  The sort key lives in the immutable packed id, and an order's health changes
+  with the live surface — it cannot be a static key. Largest-first is the best
+  feasible static proxy for the quantity that matters (how much a stale order can
   overstate NAV). *Rejected:* most-under-floor-first (would require re-keying the
-  book on every index tick).
+  book whenever marks move).
 
 ## Accounting and rounding
 
@@ -86,7 +88,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Backing and solvency (recent)
 
 - **The live cash-backing reserve is a settlement floor plus a tunable liquidity
-  buffer**: `max_live_backing + λ · (Σ live_backing − max_live_backing)`, with
+  buffer**: `max_net_payout + λ · (Σ net_payout − max_net_payout)`, with
   `λ` (`backing_buffer_lambda`) an admin template value, default 0.25. The floor
   — the maximum summed payout at any *single* settlement price — pays every
   settlement winner in full on every price path, because exactly one price
@@ -111,7 +113,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (`idle ≥ Σ active (max_funding − net_funding)`), which pinned the full cap of
   pool capital per active market regardless of book shape and whose backing
   duty became void under the settlement-floor guarantee.
-- **Keep the payout tree.** The tree's max-live term is the enforced settlement
+- **Keep the payout tree.** The tree's max-net-payout term is the enforced settlement
   floor that anchors the live reserve — an O(1) root read, and the structural
   proof that any reserve ≥ it always pays in full at settlement. The same tree now
   also serves the exact NAV linear walk (`Σ qty·P` over its live boundaries), so it
@@ -192,7 +194,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   fit), and an opaque id with a separate order table.
 - **No-spot market creation.** Because the tick domain is absolute, market creation
   reads no live spot — it snapshots the cadence `tick_size` and starts with zero cash.
-  `MarketCreated` carries `tick_size` and `max_expiry_allocation`, not min/max strike.
+  `MarketCreated` carries `tick_size`, `max_expiry_allocation`, and
+  `initial_expiry_cash`, not min/max strike.
   *Rationale:* the only reason creation needed a fresh spot was to center the deleted grid; a market simply
   cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
   re-adding a creation-time spot read purely to sanity-check the tick size against the

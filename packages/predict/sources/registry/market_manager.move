@@ -24,7 +24,8 @@ const EPythFeedNotBoundToUnderlying: u64 = 8;
 const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
-/// expiry; the market's tick size and allocation cap are committed by creation.
+/// expiry; the market's tick size, allocation cap, and initial cash target are
+/// committed by creation.
 public struct MarketKey has copy, drop, store {
     propbook_underlying_id: u32,
     expiry: u64,
@@ -46,6 +47,8 @@ public struct CadenceConfig has copy, drop, store {
     tick_size: u64,
     /// DUSDC pool allocation cap snapshotted into pool accounting for each created expiry.
     max_expiry_allocation: u64,
+    /// Minimum DUSDC cash target snapshotted into pool accounting for each created expiry.
+    initial_expiry_cash: u64,
     /// Number of future cadence slots that deployment may keep filled.
     /// Zero disables this cadence.
     window_size: u64,
@@ -100,12 +103,17 @@ public(package) fun expiry_market_id(
     }
 }
 
-public(package) fun cadence_config(manager: &MarketManager, cadence_id: u8): (u64, u64, u64) {
+public(package) fun cadence_config(manager: &MarketManager, cadence_id: u8): (u64, u64, u64, u64) {
     let cadence = &manager.cadences[cadence_index(cadence_id)];
-    (cadence.tick_size, cadence.max_expiry_allocation, cadence.window_size)
+    (
+        cadence.tick_size,
+        cadence.max_expiry_allocation,
+        cadence.initial_expiry_cash,
+        cadence.window_size,
+    )
 }
 
-/// Return the next expiry, tick size, and allocation cap for an underlying/cadence.
+/// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
 /// slot after the current clock time. Reserved higher-rank cadence slots are skipped,
@@ -116,7 +124,7 @@ public(package) fun next_deployable_market(
     propbook_underlying_id: u32,
     cadence_id: u8,
     clock: &Clock,
-): (u64, u64, u64) {
+): (u64, u64, u64, u64) {
     let cadence_index = cadence_index(cadence_id);
     let cadence = &manager.cadences[cadence_index];
     assert!(cadence.window_size > 0, ECadenceDisabled);
@@ -146,7 +154,12 @@ public(package) fun next_deployable_market(
                 EBlockScholesFeedNotBoundToUnderlying,
             );
 
-            return (expiry, cadence.tick_size, cadence.max_expiry_allocation)
+            return (
+                expiry,
+                cadence.tick_size,
+                cadence.max_expiry_allocation,
+                cadence.initial_expiry_cash,
+            )
         }
     };
 
@@ -171,12 +184,14 @@ public(package) fun set_cadence_config(
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 ) {
-    assert_cadence_config(tick_size, max_expiry_allocation, window_size);
+    assert_cadence_config(tick_size, max_expiry_allocation, initial_expiry_cash, window_size);
     let cadence = &mut manager.cadences[cadence_index(cadence_id)];
     cadence.tick_size = tick_size;
     cadence.max_expiry_allocation = max_expiry_allocation;
+    cadence.initial_expiry_cash = initial_expiry_cash;
     cadence.window_size = window_size;
 }
 
@@ -243,7 +258,7 @@ fun cadence_period_ms(cadence_id: u8): u64 {
 }
 
 fun disabled_cadence(): CadenceConfig {
-    CadenceConfig { tick_size: 0, max_expiry_allocation: 0, window_size: 0 }
+    CadenceConfig { tick_size: 0, max_expiry_allocation: 0, initial_expiry_cash: 0, window_size: 0 }
 }
 
 fun disabled_cadences(): vector<CadenceConfig> {
@@ -262,13 +277,29 @@ fun cadence_index(cadence_id: u8): u64 {
     (cadence_id as u64)
 }
 
-fun assert_cadence_config(tick_size: u64, max_expiry_allocation: u64, window_size: u64) {
-    let disabled = tick_size == 0 && max_expiry_allocation == 0 && window_size == 0;
+fun assert_cadence_config(
+    tick_size: u64,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+    window_size: u64,
+) {
+    let disabled =
+        tick_size == 0
+            && max_expiry_allocation == 0
+            && initial_expiry_cash == 0
+            && window_size == 0;
     if (disabled) return;
 
-    assert!(tick_size > 0 && max_expiry_allocation > 0 && window_size > 0, EInvalidCadenceConfig);
+    assert!(
+        tick_size > 0
+            && max_expiry_allocation > 0
+            && initial_expiry_cash > 0
+            && window_size > 0,
+        EInvalidCadenceConfig,
+    );
     config_constants::assert_market_tick_size_bounds(tick_size);
-    assert!(max_expiry_allocation >= constants::min_expiry_allocation!(), EInvalidCadenceConfig);
+    assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
+    assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 
 fun has_higher_rank_overlap(manager: &MarketManager, cadence_id: u8, expiry: u64): bool {

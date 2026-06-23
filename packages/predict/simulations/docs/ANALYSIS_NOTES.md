@@ -43,8 +43,8 @@ faster than accumulated fees.
 Random direction count is not the same as balanced economic exposure.
 
 -   Accepted mints are filtered. The generator retries failed rows, and failed
-    rows can depend on side, strike, fee bounds, leverage tier, liquidation entry
-    guard, terminal LTV guard, and available manager cash.
+    rows can depend on side, strike, fee bounds, dynamic admission leverage,
+    liquidation entry guard, and available manager cash.
 -   Spend-based sizing amplifies probability differences. For the same target
     spend, cheaper contracts receive more quantity.
 -   Redeems and liquidations are path-dependent. The final open book is the
@@ -134,8 +134,8 @@ The bounded liquidation scan sorts active leveraged orders by packed `order_id`.
 An offline priority search over the `may29-1738` long-run backlog samples found
 that a quantity-first packed layout captured more liquidatable value than the
 previous leverage-first layout. The current protocol layout is
-`quantity_lots desc > floor_shares desc > opened_at_ms asc >
-lower_boundary_index asc > higher_boundary_index asc > sequence asc`.
+`quantity_lots desc > floor_shares desc > lower_tick asc > higher_tick asc >
+sequence asc`.
 
 The useful interpretation is that order size was the strongest immutable proxy
 for value-at-risk in that run. Higher leverage still matters, but using it as the

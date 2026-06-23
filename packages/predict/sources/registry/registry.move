@@ -59,8 +59,8 @@ public fun expiry_market_id(
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
 }
 
-/// Return `(tick_size, max_expiry_allocation, window_size)` for a cadence.
-public fun cadence_config(registry: &Registry, cadence_id: u8): (u64, u64, u64) {
+/// Return `(tick_size, max_expiry_allocation, initial_expiry_cash, window_size)` for a cadence.
+public fun cadence_config(registry: &Registry, cadence_id: u8): (u64, u64, u64, u64) {
     registry.market_manager.cadence_config(cadence_id)
 }
 
@@ -162,7 +162,7 @@ public fun register_underlying(
     registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
-/// Set all deployment terms for one cadence. Passing zero for all three values
+/// Set all deployment terms for one cadence. Passing zero for all four values
 /// disables the cadence; otherwise all values must be nonzero and valid.
 public fun set_cadence_config(
     registry: &mut Registry,
@@ -171,17 +171,25 @@ public fun set_cadence_config(
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 ) {
     config.assert_version();
     registry
         .market_manager
-        .set_cadence_config(cadence_id, tick_size, max_expiry_allocation, window_size);
+        .set_cadence_config(
+            cadence_id,
+            tick_size,
+            max_expiry_allocation,
+            initial_expiry_cash,
+            window_size,
+        );
     config_events::emit_cadence_config_updated(
         registry.id(),
         cadence_id,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
         window_size,
     );
 }
@@ -195,10 +203,11 @@ public fun set_cadence_config(
 /// Propbook's admin-gated canonical binding — that both
 /// required oracle kinds are currently bound for the underlying. The market
 /// snapshots the cadence tick size, while pool accounting snapshots the cadence
-/// allocation cap. Priced flows resolve current canonical oracle object IDs from
-/// Propbook so a Propbook rebind affects existing markets. The market is created
-/// with zero cash and registered with the pool vault as an accounting row only; it
-/// is not mintable until `plp::rebalance_expiry_cash` funds it.
+/// allocation cap and initial expiry cash target. Priced flows resolve current
+/// canonical oracle object IDs from Propbook so a Propbook rebind affects
+/// existing markets. The market is created with zero cash and registered with
+/// the pool vault as an accounting row only; it is not mintable until
+/// `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -214,7 +223,7 @@ public fun create_expiry_market(
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
-    let (expiry, tick_size, max_expiry_allocation) = registry
+    let (expiry, tick_size, max_expiry_allocation, initial_expiry_cash) = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
     let pool_vault_id = pool_vault.id();
@@ -225,7 +234,7 @@ public fun create_expiry_market(
         tick_size,
         ctx,
     );
-    pool_vault.register_expiry(expiry_market_id, max_expiry_allocation);
+    pool_vault.register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
     registry
         .market_manager
         .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
@@ -236,6 +245,7 @@ public fun create_expiry_market(
         expiry,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
     );
 
     expiry_market_id

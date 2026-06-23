@@ -11,11 +11,8 @@ module deepbook_predict::liquidation_book_tests;
 use deepbook_predict::{constants, liquidation_book, order::{Self, Order}};
 use std::unit_test::{assert_eq, destroy};
 
-const OPENED_AT_MS: u64 = 1_000;
-// Leveraged orders must be semi-infinite (order.move assert_valid_order_shape:
-// lower tick 0 or higher tick == pos_inf_tick), so use an open lower end.
-const LOWER_TICK: u64 = 0;
-const HIGHER_TICK: u64 = 2;
+const LOWER_TICK: u64 = 1;
+const HIGHER_TICK: u64 = 3;
 const SEQUENCE: u64 = 7;
 const PRIORITY_QUANTITY_LOTS: u64 = 10;
 const LOW_FLOOR_SHARES: u64 = 10_000;
@@ -26,7 +23,6 @@ const HIGH_FLOOR_SHARES: u64 = 20_000;
 fun leveraged_order(): Order {
     let quantity = constants::position_lot_size!();
     order::new_from_ticks(
-        OPENED_AT_MS,
         LOWER_TICK,
         HIGHER_TICK,
         quantity / 2, // floor_shares > 0 => leveraged
@@ -63,7 +59,6 @@ fun remove_uninserted_order_from_nonempty_book_aborts() {
     // Same ticks, different sequence => different packed id.
     let quantity = constants::position_lot_size!();
     let missing = order::new_from_ticks(
-        OPENED_AT_MS,
         LOWER_TICK,
         HIGHER_TICK,
         quantity / 2,
@@ -119,7 +114,6 @@ fun head_candidate_prefers_higher_floor_for_equal_quantity() {
     let mut book = liquidation_book::new(ctx);
     let quantity = constants::position_lot_size!() * PRIORITY_QUANTITY_LOTS;
     let low_floor = order::new_from_ticks(
-        OPENED_AT_MS,
         LOWER_TICK,
         HIGHER_TICK,
         LOW_FLOOR_SHARES,
@@ -127,7 +121,6 @@ fun head_candidate_prefers_higher_floor_for_equal_quantity() {
         SEQUENCE,
     );
     let high_floor = order::new_from_ticks(
-        OPENED_AT_MS,
         LOWER_TICK,
         HIGHER_TICK,
         HIGH_FLOOR_SHARES,

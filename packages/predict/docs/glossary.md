@@ -3,9 +3,8 @@
 Technical definitions for the terms the Predict docs and code use, with the
 established options / structured-product term each one maps to and the code
 identifier it corresponds to. Mint-economics identifiers (`entry_value`,
-`net_premium`, `financed_amount`) match these terms directly; the floor family
-keeps its payoff-oriented code names (`floor_shares`, `floor_index`), bridged
-here.
+`net_premium`, `financed_amount`) match these terms directly; the floor amount
+keeps its payoff-oriented code name (`floor_shares`), bridged here.
 
 ## The product
 
@@ -28,7 +27,7 @@ here.
 - **Writer** — the seller of an option, who owes its payout. The pool
   (`PoolVault` plus each expiry's `ExpiryCash`) is the writer of record for
   every Predict contract and fully collateralizes its written payouts (code:
-  `payout_liability`, `live_backing_payout`).
+  `payout_liability`, `net_payout`).
 - **Expiry market** — all contracts sharing one `(feed, expiry)` pair; code
   `ExpiryMarket`. Its tick grid is the expiry's option chain.
 
@@ -122,28 +121,18 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 - **Financed amount** — the slice of the full premium the pool funds at mint,
   `full premium − net premium`; code `financed_amount`. The structured-product
   analogue is a turbo warrant's financing level at issuance.
-- **Floor (financing balance)** — the financed amount accreted to time `t`; the
-  value the contract must cover before the holder owns anything above it. It
-  enters the payoff itself (`payout = quantity − terminal floor` for a winner),
-  so it is part of the contract, not a separable debt position. Code
-  `floor_amount`.
-- **Financing index (floor index)** — the deterministic accrual schedule the
-  financing balance grows along (quadratic ramp to a terminal value) — the
-  same role a borrow index plays in a money market. Code `floor_index`,
-  `terminal_floor_index`.
-- **Financing shares (floor shares)** — the financing balance normalized by the
-  index at open, so every contract in an expiry accrues along one curve:
-  `floor_shares = financed_amount / floor_index(opened_at)` and
-  `balance(t) = floor_shares × floor_index(t)`. The same convention as a
-  scaled (share-denominated) debt balance in lending protocols. Code
-  `floor_shares`.
+- **Floor (financing balance)** — the static financed amount the contract must
+  cover before the holder owns anything above it. It enters the payoff itself
+  (`payout = quantity − floor_shares` for a winner), so it is part of the
+  contract, not a separable debt position. Code `floor_shares`.
 - **Limited recourse** — the financing is secured by its own contract only: the
   floor can consume that one order's value or payout, capped at it, and never
   creates a claim on the holder's other assets.
-- **Leverage** — premium leverage: full premium over net premium, in discrete
-  tiers 1x–3x. This is financing leverage on the premium, on top of the high
-  gearing a digital already has relative to the underlying. (The symbol λ is
-  reserved in these docs for `backing_buffer_lambda`.)
+- **Leverage** — premium leverage: full premium over net premium, represented as
+  a 1e9-scaled multiplier and admitted by a probability-sensitive cap. This is
+  financing leverage on the premium, on top of the high gearing a digital already
+  has relative to the underlying. (The symbol λ is reserved in these docs for
+  `backing_buffer_lambda`.)
 
 ## Knock-out (liquidation)
 
@@ -223,5 +212,5 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem` (live) | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
-| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − terminal floor`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
+| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
 | `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero rebate. |

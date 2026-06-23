@@ -13,11 +13,14 @@ const BTC_TICK_SIZE: u64 = 1_000_000_000;
 const ETH_TICK_SIZE: u64 = 100_000_000;
 const BTC_MAX_EXPIRY_ALLOCATION: u64 = 250_000_000_000;
 const ETH_MAX_EXPIRY_ALLOCATION: u64 = 100_000_000_000;
+const BTC_INITIAL_EXPIRY_CASH: u64 = 50_000_000_000;
+const ETH_INITIAL_EXPIRY_CASH: u64 = 25_000_000_000;
 const WINDOW_SIZE_THREE: u64 = 3;
 const DISABLED_VALUE: u64 = 0;
 const INVALID_CADENCE_ID: u8 = 6;
 const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
-const BELOW_MIN_EXPIRY_ALLOCATION: u64 = 9_999_999_999;
+const BELOW_EXPIRY_CASH_FLOOR: u64 = 9_999_999_999;
+const BELOW_INITIAL_EXPIRY_CASH: u64 = BTC_INITIAL_EXPIRY_CASH - 1;
 
 const EUnexpectedSuccess: u64 = 999;
 
@@ -35,13 +38,15 @@ fun register_underlying_allows_distinct_underlyings() {
         market_manager::cadence_one_day!(),
         ETH_TICK_SIZE,
         ETH_MAX_EXPIRY_ALLOCATION,
+        ETH_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
-    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, initial_expiry_cash, window_size) = reg.cadence_config(
         market_manager::cadence_one_day!(),
     );
     assert_eq!(tick_size, ETH_TICK_SIZE);
     assert_eq!(max_expiry_allocation, ETH_MAX_EXPIRY_ALLOCATION);
+    assert_eq!(initial_expiry_cash, ETH_INITIAL_EXPIRY_CASH);
     assert_eq!(window_size, WINDOW_SIZE_THREE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -71,11 +76,12 @@ fun register_underlying_with_current_version_disabled_aborts() {
 fun cadence_config_initializes_disabled() {
     let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, initial_expiry_cash, window_size) = reg.cadence_config(
         market_manager::cadence_one_minute!(),
     );
     assert_eq!(tick_size, DISABLED_VALUE);
     assert_eq!(max_expiry_allocation, DISABLED_VALUE);
+    assert_eq!(initial_expiry_cash, DISABLED_VALUE);
     assert_eq!(window_size, DISABLED_VALUE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -91,13 +97,15 @@ fun set_cadence_config_updates_all_terms() {
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
-    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, initial_expiry_cash, window_size) = reg.cadence_config(
         market_manager::cadence_one_minute!(),
     );
     assert_eq!(tick_size, BTC_TICK_SIZE);
     assert_eq!(max_expiry_allocation, BTC_MAX_EXPIRY_ALLOCATION);
+    assert_eq!(initial_expiry_cash, BTC_INITIAL_EXPIRY_CASH);
     assert_eq!(window_size, WINDOW_SIZE_THREE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -113,6 +121,7 @@ fun set_cadence_config_can_disable_cadence() {
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
     reg.set_cadence_config(
@@ -122,12 +131,14 @@ fun set_cadence_config_can_disable_cadence() {
         DISABLED_VALUE,
         DISABLED_VALUE,
         DISABLED_VALUE,
+        DISABLED_VALUE,
     );
-    let (tick_size, max_expiry_allocation, window_size) = reg.cadence_config(
+    let (tick_size, max_expiry_allocation, initial_expiry_cash, window_size) = reg.cadence_config(
         market_manager::cadence_one_minute!(),
     );
     assert_eq!(tick_size, DISABLED_VALUE);
     assert_eq!(max_expiry_allocation, DISABLED_VALUE);
+    assert_eq!(initial_expiry_cash, DISABLED_VALUE);
     assert_eq!(window_size, DISABLED_VALUE);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
@@ -143,6 +154,7 @@ fun set_cadence_config_invalid_cadence_id_aborts() {
         INVALID_CADENCE_ID,
         BTC_TICK_SIZE,
         BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess
@@ -158,13 +170,14 @@ fun set_cadence_config_unaligned_tick_size_aborts() {
         market_manager::cadence_one_minute!(),
         INVALID_TICK_SIZE,
         BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = market_manager::EInvalidCadenceConfig)]
-fun set_cadence_config_below_min_allocation_aborts() {
+fun set_cadence_config_initial_cash_below_floor_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
     reg.set_cadence_config(
@@ -172,7 +185,24 @@ fun set_cadence_config_below_min_allocation_aborts() {
         &admin_cap,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
-        BELOW_MIN_EXPIRY_ALLOCATION,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BELOW_EXPIRY_CASH_FLOOR,
+        WINDOW_SIZE_THREE,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_manager::EInvalidCadenceConfig)]
+fun set_cadence_config_initial_cash_above_allocation_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_minute!(),
+        BTC_TICK_SIZE,
+        BELOW_INITIAL_EXPIRY_CASH,
+        BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess
@@ -188,6 +218,7 @@ fun set_cadence_config_partial_disable_aborts() {
         market_manager::cadence_one_minute!(),
         DISABLED_VALUE,
         BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess

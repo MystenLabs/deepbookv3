@@ -42,7 +42,7 @@ base_fee_rate = max( raw_fee_rate , min_fee )
 
 As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
 
-The all-in mint execution price is `p + fee_rate`, and the protocol rejects mints whose execution price falls outside the configured `[min_ask_price, max_ask_price]` band. This is a pricing admission check, not a separate fee — it bounds the price a mint can execute at after the fee is added.
+Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
 
 ## 2. Expiry fee ramp
 

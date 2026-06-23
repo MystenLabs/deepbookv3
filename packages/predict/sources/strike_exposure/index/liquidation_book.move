@@ -70,22 +70,17 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
 }
 
 /// Sum the NAV floor-correction term over the active leveraged book:
-/// `Σ min(qty·range_price(lower, higher), floor_shares·index_now)`.
+/// `Σ min(qty·range_price(lower, higher), floor_shares)`.
 ///
 /// The active index already holds exactly the leveraged orders (1x mints are
 /// no-ops, liquidated orders are tombstoned out), so this scan needs no extra
-/// filtering. Each active order is one-sided, so `range_price` costs one heavy
-/// eval. The `min` is the order's limited-recourse floor: an underwater order's
-/// range value is capped at its floor and nets to zero against the linear term, so
-/// NAV needs no liquidation pass. All terms are non-negative — a plain `u64` sum.
-/// The caller (which owns the model) supplies the live `pricer`, the market
-/// `tick_size` for raw-strike decoding, and the current floor `index_now`.
-public(package) fun correction_value(
-    book: &LiquidationBook,
-    pricer: &Pricer,
-    tick_size: u64,
-    index_now: u64,
-): u64 {
+/// filtering. Each active order is priced by its encoded range. The `min` is the
+/// order's limited-recourse static floor: a knocked-out
+/// order's range value is capped at its floor and nets to zero against the linear
+/// term, so NAV needs no liquidation pass for an exact mark. All terms are
+/// non-negative — a plain `u64` sum. The caller (which owns the model) supplies the
+/// live `pricer` and the market `tick_size` for raw-strike decoding.
+public(package) fun correction_value(book: &LiquidationBook, pricer: &Pricer, tick_size: u64): u64 {
     let mut correction = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
@@ -97,7 +92,7 @@ public(package) fun correction_value(
             tick_size,
         );
         let range_value = math::mul(pricer.range_price(lower, higher), order.quantity());
-        let floor_value = math::mul(order.floor_shares(), index_now);
+        let floor_value = order.floor_shares();
         correction = correction + range_value.min(floor_value);
         cursor = book.next_cursor(scan);
     };

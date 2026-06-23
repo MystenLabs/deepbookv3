@@ -522,12 +522,14 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
     return tx;
 }
 
-// Enable one registry-owned market cadence. Tick size and allocation cap are
-// snapshotted into future markets created from this cadence.
+// Enable one registry-owned market cadence. Tick size, allocation cap, and
+// initial expiry cash target are snapshotted into future markets created from
+// this cadence.
 export function setCadenceConfigTx(params: {
     cadenceId: number;
     tickSize: bigint;
     maxExpiryAllocation: bigint;
+    initialExpiryCash: bigint;
     windowSize: bigint;
 }): Transaction {
     const tx = new Transaction();
@@ -540,6 +542,7 @@ export function setCadenceConfigTx(params: {
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
             tx.pure.u64(params.maxExpiryAllocation),
+            tx.pure.u64(params.initialExpiryCash),
             tx.pure.u64(params.windowSize),
         ],
     });
@@ -602,17 +605,17 @@ export function setTemplateExpiryFeeConfigTx(
     return tx;
 }
 
-export function setTemplateTerminalFloorIndexTx(
+export function setTemplateMaxAdmissionLeverageTx(
     protocolConfigId: string,
-    terminalFloorIndex: bigint,
+    maxAdmissionLeverage: bigint,
 ): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("protocol_config", "set_template_terminal_floor_index"),
+        target: target("protocol_config", "set_template_max_admission_leverage"),
         arguments: [
             tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(terminalFloorIndex),
+            tx.pure.u64(maxAdmissionLeverage),
         ],
     });
     return tx;

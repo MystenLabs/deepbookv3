@@ -112,20 +112,6 @@ public fun set_template_expiry_fee_max_multiplier(
     );
 }
 
-/// Set the terminal floor index snapshotted by future expiry markets.
-public fun set_template_terminal_floor_index(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_terminal_floor_index(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
-}
-
 /// Set the liquidation LTV snapshotted by future expiry markets.
 public fun set_template_liquidation_ltv(
     config: &mut ProtocolConfig,
@@ -134,6 +120,20 @@ public fun set_template_liquidation_ltv(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_liquidation_ltv(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the max admission leverage snapshotted by future expiry markets.
+public fun set_template_max_admission_leverage(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_max_admission_leverage(value);
     config_events::emit_strike_exposure_template_config_updated(
         config.id(),
         &config.strike_exposure_template_config,
@@ -167,28 +167,28 @@ public fun set_benefit_powers(
     config_events::emit_stake_config_updated(config.id(), &config.stake_config);
 }
 
-/// Set the minimum all-in mint price snapshotted by future expiry markets.
-public fun set_template_min_ask_price(
+/// Set the minimum raw entry probability snapshotted by future expiry markets.
+public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_version();
-    config.strike_exposure_template_config.set_min_ask_price(value);
+    config.strike_exposure_template_config.set_min_entry_probability(value);
     config_events::emit_strike_exposure_template_config_updated(
         config.id(),
         &config.strike_exposure_template_config,
     );
 }
 
-/// Set the maximum all-in mint price snapshotted by future expiry markets.
-public fun set_template_max_ask_price(
+/// Set the maximum raw entry probability snapshotted by future expiry markets.
+public fun set_template_max_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_version();
-    config.strike_exposure_template_config.set_max_ask_price(value);
+    config.strike_exposure_template_config.set_max_entry_probability(value);
     config_events::emit_strike_exposure_template_config_updated(
         config.id(),
         &config.strike_exposure_template_config,
