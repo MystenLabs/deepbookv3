@@ -4,18 +4,17 @@
 /// Immutable contract terms encoded in a Predict order ID.
 ///
 /// An `Order` represents the durable contract terms needed after mint: the lower
-/// and higher strike ticks, quantity, normalized floor shares, original open time,
-/// and expiry-local sequence. Mint-only inputs such as entry probability, leverage,
-/// net premium, and fee policy intentionally live outside this module. The packed
-/// ID is the single source of truth at protocol boundaries; raw strike conversion
-/// (through the owning market's `tick_size`) and floor-index timing are interpreted
-/// by `StrikeExposure`.
+/// and higher strike ticks, quantity, the static floor amount (`floor_shares = F`),
+/// and the expiry-local sequence. Mint-only inputs such as entry probability,
+/// leverage, net premium, and fee policy intentionally live outside this module.
+/// The packed ID is the single source of truth at protocol boundaries; raw strike
+/// conversion (through the owning market's `tick_size`) is interpreted by
+/// `StrikeExposure`.
 module deepbook_predict::order;
 
 use deepbook_predict::constants;
 
 const EInvalidOrderId: u64 = 0;
-const EInvalidOpenedAt: u64 = 1;
 const EInvalidTick: u64 = 2;
 const EInvalidFloorShares: u64 = 3;
 const EInvalidRange: u64 = 4;
@@ -24,7 +23,6 @@ const EInvalidSequence: u64 = 6;
 
 const QUANTITY_LOTS_OFFSET: u8 = 200;
 const FLOOR_SHARES_OFFSET: u8 = 136;
-const OPENED_AT_OFFSET: u8 = 88;
 const LOWER_TICK_OFFSET: u8 = 64;
 const HIGHER_TICK_OFFSET: u8 = 40;
 const ORDER_ID_BITS: u8 = 232;
@@ -32,7 +30,6 @@ const ORDER_ID_BITS: u8 = 232;
 const U24_MASK: u256 = (1u256 << 24) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;
 const U40_MASK: u256 = (1u256 << 40) - 1;
-const U48_MASK: u256 = (1u256 << 48) - 1;
 const U64_MASK: u256 = (1u256 << 64) - 1;
 
 /// Validated typed view over one packed Predict order ID.
@@ -52,11 +49,6 @@ public(package) fun from_order_id(order_id: u256): Order {
 /// Return the canonical packed order ID.
 public(package) fun id(order: &Order): u256 {
     order.id
-}
-
-/// Return the timestamp in milliseconds when this position was originally opened.
-public(package) fun opened_at_ms(order: &Order): u64 {
-    decode_u48(order.id, OPENED_AT_OFFSET)
 }
 
 /// Return the lower strike tick encoded in this order (`0` is the `neg_inf` lower).
@@ -87,7 +79,6 @@ public(package) fun sequence(order: &Order): u64 {
 
 /// Construct an order ID from validated strike ticks.
 public(package) fun new_from_ticks(
-    opened_at_ms: u64,
     lower_tick: u64,
     higher_tick: u64,
     floor_shares: u64,
@@ -95,7 +86,6 @@ public(package) fun new_from_ticks(
     sequence: u64,
 ): Order {
     new(
-        opened_at_ms,
         lower_tick,
         higher_tick,
         floor_shares,
@@ -113,7 +103,6 @@ public(package) fun replacement(
 ): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
     new_from_ticks(
-        old_order.opened_at_ms(),
         old_order.lower_tick(),
         old_order.higher_tick(),
         floor_shares,
@@ -133,20 +122,18 @@ public(package) fun is_leveraged(order: &Order): bool {
     order.floor_shares() > 0
 }
 
-/// Return the normalized floor shares encoded in this order.
+/// Return the static floor amount (`floor_shares = F`) encoded in this order.
 public(package) fun floor_shares(order: &Order): u64 {
     decode_floor_shares(order.id)
 }
 
 fun new(
-    opened_at_ms: u64,
     lower_tick: u64,
     higher_tick: u64,
     floor_shares: u64,
     quantity_lots: u64,
     sequence: u64,
 ): Order {
-    assert!(opened_at_ms <= U48_MASK as u64, EInvalidOpenedAt);
     assert!(lower_tick <= U24_MASK as u64, EInvalidTick);
     assert!(higher_tick <= U24_MASK as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
@@ -160,7 +147,6 @@ fun new(
     let id =
         (quantity_lots_key << QUANTITY_LOTS_OFFSET)
         | (floor_shares_key << FLOOR_SHARES_OFFSET)
-        | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((lower_tick as u256) << LOWER_TICK_OFFSET)
         | ((higher_tick as u256) << HIGHER_TICK_OFFSET)
         | (sequence as u256);
@@ -180,10 +166,6 @@ fun decode_u32(id: u256, offset: u8): u64 {
 
 fun decode_quantity_lots(id: u256): u64 {
     (U32_MASK as u64) - decode_u32(id, QUANTITY_LOTS_OFFSET)
-}
-
-fun decode_u48(id: u256, offset: u8): u64 {
-    ((id >> offset) & U48_MASK) as u64
 }
 
 fun decode_u64(id: u256, offset: u8): u64 {

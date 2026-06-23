@@ -204,21 +204,18 @@ public(package) fun allocate_mint_order(
         exposure.tick_size,
     );
     let entry_probability = pricer.range_price(lower, higher);
-    let opened_at_ms = clock.timestamp_ms();
     let (net_premium, floor_shares) = exposure
         .config
         .assert_mint_admission(
             exposure.expiry_ms,
-            opened_at_ms,
+            clock.timestamp_ms(),
             entry_probability,
             quantity,
             leverage,
         );
 
     let sequence = exposure.next_order_sequence;
-
     let allocated_order = order::new_from_ticks(
-        opened_at_ms,
         lower_tick,
         higher_tick,
         floor_shares,
@@ -302,7 +299,6 @@ public(package) fun liquidate_live_order(
     order: &Order,
 ): bool {
     if (!exposure.liquidation.contains_active_order(order)) return false;
-
     let liquidation_ltv = exposure.config.liquidation_ltv();
     exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
 }
