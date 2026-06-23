@@ -81,7 +81,7 @@ Every admin setter follows the same shape, which keeps creation-time and update-
 
 1. The setter asserts no valuation is in progress (for the global lock).
 2. The new value is validated against its `assert_*` bound in `config_constants` (a single specific error code per value), so it lands inside the upgrade-required envelope.
-3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the all-in mint price setters require `min_ask_price < max_ask_price`, and the staking setter validates `lower` and `upper` together with `upper > 2 * lower` (which keeps the curve's `upper - lower` denominator positive and `lower > 0`).
+3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the mint-admission probability setters require `min_entry_probability < max_entry_probability`, and the staking setter validates `lower` and `upper` together with `upper > 2 * lower` (which keeps the curve's `upper - lower` denominator positive and `lower > 0`).
 4. The value is stored and a config event is emitted reflecting the new state.
 
 The grouped EWMA setter still validates each field against its own

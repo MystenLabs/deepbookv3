@@ -3,8 +3,9 @@
 
 /// Abort-path coverage for every `strike_exposure_config` error code.
 ///
-/// Setter-side: `EInvalidAskBound` (the relational min < max ask guard on the
-/// template setters). Leaf math guard: `EInvalidFeeProbability` — unreachable
+/// Setter-side: `EInvalidEntryProbabilityBound` (the relational min < max entry
+/// probability guard on the template setters). Leaf math guard:
+/// `EInvalidFeeProbability` — unreachable
 /// from the public mint surface because `pricing` quotes come from
 /// `normal_cdf`, which is bounded to `[0, 1e9]`, so it is exercised by a
 /// direct package-internal `trading_fee` call (rule 4). Mint-admission policy is
@@ -26,7 +27,7 @@ use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 // Leverage and probability values in FLOAT_SCALING (1e9).
-const ENTRY_PROBABILITY_ZERO: u64 = 0;
+const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
 const ENTRY_PROBABILITY_LOW: u64 = 100_000_000;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
 const LEVERAGE_BELOW_ONE_X: u64 = 999_999_999;
@@ -46,40 +47,59 @@ fun new_shared_config(): (Scenario, AdminCap, ID) {
     (scenario, admin_cap, config_id)
 }
 
-// === EInvalidAskBound (template setter relational guard) ===
+// === EInvalidEntryProbabilityBound (template setter relational guard) ===
 
-// A min ask equal to the current max ask is the tightest just-outside value
+// A min entry probability equal to the current max entry probability is the
+// tightest just-outside value
 // (the setter requires min < max strictly); it is inside the
 // `config_constants` envelope, so the relational guard is what fires.
-#[test, expected_failure(abort_code = strike_exposure_config::EInvalidAskBound)]
-fun template_min_ask_price_at_max_ask_aborts() {
+#[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
+fun template_min_entry_probability_at_max_entry_probability_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_min_ask_price(&admin_cap, config_constants::default_max_ask_price!());
+    config.set_template_min_entry_probability(
+        &admin_cap,
+        config_constants::default_max_entry_probability!(),
+    );
     abort 999
 }
 
-#[test, expected_failure(abort_code = strike_exposure_config::EInvalidAskBound)]
-fun template_max_ask_price_at_min_ask_aborts() {
+#[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
+fun template_max_entry_probability_at_min_entry_probability_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_max_ask_price(&admin_cap, config_constants::default_min_ask_price!());
+    config.set_template_max_entry_probability(
+        &admin_cap,
+        config_constants::default_min_entry_probability!(),
+    );
     abort 999
 }
 
 #[test]
-fun template_ask_bounds_accept_adjacent_values() {
+fun template_entry_probability_bounds_accept_adjacent_values() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
     // min one unit below the default max, then max one unit above that min:
     // the tightest just-inside pair for the relational guard.
-    config.set_template_min_ask_price(&admin_cap, config_constants::default_max_ask_price!() - 1);
-    config.set_template_max_ask_price(&admin_cap, config_constants::default_max_ask_price!());
+    config.set_template_min_entry_probability(
+        &admin_cap,
+        config_constants::default_max_entry_probability!() - 1,
+    );
+    config.set_template_max_entry_probability(
+        &admin_cap,
+        config_constants::default_max_entry_probability!(),
+    );
 
     let snapshot = config.strike_exposure_config_snapshot();
-    assert_eq!(snapshot.min_ask_price(), config_constants::default_max_ask_price!() - 1);
-    assert_eq!(snapshot.max_ask_price(), config_constants::default_max_ask_price!());
+    assert_eq!(
+        snapshot.min_entry_probability(),
+        config_constants::default_max_entry_probability!() - 1,
+    );
+    assert_eq!(
+        snapshot.max_entry_probability(),
+        config_constants::default_max_entry_probability!(),
+    );
     destroy(snapshot);
 
     return_shared(config);
@@ -120,15 +140,13 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
     destroy(config);
 }
 
-// === EAskPriceOutOfBounds (mint admission) ===
+// === EEntryProbabilityOutOfBounds (mint admission) ===
 
-#[test, expected_failure(abort_code = strike_exposure_config::EAskPriceOutOfBounds)]
-fun mint_admission_probability_one_above_max_ask_aborts() {
+#[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
+fun mint_admission_probability_one_above_max_entry_probability_aborts() {
     let config = strike_exposure_config::new();
-    // p = 1.0, fee floor = 0.005, all-in price = 1.005 > max ask 0.99.
+    // p = 1.0 is above the default max entry probability 0.99.
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         float!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
@@ -136,14 +154,14 @@ fun mint_admission_probability_one_above_max_ask_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = strike_exposure_config::EAskPriceOutOfBounds)]
-fun mint_admission_zero_probability_below_min_ask_aborts() {
+#[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
+fun mint_admission_probability_below_min_entry_probability_aborts() {
     let config = strike_exposure_config::new();
-    // p = 0, fee floor = 0.005, all-in price = 0.005 < min ask 0.01.
+    // This probability is below 1%, but its old all-in ask price would have
+    // cleared 1% after the min fee was added. Admission now gates raw
+    // probability directly.
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
-        ENTRY_PROBABILITY_ZERO,
+        ENTRY_PROBABILITY_BELOW_MIN,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -156,8 +174,6 @@ fun mint_admission_zero_probability_below_min_ask_aborts() {
 fun mint_admission_leverage_below_one_x_aborts() {
     let config = strike_exposure_config::new();
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_BELOW_ONE_X,
@@ -170,8 +186,6 @@ fun mint_admission_low_probability_two_x_above_curve_aborts() {
     let config = strike_exposure_config::new();
     // With default max leverage 3x and k = 0.2, p = 0.1 gives cap 1.8x.
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_LOW,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
@@ -185,8 +199,6 @@ fun mint_admission_template_cap_scales_curve_aborts() {
     config.set_max_admission_leverage(LEVERAGE_TWO_X);
     // With max leverage 2x and k = 0.2, p = 0.5 gives cap 1.857142857x.
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
@@ -202,8 +214,6 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
     // At 2.5x, net premium = 500_000_000 / 2.5 = 200_000_000 and
     // floor shares = 500_000_000 - 200_000_000 = 300_000_000.
     let (net_premium, floor_shares) = config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
@@ -221,8 +231,6 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
     // At p = 0.5 and 1x leverage, quantity 1_990_000 gives net premium
     // 995_000, one position lot below the 1_000_000 minimum.
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!() - constants::position_lot_size!(),
         test_constants::leverage_one_x(),
@@ -235,8 +243,6 @@ fun mint_admission_net_premium_at_minimum_succeeds() {
     let config = strike_exposure_config::new();
 
     let (net_premium, floor_shares) = config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
@@ -256,8 +262,6 @@ fun mint_admission_liquidation_ltv_still_controls_open_threshold() {
     // liquidation LTV set to 0.5, the open threshold equals entry value, so the
     // strict above-threshold check fails even though 2x passes admission cap.
     config.assert_mint_admission(
-        test_constants::default_expiry_ms(),
-        test_constants::now_ms(),
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,

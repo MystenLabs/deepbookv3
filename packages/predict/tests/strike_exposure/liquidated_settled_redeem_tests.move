@@ -100,7 +100,6 @@ fun liquidated_order_fixture(): (
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             LEVERAGE_TWO_X,
-            fx.clock(),
         );
 
     fx.set_pyth(&mut pyth, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);

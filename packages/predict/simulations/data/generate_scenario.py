@@ -174,6 +174,7 @@ class Generator:
             lower, higher = replay.binary_range_bounds(replay.align_strike_to_tick(strike), is_up)
             try:
                 entry_probability = replay.compute_range_price(svi, pricing_forward, lower, higher)
+                replay.assert_entry_probability_bounds(entry_probability)
                 fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
                 leverage = self.random_leverage(entry_probability)
                 quantity = self.quantity_for_spend(

@@ -9,8 +9,8 @@ module deepbook_predict::config_constants;
 
 const EInvalidBaseFee: u64 = 0;
 const EInvalidMinFee: u64 = 1;
-const EInvalidMinAskPrice: u64 = 2;
-const EInvalidMaxAskPrice: u64 = 3;
+const EInvalidMinEntryProbability: u64 = 2;
+const EInvalidMaxEntryProbability: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
@@ -183,24 +183,32 @@ public(package) fun assert_market_tick_size_bounds(value: u64) {
     );
 }
 
-public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
-public(package) macro fun min_min_ask_price(): u64 { 0 }
-public(package) macro fun max_min_ask_price(): u64 {
+public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
+public(package) macro fun min_min_entry_probability(): u64 { 0 }
+public(package) macro fun max_min_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun assert_min_ask_price(value: u64) {
-    assert!(value >= min_min_ask_price!() && value <= max_min_ask_price!(), EInvalidMinAskPrice);
+public(package) fun assert_min_entry_probability(value: u64) {
+    assert!(
+        value >= min_min_entry_probability!()
+            && value <= max_min_entry_probability!(),
+        EInvalidMinEntryProbability,
+    );
 }
 
-public(package) macro fun default_max_ask_price(): u64 { 990_000_000 }
-public(package) macro fun min_max_ask_price(): u64 { 0 }
-public(package) macro fun max_max_ask_price(): u64 {
+public(package) macro fun default_max_entry_probability(): u64 { 990_000_000 }
+public(package) macro fun min_max_entry_probability(): u64 { 0 }
+public(package) macro fun max_max_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun assert_max_ask_price(value: u64) {
-    assert!(value >= min_max_ask_price!() && value <= max_max_ask_price!(), EInvalidMaxAskPrice);
+public(package) fun assert_max_entry_probability(value: u64) {
+    assert!(
+        value >= min_max_entry_probability!()
+            && value <= max_max_entry_probability!(),
+        EInvalidMaxEntryProbability,
+    );
 }
 
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }

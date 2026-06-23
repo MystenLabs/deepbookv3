@@ -13,8 +13,8 @@ use deepbook_predict::{config_constants, constants};
 use fixed_math::math;
 
 const EOrderBelowLiquidationThreshold: u64 = 0;
-const EAskPriceOutOfBounds: u64 = 1;
-const EInvalidAskBound: u64 = 2;
+const EEntryProbabilityOutOfBounds: u64 = 1;
+const EInvalidEntryProbabilityBound: u64 = 2;
 const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
@@ -39,10 +39,10 @@ public struct StrikeExposureConfig has store {
     base_fee: u64,
     /// Minimum per-unit fee floor; live trade fees never go below this value.
     min_fee: u64,
-    /// Minimum allowed all-in mint price after adding the fee.
-    min_ask_price: u64,
-    /// Maximum allowed all-in mint price after adding the fee.
-    max_ask_price: u64,
+    /// Minimum raw entry probability allowed for mint admission.
+    min_entry_probability: u64,
+    /// Maximum raw entry probability allowed for mint admission.
+    max_entry_probability: u64,
     /// Window before expiry over which trade fees ramp up.
     expiry_fee_window_ms: u64,
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables the ramp.
@@ -71,12 +71,12 @@ public(package) fun min_fee(config: &StrikeExposureConfig): u64 {
     config.min_fee
 }
 
-public(package) fun min_ask_price(config: &StrikeExposureConfig): u64 {
-    config.min_ask_price
+public(package) fun min_entry_probability(config: &StrikeExposureConfig): u64 {
+    config.min_entry_probability
 }
 
-public(package) fun max_ask_price(config: &StrikeExposureConfig): u64 {
-    config.max_ask_price
+public(package) fun max_entry_probability(config: &StrikeExposureConfig): u64 {
+    config.max_entry_probability
 }
 
 public(package) fun expiry_fee_window_ms(config: &StrikeExposureConfig): u64 {
@@ -98,7 +98,7 @@ public(package) fun trading_fee(
     math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
-/// Assert mint price, leverage, net-premium, and barrier policy; return
+/// Assert entry probability, leverage, net-premium, and barrier policy; return
 /// `(net_premium, floor_shares)`.
 ///
 /// `floor_shares` is the static dollar floor `F = financed_amount = entry_value -
@@ -108,17 +108,14 @@ public(package) fun trading_fee(
 /// the protocol originates the requested leverage.
 public(package) fun assert_mint_admission(
     config: &StrikeExposureConfig,
-    expiry_ms: u64,
-    timestamp_ms: u64,
     entry_probability: u64,
     quantity: u64,
     leverage: u64,
 ): (u64, u64) {
-    let fee_rate = config.fee_rate(expiry_ms, entry_probability, timestamp_ms);
-    let execution_price = entry_probability + fee_rate;
     assert!(
-        execution_price >= config.min_ask_price && execution_price <= config.max_ask_price,
-        EAskPriceOutOfBounds,
+        entry_probability >= config.min_entry_probability
+            && entry_probability <= config.max_entry_probability,
+        EEntryProbabilityOutOfBounds,
     );
 
     // Leverage is continuous, with the protocol cap scaled down for low prices.
@@ -148,8 +145,8 @@ public(package) fun new(): StrikeExposureConfig {
         backing_buffer_lambda: config_constants::default_backing_buffer_lambda!(),
         base_fee: config_constants::default_base_fee!(),
         min_fee: config_constants::default_min_fee!(),
-        min_ask_price: config_constants::default_min_ask_price!(),
-        max_ask_price: config_constants::default_max_ask_price!(),
+        min_entry_probability: config_constants::default_min_entry_probability!(),
+        max_entry_probability: config_constants::default_max_entry_probability!(),
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
     }
@@ -163,8 +160,8 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         backing_buffer_lambda: config.backing_buffer_lambda,
         base_fee: config.base_fee,
         min_fee: config.min_fee,
-        min_ask_price: config.min_ask_price,
-        max_ask_price: config.max_ask_price,
+        min_entry_probability: config.min_entry_probability,
+        max_entry_probability: config.max_entry_probability,
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
     }
@@ -195,16 +192,16 @@ public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
     config.min_fee = value;
 }
 
-public(package) fun set_min_ask_price(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_min_ask_price(value);
-    assert!(value < config.max_ask_price, EInvalidAskBound);
-    config.min_ask_price = value;
+public(package) fun set_min_entry_probability(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_min_entry_probability(value);
+    assert!(value < config.max_entry_probability, EInvalidEntryProbabilityBound);
+    config.min_entry_probability = value;
 }
 
-public(package) fun set_max_ask_price(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_max_ask_price(value);
-    assert!(value > config.min_ask_price, EInvalidAskBound);
-    config.max_ask_price = value;
+public(package) fun set_max_entry_probability(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_max_entry_probability(value);
+    assert!(value > config.min_entry_probability, EInvalidEntryProbabilityBound);
+    config.max_entry_probability = value;
 }
 
 public(package) fun set_expiry_fee_window_ms(config: &mut StrikeExposureConfig, value: u64) {

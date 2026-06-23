@@ -111,7 +111,7 @@ public fun setup_market(tick: u64): Fixture {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
-    config.set_template_min_ask_price(&admin_cap, 0);
+    config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_cadence_config(

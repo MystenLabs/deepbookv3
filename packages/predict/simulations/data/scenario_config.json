@@ -27,8 +27,8 @@
     "protocol": {
         "base_fee": "20000000",
         "min_fee": "5000000",
-        "min_ask_price": "10000000",
-        "max_ask_price": "990000000",
+        "min_entry_probability": "10000000",
+        "max_entry_probability": "990000000",
         "trade_liquidation_budget": "24",
         "valuation_liquidation_budget": "192",
         "liquidation_head_scan_divisor": "3",

@@ -38,8 +38,8 @@ ORACLE_REFRESH_FIELDS = (
 # these only when the corresponding localnet setup is intentionally extended.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
-MIN_ASK_PRICE = 10_000_000
-MAX_ASK_PRICE = 990_000_000
+MIN_ENTRY_PROBABILITY = 10_000_000
+MAX_ENTRY_PROBABILITY = 990_000_000
 # Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
 # tick * tick_size`, no centered grid. Finite ticks occupy 1..POS_INF_TICK-1; tick
 # 0 is the neg-inf sentinel (lower side) and POS_INF_TICK is the pos-inf sentinel
@@ -148,8 +148,8 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global INITIAL_TOTAL_PLP_SUPPLY
     global BASE_FEE
     global MIN_FEE
-    global MIN_ASK_PRICE
-    global MAX_ASK_PRICE
+    global MIN_ENTRY_PROBABILITY
+    global MAX_ENTRY_PROBABILITY
     global TRADE_LIQUIDATION_BUDGET
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
@@ -171,8 +171,18 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
 
     BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
     MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
-    MIN_ASK_PRICE = _config_int(config, "protocol", "min_ask_price", MIN_ASK_PRICE)
-    MAX_ASK_PRICE = _config_int(config, "protocol", "max_ask_price", MAX_ASK_PRICE)
+    MIN_ENTRY_PROBABILITY = _config_int(
+        config,
+        "protocol",
+        "min_entry_probability",
+        MIN_ENTRY_PROBABILITY,
+    )
+    MAX_ENTRY_PROBABILITY = _config_int(
+        config,
+        "protocol",
+        "max_entry_probability",
+        MAX_ENTRY_PROBABILITY,
+    )
     TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
     VALUATION_LIQUIDATION_BUDGET = _config_int(
         config,
@@ -492,6 +502,10 @@ def deepbook_mul(x: int, y: int) -> int:
 
 def mul_div_round_down(a: int, b: int, c: int) -> int:
     return a * b // c
+
+
+def mul_div_round_up(a: int, b: int, c: int) -> int:
+    return (a * b + c - 1) // c
 
 
 def live_forward(spot: int, forward: int) -> int:
@@ -1011,7 +1025,6 @@ def remove_closed_live_order(
     else:
         remaining_quantity, remaining_floor_shares = order_index_update_terms(resulting_order)
 
-    closed_floor_shares = old_floor_shares - remaining_floor_shares
     model["payout"].remove_range(order["lower"], order["higher"], old_quantity, old_floor_shares)
     if resulting_order is not None:
         model["payout"].insert_range(
@@ -1021,7 +1034,8 @@ def remove_closed_live_order(
             remaining_floor_shares,
         )
     invalidate_valuation_cache(model)
-    return floor_amount(closed_floor_shares)
+    closed_floor_amount = mul_div_round_up(old_floor_shares, close_quantity, old_quantity)
+    return floor_amount(closed_floor_amount)
 
 
 def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
@@ -1300,12 +1314,13 @@ def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
     return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
 
 
+def assert_entry_probability_bounds(probability: int) -> None:
+    if probability < MIN_ENTRY_PROBABILITY or probability > MAX_ENTRY_PROBABILITY:
+        raise ValueError("entry probability out of bounds")
+
+
 def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
-    rate = fee_rate(probability, time_to_expiry_ms)
-    ask_price = probability + rate
-    if ask_price < MIN_ASK_PRICE or ask_price > MAX_ASK_PRICE:
-        raise ValueError("ask price out of bounds")
-    return rate
+    return fee_rate(probability, time_to_expiry_ms)
 
 
 def initial_state() -> dict[str, int]:
@@ -1451,6 +1466,7 @@ def order_minted_update(
     lower, higher = binary_range_bounds(strike, mint["isUp"])
     lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
+    assert_entry_probability_bounds(entry_probability)
     fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
     assert_net_premium_above_min(terms["contribution"])

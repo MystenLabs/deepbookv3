@@ -189,7 +189,6 @@ public(package) fun allocate_mint_order(
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
-    clock: &Clock,
 ): (Order, u64, u64) {
     let (lower, higher) = range_codec::strikes_from_ticks(
         lower_tick,
@@ -200,8 +199,6 @@ public(package) fun allocate_mint_order(
     let (net_premium, floor_shares) = exposure
         .config
         .assert_mint_admission(
-            exposure.expiry_ms,
-            clock.timestamp_ms(),
             entry_probability,
             quantity,
             leverage,

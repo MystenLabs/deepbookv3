@@ -589,7 +589,6 @@ fun mint_internal(
             higher_tick,
             quantity,
             leverage,
-            clock,
         );
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);

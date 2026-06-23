@@ -125,8 +125,8 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Mint admission
 
-- Execution price `entry_probability + fee_rate` must lie in `[min_ask_price,
-  max_ask_price]`.
+- Raw `entry_probability` must lie in `[min_entry_probability,
+  max_entry_probability]`; fees are not included in this admission bound.
 - Leverage is continuous at 1e9 scale: any requested `leverage ≥ 1×` is allowed
   only if it is no greater than the dynamic admission cap derived from entry
   probability, the expiry's snapshotted `max_admission_leverage`, and the
