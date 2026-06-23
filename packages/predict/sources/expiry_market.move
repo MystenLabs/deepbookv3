@@ -252,8 +252,8 @@ public fun redeem(
 }
 
 /// Permissionlessly redeem a settled order without account-owner authority. The
-/// market must be settled already; this flow does not run live pricing,
-/// liquidation, or liquidated-position cleanup. Requires a full close.
+/// market must be settled already; this flow does not run live pricing or new
+/// liquidation. Liquidated tombstones clear with zero payout. Requires a full close.
 public fun redeem_settled(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -762,6 +762,11 @@ fun redeem_settled_internal(
     order: &Order,
     ctx: &mut TxContext,
 ) {
+    if (market.strike_exposure.is_liquidated_order(order)) {
+        market.redeem_liquidated_order(account, order, order.quantity(), ctx);
+        return
+    };
+
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
