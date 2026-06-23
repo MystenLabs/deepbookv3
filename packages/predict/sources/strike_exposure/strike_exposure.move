@@ -3,13 +3,14 @@
 
 /// Expiry-local exposure book for one expiry market.
 ///
-/// This module interprets `Order` terms against the expiry's `tick_size` and
-/// floor-index schedule, recovering raw strikes from order ticks only at the
-/// pricing/settlement boundary. It owns the payout-liability view of the active
-/// contracts used for cash backing. It stores the parent market identity so
-/// market-scoped liquidation events can be emitted atomically with exposure
-/// removal. Expiry-market cash custody, rebate accounting, manager positions,
-/// and payout movement stay outside this module.
+/// This module interprets `Order` terms against the expiry's `tick_size`,
+/// recovering raw strikes from order ticks only at the pricing/settlement boundary.
+/// It owns the payout-liability view of the active contracts used for cash backing.
+/// The order floor is a static dollar amount (`floor_shares`), so order accounting
+/// needs no clock. It stores the parent market identity so market-scoped
+/// liquidation events can be emitted atomically with exposure removal. Expiry-market
+/// cash custody, rebate accounting, manager positions, and payout movement stay
+/// outside this module.
 module deepbook_predict::strike_exposure;
 
 use deepbook_predict::{
@@ -31,7 +32,7 @@ const EInvalidCloseQuantity: u64 = 0;
 public struct StrikeExposure has store {
     /// Expiry market that owns this exposure book.
     expiry_market_id: ID,
-    /// Terminal timestamp used by floor-index and order floor math.
+    /// Terminal timestamp used by fee and settlement math.
     expiry_ms: u64,
     /// Raw-price-per-tick conversion factor; `raw_strike = tick * tick_size`.
     tick_size: u64,
@@ -49,13 +50,13 @@ public struct StrikeExposure has store {
 /// Live exposure index: the sparse payout tree for cash backing.
 public struct LiveExposure has store {
     payout: StrikePayoutTree,
-    /// Sum of live backing payouts for active orders; prices the buffer above the max-point floor.
+    /// Sum of net payouts for active orders; prices the buffer above the max-point floor.
     live_backing_liability: u64,
 }
 
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
 ///
-/// Live reserve is the settlement floor (max single-point backing) plus a
+/// Live reserve is the settlement floor (max single-point net payout) plus a
 /// configured fraction of the disjoint-book gap. Lambda at 1.0 reproduces the
 /// old summed reserve because `math::mul(1_000_000_000, gap) == gap`.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
@@ -72,35 +73,24 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 
 /// Value this book's exact live liability for one live price snapshot:
 /// `linear - correction`, where `linear = Σ_orders qty·P` is the full payout-tree
-/// walk and `correction = Σ_leveraged min(qty·P, floor_shares·index_now)` is the
-/// scan over the active leveraged set. The per-order floor cap makes an underwater
-/// leveraged order net to zero, so no liquidation pass is needed. `correction <=
-/// linear` for any mint-admitted book (each leveraged order's `min` is capped at
-/// its own linear contribution, which the boundary aggregation only raises), so the
-/// saturating_sub is a no-op there; it floors the bounded valuation ulp dust the
-/// linear walk can carry — or that an enabled interpolation tolerance can introduce
-/// — rather than aborting. A pure read returning the liability fact; the caller
-/// owns the NAV/cash clamp.
-public(package) fun exact_live_liability(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    clock: &Clock,
-): u64 {
-    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
+/// walk and `correction = Σ_leveraged min(qty·P, floor_shares)` is the static-floor
+/// scan over the active leveraged set. The per-order floor cap makes a knocked-out
+/// leveraged order net to zero, so no liquidation pass is needed for an exact mark.
+/// `correction <= linear` for any mint-admitted book (each leveraged order's `min`
+/// is capped at its own linear contribution), so the saturating_sub floors only the
+/// bounded valuation ulp dust the linear walk can carry — or that an enabled
+/// interpolation tolerance can introduce — rather than aborting. A pure read
+/// returning the liability fact; the caller owns the NAV/cash clamp.
+public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     // Linear term: the full payout-tree walk. Interpolation is gated by the
     // upgrade-required `nav_interpolation_price_tolerance` (0 = fully exact).
     let linear = exposure
         .live
         .payout
         .walk_linear(pricer, exposure.tick_size, constants::nav_interpolation_price_tolerance!());
-    // Correction term: the floor-capped scan over this book's active leveraged set.
-    let correction = exposure.liquidation.correction_value(pricer, exposure.tick_size, index_now);
+    // Correction term: the static-floor-capped scan over this book's leveraged set.
+    let correction = exposure.liquidation.correction_value(pricer, exposure.tick_size);
     linear.saturating_sub(correction)
-}
-
-/// Return the terminal floor index snapshotted for this exposure book.
-public(package) fun terminal_floor_index(exposure: &StrikeExposure): u64 {
-    exposure.config.terminal_floor_index()
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.
@@ -185,14 +175,12 @@ public(package) fun close_settled_order(
     if (settlement <= lower || settlement > higher) {
         return 0
     };
-    let quantity = order.quantity();
-    // payout = quantity - floor(floor_shares * terminal_floor_index); rounds down,
-    // winner eats <=1 ulp. The reserve seeded into settled_payout_liability (the
-    // payout tree's terminal_payout, via materialize_settled_liability) is the
-    // same canonical `terminal_payout` evaluation by construction: mint insert
-    // and partial-close reinsert price through it, so reserve == payout and the
-    // subtraction below cannot underflow (R1 liveness).
-    let payout = exposure.config.terminal_payout(quantity, order.floor_shares());
+    // payout = quantity - floor_shares (= Q - F). The reserve seeded into
+    // settled_payout_liability is the same per-order `net_payout` the payout tree
+    // stores (mint insert and partial-close removal use it), so reserve == payout
+    // and the subtraction cannot underflow (R1 liveness). The static floor makes
+    // `net_payout` exactly additive, so this holds with no dust buffer.
+    let payout = net_payout(order.quantity(), order.floor_shares());
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
 
     payout
@@ -217,22 +205,14 @@ public(package) fun allocate_mint_order(
     );
     let entry_probability = pricer.range_price(lower, higher);
     let opened_at_ms = clock.timestamp_ms();
-    let (net_premium, financed_amount) = exposure
+    let (net_premium, floor_shares) = exposure
         .config
-        .assert_mint_admission_policy(
+        .assert_mint_admission(
             exposure.expiry_ms,
             opened_at_ms,
             entry_probability,
             quantity,
             leverage,
-        );
-    let (floor_shares, terminal_payout, live_backing_payout) = exposure
-        .config
-        .assert_mint_floor_terms(
-            exposure.expiry_ms,
-            opened_at_ms,
-            financed_amount,
-            quantity,
         );
 
     let sequence = exposure.next_order_sequence;
@@ -248,13 +228,7 @@ public(package) fun allocate_mint_order(
     exposure.next_order_sequence = sequence + 1;
 
     exposure.liquidation.insert_order(&allocated_order);
-    exposure.insert_live_index_quantity(
-        lower_tick,
-        higher_tick,
-        quantity,
-        terminal_payout,
-        live_backing_payout,
-    );
+    exposure.insert_live_index_quantity(lower_tick, higher_tick, quantity, floor_shares);
 
     (allocated_order, entry_probability, net_premium)
 }
@@ -270,7 +244,6 @@ public(package) fun close_and_quote_live_order(
     pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
-    clock: &Clock,
 ): (Order, u64, u64) {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
@@ -284,30 +257,20 @@ public(package) fun close_and_quote_live_order(
     let remaining_quantity = old_quantity - close_quantity;
     let remaining_floor_shares = old_floor_shares - remove_floor_shares;
 
-    // Remove the order's FULL live-index terms (bit-equal to the mint insert),
-    // then reinsert the survivor's exact terms below. Removing only the closed
-    // slice would leave the payout tree's residual 1 ulp short of what
-    // `close_settled_order` recomputes at settlement (round-down `mul` is
-    // sub-additive over the floor-share split: `mul(old_fs,T) >=
-    // mul(remove_fs,T) + mul(remaining_fs,T)`), underflowing the settled redeem.
-    exposure.remove_live_index_quantity(order, old_quantity, old_floor_shares);
+    // Remove only the closed slice. Under the static floor `net_payout = q - fs` is
+    // exactly additive over the split (`old_q - old_fs == (close_q - remove_fs) +
+    // (remaining_q - remaining_fs)`, both q and fs split exactly), so the tree
+    // residual is the survivor's exact `net_payout` with no full-remove/reinsert
+    // dance and no 1-ulp underflow at settlement.
+    exposure.remove_live_index_quantity(order, close_quantity, remove_floor_shares);
     exposure.liquidation.remove_order(order);
 
-    // calculate payout
     let range_probability = pricer.range_price(lower, higher);
-    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
-    // Live redeem outflow rounds toward the pool (R2): the gross rounds DOWN and
-    // the floor deduction (subtrahend) rounds UP, so redeem_amount <= the exact
-    // live value `prob*qty - fs*index` and the user eats <=1 ulp. saturating_sub
-    // floors it at 0 (R1: no underflow). Rounding the deduction up is solvency-safe
-    // here because `removed_floor_amount` backs no stored reserve — unlike the
-    // settled C1 path, where the deduction must round down to stay bit-equal to the
-    // payout tree.
-    let removed_floor_amount = math::mul_div_up(
-        remove_floor_shares,
-        index_now,
-        math::float_scaling!(),
-    );
+    // Live redeem = close_q*P - ceil(F * close_q/old_q), the static-floor equity of
+    // the closed slice. The deduction rounds UP (R2: user eats <=1 ulp) and is
+    // >= the tree's removed net_payout (`remove_floor_shares`, round-down), so the
+    // redeem never exceeds the reserve released. saturating_sub floors at 0 (R1).
+    let removed_floor_amount = math::mul_div_up(old_floor_shares, close_quantity, old_quantity);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount.saturating_sub(removed_floor_amount);
 
@@ -321,13 +284,7 @@ public(package) fun close_and_quote_live_order(
         remaining_floor_shares,
         exposure.next_order_sequence,
     );
-
     exposure.liquidation.insert_order(&replacement_order);
-    exposure.reinsert_live_index_quantity(
-        &replacement_order,
-        remaining_quantity,
-        remaining_floor_shares,
-    );
     exposure.next_order_sequence = exposure.next_order_sequence + 1;
 
     (replacement_order, redeem_amount, range_probability)
@@ -343,18 +300,11 @@ public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
-    clock: &Clock,
 ): bool {
     if (!exposure.liquidation.contains_active_order(order)) return false;
 
-    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    exposure.liquidate_order_if_under_floor(
-        pricer,
-        order,
-        index_now,
-        liquidation_ltv,
-    )
+    exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
 }
 
 /// Run one bounded liquidation pass using exact per-candidate pricing.
@@ -362,23 +312,16 @@ public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     budget: u64,
-    clock: &Clock,
 ): u64 {
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
     if (candidates.is_empty()) return 0;
-    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
     let mut liquidated_count = 0;
     let mut i = 0;
     while (i < candidates.length()) {
         let order = order::from_order_id(candidates[i]);
-        let liquidated = exposure.liquidate_order_if_under_floor(
-            pricer,
-            &order,
-            index_now,
-            liquidation_ltv,
-        );
+        let liquidated = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
         if (liquidated) {
             liquidated_count = liquidated_count + 1;
         };
@@ -413,42 +356,43 @@ fun insert_live_index_quantity(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    terminal_payout: u64,
-    live_backing_payout: u64,
+    floor_shares: u64,
 ) {
+    let net_payout = net_payout(quantity, floor_shares);
     let live = &mut exposure.live;
-    live
-        .payout
-        .insert_range(lower_tick, higher_tick, quantity, terminal_payout, live_backing_payout);
-    live.live_backing_liability = live.live_backing_liability + live_backing_payout;
+    live.payout.insert_range(lower_tick, higher_tick, quantity, net_payout);
+    live.live_backing_liability = live.live_backing_liability + net_payout;
 }
 
+/// Liquidate (knock out) `order` when its live value has reached the static floor:
+/// `qty·P <= floor_shares / liquidation_ltv`. The LTV buffer is the anti-arbitrage
+/// enforcement margin — knock out a hair before zero equity so a missed barrier
+/// touch can't be monetized; the reserve already backs the full `Q - F`, so this is
+/// not a solvency margin.
 fun liquidate_order_if_under_floor(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
-    index_now: u64,
     liquidation_ltv: u64,
 ): bool {
     let quantity = order.quantity();
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricer.range_price(lower, higher);
-    let floor_shares = order.floor_shares();
-    let current_floor_amount = math::mul(floor_shares, index_now);
+    let floor_amount = order.floor_shares();
     let gross_value = math::mul(range_probability, quantity);
-    let liquidation_threshold = math::div(current_floor_amount, liquidation_ltv);
+    let liquidation_threshold = math::div(floor_amount, liquidation_ltv);
     let can_liquidate = gross_value <= liquidation_threshold;
     if (!can_liquidate) return false;
 
     exposure.liquidation.mark_liquidated(order);
-    exposure.remove_live_index_quantity(order, quantity, floor_shares);
+    exposure.remove_live_index_quantity(order, quantity, floor_amount);
 
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
         order,
         quantity,
         gross_value,
-        current_floor_amount,
+        floor_amount,
         liquidation_ltv,
     );
 
@@ -461,51 +405,17 @@ fun remove_live_index_quantity(
     quantity: u64,
     floor_shares: u64,
 ) {
-    let (terminal_payout, live_backing_payout) = exposure
-        .config
-        .index_terms(
-            exposure.expiry_ms,
-            order.opened_at_ms(),
-            quantity,
-            floor_shares,
-        );
+    let net_payout = net_payout(quantity, floor_shares);
     let live = &mut exposure.live;
-    live
-        .payout
-        .remove_range(
-            order.lower_tick(),
-            order.higher_tick(),
-            quantity,
-            terminal_payout,
-            live_backing_payout,
-        );
-    live.live_backing_liability = live.live_backing_liability - live_backing_payout;
+    live.payout.remove_range(order.lower_tick(), order.higher_tick(), quantity, net_payout);
+    live.live_backing_liability = live.live_backing_liability - net_payout;
 }
 
-/// Reinsert a partial-close survivor's exact live-index terms, mirroring the
-/// mint insert so the payout tree's residual is bit-equal to what
-/// `close_settled_order` recomputes for this order at settlement.
-fun reinsert_live_index_quantity(
-    exposure: &mut StrikeExposure,
-    order: &Order,
-    quantity: u64,
-    floor_shares: u64,
-) {
-    let (terminal_payout, live_backing_payout) = exposure
-        .config
-        .index_terms(
-            exposure.expiry_ms,
-            order.opened_at_ms(),
-            quantity,
-            floor_shares,
-        );
-    exposure.insert_live_index_quantity(
-        order.lower_tick(),
-        order.higher_tick(),
-        quantity,
-        terminal_payout,
-        live_backing_payout,
-    );
+/// Canonical net payout for an order's atoms: `quantity - floor_shares = Q - F`.
+/// The static floor makes this an exact subtraction, so mint insert, close-slice
+/// remove, and settled recompute all produce bit-identical terms with no rounding.
+fun net_payout(quantity: u64, floor_shares: u64): u64 {
+    quantity - floor_shares
 }
 
 /// Decode an order into `(lower, higher)` raw strike boundaries for pricing and

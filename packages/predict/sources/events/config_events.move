@@ -39,7 +39,6 @@ public struct ExpiryCashTemplateConfigUpdated has copy, drop, store {
 /// Emitted when future strike-exposure template policy changes.
 public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    terminal_floor_index: u64,
     liquidation_ltv: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
@@ -101,7 +100,6 @@ public struct MarketCreated has copy, drop, store {
 /// authoritative source for the policy actually in force on the market.
 public struct MarketConfigSnapshot has copy, drop, store {
     expiry_market_id: ID,
-    terminal_floor_index: u64,
     liquidation_ltv: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
@@ -172,7 +170,6 @@ public(package) fun emit_strike_exposure_template_config_updated(
 ) {
     event::emit(StrikeExposureTemplateConfigUpdated {
         protocol_config_id,
-        terminal_floor_index: config.terminal_floor_index(),
         liquidation_ltv: config.liquidation_ltv(),
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
@@ -250,7 +247,6 @@ public(package) fun emit_market_config_snapshot(
 ) {
     event::emit(MarketConfigSnapshot {
         expiry_market_id,
-        terminal_floor_index: strike_exposure_config.terminal_floor_index(),
         liquidation_ltv: strike_exposure_config.liquidation_ltv(),
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),

@@ -112,20 +112,6 @@ public fun set_template_expiry_fee_max_multiplier(
     );
 }
 
-/// Set the terminal floor index snapshotted by future expiry markets.
-public fun set_template_terminal_floor_index(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_terminal_floor_index(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
-}
-
 /// Set the liquidation LTV snapshotted by future expiry markets.
 public fun set_template_liquidation_ltv(
     config: &mut ProtocolConfig,

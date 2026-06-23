@@ -9,10 +9,11 @@
 /// `tick_size` (`raw_strike = tick * tick_size`); the tree stores no grid geometry.
 ///
 /// This treap stores finite interval boundaries touched by positions. It tracks
-/// each order's exact terminal payout — summed at a settlement price for settled
-/// liability — and a static max-live backing term. Live cash backing is now the
-/// max-live settlement floor plus a buffer over the disjoint-book gap; the
-/// tree's max-live term is the floor anchor of that enforced reserve.
+/// each order's `net_payout` (`quantity - floor_shares = Q - F`, the static-floor
+/// winner payout) — summed at a settlement price for settled liability — and the
+/// max single-point net payout. Live cash backing is the max-point net payout plus
+/// a buffer over the disjoint-book gap; the tree's max-point term is the floor
+/// anchor of that enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};
@@ -20,7 +21,6 @@ use fixed_math::math;
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
-const EInvalidPayoutTerms: u64 = 1;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -34,11 +34,13 @@ public struct PayoutTerms has copy, drop, store {
     /// Aggregate order quantity over the prefix. Read by the NAV linear walk
     /// (`walk_linear`), which prices each boundary's start/end quantity.
     quantity: u64,
-    terminal_payout: u64,
-    live_backing_payout: u64,
+    /// Aggregate net payout `quantity - floor_shares = Q - F` over the prefix. The
+    /// static floor makes the settled (winner) payout and the live-backing term one
+    /// value. Read by the settled-liability prefix sum and the max-point reserve.
+    net_payout: u64,
 }
 
-/// Subtree totals and max static live backing prefix gain.
+/// Subtree totals and max static net-payout prefix gain.
 public struct PayoutSummary has copy, drop, store {
     total_start: PayoutTerms,
     total_end: PayoutTerms,
@@ -65,10 +67,10 @@ public struct PayoutNode has copy, drop, store {
     summary: PayoutSummary,
 }
 
-/// Return the static max-live backing term: the maximum liability at a single
+/// Return the static max-live backing term: the maximum net payout at a single
 /// settlement point — the settlement floor that anchors the enforced live reserve.
 public(package) fun max_live_backing_payout(tree: &StrikePayoutTree): u64 {
-    let mut max_payout = tree.base.live_backing_payout;
+    let mut max_payout = tree.base.net_payout;
     if (tree.root.is_some()) {
         max_payout =
             max_payout + tree.nodes[*tree.root.borrow()].summary.max_live_backing_prefix_gain;
@@ -91,7 +93,7 @@ public(package) fun settled_payout_liability(
         limit_tick,
         tree.base,
     );
-    terms.terminal_payout
+    terms.net_payout
 }
 
 /// Value the NAV linear term — `Σ_orders qty·P(strike)` — by walking the whole
@@ -137,7 +139,7 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
         root: option::none(),
         nodes: table::new(ctx),
-        base: payout_terms(0, 0, 0),
+        base: payout_terms(0, 0),
     }
 }
 
@@ -147,13 +149,12 @@ public(package) fun insert_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    terminal_payout: u64,
-    live_backing_payout: u64,
+    net_payout: u64,
 ) {
     tree.apply_range(
         lower_tick,
         higher_tick,
-        payout_terms(quantity, terminal_payout, live_backing_payout),
+        payout_terms(quantity, net_payout),
         true,
     );
 }
@@ -164,13 +165,12 @@ public(package) fun remove_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    terminal_payout: u64,
-    live_backing_payout: u64,
+    net_payout: u64,
 ) {
     tree.apply_range(
         lower_tick,
         higher_tick,
-        payout_terms(quantity, terminal_payout, live_backing_payout),
+        payout_terms(quantity, net_payout),
         false,
     );
 }
@@ -193,11 +193,9 @@ fun apply_range(
     terms: PayoutTerms,
     add: bool,
 ) {
-    // Index any order with nonzero quantity even when both payout terms are 0
-    // (e.g. a fully-floored leveraged order with terminal_payout == 0), so the
-    // NAV walk never silently skips it.
-    if (terms.quantity == 0 && terms.terminal_payout == 0 && terms.live_backing_payout == 0) return;
-    assert!(terms.terminal_payout <= terms.live_backing_payout, EInvalidPayoutTerms);
+    // Skip a fully-zero delta; index any order with nonzero quantity (net_payout is
+    // always > 0 for a valid order since the barrier forces F < Q).
+    if (terms.quantity == 0 && terms.net_payout == 0) return;
 
     if (lower_tick == 0) {
         apply_terms_delta(&mut tree.base, terms, add);
@@ -292,9 +290,9 @@ fun apply_at(
 
 fun new_leaf(tick: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
-        (terms, payout_terms(0, 0, 0))
+        (terms, payout_terms(0, 0))
     } else {
-        (payout_terms(0, 0, 0), terms)
+        (payout_terms(0, 0), terms)
     };
 
     let mut summary = boundary_summary(start, end);
@@ -458,9 +456,9 @@ fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
     PayoutSummary {
         total_start: start,
         total_end: end,
-        max_live_backing_prefix_gain: positive_live_delta(
-            start.live_backing_payout,
-            end.live_backing_payout,
+        max_live_backing_prefix_gain: positive_net_delta(
+            start.net_payout,
+            end.net_payout,
             0,
         ),
         // The boundary alone carries no tick span; the owning node sets it.
@@ -471,8 +469,8 @@ fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
 
 fun zero_summary(): PayoutSummary {
     PayoutSummary {
-        total_start: payout_terms(0, 0, 0),
-        total_end: payout_terms(0, 0, 0),
+        total_start: payout_terms(0, 0),
+        total_end: payout_terms(0, 0),
         max_live_backing_prefix_gain: 0,
         min_tick: 0,
         max_tick: 0,
@@ -480,9 +478,9 @@ fun zero_summary(): PayoutSummary {
 }
 
 fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary {
-    let right_gain_after_left = positive_live_delta(
-        left.total_start.live_backing_payout,
-        left.total_end.live_backing_payout,
+    let right_gain_after_left = positive_net_delta(
+        left.total_start.net_payout,
+        left.total_end.net_payout,
         right.max_live_backing_prefix_gain,
     );
 
@@ -496,20 +494,19 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
     }
 }
 
-fun positive_live_delta(start: u64, end: u64, gain: u64): u64 {
+fun positive_net_delta(start: u64, end: u64, gain: u64): u64 {
     (start + gain).saturating_sub(end)
 }
 
 fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {
     payout_terms(
         left.quantity + right.quantity,
-        left.terminal_payout + right.terminal_payout,
-        left.live_backing_payout + right.live_backing_payout,
+        left.net_payout + right.net_payout,
     )
 }
 
-fun payout_terms(quantity: u64, terminal_payout: u64, live_backing_payout: u64): PayoutTerms {
-    PayoutTerms { quantity, terminal_payout, live_backing_payout }
+fun payout_terms(quantity: u64, net_payout: u64): PayoutTerms {
+    PayoutTerms { quantity, net_payout }
 }
 
 #[test_only]
@@ -524,23 +521,17 @@ fun destroy_nodes_for_testing(nodes: &mut Table<u64, PayoutNode>, root: Option<u
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
     if (add) {
         value.quantity = value.quantity + delta.quantity;
-        value.terminal_payout = value.terminal_payout + delta.terminal_payout;
-        value.live_backing_payout = value.live_backing_payout + delta.live_backing_payout;
+        value.net_payout = value.net_payout + delta.net_payout;
     } else {
         assert_terms_available(*value, delta);
         value.quantity = value.quantity - delta.quantity;
-        value.terminal_payout = value.terminal_payout - delta.terminal_payout;
-        value.live_backing_payout = value.live_backing_payout - delta.live_backing_payout;
+        value.net_payout = value.net_payout - delta.net_payout;
     };
 }
 
 fun assert_terms_available(available: PayoutTerms, required: PayoutTerms) {
     assert!(available.quantity >= required.quantity, EInsufficientPayoutTerms);
-    assert!(available.terminal_payout >= required.terminal_payout, EInsufficientPayoutTerms);
-    assert!(
-        available.live_backing_payout >= required.live_backing_payout,
-        EInsufficientPayoutTerms,
-    );
+    assert!(available.net_payout >= required.net_payout, EInsufficientPayoutTerms);
 }
 
 fun tick_priority(tick: u64): u64 {

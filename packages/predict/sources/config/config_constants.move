@@ -15,7 +15,6 @@ const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
 const EInvalidTradingLossRebateRate: u64 = 7;
-const EInvalidTerminalFloorIndex: u64 = 8;
 const EInvalidExpiryFeeWindowMs: u64 = 9;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
 const EInvalidLowerBenefitPower: u64 = 11;
@@ -62,22 +61,7 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     );
 }
 
-// === Floor Index, Backing, and Liquidation ===
-
-public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
-public(package) macro fun min_terminal_floor_index(): u64 {
-    fixed_math::math::float_scaling!()
-}
-public(package) macro fun max_terminal_floor_index(): u64 {
-    2 * fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_terminal_floor_index(value: u64) {
-    assert!(
-        value >= min_terminal_floor_index!() && value <= max_terminal_floor_index!(),
-        EInvalidTerminalFloorIndex,
-    );
-}
+// === Backing and Liquidation ===
 
 public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
 public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }

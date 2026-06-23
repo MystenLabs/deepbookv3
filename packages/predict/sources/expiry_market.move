@@ -95,11 +95,6 @@ public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.cash.trading_loss_rebate_rate()
 }
 
-/// Return the terminal floor index snapshotted for this expiry.
-public fun terminal_floor_index(market: &ExpiryMarket): u64 {
-    market.strike_exposure.terminal_floor_index()
-}
-
 /// Return the liquidation LTV snapshotted for this expiry.
 public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
@@ -158,7 +153,7 @@ public fun current_nav(
     clock: &Clock,
 ): u64 {
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    let liability = market.strike_exposure.exact_live_liability(&pricer, clock);
+    let liability = market.strike_exposure.exact_live_liability(&pricer);
     // Floor at 0 rather than abort: a degenerate underwater market marks at 0, and
     // partial-close `walk_linear` survivors can leave residual ulp dust that makes
     // liability exceed free cash by ~1-2 ulp/order, biasing the supply mark down by
@@ -176,11 +171,11 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 ///
 /// Requires the running package version to be at or above the protocol version
 /// watermark, per-market mint pause to be off, trading globally enabled, a valid
-/// account owner auth, a live fresh oracle, enough expiry cash to back the post-mint
-/// max payout and rebate reserve, and leveraged floor terms below this expiry's
-/// liquidation LTV at terminal. Leveraged mints must also satisfy leverage tier
-/// policy and be above the current liquidation threshold at entry. Mint fees are
-/// paid by routing a withdraw through the loaded account. The position's strike
+/// account owner auth, a live fresh oracle, and enough expiry cash to back the
+/// post-mint max payout and rebate reserve. Leverage is continuous (any `L >= 1`);
+/// the derived static barrier `b = floor_shares/quantity` must sit below the
+/// at-entry liquidation threshold so the order is not instantly knockable. Mint
+/// fees are paid by routing a withdraw through the loaded account. The position's strike
 /// range is the tick pair `(lower_tick, higher_tick]` (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw strikes
 /// to ticks. Returns the minted order ID for future order-scoped flows.
@@ -301,13 +296,7 @@ public fun liquidate(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            &pricer,
-            budget,
-            clock,
-        )
+    market.strike_exposure.liquidate_live_orders(&pricer, budget)
 }
 
 /// Try to liquidate one active leveraged order by ID.
@@ -325,7 +314,7 @@ public fun liquidate_order(
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
 
     let order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_order(&pricer, &order, clock)
+    market.strike_exposure.liquidate_live_order(&pricer, &order)
 }
 
 /// Set whether new mints are paused on this expiry market. Admin-only and
@@ -585,13 +574,7 @@ fun mint_internal(
     config.assert_not_valuation_in_progress();
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
     let active_stake = predict_account::active_stake_mut(account, ctx);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            &pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
+    market.strike_exposure.liquidate_live_orders(&pricer, config.trade_liquidation_budget());
 
     let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
@@ -655,13 +638,7 @@ fun redeem_internal(
     };
 
     let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            &pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
+    market.strike_exposure.liquidate_live_orders(&pricer, config.trade_liquidation_budget());
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
         return (redeemed_order.id(), option::none())
@@ -698,12 +675,7 @@ fun redeem_live_internal(
 
     let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
-        .close_and_quote_live_order(
-            pricer,
-            order,
-            close_quantity,
-            clock,
-        );
+        .close_and_quote_live_order(pricer, order, close_quantity);
     let fee_amount = market
         .strike_exposure
         .trading_fee(

@@ -95,11 +95,6 @@ public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { one_year_ms!() }
 
-// === Leverage ===
-
-/// Window before expiry over which the leverage floor index rises.
-public(package) macro fun leverage_floor_window_ms(): u64 { one_year_ms!() }
-
 // === Staking ===
 
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).
