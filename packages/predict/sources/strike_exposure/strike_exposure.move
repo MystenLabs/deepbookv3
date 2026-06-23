@@ -220,6 +220,26 @@ public(package) fun allocate_mint_order(
     (allocated_order, entry_probability, net_premium)
 }
 
+/// Quote immutable mint entry probability without mutating the exposure book.
+public(package) fun quote_mint_entry_probability(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    leverage: u64,
+): u64 {
+    let (lower, higher) = range_codec::strikes_from_ticks(
+        lower_tick,
+        higher_tick,
+        exposure.tick_size,
+    );
+    let entry_probability = pricer.range_price(lower, higher);
+    exposure
+        .config
+        .assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+    entry_probability
+}
+
 /// Close live indexed quantity and return redeem terms.
 ///
 /// Returns `(resulting_order, redeem_amount, range_probability)`.

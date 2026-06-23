@@ -33,6 +33,9 @@ const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
 const LEVERAGE_BELOW_ONE_X: u64 = 999_999_999;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
+const LEVERAGE_THREE_X: u64 = 3_000_000_000;
+/// Smallest 3x net-premium budget where `(budget + 1) * leverage` exceeds u64.
+const THREE_X_FIRST_OVERFLOW_NET_PREMIUM: u64 = 6_148_914_691;
 const HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM: u64 = 200_000_000;
 const HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES: u64 = 300_000_000;
 const UNLEVERAGED_FLOOR_SHARES: u64 = 0;
@@ -138,6 +141,104 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
         config_constants::default_min_fee!(),
     );
     destroy(config);
+}
+
+// === max_quantity_for_net_premium (fixed-amount inverse) ===
+
+#[test]
+fun max_quantity_for_net_premium_exact_lot_boundary() {
+    // At p = 1.0 and 1x leverage, net premium equals quantity, so a
+    // one-lot premium budget admits exactly one position lot.
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(
+            float!(),
+            constants::position_lot_size!(),
+            test_constants::leverage_one_x(),
+        ),
+        constants::position_lot_size!(),
+    );
+}
+
+#[test]
+fun max_quantity_for_net_premium_one_x_unit_neighbors() {
+    // With p = 3 / 1e9 and 1x leverage:
+    //   N=4 admits floor(4.999999998e9 / 3) = 1_666_666_666
+    //   N=5 admits floor(5.999999999e9 / 3) = 1_999_999_999
+    //   N=6 admits floor(6.999999999e9 / 3) = 2_333_333_333
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(
+            3,
+            4,
+            test_constants::leverage_one_x(),
+        ),
+        1_666_666_666,
+    );
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(
+            3,
+            5,
+            test_constants::leverage_one_x(),
+        ),
+        1_999_999_999,
+    );
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(
+            3,
+            6,
+            test_constants::leverage_one_x(),
+        ),
+        2_333_333_333,
+    );
+}
+
+#[test]
+fun max_quantity_for_net_premium_two_x_unit_boundary() {
+    // Same p = 3 / 1e9 at 2x leverage. Net premium N=5 permits entry value 11
+    // but not 12, so quantity is floor(11.999999999e9 / 3).
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(3, 5, LEVERAGE_TWO_X),
+        3_999_999_999,
+    );
+}
+
+#[test]
+fun max_quantity_for_net_premium_zero_guards() {
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(
+            0,
+            5,
+            test_constants::leverage_one_x(),
+        ),
+        0,
+    );
+    assert_eq!(
+        strike_exposure_config::max_quantity_for_net_premium(
+            3,
+            0,
+            test_constants::leverage_one_x(),
+        ),
+        0,
+    );
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBudgetTooHigh)]
+fun max_quantity_for_net_premium_max_budget_aborts() {
+    strike_exposure_config::max_quantity_for_net_premium(
+        float!(),
+        std::u64::max_value!(),
+        test_constants::leverage_one_x(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBudgetTooHigh)]
+fun max_quantity_for_net_premium_budget_leverage_product_overflow_aborts() {
+    strike_exposure_config::max_quantity_for_net_premium(
+        float!(),
+        THREE_X_FIRST_OVERFLOW_NET_PREMIUM,
+        LEVERAGE_THREE_X,
+    );
+    abort 999
 }
 
 // === EEntryProbabilityOutOfBounds (mint admission) ===

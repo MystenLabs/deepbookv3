@@ -120,6 +120,10 @@ public(package) fun assert_valid_quantity(quantity: u64) {
     assert!(quantity / lot_size <= U32_MASK as u64, EInvalidQuantity);
 }
 
+public(package) fun max_quantity_lots(): u64 {
+    U32_MASK as u64
+}
+
 public(package) fun is_leveraged(order: &Order): bool {
     order.floor_shares() > 0
 }

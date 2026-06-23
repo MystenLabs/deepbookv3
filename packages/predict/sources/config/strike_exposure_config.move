@@ -19,6 +19,7 @@ const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
 const ELeverageAboveAdmissionCap: u64 = 6;
+const ENetPremiumBudgetTooHigh: u64 = 7;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -98,6 +99,27 @@ public(package) fun trading_fee(
     math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
+/// Assert entry probability and leverage policy without deriving quantity-dependent
+/// mint terms.
+public(package) fun assert_mint_probability_and_leverage_policy(
+    config: &StrikeExposureConfig,
+    entry_probability: u64,
+    leverage: u64,
+) {
+    assert!(
+        entry_probability >= config.min_entry_probability
+            && entry_probability <= config.max_entry_probability,
+        EEntryProbabilityOutOfBounds,
+    );
+
+    // Leverage is continuous, with the protocol cap scaled down for low prices.
+    assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
+    assert!(
+        leverage <= config.admitted_leverage_cap(entry_probability),
+        ELeverageAboveAdmissionCap,
+    );
+}
+
 /// Assert entry probability, leverage, net-premium, and barrier policy; return
 /// `(net_premium, floor_shares)`.
 ///
@@ -112,18 +134,7 @@ public(package) fun assert_mint_admission(
     quantity: u64,
     leverage: u64,
 ): (u64, u64) {
-    assert!(
-        entry_probability >= config.min_entry_probability
-            && entry_probability <= config.max_entry_probability,
-        EEntryProbabilityOutOfBounds,
-    );
-
-    // Leverage is continuous, with the protocol cap scaled down for low prices.
-    assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
-    assert!(
-        leverage <= config.admitted_leverage_cap(entry_probability),
-        ELeverageAboveAdmissionCap,
-    );
+    config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
 
     let entry_value = math::mul(entry_probability, quantity);
     let net_premium = math::div(entry_value, leverage);
@@ -136,6 +147,23 @@ public(package) fun assert_mint_admission(
     };
 
     (net_premium, floor_shares)
+}
+
+/// Return the largest raw quantity whose derived net premium is at most `net_premium`.
+public(package) fun max_quantity_for_net_premium(
+    entry_probability: u64,
+    net_premium: u64,
+    leverage: u64,
+): u64 {
+    if (entry_probability == 0 || net_premium == 0) return 0;
+
+    let scaling = math::float_scaling!();
+    assert!(net_premium < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
+    assert!(net_premium + 1 <= std::u64::max_value!() / leverage, ENetPremiumBudgetTooHigh);
+    let max_entry_value = ((net_premium + 1) * leverage - 1) / scaling;
+    assert!(max_entry_value < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
+    assert!(max_entry_value + 1 <= std::u64::max_value!() / scaling, ENetPremiumBudgetTooHigh);
+    ((max_entry_value + 1) * scaling - 1) / entry_probability
 }
 
 public(package) fun new(): StrikeExposureConfig {
