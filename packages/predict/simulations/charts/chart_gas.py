@@ -12,7 +12,7 @@ from sim_artifacts import load_json_object, normalized_action, sui
 
 TRADE_ACTIONS = ("mint", "redeem")
 POOL_ACTIONS = ("supply", "withdraw")
-FLUSH_ACTIONS = ("flush",)
+MAINTENANCE_ACTIONS = ("flush", "rebalance_expiry_cash")
 
 
 def load_trace(path: Path) -> dict[str, Any]:
@@ -108,9 +108,8 @@ def render(trace_path: Path, output_path: Path) -> None:
     plot_timeline_panel(
         axes[2],
         series,
-        FLUSH_ACTIONS,
-        "Flush Gas\nEach point is one runner-synthesized privileged LP drain "
-        "(refresh + value_expiry + queue drain).",
+        MAINTENANCE_ACTIONS,
+        "Maintenance Gas\nFlush drains LP queues; cash rebalance tops up expiry backing.",
     )
     axes[2].set_xlabel("transaction")
 

@@ -79,6 +79,7 @@ public struct CadenceConfigUpdated has copy, drop, store {
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 }
 
@@ -93,6 +94,8 @@ public struct MarketCreated has copy, drop, store {
     tick_size: u64,
     /// DUSDC pool allocation cap snapshotted for this expiry.
     max_expiry_allocation: u64,
+    /// Minimum DUSDC cash target snapshotted for this expiry.
+    initial_expiry_cash: u64,
 }
 
 /// Emitted alongside `MarketCreated` with the per-market policy snapshotted into
@@ -214,6 +217,7 @@ public(package) fun emit_cadence_config_updated(
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 ) {
     event::emit(CadenceConfigUpdated {
@@ -221,6 +225,7 @@ public(package) fun emit_cadence_config_updated(
         cadence_id,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
         window_size,
     });
 }
@@ -232,6 +237,7 @@ public(package) fun emit_market_created(
     expiry: u64,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -240,6 +246,7 @@ public(package) fun emit_market_created(
         expiry,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
     });
 }
 

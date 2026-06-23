@@ -57,7 +57,7 @@ import {
 const DUSDC_DECIMALS = 1_000_000n;
 const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
-const EXPIRY_CASH_FLOOR = 10_000n * DUSDC_DECIMALS;
+const DEFAULT_INITIAL_EXPIRY_CASH = 50_000n * DUSDC_DECIMALS;
 const FLOAT_SCALING = 1_000_000_000n;
 const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
 const DEFAULT_MAX_ADMISSION_LEVERAGE = 3n * FLOAT_SCALING;
@@ -143,18 +143,18 @@ function scenarioPath(): string {
     return configured && configured.length > 0 ? configured : DEFAULT_SCENARIO_PATH;
 }
 
-function initialEconomicState(capital: SimulationCapital): EconomicState {
-    if (capital.vaultSeed < EXPIRY_CASH_FLOOR) {
+function initialEconomicState(capital: SimulationCapital, initialExpiryCash: bigint): EconomicState {
+    if (capital.vaultSeed < initialExpiryCash) {
         throw new Error("vault seed is below the setup expiry cash floor");
     }
 
     return {
         managerBalance: capital.managerSeed,
-        expiryCashBalance: EXPIRY_CASH_FLOOR,
+        expiryCashBalance: initialExpiryCash,
         expiryUnresolvedTradingFees: 0n,
-        vaultIdleBalance: capital.vaultSeed - EXPIRY_CASH_FLOOR,
+        vaultIdleBalance: capital.vaultSeed - initialExpiryCash,
         vaultProtocolReserveBalance: 0n,
-        profitBasisDebits: EXPIRY_CASH_FLOOR,
+        profitBasisDebits: initialExpiryCash,
         profitBasisCredits: 0n,
         vaultTotalPlpSupply: capital.initialTotalPlpSupply,
         openOrderCount: 0n,
@@ -838,6 +838,20 @@ function flushCheckpoints(): Set<number> {
     return new Set([300, 999]);
 }
 
+// Row counts after which the runner synthesizes a standalone expiry-cash rebalance.
+// This is intentionally more frequent than the LP flush cadence: lowering the
+// bootstrap cash floor to 10k means backing headroom can be consumed well before
+// the next LP queue drain. The rebalance is a real tx and is recorded in the gas
+// trace, but it is not a CSV row action.
+function cashRebalanceCheckpoints(rowCount: number, flushAfter: Set<number>): Set<number> {
+    const interval = 100;
+    const checkpoints = new Set<number>();
+    for (let row = interval; row <= rowCount; row += interval) {
+        if (!flushAfter.has(row)) checkpoints.add(row);
+    }
+    return checkpoints;
+}
+
 function clearOutputArtifacts() {
     for (const path of [LOCAL_TRACE_PATH, LOCAL_DATA_PATH, PYTHON_DATA_PATH]) {
         if (existsSync(path)) unlinkSync(path);
@@ -923,6 +937,11 @@ async function setupSimulation(
         "max_expiry_allocation",
         DEFAULT_MAX_EXPIRY_ALLOCATION,
     );
+    const initialExpiryCash = protocolConfigValue(
+        scenarioConfig,
+        "initial_expiry_cash",
+        DEFAULT_INITIAL_EXPIRY_CASH,
+    );
 
     let result = await executeAndWait(
         finalizeDusdcCurrencyRegistrationTx(),
@@ -996,12 +1015,13 @@ async function setupSimulation(
             cadenceId: SIM_CADENCE_ONE_MONTH,
             tickSize: ORACLE_TICK_SIZE,
             maxExpiryAllocation,
+            initialExpiryCash,
             windowSize: SIM_CADENCE_WINDOW_SIZE,
         }),
         "set_cadence_config",
     );
     console.log(
-        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
+        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC initial_cash=${initialExpiryCash / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
     );
 
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
@@ -1112,6 +1132,7 @@ async function setupSimulation(
         bsFeedId,
         accountWrapperId,
         lifecycleCapId,
+        initialExpiryCash: initialExpiryCash.toString(),
     };
 
     writeJson(STATE_PATH, state);
@@ -1232,7 +1253,7 @@ async function executeScenario(
 
     const traceSteps: LocalTraceStep[] = [];
     const records: EconomicRecord[] = [];
-    const economicState = initialEconomicState(capital);
+    const economicState = initialEconomicState(capital, BigInt(state.initialExpiryCash));
     const aliases = initialAliases();
     const targetMints = rows.filter((row) => row.action === "oracle_mint_ptb").length;
     let successfulMints = 0;
@@ -1247,6 +1268,7 @@ async function executeScenario(
     // with it (a conservative lower bound — see AliasState.availableSettledPlp).
     aliases.availableSettledPlp = capital.vaultSeed;
     const flushAfter = flushCheckpoints();
+    const rebalanceAfter = cashRebalanceCheckpoints(rows.length, flushAfter);
     let skippedWithdraws = 0;
 
     const runFlush = async (afterRow: number, row: ScenarioRow) => {
@@ -1291,6 +1313,44 @@ async function executeScenario(
         );
     };
 
+    const runCashRebalance = async (afterRow: number) => {
+        const startedAt = performance.now();
+        const receipt = await execute(
+            () =>
+                rebalanceExpiryCashTx({
+                    poolVaultId: state.poolVaultId,
+                    protocolConfigId: state.protocolConfigId,
+                    expiryMarketId: state.expiryMarketId,
+                    pythFeedId: state.pythFeedId,
+                }),
+            `rebalance_expiry_cash_after_row_${afterRow}`,
+        );
+        const wallMs = performance.now() - startedAt;
+        traceSteps.push({
+            step: afterRow,
+            action: "rebalance_expiry_cash",
+            digest: receipt.digest,
+            wallMs,
+            gas: receipt.gas,
+            events: receipt.events.map((event: any) => ({
+                type: eventName(event),
+                full_type: String(event.type ?? ""),
+                parsedJson: event.parsedJson ?? {},
+            })),
+        });
+        process.stdout.write(
+            `[${ts()}]   -- rebalance expiry cash after row ${afterRow} (gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
+        );
+    };
+
+    const runSyntheticMaintenance = async (afterRow: number, row: ScenarioRow) => {
+        if (flushAfter.has(afterRow)) {
+            await runFlush(afterRow, row);
+        } else if (rebalanceAfter.has(afterRow)) {
+            await runCashRebalance(afterRow);
+        }
+    };
+
     let processed = 0;
     for (const row of rows) {
         processed++;
@@ -1305,7 +1365,7 @@ async function executeScenario(
                 process.stdout.write(
                     `[${ts()}]   [${row.step}] withdraw SKIPPED (${row.lpRef}: want ${shares} PLP, ${aliases.availableSettledPlp} materialized)\n`,
                 );
-                if (flushAfter.has(processed)) await runFlush(processed, row);
+                await runSyntheticMaintenance(processed, row);
                 continue;
             }
         }
@@ -1337,7 +1397,7 @@ async function executeScenario(
                 `${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`,
             );
         }
-        if (flushAfter.has(processed)) await runFlush(processed, row);
+        await runSyntheticMaintenance(processed, row);
     }
     if (skippedWithdraws > 0) {
         console.log(

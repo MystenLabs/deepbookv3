@@ -43,10 +43,6 @@ public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 
-/// Minimum per-expiry allocation cap an enabled cadence may configure:
-/// 10,000 whole DUSDC in 6-decimal quote units.
-public(package) macro fun min_expiry_allocation(): u64 { 10_000_000_000 }
-
 // === Async LP Requests ===
 // Minimums and the per-flush cap are upgrade-required for now. A per-vault
 // admin-tunable minimum is a deferred follow-up (see config rules in move.md).

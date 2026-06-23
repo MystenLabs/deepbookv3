@@ -9,7 +9,7 @@ The protocol does not run a single continuous market. Instead, the `Registry` mi
 The `Registry` enforces uniqueness, admin approval, and cadence policy:
 
 - A Propbook underlying must be **admin-approved** before Predict can build markets on it: `register_underlying` records approval for that `propbook_underlying_id`. The `propbook` feed objects themselves are created permissionlessly in `propbook`; Propbook owns source IDs and canonical source-to-underlying bindings.
-- Admin configures each cadence with `tick_size`, `max_expiry_allocation`, and `window_size`. A zeroed cadence is disabled; an enabled cadence creates the next missing expiry inside its window and snapshots the configured tick/allocation terms into that market.
+- Admin configures each cadence with `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size`. A zeroed cadence is disabled; an enabled cadence creates the next missing expiry inside its window and snapshots the configured tick/allocation/cash-target terms into that market.
 - **One `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair.** `create_expiry_market` aborts if the registry already holds a market for that underlying and expiry.
 
 ### How a market is created
@@ -18,20 +18,20 @@ The `Registry` enforces uniqueness, admin approval, and cadence policy:
 
 1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the registry's allowlist, the running package version must be allowed, global trading must be enabled, the underlying must be registered in Predict, and the requested cadence must be enabled. The market manager then scans forward from the cadence watermark/current-clock candidate, skips slots reserved for enabled higher-rank cadences, and requires the selected expiry to remain inside the cadence window and not already exist.
 2. **Require current Propbook coverage.** The caller also passes Propbook's `OracleRegistry`; the registry asserts that Propbook currently has canonical Pyth and Block Scholes bindings for the supplied `propbook_underlying_id`. The market does **not** store those oracle object IDs, so a later Propbook rebind affects existing markets.
-3. **Compute expiry and snapshot config.** The market manager picks the next missing expiry from the cadence watermark and current clock, then the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, stores `propbook_underlying_id`, and snapshots the cadence `tick_size`. Pool accounting snapshots the cadence `max_expiry_allocation`. Creation needs **no live spot** — strikes are absolute ticks, so there is no grid to center on a price.
+3. **Compute expiry and snapshot config.** The market manager picks the next missing expiry from the cadence watermark and current clock, then the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, stores `propbook_underlying_id`, and snapshots the cadence `tick_size`. Pool accounting snapshots the cadence `max_expiry_allocation` and `initial_expiry_cash`. Creation needs **no live spot** — strikes are absolute ticks, so there is no grid to center on a price.
 4. **Create, share, and register.** The `ExpiryMarket` is shared, registered with the pool vault as an active-expiry accounting row, and indexed by expiry in the registry.
 
-The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, `tick_size`, and `max_expiry_allocation`. The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`. The event also carries the immutable per-expiry pool allocation cap, since the cadence config that produced it can change later.
+The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, `tick_size`, `max_expiry_allocation`, and `initial_expiry_cash`. The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`. The event also carries the immutable per-expiry pool allocation cap and initial cash target, since the cadence config that produced them can change later.
 
 ```mermaid
 flowchart TD
-  A["Admin: register_underlying(underlying)"] --> B["Admin: set_cadence_config(tick_size, allocation, window)"]
+  A["Admin: register_underlying(underlying)"] --> B["Admin: set_cadence_config(tick_size, allocation, initial_cash, window)"]
   B --> C["create_expiry_market(propbook_registry, underlying, cadence_id, clock, ...)"]
   C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>cadence enabled,<br/>skip higher-rank reserved slots,<br/>selected expiry in window,<br/>underlying registered,<br/>Propbook bindings exist,<br/>market not already created"}
   D -->|pass| E["compute next expiry<br/>snapshot config + cadence terms<br/>(no live spot read)"]
   E --> F["share ExpiryMarket with propbook_underlying_id"]
   F --> G["PoolVault.register_expiry (accounting row)"]
-  G --> H["emit MarketCreated (carries tick_size + allocation cap)"]
+  G --> H["emit MarketCreated (carries tick_size + allocation cap + initial cash)"]
 ```
 
 ## Strikes are absolute integer ticks

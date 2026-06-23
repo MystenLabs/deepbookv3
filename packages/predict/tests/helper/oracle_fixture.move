@@ -72,6 +72,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         test_constants::default_cadence_id(),
         tick,
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     return_shared(config);

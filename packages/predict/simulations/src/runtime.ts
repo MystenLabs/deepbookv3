@@ -518,12 +518,14 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
     return tx;
 }
 
-// Enable one registry-owned market cadence. Tick size and allocation cap are
-// snapshotted into future markets created from this cadence.
+// Enable one registry-owned market cadence. Tick size, allocation cap, and
+// initial expiry cash target are snapshotted into future markets created from
+// this cadence.
 export function setCadenceConfigTx(params: {
     cadenceId: number;
     tickSize: bigint;
     maxExpiryAllocation: bigint;
+    initialExpiryCash: bigint;
     windowSize: bigint;
 }): Transaction {
     const tx = new Transaction();
@@ -536,6 +538,7 @@ export function setCadenceConfigTx(params: {
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
             tx.pure.u64(params.maxExpiryAllocation),
+            tx.pure.u64(params.initialExpiryCash),
             tx.pure.u64(params.windowSize),
         ],
     });

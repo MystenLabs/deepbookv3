@@ -60,7 +60,7 @@ DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
 INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
-EXPIRY_CASH_FLOOR = 10_000 * DUSDC_DECIMALS
+INITIAL_EXPIRY_CASH = 50_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
 MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
@@ -157,6 +157,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global PROTOCOL_RESERVE_PROFIT_SHARE
     global TRADING_LOSS_REBATE_RATE
     global MAX_EXPIRY_ALLOCATION
+    global INITIAL_EXPIRY_CASH
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
@@ -214,6 +215,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "protocol",
         "max_expiry_allocation",
         MAX_EXPIRY_ALLOCATION,
+    )
+    INITIAL_EXPIRY_CASH = _config_int(
+        config,
+        "protocol",
+        "initial_expiry_cash",
+        INITIAL_EXPIRY_CASH,
     )
     BACKING_BUFFER_LAMBDA = _config_int(
         config,
@@ -1215,8 +1222,8 @@ def expiry_rebalance_cash_terms(model: dict[str, Any], state: dict[str, int]) ->
         TRADING_LOSS_REBATE_RATE,
     )
     target_buffer = deepbook_mul(required_cash, EXPIRY_REBALANCE_PCT)
-    target_cash = max(required_cash + target_buffer, EXPIRY_CASH_FLOOR)
-    sweep_threshold_cash = max(required_cash + target_buffer + target_buffer, EXPIRY_CASH_FLOOR)
+    target_cash = max(required_cash + target_buffer, INITIAL_EXPIRY_CASH)
+    sweep_threshold_cash = max(required_cash + target_buffer + target_buffer, INITIAL_EXPIRY_CASH)
     return state["expiry_cash_balance"], target_cash, sweep_threshold_cash
 
 
@@ -1324,21 +1331,21 @@ def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None)
 
 
 def initial_state() -> dict[str, int]:
-    if VAULT_SEED < EXPIRY_CASH_FLOOR:
+    if VAULT_SEED < INITIAL_EXPIRY_CASH:
         raise ValueError("vault seed is below the setup expiry cash floor")
 
     return {
         "manager_balance": MANAGER_SEED,
-        "expiry_cash_balance": EXPIRY_CASH_FLOOR,
+        "expiry_cash_balance": INITIAL_EXPIRY_CASH,
         "expiry_unresolved_trading_fees": 0,
-        "vault_idle_balance": VAULT_SEED - EXPIRY_CASH_FLOOR,
+        "vault_idle_balance": VAULT_SEED - INITIAL_EXPIRY_CASH,
         "vault_protocol_reserve_balance": 0,
-        "expiry_sent_to_expiry": EXPIRY_CASH_FLOOR,
+        "expiry_sent_to_expiry": INITIAL_EXPIRY_CASH,
         "expiry_received_from_expiry": 0,
         "terminal_accounting_started": 0,
         "terminal_received_watermark": 0,
         "net_losses_to_fill": 0,
-        "profit_basis_debits": EXPIRY_CASH_FLOOR,
+        "profit_basis_debits": INITIAL_EXPIRY_CASH,
         "profit_basis_credits": 0,
         "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
         "open_order_count": 0,

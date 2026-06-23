@@ -65,10 +65,11 @@ interface.
     snapshots.
 -   `data/scenario_config.json`: source expiry/settlement values, normal/long
     capital sizing, mint spend ranges, fee-ramp settings, cadence allocation,
-    admission-leverage setup, and protocol knobs. Localnet setup applies the
-    normal capital sizing, cadence allocation, Pyth fee-ramp settings, and max
-    admission leverage; other protocol values in this file mirror Move defaults
-    for parity and are consumed directly by the generator and Python replay.
+    initial expiry cash, admission-leverage setup, and protocol knobs. Localnet
+    setup applies the normal capital sizing, cadence allocation, initial expiry
+    cash, Pyth fee-ramp settings, and max admission leverage; other protocol
+    values in this file mirror Move defaults for parity and are consumed directly
+    by the generator and Python replay.
 -   `data/generate_scenario.py`: random normal/long scenario generator.
 -   `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
     follow-up analysis questions (economics).
@@ -111,11 +112,15 @@ interface.
    one-month market cadence, creates the next cadence expiry market, then seeds
    the Propbook Pyth/Block Scholes feeds for the emitted market
    expiry. Market creation reads no spot; a setup-only rebalance then funds the
-   expiry to the protocol cash floor before scenario rows start.
+   expiry to the configured initial expiry cash target before scenario rows start.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
-7. Replays the same normal scenario against localnet.
+7. Replays the same normal scenario against localnet. The runner also
+   synthesizes privileged maintenance transactions: standalone expiry-cash
+   rebalances every 100 rows and LP flushes at the configured flush checkpoints.
+   These are real localnet transactions recorded in `local_trace.json`, but they
+   are not CSV row actions.
 8. Writes `local_trace.json` and `local_data.json`.
 9. Renders gas charts from `local_trace.json`.
 10. Compares `local_data.json` against `python_data.json`.
@@ -207,8 +212,9 @@ long Python = real timestamp economic analysis
 
 Expiry market creation goes through the registry's cadence config. The localnet
 setup enables the one-month cadence with `tick_size`, `max_expiry_allocation`,
-and `window_size`, then snapshots the configured tick size and allocation into
-the created market. It does not derive a centered grid from the first spot. The
+`initial_expiry_cash`, and `window_size`, then snapshots the configured tick size,
+allocation, and initial cash target into the created market. It does not derive a
+centered grid from the first spot. The
 generator, Python replay, and localnet runner all use absolute ticks
 (`raw_strike = tick * tick_size`) and the finite tick domain
 `1..pos_inf_tick - 1`. To cover a higher spot or wider strike set, raise the
@@ -222,7 +228,8 @@ Full localnet runs can produce:
 -   `artifacts/normal_scenario.csv`: the exact generated normal scenario replayed
     by both localnet and Python.
 -   `artifacts/local_trace.json`: compact localnet transaction trace with digests,
-    gas, and normalized Move event payloads.
+    gas, and normalized Move event payloads, including runner-synthesized
+    maintenance transactions such as LP flushes and expiry-cash rebalances.
 -   `artifacts/local_data.json`: cleaned localnet economic projection.
 -   `artifacts/python_data.json`: cleaned Python economic projection for parity.
 -   `artifacts/python_long_data.json`: long-run Python canonical data. Deleted by
@@ -254,7 +261,9 @@ Localnet/Python parity is a confidence gate, not a proof of every possible
 terminal state. The normal replay validates that Python and localnet agree on
 canonical live economics for the same generated CSV rows: oracle refreshes,
 mints, redeems, passive liquidations, supply, withdraw, normalized event fields,
-and tracked state deltas.
+and tracked state deltas. Runner-synthesized maintenance transactions such as
+LP flushes and expiry-cash rebalances are traced for gas and to keep localnet
+flows executable under the configured cadence; they are not generated CSV rows.
 
 Live pool-sync sweeps increase aggregate pricing credits but do not materialize
 protocol profit. Protocol reserves move only when terminal expiry accounting
