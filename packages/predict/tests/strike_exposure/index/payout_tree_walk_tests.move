@@ -72,7 +72,7 @@ fun exact_walk_matches_per_order_reference() {
     let exact = tree.walk_linear(&pricer, tick_size(), 0);
     assert_eq!(exact, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
 
-    tree.destroy();
+    destroy(tree);
     cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
@@ -106,7 +106,7 @@ fun interpolation_collapses_subtree_within_bound() {
     // bound derived from the gate inputs (span, quantities), never from output.
     test_helpers::assert_within(interpolated, reference, math::mul(span, total_quantity));
 
-    tree.destroy();
+    destroy(tree);
     cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
@@ -126,7 +126,7 @@ fun skip_zero_delta_ignores_dead_boundaries() {
     let walk = tree.walk_linear(&pricer, tick_size(), 0);
     assert_eq!(walk, up_reference(&pricer, vector[t0], vector[LIVE_QUANTITY]));
 
-    tree.destroy();
+    destroy(tree);
     cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
@@ -155,7 +155,7 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     assert_eq!(reference, 0);
     assert_eq!(tree.walk_linear(&pricer, tick_size(), 0), 0);
 
-    tree.destroy();
+    destroy(tree);
     cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 

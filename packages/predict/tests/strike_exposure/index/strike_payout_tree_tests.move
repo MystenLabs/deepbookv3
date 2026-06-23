@@ -19,7 +19,6 @@ const TICK_SIZE: u64 = 10_000;
 /// A tick comfortably above every key inserted in these tests, used where the old
 /// grid tests settled at `max_strike()`.
 const HIGH_SETTLEMENT_TICK: u64 = 10;
-const DESTROY_INSERT_TICKS: u64 = 10;
 const PARTIAL_SURVIVOR_TERMINAL: u64 = 449_992_342;
 const PARTIAL_SURVIVOR_LIVE: u64 = 449_992_501;
 const LEVERAGED_TERMINAL: u64 = 749_999_737;
@@ -95,7 +94,7 @@ fun new_returns_empty_tree() {
     assert_eq!(tree.max_live_backing_payout(), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
-    tree.destroy();
+    destroy(tree);
 }
 
 // === max_live_backing_payout ===
@@ -110,7 +109,7 @@ fun insert_open_low_range_returns_backing_at_max_strike() {
     insert_range(&mut tree, 0, 5, 100, 100);
 
     assert_eq!(tree.max_live_backing_payout(), 100);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -121,7 +120,7 @@ fun insert_open_high_range_returns_max_backing() {
     insert_range(&mut tree, 5, constants::pos_inf_tick!(), 100, 100);
 
     assert_eq!(tree.max_live_backing_payout(), 100);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -132,7 +131,7 @@ fun insert_finite_range_returns_max_backing_in_range() {
     insert_range(&mut tree, 2, 6, 50, 50);
 
     assert_eq!(tree.max_live_backing_payout(), 50);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -145,7 +144,7 @@ fun two_disjoint_ranges_only_count_max_overlap() {
     insert_range(&mut tree, 5, 7, 30, 30);
 
     assert_eq!(tree.max_live_backing_payout(), 40);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -158,7 +157,7 @@ fun two_overlapping_ranges_sum_backing() {
     insert_range(&mut tree, 3, 7, 30, 30);
 
     assert_eq!(tree.max_live_backing_payout(), 70);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -202,7 +201,7 @@ fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
         LEVERAGED_TERMINAL,
         floor,
     );
-    tree.destroy();
+    destroy(tree);
 }
 
 // === insert_range early-return and abort cases ===
@@ -216,7 +215,7 @@ fun insert_with_both_terms_zero_is_no_op() {
     insert_range(&mut tree, 2, 6, 0, 0);
 
     assert_eq!(tree.max_live_backing_payout(), 0);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test, expected_failure(abort_code = strike_payout_tree::EInvalidPayoutTerms)]
@@ -240,7 +239,7 @@ fun insert_then_remove_restores_empty_state() {
     assert_eq!(tree.max_live_backing_payout(), 50);
     remove_range(&mut tree, 2, 6, 50, 50);
     assert_eq!(tree.max_live_backing_payout(), 0);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -254,7 +253,7 @@ fun insert_two_then_remove_one_leaves_other() {
 
     remove_range(&mut tree, 3, 7, 30, 30);
     assert_eq!(tree.max_live_backing_payout(), 40);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutTerms)]
@@ -287,7 +286,7 @@ fun settled_liability_zero_below_winning_range() {
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -299,7 +298,7 @@ fun settled_liability_owed_inside_winning_range() {
     // (tick 2, tick 6] wins for settlement in the finite interior up to tick 6.
     assert_eq!(tree.settled_payout_liability(settle_at_tick(3), TICK_SIZE), 50);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 50);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -315,7 +314,7 @@ fun settled_liability_zero_above_winning_range() {
         tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE),
         0,
     );
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -328,7 +327,7 @@ fun settled_liability_neg_inf_range_owed_until_close() {
     assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 100);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 100);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 0);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -344,7 +343,7 @@ fun settled_liability_pos_inf_range_owed_from_lower() {
         tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE),
         100,
     );
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -359,7 +358,7 @@ fun settled_liability_sums_multiple_winners() {
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 80);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 30);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(8), TICK_SIZE), 0);
-    tree.destroy();
+    destroy(tree);
 }
 
 #[test]
@@ -374,28 +373,5 @@ fun settled_liability_uses_terminal_not_backing() {
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 30);
     // Live backing peak still reflects 50.
     assert_eq!(tree.max_live_backing_payout(), 50);
-    tree.destroy();
-}
-
-// === destroy ===
-
-#[test]
-fun destroy_after_many_inserts_succeeds() {
-    let ctx = &mut tx_context::dummy();
-    let mut tree = new_tree(ctx);
-    // Insert across several finite boundaries (ticks 1..=10) to exercise the
-    // treap's node-by-node destroy path.
-    let mut t = 1;
-    while (t <= DESTROY_INSERT_TICKS) {
-        insert_range(&mut tree, t, t + 1, 1, 1);
-        t = t + 1;
-    };
-    tree.destroy();
-}
-
-#[test]
-fun destroy_empty_tree() {
-    let ctx = &mut tx_context::dummy();
-    let tree = new_tree(ctx);
-    tree.destroy();
+    destroy(tree);
 }
