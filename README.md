@@ -12,6 +12,8 @@
 
 > On-chain prediction markets built on DeepBook V3. Trade price direction (UP/DOWN) for BTC, ETH, and DEEP using Black-Scholes-inspired oracles and a multi-signal trading engine.
 
+> **Note:** This repository contains the public architecture, infrastructure, and documentation. The full trading implementation (signal engine, oracle management, position validation) is available in a private repository. Contact the maintainers for access.
+
 ## Architecture
 
 ```mermaid
