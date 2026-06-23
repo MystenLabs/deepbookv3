@@ -49,7 +49,7 @@ import {
     seedOracleTx,
     setCadenceConfigTx,
     setTemplateExpiryFeeConfigTx,
-    setTemplateTerminalFloorIndexTx,
+    setTemplateMaxAdmissionLeverageTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
 } from "./runtime.js";
@@ -60,7 +60,7 @@ const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
 const EXPIRY_CASH_FLOOR = 10_000n * DUSDC_DECIMALS;
 const FLOAT_SCALING = 1_000_000_000n;
 const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
-const DEFAULT_SIM_TERMINAL_FLOOR_INDEX = FLOAT_SCALING;
+const DEFAULT_MAX_ADMISSION_LEVERAGE = 3n * FLOAT_SCALING;
 const SIM_CADENCE_ONE_MONTH = 5;
 const SIM_CADENCE_WINDOW_SIZE = 1n;
 const DEFAULT_MAX_EXPIRY_ALLOCATION = 250_000n * DUSDC_DECIMALS;
@@ -913,10 +913,10 @@ async function setupSimulation(
         "expiry_fee_window_ms",
         DEFAULT_EXPIRY_FEE_WINDOW_MS,
     );
-    const terminalFloorIndex = protocolConfigValue(
+    const maxAdmissionLeverage = protocolConfigValue(
         scenarioConfig,
-        "normal_terminal_floor_index",
-        DEFAULT_SIM_TERMINAL_FLOOR_INDEX,
+        "max_admission_leverage",
+        DEFAULT_MAX_ADMISSION_LEVERAGE,
     );
     const maxExpiryAllocation = protocolConfigValue(
         scenarioConfig,
@@ -986,10 +986,10 @@ async function setupSimulation(
     );
 
     await executeAndWait(
-        setTemplateTerminalFloorIndexTx(protocolConfigId, terminalFloorIndex),
-        "set_template_terminal_floor_index",
+        setTemplateMaxAdmissionLeverageTx(protocolConfigId, maxAdmissionLeverage),
+        "set_template_max_admission_leverage",
     );
-    console.log(`[${ts()}]   Terminal floor index: ${terminalFloorIndex}`);
+    console.log(`[${ts()}]   Max admission leverage: ${maxAdmissionLeverage}`);
 
     await executeAndWait(
         setCadenceConfigTx({

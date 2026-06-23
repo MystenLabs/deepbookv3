@@ -8,15 +8,15 @@ import hashlib
 
 @dataclass(frozen=True, slots=True)
 class PayoutTerms:
-    terminal_payout: int
-    live_backing_payout: int
+    quantity: int
+    floor_shares: int
 
 
 @dataclass(frozen=True, slots=True)
 class PayoutSummary:
     total_start: PayoutTerms
     total_end: PayoutTerms
-    max_live_backing_prefix_gain: int
+    max_net_payout_prefix_gain: int
 
 
 @dataclass(slots=True)
@@ -42,51 +42,52 @@ def strike_priority(strike: int) -> int:
 def _apply_terms_delta(value: PayoutTerms, delta: PayoutTerms, add: bool) -> PayoutTerms:
     if add:
         return PayoutTerms(
-            value.terminal_payout + delta.terminal_payout,
-            value.live_backing_payout + delta.live_backing_payout,
+            value.quantity + delta.quantity,
+            value.floor_shares + delta.floor_shares,
         )
-    if value.terminal_payout < delta.terminal_payout or value.live_backing_payout < delta.live_backing_payout:
+    if value.quantity < delta.quantity or value.floor_shares < delta.floor_shares:
         raise ValueError("insufficient payout terms")
     return PayoutTerms(
-        value.terminal_payout - delta.terminal_payout,
-        value.live_backing_payout - delta.live_backing_payout,
+        value.quantity - delta.quantity,
+        value.floor_shares - delta.floor_shares,
     )
 
 
 def _add_terms(left: PayoutTerms, right: PayoutTerms) -> PayoutTerms:
     return PayoutTerms(
-        left.terminal_payout + right.terminal_payout,
-        left.live_backing_payout + right.live_backing_payout,
+        left.quantity + right.quantity,
+        left.floor_shares + right.floor_shares,
     )
 
 
-def _positive_live_delta(start: int, end: int, gain: int) -> int:
-    positive = start + gain
-    return positive - end if positive > end else 0
+def _net_payout(terms: PayoutTerms) -> int:
+    return terms.quantity - terms.floor_shares
+
+
+def _positive_net_delta(start: PayoutTerms, end: PayoutTerms, gain: int) -> int:
+    positive = _net_payout(start) + gain
+    net_end = _net_payout(end)
+    return positive - net_end if positive > net_end else 0
 
 
 def _boundary_summary(start: PayoutTerms, end: PayoutTerms) -> PayoutSummary:
     return PayoutSummary(
         total_start=start,
         total_end=end,
-        max_live_backing_prefix_gain=_positive_live_delta(
-            start.live_backing_payout,
-            end.live_backing_payout,
-            0,
-        ),
+        max_net_payout_prefix_gain=_positive_net_delta(start, end, 0),
     )
 
 
 def _combine_summaries(left: PayoutSummary, right: PayoutSummary) -> PayoutSummary:
-    right_gain_after_left = _positive_live_delta(
-        left.total_start.live_backing_payout,
-        left.total_end.live_backing_payout,
-        right.max_live_backing_prefix_gain,
+    right_gain_after_left = _positive_net_delta(
+        left.total_start,
+        left.total_end,
+        right.max_net_payout_prefix_gain,
     )
     return PayoutSummary(
         total_start=_add_terms(left.total_start, right.total_start),
         total_end=_add_terms(left.total_end, right.total_end),
-        max_live_backing_prefix_gain=max(left.max_live_backing_prefix_gain, right_gain_after_left),
+        max_net_payout_prefix_gain=max(left.max_net_payout_prefix_gain, right_gain_after_left),
     )
 
 
@@ -124,26 +125,29 @@ class StrikePayoutTree:
         self.pos_inf = pos_inf
         self.base = ZERO_TERMS
 
-    def insert_range(self, lower: int, higher: int, terminal_payout: int, live_backing_payout: int) -> None:
-        self._apply_range(lower, higher, PayoutTerms(terminal_payout, live_backing_payout), True)
+    def insert_range(self, lower: int, higher: int, quantity: int, floor_shares: int) -> None:
+        self._apply_range(lower, higher, PayoutTerms(quantity, floor_shares), True)
 
-    def remove_range(self, lower: int, higher: int, terminal_payout: int, live_backing_payout: int) -> None:
-        self._apply_range(lower, higher, PayoutTerms(terminal_payout, live_backing_payout), False)
+    def remove_range(self, lower: int, higher: int, quantity: int, floor_shares: int) -> None:
+        self._apply_range(lower, higher, PayoutTerms(quantity, floor_shares), False)
 
-    def max_live_backing_payout(self) -> int:
-        max_payout = self.base.live_backing_payout
+    def net_payout_reserve_terms(self) -> tuple[int, int]:
+        max_payout = _net_payout(self.base)
+        total_terms = self.base
         if self.root is not None:
-            max_payout += self.nodes[self.root].summary.max_live_backing_prefix_gain
-        return max_payout
+            summary = self.nodes[self.root].summary
+            max_payout += summary.max_net_payout_prefix_gain
+            total_terms = _add_terms(total_terms, summary.total_start)
+        return max_payout, _net_payout(total_terms)
 
     def settled_payout_liability(self, settlement: int) -> int:
-        return self._settlement_prefix_terms(self.root, settlement, self.base).terminal_payout
+        return _net_payout(self._settlement_prefix_terms(self.root, settlement, self.base))
 
     def _apply_range(self, lower: int, higher: int, terms: PayoutTerms, add: bool) -> None:
         self._assert_range_boundaries(lower, higher)
-        if terms.terminal_payout == 0 and terms.live_backing_payout == 0:
+        if terms.quantity == 0 and terms.floor_shares == 0:
             return
-        if terms.terminal_payout > terms.live_backing_payout:
+        if terms.floor_shares > terms.quantity:
             raise ValueError("invalid payout terms")
 
         if lower == self.neg_inf:

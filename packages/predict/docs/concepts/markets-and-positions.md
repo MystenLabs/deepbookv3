@@ -52,7 +52,7 @@ The sentinels live at the ends of the 24-bit tick domain:
 
 Raw strikes are recovered from ticks only at the pricing and settlement boundary, through `range_codec::strikes_from_ticks`, which applies the sentinel mapping and the `tick × tick_size` multiplication. The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k", i.e. plain digital calls and puts — without inventing artificial outer strikes. Settlement payout is determined by whether the settlement price falls inside `(lower, higher]`: an order pays zero when `settlement ≤ lower || settlement > higher`.
 
-Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 24-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span; leveraged orders carry an extra one-sidedness rule) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
+Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 24-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
 
 ## Positions (orders)
 
@@ -62,15 +62,14 @@ A position is identified by a single packed `u256` **order ID**. It is an opaque
 | --- | --- |
 | `quantity` | Position size in DUSDC base units. Stored as a count of lots, so `position_lot_size` sets the granularity and the packed lot field bounds the maximum size. |
 | `floor_shares` | Normalized leverage floor coverage. Zero for a 1x (unleveraged) order, positive for a leveraged one. See [leverage and the floor](./leverage-and-floor.md). |
-| `opened_at_ms` | The timestamp the economic position was originally opened, preserved across partial-close replacements. Used only to reconstruct the floor schedule, not for market lifecycle decisions. |
 | `lower_tick`, `higher_tick` | The position's strike range, as two absolute ticks (`0` = `neg_inf` lower, `pos_inf_tick` = `pos_inf` higher). |
 | `sequence` | An expiry-local monotonic counter that makes each order ID unique within its market. |
 
-The packed ID is the single source of truth at protocol boundaries; the bit layout is an implementation detail and is not part of the contract surface. Mint-only inputs that do not survive into the contract terms — entry probability, leverage tier, contribution, and fee policy — are deliberately **not** encoded. This separation matters for upgrades: mint-admission policy (for example, the leverage-tier rules) lives in config and validation, not in order decoding, so tightening admission policy in a later version can never retroactively invalidate an existing packed order ID.
+The packed ID is the single source of truth at protocol boundaries; the bit layout is an implementation detail and is not part of the contract surface. Mint-only inputs that do not survive into the contract terms — entry probability, leverage multiplier, net premium, and fee policy — are deliberately **not** encoded. This separation matters for upgrades: mint-admission policy lives in config and validation, not in order decoding, so tightening admission policy in a later version can never retroactively invalidate an existing packed order ID.
 
 Order IDs are scoped to their market: an ID alone does not carry expiry or market identity. A position is bound to a market only through the `(expiry_market_id, order_id)` key in the holder's `PredictManager`. Do not infer market facts from an order ID.
 
-What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is its range probability value minus its deterministic floor — the accreting balance of the premium financing that leverage embeds — floored at zero; a 1x order is the special case with a zero floor. Leverage changes the contract's floor schedule over time rather than adding a separate debt overlay. Leverage is constrained to a discrete set — 1x, 1.5x, 2x, 2.5x, 3x (1e9-scaled) — and higher tiers are gated by entry probability at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in [leverage and the floor](./leverage-and-floor.md); pricing and oracle inputs in [pricing and oracles](./pricing-and-oracles.md).
+What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is its range probability value minus its static floor -- the financed share of the entry premium that leverage embeds -- floored at zero; a 1x order is the special case with a zero floor. Leverage is continuous at 1e9 scale and is admitted by a probability-sensitive cap at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in [leverage and the floor](./leverage-and-floor.md); pricing and oracle inputs in [pricing and oracles](./pricing-and-oracles.md).
 
 ### Where positions are tracked
 
@@ -95,14 +94,14 @@ stateDiagram-v2
 
 ### Mint
 
-`mint` creates a live position. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, no pool valuation in progress, a valid `PredictTradeProof`, current canonical Propbook feeds with a fresh surface, and enough expiry cash to back the post-mint payout liability plus rebate reserve. Leveraged mints additionally must satisfy leverage-tier policy, sit above the liquidation threshold at entry, and keep the order's terminal floor strictly below `quantity × liquidation_ltv`. The flow takes the `(lower_tick, higher_tick)` pair, quotes the entry range probability, derives the net premium and floor terms, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the strike-exposure and liquidation indexes, and settles payment (net premium + trading fee + optional builder fee + EWMA congestion penalty). It emits **`OrderMinted`** and returns the order ID. Mint gating (surface freshness, mint pause, range validity) connects to [pricing and oracles](./pricing-and-oracles.md).
+`mint` creates a live position. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, no pool valuation in progress, a valid `PredictTradeProof`, current canonical Propbook feeds with a fresh surface, and enough expiry cash to back the post-mint payout liability plus rebate reserve. Leveraged mints additionally must satisfy the probability-sensitive admission cap and sit above the liquidation threshold at entry. The flow takes the `(lower_tick, higher_tick)` pair, quotes the entry range probability, derives the net premium and floor shares, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the strike-exposure and liquidation indexes, and settles payment (net premium + trading fee + optional builder fee + EWMA congestion penalty). It emits **`OrderMinted`** and returns the order ID. Mint gating (surface freshness, mint pause, range validity) connects to [pricing and oracles](./pricing-and-oracles.md).
 
 ### Live redeem (full, or partial as cancel-and-replace)
 
 While the market is active, `redeem` closes a position the caller has trade authority over, with a `close_quantity`:
 
 - **Full close** (`close_quantity == quantity`): the order's full live-index terms are removed, the redeem amount is quoted at the current range probability net of the floor, fees and penalty are deducted, and the payout is deposited to the manager. No replacement is produced.
-- **Partial close** (`close_quantity < quantity`): the protocol removes the order's *entire* live-index terms, then reinserts a **replacement** order for the remaining quantity (with proportionally reduced floor shares, a new sequence, and the original `opened_at_ms`). The replacement inherits the same `position_root_id`. Removing-and-reinserting the whole position — rather than subtracting only the closed slice — keeps the reinserted residual bit-exact with what settlement will later recompute, avoiding a one-ulp underflow.
+- **Partial close** (`close_quantity < quantity`): the protocol removes the closed slice from the live indexes and creates a **replacement** order for the remaining quantity with proportionally reduced static floor shares and a new sequence.
 
 Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_quantity`, and `replacement_order_id` when present). `redeem` first runs a bounded liquidation pass; if the targeted order was itself liquidated in that pass, it is cleared instead (see below). Live redeem requires the proof (`EProofRequiredForLiveRedeem` if absent).
 
@@ -112,7 +111,7 @@ Settlement records the exact normalized Pyth spot at the market's expiry timesta
 
 ### Settled redeem
 
-After settlement, a position is closed for its terminal payout. `redeem_settled` is permissionless — any keeper can sweep settled positions — and requires a full close. Payout is `quantity − floor(floor_shares × terminal_floor_index)` (rounded down), credited to the order's manager and zero when the settlement price lies outside `(lower, higher]`. It emits **`SettledOrderRedeemed`** with the settlement price and payout. Closing live (unsettled) risk through this path aborts, since that requires a proof.
+After settlement, a position is closed for its settled payout. `redeem_settled` is permissionless — any keeper can sweep settled positions — and requires a full close. Payout is `quantity − floor_shares`, credited to the order's manager and zero when the settlement price lies outside `(lower, higher]`. It emits **`SettledOrderRedeemed`** with the settlement price and payout. Closing live (unsettled) risk through this path aborts, since that requires a proof.
 
 ### Liquidation
 
@@ -128,4 +127,4 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 | `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_expiry_market` (one per underlying and expiry) | shared |
 | `PredictManager` | DUSDC custody + positions keyed by `(expiry_market_id, order_id)` | `create_manager` / `create_self_owned_manager` | owned or shared |
 
-For the capability model and trade authority, see [architecture](../design/architecture.md). For tunable parameters (tick size, leverage tiers, liquidation LTV, fee policy), see [configuration](../design/configuration.md).
+For the capability model and trade authority, see [architecture](../design/architecture.md). For tunable parameters (tick size, admission leverage cap, liquidation LTV, fee policy), see [configuration](../design/configuration.md).

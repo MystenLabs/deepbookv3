@@ -166,7 +166,7 @@ class Generator:
         # update_block_scholes_prices), but pricing must use the value the
         # contracts actually quote with: forward re-derived from the live Pyth
         # spot via pricing::load_live_pricer. Mirror that here so admission decisions
-        # (tier, LTV, min principal) match localnet and the replay.
+        # (dynamic leverage cap, LTV, min premium) match localnet and the replay.
         pricing_forward = replay.live_forward(snapshot["spot"], forward)
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
@@ -183,20 +183,12 @@ class Generator:
                     leverage,
                 )
                 terms = replay.compute_mint_terms(entry_probability, quantity, leverage)
-                replay.assert_mint_principal_above_min(terms["contribution"])
-                open_floor_index = self.open_floor_index(snapshot)
-                replay.assert_terminal_ltv_mint_allowed(
-                    quantity,
-                    leverage,
-                    terms["floor_seed_amount"],
-                    open_floor_index,
-                )
+                replay.assert_net_premium_above_min(terms["contribution"])
                 replay.assert_mint_above_liquidation_threshold(
                     entry_probability,
                     quantity,
                     leverage,
-                    terms["floor_seed_amount"],
-                    open_floor_index,
+                    terms["floor_shares"],
                 )
             except ValueError:
                 continue
@@ -238,16 +230,6 @@ class Generator:
 
         raise GenerationError("could not find legal mint parameters")
 
-    def open_floor_index(self, snapshot: dict[str, Any]) -> int:
-        if self.expiry_ms is None:
-            return replay.FLOAT_SCALING
-        return replay.floor_index_at_ms(
-            snapshot["price_checkpoint_timestamp_ms"],
-            self.expiry_ms,
-            replay.LEVERAGE_FLOOR_WINDOW_MS,
-            replay.MAX_EXPIRY_FLOOR_PREMIUM,
-        )
-
     def fee_time_to_expiry(self, snapshot: dict[str, Any]) -> int | None:
         if self.expiry_ms is None:
             return None
@@ -260,11 +242,7 @@ class Generator:
         return replay.align_strike_to_tick(strike)
 
     def max_leverage_for_probability(self, entry_probability: int) -> int:
-        if entry_probability < replay.LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
-            return replay.LEVERAGE_ONE_X
-        if entry_probability < replay.LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD:
-            return replay.LEVERAGE_TWO_X
-        return replay.LEVERAGE_THREE_X
+        return replay.admission_leverage_cap(entry_probability)
 
     def random_leverage(self, entry_probability: int) -> int:
         max_leverage = self.max_leverage_for_probability(entry_probability)

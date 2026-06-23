@@ -16,7 +16,7 @@ Some structural constants are real and stable enough to state directly:
 - **1e9 fixed-point scaling** (`float_scaling`): `500_000_000` is 50%, `1_000_000_000` is 100%. Prices, probabilities, fee rates, ratios, and benefit fractions all use this scale.
 - **DUSDC settlement asset has 6 decimals**; contract quantities are 6-decimal quote units, so `1_000_000` is one contract.
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
-- **The discrete leverage set** is exactly {1x, 1.5x, 2x, 2.5x, 3x}, expressed as 1e9-scaled multipliers. The leverage *tiers* (which probabilities permit which leverage) and the leverage floor window are upgrade-required constants, not config fields.
+- **Leverage is continuous** in 1e9-scaled multipliers: any value at or above 1x can be requested, subject to the expiry's snapshotted `max_admission_leverage` and the upgrade-required dynamic admission curve constant.
 - **The minimum per-expiry allocation cap** is an upgrade-required floor. The actual per-expiry cap is admin-tuned per cadence and snapshotted into pool accounting when a market is created.
 - **Market tick sizes** are admin-tuned per cadence and must be positive and within the protocol's overflow-safe bounds. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain.
 ## Three classes of configuration
@@ -29,12 +29,12 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 
 | Template (on `ProtocolConfig`) | Snapshotted into | Governs |
 | --- | --- | --- |
-| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Terminal floor index, liquidation LTV, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
+| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Liquidation LTV, max admission leverage, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
 
 When `create_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
 
-Both templates are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, floor curve, liquidation LTV, backing-buffer lambda, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
+Both templates are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, liquidation LTV, max admission leverage, backing-buffer lambda, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
 
 ```mermaid
 flowchart LR
@@ -113,13 +113,13 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | `PauseCap` (via `Registry`) | Force global trading pause, force per-expiry mint pause — both one-way (engage only) |
 | `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also the sole authority to start the privileged pool flush (`start_pool_valuation`). No oracle-write or config authority |
 | Permissionless | Cash rebalance, settled-market sweep, and liquidation keeper flows (subject to the valuation lock, not the trading pause); LP supply/withdraw requests and their cancellation |
-| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the minimum per-expiry allocation cap, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
+| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, the dynamic admission-curve shape constant, the minimum per-expiry allocation cap, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
 
 All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (pause caps, lifecycle caps, uniqueness, underlying admission, and cadence deployment policy) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
 
 ## Related reading
 
 - [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how the `PricingConfig` freshness thresholds enter live probability resolution from the propbook feeds.
-- [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the terminal floor index, liquidation LTV, and leverage tiers that `StrikeExposureConfig` governs.
+- [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the static floor, liquidation LTV, and dynamic admission cap that `StrikeExposureConfig` governs.
 - [./architecture.md](./architecture.md) — object model, the oracle extraction, and the async NAV/LP layer.
 - [../risks.md](../risks.md) — operational and governance risk, including pause/version handling.

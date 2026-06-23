@@ -74,8 +74,8 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
 ///
 /// The active index already holds exactly the leveraged orders (1x mints are
 /// no-ops, liquidated orders are tombstoned out), so this scan needs no extra
-/// filtering. Each active order is one-sided, so `range_price` costs one heavy
-/// eval. The `min` is the order's limited-recourse static floor: a knocked-out
+/// filtering. Each active order is priced by its encoded range. The `min` is the
+/// order's limited-recourse static floor: a knocked-out
 /// order's range value is capped at its floor and nets to zero against the linear
 /// term, so NAV needs no liquidation pass for an exact mark. All terms are
 /// non-negative — a plain `u64` sum. The caller (which owns the model) supplies the

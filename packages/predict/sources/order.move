@@ -142,7 +142,7 @@ fun new(
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     let quantity = quantity_lots * constants::position_lot_size!();
     assert!(floor_shares <= quantity, EInvalidFloorShares);
-    assert_valid_order_shape(lower_tick, higher_tick, floor_shares > 0);
+    assert_valid_order_shape(lower_tick, higher_tick);
 
     let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
     let floor_shares_key = encode_floor_shares_key(floor_shares);
@@ -196,20 +196,13 @@ fun assert_valid(order: &Order) {
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
     assert!(quantity_lots > 0, EInvalidQuantity);
     assert!(order.floor_shares() <= order.quantity(), EInvalidFloorShares);
-    assert_valid_order_shape(
-        order.lower_tick(),
-        order.higher_tick(),
-        order.is_leveraged(),
-    );
+    assert_valid_order_shape(order.lower_tick(), order.higher_tick());
 }
 
-fun assert_valid_order_shape(lower_tick: u64, higher_tick: u64, is_leveraged: bool) {
+fun assert_valid_order_shape(lower_tick: u64, higher_tick: u64) {
     let pos_inf_tick = constants::pos_inf_tick!();
     assert!(lower_tick <= pos_inf_tick, EInvalidTick);
     assert!(higher_tick <= pos_inf_tick, EInvalidTick);
     assert!(lower_tick < higher_tick, EInvalidRange);
     assert!(!(lower_tick == 0 && higher_tick == pos_inf_tick), EInvalidRange);
-    if (!is_leveraged) return;
-
-    assert!(lower_tick == 0 || higher_tick == pos_inf_tick, EInvalidRange);
 }

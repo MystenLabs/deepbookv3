@@ -11,10 +11,8 @@ module deepbook_predict::liquidation_book_tests;
 use deepbook_predict::{constants, liquidation_book, order::{Self, Order}};
 use std::unit_test::{assert_eq, destroy};
 
-// Leveraged orders must be semi-infinite (order.move assert_valid_order_shape:
-// lower tick 0 or higher tick == pos_inf_tick), so use an open lower end.
-const LOWER_TICK: u64 = 0;
-const HIGHER_TICK: u64 = 2;
+const LOWER_TICK: u64 = 1;
+const HIGHER_TICK: u64 = 3;
 const SEQUENCE: u64 = 7;
 const PRIORITY_QUANTITY_LOTS: u64 = 10;
 const LOW_FLOOR_SHARES: u64 = 10_000;

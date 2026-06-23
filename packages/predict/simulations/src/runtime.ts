@@ -598,17 +598,17 @@ export function setTemplateExpiryFeeConfigTx(
     return tx;
 }
 
-export function setTemplateTerminalFloorIndexTx(
+export function setTemplateMaxAdmissionLeverageTx(
     protocolConfigId: string,
-    terminalFloorIndex: bigint,
+    maxAdmissionLeverage: bigint,
 ): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("protocol_config", "set_template_terminal_floor_index"),
+        target: target("protocol_config", "set_template_max_admission_leverage"),
         arguments: [
             tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(terminalFloorIndex),
+            tx.pure.u64(maxAdmissionLeverage),
         ],
     });
     return tx;

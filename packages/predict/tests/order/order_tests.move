@@ -102,6 +102,23 @@ fun from_order_id_decodes_every_nonleveraged_field() {
 }
 
 #[test]
+fun finite_leveraged_order_round_trips() {
+    let o = order::new_from_ticks(
+        NONLEV_LOWER,
+        NONLEV_HIGHER,
+        LEV_FLOOR,
+        LEV_QUANTITY,
+        LEV_SEQ,
+    );
+
+    assert_eq!(o.lower_tick(), NONLEV_LOWER);
+    assert_eq!(o.higher_tick(), NONLEV_HIGHER);
+    assert_eq!(o.floor_shares(), LEV_FLOOR);
+    assert_eq!(o.quantity(), LEV_QUANTITY);
+    assert!(o.is_leveraged());
+}
+
+#[test]
 fun max_quantity_lots_round_trips_through_complement_encoding() {
     // quantity_lots == U32_MASK is the max; its complement key is 0. Round-trip
     // must recover U32_MASK, not wrap.

@@ -88,17 +88,18 @@ def current_order_id_fields() -> tuple[LayoutField, ...]:
     return (
         field("quantity_lots", True),
         field("floor_shares", True),
-        field("opened_at_ms", False),
-        field("lower_boundary_index", False),
-        field("higher_boundary_index", False),
+        field("lower_tick", False),
+        field("higher_tick", False),
     )
 
 
 def curated_layout_candidates() -> list[LayoutCandidate]:
     leverage_desc = field("leverage", True)
     quantity_desc = field("quantity_lots", True)
-    floor_prob_desc = field("floor_seed_probability", True)
-    floor_prob_asc = field("floor_seed_probability", False)
+    floor_shares_desc = field("floor_shares", True)
+    floor_shares_asc = field("floor_shares", False)
+    floor_prob_desc = field("floor_probability", True)
+    floor_prob_asc = field("floor_probability", False)
     floor_lots_desc = field("floor_lots", True)
     floor_lots_asc = field("floor_lots", False)
     entry_desc = field("entry_probability", True)
@@ -107,10 +108,6 @@ def curated_layout_candidates() -> list[LayoutCandidate]:
     floor_ratio_asc = field("floor_ratio", False)
     headroom_asc = field("ltv_headroom_probability", False)
     headroom_desc = field("ltv_headroom_probability", True)
-    terminal_headroom_asc = field("terminal_ltv_headroom_probability", False)
-    terminal_headroom_desc = field("terminal_ltv_headroom_probability", True)
-    opened_asc = field("opened_at_ms", False)
-    opened_desc = field("opened_at_ms", True)
     width_asc = field("range_width_ticks", False)
     width_desc = field("range_width_ticks", True)
     risk_desc = field("risk_value_score", True)
@@ -118,6 +115,8 @@ def curated_layout_candidates() -> list[LayoutCandidate]:
     prefixes = [
         (quantity_desc, leverage_desc),
         (leverage_desc, quantity_desc),
+        (leverage_desc, floor_shares_desc),
+        (leverage_desc, floor_shares_asc),
         (leverage_desc, floor_prob_desc),
         (leverage_desc, floor_prob_asc),
         (leverage_desc, floor_lots_desc),
@@ -134,6 +133,8 @@ def curated_layout_candidates() -> list[LayoutCandidate]:
     ]
     suffixes = [
         quantity_desc,
+        floor_shares_desc,
+        floor_shares_asc,
         floor_prob_desc,
         floor_prob_asc,
         floor_lots_desc,
@@ -144,10 +145,6 @@ def curated_layout_candidates() -> list[LayoutCandidate]:
         floor_ratio_asc,
         headroom_asc,
         headroom_desc,
-        terminal_headroom_asc,
-        terminal_headroom_desc,
-        opened_asc,
-        opened_desc,
         width_asc,
         width_desc,
         risk_desc,
@@ -197,8 +194,10 @@ def wide_layout_candidates(width: int, limit: int | None) -> list[LayoutCandidat
         field("leverage", False),
         field("quantity_lots", True),
         field("quantity_lots", False),
-        field("floor_seed_probability", True),
-        field("floor_seed_probability", False),
+        field("floor_shares", True),
+        field("floor_shares", False),
+        field("floor_probability", True),
+        field("floor_probability", False),
         field("floor_lots", True),
         field("floor_lots", False),
         field("entry_probability", True),
@@ -207,10 +206,6 @@ def wide_layout_candidates(width: int, limit: int | None) -> list[LayoutCandidat
         field("floor_ratio", False),
         field("ltv_headroom_probability", True),
         field("ltv_headroom_probability", False),
-        field("terminal_ltv_headroom_probability", True),
-        field("terminal_ltv_headroom_probability", False),
-        field("opened_at_ms", True),
-        field("opened_at_ms", False),
         field("range_width_ticks", True),
         field("range_width_ticks", False),
     ]
@@ -245,52 +240,31 @@ def svi_from_update(update: dict[str, str]) -> dict[str, Any]:
 
 def enrich_order(order: dict[str, int]) -> dict[str, int]:
     quantity_lots_value = order["quantity"] // replay.POSITION_LOT_SIZE
-    floor_seed_probability_value = order["entry_probability"] - replay.user_contribution_from_exposure_value(
-        order["entry_probability"],
-        order["leverage"],
+    floor_probability_value = replay.deepbook_div(order["floor_shares"], order["quantity"])
+    threshold_probability = replay.deepbook_div(
+        replay.liquidation_threshold_value(order["floor_shares"]),
+        order["quantity"],
     )
-    threshold_probability = replay.liquidation_threshold_value(floor_seed_probability_value)
-    floor_probability_shares = replay.order_floor_shares_from_seed(
-        floor_seed_probability_value,
-        order["leverage"],
-        order["open_floor_index"],
-    )
-    terminal_floor_probability = replay.floor_amount_for_index(
-        floor_probability_shares,
-        replay.TERMINAL_FLOOR_INDEX,
-    )
-    terminal_threshold_probability = replay.liquidation_threshold_value(terminal_floor_probability)
     ltv_headroom_value = max(0, order["entry_probability"] - threshold_probability)
     order["quantity_lots"] = quantity_lots_value
-    order["user_contribution_probability"] = order["entry_probability"] - floor_seed_probability_value
-    order["floor_seed_probability"] = floor_seed_probability_value
+    order["user_contribution_probability"] = order["entry_probability"] - floor_probability_value
+    order["floor_probability"] = floor_probability_value
     order["liquidation_threshold_probability"] = threshold_probability
     order["ltv_headroom_probability"] = ltv_headroom_value
     order["ltv_headroom_ratio"] = scaled_ratio(ltv_headroom_value, order["entry_probability"])
-    order["floor_ratio"] = scaled_ratio(floor_seed_probability_value, order["entry_probability"])
-    order["terminal_ltv_headroom_probability"] = max(0, order["entry_probability"] - terminal_threshold_probability)
+    order["floor_ratio"] = scaled_ratio(floor_probability_value, order["entry_probability"])
     order["risk_value_score"] = quantity_lots_value * replay.FLOAT_SCALING // max(1, ltv_headroom_value)
-    order["range_width_ticks"] = max(1, (order["higher"] - order["lower"]) // replay.FLOAT_SCALING)
-    order["floor_lots"] = order["floor_seed_amount"] // replay.POSITION_LOT_SIZE
-    order["floor_shares"] = replay.order_floor_shares_from_seed(
-        order["floor_seed_amount"],
-        order["leverage"],
-        order["open_floor_index"],
-    )
+    order["range_width_ticks"] = max(1, order["higher_tick"] - order["lower_tick"])
+    order["floor_lots"] = order["floor_shares"] // replay.POSITION_LOT_SIZE
     order["tie_breakers"] = (
-        order["opened_at_ms"],
-        order["lower"],
-        order["higher"],
+        order["lower_tick"],
+        order["higher_tick"],
         order["leverage"],
         order["entry_probability"],
         quantity_lots_value,
         order["sequence"],
     )
     return order
-
-
-def floor_amount_at(order: dict[str, int], floor_index: int) -> int:
-    return replay.floor_amount_for_index(order["floor_shares"], floor_index)
 
 
 def liquidatable_metrics_by_ref(
@@ -302,19 +276,13 @@ def liquidatable_metrics_by_ref(
 ) -> dict[str, dict[str, int]]:
     probabilities: dict[tuple[int, int], int] = {}
     out: dict[str, dict[str, int]] = {}
-    floor_index = replay.floor_index_at_ms(
-        timestamp_ms,
-        expiry_ms,
-        replay.LEVERAGE_FLOOR_WINDOW_MS,
-        replay.MAX_EXPIRY_FLOOR_PREMIUM,
-    )
     for ref, order in active_orders.items():
         range_key = (order["lower"], order["higher"])
         probability = probabilities.get(range_key)
         if probability is None:
             probability = replay.compute_range_price(current_svi, current_forward, order["lower"], order["higher"])
             probabilities[range_key] = probability
-        floor_amount = floor_amount_at(order, floor_index)
+        floor_amount = replay.floor_amount(order["floor_shares"])
         threshold_value = replay.liquidation_threshold_value(floor_amount)
         gross_value = replay.deepbook_mul(probability, order["quantity"])
         if gross_value <= threshold_value:
@@ -352,27 +320,22 @@ def apply_order_updates(
             lower, higher = replay.strikes_from_ticks(
                 int(update["lower_tick"]), int(update["higher_tick"])
             )
+            lower_tick = int(update["lower_tick"])
+            higher_tick = int(update["higher_tick"])
             active_orders[update["order_ref"]] = enrich_order({
                 "sequence": int(update["order_sequence"]),
                 "lower": lower,
                 "higher": higher,
-                "lower_boundary_index": replay.order_boundary_index(lower),
-                "higher_boundary_index": replay.order_boundary_index(higher),
+                "lower_tick": lower_tick,
+                "higher_tick": higher_tick,
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
-                "floor_seed_amount": replay.compute_mint_terms(
+                "floor_shares": replay.compute_mint_terms(
                     int(update["entry_probability"]),
                     int(update["quantity"]),
                     leverage,
-                )["floor_seed_amount"],
-                "opened_at_ms": timestamp_ms,
-                "open_floor_index": replay.floor_index_at_ms(
-                    timestamp_ms,
-                    expiry_ms,
-                    replay.LEVERAGE_FLOOR_WINDOW_MS,
-                    replay.MAX_EXPIRY_FLOOR_PREMIUM,
-                ),
+                )["floor_shares"],
             })
         elif update_type == "live_order_redeemed":
             ref = update["order_ref"]
@@ -381,16 +344,17 @@ def apply_order_updates(
             remaining_quantity = int(update.get("remaining_quantity") or 0)
             if order is None or not replacement_ref or remaining_quantity == 0:
                 continue
-            replacement_terms = replay.compute_mint_terms(
-                order["entry_probability"],
-                remaining_quantity,
-                order["leverage"],
+            close_quantity = int(update["quantity_closed"])
+            close_fraction = replay.deepbook_div(close_quantity, order["quantity"])
+            remaining_floor_shares = order["floor_shares"] - replay.deepbook_mul(
+                order["floor_shares"],
+                close_fraction,
             )
             active_orders[replacement_ref] = enrich_order({
                 **order,
                 "sequence": int(update["replacement_order_sequence"]),
                 "quantity": remaining_quantity,
-                "floor_seed_amount": replacement_terms["floor_seed_amount"],
+                "floor_shares": remaining_floor_shares,
             })
         elif update_type in ("order_liquidated", "liquidated_order_redeemed", "settled_order_redeemed"):
             active_orders.pop(update["order_ref"], None)
@@ -402,9 +366,9 @@ def project_order_for_ranking(ref: str, order: dict[str, int]) -> dict[str, int 
         "sequence": order["sequence"],
         "leverage": order["leverage"],
         "quantity_lots": order["quantity_lots"],
-        "lower_boundary_index": order["lower_boundary_index"],
-        "higher_boundary_index": order["higher_boundary_index"],
-        "floor_seed_probability": order["floor_seed_probability"],
+        "lower_tick": order["lower_tick"],
+        "higher_tick": order["higher_tick"],
+        "floor_probability": order["floor_probability"],
         "floor_shares": order["floor_shares"],
         "floor_lots": order["floor_lots"],
         "entry_probability": order["entry_probability"],
@@ -412,19 +376,9 @@ def project_order_for_ranking(ref: str, order: dict[str, int]) -> dict[str, int 
         "liquidation_threshold_probability": order["liquidation_threshold_probability"],
         "ltv_headroom_probability": order["ltv_headroom_probability"],
         "ltv_headroom_ratio": order["ltv_headroom_ratio"],
-        "terminal_ltv_headroom_probability": order["terminal_ltv_headroom_probability"],
         "risk_value_score": order["risk_value_score"],
-        "opened_at_ms": order["opened_at_ms"],
         "range_width_ticks": order["range_width_ticks"],
     }
-
-
-def first_oracle_spot(economic_data: dict[str, Any]) -> int:
-    for record in economic_data["records"]:
-        for update in record["updates"]:
-            if update["type"] == "oracle_prices_updated":
-                return int(update["spot"])
-    raise ValueError("economic data has no oracle price update")
 
 
 def build_ranking_dataset(
@@ -883,7 +837,6 @@ def main() -> None:
         economic_data = load_json_object(args.python_long_data)
         if economic_data.get("schema_version") != replay.ECONOMIC_SCHEMA_VERSION:
             raise SystemExit(f"input must use {replay.ECONOMIC_SCHEMA_VERSION} schema")
-        replay.configure_oracle_grid(first_oracle_spot(economic_data))
         dataset = build_ranking_dataset(
             economic_data,
             expiry_ms,

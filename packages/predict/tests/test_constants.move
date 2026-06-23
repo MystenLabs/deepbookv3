@@ -96,8 +96,7 @@ public fun protocol_reserve_share(): u64 { 400_000_000 }
 
 // === Default expiry / trade flow (for `setup_everything`) ===
 
-/// Default expiry for the composite bring-up: exactly `now + 365d` (the floor
-/// window), so the floor schedule is flat and >1x mints are admissible — the
+/// Default expiry for the composite bring-up: exactly `now + 365d`, the
 /// broadly-useful default for flow tests. Grid-aligned (`now` + a multiple of the
 /// resolution period) so exact settlement inserts are representable.
 public fun default_expiry_ms(): u64 { 31_536_120_000 }
@@ -129,13 +128,13 @@ public fun default_manager_deposit(): u64 { 30_000_000_000 }
 
 // === Shared happy-path flow values (the short-expiry lifecycle tests) ===
 
-/// 1x leverage in FLOAT_SCALING (a flat floor schedule => zero floor shares).
+/// 1x leverage in FLOAT_SCALING (zero financed amount => zero floor shares).
 public fun leverage_one_x(): u64 { math::float_scaling!() }
 
 /// Short expiry (`now + 120s`) used by the lifecycle/payout flow tests: near
-/// enough that the leverage floor schedule is non-flat (a 2x order carries a real
-/// floor), unlike the far `default_expiry_ms`. Grid-aligned (`now` + 2 resolution
-/// periods) so exact settlement inserts are representable.
+/// enough for compact lifecycle scenarios. A >1x order carries a real static
+/// floor regardless of expiry. Grid-aligned (`now` + 2 resolution periods) so
+/// exact settlement inserts are representable.
 public fun short_expiry_ms(): u64 { 240_000 }
 
 /// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).

@@ -10,8 +10,8 @@
 /// owns only the boundary conversions: tick-to-raw strike for the pricing/settlement
 /// boundary and the settlement prefix threshold. It is stateless: every conversion
 /// takes the owning market's `tick_size`. Range-shape validity (lower < higher,
-/// sentinels, leveraged one-sidedness) is enforced by `order` when ticks are packed
-/// into an order ID, so this codec does not re-check it. Finite ticks occupy
+/// sentinels) is enforced by `order` when ticks are packed into an order ID, so this
+/// codec does not re-check it. Finite ticks occupy
 /// `1..pos_inf_tick - 1`; tick `0` is the negative-infinity sentinel as a lower tick
 /// and `pos_inf_tick` is the positive-infinity sentinel as a higher tick.
 module deepbook_predict::range_codec;
