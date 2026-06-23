@@ -18,14 +18,7 @@ const EAskPriceOutOfBounds: u64 = 2;
 const EInvalidAskBound: u64 = 3;
 const EInvalidFeeProbability: u64 = 4;
 const ENetPremiumBelowMinimum: u64 = 5;
-const EInvalidLeverageTier: u64 = 6;
 const EInvalidLeverage: u64 = 7;
-
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
-const LEVERAGE_ONE_AND_HALF_X: u64 = 1_500_000_000;
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
-const LEVERAGE_THREE_X: u64 = 3_000_000_000;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -176,19 +169,7 @@ public(package) fun assert_mint_admission_policy(
         EAskPriceOutOfBounds,
     );
 
-    assert!(
-        leverage == LEVERAGE_ONE_X
-            || leverage == LEVERAGE_ONE_AND_HALF_X
-            || leverage == LEVERAGE_TWO_X
-            || leverage == LEVERAGE_TWO_AND_HALF_X
-            || leverage == LEVERAGE_THREE_X,
-        EInvalidLeverage,
-    );
-    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
-        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
-    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
-        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
-    };
+    assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
 
     let entry_value = math::mul(entry_probability, quantity);
     let net_premium = math::div(entry_value, leverage);
