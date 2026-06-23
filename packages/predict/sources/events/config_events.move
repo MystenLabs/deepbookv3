@@ -39,13 +39,13 @@ public struct ExpiryCashTemplateConfigUpdated has copy, drop, store {
 /// Emitted when future strike-exposure template policy changes.
 public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    terminal_floor_index: u64,
     liquidation_ltv: u64,
+    max_admission_leverage: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
-    min_ask_price: u64,
-    max_ask_price: u64,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
 }
@@ -79,6 +79,7 @@ public struct CadenceConfigUpdated has copy, drop, store {
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 }
 
@@ -93,6 +94,8 @@ public struct MarketCreated has copy, drop, store {
     tick_size: u64,
     /// DUSDC pool allocation cap snapshotted for this expiry.
     max_expiry_allocation: u64,
+    /// Minimum DUSDC cash target snapshotted for this expiry.
+    initial_expiry_cash: u64,
 }
 
 /// Emitted alongside `MarketCreated` with the per-market policy snapshotted into
@@ -101,13 +104,13 @@ public struct MarketCreated has copy, drop, store {
 /// authoritative source for the policy actually in force on the market.
 public struct MarketConfigSnapshot has copy, drop, store {
     expiry_market_id: ID,
-    terminal_floor_index: u64,
     liquidation_ltv: u64,
+    max_admission_leverage: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
-    min_ask_price: u64,
-    max_ask_price: u64,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     trading_loss_rebate_rate: u64,
@@ -172,13 +175,13 @@ public(package) fun emit_strike_exposure_template_config_updated(
 ) {
     event::emit(StrikeExposureTemplateConfigUpdated {
         protocol_config_id,
-        terminal_floor_index: config.terminal_floor_index(),
         liquidation_ltv: config.liquidation_ltv(),
+        max_admission_leverage: config.max_admission_leverage(),
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
         min_fee: config.min_fee(),
-        min_ask_price: config.min_ask_price(),
-        max_ask_price: config.max_ask_price(),
+        min_entry_probability: config.min_entry_probability(),
+        max_entry_probability: config.max_entry_probability(),
         expiry_fee_window_ms: config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier(),
     });
@@ -214,6 +217,7 @@ public(package) fun emit_cadence_config_updated(
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 ) {
     event::emit(CadenceConfigUpdated {
@@ -221,6 +225,7 @@ public(package) fun emit_cadence_config_updated(
         cadence_id,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
         window_size,
     });
 }
@@ -232,6 +237,7 @@ public(package) fun emit_market_created(
     expiry: u64,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -240,6 +246,7 @@ public(package) fun emit_market_created(
         expiry,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
     });
 }
 
@@ -250,13 +257,13 @@ public(package) fun emit_market_config_snapshot(
 ) {
     event::emit(MarketConfigSnapshot {
         expiry_market_id,
-        terminal_floor_index: strike_exposure_config.terminal_floor_index(),
         liquidation_ltv: strike_exposure_config.liquidation_ltv(),
+        max_admission_leverage: strike_exposure_config.max_admission_leverage(),
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),
         min_fee: strike_exposure_config.min_fee(),
-        min_ask_price: strike_exposure_config.min_ask_price(),
-        max_ask_price: strike_exposure_config.max_ask_price(),
+        min_entry_probability: strike_exposure_config.min_entry_probability(),
+        max_entry_probability: strike_exposure_config.max_entry_probability(),
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),

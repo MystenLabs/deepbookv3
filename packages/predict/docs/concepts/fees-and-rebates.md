@@ -42,7 +42,7 @@ base_fee_rate = max( raw_fee_rate , min_fee )
 
 As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
 
-The all-in mint execution price is `p + fee_rate`, and the protocol rejects mints whose execution price falls outside the configured `[min_ask_price, max_ask_price]` band. This is a pricing admission check, not a separate fee — it bounds the price a mint can execute at after the fee is added.
+Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
 
 ## 2. Expiry fee ramp
 
@@ -176,7 +176,7 @@ Cash routing at trade time:
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No | No |
 | Trading-loss rebate | funded from trading fees | reserved on-chain; resolved/paid off-chain | (drawn from reserve) | No |
 
-At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is resolved off-chain rather than claimed on-chain.
+At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `net_premium` budget, capped to the account's available DUSDC before sizing, and pays trading fees, builder fees, and congestion surcharge on top. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is resolved off-chain rather than claimed on-chain.
 
 ## Related reading
 

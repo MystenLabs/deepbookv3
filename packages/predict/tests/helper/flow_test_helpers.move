@@ -111,7 +111,7 @@ public fun setup_market(tick: u64): Fixture {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
-    config.set_template_min_ask_price(&admin_cap, 0);
+    config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_cadence_config(
@@ -120,6 +120,7 @@ public fun setup_market(tick: u64): Fixture {
         test_constants::default_cadence_id(),
         tick,
         test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
     return_shared(config);
@@ -283,6 +284,14 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_backing_buffer_lambda(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_max_admission_leverage(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -505,8 +514,42 @@ public fun mint(
     quantity: u64,
     leverage: u64,
 ): u256 {
+    self.mint_exact_quantity(
+        config,
+        oracle_registry,
+        wrapper,
+        root,
+        market,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        std::u64::max_value!(),
+        std::u64::max_value!(),
+    )
+}
+
+/// Mint one exact-quantity order with explicit total-cost and probability caps.
+public fun mint_exact_quantity(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.mint(
+    market.mint_exact_quantity(
         wrapper,
         auth,
         config,
@@ -516,6 +559,43 @@ public fun mint(
         lower_tick,
         higher_tick,
         quantity,
+        leverage,
+        max_cost,
+        max_probability,
+        root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// Mint the largest lot-rounded order that fits inside a fixed net premium amount.
+public fun mint_exact_amount(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    amount: u64,
+    min_quantity: u64,
+    leverage: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market.mint_exact_amount(
+        wrapper,
+        auth,
+        config,
+        oracle_registry,
+        pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        amount,
+        min_quantity,
         leverage,
         root,
         &self.clock,

@@ -32,8 +32,8 @@ How the protocol works:
   range markets, the absolute tick grid, what an order/position is, and the
   lifecycle from mint through live redeem and liquidation.
 - **[Leverage and the floor](./concepts/leverage-and-floor.md)** — how leverage
-  is modelled as embedded premium financing (a deterministic, time-varying
-  floor) plus a knock-out on the contract's payoff.
+  is modelled as embedded premium financing (a static floor) plus a knock-out on
+  the contract's payoff.
 - **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
   formed from the propbook Pyth spot and Block Scholes surface, the forward
   fallback, and freshness rules.

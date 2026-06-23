@@ -74,6 +74,7 @@ const BS_UNDERLYING_ID = PYTH_FEED_ID;
 const TICK_BITS = 24n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 const ORACLE_TICK_SIZE = 1_000_000_000n;
+const U64_MAX = (1n << 64n) - 1n;
 // Genesis minimum-liquidity lock (constants::min_bootstrap_liquidity). `lock_capital`
 // permanently locks this much DUSDC so `total_supply > 0` for the life of the pool,
 // making the supply==0 re-bootstrap branch unreachable. request_supply/withdraw abort
@@ -418,7 +419,7 @@ function addMint(tx: Transaction, params: MintParams): void {
     const { lowerTick, higherTick } = binaryRangeTicks(params.strike, params.isUp);
     const auth = generateAuth(tx);
     tx.moveCall({
-        target: target("expiry_market", "mint"),
+        target: target("expiry_market", "mint_exact_quantity"),
         arguments: [
             tx.object(params.expiryMarketId),
             tx.object(params.wrapperId),
@@ -431,9 +432,12 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.pure.u64(higherTick),
             tx.pure.u64(params.quantity),
             tx.pure.u64(params.leverage),
-            // `mint` loads the account and ambient-settles it (`settle<DUSDC>`) before
-            // charging the premium, so it reads the singleton AccumulatorRoot at 0xacc.
-            // `root` now follows `leverage` (was right after the BS feed).
+            tx.pure.u64(U64_MAX),
+            tx.pure.u64(U64_MAX),
+            // `mint_exact_quantity` loads the account and ambient-settles it
+            // (`settle<DUSDC>`) before charging the premium, so it reads the
+            // singleton AccumulatorRoot at 0xacc. `root` follows the slippage
+            // guards.
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -518,12 +522,14 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
     return tx;
 }
 
-// Enable one registry-owned market cadence. Tick size and allocation cap are
-// snapshotted into future markets created from this cadence.
+// Enable one registry-owned market cadence. Tick size, allocation cap, and
+// initial expiry cash target are snapshotted into future markets created from
+// this cadence.
 export function setCadenceConfigTx(params: {
     cadenceId: number;
     tickSize: bigint;
     maxExpiryAllocation: bigint;
+    initialExpiryCash: bigint;
     windowSize: bigint;
 }): Transaction {
     const tx = new Transaction();
@@ -536,6 +542,7 @@ export function setCadenceConfigTx(params: {
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
             tx.pure.u64(params.maxExpiryAllocation),
+            tx.pure.u64(params.initialExpiryCash),
             tx.pure.u64(params.windowSize),
         ],
     });
@@ -598,17 +605,17 @@ export function setTemplateExpiryFeeConfigTx(
     return tx;
 }
 
-export function setTemplateTerminalFloorIndexTx(
+export function setTemplateMaxAdmissionLeverageTx(
     protocolConfigId: string,
-    terminalFloorIndex: bigint,
+    maxAdmissionLeverage: bigint,
 ): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("protocol_config", "set_template_terminal_floor_index"),
+        target: target("protocol_config", "set_template_max_admission_leverage"),
         arguments: [
             tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(terminalFloorIndex),
+            tx.pure.u64(maxAdmissionLeverage),
         ],
     });
     return tx;

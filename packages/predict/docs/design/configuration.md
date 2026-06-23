@@ -16,7 +16,7 @@ Some structural constants are real and stable enough to state directly:
 - **1e9 fixed-point scaling** (`float_scaling`): `500_000_000` is 50%, `1_000_000_000` is 100%. Prices, probabilities, fee rates, ratios, and benefit fractions all use this scale.
 - **DUSDC settlement asset has 6 decimals**; contract quantities are 6-decimal quote units, so `1_000_000` is one contract.
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
-- **The discrete leverage set** is exactly {1x, 1.5x, 2x, 2.5x, 3x}, expressed as 1e9-scaled multipliers. The leverage *tiers* (which probabilities permit which leverage) and the leverage floor window are upgrade-required constants, not config fields.
+- **Leverage is continuous** in 1e9-scaled multipliers: any value at or above 1x can be requested, subject to the expiry's snapshotted `max_admission_leverage` and the upgrade-required dynamic admission curve constant.
 - **The minimum per-expiry allocation cap** is an upgrade-required floor. The actual per-expiry cap is admin-tuned per cadence and snapshotted into pool accounting when a market is created.
 - **Market tick sizes** are admin-tuned per cadence and must be positive and within the protocol's overflow-safe bounds. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 24-bit tick domain.
 ## Three classes of configuration
@@ -29,12 +29,12 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 
 | Template (on `ProtocolConfig`) | Snapshotted into | Governs |
 | --- | --- | --- |
-| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Terminal floor index, liquidation LTV, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
+| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Liquidation LTV, max admission leverage, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
 
 When `create_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
 
-Both templates are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, floor curve, liquidation LTV, backing-buffer lambda, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
+Both templates are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, liquidation LTV, max admission leverage, backing-buffer lambda, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
 
 ```mermaid
 flowchart LR
@@ -81,7 +81,7 @@ Every admin setter follows the same shape, which keeps creation-time and update-
 
 1. The setter asserts no valuation is in progress (for the global lock).
 2. The new value is validated against its `assert_*` bound in `config_constants` (a single specific error code per value), so it lands inside the upgrade-required envelope.
-3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the all-in mint price setters require `min_ask_price < max_ask_price`, and the staking setter validates `lower` and `upper` together with `upper > 2 * lower` (which keeps the curve's `upper - lower` denominator positive and `lower > 0`).
+3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the mint-admission probability setters require `min_entry_probability < max_entry_probability`, and the staking setter validates `lower` and `upper` together with `upper > 2 * lower` (which keeps the curve's `upper - lower` denominator positive and `lower > 0`).
 4. The value is stored and a config event is emitted reflecting the new state.
 
 The grouped EWMA setter still validates each field against its own
@@ -93,7 +93,7 @@ Several bounds are tightened on purpose so a single bad admin call cannot quietl
 
 ## Registry tuning: underlyings and cadences
 
-The `Registry` records admin-approved Propbook underlyings and owns cadence deployment config through its `MarketManager`. `register_underlying` is `AdminCap`-gated and records which Propbook underlyings Predict may create markets for. `set_cadence_config` is also `AdminCap`-gated and sets a cadence's `tick_size`, `max_expiry_allocation`, and `window_size` together. A zeroed cadence is disabled; an enabled cadence's tick size and allocation cap are snapshotted into each created market. There is no on-chain check that a cadence tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded).
+The `Registry` records admin-approved Propbook underlyings and owns cadence deployment config through its `MarketManager`. `register_underlying` is `AdminCap`-gated and records which Propbook underlyings Predict may create markets for. `set_cadence_config` is also `AdminCap`-gated and sets a cadence's `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size` together. A zeroed cadence is disabled; an enabled cadence's tick size, allocation cap, and initial cash target are snapshotted into each created market. There is no on-chain check that a cadence tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded).
 The `Registry` also owns the `PauseCap` / `MarketLifecycleCap` allowlists; the protocol version watermark lives on `ProtocolConfig` (below). The oracle/feed objects themselves are external (`propbook`); the registry only records which Propbook underlyings Predict may create markets for and the cadence policies used to create them.
 
 ## Versioning and pause governance
@@ -113,13 +113,13 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | `PauseCap` (via `Registry`) | Force global trading pause, force per-expiry mint pause — both one-way (engage only) |
 | `MarketLifecycleCap` (Registry allowlist) | Create expiry markets; also the sole authority to start the privileged pool flush (`start_pool_valuation`). No oracle-write or config authority |
 | Permissionless | Cash rebalance, settled-market sweep, and liquidation keeper flows (subject to the valuation lock, not the trading pause); LP supply/withdraw requests and their cancellation |
-| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, leverage set and tiers, leverage floor window, the minimum per-expiry allocation cap, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
+| Upgrade only | Everything in the `constants` module: scaling, lot size, minimum net premium, the dynamic admission-curve shape constant, the minimum per-expiry allocation cap, the 24-bit tick domain, and every `min_*`/`max_*` bound in `config_constants` |
 
 All admin setters route through their owning module: global protocol policy through `protocol_config`, per-object policy through the object's own module, and only registry-owned concerns (pause caps, lifecycle caps, uniqueness, underlying admission, and cadence deployment policy) through `registry`. The privileged pool flush is started on `plp`. The embedded config struct setters themselves are package-internal; the public, capability-gated entrypoints are the only external surface for changing policy.
 
 ## Related reading
 
 - [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how the `PricingConfig` freshness thresholds enter live probability resolution from the propbook feeds.
-- [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the terminal floor index, liquidation LTV, and leverage tiers that `StrikeExposureConfig` governs.
+- [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the static floor, liquidation LTV, and dynamic admission cap that `StrikeExposureConfig` governs.
 - [./architecture.md](./architecture.md) — object model, the oracle extraction, and the async NAV/LP layer.
 - [../risks.md](../risks.md) — operational and governance risk, including pause/version handling.

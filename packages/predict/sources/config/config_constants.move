@@ -9,13 +9,12 @@ module deepbook_predict::config_constants;
 
 const EInvalidBaseFee: u64 = 0;
 const EInvalidMinFee: u64 = 1;
-const EInvalidMinAskPrice: u64 = 2;
-const EInvalidMaxAskPrice: u64 = 3;
+const EInvalidMinEntryProbability: u64 = 2;
+const EInvalidMaxEntryProbability: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
 const EInvalidTradingLossRebateRate: u64 = 7;
-const EInvalidTerminalFloorIndex: u64 = 8;
 const EInvalidExpiryFeeWindowMs: u64 = 9;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
 const EInvalidLowerBenefitPower: u64 = 11;
@@ -28,6 +27,7 @@ const EInvalidEwmaAlpha: u64 = 17;
 const EInvalidEwmaZScoreThreshold: u64 = 18;
 const EInvalidEwmaPenaltyRate: u64 = 19;
 const EInvalidBackingBufferLambda: u64 = 20;
+const EInvalidMaxAdmissionLeverage: u64 = 21;
 
 // === Fees ===
 
@@ -62,22 +62,7 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     );
 }
 
-// === Floor Index, Backing, and Liquidation ===
-
-public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
-public(package) macro fun min_terminal_floor_index(): u64 {
-    fixed_math::math::float_scaling!()
-}
-public(package) macro fun max_terminal_floor_index(): u64 {
-    2 * fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_terminal_floor_index(value: u64) {
-    assert!(
-        value >= min_terminal_floor_index!() && value <= max_terminal_floor_index!(),
-        EInvalidTerminalFloorIndex,
-    );
-}
+// === Backing and Liquidation ===
 
 public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
 public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
@@ -89,6 +74,31 @@ public(package) fun assert_liquidation_ltv(value: u64) {
         EInvalidLiquidationLtv,
     );
 }
+
+/// Global admission-leverage cap snapshotted by future expiry markets. Mint
+/// admission scales this cap down for low-probability contracts.
+public(package) macro fun default_max_admission_leverage(): u64 {
+    3 * fixed_math::math::float_scaling!()
+}
+public(package) macro fun min_max_admission_leverage(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun max_max_admission_leverage(): u64 {
+    10 * fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_max_admission_leverage(value: u64) {
+    assert!(
+        value >= min_max_admission_leverage!()
+            && value <= max_max_admission_leverage!(),
+        EInvalidMaxAdmissionLeverage,
+    );
+}
+
+/// Shape parameter for the admission curve:
+/// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
+/// while still approaching the configured cap smoothly as probability rises.
+public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
@@ -173,24 +183,32 @@ public(package) fun assert_market_tick_size_bounds(value: u64) {
     );
 }
 
-public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
-public(package) macro fun min_min_ask_price(): u64 { 0 }
-public(package) macro fun max_min_ask_price(): u64 {
+public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
+public(package) macro fun min_min_entry_probability(): u64 { 0 }
+public(package) macro fun max_min_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun assert_min_ask_price(value: u64) {
-    assert!(value >= min_min_ask_price!() && value <= max_min_ask_price!(), EInvalidMinAskPrice);
+public(package) fun assert_min_entry_probability(value: u64) {
+    assert!(
+        value >= min_min_entry_probability!()
+            && value <= max_min_entry_probability!(),
+        EInvalidMinEntryProbability,
+    );
 }
 
-public(package) macro fun default_max_ask_price(): u64 { 990_000_000 }
-public(package) macro fun min_max_ask_price(): u64 { 0 }
-public(package) macro fun max_max_ask_price(): u64 {
+public(package) macro fun default_max_entry_probability(): u64 { 990_000_000 }
+public(package) macro fun min_max_entry_probability(): u64 { 0 }
+public(package) macro fun max_max_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun assert_max_ask_price(value: u64) {
-    assert!(value >= min_max_ask_price!() && value <= max_max_ask_price!(), EInvalidMaxAskPrice);
+public(package) fun assert_max_entry_probability(value: u64) {
+    assert!(
+        value >= min_max_entry_probability!()
+            && value <= max_max_entry_probability!(),
+        EInvalidMaxEntryProbability,
+    );
 }
 
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
