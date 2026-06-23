@@ -100,6 +100,11 @@ public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
+/// Return the max admission leverage snapshotted for this expiry.
+public fun max_admission_leverage(market: &ExpiryMarket): u64 {
+    market.strike_exposure.max_admission_leverage()
+}
+
 /// Return the backing-buffer lambda snapshotted for this expiry.
 public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
     market.strike_exposure.backing_buffer_lambda()

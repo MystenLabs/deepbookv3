@@ -126,6 +126,20 @@ public fun set_template_liquidation_ltv(
     );
 }
 
+/// Set the max admission leverage snapshotted by future expiry markets.
+public fun set_template_max_admission_leverage(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_max_admission_leverage(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
 /// Set the backing-buffer lambda snapshotted by future expiry markets.
 public fun set_template_backing_buffer_lambda(
     config: &mut ProtocolConfig,

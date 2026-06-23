@@ -27,6 +27,7 @@ const EInvalidEwmaAlpha: u64 = 17;
 const EInvalidEwmaZScoreThreshold: u64 = 18;
 const EInvalidEwmaPenaltyRate: u64 = 19;
 const EInvalidBackingBufferLambda: u64 = 20;
+const EInvalidMaxAdmissionLeverage: u64 = 21;
 
 // === Fees ===
 
@@ -73,6 +74,31 @@ public(package) fun assert_liquidation_ltv(value: u64) {
         EInvalidLiquidationLtv,
     );
 }
+
+/// Global admission-leverage cap snapshotted by future expiry markets. Mint
+/// admission scales this cap down for low-probability contracts.
+public(package) macro fun default_max_admission_leverage(): u64 {
+    3 * fixed_math::math::float_scaling!()
+}
+public(package) macro fun min_max_admission_leverage(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun max_max_admission_leverage(): u64 {
+    10 * fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_max_admission_leverage(value: u64) {
+    assert!(
+        value >= min_max_admission_leverage!()
+            && value <= max_max_admission_leverage!(),
+        EInvalidMaxAdmissionLeverage,
+    );
+}
+
+/// Shape parameter for the admission curve:
+/// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
+/// while still approaching the configured cap smoothly as probability rises.
+public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }

@@ -18,6 +18,7 @@ const EInvalidAskBound: u64 = 2;
 const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
+const ELeverageAboveAdmissionCap: u64 = 6;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -27,6 +28,9 @@ public struct StrikeExposureConfig has store {
     /// enforcement margin (knock out a hair before zero equity), not a solvency
     /// margin — the reserve already backs the full `Q - F`.
     liquidation_ltv: u64,
+    /// Global max leverage for mint admission, before the low-probability curve
+    /// scales it down. Actual liquidation still uses `liquidation_ltv`.
+    max_admission_leverage: u64,
     /// Fraction of the disjoint-book backing gap reserved for early exits.
     /// 1.0 fully reserves early exits, matching the pre-buffer summed reserve.
     backing_buffer_lambda: u64,
@@ -49,6 +53,10 @@ public struct StrikeExposureConfig has store {
 
 public(package) fun liquidation_ltv(config: &StrikeExposureConfig): u64 {
     config.liquidation_ltv
+}
+
+public(package) fun max_admission_leverage(config: &StrikeExposureConfig): u64 {
+    config.max_admission_leverage
 }
 
 public(package) fun backing_buffer_lambda(config: &StrikeExposureConfig): u64 {
@@ -94,10 +102,10 @@ public(package) fun trading_fee(
 /// `(net_premium, floor_shares)`.
 ///
 /// `floor_shares` is the static dollar floor `F = financed_amount = entry_value -
-/// net_premium`. Continuous leverage: any `L >= 1.0`. The barrier `b = F/quantity`
-/// must sit below the at-entry liquidation threshold (`entry_value > F /
-/// liquidation_ltv`, i.e. `b < entry_probability * liquidation_ltv`) so the order
-/// is not instantly knockable and the trigger threshold stays below the mark.
+/// net_premium`. Leverage must be at least 1x and no greater than the
+/// probability-sensitive admission cap. The actual live liquidation threshold
+/// remains the market's fixed `liquidation_ltv`; admission only decides whether
+/// the protocol originates the requested leverage.
 public(package) fun assert_mint_admission(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
@@ -113,8 +121,12 @@ public(package) fun assert_mint_admission(
         EAskPriceOutOfBounds,
     );
 
-    // Continuous leverage: any L >= 1.0 (1x = unleveraged, zero floor).
+    // Leverage is continuous, with the protocol cap scaled down for low prices.
     assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
+    assert!(
+        leverage <= config.admitted_leverage_cap(entry_probability),
+        ELeverageAboveAdmissionCap,
+    );
 
     let entry_value = math::mul(entry_probability, quantity);
     let net_premium = math::div(entry_value, leverage);
@@ -132,6 +144,7 @@ public(package) fun assert_mint_admission(
 public(package) fun new(): StrikeExposureConfig {
     StrikeExposureConfig {
         liquidation_ltv: config_constants::default_liquidation_ltv!(),
+        max_admission_leverage: config_constants::default_max_admission_leverage!(),
         backing_buffer_lambda: config_constants::default_backing_buffer_lambda!(),
         base_fee: config_constants::default_base_fee!(),
         min_fee: config_constants::default_min_fee!(),
@@ -146,6 +159,7 @@ public(package) fun new(): StrikeExposureConfig {
 public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfig {
     StrikeExposureConfig {
         liquidation_ltv: config.liquidation_ltv,
+        max_admission_leverage: config.max_admission_leverage,
         backing_buffer_lambda: config.backing_buffer_lambda,
         base_fee: config.base_fee,
         min_fee: config.min_fee,
@@ -159,6 +173,11 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
 public(package) fun set_liquidation_ltv(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_liquidation_ltv(value);
     config.liquidation_ltv = value;
+}
+
+public(package) fun set_max_admission_leverage(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_max_admission_leverage(value);
+    config.max_admission_leverage = value;
 }
 
 public(package) fun set_backing_buffer_lambda(config: &mut StrikeExposureConfig, value: u64) {
@@ -218,6 +237,17 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
     let variance = math::mul(probability, complement);
     let bernoulli_factor = math::sqrt(variance, math::float_scaling!());
     math::mul(config.base_fee, bernoulli_factor)
+}
+
+fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64): u64 {
+    let k = config_constants::admission_leverage_curve_k!();
+    let risk_curve = math::mul_div_down(
+        entry_probability,
+        math::float_scaling!() + k,
+        entry_probability + k,
+    );
+    math::float_scaling!()
+        + math::mul(config.max_admission_leverage - math::float_scaling!(), risk_curve)
 }
 
 /// Linear ramp that scales the trade fee up as expiry approaches.

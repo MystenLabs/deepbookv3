@@ -4,8 +4,9 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, ask prices, expiry-fee ramp,
-/// liquidation LTV, backing buffer lambda), the expiry-cash trading-loss rebate
-/// template. Every abort test drives the real admin setter on a shared
+/// liquidation LTV, max admission leverage, backing buffer lambda), the
+/// expiry-cash trading-loss rebate template. Every abort test drives the real
+/// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
 /// that boundary values round-trip through setter + getter. Codes whose envelope
 /// floor is 0
@@ -148,6 +149,30 @@ fun template_liquidation_ltv_above_max_aborts() {
     abort 999
 }
 
+// === Strike-exposure templates: max admission leverage ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxAdmissionLeverage)]
+fun template_max_admission_leverage_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::min_max_admission_leverage!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxAdmissionLeverage)]
+fun template_max_admission_leverage_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::max_max_admission_leverage!() + 1,
+    );
+    abort 999
+}
+
 // === Strike-exposure templates: backing buffer lambda ===
 
 #[test, expected_failure(abort_code = config_constants::EInvalidBackingBufferLambda)]
@@ -189,6 +214,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::min_expiry_fee_max_multiplier!(),
     );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::min_liquidation_ltv!());
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::min_max_admission_leverage!(),
+    );
     config.set_template_backing_buffer_lambda(
         &admin_cap,
         config_constants::min_backing_buffer_lambda!(),
@@ -205,6 +234,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::min_expiry_fee_max_multiplier!(),
     );
     assert_eq!(snapshot.liquidation_ltv(), config_constants::min_liquidation_ltv!());
+    assert_eq!(
+        snapshot.max_admission_leverage(),
+        config_constants::min_max_admission_leverage!(),
+    );
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
     destroy(snapshot);
 
@@ -224,6 +257,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::max_expiry_fee_max_multiplier!(),
     );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::max_liquidation_ltv!());
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::max_max_admission_leverage!(),
+    );
     config.set_template_backing_buffer_lambda(
         &admin_cap,
         config_constants::max_backing_buffer_lambda!(),
@@ -240,12 +277,46 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::max_expiry_fee_max_multiplier!(),
     );
     assert_eq!(snapshot.liquidation_ltv(), config_constants::max_liquidation_ltv!());
+    assert_eq!(
+        snapshot.max_admission_leverage(),
+        config_constants::max_max_admission_leverage!(),
+    );
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
     destroy(snapshot);
 
     return_shared(config);
     destroy(admin_cap);
     scenario.end();
+}
+
+#[test]
+fun max_admission_leverage_market_snapshot_freezes_at_creation() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_max_admission_leverage(config_constants::max_max_admission_leverage!());
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+
+    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    assert_eq!(
+        market.max_admission_leverage(),
+        config_constants::max_max_admission_leverage!(),
+    );
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+
+    fx.set_template_max_admission_leverage(config_constants::min_max_admission_leverage!());
+    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    let snapshot = config.strike_exposure_config_snapshot();
+    assert_eq!(
+        snapshot.max_admission_leverage(),
+        config_constants::min_max_admission_leverage!(),
+    );
+    assert_eq!(
+        market.max_admission_leverage(),
+        config_constants::max_max_admission_leverage!(),
+    );
+    destroy(snapshot);
+
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    fx.finish();
 }
 
 #[test]

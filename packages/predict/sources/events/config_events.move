@@ -40,6 +40,7 @@ public struct ExpiryCashTemplateConfigUpdated has copy, drop, store {
 public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     liquidation_ltv: u64,
+    max_admission_leverage: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
@@ -101,6 +102,7 @@ public struct MarketCreated has copy, drop, store {
 public struct MarketConfigSnapshot has copy, drop, store {
     expiry_market_id: ID,
     liquidation_ltv: u64,
+    max_admission_leverage: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
@@ -171,6 +173,7 @@ public(package) fun emit_strike_exposure_template_config_updated(
     event::emit(StrikeExposureTemplateConfigUpdated {
         protocol_config_id,
         liquidation_ltv: config.liquidation_ltv(),
+        max_admission_leverage: config.max_admission_leverage(),
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
         min_fee: config.min_fee(),
@@ -248,6 +251,7 @@ public(package) fun emit_market_config_snapshot(
     event::emit(MarketConfigSnapshot {
         expiry_market_id,
         liquidation_ltv: strike_exposure_config.liquidation_ltv(),
+        max_admission_leverage: strike_exposure_config.max_admission_leverage(),
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),
         min_fee: strike_exposure_config.min_fee(),

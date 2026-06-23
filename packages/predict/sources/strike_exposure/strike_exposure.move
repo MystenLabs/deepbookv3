@@ -90,6 +90,11 @@ public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.config.liquidation_ltv()
 }
 
+/// Return the max admission leverage snapshotted for this exposure book.
+public(package) fun max_admission_leverage(exposure: &StrikeExposure): u64 {
+    exposure.config.max_admission_leverage()
+}
+
 /// Return the backing-buffer lambda snapshotted for this exposure book.
 public(package) fun backing_buffer_lambda(exposure: &StrikeExposure): u64 {
     exposure.config.backing_buffer_lambda()

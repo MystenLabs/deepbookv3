@@ -287,6 +287,14 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_max_admission_leverage(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Take the four shared market objects + the protocol config a flow test mutates.
 /// The config is threaded into the flow-phase methods as a parameter (it cannot be
 /// a `Fixture` field — see module doc) and returned by the test.
