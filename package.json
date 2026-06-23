@@ -1,6 +1,7 @@
 {
 	"name": "deepbookv3",
 	"version": "1.0.0",
+	"type": "module",
 	"private": true,
 	"description": "This repository holds the Deepbook V3 contracts",
 	"main": "index.js",
@@ -25,6 +26,9 @@
 		"typescript": "^5.6.3"
 	},
 	"scripts": {
+		"start:oracle": "tsx scripts/services/oracle-feed.ts",
+		"start:multi-oracle": "tsx scripts/services/multi-oracle-feed.ts",
+		"backtest": "tsx scripts/services/backtest.ts",
 		"test": "echo \"Error: no test specified\" && exit 1",
 		"prettier:check": "prettier -c --ignore-unknown .",
 		"prettier:fix": "prettier -w --ignore-unknown .",
@@ -37,6 +41,7 @@
 	"author": "",
 	"license": "Apache-2.0",
 	"dependencies": {
-		"@mysten/prettier-plugin-move": "^0.3.5"
+		"@mysten/prettier-plugin-move": "^0.3.5",
+		"express": "^5.2.1"
 	}
 }

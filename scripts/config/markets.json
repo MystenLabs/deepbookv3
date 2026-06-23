@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "description": "Predict market configuration. Add new markets by adding entries here.",
+  "markets": [
+    {
+      "asset": "BTC",
+      "oracleEnvKey": "BTC_ORACLE_ID",
+      "quoteAssetEnvKey": "DEEP_TYPE",
+      "minStrikeEnvKey": "BTC_MIN_STRIKE",
+      "tickSizeEnvKey": "BTC_TICK_SIZE",
+      "defaults": {
+        "minStrike": "60000000000000",
+        "tickSize": "1000000000000"
+      },
+      "enabled": true
+    },
+    {
+      "asset": "ETH",
+      "oracleEnvKey": "ETH_ORACLE_ID",
+      "quoteAssetEnvKey": "DEEP_TYPE",
+      "minStrikeEnvKey": "ETH_MIN_STRIKE",
+      "tickSizeEnvKey": "ETH_TICK_SIZE",
+      "defaults": {
+        "minStrike": "2000000000000",
+        "tickSize": "50000000000"
+      },
+      "enabled": true
+    },
+    {
+      "asset": "DEEP",
+      "oracleEnvKey": "DEEP_ORACLE_ID",
+      "quoteAssetEnvKey": "DEEP_TYPE",
+      "minStrikeEnvKey": "DEEP_MIN_STRIKE",
+      "tickSizeEnvKey": "DEEP_TICK_SIZE",
+      "defaults": {
+        "minStrike": "50000000",
+        "tickSize": "1000000"
+      },
+      "enabled": true
+    }
+  ],
+  "trading": {
+    "cycleIntervalMs": 60000,
+    "maxPositionFraction": 0.5,
+    "kellyFraction": 0.25,
+    "confidenceThreshold": 0.05,
+    "claimRetryLimit": 3,
+    "oracleRotationBufferMinutes": 15
+  },
+  "signal": {
+    "rsiPeriod": 14,
+    "emaFast": 9,
+    "emaSlow": 21,
+    "atrPeriod": 14,
+    "volumePeriod": 20,
+    "momentumPeriod": 5,
+    "weights": {
+      "rsi": 0.25,
+      "ema": 0.25,
+      "momentum": 0.2,
+      "volume": 0.1,
+      "volatility": 0.1,
+      "ml": 0.1
+    }
+  }
+}

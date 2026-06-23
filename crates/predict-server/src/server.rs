@@ -1,9 +1,11 @@
 use crate::error::PredictError;
+use crate::metrics::encode_metrics;
 use crate::reader::Reader;
 use axum::{
     extract::{Path, Query, State},
     routing::get,
     Json, Router,
+    response::IntoResponse,
 };
 use deepbook_predict_schema::models::*;
 use serde::Deserialize;
@@ -30,7 +32,16 @@ pub fn predict_routes(state: Arc<AppState>) -> Router {
         .route("/positions/:manager_id", get(get_user_positions))
         .route("/events/minted", get(get_mint_events))
         .route("/events/redeemed", get(get_redeem_events))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
+}
+
+async fn metrics_handler() -> impl IntoResponse {
+    (
+        axum::http::StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        encode_metrics(),
+    )
 }
 
 async fn get_vaults(

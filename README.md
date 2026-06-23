@@ -1,45 +1,293 @@
 ![image info](./DeepBook_Logo_White.png)
 
-# DeepBook V3
+# DeepBook V3 — Predict Protocol
 
-DeepBook V3 is a next generation decentralized central limit order book (CLOB) built on Sui. It leverages Sui's parallel execution and low transaction fees to bring a highly performant, low latency exchange on chain. DBv3 comes with brand new features including flashloans, governance, improved account abstraction, and enhancements to the existing matching engine. With the addition of the DEEP token, staked takers can trade with fees as low as 0.25 bps / 2.5 bps on stable and volatile pairs, while allowing staked makers to earn rebates. Checkout the full whitepaper on [deepbook.tech](https://deepbook.tech).
+[![Move Tests](https://github.com/MystenLabs/deepbookv3/actions/workflows/move_test.yml/badge.svg)](https://github.com/MystenLabs/deepbookv3/actions/workflows/move_test.yml)
+[![Rust CI](https://github.com/MystenLabs/deepbookv3/actions/workflows/rust.yml/badge.svg)](https://github.com/MystenLabs/deepbookv3/actions/workflows/rust.yml)
+[![Deploy Predict](https://github.com/MystenLabs/deepbookv3/actions/workflows/deploy-predict.yml/badge.svg)](https://github.com/MystenLabs/deepbookv3/actions/workflows/deploy-predict.yml)
+[![Predict Bench](https://github.com/MystenLabs/deepbookv3/actions/workflows/predict-bench.yml/badge.svg)](https://github.com/MystenLabs/deepbookv3/actions/workflows/predict-bench.yml)
+[![Backtest](https://github.com/MystenLabs/deepbookv3/actions/workflows/backtest.yml/badge.svg)](https://github.com/MystenLabs/deepbookv3/actions/workflows/backtest.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Sui Testnet](https://img.shields.io/badge/Sui-Testnet-green)](https:// sui.io)
+
+> On-chain prediction markets built on DeepBook V3. Trade price direction (UP/DOWN) for BTC, ETH, and DEEP using Black-Scholes-inspired oracles and a multi-signal trading engine.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph OffChain["Off-Chain Services"]
+        OE[Oracle Feed<br/>multi-oracle-feed.ts]
+        SE[Signal Engine<br/>signal_engine.ts]
+        TR[Trader Bot<br/>multi-oracle-feed.ts]
+        AL[Alerting<br/>Telegram + Console]
+    end
+
+    subgraph OnChain["On-Chain (Sui Testnet)"]
+        OR[Oracle Object<br/>spot + forward prices]
+        PR[Predict Protocol<br/>mint / settle / redeem]
+        BM[Balance Manager<br/>DEEP token vault]
+    end
+
+    subgraph DataLayer["Data Layer"]
+        PG[(PostgreSQL)]
+        IDX[Indexer<br/>predict-indexer]
+        API[Predict Server<br/>predict-server :8080]
+    end
+
+    OE -->|update_prices| OR
+    SE -->|generate signal| TR
+    TR -->|mint position| PR
+    PR -->|events| IDX
+    IDX -->|write| PG
+    API -->|read| PG
+    AL -->|notify| OE
+    TR -->|metrics| API
+```
+
+## How It Works
+
+### 1. Oracle System
+
+Each market (BTC, ETH, DEEP) has an on-chain **Oracle** that stores:
+- **Spot price** — current market price (Binance/Bybit)
+- **Forward price** — theoretical forward via cost-of-carry model
+- **SVI parameters** — simplified volatility surface for options pricing
+- **Staleness threshold** — maximum age before requiring an update
+
+Oracles auto-rotate every 8 hours. A 15-minute buffer before expiry triggers rotation to a fresh oracle.
+
+### 2. Signal Engine
+
+The trading bot uses a multi-factor signal engine:
+
+| Component | Weight | Description |
+|-----------|--------|-------------|
+| RSI (14-period) | 25% | Wilder's smoothing, overbought/oversold |
+| EMA Crossover (9/21) | 25% | Trend confirmation |
+| Momentum (5-period ROC) | 20% | Price momentum |
+| Volume Profile | 10% | Relative volume confirmation |
+| Volatility Filter (ATR) | 10% | Penalizes high-volatility regimes |
+| ML Ensemble | 10% | Gradient boosting prediction |
+
+**Position sizing** uses the Kelly Criterion with a 25% safety fraction and session-based multipliers (US > EU > Asian > Off-hours).
+
+### 3. Trading Flow
+
+```
+Cycle (every 60s):
+  for each market (BTC, ETH, DEEP):
+    1. Validate oracle state
+    2. If UPDATING → update prices on-chain
+    3. If FRESH/TRADE_READY → generate signal → mint position
+    4. If EXPIRED → rotate oracle
+    5. Settle expired positions
+    6. Claim winning positions
+    7. Emit metrics
+```
+
+### 4. Risk Management
+
+- **Max position size**: Kelly Criterion caps at 50% of balance
+- **Session filter**: Reduced size during low-liquidity sessions
+- **Confidence threshold**: Signals below 0.05 confidence are skipped
+- **Claim retry limit**: 3 attempts before marking position as FAILED
+- **Staleness guard**: Double-threshold check before trade execution
+
+## Quick Start
+
+### Docker (Recommended)
+
+```bash
+# Clone and configure
+git clone https://github.com/MystenLabs/deepbookv3.git
+cd deepbookv3
+cp .env.example .env  # Fill in your keys
+
+# Start all services
+docker compose -f docker-compose.predict.yml up -d
+```
+
+Services:
+- **Oracle**: feeds prices on-chain
+- **Indexer**: ingests events to PostgreSQL
+- **Server**: REST API on `:8080`
+- **Trader**: autonomous signal → trade execution
+
+### Local Development
+
+```bash
+# Install dependencies
+pnpm install
+
+# Run oracle feed
+pnpm run start:oracle
+
+# Run predict server
+cargo run -p deepbook-predict-server -- --database-url postgres://postgres@localhost/predict
+```
+
+### API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/vaults` | List all vaults |
+| `GET /api/v1/oracles` | List all oracles |
+| `GET /api/v1/positions/:manager_id` | User positions |
+| `GET /api/v1/events/minted?trader=` | Mint events |
+| `GET /api/v1/events/redeemed?owner=` | Redeem events |
+| `GET /api/v1/metrics` | Prometheus metrics |
+
+## Monitoring
+
+### Prometheus Metrics
+
+Available at `/api/v1/metrics`:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `predict_oracle_updates_total` | counter | Total oracle price updates |
+| `predict_trades_executed_total` | counter | Total trades executed |
+| `predict_trades_failed_total` | counter | Total failed trades |
+| `predict_positions_open` | gauge | Currently open positions |
+| `predict_positions_settled_total` | counter | Total settled positions |
+| `predict_positions_claimed_total` | counter | Total claimed positions |
+| `predict_rpc_requests_total` | counter | Total RPC requests to Sui |
+
+### Alerting
+
+Configure Telegram alerts by setting environment variables:
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+
+Alerts fire on:
+- Oracle rotation failures
+- Trade execution errors
+- Low SUI/DEEP balance warnings
+- Settlement failures
+
+## Project Structure
+
+```
+├── packages/
+│   └── predict/              # Move contracts
+│       ├── sources/
+│       │   ├── oracle.move          # Oracle price feed
+│       │   ├── predict.move         # Core prediction logic
+│       │   ├── predict_manager.move # Position management
+│       │   ├── registry.move        # Oracle registry
+│       │   ├── vault/               # Token vault
+│       │   ├── accounting/          # PnL accounting
+│       │   └── market_key/          # Market key definitions
+│       └── tests/                  # Move unit tests
+├── crates/
+│   ├── predict-server/       # Rust REST API + Prometheus
+│   ├── predict-indexer/      # Sui event indexer
+│   └── predict-schema/       # Database schema
+├── scripts/
+│   ├── services/
+│   │   ├── multi-oracle-feed.ts     # Main trading loop (dynamic config)
+│   │   ├── multi-oracle-service.ts  # Oracle management
+│   │   ├── signal_engine.ts         # Multi-factor signal generation
+│   │   ├── validation-engine.ts     # Position tracking & settlement
+│   │   ├── backtest.ts              # Historical backtesting engine
+│   │   ├── alerting.ts              # Alert system (console + file)
+│   │   └── telegram-alerting.ts     # Telegram notifications
+│   └── config/
+│       ├── constants.ts        # Network-specific IDs
+│       ├── markets.json        # Dynamic market configuration
+│       └── market-config.ts    # Config loader
+├── docker/                   # Dockerfiles for all services
+└── docker-compose.predict.yml
+```
+
+## Move Contract Details
+
+### Key Functions
+
+| Module | Function | Description |
+|--------|----------|-------------|
+| `oracle` | `update_prices` | Update spot & forward prices |
+| `oracle` | `update_svi` | Update volatility surface |
+| `oracle` | `activate` | Activate an oracle |
+| `predict` | `mint` | Mint an UP/DOWN position |
+| `predict` | `settle` | Settle expired oracle |
+| `predict` | `redeem` | Claim winning position |
+| `registry` | `create_oracle` | Create new oracle with grid config |
+
+### Position Lifecycle
+
+```
+MINTED → OPEN → SETTLED → CLAIMABLE → CLAIMED
+                   ↓
+                FAILED (if claim fails 3x)
+```
+
+## Testing
+
+```bash
+# Move tests
+sui move test --path packages/predict --gas-limit 100000000000
+
+# Rust tests
+cargo nextest run -E 'package(deepbook-indexer)'
+
+# Backtest (fetches historical data from Binance)
+pnpm run backtest BTC 10000 --days 7
+pnpm run backtest ETH 5000 --days 30
+
+# Gas benchmarks
+# Triggered automatically on push to main via predict-bench.yml
+```
+
+### Backtesting Results
+
+The backtest engine simulates the signal engine against historical 15m candles with:
+- **Stop-loss / Take-profit** (3% / 5%)
+- **Kelly Criterion** position sizing
+- **Confidence threshold** filtering (15% minimum)
+- **Session-aware** multipliers
+
+Output includes: win rate, Sharpe ratio, max drawdown, profit factor, and trade log.
+
+## Dynamic Market Configuration
+
+Markets are configured in `scripts/config/markets.json`. To add a new market:
+
+```json
+{
+  "asset": "SUI",
+  "oracleEnvKey": "SUI_ORACLE_ID",
+  "quoteAssetEnvKey": "DEEP_TYPE",
+  "minStrikeEnvKey": "SUI_MIN_STRIKE",
+  "tickSizeEnvKey": "SUI_TICK_SIZE",
+  "defaults": {
+    "minStrike": "1000000000",
+    "tickSize": "10000000"
+  },
+  "enabled": true
+}
+```
+
+Then set the corresponding env vars and restart the oracle feed. No code changes needed.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for key management, operational security, and vulnerability reporting.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and PR guidelines.
 
 ## DeepBook V3 Information
 
-- [Package and Pools](https://docs.google.com/document/d/1uK4MNqYa0LdhVqBD4KqOcWG1N1nNNe3JwbeUZc1kH1I)
 - [Contract Documentation](https://docs.sui.io/standards/deepbookv3)
 - [SDK Documentation](https://docs.sui.io/standards/deepbookv3-sdk)
-- [Example SDK Usage](https://github.com/MystenLabs/ts-sdks/tree/main/packages/deepbook-v3/examples)
 - [Whitepaper](https://cdn.prod.website-files.com/65fdccb65290aeb1c597b611/66059b44041261e3fe4a330d_deepbook_whitepaper.pdf)
-- [Rust SDK(Unofficial)](https://github.com/hoh-zone/sui-deepbookv3)
 
-## DeepBook Architecture
+## License
 
-![image info](./DBv3Architecture.png)
-
-## Balance Manager
-
-The `BalanceManager` is a shared object that holds all balances of a single account. It has one owner and can have up to 1000 traders. When creating a `BalanceManager`, the sender of the transaction becomes the owner. The owner can add or remove traders. The owner cannot be changed.
-The owner can deposit and withdraw funds from the `BalanceManager` as well as place orders, stake, and more. A trader cannot deposit and withdraw funds, but can do everything else. All actions are shared between owner/traders. For example, one trader can cancel an order placed by another trader within the same `BalanceManager`.
-With exception to swaps, all interactions with DeepBook will require a `BalanceManager` as one of its inputs. When orders are matched, funds will be transferred to / from the `BalanceManager`. A single `BalanceManager` can be used between all pools.
-
-## Pool
-
-`Pool` is made up of three distinct parts: Book, State and Vault. These parts define the flow for the different types of actions that can be performed on DeepBook.
-
-1.  Book - manages reading and writing to the order book. It fills orders and places orders into the order book.
-2.  State - the most complex: maintains individual user data, overall volumes, historic volumes, and governance.
-3.  Vault - the least complex: settles users funds after action execution.
-
-Users can place, modify and cancel limit / market orders. These actions will require a funded `BalanceManager` with the appropriate amount of base and quote tokens as well as DEEP tokens for trading fees. DBv3 also supports direct swaps, allowing users as well as protocols building on top of DBv3 to place market orders with `Coin` objects as inputs drectly and receive `Coin` objects as outputs.
-
-## $DEEP
-
-### Trading Fees
-
-In the initial release, all pool creation will be permissioned and DEEP tokens will be required to pay for trading fees. In the future upgrades, these restrictions will be removed, but usage of the DEEP token will still be incentivized. Both takers and makers will pay fees in DEEP, but makers with enough staked DEEP tokens will be eligible for rebates at the end of every epoch. Excess DEEP accumulated by all pools will be burned on a regular basis.
-DEEP/SUI and DEEP/USDC pools will be launched and whitelisted. Whitelisted pools have 0% trading fees. This allows users to easily obtain DEEP tokens to pay for trading fees in non DEEP pools.
-
-### DEEP Staking & Governance
-
-DEEP tokens can be staked in individual pools, granting the staker access to governance. If the amount of DEEP tokens staked is greater than the pool's stake required, then that user will be able to reap additional benefits from the pool. These benefits include halved trading fees after reaching a trade volume requirement, as well as maker rebates. During every epoch, staked users can submit proposals to change three parameters: taker fees, maker fees, and stake required. If the proposal passes quorum, 1/2 of all current stake, then its effects will be live from the next epoch and onwards.
+Apache 2.0 — see [LICENSE](LICENSE)

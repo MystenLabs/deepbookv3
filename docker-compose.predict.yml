@@ -3,6 +3,7 @@ version: '3.8'
 services:
   db:
     image: postgres:16
+    restart: always
     environment:
       POSTGRES_DB: predict
       POSTGRES_HOST_AUTH_METHOD: trust
@@ -18,6 +19,7 @@ services:
     build:
       context: .
       dockerfile: docker/predict-indexer/Dockerfile
+    restart: always
     environment:
       DATABASE_URL: postgres://postgres@db/predict
       ENV: testnet
@@ -29,6 +31,7 @@ services:
     build:
       context: .
       dockerfile: docker/predict-server/Dockerfile
+    restart: always
     environment:
       DATABASE_URL: postgres://postgres@db/predict
     ports:
@@ -41,6 +44,7 @@ services:
     build:
       context: .
       dockerfile: docker/oracle-feed/Dockerfile
+    restart: always
     environment:
       PACKAGE_ID: ${PACKAGE_ID}
       ORACLE_CAP_ID: ${ORACLE_CAP_ID}
@@ -49,3 +53,29 @@ services:
       NETWORK: testnet
     depends_on:
       - server
+
+  trader:
+    build:
+      context: .
+      dockerfile: docker/oracle-feed/Dockerfile
+    restart: always
+    command: ["node", "--loader", "tsx", "scripts/autonomous_trader.ts"]
+    environment:
+      PACKAGE_ID: ${PACKAGE_ID}
+      PREDICT_ID: ${PREDICT_ID}
+      MANAGER_ID: ${MANAGER_ID}
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      NETWORK: testnet
+    depends_on:
+      - server
+
+  backtest:
+    build:
+      context: .
+      dockerfile: docker/oracle-feed/Dockerfile
+    profiles: ["backtest"]
+    command: ["node", "--loader", "tsx", "scripts/services/backtest.ts", "${BACKTEST_ASSET:-BTC}", "${BACKTEST_CAPITAL:-10000}", "--days", "${BACKTEST_DAYS:-7}"]
+    environment:
+      BACKTEST_ASSET: ${BACKTEST_ASSET:-BTC}
+      BACKTEST_CAPITAL: ${BACKTEST_CAPITAL:-10000}
+      BACKTEST_DAYS: ${BACKTEST_DAYS:-7}

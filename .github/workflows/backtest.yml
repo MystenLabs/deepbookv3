@@ -1,0 +1,47 @@
+name: Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset:
+        description: 'Asset to backtest (BTC, ETH, DEEP)'
+        required: false
+        default: 'BTC'
+        type: choice
+        options:
+          - BTC
+          - ETH
+          - DEEP
+      capital:
+        description: 'Initial capital in USD'
+        required: false
+        default: '10000'
+        type: string
+      days:
+        description: 'Days of history to backtest'
+        required: false
+        default: '7'
+        type: string
+  schedule:
+    - cron: '0 8 * * 1'  # Weekly on Monday at 8am UTC
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run backtest
+        run: |
+          ASSET="${{ github.event.inputs.asset || 'BTC' }}"
+          CAPITAL="${{ github.event.inputs.capital || '10000' }}"
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          npx tsx scripts/services/backtest.ts "$ASSET" "$CAPITAL" --days "$DAYS"
