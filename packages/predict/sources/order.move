@@ -21,11 +21,13 @@ const EInvalidRange: u64 = 4;
 const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 
-const QUANTITY_LOTS_OFFSET: u8 = 200;
-const FLOOR_SHARES_OFFSET: u8 = 136;
+// Active order id fields are dense in the low bits. Any unused bits are leading
+// bits rejected by ORDER_ID_BITS during decode validation.
+const QUANTITY_LOTS_OFFSET: u8 = 152;
+const FLOOR_SHARES_OFFSET: u8 = 88;
 const LOWER_TICK_OFFSET: u8 = 64;
 const HIGHER_TICK_OFFSET: u8 = 40;
-const ORDER_ID_BITS: u8 = 232;
+const ORDER_ID_BITS: u8 = 184;
 
 const U24_MASK: u256 = (1u256 << 24) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;

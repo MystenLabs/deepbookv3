@@ -39,7 +39,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use std::unit_test::assert_eq;
+use std::unit_test::{assert_eq, destroy};
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes
 /// price close together and smoothly — a real clustered-price regime.
@@ -118,8 +118,8 @@ fun skip_zero_delta_ignores_dead_boundaries() {
     let (t0, t1, t2) = clustered_ticks();
     // Insert then fully remove a finite range: its boundary nodes persist (the
     // treap never GCs) with zeroed local quantity -> skip-zero-delta must skip them.
-    tree.insert_range(t1, t2, DEAD_QUANTITY, DEAD_QUANTITY, DEAD_QUANTITY);
-    tree.remove_range(t1, t2, DEAD_QUANTITY, DEAD_QUANTITY, DEAD_QUANTITY);
+    tree.insert_range(t1, t2, DEAD_QUANTITY, 0);
+    tree.remove_range(t1, t2, DEAD_QUANTITY, 0);
     insert_up(&mut tree, t0, LIVE_QUANTITY);
 
     // Only the live order is valued; the dead t1/t2 nodes contribute nothing.
@@ -144,8 +144,8 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     // flat tail the end-side floor at the shared boundary aggregates 1 ulp above the
     // two start-side floors (199_999 vs 99_999+99_999), so the raw
     // base+start-end would underflow to -1 and abort. The clamp returns 0.
-    tree.insert_range(lower_a, higher, DUST_QUANTITY, DUST_QUANTITY, DUST_QUANTITY);
-    tree.insert_range(lower_b, higher, DUST_QUANTITY, DUST_QUANTITY, DUST_QUANTITY);
+    tree.insert_range(lower_a, higher, DUST_QUANTITY, 0);
+    tree.insert_range(lower_b, higher, DUST_QUANTITY, 0);
 
     // Independent per-order reference: both ranges' values round to 0, so true
     // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
@@ -177,7 +177,7 @@ fun clustered_ticks(): (u64, u64, u64) {
 /// Insert a one-sided up range `(tick, pos_inf]` carrying `quantity` (1x-shaped
 /// terms; `walk_linear` reads only the quantity).
 fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
-    tree.insert_range(tick, constants::pos_inf_tick!(), quantity, quantity, quantity);
+    tree.insert_range(tick, constants::pos_inf_tick!(), quantity, 0);
 }
 
 /// Independent linear reference: `Σ mul(range_price(tick·ts, +inf), quantity)`.

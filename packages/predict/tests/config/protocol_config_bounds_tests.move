@@ -3,12 +3,12 @@
 
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
-/// strike-exposure templates (base fee, min fee, ask prices, terminal floor
-/// index, expiry-fee ramp, liquidation LTV, backing buffer lambda), the
-/// expiry-cash trading-loss rebate template. Every abort test drives the real
-/// admin setter on a shared `ProtocolConfig` with a value one unit outside the
-/// envelope; pass tests assert that boundary values round-trip through setter +
-/// getter. Codes whose envelope floor is 0
+/// strike-exposure templates (base fee, min fee, ask prices, expiry-fee ramp,
+/// liquidation LTV, backing buffer lambda), the expiry-cash trading-loss rebate
+/// template. Every abort test drives the real admin setter on a shared
+/// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
+/// that boundary values round-trip through setter + getter. Codes whose envelope
+/// floor is 0
 /// (`EInvalidMinFee`, `EInvalidMinAskPrice`, `EInvalidMaxAskPrice`,
 /// `EInvalidTradingLossRebateRate`) have no reachable below-min case for a
 /// `u64`, so only the above-max side is exercised.
@@ -81,30 +81,6 @@ fun template_max_ask_price_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_max_ask_price(&admin_cap, config_constants::max_max_ask_price!() + 1);
-    abort 999
-}
-
-// === Strike-exposure templates: terminal floor index ===
-
-#[test, expected_failure(abort_code = config_constants::EInvalidTerminalFloorIndex)]
-fun template_terminal_floor_index_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_terminal_floor_index(
-        &admin_cap,
-        config_constants::min_terminal_floor_index!() - 1,
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidTerminalFloorIndex)]
-fun template_terminal_floor_index_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_terminal_floor_index(
-        &admin_cap,
-        config_constants::max_terminal_floor_index!() + 1,
-    );
     abort 999
 }
 
@@ -204,10 +180,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
     config.set_template_min_ask_price(&admin_cap, config_constants::min_min_ask_price!());
     config.set_template_max_ask_price(&admin_cap, config_constants::min_max_ask_price!() + 1);
-    config.set_template_terminal_floor_index(
-        &admin_cap,
-        config_constants::min_terminal_floor_index!(),
-    );
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
         config_constants::min_expiry_fee_window_ms!(),
@@ -227,7 +199,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.min_fee(), config_constants::min_min_fee!());
     assert_eq!(snapshot.min_ask_price(), config_constants::min_min_ask_price!());
     assert_eq!(snapshot.max_ask_price(), config_constants::min_max_ask_price!() + 1);
-    assert_eq!(snapshot.terminal_floor_index(), config_constants::min_terminal_floor_index!());
     assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::min_expiry_fee_window_ms!());
     assert_eq!(
         snapshot.expiry_fee_max_multiplier(),
@@ -244,10 +215,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     config.set_template_min_ask_price(&admin_cap, config_constants::max_min_ask_price!() - 1);
     config.set_template_base_fee(&admin_cap, config_constants::max_base_fee!());
     config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!());
-    config.set_template_terminal_floor_index(
-        &admin_cap,
-        config_constants::max_terminal_floor_index!(),
-    );
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
         config_constants::max_expiry_fee_window_ms!(),
@@ -267,7 +234,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.min_fee(), config_constants::max_min_fee!());
     assert_eq!(snapshot.min_ask_price(), config_constants::max_min_ask_price!() - 1);
     assert_eq!(snapshot.max_ask_price(), config_constants::max_max_ask_price!());
-    assert_eq!(snapshot.terminal_floor_index(), config_constants::max_terminal_floor_index!());
     assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::max_expiry_fee_window_ms!());
     assert_eq!(
         snapshot.expiry_fee_max_multiplier(),
