@@ -328,15 +328,17 @@ fun max_admission_leverage_market_snapshot_freezes_at_creation() {
     fx.set_template_max_admission_leverage(config_constants::max_max_admission_leverage!());
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
 
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    let (pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config) =
+        fx.take_market(expiry_id);
     assert_eq!(
         market.max_admission_leverage(),
         config_constants::max_max_admission_leverage!(),
     );
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
 
     fx.set_template_max_admission_leverage(config_constants::min_max_admission_leverage!());
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    let (pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config) =
+        fx.take_market(expiry_id);
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(
         snapshot.max_admission_leverage(),
@@ -348,7 +350,7 @@ fun max_admission_leverage_market_snapshot_freezes_at_creation() {
     );
     destroy(snapshot);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
     fx.finish();
 }
 
@@ -358,18 +360,20 @@ fun backing_buffer_lambda_market_snapshot_freezes_at_creation() {
     fx.set_template_backing_buffer_lambda(config_constants::max_backing_buffer_lambda!());
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
 
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    let (pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config) =
+        fx.take_market(expiry_id);
     assert_eq!(market.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
 
     fx.set_template_backing_buffer_lambda(config_constants::min_backing_buffer_lambda!());
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    let (pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config) =
+        fx.take_market(expiry_id);
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
     assert_eq!(market.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
     destroy(snapshot);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
     fx.finish();
 }
 

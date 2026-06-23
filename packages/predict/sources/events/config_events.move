@@ -17,7 +17,8 @@ use sui::event;
 public struct PricingConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     pyth_spot_freshness_ms: u64,
-    block_scholes_surface_freshness_ms: u64,
+    block_scholes_price_freshness_ms: u64,
+    block_scholes_svi_freshness_ms: u64,
 }
 
 /// Emitted when protocol-scalar risk/reserve policy changes: the per-flow
@@ -143,7 +144,8 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
     event::emit(PricingConfigUpdated {
         protocol_config_id,
         pyth_spot_freshness_ms: config.pyth_spot_freshness_ms(),
-        block_scholes_surface_freshness_ms: config.block_scholes_surface_freshness_ms(),
+        block_scholes_price_freshness_ms: config.block_scholes_price_freshness_ms(),
+        block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms(),
     });
 }
 

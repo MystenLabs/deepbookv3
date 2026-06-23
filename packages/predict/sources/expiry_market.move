@@ -29,7 +29,13 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
+use propbook::{
+    block_scholes_forward_feed::BlockScholesForwardFeed,
+    block_scholes_spot_feed::BlockScholesSpotFeed,
+    block_scholes_svi_feed::BlockScholesSVIFeed,
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
 
 const EMintPaused: u64 = 0;
@@ -145,7 +151,7 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 /// (underwater) market at 0 — the correct per-market limited-recourse value, never
 /// negative. `pricing::load_live_pricer` binds the passed propbook feeds to this
 /// market's current Propbook registry mapping, rejects a past-expiry market, and
-/// gates surface freshness.
+/// gates oracle freshness.
 ///
 /// A past-expiry market that has not settled aborts here. There is no solvency-safe
 /// NAV for an unsettled past-expiry market: the flush uses one mark for both supply
@@ -158,10 +164,20 @@ public fun current_nav(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     clock: &Clock,
 ): u64 {
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
     let liability = market.strike_exposure.exact_live_liability(&pricer);
     // Floor at 0 rather than abort: a degenerate underwater market marks at 0, and
     // partial-close `walk_linear` survivors can leave residual ulp dust that makes
@@ -198,7 +214,9 @@ public fun mint_exact_quantity(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -215,7 +233,15 @@ public fun mint_exact_quantity(
     assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
     let active_stake = predict_account::active_stake_mut(account, ctx);
     market
         .strike_exposure
@@ -255,7 +281,9 @@ public fun mint_exact_amount(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     lower_tick: u64,
     higher_tick: u64,
     amount: u64,
@@ -272,7 +300,15 @@ public fun mint_exact_amount(
     assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
     let active_stake = predict_account::active_stake_mut(account, ctx);
     market
         .strike_exposure
@@ -317,7 +353,9 @@ public fun redeem(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     order_id: u256,
     close_quantity: u64,
     root: &AccumulatorRoot,
@@ -331,7 +369,9 @@ public fun redeem(
         config,
         propbook_registry,
         pyth,
-        bs,
+        bs_spot,
+        bs_forward,
+        bs_svi,
         order_id,
         close_quantity,
         clock,
@@ -382,13 +422,23 @@ public fun liquidate(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     budget: u64,
     clock: &Clock,
 ): u64 {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
     market.strike_exposure.liquidate_live_orders(&pricer, budget)
 }
 
@@ -398,13 +448,23 @@ public fun liquidate_order(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     order_id: u256,
     clock: &Clock,
 ): bool {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
 
     let order = order::from_order_id(order_id);
     market.strike_exposure.liquidate_live_order(&pricer, &order)
@@ -575,7 +635,9 @@ fun load_live_pricer(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     clock: &Clock,
 ): pricing::Pricer {
     pricing::load_live_pricer(
@@ -583,7 +645,9 @@ fun load_live_pricer(
         propbook_registry,
         market.propbook_underlying_id,
         pyth,
-        bs,
+        bs_spot,
+        bs_forward,
+        bs_svi,
         market.expiry,
         clock,
     )
@@ -740,7 +804,9 @@ fun redeem_internal(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     order_id: u256,
     close_quantity: u64,
     clock: &Clock,
@@ -755,7 +821,15 @@ fun redeem_internal(
         return (redeemed_order.id(), option::none())
     };
 
-    let pricer = market.load_live_pricer(config, propbook_registry, pyth, bs, clock);
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
     market.strike_exposure.liquidate_live_orders(&pricer, config.trade_liquidation_budget());
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);

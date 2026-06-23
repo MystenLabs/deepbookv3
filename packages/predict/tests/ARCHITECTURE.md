@@ -37,11 +37,11 @@ Layer 1  test_helpers.move        — domain-free leaf utils: destroy_2/3/4 macr
                                      and the rule-10 math carve-out assert_within /
                                      assert_within_relative (principled bounds only).
 Layer 2  oracle_fixture.move      — lightweight production-valid registry+config+cap+
-                                     Propbook PythFeed+BlockScholesFeed+ExpiryMarket bring-up
+                                     Propbook PythFeed+BS spot/forward/SVI+ExpiryMarket bring-up
                                      for pricing/oracle error paths that don't need a funded
                                      market. Pyth uses the irreducible
                                      pyth_feed::record_raw_for_testing seam; BS uses the
-                                     stub verifier's public update constructor.
+                                     stub verifier's split public update constructors.
                                      take_oracle/return_oracle pairing includes OracleRegistry.
          flow_test_helpers.move   — the tradeable market Fixture: production create path plus
                                      explicit test-only expiry cash seeding while pool funding is

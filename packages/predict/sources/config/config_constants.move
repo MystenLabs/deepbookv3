@@ -12,9 +12,10 @@ const EInvalidMinFee: u64 = 1;
 const EInvalidMinEntryProbability: u64 = 2;
 const EInvalidMaxEntryProbability: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
-const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
+const EInvalidBlockScholesPriceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
 const EInvalidTradingLossRebateRate: u64 = 7;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
 const EInvalidExpiryFeeWindowMs: u64 = 9;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
 const EInvalidLowerBenefitPower: u64 = 11;
@@ -224,20 +225,31 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-// One Block Scholes surface row carries spot + forward + SVI written together, so
-// a single freshness window covers the whole surface (was a separate price and
-// SVI window before the oracle moved to per-expiry surfaces).
-public(package) macro fun default_block_scholes_surface_freshness_ms(): u64 { 3_000 }
-public(package) macro fun min_block_scholes_surface_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 {
+public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 3_000 }
+public(package) macro fun min_block_scholes_price_freshness_ms(): u64 { 1 }
+public(package) macro fun max_block_scholes_price_freshness_ms(): u64 {
     deepbook_predict::constants::one_minute_ms!()
 }
 
-public(package) fun assert_block_scholes_surface_freshness_ms(value: u64) {
+public(package) fun assert_block_scholes_price_freshness_ms(value: u64) {
     assert!(
-        value >= min_block_scholes_surface_freshness_ms!()
-            && value <= max_block_scholes_surface_freshness_ms!(),
-        EInvalidBlockScholesSurfaceFreshnessMs,
+        value >= min_block_scholes_price_freshness_ms!()
+            && value <= max_block_scholes_price_freshness_ms!(),
+        EInvalidBlockScholesPriceFreshnessMs,
+    );
+}
+
+public(package) macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
+public(package) macro fun min_block_scholes_svi_freshness_ms(): u64 { 1 }
+public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
+
+public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
+    assert!(
+        value >= min_block_scholes_svi_freshness_ms!()
+            && value <= max_block_scholes_svi_freshness_ms!(),
+        EInvalidBlockScholesSVIFreshnessMs,
     );
 }
 

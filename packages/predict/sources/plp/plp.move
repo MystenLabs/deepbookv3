@@ -30,7 +30,13 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
+use propbook::{
+    block_scholes_forward_feed::BlockScholesForwardFeed,
+    block_scholes_spot_feed::BlockScholesSpotFeed,
+    block_scholes_svi_feed::BlockScholesSVIFeed,
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use sui::{
     accumulator::AccumulatorRoot,
     balance::{Self, Balance},
@@ -215,7 +221,9 @@ public fun value_expiry(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
     clock: &Clock,
 ) {
     config.assert_version();
@@ -226,7 +234,7 @@ public fun value_expiry(
     let nav = if (settled) {
         0
     } else {
-        market.current_nav(config, propbook_registry, pyth, bs, clock)
+        market.current_nav(config, propbook_registry, pyth, bs_spot, bs_forward, bs_svi, clock)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;

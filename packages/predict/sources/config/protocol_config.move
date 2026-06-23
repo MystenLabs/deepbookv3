@@ -206,14 +206,25 @@ public fun set_pyth_spot_freshness_ms(
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
-/// Set the live Block Scholes surface (spot/forward/SVI) freshness threshold.
-public fun set_block_scholes_surface_freshness_ms(
+/// Set the live Block Scholes spot/forward freshness threshold.
+public fun set_block_scholes_price_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_version();
-    config.pricing_config.set_block_scholes_surface_freshness_ms(value);
+    config.pricing_config.set_block_scholes_price_freshness_ms(value);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the live Block Scholes SVI freshness threshold.
+public fun set_block_scholes_svi_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.pricing_config.set_block_scholes_svi_freshness_ms(value);
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 

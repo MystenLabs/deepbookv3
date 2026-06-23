@@ -21,7 +21,9 @@ const ECadenceWindowExceeded: u64 = 5;
 const EInvalidDeploymentExpiry: u64 = 6;
 const EInvalidCadenceConfig: u64 = 7;
 const EPythFeedNotBoundToUnderlying: u64 = 8;
-const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
+const EBlockScholesSpotFeedNotBoundToUnderlying: u64 = 9;
+const EBlockScholesForwardFeedNotBoundToUnderlying: u64 = 10;
+const EBlockScholesSVIFeedNotBoundToUnderlying: u64 = 11;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size, allocation cap, and initial cash target are
@@ -149,9 +151,27 @@ public(package) fun next_deployable_market(
             );
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+                    .propbook_block_scholes_spot_id_for_underlying(propbook_underlying_id)
                     .is_some(),
-                EBlockScholesFeedNotBoundToUnderlying,
+                EBlockScholesSpotFeedNotBoundToUnderlying,
+            );
+            assert!(
+                propbook_registry
+                    .propbook_block_scholes_forward_id_for_underlying_expiry(
+                        propbook_underlying_id,
+                        expiry,
+                    )
+                    .is_some(),
+                EBlockScholesForwardFeedNotBoundToUnderlying,
+            );
+            assert!(
+                propbook_registry
+                    .propbook_block_scholes_svi_id_for_underlying_expiry(
+                        propbook_underlying_id,
+                        expiry,
+                    )
+                    .is_some(),
+                EBlockScholesSVIFeedNotBoundToUnderlying,
             );
 
             return (
