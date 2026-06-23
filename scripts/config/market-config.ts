@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
 export interface MarketConfig {
   asset: string;
@@ -48,6 +49,8 @@ export interface PredictConfig {
   signal: SignalConfig;
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const CONFIG_PATH = path.join(__dirname, "markets.json");
 
 let _cachedConfig: PredictConfig | null = null;

@@ -14,8 +14,6 @@ import axios from "axios";
 import * as path from "path";
 import * as fs from "fs";
 import {
-  generateSignal,
-  fetchFundingRate,
   MarketData,
   SignalResult,
 } from "./signal_engine.ts";
@@ -30,6 +28,47 @@ interface BacktestTrade {
   confidence: number;
   kellySize: number;
   closed: boolean;
+}
+
+/**
+ * Simple public signal generator for backtesting.
+ * Uses basic RSI + momentum — NOT the full private strategy.
+ */
+function simpleSignal(data: MarketData): SignalResult {
+  const closes = data.closes;
+  const len = closes.length;
+  if (len < 20) {
+    return { direction: "HOLD", score: 0, confidence: 0, components: { rsi: 50, ema: 0, momentum: 0, funding: 0, volume: 1, volatility: 0, ml: 0 }, kellySize: 0, session: "OFF" };
+  }
+
+  // Simple RSI
+  let gains = 0, losses = 0;
+  for (let i = Math.max(1, len - 14); i < len; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  const rsi = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
+
+  // Simple momentum (5-period)
+  const momentum = len >= 5 ? (closes[len - 1] - closes[len - 5]) / closes[len - 5] : 0;
+
+  // Score
+  const rsiScore = (rsi - 50) / 50;
+  const momScore = Math.max(-1, Math.min(1, momentum * 15));
+  const rawScore = rsiScore * 0.5 + momScore * 0.5;
+
+  const direction = rawScore > 0.05 ? "UP" : rawScore < -0.05 ? "DOWN" : "HOLD";
+  const confidence = Math.min(1, Math.abs(rawScore) * 3);
+  const kellySize = confidence > 0.2 ? 0.05 : 0.02;
+
+  return {
+    direction,
+    score: rawScore,
+    confidence,
+    components: { rsi, ema: 0, momentum, funding: 0, volume: 1, volatility: 0, ml: 0 },
+    kellySize,
+    session: "OFF",
+  };
 }
 
 interface BacktestResult {
@@ -256,7 +295,7 @@ export async function runBacktest(
 
     // Open new trade if no position
     if (!openTrade && i >= warmupPeriod + 10) {
-      const signal: SignalResult = generateSignal(slice, winRate, avgWin, avgLoss);
+      const signal: SignalResult = simpleSignal(slice);
 
       if (
         signal.direction !== "HOLD" &&
