@@ -286,6 +286,15 @@ interface RedeemParams {
     closeQuantity: bigint;
 }
 
+interface LivePricerParams {
+    expiryMarketId: string;
+    protocolConfigId: string;
+    pythFeedId: string;
+    bsSpotFeedId: string;
+    bsForwardFeedId: string;
+    bsSviFeedId: string;
+}
+
 // Inputs to drive one privileged full-pool flush (the async LP drain).
 export interface FlushParams {
     poolVaultId: string;
@@ -418,6 +427,22 @@ function mintDusdc(tx: Transaction, amount: bigint) {
     return coin;
 }
 
+function loadLivePricer(tx: Transaction, params: LivePricerParams) {
+    return tx.moveCall({
+        target: target("expiry_market", "load_live_pricer"),
+        arguments: [
+            tx.object(params.expiryMarketId),
+            tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsSpotFeedId),
+            tx.object(params.bsForwardFeedId),
+            tx.object(params.bsSviFeedId),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
 // Run one full-pool flush over the single active market in the same PTB: the
 // privileged `start_pool_valuation` (started via a market-deployer `MarketLifecycleCap`
 // proof — the sole flush authority) -> one `value_expiry` for our market ->
@@ -463,6 +488,7 @@ function addFlush(tx: Transaction, params: FlushParams): void {
 
 function addMint(tx: Transaction, params: MintParams): void {
     const { lowerTick, higherTick } = binaryRangeTicks(params.strike, params.isUp);
+    const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);
     tx.moveCall({
         target: target("expiry_market", "mint_exact_quantity"),
@@ -471,11 +497,7 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.object(params.wrapperId),
             auth,
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
-            tx.object(params.bsSpotFeedId),
-            tx.object(params.bsForwardFeedId),
-            tx.object(params.bsSviFeedId),
+            pricer,
             tx.pure.u64(lowerTick),
             tx.pure.u64(higherTick),
             tx.pure.u64(params.quantity),
@@ -494,27 +516,22 @@ function addMint(tx: Transaction, params: MintParams): void {
 
 function addRedeem(tx: Transaction, params: RedeemParams): void {
     // The sim always acts as the account owner, so it uses the owner-authorized
-    // `redeem` (auth consumed). It works in any order state: live (priced + closed),
-    // settled, or liquidated — so the harness never needs the permissionless
-    // `redeem_settled` (app-auth) path.
+    // `redeem_live` (auth consumed). The benchmark harness does not drive the
+    // permissionless settled redeem path.
+    const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);
     tx.moveCall({
-        target: target("expiry_market", "redeem"),
+        target: target("expiry_market", "redeem_live"),
         arguments: [
             tx.object(params.expiryMarketId),
             tx.object(params.wrapperId),
             auth,
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
-            tx.object(params.bsSpotFeedId),
-            tx.object(params.bsForwardFeedId),
-            tx.object(params.bsSviFeedId),
+            pricer,
             tx.pure.u256(BigInt(params.orderId)),
             tx.pure.u64(params.closeQuantity),
-            // `redeem` loads the account and ambient-settles it (`settle<DUSDC>`) before
-            // crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
-            // `root` now follows `close_quantity` (was right after the BS feed).
+            // `redeem_live` loads the account and ambient-settles it (`settle<DUSDC>`)
+            // before crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
