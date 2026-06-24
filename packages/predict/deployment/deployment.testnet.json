@@ -3,11 +3,11 @@
   "chainId": "4c78adac",
   "deployer": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
   "packages": {
-    "fixed_math": "0x41b30f9ca838e5a3423a964061bdd6b64dc13c7ddcf12c0be6691541cd1267cd",
-    "block_scholes_oracle": "0x291096a5fae0468e19450b1af6f42b367eda6a29123b02b95bc40551658051b1",
-    "account": "0x0ab3ebd43d15ce9ab7abd2a762da55c2b0ec0ac68cdaed6b6e739b086757b68a",
-    "propbook": "0x58e571841813e814d4244d6d34f9c6fcc5de9397ff063f659db7ad1caf6433a6",
-    "predict": "0x0e8d178bb29c78e10bf3b16c46a0484cbf75d9c99a19b3586536f736d9db0a3d"
+    "fixed_math": "0x6930d8eff504f15e45e7ceec3d504bfc1a6f1e1d4c02babe03c156f77b84523d",
+    "block_scholes_oracle": "0x8192932b70d5946217d0f09aad44f84ad5c27ee4c1ca31b09f46200fbd31d3de",
+    "account": "0xb9389eac8d59170ffd1427c1a66e5c8306263464fcc6615e825c1f5b3e15da3b",
+    "propbook": "0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b",
+    "predict": "0x5bd280579da47e117849eef7290ffe12cf85a2f313a082ce9684d42a76c3711a"
   },
   "linked": {
     "dusdc": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
@@ -17,74 +17,78 @@
   },
   "sharedObjects": {
     "account": {
-      "account_registry::AccountRegistry": "0x0d911d5a0b90c7c3802faffa97ddfd8239666ae77508a7798efa6861e901386e"
+      "account_registry::AccountRegistry": "0x3c54d5b8b6bca376fc289121838ad02f8a5b3843242b9ad7e8f8245720e685a2"
     },
     "propbook": {
-      "registry::OracleRegistry": "0xfb9ffec752a32c5a7ebea7b781bc7769c70c386467edb3b04652666422dc75a2"
+      "registry::OracleRegistry": "0xf3deaff68cbd081a35ec21653af6f671d2ad5f012f3b4d817d81752843374136"
     },
     "predict": {
-      "plp::PoolVault": "0x0b32c7a70943f7a669cc265be6683e530b04b9d7109f90293b4e29b3c7c18cb9",
-      "protocol_config::ProtocolConfig": "0x53487e2fbd3bc4a48215167c7fbd1240a3bf4d7f1bd55b488b83238ad6e4eb69",
-      "registry::Registry": "0x94badb0ac302efb06fb78f0314037ddb8cfa9173bda03f15a41e9d977140821d"
+      "plp::PoolVault": "0x2cff1feb01aaebba18789d4a40e19b9168f0561e516739b6ef6e634b5d17f1d0",
+      "protocol_config::ProtocolConfig": "0xc9ff8aa8fc2585da49cdb63c21b75e6faaaece14eceb9f94fb8c0c84b0dc40b3",
+      "registry::Registry": "0xd823c6a045fe241fe3a8f1e3132673fea98fe80118f60debb5f88e82aad4fbd2"
     }
   },
   "ownedCaps": {
     "fixed_math": {
-      "package::UpgradeCap": "0x6a29e1d7e370a4ae19b70eb27d809813391dfd2d9dd6385dde61706d9dfea8b9"
+      "package::UpgradeCap": "0x0770fd8ca954854be135d88c9da6fd806c09a5df3e2ebbd0428c815387b60c43"
     },
     "block_scholes_oracle": {
-      "package::UpgradeCap": "0x8196ae45031547c685c808a2ae3c4f45d970fec8872c9146d9d24ab3df689d00"
+      "package::UpgradeCap": "0x616f5383c424f0bac96d8dd2c0ba33e188da4a4c48844f754d279e4e950f851b"
     },
     "account": {
-      "account_registry::AccountAdminCap": "0x1b8f193b72987a2d432377535b7e1627af4004e60e87e9c4c97f1ef334dce0a8",
-      "package::UpgradeCap": "0xa5e40e003818a570a549671484410e523e14e501b572d6004f12e3fa671faed1"
+      "account_registry::AccountAdminCap": "0x157f08dec265b2cc0a7a37361e94efb71d55a4d9955850e17c63103493551f3a",
+      "package::UpgradeCap": "0x42dfa4a5570ec9bd3c64154ca4df37c667216b0b3055f7326d095c47f99d522b"
     },
     "propbook": {
-      "registry::RegistryAdminCap": "0x78734e18c245627f3c65e4ed4bfba0f48f5b9265052b625a6247a970f552c1b4",
-      "package::UpgradeCap": "0xaf3288e55cc0c2a3efe32005a92404986de19db519ecd73a8ae1948795d49e78"
+      "package::UpgradeCap": "0x8c87810ee7d0b5f65f8504a4043c3be599208a9bd8031f5b0b2e4ac29f59b394",
+      "registry::RegistryAdminCap": "0xe8053a0cefe5d62892e018e8f09ec641c1dd2d0f3735ab5bd94c176d11a263de"
     },
     "predict": {
-      "coin_registry::MetadataCap<0x0e8d178bb29c78e10bf3b16c46a0484cbf75d9c99a19b3586536f736d9db0a3d::plp::PLP>": "0x32577f5289dad066d9ee0abd499b517d20017d6a98771a1fed0c4061d6c1a52d",
-      "package::UpgradeCap": "0x836005ba0f2e5d223b561fa902eab759effd35c0164fcd2cd881edebab526052",
-      "admin::AdminCap": "0xda1e395bbb2c6e3bececb5cc3d8441b500bcfa504ab3250829f7ca1182088bf9"
+      "coin_registry::MetadataCap<0x5bd280579da47e117849eef7290ffe12cf85a2f313a082ce9684d42a76c3711a::plp::PLP>": "0x99bff75941170cbcc01adbb5edae12bdcdb099d4bd7a54a4f4b9b84332c6f938",
+      "package::UpgradeCap": "0xb91cc09dcad5462fb791ee02bacb41e0736f23864bb4815dfb3a42a744766a20",
+      "admin::AdminCap": "0xd7b3e30fe2f3661f95ddd972709c3f8a722115f549d90dfcdccd9d6f9aeeefc4"
     }
   },
   "publishTx": {
-    "fixed_math": "36ZQAYJhUsSvW8NA9xJG8GaDjmGfSgsE4w5YR3bMqtKY",
-    "block_scholes_oracle": "138yKEy5x1JeMy1yzcR494BA6Z6prnh32FR5yneM5dfq",
-    "account": "7aaL1SiSjFnfzbyBfon27rR2G5WifCNJzxAxnHxGh4j6",
-    "propbook": "BHbuBnA2EPBG4ktK4ne7PjkoVUGKczoWxsvoxDAx1QTn",
-    "predict": "6xS3jHFx8cYJpwCJ2iowLKrYk66qBT7UBaQrWRKSCczS"
+    "fixed_math": "9pKxss9XNpvAsto58bBCYReH5KBdZBgdz9yFSdwY9kKk",
+    "block_scholes_oracle": "GqEmSqA7udvcsp6MFSuujYj7uUV9Uruy9NSt432W7dYr",
+    "account": "7pYFmYn5Ysfpn3Gch154frPdA2a2MwyAeJmDYuL6GWAM",
+    "propbook": "C9hBaz7PV1pThgDzH7FsxnTj9TME6zDLgyuwk8AqM92Q",
+    "predict": "3Q7UzHqQ2ZnqQ3H3z5FWvQCcsVNQkEbn8qH2cGwGgz2k"
   },
   "wiring": {
     "version": 1,
     "network": "testnet",
     "operator": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
-    "updatedAt": "2026-06-24T20:19:24.000Z",
+    "updatedAt": "2026-06-24T21:32:00.508Z",
     "account": {
       "predictAppAuthorized": true,
-      "authorizeTx": "FZhbDpVz6E3asKjUr7fRMZFecTnWyCacFQtD2oiyKB1w",
-      "accountWrapperId": "0x1c8e64b06907fd0916cdb5530b9fc2ed19968efa16cd6ba1561e3bda32641a04",
-      "createAccountTx": "GdME1i4B38MtrHqN2stoexkVXxhRSkXvi5hY1DFwmuqc"
+      "authorizeTx": "EFxcgB2pkNdgDiiq8BBoVLGw2JD4sXqQDtsThEonAuvP",
+      "accountWrapperId": "0x747fbd571a6cdaece5ae28843a1868d9ee4629e23c36166c38cc778c195cbd9d",
+      "createAccountTx": "4foA8r5evqCd4wANmuMJ6styp4dLfCnLRufqCpQwREXo"
     },
     "lifecycleCap": {
-      "id": "0x452a64eafae0f10839db3f325ff6c46da4ff307bf8ef39297d3a8b8be204a3ed",
+      "id": "0x06f30ae80b9549dcca3b7d6245a492cc328deb09cf30920ae30c2eb69475a8c9",
       "recipient": "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82",
       "owner": "recipient",
-      "mintTx": "DPjLZYb7GTSoPWeNzxRvUsgmQZcTv3qEZCh4wj71kx1y",
-      "transferTx": "5HWWFYPJ9XAG4cf89C2fUMoqpGS62SUmoLgTXEymHg3N"
+      "mintTx": "ChiaxnTUDiyw5x674gCLHqkwtv2cQrWRiQH3CQgMoULJ",
+      "transferTx": "Cy4WhdSRD5GAQgFoTSjdtwW1aPden83Vc37xMAzxtyRR"
     },
     "asset": {
       "name": "BTC_USD",
       "propbookUnderlyingId": 1,
       "pythLazerFeedId": 1,
       "blockScholesSourceId": 1,
-      "globalFeedsCreatedTx": "3h866vKwqtGi4MgfGLZDrE6CeD2JFWYekvqBr3viR1Qc",
-      "pythFeedId": "0x01b2746e5b90ab53e139ec1046fea1d34432779ab5901ac890bd84959df5dbeb",
-      "blockScholesSpotFeedId": "0x348c5fc25e8c546ad5842dbeb145d516c066ee4a99f025dcf309ca6c50c59995",
-      "globalFeedsBoundTx": "Fu41MWgvgSd1KfkDfdDcS2zBjXimaxpop8AtfTJoCJyM",
+      "globalFeedsCreatedTx": "FKUK9TNmks6MJsFbwxzi8quzjrK3NvaDkQWWheDHsoQ8",
+      "pythFeedId": "0xc78d7de16217d46d21b92ae475da799448be30b71a758dc6d7bb3ac2f1c35afb",
+      "blockScholesSpotFeedId": "0xcdc5fa7364e60fd2504aa96f65b707dc0734e507a919b1a7d7d63164fd67b745",
+      "globalFeedsBoundTx": "7oU3DhdNwdvuiHkoSgsFRsL6UZqyxUZepcdn98hDrqzd",
+      "surfaceFeedsCreatedTx": "5wcVoh9RqLbiUvuVvwFmUWhGbKkJKUKUy5fxoagxvkGM",
+      "blockScholesForwardFeedId": "0xe72c734ea8d8dcbc9183d9d8f96f51aaa1fb5034d5ed33ac60d67d261e15b48a",
+      "blockScholesSviFeedId": "0xdc2f8270676bd05fb28491e8d4a41a495722fda7a454926dd66dbba256a21c69",
+      "surfaceFeedsBoundTx": "FuuFTF5gBzMzGewinTUWj1at1r5Fe9ZAW27HMLjwLSsw",
       "predictUnderlyingRegistered": true,
-      "predictUnderlyingRegisteredTx": "9JRkpgJ16wPxZw9v2z2t9w5yFKf3FULHVPbkeK6yoExu"
+      "predictUnderlyingRegisteredTx": "AcRvkH8N3Eh2phJVA23AiKGi5D9BVP8aJ7QFP2qqaoqe"
     },
     "cadences": [
       {
@@ -94,7 +98,7 @@
         "maxExpiryAllocation": "50000000000",
         "initialExpiryCash": "10000000000",
         "windowSize": "3",
-        "setTx": "5YLMrwjdSLX5Pbs2szUB6Xc7VqZgUpa2e8pzRQi24TaY"
+        "setTx": "8pCFMuX4CcTfAUKGrva2qiY9E5DYZgimoVjn5hb7yXuk"
       },
       {
         "id": 2,
@@ -103,15 +107,15 @@
         "maxExpiryAllocation": "250000000000",
         "initialExpiryCash": "50000000000",
         "windowSize": "3",
-        "setTx": "5YLMrwjdSLX5Pbs2szUB6Xc7VqZgUpa2e8pzRQi24TaY"
+        "setTx": "8pCFMuX4CcTfAUKGrva2qiY9E5DYZgimoVjn5hb7yXuk"
       }
     ],
     "bootstrap": {
       "lockCapitalAmount": "10000000",
       "supplyAmount": "10000000000000",
-      "lockCapitalTx": "He6wtHAXGK9fBwKG31x9gcLcGKqsiR9wxuMRQkbcd6DA",
-      "supplyRequestTx": "7Qfk7uFGeScmEmtSWe6x8hfUwQHSjbJ5kZbCieHnxKfK",
-      "flushTx": "BXGs6KKYRRVbDnhGgFkjzfA86WFTohSftPwmJBcrrfeE"
+      "lockCapitalTx": "3a7Gg8Rn1rZexsXL2dseu7V1PNjDzRgWeDVWAU7kKXsF",
+      "supplyRequestTx": "2Bd52KQ7VM8eWfJRwMiNprjdpDY3SbsrHnH1xzWweqLK",
+      "flushTx": "GbaebfiaVnmXaMySaPA43i7tHvJZD2rUC7QArPyXybXR"
     }
   }
 }

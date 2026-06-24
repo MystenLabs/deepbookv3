@@ -20,6 +20,7 @@ const DEPLOYMENT_JSON = resolve(
 
 const SUI = process.env.SUI_BINARY ?? "sui";
 const GAS_BUDGET = BigInt(process.env.GAS_BUDGET ?? "1000000000");
+const MIN_MARKET_LEAD_MS = Number(process.env.MIN_MARKET_LEAD_MS ?? "90000");
 
 const LIFECYCLE_CAP_RECIPIENT =
   "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82";
@@ -98,8 +99,12 @@ interface WiringState {
     blockScholesSourceId: number;
     pythFeedId?: string;
     blockScholesSpotFeedId?: string;
+    blockScholesForwardFeedId?: string;
+    blockScholesSviFeedId?: string;
     globalFeedsCreatedTx?: string;
     globalFeedsBoundTx?: string;
+    surfaceFeedsCreatedTx?: string;
+    surfaceFeedsBoundTx?: string;
   };
   cadences?: Array<{
     id: number;
@@ -266,6 +271,10 @@ async function getTransactionBlockWithRetry(digest: string): Promise<any> {
   throw lastError;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function execute(label: string, tx: Transaction): Promise<Receipt> {
   tx.setSender(sender);
   tx.setGasBudget(GAS_BUDGET);
@@ -379,6 +388,33 @@ async function inspectU64(
   const tx = new Transaction();
   build(tx);
   return parseU64(await devInspectReturn(tx, label));
+}
+
+async function currentClockMs(): Promise<number> {
+  return Number(
+    await inspectU64("clock_timestamp_ms", (tx) => {
+      tx.moveCall({
+        target: "0x2::clock::timestamp_ms",
+        arguments: [tx.object(CLOCK_ID)],
+      });
+    }),
+  );
+}
+
+async function waitForCadenceLead(
+  cadence: (typeof CADENCES)[number],
+): Promise<void> {
+  const nowMs = await currentClockMs();
+  const nextExpiryMs =
+    (Math.floor(nowMs / cadence.periodMs) + 1) * cadence.periodMs;
+  const leadMs = nextExpiryMs - nowMs;
+  if (leadMs >= MIN_MARKET_LEAD_MS) return;
+
+  const waitMs = leadMs + 2_000;
+  console.log(
+    `[wire] ${cadence.name} next slot is only ${leadMs}ms away; waiting ${waitMs}ms before creating market`,
+  );
+  await sleep(waitMs);
 }
 
 async function inspectOptionId(
@@ -622,6 +658,173 @@ async function ensureGlobalFeeds(deployment: DeploymentJson): Promise<{
   writeDeployment(deployment);
 
   return { pythFeedId, blockScholesSpotFeedId };
+}
+
+async function ensureBlockScholesSurfaceFeeds(
+  deployment: DeploymentJson,
+): Promise<{
+  blockScholesForwardFeedId: string;
+  blockScholesSviFeedId: string;
+}> {
+  deployment.wiring!.asset ??= {
+    name: ASSET.name,
+    propbookUnderlyingId: ASSET.propbookUnderlyingId,
+    pythLazerFeedId: ASSET.pythLazerFeedId,
+    blockScholesSourceId: ASSET.blockScholesSourceId,
+  };
+
+  let blockScholesForwardFeedId =
+    deployment.wiring!.asset.blockScholesForwardFeedId ??
+    (await inspectOptionId(
+      "propbook_block_scholes_forward_id_for_source",
+      (tx) => {
+        tx.moveCall({
+          target: propbookTarget(
+            deployment,
+            "registry",
+            "propbook_block_scholes_forward_id_for_source",
+          ),
+          arguments: [
+            tx.object(oracleRegistryId(deployment)),
+            tx.pure.u32(ASSET.blockScholesSourceId),
+          ],
+        });
+      },
+    ));
+
+  let blockScholesSviFeedId =
+    deployment.wiring!.asset.blockScholesSviFeedId ??
+    (await inspectOptionId("propbook_block_scholes_svi_id_for_source", (tx) => {
+      tx.moveCall({
+        target: propbookTarget(
+          deployment,
+          "registry",
+          "propbook_block_scholes_svi_id_for_source",
+        ),
+        arguments: [
+          tx.object(oracleRegistryId(deployment)),
+          tx.pure.u32(ASSET.blockScholesSourceId),
+        ],
+      });
+    }));
+
+  if (!blockScholesForwardFeedId || !blockScholesSviFeedId) {
+    const tx = new Transaction();
+    if (!blockScholesForwardFeedId) {
+      tx.moveCall({
+        target: propbookTarget(
+          deployment,
+          "registry",
+          "create_and_share_block_scholes_forward_feed",
+        ),
+        arguments: [
+          tx.object(oracleRegistryId(deployment)),
+          tx.pure.u32(ASSET.blockScholesSourceId),
+        ],
+      });
+    }
+    if (!blockScholesSviFeedId) {
+      tx.moveCall({
+        target: propbookTarget(
+          deployment,
+          "registry",
+          "create_and_share_block_scholes_svi_feed",
+        ),
+        arguments: [
+          tx.object(oracleRegistryId(deployment)),
+          tx.pure.u32(ASSET.blockScholesSourceId),
+        ],
+      });
+    }
+    const receipt = await execute("create_bs_surface_feeds", tx);
+    if (!blockScholesForwardFeedId) {
+      blockScholesForwardFeedId = createdObjectId(
+        receipt,
+        "block_scholes_forward_feed::BlockScholesForwardFeed",
+      );
+    }
+    if (!blockScholesSviFeedId) {
+      blockScholesSviFeedId = createdObjectId(
+        receipt,
+        "block_scholes_svi_feed::BlockScholesSVIFeed",
+      );
+    }
+    deployment.wiring!.asset.surfaceFeedsCreatedTx = receipt.digest;
+  }
+
+  deployment.wiring!.asset.blockScholesForwardFeedId =
+    blockScholesForwardFeedId;
+  deployment.wiring!.asset.blockScholesSviFeedId = blockScholesSviFeedId;
+  writeDeployment(deployment);
+
+  const boundForward = await inspectOptionId(
+    "propbook_block_scholes_forward_id_for_underlying",
+    (tx) => {
+      tx.moveCall({
+        target: propbookTarget(
+          deployment,
+          "registry",
+          "propbook_block_scholes_forward_id_for_underlying",
+        ),
+        arguments: [
+          tx.object(oracleRegistryId(deployment)),
+          tx.pure.u32(ASSET.propbookUnderlyingId),
+        ],
+      });
+    },
+  );
+  const boundSvi = await inspectOptionId(
+    "propbook_block_scholes_svi_id_for_underlying",
+    (tx) => {
+      tx.moveCall({
+        target: propbookTarget(
+          deployment,
+          "registry",
+          "propbook_block_scholes_svi_id_for_underlying",
+        ),
+        arguments: [
+          tx.object(oracleRegistryId(deployment)),
+          tx.pure.u32(ASSET.propbookUnderlyingId),
+        ],
+      });
+    },
+  );
+
+  if (
+    boundForward === blockScholesForwardFeedId &&
+    boundSvi === blockScholesSviFeedId
+  ) {
+    console.log(
+      "[wire] Block Scholes surface feeds already bound to underlying",
+    );
+    return { blockScholesForwardFeedId, blockScholesSviFeedId };
+  }
+  if (boundForward || boundSvi) {
+    throw new Error(
+      `Block Scholes surface binding mismatch: forward=${boundForward} svi=${boundSvi}`,
+    );
+  }
+
+  const tx = new Transaction();
+  tx.moveCall({
+    target: propbookTarget(
+      deployment,
+      "registry",
+      "bind_block_scholes_surface_to_underlying",
+    ),
+    arguments: [
+      tx.object(oracleRegistryId(deployment)),
+      tx.object(oracleRegistryAdminCapId(deployment)),
+      tx.object(blockScholesForwardFeedId),
+      tx.object(blockScholesSviFeedId),
+      tx.pure.u32(ASSET.propbookUnderlyingId),
+    ],
+  });
+  const receipt = await execute("bind_bs_surface_feeds", tx);
+  deployment.wiring!.asset.surfaceFeedsBoundTx = receipt.digest;
+  writeDeployment(deployment);
+
+  return { blockScholesForwardFeedId, blockScholesSviFeedId };
 }
 
 async function registerUnderlying(deployment: DeploymentJson): Promise<void> {
@@ -875,183 +1078,6 @@ async function ensureBootstrap(
   }
 }
 
-function higherRankOverlap(cadenceId: number, expiry: number): boolean {
-  if (cadenceId === 1) return expiry % (60 * 60_000) === 0;
-  return false;
-}
-
-function nextCandidateExpiries(
-  cadenceId: number,
-  periodMs: number,
-  lastCreatedMs: number,
-): number[] {
-  const now = Date.now();
-  const out: number[] = [];
-  let expiry = Math.max(
-    lastCreatedMs + periodMs,
-    (Math.floor(now / periodMs) + 1) * periodMs,
-  );
-  while (out.length < 2) {
-    if (!higherRankOverlap(cadenceId, expiry)) out.push(expiry);
-    expiry += periodMs;
-  }
-  return out;
-}
-
-function lastCreatedExpiry(
-  lastCreatedExpiries: Map<number, number>,
-  cadenceId: number,
-): number {
-  return lastCreatedExpiries.get(cadenceId) ?? 0;
-}
-
-async function ensureExpiryFeeds(
-  deployment: DeploymentJson,
-  expiryMs: number,
-): Promise<{
-  forwardFeedId: string;
-  sviFeedId: string;
-  createFeedsTx?: string;
-  bindFeedsTx?: string;
-}> {
-  let forwardFeedId = await inspectOptionId(
-    "bs_forward_id_for_source",
-    (tx) => {
-      tx.moveCall({
-        target: propbookTarget(
-          deployment,
-          "registry",
-          "propbook_block_scholes_forward_id_for_source",
-        ),
-        arguments: [
-          tx.object(oracleRegistryId(deployment)),
-          tx.pure.u32(ASSET.blockScholesSourceId),
-          tx.pure.u64(BigInt(expiryMs)),
-        ],
-      });
-    },
-  );
-  let sviFeedId = await inspectOptionId("bs_svi_id_for_source", (tx) => {
-    tx.moveCall({
-      target: propbookTarget(
-        deployment,
-        "registry",
-        "propbook_block_scholes_svi_id_for_source",
-      ),
-      arguments: [
-        tx.object(oracleRegistryId(deployment)),
-        tx.pure.u32(ASSET.blockScholesSourceId),
-        tx.pure.u64(BigInt(expiryMs)),
-      ],
-    });
-  });
-
-  let createFeedsTx: string | undefined;
-  if (!forwardFeedId || !sviFeedId) {
-    const tx = new Transaction();
-    if (!forwardFeedId) {
-      tx.moveCall({
-        target: propbookTarget(
-          deployment,
-          "registry",
-          "create_and_share_block_scholes_forward_feed",
-        ),
-        arguments: [
-          tx.object(oracleRegistryId(deployment)),
-          tx.pure.u32(ASSET.blockScholesSourceId),
-          tx.pure.u64(BigInt(expiryMs)),
-        ],
-      });
-    }
-    if (!sviFeedId) {
-      tx.moveCall({
-        target: propbookTarget(
-          deployment,
-          "registry",
-          "create_and_share_block_scholes_svi_feed",
-        ),
-        arguments: [
-          tx.object(oracleRegistryId(deployment)),
-          tx.pure.u32(ASSET.blockScholesSourceId),
-          tx.pure.u64(BigInt(expiryMs)),
-        ],
-      });
-    }
-    const receipt = await execute(`create_bs_expiry_feeds_${expiryMs}`, tx);
-    createFeedsTx = receipt.digest;
-    if (!forwardFeedId) {
-      forwardFeedId = createdObjectId(
-        receipt,
-        "block_scholes_forward_feed::BlockScholesForwardFeed",
-      );
-    }
-    if (!sviFeedId) {
-      sviFeedId = createdObjectId(
-        receipt,
-        "block_scholes_svi_feed::BlockScholesSVIFeed",
-      );
-    }
-  }
-
-  const boundForward = await inspectOptionId(
-    "bs_forward_id_for_underlying_expiry",
-    (tx) => {
-      tx.moveCall({
-        target: propbookTarget(
-          deployment,
-          "registry",
-          "propbook_block_scholes_forward_id_for_underlying_expiry",
-        ),
-        arguments: [
-          tx.object(oracleRegistryId(deployment)),
-          tx.pure.u32(ASSET.propbookUnderlyingId),
-          tx.pure.u64(BigInt(expiryMs)),
-        ],
-      });
-    },
-  );
-  const boundSvi = await inspectOptionId(
-    "bs_svi_id_for_underlying_expiry",
-    (tx) => {
-      tx.moveCall({
-        target: propbookTarget(
-          deployment,
-          "registry",
-          "propbook_block_scholes_svi_id_for_underlying_expiry",
-        ),
-        arguments: [
-          tx.object(oracleRegistryId(deployment)),
-          tx.pure.u32(ASSET.propbookUnderlyingId),
-          tx.pure.u64(BigInt(expiryMs)),
-        ],
-      });
-    },
-  );
-
-  let bindFeedsTx: string | undefined;
-  if (boundForward !== forwardFeedId || boundSvi !== sviFeedId) {
-    const tx = new Transaction();
-    tx.moveCall({
-      target: propbookTarget(
-        deployment,
-        "registry",
-        "bind_block_scholes_expiry_to_underlying",
-      ),
-      arguments: [
-        tx.object(oracleRegistryId(deployment)),
-        tx.object(oracleRegistryAdminCapId(deployment)),
-        tx.object(forwardFeedId),
-        tx.object(sviFeedId),
-        tx.pure.u32(ASSET.propbookUnderlyingId),
-      ],
-    });
-    const receipt = await execute(`bind_bs_expiry_feeds_${expiryMs}`, tx);
-    bindFeedsTx = receipt.digest;
-  }
-
-  return { forwardFeedId, sviFeedId, createFeedsTx, bindFeedsTx };
-}
-
 async function createMarkets(
   deployment: DeploymentJson,
   lifecycleCapId: string,
@@ -1065,29 +1091,10 @@ async function createMarkets(
   }
 
   const createdCounts = new Map<number, number>();
-  const lastCreatedExpiries = new Map<number, number>();
 
   for (const cadence of CADENCES) {
     while ((createdCounts.get(cadence.id) ?? 0) < cadence.marketsToCreate) {
-      const lastExpiry = lastCreatedExpiry(lastCreatedExpiries, cadence.id);
-      const candidateExpiries = nextCandidateExpiries(
-        cadence.id,
-        cadence.periodMs,
-        lastExpiry,
-      );
-      const feedByExpiry = new Map<
-        number,
-        {
-          forwardFeedId: string;
-          sviFeedId: string;
-          createFeedsTx?: string;
-          bindFeedsTx?: string;
-        }
-      >();
-
-      for (const expiry of candidateExpiries) {
-        feedByExpiry.set(expiry, await ensureExpiryFeeds(deployment, expiry));
-      }
+      await waitForCadenceLead(cadence);
 
       const tx = new Transaction();
       tx.moveCall({
@@ -1113,12 +1120,6 @@ async function createMarkets(
       if (!expiryMs) {
         throw new Error(`MarketCreated expiry missing for ${expiryMarketId}`);
       }
-      const feed = feedByExpiry.get(expiryMs);
-      if (!feed) {
-        throw new Error(
-          `created market expiry ${expiryMs} was not in prepared feed set ${candidateExpiries.join(",")}`,
-        );
-      }
 
       const rebalanceTx = new Transaction();
       rebalanceTx.moveCall({
@@ -1138,13 +1139,12 @@ async function createMarkets(
       );
 
       createdCounts.set(cadence.id, (createdCounts.get(cadence.id) ?? 0) + 1);
-      lastCreatedExpiries.set(cadence.id, expiryMs);
       console.log(
         `[wire] ${cadence.name} market ready: expiry=${new Date(
           expiryMs,
         ).toISOString()} market=${expiryMarketId} create=${receipt.digest} rebalance=${
           rebalanceReceipt.digest
-        } forward=${feed.forwardFeedId} svi=${feed.sviFeedId}`,
+        }`,
       );
     }
   }
@@ -1205,6 +1205,7 @@ async function main(): Promise<void> {
   await ensurePredictAppAuthorized(deployment);
   const lifecycleCapId = await ensureLifecycleCap(deployment);
   const { pythFeedId } = await ensureGlobalFeeds(deployment);
+  await ensureBlockScholesSurfaceFeeds(deployment);
   await registerUnderlying(deployment);
   await configureCadences(deployment);
   const accountWrapperId = await ensureAccountWrapper(deployment);
