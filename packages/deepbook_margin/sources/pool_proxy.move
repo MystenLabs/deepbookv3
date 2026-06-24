@@ -370,8 +370,8 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
 /// `risk_ratio` while the debt is unchanged, so the swap-only monotonic check
 /// here rejects essentially every taker fill. The `_and_repay` variant
 /// deleverages with the proceeds so the net-state ratio actually improves. Kept
-/// callable for existing integrators; its symmetric net-debt cap is retained as
-/// legacy (the live entries cap the ask on gross base held instead).
+/// callable for existing integrators; its quantity caps match the other
+/// reduce-only entries (gross-base ask, round-up-to-lot bid).
 public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,

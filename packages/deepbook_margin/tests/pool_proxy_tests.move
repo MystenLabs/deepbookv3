@@ -6767,6 +6767,84 @@ fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
+#[test, expected_failure(abort_code = pool_proxy::EPoolNotEnabledForMarginTrading)]
+fun place_market_order_and_repay_loan_aborts_when_pool_disabled() {
+    // Unlike the reduce-only and-repay siblings, the non-reduce-only and-repay
+    // requires margin trading enabled — in reduce-only mode a user must close via
+    // place_reduce_only_market_order_and_repay_loan. Disabling the pool makes this
+    // endpoint abort on its pool_enabled gate (the guard that distinguishes it).
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(250 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Drop the pool out of margin trading; the and-repay close must now refuse.
+    registry.disable_deepbook_pool<USDC, USDT>(&_admin_cap, &mut pool, &clock);
+
+    let _ = test_helpers::place_market_order_and_repay_loan_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &mut mm,
+        &mut pool,
+        &mut base_pool,
+        &mut quote_pool,
+        1,
+        constants::self_matching_allowed(),
+        101 * test_constants::usdc_multiplier(),
+        true,
+        false,
+        &clock,
+    );
+
+    abort 999
+}
+
 #[test]
 fun reduce_only_bid_allows_min_size_when_net_debt_is_sub_lot() {
     // Reduce-only "not stuck" floor: when the net short is below one min_size
