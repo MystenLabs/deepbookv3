@@ -43,7 +43,9 @@ def reconcile_user_edits(d, state, run):
         if it['status'] != 'open':
             continue
         b = blocks.get(iid)
-        if b is None or re.search(r'\[[xX]\]', b):  # block deleted, or its checkbox ticked
+        # block deleted, OR its checkbox line ticked. Anchor to the `- [x] fixed` line so stray `[x]`
+        # in a claim/evidence/location can't falsely auto-resolve an item.
+        if b is None or re.search(r'(?mi)^\s*-\s*\[[xX]\]\s*fixed', b):
             it['status'] = 'resolved'
             it.setdefault('notes', []).append(f"resolved by you (≤run {run})")
             n += 1
@@ -69,12 +71,12 @@ def merge(d, run, findings_path):
         elif it['status'] == 'wontfix':
             it['last_seen'] = run  # confirmed false-positive — stays suppressed
         elif it['status'] == 'resolved':
-            it['status'] = 'open'; it['last_seen'] = run; it['evidence'] = f.get('evidence', it.get('evidence', ''))
+            it['status'] = 'open'; it['last_seen'] = run; it['evidence'] = f.get('evidence') or it.get('evidence', '')
             it['notes'].append(f"⚠ RE-DETECTED run {run} after being marked resolved — the fix may not have taken")
             reopened += 1
         else:  # open
             it['last_seen'] = run
-            it['severity'] = f.get('severity', it['severity']); it['evidence'] = f.get('evidence', it.get('evidence', ''))
+            it['severity'] = f.get('severity', it['severity']); it['evidence'] = f.get('evidence') or it.get('evidence', '')
             h = f.get('harness', '')
             if h and h not in it['harnesses']:
                 it['harnesses'].append(h)

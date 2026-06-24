@@ -119,6 +119,8 @@ const mapResults = await parallel(UNITS.map(u => () => agent(
   + `Build the RESPONSIBILITY MAP for every module under those path(s) in packages/${u.pkg}/. For each module emit its entry: role (state-owner/composer/leaf/flow-entry/config/events/mixed — a module that declares Balance/liability fields is a state-owner; one that imports many domain objects to sequence them is a composer; a math/index/data-structure module is a leaf), owns (the facts/state/policy/guards it is the source of truth for — it owns the fields it declares + derivations purely within its domain), must_not_own (what belongs to a neighbor), composes (modules it orchestrates), and functions (EVERY function name — public/package/private; this drives the per-function check). This map is the SPEC the check pass measures against, so be precise about ownership boundaries.`,
   { schema: MAP_SCHEMA, phase: 'Map', label: `map:${u.key}` })))
 
+const unmappedUnits = UNITS.filter((u, i) => !mapResults[i]).map(u => u.key)
+if (unmappedUnits.length) log(`⚠ MAP failed for ${unmappedUnits.length} unit(s) — their modules are NOT walked this run (resume to fill): ${unmappedUnits.join(', ')}`)
 const allModules = mapResults.filter(Boolean).flatMap(r => r.modules || [])
 const mapByModule = {}
 allModules.forEach(m => { mapByModule[m.module] = m })
@@ -152,7 +154,9 @@ const DRY_TARGET = A.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || 12
 const RESERVE = (budget && budget.total) ? Math.max(4_000_000, Math.floor(budget.total * 0.3)) : 4_000_000
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase()}`.slice(0, 200) }
+// strip line numbers from node so a same violation at a shifted line still dedups across rounds (else the
+// loop never dries — see orchestrator nloc comment).
+function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9:_]/g, '')}` }
 
 function checkPrompt(cu, round, known) {
   return `${PRELUDE}\n\n=== CHECK PASS (round ${round}) — module ${cu.module} (${cu.file}) ===\n`
@@ -204,7 +208,7 @@ all.filter(x => x.verdict && (x.verdict.classification === 'update-rule' || x.ve
 log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | rounds: ${round} | violations: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
 
 return {
-  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, rounds: round, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
+  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, unmapped_units: unmappedUnits, rounds: round, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
   responsibility_map: allModules.map(m => ({ module: m.module, role: m.role, owns: m.owns, composes: m.composes })),
   confirmed: confirmed.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, expected_owner: x.expected_owner, actual_owner: x.actual_owner, severity: (x.verdict && x.verdict.adjusted_severity) || x.severity, classification: x.verdict && x.verdict.classification, settled_ref: x.settled_ref, recommendation: x.recommendation, data_flow: x.data_flow, proof: x.verdict && x.verdict.evidence })),
   settled: settledOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, settled_ref: (x.verdict && x.verdict.evidence) || x.settled_ref })),

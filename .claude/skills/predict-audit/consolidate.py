@@ -18,10 +18,18 @@ SEV = {  # unify the two severity vocabularies into one rank (higher = worse)
 }
 
 def load(path):
+    """Tolerant: scan successive '{' and raw_decode (ignores leading prose / trailing logs) so a task
+    output file that isn't pure JSON can't crash the whole consolidation."""
     raw = open(path, encoding='utf-8', errors='replace').read()
+    dec = json.JSONDecoder()
     i = raw.find('{')
-    data = json.loads(raw[i:])
-    return data.get('result', data)  # unwrap the notification envelope if present
+    while i != -1:
+        try:
+            data, _ = dec.raw_decode(raw, i)
+            return data.get('result', data) if isinstance(data, dict) else data
+        except json.JSONDecodeError:
+            i = raw.find('{', i + 1)
+    raise ValueError(f"no parseable JSON object in {path}")
 
 def _fp(location, title):
     """Stable fingerprint: file path WITHOUT line numbers (survives line drift) + normalized title."""
@@ -70,9 +78,14 @@ def main():
         print(__doc__); sys.exit(2)
     out_dir, files = sys.argv[1], sys.argv[2:]
     os.makedirs(out_dir, exist_ok=True)
-    all_findings, per_harness, coverage_blocks = [], [], []
+    all_findings, per_harness, coverage_blocks, parse_failures = [], [], [], []
     for path in files:
-        res = load(path)
+        try:
+            res = load(path)
+        except Exception as e:  # a file we can't parse is a VISIBLE failure, never a silent slip
+            parse_failures.append((path, str(e)))
+            print(f"⚠ FAILED to parse {path}: {e}", file=sys.stderr)
+            continue
         harness = res.get('summary', {})
         hname = (os.path.basename(path).split('.')[0]) or 'harness'
         findings, npromoted = collect(res, hname)
@@ -108,6 +121,9 @@ def main():
     acct = (f"ACCOUNTING — parsed {total_in} | open {len(dedup_open)} (+{merges} dup-merges) | "
             f"settled {len(settled)} | refuted {len(refuted)} | DROPPED {dropped} "
             + ("✅ 0 dropped" if dropped == 0 else "⚠️ MISMATCH — investigate"))
+    if parse_failures:
+        acct += f"\n⛔ {len(parse_failures)} INPUT FILE(S) FAILED TO PARSE (findings NOT in this report): " \
+                + "; ".join(f"{p} ({e})" for p, e in parse_failures)
 
     dedup_open.sort(key=lambda f: -SEV.get(f['severity'].lower(), 1))
     L = []
@@ -141,7 +157,7 @@ def main():
               open(os.path.join(out_dir, 'findings.json'), 'w', encoding='utf-8'), indent=1)
     print(acct)
     print(f"wrote {rpt} ({len(dedup_open)} open, {len(settled)} settled, {len(refuted)} refuted)")
-    sys.exit(0 if dropped == 0 else 1)
+    sys.exit(0 if (dropped == 0 and not parse_failures) else 1)
 
 if __name__ == '__main__':
     main()

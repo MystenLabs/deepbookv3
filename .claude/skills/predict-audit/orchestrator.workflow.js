@@ -164,15 +164,23 @@ function aggregate(f, laneKey, verdicts) {
 
 // ---------- FIND: budget-aware loop-until-dry ----------
 phase('Find')
-function fkey(f) { return `${f.lane}|${(f.location || '').toLowerCase()}|${(f.title || '').toLowerCase()}`.slice(0, 200) }
+// Dedup key strips line numbers + normalizes the title, so a re-worded or line-shifted SAME finding still
+// matches across rounds — otherwise "fresh" never goes to 0, the loop never dries, and it burns the whole
+// budget on rewording churn instead of converging.
+function nloc(s) { return (s || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '') }
+function ntitle(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 50) }
+function fkey(f) { return `${f.lane}|${nloc(f.location).slice(0, 80)}|${ntitle(f.title)}` }
 const seen = new Set()
 const candidates = []
 const coverageByLane = {}
 let dry = 0, round = 0
 while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   round++
-  const known = candidates.map(f => `- [${f.severity}] (${f.lane}) ${f.title} @ ${f.location}`).join('\n')
-  const roundRes = await parallel(LANES.map(lane => () => agent(finderPrompt(lane, round, known),
+  // Per-lane known list (not the whole cross-lane union) so the prompt doesn't grow super-linearly and
+  // trip StructuredOutput truncation on big runs.
+  const knownByLane = {}
+  candidates.forEach(f => { (knownByLane[f.lane] = knownByLane[f.lane] || []).push(`- [${f.severity}] ${f.title} @ ${f.location}`) })
+  const roundRes = await parallel(LANES.map(lane => () => agent(finderPrompt(lane, round, (knownByLane[lane.key] || []).join('\n')),
     { schema: FINDINGS_SCHEMA, effort: 'max', phase: 'Find', label: `find:${lane.key}:r${round}` })))
   let freshCount = 0
   roundRes.filter(Boolean).forEach(r => {

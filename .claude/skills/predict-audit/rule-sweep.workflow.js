@@ -87,6 +87,7 @@ const FINDING = {
   properties: {
     location: { type: 'string', description: 'file.move:line(s)' },
     claim: { type: 'string', description: 'why this violates the rule (quote the rule text)' },
+    severity: { type: 'string', enum: ['high', 'medium', 'low', 'cleanup'], description: 'high ONLY if it can strand funds / brick a flow / misprice an indexer (e.g. a write-only field); most hygiene is cleanup/low' },
     context: { type: 'string' },
     defensible: { type: 'string', enum: ['yes', 'no', 'unclear'] },
     classification: { type: 'string', enum: ['fix-code', 'update-rule', 'design-decision', 'false-positive'] },
@@ -116,11 +117,12 @@ const DRY_TARGET = A.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || 10
 const RESERVE = (budget && budget.total) ? Math.max(3_000_000, Math.floor(budget.total * 0.3)) : 3_000_000
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase()}`.slice(0, 180) }
+// strip line numbers so a same violation at a shifted line still dedups across rounds.
+function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '')}`.slice(0, 160) }
 function sweepPrompt(rf, round, known) {
   return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} (round ${round}) ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n`
     + (known ? `ALREADY-FOUND violations of this rule (do NOT re-report — find DIFFERENT ones, in modules/branches not yet covered):\n${known}\n\n` : '')
-    + `Inspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output. Cap at your ${maxFindings} highest-value NEW findings.`
+    + `Inspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, a SEVERITY (high only if it can strand funds / brick a flow / misprice an indexer — e.g. a write-only field; most hygiene is cleanup/low), context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output. Cap at your ${maxFindings} highest-value NEW findings.`
 }
 
 phase('Sweep')
@@ -157,7 +159,7 @@ const refutedOut = all.filter(x => x.verdict && x.verdict.verdict === 'refuted')
 log(`Rule families: ${FAMILIES.length} | rounds: ${round} | findings: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
 
 function shape(x) {
-  return { rule_family: x.rule_family, location: x.location, claim: x.claim, classification: (x.verdict && x.verdict.classification) || x.classification, recommendation: x.recommendation, evidence: x.verdict && x.verdict.evidence }
+  return { rule_family: x.rule_family, severity: x.severity || (x.classification === 'fix-code' ? 'medium' : 'low'), location: x.location, claim: x.claim, classification: (x.verdict && x.verdict.classification) || x.classification, recommendation: x.recommendation, evidence: x.verdict && x.verdict.evidence }
 }
 return {
   summary: { rule_families: FAMILIES.length, rounds: round, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },

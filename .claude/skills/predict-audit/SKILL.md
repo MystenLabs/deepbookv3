@@ -57,7 +57,7 @@ Axis split: lenses = perspective × whole codebase; ownership walk = per-module 
 **Step 1 — ground truth, MAIN LOOP only** (feeds every subagent via `args.groundTruth`; a wrong command starts the run from a false "all green"):
 ```
 sui move build --path packages/<pkg> --warnings-are-errors   # pkg ∈ predict propbook account block_scholes_oracle
-sui move test  --path packages/predict --gas-limit 100000000000
+sui move test  --path packages/<pkg> --gas-limit 100000000000   # each of the four (predict is the big suite)
 (cd packages/predict/simulations && bash run.sh --python-only)   # sim smoke; localnet `bash run.sh` is also main-loop-only
 ```
 **Step 2 — launch a harness.** Each **loops-until-dry** (tune `dryRounds`/`maxRounds`). Precede the turn with a budget directive (e.g. `+100m`) to cap a maximal full run — it loops until ~70% spent, reserving 30% for verify. Scope with `lenses`/`units`/`rules`; the config log echoes scope + budget. The no-arg default loops the WHOLE fleet until dry (= maximal mode):
@@ -77,14 +77,14 @@ It emits ONE `consolidated-report.md` (a per-run snapshot under `reports/<run>/`
 
 **Step 4 — update the ONE live tracker.** Merge this run's open findings into the single persistent worklist:
 ```
-python3 .claude/skills/predict-audit/track.py .claude/predict-review/ merge --run <run-id> reports/<run>/findings.json
+python3 .claude/skills/predict-audit/track.py .claude/predict-review/ merge --run <run-id> .claude/predict-review/reports/<run>/findings.json
 ```
 `.claude/predict-review/OPEN-ITEMS.md` is the single place to work from — severity-sorted, **deduped by a stable per-issue id across runs** (so re-runs update in place, never duplicate), with a per-run changelog (`+new ~updated ↑re-opened`). Fix code → delete the item's block (or `track.py … resolve <id>` / `wontfix <id>`); a later run **re-opens (⚠) anything you resolved that the audit still finds**. (The tracker lives in the gitignored reports dir — commit `OPEN-ITEMS.md` if you want it shared with the team.)
 
 ### Which harness, in what order
 - **"Audit Predict" / find bugs** → start with the **lens fan-out** (orchestrator). For a pre-merge pass, add the **ownership walk** + **rule sweep**.
 - **Subsystem deep-dive** → ownership walk on that `units` cluster. **Mechanical hygiene** → rule sweep on the relevant `rules`.
-- **Maximal end-to-end:** ground truth → (lens fan-out + ownership walk + rule sweep, each loop-until-dry, no scope) → synthesize the union. This is the last-line-of-defense mode — hundreds of agents; gate it with a `+100m`-style budget. For a quick pass instead, scope + set `dryRounds: 1`.
+- **Maximal end-to-end:** ground truth → run the three harnesses loop-until-dry, **each in its OWN turn with its OWN budget directive** — they share the turn's `budget` pool, so launching all three in one turn starves the later two; give each e.g. a `+35m` → `consolidate.py` → `track.py`. Last-line-of-defense mode, hundreds of agents. Quick pass instead: scope + `dryRounds: 1`.
 
 ## Hard rules (non-negotiable)
 - **Read-only on source.** Never modify `packages/*/sources/**`. The only writes are reports (to `.claude/predict-review/reports/<date>/`, gitignored) and temp sims/scripts (to the session scratchpad).
