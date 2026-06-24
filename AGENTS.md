@@ -34,7 +34,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 ### Manual-Trigger Rules — read when the request matches
 
-- `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes (for a deep Predict protocol review it routes on to the `.claude/predict-review/` lenses + `rule-auditor.md`).
+- `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes (for a deep Predict smart-contract audit, invoke the `predict-audit` skill at `.claude/skills/predict-audit/`; for a full rule audit, `rule-auditor.md`).
 - Before proposing/changing any **Predict economics** (NAV/backing, rounding, oracle trust, liquidation, tick/order-id encoding, floor/leverage, supply/withdraw): grep `.claude/predict-design/DECISION_JOURNAL.md` + `HISTORY.md` for prior rulings; never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met. (The current settled list is also inlined below.)
 - `.claude/rules/wrap-up.md` when the user says "wrap up".
 
@@ -111,7 +111,7 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 
 - When the user asks for a review, read `.claude/rules/code-review.md` before producing findings and review the relevant diff in a code-review stance.
 - For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`.
-- For a deep Predict pre-merge / pre-testnet protocol review, read `.claude/predict-review/00-primer.md` and the relevant lens (01-invariants, 02-audit, 03-oracle, 04-access-control, 05-surface-area, 06-assertions, 07-lifecycle). For a full rule audit of `packages/predict`, follow `rule-auditor.md` (12 read-only rule-family agents).
+- For a deep Predict smart-contract audit (predict + propbook + block_scholes_oracle + account), invoke the **`predict-audit`** skill (`.claude/skills/predict-audit/`): read its `primer.md` + the relevant `lenses/NN-*.md`, or launch `orchestrator.workflow.js` for the full parallel find→verify pipeline. For a full rule audit of `packages/predict`, follow `rule-auditor.md` (12 read-only rule-family agents).
 
 ## When Updating Repo Guidance
 

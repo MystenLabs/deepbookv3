@@ -34,7 +34,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 ### Manual-Trigger Rules — read when the request matches
 
-- **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict protocol review it routes you on to the `.claude/predict-review/` lenses + `rule-auditor.md`)
+- **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict smart-contract audit, invoke the `predict-audit` skill — `.claude/skills/predict-audit/` — which fans the lenses out via `orchestrator.workflow.js`; for a full rule audit, `rule-auditor.md`)
 - **Wrap-up requests** → `.claude/rules/wrap-up.md`
 
 When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`.
