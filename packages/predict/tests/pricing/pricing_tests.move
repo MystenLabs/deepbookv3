@@ -137,7 +137,7 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
         fx.take_oracle();
     // Block Scholes spot = forward = 100e9, so basis = div(100e9, 100e9) = 1.0
-    // exactly; the surface freshness timestamp is min(99_000, landed) = 99_000.
+    // exactly.
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,

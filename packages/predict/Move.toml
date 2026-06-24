@@ -10,9 +10,10 @@ dusdc = { local = "../dusdc" }
 # and its app-data slot live here; the former PredictManager / cap / proof layer
 # collapses onto it. Declared `local` like the other in-repo packages.
 account = { local = "../account" }
-# Standalone Pyth + Block Scholes oracle feeds. Predict consumes `propbook::pyth_feed`
-# and `propbook::block_scholes_feed` for live spot/surface pricing (the former
-# in-package `market_oracle`/`pyth_source` modules were extracted into propbook).
+# Standalone Pyth + split Block Scholes oracle feeds. Predict consumes
+# `propbook::pyth_feed` plus the BS spot/forward/SVI feeds for live pricing (the
+# former in-package `market_oracle`/`pyth_source` modules were extracted into
+# propbook).
 propbook = { local = "../propbook" }
 # DEEP token (from the deepbookv3 repo), used for staking custody (`registry::stake_deep`)
 # and DEEP burning via `token::deep::ProtectedTreasury`.
@@ -22,10 +23,10 @@ token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packag
 # so the publishable root declares the `dep-replacements` linking below. Use
 # `rev = "sui-testnet"` for testnet because Wormhole is custom-deployed there.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
-# The stub Block Scholes verifier. Predict SOURCE does not use it (the BS surface
-# is read through `propbook::block_scholes_feed`), but the test fixtures construct a
-# verified `update::Update` via its public `new_update` to seed surfaces. Declared
-# with the same `local` source propbook uses so the resolver unifies the package.
+# The stub Block Scholes verifier. Predict source does not use it directly (BS
+# data is read through propbook feeds), but test fixtures construct verified
+# spot/forward/SVI updates through it to seed local feeds. Declared with the same
+# `local` source propbook uses so the resolver unifies the package.
 block_scholes_oracle = { local = "../block_scholes_oracle" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source

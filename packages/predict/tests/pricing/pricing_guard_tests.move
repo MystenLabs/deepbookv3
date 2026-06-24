@@ -99,9 +99,8 @@ fun live_quote_with_equal_range_bounds_aborts() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
 fun live_quote_with_stale_block_scholes_surface_aborts() {
     let (mut fx, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config) = setup_live();
-    // The surface freshness timestamp is min(source, update) =
-    // live_source_timestamp_ms (99_000); one ms past the BS price window the spot
-    // and forward feeds are stale and the quote aborts before any pricing.
+    // One ms past the BS price freshness window, the spot and forward feeds are
+    // stale and the quote aborts before any pricing.
     let stale_now =
         test_constants::live_source_timestamp_ms()
         + config.pricing_config().block_scholes_price_freshness_ms()

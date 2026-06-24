@@ -594,8 +594,9 @@ public fun set_pyth_price_for_testing(
     store_pyth_spot(pyth, live_price, source_timestamp_ms, self.clock.timestamp_ms());
 }
 
-/// Write a Block Scholes surface row for `market`'s expiry through the real ingest
-/// path (`spot`/`forward` give the basis; default SVI), at `source_timestamp_ms`.
+/// Write split Block Scholes spot, forward, and SVI rows for `market`'s expiry
+/// through the real ingest path (`spot`/`forward` give the basis; default SVI),
+/// at `source_timestamp_ms`.
 public fun seed_bs_surface(
     self: &mut Fixture,
     market: &ExpiryMarket,

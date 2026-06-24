@@ -28,7 +28,7 @@ settled_value = quantity   if settlement is inside the range, else 0
 
 `quantity` is the contract's notional -- the digital's fixed cash payout --
 denominated in 6-decimal DUSDC quote units and a multiple of the lot size.
-`probability(range)` is the live range probability quoted from the SVI surface
+`probability(range)` is the live range probability quoted from the SVI curve
 (see [pricing and oracles](./pricing-and-oracles.md)), expressed in Predict's
 1e9 fixed-point scale where `1_000_000_000` is probability 1. At settlement the
 range probability collapses to 0 or 1, so the contract is worth either the full

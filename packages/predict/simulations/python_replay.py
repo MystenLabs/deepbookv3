@@ -1442,9 +1442,9 @@ def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
     }
 
 
-# Propbook Block Scholes oracle_lane::ObservationRecorded normalized view: this
-# expiry's surface (spot + forward + SVI). `basis` is no longer an event field
-# (derived as forward/spot).
+# Synthetic normalized view collapsed from Propbook's split Block Scholes spot,
+# forward, and SVI feed events. `basis` is no longer an event field (derived as
+# forward/spot).
 def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
     return {
         "type": "block_scholes_surface_updated",

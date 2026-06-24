@@ -117,11 +117,13 @@ export interface SimState {
     // Expiry timestamp chosen on-chain by the registry cadence manager and emitted
     // in MarketCreated. Stored as a decimal string so state.json stays plain JSON.
     expiryMs: string;
-    // propbook feeds replace the in-package oracle + Pyth source. There is no
-    // writer cap anymore (BS surface updates are permissionless via the verified
-    // `Update`).
+    // Propbook feeds replace the in-package oracle + Pyth source. There is no
+    // writer cap anymore; BS updates are permissionless via verified split `Update`
+    // values.
     pythFeedId: string;
-    bsFeedId: string;
+    bsSpotFeedId: string;
+    bsForwardFeedId: string;
+    bsSviFeedId: string;
     // The sender's canonical derived account wrapper (replaces the predict manager).
     // Owner auth is minted per-call from the tx sender, so there are no capital caps.
     accountWrapperId: string;

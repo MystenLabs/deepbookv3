@@ -5,12 +5,12 @@ package. It simulates protocol behavior and economic activity, not client
 latency.
 
 The current topology is intentionally narrow: one pool vault, one expiry market,
-one oracle, one manager, and many orders. The generated CSV is the transaction
-ledger. Each row is one executable transaction, and only these row actions are
-supported:
+one Propbook source set, one manager, and many orders. The generated CSV is the
+transaction ledger. Each row is one executable transaction, and only these row
+actions are supported:
 
--   `oracle_mint_ptb`: update Block Scholes prices, update SVI, and mint one
-    order in one PTB.
+-   `oracle_mint_ptb`: update Pyth plus Block Scholes spot/forward/SVI data and
+    mint one order in one PTB.
 -   `redeem`: refresh oracle data and redeem one referenced order.
 -   `supply`: refresh oracle data, value the active expiry, and supply DUSDC.
 -   `withdraw`: refresh oracle data, value the active expiry, and withdraw one

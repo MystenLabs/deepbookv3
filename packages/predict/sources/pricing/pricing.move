@@ -7,7 +7,7 @@
 /// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
 /// range prices. It does not mutate feed, pool, expiry, or position state, and it
 /// owns the live pricing boundary: current Propbook feed binding, pre-expiry
-/// market liveness, feed freshness, and Predict's pricing-safe surface envelope.
+/// market liveness, feed freshness, and Predict's pricing-safe BS input envelope.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig};
@@ -41,9 +41,10 @@ const EBlockScholesSVIStale: u64 = 10;
 const EWrongBlockScholesForwardFeed: u64 = 11;
 const EWrongBlockScholesSVIFeed: u64 = 12;
 
-/// Predict's private pricing envelope for raw propbook surfaces. These are not
-/// oracle-source validity rules; they only bound the SVI inputs tightly enough
-/// that Predict's fixed-point pricing math remains live and meaningful.
+/// Predict's private pricing envelope for raw propbook BS inputs. These are not
+/// oracle-source validity rules; they only bound the forward/basis and SVI inputs
+/// tightly enough that Predict's fixed-point pricing math remains live and
+/// meaningful.
 macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
 // max_pricing_spot * max_pricing_basis / float_scaling == u64::max by
 // construction: the re-anchored forward (spot * basis) can't overflow u64.

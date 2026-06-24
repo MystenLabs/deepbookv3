@@ -35,7 +35,7 @@ How the protocol works:
   is modelled as embedded premium financing (a static floor) plus a knock-out on
   the contract's payoff.
 - **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
-  formed from the propbook Pyth spot and Block Scholes surface, the forward
+  formed from the propbook Pyth spot and split Block Scholes feeds, the forward
   fallback, and freshness rules.
 - **[Fees and rebates](./concepts/fees-and-rebates.md)** — the fee components a
   trader pays, the staking discount, and the trading-loss rebate.
