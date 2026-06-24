@@ -1,9 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Block Scholes SVI oracle: one shared object per `(source id, expiry)`,
-/// storing an independent expiry volatility-surface stream through a generic
-/// Propbook oracle lane.
+/// Block Scholes SVI oracle: one shared object per source id, storing
+/// per-expiry volatility-surface streams keyed by expiry timestamp.
 ///
 /// Propbook does not validate Predict's pricing-safe SVI envelope; consumers
 /// own any bounds or no-arbitrage policy needed by their pricing math.
@@ -13,10 +12,9 @@ use block_scholes_oracle::update::SVIUpdate;
 use fixed_math::i64::{Self, I64};
 use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use std::option::{Self, Option};
-use sui::clock::Clock;
+use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
-const EWrongExpiry: u64 = 1;
 const ERawSVINotFound: u64 = 2;
 const EWrongVersion: u64 = 3;
 const ENotNewerVersion: u64 = 4;
@@ -38,15 +36,14 @@ public struct RawSVI has copy, drop, store {
     svi: SVIParams,
 }
 
-/// One Block Scholes SVI feed: version gate plus one generic oracle lane.
+/// One Block Scholes SVI feed: version gate plus one generic oracle lane per expiry.
 public struct BlockScholesSVIFeed has key {
     id: UID,
     bs_source_id: u32,
-    expiry_ms: u64,
     /// Package version this feed runs at; updates require an exact match and
     /// `migrate` advances it forward-only after a package upgrade.
     version: u64,
-    lane: OracleLane<RawSVI>,
+    expiries: Table<u64, OracleLane<RawSVI>>,
 }
 
 // === Read Functions ===
@@ -61,43 +58,50 @@ public fun bs_source_id(feed: &BlockScholesSVIFeed): u32 {
     feed.bs_source_id
 }
 
-/// Return the expiry this feed is bound to.
-public fun expiry_ms(feed: &BlockScholesSVIFeed): u64 {
-    feed.expiry_ms
-}
-
 /// Return the package version this feed runs at.
 public fun version(feed: &BlockScholesSVIFeed): u64 {
     feed.version
 }
 
-/// Latest raw BS SVI read. Aborts if no live update has landed.
-public fun raw_svi(feed: &BlockScholesSVIFeed): OracleRead<RawSVI> {
-    let read = feed.lane.latest_read();
+/// Latest raw BS SVI read for `expiry_ms`. Aborts if no live update has landed.
+public fun raw_svi(feed: &BlockScholesSVIFeed, expiry_ms: u64): OracleRead<RawSVI> {
+    assert!(feed.expiries.contains(expiry_ms), ERawSVINotFound);
+    let read = feed.expiries.borrow(expiry_ms).latest_read();
     assert!(read.is_some(), ERawSVINotFound);
     read.destroy_some()
 }
 
-/// Latest Propbook-normalized SVI params.
-public fun normalized_svi(feed: &BlockScholesSVIFeed): Option<OracleRead<SVIParams>> {
-    let read = feed.lane.latest_read();
+/// Latest Propbook-normalized SVI params for `expiry_ms`.
+public fun normalized_svi(
+    feed: &BlockScholesSVIFeed,
+    expiry_ms: u64,
+): Option<OracleRead<SVIParams>> {
+    if (!feed.expiries.contains(expiry_ms)) return option::none();
+    let read = feed.expiries.borrow(expiry_ms).latest_read();
     if (read.is_none()) return option::none();
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
 
-/// Exact raw BS SVI read for `timestamp_ms`.
-public fun raw_svi_at(feed: &BlockScholesSVIFeed, timestamp_ms: u64): OracleRead<RawSVI> {
-    let read = feed.lane.read_at(timestamp_ms);
+/// Exact raw BS SVI read for `(expiry_ms, timestamp_ms)`.
+public fun raw_svi_at(
+    feed: &BlockScholesSVIFeed,
+    expiry_ms: u64,
+    timestamp_ms: u64,
+): OracleRead<RawSVI> {
+    assert!(feed.expiries.contains(expiry_ms), ERawSVINotFound);
+    let read = feed.expiries.borrow(expiry_ms).read_at(timestamp_ms);
     assert!(read.is_some(), ERawSVINotFound);
     read.destroy_some()
 }
 
-/// Exact Propbook-normalized SVI params for `timestamp_ms`.
+/// Exact Propbook-normalized SVI params for `(expiry_ms, timestamp_ms)`.
 public fun normalized_svi_at(
     feed: &BlockScholesSVIFeed,
+    expiry_ms: u64,
     timestamp_ms: u64,
 ): Option<OracleRead<SVIParams>> {
-    let read = feed.lane.read_at(timestamp_ms);
+    if (!feed.expiries.contains(expiry_ms)) return option::none();
+    let read = feed.expiries.borrow(expiry_ms).read_at(timestamp_ms);
     if (read.is_none()) return option::none();
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
@@ -137,26 +141,36 @@ public fun sigma(params: &SVIParams): u64 {
 // === Write Functions ===
 
 /// Ingest a verified BS SVI update into this feed's generic oracle lane.
-public fun update(feed: &mut BlockScholesSVIFeed, update: SVIUpdate, clock: &Clock) {
+public fun update(
+    feed: &mut BlockScholesSVIFeed,
+    update: SVIUpdate,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.svi_source_id() == feed.bs_source_id, EWrongSource);
-    assert!(update.svi_expiry_ms() == feed.expiry_ms, EWrongExpiry);
 
     let read = feed.new_read(&update, clock.timestamp_ms());
+    let expiry = read.read_value().expiry_ms;
     let id = feed.id();
-    feed.lane.update(id, read);
+    feed.update_expiry(expiry, id, read, ctx);
 }
 
 /// Insert an exact BS SVI observation keyed by the update-derived source
 /// timestamp. This does not mutate the live latest observation.
-public fun insert_at(feed: &mut BlockScholesSVIFeed, update: SVIUpdate, clock: &Clock) {
+public fun insert_at(
+    feed: &mut BlockScholesSVIFeed,
+    update: SVIUpdate,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.svi_source_id() == feed.bs_source_id, EWrongSource);
-    assert!(update.svi_expiry_ms() == feed.expiry_ms, EWrongExpiry);
 
     let read = feed.new_read(&update, clock.timestamp_ms());
+    let expiry = read.read_value().expiry_ms;
     let id = feed.id();
-    feed.lane.insert_at(id, read);
+    feed.insert_expiry_at(expiry, id, read, ctx);
 }
 
 /// Migrate this feed to the running package version. Forward-only:
@@ -168,19 +182,17 @@ public fun migrate(feed: &mut BlockScholesSVIFeed) {
 
 // === Public-Package Functions ===
 
-/// Create and share a BS SVI feed for `(bs_source_id, expiry_ms)`.
+/// Create and share a BS SVI feed for `bs_source_id`.
 /// Package-only: `registry` owns source-catalog uniqueness.
 public(package) fun create_and_share(
     bs_source_id: u32,
-    expiry_ms: u64,
     ctx: &mut TxContext,
 ): ID {
     let feed = BlockScholesSVIFeed {
         id: object::new(ctx),
         bs_source_id,
-        expiry_ms,
         version: constants::current_version!(),
-        lane: oracle_lane::new(ctx),
+        expiries: table::new(ctx),
     };
     let id = feed.id();
     transfer::share_object(feed);
@@ -199,7 +211,7 @@ fun new_read(
         update_timestamp_ms,
         RawSVI {
             bs_source_id: feed.bs_source_id,
-            expiry_ms: feed.expiry_ms,
+            expiry_ms: update.svi_expiry_ms(),
             svi: SVIParams {
                 a: update.svi_a(),
                 b: update.svi_b(),
@@ -209,6 +221,40 @@ fun new_read(
             },
         },
     )
+}
+
+fun update_expiry(
+    feed: &mut BlockScholesSVIFeed,
+    expiry_ms: u64,
+    propbook_oracle_id: ID,
+    read: OracleRead<RawSVI>,
+    ctx: &mut TxContext,
+) {
+    if (feed.expiries.contains(expiry_ms)) {
+        feed.expiries.borrow_mut(expiry_ms).update(propbook_oracle_id, read);
+    } else {
+        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        let mut lane = oracle_lane::new(ctx);
+        lane.update(propbook_oracle_id, read);
+        feed.expiries.add(expiry_ms, lane);
+    };
+}
+
+fun insert_expiry_at(
+    feed: &mut BlockScholesSVIFeed,
+    expiry_ms: u64,
+    propbook_oracle_id: ID,
+    read: OracleRead<RawSVI>,
+    ctx: &mut TxContext,
+) {
+    if (feed.expiries.contains(expiry_ms)) {
+        feed.expiries.borrow_mut(expiry_ms).insert_at(propbook_oracle_id, read);
+    } else {
+        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        let mut lane = oracle_lane::new(ctx);
+        lane.insert_at(propbook_oracle_id, read);
+        feed.expiries.add(expiry_ms, lane);
+    };
 }
 
 fun normalized_svi_from_read(read: &OracleRead<RawSVI>): OracleRead<SVIParams> {

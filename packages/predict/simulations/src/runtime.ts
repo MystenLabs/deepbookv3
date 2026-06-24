@@ -232,7 +232,7 @@ export async function nextOneMonthExpiryMs(): Promise<bigint> {
     return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
 }
 
-interface SplitBlockScholesFeedIds {
+interface BlockScholesSurfaceFeedIds {
     bsSpotFeedId: string;
     bsForwardFeedId: string;
     bsSviFeedId: string;
@@ -563,8 +563,9 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
 }
 
 // Admin-approve one Propbook underlying for Predict and permissionlessly create
-// the global Pyth spot feed plus the global BS spot feed. Per-expiry BS
-// forward/SVI feeds are created after the harness precomputes the cadence expiry.
+// the permanent Pyth spot feed plus the permanent BS spot feed. The permanent BS
+// forward/SVI surface feeds are created after this transaction so their IDs can be
+// captured from object changes.
 export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -588,23 +589,15 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
     return tx;
 }
 
-export function createBlockScholesExpiryFeedsTx(expiry: bigint): Transaction {
+export function createBlockScholesSurfaceFeedsTx(): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: propbookTarget("registry", "create_and_share_block_scholes_forward_feed"),
-        arguments: [
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(expiry),
-        ],
+        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
     });
     tx.moveCall({
         target: propbookTarget("registry", "create_and_share_block_scholes_svi_feed"),
-        arguments: [
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(expiry),
-        ],
+        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
     });
     return tx;
 }
@@ -637,8 +630,8 @@ export function setCadenceConfigTx(params: {
 }
 
 // Admin-bind the Pyth spot feed and BS spot feed to one canonical Propbook
-// underlying. Must run after the feeds are shared. Per-expiry BS forward/SVI feeds
-// are bound separately before market creation.
+// underlying. Must run after the feeds are shared. The permanent BS forward/SVI
+// surface is bound separately before market creation.
 export function bindFeedsToUnderlyingTx(params: {
     pythFeedId: string;
     bsSpotFeedId: string;
@@ -665,12 +658,12 @@ export function bindFeedsToUnderlyingTx(params: {
     return tx;
 }
 
-export function bindBlockScholesExpiryFeedsToUnderlyingTx(
-    params: Pick<SplitBlockScholesFeedIds, "bsForwardFeedId" | "bsSviFeedId">,
+export function bindBlockScholesSurfaceToUnderlyingTx(
+    params: Pick<BlockScholesSurfaceFeedIds, "bsForwardFeedId" | "bsSviFeedId">,
 ): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: propbookTarget("registry", "bind_block_scholes_expiry_to_underlying"),
+        target: propbookTarget("registry", "bind_block_scholes_surface_to_underlying"),
         arguments: [
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
@@ -744,9 +737,9 @@ export function updatePythTrustedSignerTx(): Transaction {
 // Seed the split Block Scholes feeds (and Pyth spot) for the market's expiry. Market
 // creation itself reads NO spot now (absolute ticks need no grid centering), but a
 // fresh BS price/SVI source set must exist before the first mint and before any
-// flush valuation can price `current_nav`. The per-expiry feeds must already be
-// created and bound before market creation, but seeding the feed values happens
-// after the market is created.
+// flush valuation can price `current_nav`. The permanent forward/SVI feeds must
+// already be created and bound before market creation, but seeding the per-expiry
+// feed rows happens after the market is created.
 export async function seedOracleTx(params: {
     pythFeedId: string;
     bsSpotFeedId: string;

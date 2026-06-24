@@ -90,10 +90,9 @@ public(package) fun load_live_pricer(
         bs_spot,
         bs_forward,
         bs_svi,
-        expiry,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    let (forward, svi) = live_inputs(config, pyth, bs_spot, bs_forward, bs_svi, clock);
+    let (forward, svi) = live_inputs(config, pyth, bs_spot, bs_forward, bs_svi, expiry, clock);
     Pricer { expiry_market_id, forward, svi }
 }
 
@@ -116,7 +115,6 @@ fun assert_current_oracles(
     bs_spot: &BlockScholesSpotFeed,
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
-    expiry: u64,
 ) {
     assert!(
         propbook_registry
@@ -132,19 +130,13 @@ fun assert_current_oracles(
     );
     assert!(
         propbook_registry
-            .propbook_block_scholes_forward_id_for_underlying_expiry(
-                propbook_underlying_id,
-                expiry,
-            )
+            .propbook_block_scholes_forward_id_for_underlying(propbook_underlying_id)
             .contains(&bs_forward.id()),
         EWrongBlockScholesForwardFeed,
     );
     assert!(
         propbook_registry
-            .propbook_block_scholes_svi_id_for_underlying_expiry(
-                propbook_underlying_id,
-                expiry,
-            )
+            .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
             .contains(&bs_svi.id()),
         EWrongBlockScholesSVIFeed,
     );
@@ -163,6 +155,7 @@ fun live_inputs(
     bs_spot: &BlockScholesSpotFeed,
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
+    expiry: u64,
     clock: &Clock,
 ): (u64, SVIParams) {
     let bs_spot_read = bs_spot.normalized_spot();
@@ -178,7 +171,7 @@ fun live_inputs(
     );
     let bs_spot = bs_spot_read.read_value();
 
-    let bs_forward_read = bs_forward.normalized_forward();
+    let bs_forward_read = bs_forward.normalized_forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceStale);
     let bs_forward_read = bs_forward_read.destroy_some();
     assert!(
@@ -191,7 +184,7 @@ fun live_inputs(
     );
     let bs_forward = bs_forward_read.read_value();
 
-    let svi_read = bs_svi.normalized_svi();
+    let svi_read = bs_svi.normalized_svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIStale);
     let svi_read = svi_read.destroy_some();
     assert!(
