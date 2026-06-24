@@ -151,20 +151,24 @@ Source wrapper creation is permissionless and only records the source catalog.
 Canonical binding is admin-gated because it is the trust claim that a source id
 represents a Propbook underlying.
 
-Admin trust model: package init mints one `RegistryAdminCap`, and canonical bind
-or rebind is immediate for whoever holds that cap. Propbook does not implement
-on-chain multisig, rotation, timelock, or two-step rebinds. Production deployments
-should treat the cap as governance custody and enforce multisig/timelock
-operationally, or add an on-chain governance layer before relying on registry
-bindings as an irreversible trust anchor.
+Admin trust model: package init mints one `RegistryAdminCap`, and canonical
+bindings are insert-only for whoever holds that cap. Propbook does not implement
+on-chain multisig, rotation, timelock, or replacement flows. Production
+deployments should treat the cap as governance custody and enforce
+multisig/timelock operationally, or add an on-chain governance layer before
+relying on registry bindings as an irreversible trust anchor.
 
 Typical discovery question:
 
 > What is the Propbook Pyth oracle object for BTC?
 
 Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
-equivalent BS lookup is
-`propbook_block_scholes_id_for_underlying(registry, propbook_underlying_id)`.
+equivalent BS spot lookup is
+`propbook_block_scholes_spot_id_for_underlying(registry, propbook_underlying_id)`.
+Per-expiry BS lookups are
+`propbook_block_scholes_forward_id_for_underlying_expiry(registry, propbook_underlying_id, expiry_ms)`
+and
+`propbook_block_scholes_svi_id_for_underlying_expiry(registry, propbook_underlying_id, expiry_ms)`.
 
 ## Events
 
@@ -173,8 +177,9 @@ Propbook emits generic oracle events:
 - `ObservationRecorded<OracleRead<Payload>>`
 - `ObservationInserted<OracleRead<Payload>>`
 
-For BS, the payload includes the expiry, so the generic event is enough to index
-per-expiry writes. Exact-insert events include the source timestamp in the
+For per-expiry BS forward and SVI feeds, the payload includes the expiry, so the
+generic event is enough to index per-expiry writes. BS spot is source-level and
+does not carry an expiry. Exact-insert events include the source timestamp in the
 `OracleRead` envelope.
 
 High-frequency cost caveats:

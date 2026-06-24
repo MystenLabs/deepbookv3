@@ -200,13 +200,13 @@ public fun set_cadence_config(
 /// market per `(propbook_underlying_id, expiry)`, that the underlying is
 /// admin-approved for Predict, that the cadence is enabled and inside its
 /// deployment window after skipping enabled higher-rank cadence slots and already
-/// created markets, and — via Propbook's admin-gated canonical binding — that both
-/// required oracle kinds are currently bound for the underlying. The market
-/// snapshots the cadence tick size, while pool accounting snapshots the cadence
-/// allocation cap and initial expiry cash target. Priced flows resolve current
-/// canonical oracle object IDs from Propbook so a Propbook rebind affects
-/// existing markets. The market is created with zero cash and registered with
-/// the pool vault as an accounting row only; it is not mintable until
+/// created markets, and — via Propbook's admin-gated canonical binding — that
+/// Pyth spot, BS spot, and the selected expiry's BS forward/SVI feeds are bound
+/// for the underlying. The market snapshots the cadence tick size, while pool
+/// accounting snapshots the cadence allocation cap and initial expiry cash
+/// target. Priced flows resolve the canonical oracle object IDs from Propbook's
+/// insert-only bindings. The market is created with zero cash and registered
+/// with the pool vault as an accounting row only; it is not mintable until
 /// `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
