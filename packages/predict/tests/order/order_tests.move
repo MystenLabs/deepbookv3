@@ -203,6 +203,12 @@ fun new_rejects_lower_not_below_higher() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = order::EInvalidRange)]
+fun new_rejects_full_open_range() {
+    order::new_from_ticks(0, constants::pos_inf_tick!(), 0, LEV_QUANTITY, LEV_SEQ);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = order::EInvalidFloorShares)]
 fun new_rejects_floor_shares_above_quantity() {
     order::new_from_ticks(

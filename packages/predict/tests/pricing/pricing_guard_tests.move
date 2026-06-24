@@ -39,6 +39,7 @@
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
+use block_scholes_oracle::update;
 use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleFixture},
@@ -106,6 +107,77 @@ fun live_quote_with_stale_block_scholes_surface_aborts() {
         + config.pricing_config().block_scholes_price_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
+    live_quote(
+        &fx,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        &oracle_registry,
+        &config,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
+    let (mut fx, pyth, mut bs_spot, bs_forward, bs_svi, oracle_registry, config) = setup_live();
+    let stale_now =
+        test_constants::live_source_timestamp_ms()
+        + config.pricing_config().block_scholes_price_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    bs_spot.update(
+        update::new_spot_update(
+            test_constants::pyth_feed_id(),
+            stale_now,
+            test_constants::default_live_price(),
+        ),
+        fx.clock(),
+    );
+
+    live_quote(
+        &fx,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        &oracle_registry,
+        &config,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
+fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
+    let (mut fx, pyth, mut bs_spot, mut bs_forward, bs_svi, oracle_registry, config) = setup_live();
+    let stale_now =
+        test_constants::live_source_timestamp_ms()
+        + config.pricing_config().block_scholes_svi_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    bs_spot.update(
+        update::new_spot_update(
+            test_constants::pyth_feed_id(),
+            stale_now,
+            test_constants::default_live_price(),
+        ),
+        fx.clock(),
+    );
+    bs_forward.update(
+        update::new_forward_update(
+            test_constants::pyth_feed_id(),
+            fx.expiry(),
+            stale_now,
+            test_constants::default_live_price(),
+        ),
+        fx.clock(),
+    );
+
     live_quote(
         &fx,
         &pyth,
