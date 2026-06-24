@@ -54,6 +54,16 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     pending_protocol_profit_after: u64,
 }
 
+/// Emitted when a keeper resolves one account's settled trading-loss rebate.
+public struct TradingLossRebateClaimed has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    account_id: ID,
+    rebate_amount: u64,
+    residual_returned: u64,
+    idle_balance_after: u64,
+}
+
 /// Emitted when an account stakes DEEP for trading benefits.
 public struct DeepStaked has copy, drop, store {
     pool_vault_id: ID,
@@ -260,6 +270,24 @@ public(package) fun emit_expiry_profit_materialized(
         protocol_reserve_balance_after,
         profit_basis_after,
         pending_protocol_profit_after,
+    });
+}
+
+public(package) fun emit_trading_loss_rebate_claimed(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    account_id: ID,
+    rebate_amount: u64,
+    residual_returned: u64,
+    idle_balance_after: u64,
+) {
+    event::emit(TradingLossRebateClaimed {
+        pool_vault_id,
+        expiry_market_id,
+        account_id,
+        rebate_amount,
+        residual_returned,
+        idle_balance_after,
     });
 }
 

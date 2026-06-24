@@ -441,6 +441,11 @@ public fun set_mint_paused(
 
 // === Public-Package Functions ===
 
+/// Return the recorded settlement price. Aborts if the market is not settled.
+public(package) fun settlement_price(market: &ExpiryMarket): u64 {
+    market.settlement_price.destroy_some()
+}
+
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
 /// the attempt. This is the canonical passive settlement gate used immediately
@@ -491,6 +496,46 @@ public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<D
 /// Receive sponsor-funded fee incentives allocated by the pool vault.
 public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<DUSDC>) {
     market.fee_incentive_balance.join(incentives);
+}
+
+/// Resolve one account's settled trading-loss rebate and return unearned reserve.
+public(package) fun claim_trading_loss_rebate(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    ctx: &mut TxContext,
+): (Balance<DUSDC>, u64) {
+    assert!(market.is_settled(), EMarketNotSettled);
+    market.materialize_settled_liability();
+
+    let (trading_fees_paid, gross_profit) =
+        predict_account::resolve_expiry_summary(account, market.id());
+    if (trading_fees_paid == 0) {
+        return (balance::zero(), 0)
+    };
+
+    let resolved_rebate_reserve = market
+        .cash
+        .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
+    let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
+    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let rebate_amount = config
+        .stake_config()
+        .rebate_amount(eligible_rebate, active_stake);
+
+    if (rebate_amount > 0) {
+        let payout = market.cash.pay_authorized(rebate_amount);
+        account.deposit<DUSDC>(payout.into_coin(ctx));
+    };
+
+    let residual_rebate_reserve = resolved_rebate_reserve - rebate_amount;
+    let residual_cash = if (residual_rebate_reserve > 0) {
+        market.cash.pay_authorized(residual_rebate_reserve)
+    } else {
+        balance::zero()
+    };
+    market.assert_cash_backing();
+    (residual_cash, rebate_amount)
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
@@ -573,10 +618,6 @@ public(package) fun create_and_share(
 
 fun is_settled(market: &ExpiryMarket): bool {
     market.settlement_price.is_some()
-}
-
-fun settlement_price(market: &ExpiryMarket): u64 {
-    market.settlement_price.destroy_some()
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
@@ -877,6 +918,7 @@ fun settle_mint_payment(
     let withdraw_amount = net_premium + trader_fee_amount + builder_fee_amount + penalty_amount;
 
     predict_account::add_position(account, market.id(), order.id(), order.id(), ctx);
+    predict_account::record_gross_paid_to_expiry(account, market.id(), net_premium, ctx);
     let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(copy builder_code_id, builder_fee_payment);
@@ -917,6 +959,7 @@ fun settle_live_redeem_payment(
     let mut payout = market.cash.pay_authorized(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
+    predict_account::record_gross_received_from_expiry(account, market.id(), redeem_amount, ctx);
     market.collect_trade_fee(account, fee, fee_amount, ctx);
     send_builder_fee(copy builder_code_id, builder_fee);
     // Penalty surplus stays in expiry cash rather than flowing to the redeemer.
@@ -933,6 +976,7 @@ fun settle_settled_redeem_payment(
     payout_amount: u64,
     ctx: &mut TxContext,
 ) {
+    predict_account::record_gross_received_from_expiry(account, market.id(), payout_amount, ctx);
     // A settled losing position pays nothing; `redeem_settled` is permissionless,
     // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
     if (payout_amount > 0) {
@@ -950,7 +994,7 @@ fun collect_trade_fee(
     trader_fee_amount: u64,
     ctx: &mut TxContext,
 ) {
-    market.cash.collect_trade_fee(fee);
+    market.cash.collect_trade_fee(fee, trader_fee_amount);
     predict_account::record_trading_fee_paid(account, market.id(), trader_fee_amount, ctx);
 }
 
