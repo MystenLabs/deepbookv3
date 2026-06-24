@@ -73,8 +73,6 @@ interface.
 -   `data/generate_scenario.py`: random normal/long scenario generator.
 -   `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
     follow-up analysis questions (economics).
--   `docs/GAS_EXPERIMENTS.md`: running log of gas/performance experiments on the
-    Predict contracts — hypothesis, change, measurement, and keep/revert decision.
 -   `charts/chart_*.py`: standalone chart scripts; one script writes one chart
     file.
 -   `charts/chart_common.py`: shared chart styling and timeline helpers.
