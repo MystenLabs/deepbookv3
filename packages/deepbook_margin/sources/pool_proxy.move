@@ -302,15 +302,17 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
     let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
+    let (_, _, min_size) = pool.pool_book_params();
 
     // Reduce-only. The ask (closing a long) may sell up to the full base the
     // manager holds, so a long can be fully unwound — selling base can only
-    // shrink base exposure, never flip it short. The bid (covering a short)
-    // stays capped at the net short (`base_debt - base_asset`): buying past it
-    // would flip the short into a fresh long, i.e. open exposure rather than
-    // reduce it. The monotonic risk-ratio check below guards value leak.
+    // shrink base exposure, never flip it short. The bid (covering a short) is
+    // capped at the net short (`base_debt - base_asset`), but never below one
+    // `min_size` order, so a sub-lot net debt (e.g. accrued-interest dust) can
+    // still be covered instead of leaving the position stuck. The monotonic
+    // risk-ratio check below guards value leak.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
+        (is_bid && base_debt > base_asset && quantity <= (base_debt - base_asset).max(min_size)) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -407,10 +409,13 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // The order is a bid, and quantity is less than the net base debt.
-    // The order is a ask, and quote quantity is less than the net quote debt.
+    // Reduce-only (legacy net-debt cap on both sides). The bid is never capped
+    // below one `min_size` order, so a sub-lot net debt can still be covered.
+    // This entry is superseded for closing (see the doc above); the floor only
+    // keeps it consistent with the live reduce-only entries.
+    let (_, _, min_size) = pool.pool_book_params();
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
+        (is_bid && base_debt > base_asset && quantity <= (base_debt - base_asset).max(min_size)) ||
             (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
         ENotReduceOnlyOrder,
     );
@@ -495,6 +500,7 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
     let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
+    let (_, _, min_size) = pool.pool_book_params();
 
     let (effective_price, _) = calculate_effective_price(
         pool,
@@ -506,12 +512,13 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
 
     // Reduce-only. The ask (closing a long) may sell up to the full base the
     // manager holds — selling can only shrink base exposure, never flip it
-    // short — so a long fully closes and the repay absorbs any proceeds past the
-    // debt. The bid (covering a short) stays capped at the net short
-    // (`base_debt - base_asset`) so buying back can't overshoot into a fresh
-    // long. The net-state monotonic check below guards value leak.
+    // short. The bid (covering a short) is capped at the net short
+    // (`base_debt - base_asset`), but never below one `min_size` order, so a
+    // sub-lot net debt (e.g. accrued-interest dust) can still be covered instead
+    // of leaving the position stuck. The net-state monotonic check below guards
+    // value leak.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
+        (is_bid && base_debt > base_asset && quantity <= (base_debt - base_asset).max(min_size)) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -567,6 +574,86 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         );
         assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
     };
+
+    order_info
+}
+
+/// Atomically places a market order and repays the loan with the proceeds,
+/// gating post-repay solvency on `min_open_risk_ratio`. This is the everyday
+/// close / deleverage tool: unlike `place_market_order_v2`, the repay runs
+/// *before* the solvency check, so the deleverage credit lets a position close
+/// cleanly even in the `liquidation..min_borrow` band — a full close drives debt
+/// to 0 (`risk_ratio` MAX), which always passes.
+///
+/// Not reduce-only: there is no quantity cap, so a close may overshoot the debt
+/// (e.g. round past accrued-interest dust that isn't lot-aligned). That is safe
+/// — the repay only ever reduces debt, zero debt has no bad-debt risk to the
+/// lending pool, any surplus base/quote is the manager's own holding, and
+/// `assert_price` still bounds slippage. The repay is the safety mechanism here,
+/// not a quantity cap. Requires margin trading enabled; in reduce-only mode use
+/// `place_reduce_only_market_order_and_repay_loan`.
+public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    registry.load_inner();
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    let (effective_price, _) = calculate_effective_price(
+        pool,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+    );
+    registry.assert_price(pool.id(), effective_price, is_bid, clock);
+
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    let order_info = pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    );
+
+    // Repay the debt side with the settled proceeds *before* the solvency check,
+    // so a deleveraging close passes where the bare swap would not. Skipped when
+    // the manager has no debt.
+    if (margin_manager.has_base_debt()) {
+        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
+    } else if (margin_manager.borrowed_quote_shares() > 0) {
+        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
+    };
+
+    assert_post_trade_solvent(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
 
     order_info
 }

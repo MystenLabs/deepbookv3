@@ -1487,6 +1487,43 @@ public fun place_reduce_only_market_order_and_repay_loan_for_test<BaseAsset, Quo
     order_info
 }
 
+public fun place_market_order_and_repay_loan_for_test<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    registry: &MarginRegistry,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): deepbook::order_info::OrderInfo {
+    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy::place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+        registry,
+        mm,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        &base_oracle,
+        &quote_oracle,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(base_oracle);
+    destroy(quote_oracle);
+    order_info
+}
+
 public fun execute_conditional_orders_v2_for_test<BaseAsset, QuoteAsset>(
     scenario: &mut Scenario,
     base_margin_pool: &MarginPool<BaseAsset>,
