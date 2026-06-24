@@ -6865,3 +6865,105 @@ fun reduce_only_bid_allows_min_size_when_net_debt_is_sub_lot() {
     return_shared(quote_pool);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun reduce_only_and_repay_rounds_net_debt_up_to_lot_to_fully_close() {
+    // Reduce-only round-up-to-lot floor: a non-lot-aligned net short can be fully
+    // closed by buying the next lot up. Borrow 30 USDC, withdraw all but 500 raw,
+    // leaving a net short of ~29_999_500 (not lot-aligned, lot = 1000). The
+    // reduce-only and-repay bid for 30_000_000 (the net rounded up to the next
+    // lot) is accepted and clears the loan; the un-rounded net cap would reject
+    // it, stranding the dust.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(100 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        30 * test_constants::usdc_multiplier(), // 30 USDC = 30_000_000 (lot-aligned)
+        &clock,
+        scenario.ctx(),
+    );
+    // Withdraw all but 500 raw, leaving net short = 30_000_000 - 500 = 29_999_500
+    // (not a multiple of lot_size 1000).
+    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        30 * test_constants::usdc_multiplier() - 500,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(withdrawn);
+    destroy_2!(usdc_price, usdt_price);
+
+    // Buy 30_000_000 — the net short (~29_999_500) rounded up to the next lot.
+    let order_info = test_helpers::place_reduce_only_market_order_and_repay_loan_for_test<
+        USDC,
+        USDT,
+    >(
+        &mut scenario,
+        &registry,
+        &mut mm,
+        &mut pool,
+        &mut base_pool,
+        &mut quote_pool,
+        1,
+        constants::self_matching_allowed(),
+        30 * test_constants::usdc_multiplier(),
+        true, // is_bid = true (cover the short)
+        false,
+        &clock,
+    );
+    destroy(order_info);
+
+    // Rounding up to the lot let the dust debt be fully cleared.
+    assert_eq!(mm.borrowed_base_shares(), 0);
+
+    return_shared_3!(mm, pool, base_pool);
+    return_shared(quote_pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}

@@ -302,17 +302,16 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
     let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
-    let (_, _, min_size) = pool.pool_book_params();
 
     // Reduce-only. The ask (closing a long) may sell up to the full base the
     // manager holds, so a long can be fully unwound — selling base can only
     // shrink base exposure, never flip it short. The bid (covering a short) is
-    // capped at the net short (`base_debt - base_asset`), but never below one
-    // `min_size` order, so a sub-lot net debt (e.g. accrued-interest dust) can
-    // still be covered instead of leaving the position stuck. The monotonic
-    // risk-ratio check below guards value leak.
+    // capped at the net short rounded up to the next lot and floored at one
+    // `min_size` order (`reduce_only_bid_cap`), so a non-lot-aligned or sub-lot
+    // net debt (e.g. accrued-interest dust) can still be fully covered. The
+    // monotonic risk-ratio check below guards value leak.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= (base_debt - base_asset).max(min_size)) ||
+        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -409,13 +408,13 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // Reduce-only (legacy net-debt cap on both sides). The bid is never capped
-    // below one `min_size` order, so a sub-lot net debt can still be covered.
-    // This entry is superseded for closing (see the doc above); the floor only
-    // keeps it consistent with the live reduce-only entries.
-    let (_, _, min_size) = pool.pool_book_params();
+    // Reduce-only (legacy net-debt cap; ask still uses the old quote net cap).
+    // The bid cap rounds the net short up to the next lot and floors it at one
+    // `min_size` (`reduce_only_bid_cap`) so a non-lot-aligned/sub-lot debt can be
+    // covered. This entry is superseded for closing (see the doc above); the cap
+    // only keeps it consistent with the live reduce-only entries.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= (base_debt - base_asset).max(min_size)) ||
+        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
             (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
         ENotReduceOnlyOrder,
     );
@@ -500,7 +499,6 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
     let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
-    let (_, _, min_size) = pool.pool_book_params();
 
     let (effective_price, _) = calculate_effective_price(
         pool,
@@ -512,13 +510,13 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
 
     // Reduce-only. The ask (closing a long) may sell up to the full base the
     // manager holds — selling can only shrink base exposure, never flip it
-    // short. The bid (covering a short) is capped at the net short
-    // (`base_debt - base_asset`), but never below one `min_size` order, so a
-    // sub-lot net debt (e.g. accrued-interest dust) can still be covered instead
-    // of leaving the position stuck. The net-state monotonic check below guards
-    // value leak.
+    // short. The bid (covering a short) is capped at the net short rounded up to
+    // the next lot and floored at one `min_size` order (`reduce_only_bid_cap`),
+    // so a non-lot-aligned or sub-lot net debt (e.g. accrued-interest dust) can
+    // still be fully covered. The net-state monotonic check below guards value
+    // leak.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= (base_debt - base_asset).max(min_size)) ||
+        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -888,6 +886,19 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
 }
 
 // === Internal Functions ===
+
+/// Reduce-only bid quantity cap for covering a short. The net short is rounded
+/// *up* to the next lot so a non-lot-aligned debt (e.g. accrued interest) can be
+/// fully cleared, and floored at one `min_size` order so a sub-lot net debt
+/// isn't stuck. The round-up is bounded by one lot, so the post-repay residual
+/// long is always under one lot (dust) — it never opens meaningful new exposure.
+fun reduce_only_bid_cap<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    net_debt: u64,
+): u64 {
+    let (_, lot_size, min_size) = pool.pool_book_params();
+    (net_debt.div_ceil(lot_size) * lot_size).max(min_size)
+}
 
 /// Calculates the effective price for a market order by querying the pool.
 /// Returns (effective_price, quote_amount) where quote_amount is quote_in for bids and quote_out for asks.
