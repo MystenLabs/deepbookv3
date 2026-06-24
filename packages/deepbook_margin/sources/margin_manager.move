@@ -2059,7 +2059,10 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
 
     // Deleverage with the market proceeds so the fill improves (not just holds)
     // solvency. The repay only moves the manager's own funds against its own
-    // debt, so it is safe in this permissionless path.
+    // debt, so it is safe in this permissionless path. A manager holds at most
+    // one debt side at a time (single `margin_pool_id: Option<ID>`, enforced by
+    // `can_borrow`), so `has_base_debt()`-else-quote is an exhaustive dispatch,
+    // not a both-sides-simultaneously assumption.
     if (market_filled && has_debt) {
         if (self.has_base_debt()) {
             self.repay<BaseAsset, QuoteAsset, BaseAsset>(

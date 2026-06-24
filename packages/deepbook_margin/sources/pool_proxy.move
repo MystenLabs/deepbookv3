@@ -999,9 +999,13 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
 
 /// Reduce-only bid quantity cap for covering a short. The net short is rounded
 /// *up* to the next lot so a non-lot-aligned debt (e.g. accrued interest) can be
-/// fully cleared, and floored at one `min_size` order so a sub-lot net debt
-/// isn't stuck. The round-up is bounded by one lot, so the post-repay residual
-/// long is always under one lot (dust) — it never opens meaningful new exposure.
+/// fully cleared, and floored at one `min_size` so a sub-`min_size` net debt
+/// isn't stuck below the orderbook minimum. The over-cover is therefore bounded
+/// by one lot (round-up branch) or one `min_size` (floor branch — which can
+/// exceed a lot when `min_size > lot_size`); either way it's a fixed bound, not
+/// open-ended exposure. The reduce-only monotonic check — or, in the and-repay
+/// entries, the post-repay solvency gate — is what actually guards value; this
+/// cap only enforces reduce-only *semantics*.
 fun reduce_only_bid_cap<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     net_debt: u64,

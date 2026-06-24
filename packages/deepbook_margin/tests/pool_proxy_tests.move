@@ -6672,11 +6672,11 @@ fun place_market_order_and_repay_loan_fully_closes_long() {
 
 #[test]
 fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
-    // A short (USDC debt, holding USDT) closes with a bid that buys *more* than
-    // the debt — there is no reduce-only quantity cap, so it can overshoot to
-    // clear the loan (e.g. round past dust). Owe 100 USDC, buy 101, repay 100,
-    // debt -> 0 with ~1 USDC surplus. The reduce-only bid (capped at the net
-    // short) would reject 101.
+    // A short (USDC debt, holding USDT) closes with a bid that buys well *past*
+    // the debt — there is no reduce-only quantity cap, so the overshoot is
+    // allowed. Owe 100 USDC, buy 150, repay 100, debt -> 0 with a 50 USDC surplus
+    // that lands as the manager's own holding (not an abort, not lost). The
+    // reduce-only bid (capped at the net short rounded to a lot) would reject 150.
     let (
         mut scenario,
         clock,
@@ -6752,15 +6752,17 @@ fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
         &mut quote_pool,
         1,
         constants::self_matching_allowed(),
-        101 * test_constants::usdc_multiplier(), // buy 101 to cover a 100 debt
+        150 * test_constants::usdc_multiplier(), // buy 150 to cover a 100 debt
         true, // is_bid = true (buy base to cover the short)
         false,
         &clock,
     );
     destroy(order_info);
 
-    // Overbought past the debt and fully closed.
+    // Overbought well past the debt and fully closed; the 50 USDC overshoot is
+    // retained as the manager's own base balance, not lost or aborted.
     assert_eq!(mm.borrowed_base_shares(), 0);
+    assert_eq!(mm.base_balance(), 50 * test_constants::usdc_multiplier());
 
     return_shared_3!(mm, pool, base_pool);
     return_shared(quote_pool);
