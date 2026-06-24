@@ -1,0 +1,59 @@
+{
+  "network": "testnet",
+  "chainId": "4c78adac",
+  "deployer": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+  "packages": {
+    "fixed_math": "0x41b30f9ca838e5a3423a964061bdd6b64dc13c7ddcf12c0be6691541cd1267cd",
+    "block_scholes_oracle": "0x291096a5fae0468e19450b1af6f42b367eda6a29123b02b95bc40551658051b1",
+    "account": "0x0ab3ebd43d15ce9ab7abd2a762da55c2b0ec0ac68cdaed6b6e739b086757b68a",
+    "propbook": "0x58e571841813e814d4244d6d34f9c6fcc5de9397ff063f659db7ad1caf6433a6",
+    "predict": "0x0e8d178bb29c78e10bf3b16c46a0484cbf75d9c99a19b3586536f736d9db0a3d"
+  },
+  "linked": {
+    "dusdc": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
+    "deep": "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
+    "pyth_lazer": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+    "wormhole": "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2"
+  },
+  "sharedObjects": {
+    "account": {
+      "account_registry::AccountRegistry": "0x0d911d5a0b90c7c3802faffa97ddfd8239666ae77508a7798efa6861e901386e"
+    },
+    "propbook": {
+      "registry::OracleRegistry": "0xfb9ffec752a32c5a7ebea7b781bc7769c70c386467edb3b04652666422dc75a2"
+    },
+    "predict": {
+      "plp::PoolVault": "0x0b32c7a70943f7a669cc265be6683e530b04b9d7109f90293b4e29b3c7c18cb9",
+      "protocol_config::ProtocolConfig": "0x53487e2fbd3bc4a48215167c7fbd1240a3bf4d7f1bd55b488b83238ad6e4eb69",
+      "registry::Registry": "0x94badb0ac302efb06fb78f0314037ddb8cfa9173bda03f15a41e9d977140821d"
+    }
+  },
+  "ownedCaps": {
+    "fixed_math": {
+      "package::UpgradeCap": "0x6a29e1d7e370a4ae19b70eb27d809813391dfd2d9dd6385dde61706d9dfea8b9"
+    },
+    "block_scholes_oracle": {
+      "package::UpgradeCap": "0x8196ae45031547c685c808a2ae3c4f45d970fec8872c9146d9d24ab3df689d00"
+    },
+    "account": {
+      "account_registry::AccountAdminCap": "0x1b8f193b72987a2d432377535b7e1627af4004e60e87e9c4c97f1ef334dce0a8",
+      "package::UpgradeCap": "0xa5e40e003818a570a549671484410e523e14e501b572d6004f12e3fa671faed1"
+    },
+    "propbook": {
+      "registry::RegistryAdminCap": "0x78734e18c245627f3c65e4ed4bfba0f48f5b9265052b625a6247a970f552c1b4",
+      "package::UpgradeCap": "0xaf3288e55cc0c2a3efe32005a92404986de19db519ecd73a8ae1948795d49e78"
+    },
+    "predict": {
+      "coin_registry::MetadataCap<0x0e8d178bb29c78e10bf3b16c46a0484cbf75d9c99a19b3586536f736d9db0a3d::plp::PLP>": "0x32577f5289dad066d9ee0abd499b517d20017d6a98771a1fed0c4061d6c1a52d",
+      "package::UpgradeCap": "0x836005ba0f2e5d223b561fa902eab759effd35c0164fcd2cd881edebab526052",
+      "admin::AdminCap": "0xda1e395bbb2c6e3bececb5cc3d8441b500bcfa504ab3250829f7ca1182088bf9"
+    }
+  },
+  "publishTx": {
+    "fixed_math": "36ZQAYJhUsSvW8NA9xJG8GaDjmGfSgsE4w5YR3bMqtKY",
+    "block_scholes_oracle": "138yKEy5x1JeMy1yzcR494BA6Z6prnh32FR5yneM5dfq",
+    "account": "7aaL1SiSjFnfzbyBfon27rR2G5WifCNJzxAxnHxGh4j6",
+    "propbook": "BHbuBnA2EPBG4ktK4ne7PjkoVUGKczoWxsvoxDAx1QTn",
+    "predict": "6xS3jHFx8cYJpwCJ2iowLKrYk66qBT7UBaQrWRKSCczS"
+  }
+}
