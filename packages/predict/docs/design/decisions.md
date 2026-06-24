@@ -143,10 +143,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  `market_oracle_config`, `market_oracle_writer_cap`, and `oracle_events` modules
 	  were deleted. Live data now comes from Predict-unaware Propbook feeds:
 	  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed), a source-level
-	  `propbook::block_scholes_spot_feed::BlockScholesSpotFeed`, and per-expiry
+	  `propbook::block_scholes_spot_feed::BlockScholesSpotFeed`, and source-level
 	  `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` /
-	  `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` objects. Each is updated
-	  permissionlessly from a self-authenticating verified update, so there is no writer capability.
+	  `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` objects with per-expiry
+	  rows. Each is updated permissionlessly from a self-authenticating verified
+	  update, so there is no writer capability.
   *Rationale:* the oracle suite is reusable by the wider ecosystem and has a clean,
   Predict-agnostic boundary; possessing a verified `Update` is the only proof
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted

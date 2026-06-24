@@ -32,7 +32,6 @@ const ESourceAlreadyBound: u64 = 3;
 const EBindingAlreadyExists: u64 = 4;
 const EBlockScholesSpotNotBound: u64 = 5;
 const EWrongBlockScholesSource: u64 = 6;
-const EWrongBlockScholesExpiry: u64 = 7;
 
 /// Oracle-kind tags stored in registry keys; future oracles add a value here.
 public(package) macro fun kind_pyth(): u8 {
@@ -76,23 +75,17 @@ public struct OracleRegistry has key {
     source_bindings: Table<OracleSourceKey, u32>,
 }
 
-/// Composite source key: oracle kind plus source-local identity. Underlying-level
-/// feeds set `has_expiry = false`; per-expiry feeds carry `expiry_ms`.
+/// Composite source key: oracle kind plus source-local identity.
 public struct OracleSourceKey has copy, drop, store {
     oracle_kind: u8,
     source_id: u32,
-    has_expiry: bool,
-    expiry_ms: u64,
 }
 
 /// Canonical binding key: Propbook underlying plus oracle value identity.
-/// Expiry-level values set `has_expiry = true`.
 public struct OracleBindingKey has copy, drop, store {
     propbook_underlying_id: u32,
     oracle_kind: u8,
     value_kind: u8,
-    has_expiry: bool,
-    expiry_ms: u64,
 }
 
 /// Canonical metadata for one immutable Propbook oracle binding.
@@ -102,16 +95,12 @@ public struct OracleMetadata has copy, drop, store {
     source_id: u32,
     propbook_oracle_id: ID,
     value_kind: u8,
-    has_expiry: bool,
-    expiry_ms: u64,
 }
 
 /// Emitted when a Propbook source wrapper is created and registered.
 public struct OracleSourceRegistered has copy, drop {
     oracle_kind: u8,
     source_id: u32,
-    has_expiry: bool,
-    expiry_ms: u64,
     propbook_oracle_id: ID,
 }
 
@@ -122,8 +111,6 @@ public struct OracleBound has copy, drop {
     source_id: u32,
     propbook_oracle_id: ID,
     value_kind: u8,
-    has_expiry: bool,
-    expiry_ms: u64,
 }
 
 fun init(ctx: &mut TxContext) {
@@ -154,22 +141,20 @@ public fun contains_block_scholes_spot_source(
     registry.contains_source(block_scholes_spot_source_key(bs_source_id))
 }
 
-/// Whether a Propbook BS forward wrapper exists for `(bs_source_id, expiry_ms)`.
+/// Whether a Propbook BS forward wrapper exists for `bs_source_id`.
 public fun contains_block_scholes_forward_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
-    expiry_ms: u64,
 ): bool {
-    registry.contains_source(block_scholes_forward_source_key(bs_source_id, expiry_ms))
+    registry.contains_source(block_scholes_forward_source_key(bs_source_id))
 }
 
-/// Whether a Propbook BS SVI wrapper exists for `(bs_source_id, expiry_ms)`.
+/// Whether a Propbook BS SVI wrapper exists for `bs_source_id`.
 public fun contains_block_scholes_svi_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
-    expiry_ms: u64,
 ): bool {
-    registry.contains_source(block_scholes_svi_source_key(bs_source_id, expiry_ms))
+    registry.contains_source(block_scholes_svi_source_key(bs_source_id))
 }
 
 /// Propbook Pyth object ID for a Pyth source id, if a wrapper exists.
@@ -185,23 +170,20 @@ public fun propbook_block_scholes_spot_id_for_source(
     registry.source_oracle_id(block_scholes_spot_source_key(bs_source_id))
 }
 
-/// Propbook BS forward object ID for `(bs_source_id, expiry_ms)`, if a wrapper
-/// exists.
+/// Propbook BS forward object ID for `bs_source_id`, if a wrapper exists.
 public fun propbook_block_scholes_forward_id_for_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
-    expiry_ms: u64,
 ): Option<ID> {
-    registry.source_oracle_id(block_scholes_forward_source_key(bs_source_id, expiry_ms))
+    registry.source_oracle_id(block_scholes_forward_source_key(bs_source_id))
 }
 
-/// Propbook BS SVI object ID for `(bs_source_id, expiry_ms)`, if a wrapper exists.
+/// Propbook BS SVI object ID for `bs_source_id`, if a wrapper exists.
 public fun propbook_block_scholes_svi_id_for_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
-    expiry_ms: u64,
 ): Option<ID> {
-    registry.source_oracle_id(block_scholes_svi_source_key(bs_source_id, expiry_ms))
+    registry.source_oracle_id(block_scholes_svi_source_key(bs_source_id))
 }
 
 /// Canonical Propbook Pyth object ID for `propbook_underlying_id`, if bound.
@@ -220,25 +202,20 @@ public fun propbook_block_scholes_spot_id_for_underlying(
     registry.canonical_oracle_id(block_scholes_spot_binding_key(propbook_underlying_id))
 }
 
-/// Canonical Propbook BS forward object ID for `(underlying, expiry)`, if bound.
-public fun propbook_block_scholes_forward_id_for_underlying_expiry(
+/// Canonical Propbook BS forward object ID for `propbook_underlying_id`, if bound.
+public fun propbook_block_scholes_forward_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
-    expiry_ms: u64,
 ): Option<ID> {
-    registry
-        .canonical_oracle_id(
-            block_scholes_forward_binding_key(propbook_underlying_id, expiry_ms),
-        )
+    registry.canonical_oracle_id(block_scholes_forward_binding_key(propbook_underlying_id))
 }
 
-/// Canonical Propbook BS SVI object ID for `(underlying, expiry)`, if bound.
-public fun propbook_block_scholes_svi_id_for_underlying_expiry(
+/// Canonical Propbook BS SVI object ID for `propbook_underlying_id`, if bound.
+public fun propbook_block_scholes_svi_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
-    expiry_ms: u64,
 ): Option<ID> {
-    registry.canonical_oracle_id(block_scholes_svi_binding_key(propbook_underlying_id, expiry_ms))
+    registry.canonical_oracle_id(block_scholes_svi_binding_key(propbook_underlying_id))
 }
 
 /// Canonical Pyth metadata for `propbook_underlying_id`, if bound.
@@ -257,25 +234,20 @@ public fun block_scholes_spot_metadata_for_underlying(
     registry.canonical_metadata(block_scholes_spot_binding_key(propbook_underlying_id))
 }
 
-/// Canonical BS forward metadata for `(underlying, expiry)`, if bound.
-public fun block_scholes_forward_metadata_for_underlying_expiry(
+/// Canonical BS forward metadata for `propbook_underlying_id`, if bound.
+public fun block_scholes_forward_metadata_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
-    expiry_ms: u64,
 ): Option<OracleMetadata> {
-    registry
-        .canonical_metadata(
-            block_scholes_forward_binding_key(propbook_underlying_id, expiry_ms),
-        )
+    registry.canonical_metadata(block_scholes_forward_binding_key(propbook_underlying_id))
 }
 
-/// Canonical BS SVI metadata for `(underlying, expiry)`, if bound.
-public fun block_scholes_svi_metadata_for_underlying_expiry(
+/// Canonical BS SVI metadata for `propbook_underlying_id`, if bound.
+public fun block_scholes_svi_metadata_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
-    expiry_ms: u64,
 ): Option<OracleMetadata> {
-    registry.canonical_metadata(block_scholes_svi_binding_key(propbook_underlying_id, expiry_ms))
+    registry.canonical_metadata(block_scholes_svi_binding_key(propbook_underlying_id))
 }
 
 public fun propbook_underlying_id(metadata: &OracleMetadata): u32 {
@@ -296,14 +268,6 @@ public fun propbook_oracle_id(metadata: &OracleMetadata): ID {
 
 public fun value_kind(metadata: &OracleMetadata): u8 {
     metadata.value_kind
-}
-
-public fun has_expiry(metadata: &OracleMetadata): bool {
-    metadata.has_expiry
-}
-
-public fun expiry_ms(metadata: &OracleMetadata): u64 {
-    metadata.expiry_ms
 }
 
 /// Create and share the Propbook Pyth wrapper for `pyth_source_id`, then record
@@ -337,33 +301,30 @@ public fun create_and_share_block_scholes_spot_feed(
     propbook_spot_id
 }
 
-/// Create and share the Propbook BS forward wrapper for `(bs_source_id,
-/// expiry_ms)`, then record it in the source catalog.
+/// Create and share the Propbook BS forward wrapper for `bs_source_id`, then
+/// record it in the source catalog.
 public fun create_and_share_block_scholes_forward_feed(
     registry: &mut OracleRegistry,
     bs_source_id: u32,
-    expiry_ms: u64,
     ctx: &mut TxContext,
 ): ID {
-    let source_key = block_scholes_forward_source_key(bs_source_id, expiry_ms);
+    let source_key = block_scholes_forward_source_key(bs_source_id);
     assert_source_available(registry, source_key);
-    let propbook_forward_id =
-        block_scholes_forward_feed::create_and_share(bs_source_id, expiry_ms, ctx);
+    let propbook_forward_id = block_scholes_forward_feed::create_and_share(bs_source_id, ctx);
     registry.record_source(source_key, propbook_forward_id);
     propbook_forward_id
 }
 
-/// Create and share the Propbook BS SVI wrapper for `(bs_source_id, expiry_ms)`,
-/// then record it in the source catalog.
+/// Create and share the Propbook BS SVI wrapper for `bs_source_id`, then record
+/// it in the source catalog.
 public fun create_and_share_block_scholes_svi_feed(
     registry: &mut OracleRegistry,
     bs_source_id: u32,
-    expiry_ms: u64,
     ctx: &mut TxContext,
 ): ID {
-    let source_key = block_scholes_svi_source_key(bs_source_id, expiry_ms);
+    let source_key = block_scholes_svi_source_key(bs_source_id);
     assert_source_available(registry, source_key);
-    let propbook_svi_id = block_scholes_svi_feed::create_and_share(bs_source_id, expiry_ms, ctx);
+    let propbook_svi_id = block_scholes_svi_feed::create_and_share(bs_source_id, ctx);
     registry.record_source(source_key, propbook_svi_id);
     propbook_svi_id
 }
@@ -400,22 +361,16 @@ public fun bind_block_scholes_spot_to_underlying(
     );
 }
 
-/// Admin-bind this BS forward/SVI pair to a canonical Propbook underlying and
-/// expiry. The underlying's BS spot feed must already be bound, and all three BS
-/// feeds must come from the same source id.
-public fun bind_block_scholes_expiry_to_underlying(
+/// Admin-bind this BS forward/SVI surface pair to a canonical Propbook underlying.
+/// The underlying's BS spot feed must already be bound, and all three BS feeds
+/// must come from the same source id.
+public fun bind_block_scholes_surface_to_underlying(
     registry: &mut OracleRegistry,
     admin_cap: &RegistryAdminCap,
     forward_feed: &BlockScholesForwardFeed,
     svi_feed: &BlockScholesSVIFeed,
     propbook_underlying_id: u32,
 ) {
-    let expiry_ms = block_scholes_forward_feed::expiry_ms(forward_feed);
-    assert!(
-        expiry_ms == block_scholes_svi_feed::expiry_ms(svi_feed),
-        EWrongBlockScholesExpiry,
-    );
-
     let bs_source_id = block_scholes_forward_feed::bs_source_id(forward_feed);
     assert!(
         bs_source_id == block_scholes_svi_feed::bs_source_id(svi_feed),
@@ -423,11 +378,10 @@ public fun bind_block_scholes_expiry_to_underlying(
     );
     registry.assert_bound_block_scholes_spot_source(propbook_underlying_id, bs_source_id);
 
-    let forward_source_key = block_scholes_forward_source_key(bs_source_id, expiry_ms);
-    let svi_source_key = block_scholes_svi_source_key(bs_source_id, expiry_ms);
-    let forward_binding_key =
-        block_scholes_forward_binding_key(propbook_underlying_id, expiry_ms);
-    let svi_binding_key = block_scholes_svi_binding_key(propbook_underlying_id, expiry_ms);
+    let forward_source_key = block_scholes_forward_source_key(bs_source_id);
+    let svi_source_key = block_scholes_svi_source_key(bs_source_id);
+    let forward_binding_key = block_scholes_forward_binding_key(propbook_underlying_id);
+    let svi_binding_key = block_scholes_svi_binding_key(propbook_underlying_id);
 
     registry.assert_registered_source_object(
         forward_source_key,
@@ -471,8 +425,6 @@ fun record_source(registry: &mut OracleRegistry, source_key: OracleSourceKey, pr
     event::emit(OracleSourceRegistered {
         oracle_kind: source_key.oracle_kind,
         source_id: source_key.source_id,
-        has_expiry: source_key.has_expiry,
-        expiry_ms: source_key.expiry_ms,
         propbook_oracle_id,
     });
 }
@@ -504,8 +456,6 @@ fun bind_oracle(
         source_id: source_key.source_id,
         propbook_oracle_id,
         value_kind: binding_key.value_kind,
-        has_expiry: source_key.has_expiry,
-        expiry_ms: source_key.expiry_ms,
     };
     registry.bindings.add(binding_key, metadata);
 
@@ -519,8 +469,6 @@ fun bind_oracle(
         source_id: source_key.source_id,
         propbook_oracle_id,
         value_kind: binding_key.value_kind,
-        has_expiry: source_key.has_expiry,
-        expiry_ms: source_key.expiry_ms,
     });
 }
 
@@ -597,8 +545,6 @@ fun pyth_source_key(pyth_source_id: u32): OracleSourceKey {
     OracleSourceKey {
         oracle_kind: kind_pyth!(),
         source_id: pyth_source_id,
-        has_expiry: false,
-        expiry_ms: 0,
     }
 }
 
@@ -606,26 +552,20 @@ fun block_scholes_spot_source_key(bs_source_id: u32): OracleSourceKey {
     OracleSourceKey {
         oracle_kind: kind_block_scholes_spot!(),
         source_id: bs_source_id,
-        has_expiry: false,
-        expiry_ms: 0,
     }
 }
 
-fun block_scholes_forward_source_key(bs_source_id: u32, expiry_ms: u64): OracleSourceKey {
+fun block_scholes_forward_source_key(bs_source_id: u32): OracleSourceKey {
     OracleSourceKey {
         oracle_kind: kind_block_scholes_forward!(),
         source_id: bs_source_id,
-        has_expiry: true,
-        expiry_ms,
     }
 }
 
-fun block_scholes_svi_source_key(bs_source_id: u32, expiry_ms: u64): OracleSourceKey {
+fun block_scholes_svi_source_key(bs_source_id: u32): OracleSourceKey {
     OracleSourceKey {
         oracle_kind: kind_block_scholes_svi!(),
         source_id: bs_source_id,
-        has_expiry: true,
-        expiry_ms,
     }
 }
 
@@ -634,8 +574,6 @@ fun pyth_binding_key(propbook_underlying_id: u32): OracleBindingKey {
         propbook_underlying_id,
         oracle_kind: kind_pyth!(),
         value_kind: value_kind_spot!(),
-        has_expiry: false,
-        expiry_ms: 0,
     }
 }
 
@@ -644,34 +582,22 @@ fun block_scholes_spot_binding_key(propbook_underlying_id: u32): OracleBindingKe
         propbook_underlying_id,
         oracle_kind: kind_block_scholes_spot!(),
         value_kind: value_kind_spot!(),
-        has_expiry: false,
-        expiry_ms: 0,
     }
 }
 
-fun block_scholes_forward_binding_key(
-    propbook_underlying_id: u32,
-    expiry_ms: u64,
-): OracleBindingKey {
+fun block_scholes_forward_binding_key(propbook_underlying_id: u32): OracleBindingKey {
     OracleBindingKey {
         propbook_underlying_id,
         oracle_kind: kind_block_scholes_forward!(),
         value_kind: value_kind_forward!(),
-        has_expiry: true,
-        expiry_ms,
     }
 }
 
-fun block_scholes_svi_binding_key(
-    propbook_underlying_id: u32,
-    expiry_ms: u64,
-): OracleBindingKey {
+fun block_scholes_svi_binding_key(propbook_underlying_id: u32): OracleBindingKey {
     OracleBindingKey {
         propbook_underlying_id,
         oracle_kind: kind_block_scholes_svi!(),
         value_kind: value_kind_svi!(),
-        has_expiry: true,
-        expiry_ms,
     }
 }
 

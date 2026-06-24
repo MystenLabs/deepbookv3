@@ -168,15 +168,7 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
         ),
         fx.clock(),
     );
-    bs_forward.update(
-        update::new_forward_update(
-            test_constants::pyth_feed_id(),
-            fx.expiry(),
-            stale_now,
-            test_constants::default_live_price(),
-        ),
-        fx.clock(),
-    );
+    fx.set_bs_forward_for_testing(&mut bs_forward, stale_now, test_constants::default_live_price());
 
     live_quote(
         &fx,

@@ -20,7 +20,7 @@ Because the tick domain is absolute and fixed in advance, **market creation read
 
 ### Prices come from external feeds
 
-Live prices come from standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global source-native spot payload per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload and exposed through a normalized spot read. Block Scholes data is split into a source-level spot feed plus per-expiry forward and SVI feeds. Predict builds a forward and differences each range's probability off the SVI curve: when the normalized Pyth spot is fresh and usable it uses `forward = spot × basis(expiry)`; when the Pyth spot is absent, unusable, or stale it falls back to the BS forward feed. BS spot/forward must be fresh under the price window, and SVI must be fresh under its looser window. Propbook stores source facts; Predict validates the pricing-safe envelope at read time.
+Live prices come from standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global source-native spot payload per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload and exposed through a normalized spot read. Block Scholes data is split into permanent source-level spot, forward, and SVI feeds; the forward and SVI feeds store per-expiry rows. Predict builds a forward and differences each range's probability off the SVI curve: when the normalized Pyth spot is fresh and usable it uses `forward = spot × basis(expiry)`; when the Pyth spot is absent, unusable, or stale it falls back to the BS forward feed. BS spot/forward must be fresh under the price window, and SVI must be fresh under its looser window. Propbook stores source facts; Predict validates the pricing-safe envelope at read time.
 
 ### Settlement is passive
 
@@ -39,7 +39,7 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 | `PredictManager` | Per-trader DUSDC custody + positions, staking mirror, builder attribution | owned or shared |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
-Oracle data is **not** a Predict object: the `PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, and `BlockScholesSVIFeed` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed feed objects against Propbook's current canonical bindings for that underlying and expiry.
+Oracle data is **not** a Predict object: the `PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, and `BlockScholesSVIFeed` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed feed objects against Propbook's current canonical bindings for that underlying and then reads the expiry row from the forward/SVI surfaces.
 
 Capabilities are owned objects: `AdminCap` (global policy, plus genesis-bootstrapping the pool), `MarketLifecycleCap` (market creation and the sole authority to start the pool flush), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
 
