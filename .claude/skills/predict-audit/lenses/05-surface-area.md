@@ -37,6 +37,12 @@ over-broad APIs, sync-invariant state — not just style.)
 real but out of scope for a surgical change — per repo convention, do not delete pre-existing dead code
 reflexively; name it for the team to decide.
 
+**Don't return empty, and stay in your lane.** A zero-finding result for this lens is itself a red flag — at
+minimum, inventory the public surface and flag every `public`/`public(package)` function, struct, and field
+with no non-test caller (low confidence is fine; flag, don't drop). But your axis is *removal*: if a module is
+large because it bundles responsibilities, that is a **restructure, not a deletion** — hand it to lens 10
+(architecture) and note the pointer here rather than forcing a deletion proposal.
+
 ## Output
 For each proposal: location(s), what to remove/merge, the exact behavior/properties preserved, call sites
 affected, surface removed (functions/fields/branches/lines), and risk level. Rank by (surface removed) ×

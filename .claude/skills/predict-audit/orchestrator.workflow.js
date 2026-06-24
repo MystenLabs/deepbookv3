@@ -17,8 +17,9 @@ export const meta = {
   name: 'predict-audit-orchestrator',
   description: 'Parallel multi-lens smart-contract audit of Predict (+ propbook, block_scholes_oracle, account): find -> adversarially verify -> structured findings',
   phases: [
-    { title: 'Find', detail: '9 prior-aware lenses fan out over the four packages' },
+    { title: 'Find', detail: '10 prior-aware lenses fan out over the four packages' },
     { title: 'Verify', detail: 'refute / settled / repro panel per candidate finding' },
+    { title: 'Promote', detail: 'elevate high-signal observations buried in coverage into findings' },
   ],
 }
 
@@ -41,13 +42,14 @@ const ALL_LANES = [
   { key: 'lifecycle', file: '07-lifecycle.md' },
   { key: 'cross-package', file: '08-cross-package-trust.md' },
   { key: 'econ-sim', file: '09-economic-simulation.md' },
+  { key: 'architecture', file: '10-architecture-maintainability.md' },
 ]
 const want = Array.isArray(A.lenses) ? A.lenses : null
 const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0) : ALL_LANES
 const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
 // Echo the resolved config so /workflows shows whether scope/lenses actually applied (a silent
-// full-fleet run is exactly what burned us once — never run 9 lenses without saying so).
-log(`audit config — scope: "${scope}" | lenses: ${want ? want.join(',') : 'ALL 9 (no filter)'} | maxFindings: ${maxFindings}`
+// full-fleet run is exactly what burned us once — never run the full fleet without saying so).
+log(`audit config — scope: "${scope}" | lenses: ${want ? want.join(',') : `ALL ${ALL_LANES.length} (no filter)`} | maxFindings: ${maxFindings}`
   + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 80)}`)
 if (want && !LANES.length) {
@@ -174,8 +176,26 @@ const refutedOut = all.filter(f => f.status === 'refuted')
 
 log(`Lenses: ${lanes.length} | candidates: ${all.length} | kept: ${kept.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
 
+// Promotion pass: lenses sometimes bury a real issue inside their Coverage/aside text without raising it
+// as a finding. One critic scans all coverage + the captured findings and elevates anything high-signal.
+phase('Promote')
+const PROMOTE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: { findings: { type: 'array', items: FINDINGS_SCHEMA.properties.findings.items } },
+  required: ['findings'],
+}
+const coverageBlob = lanes.map(l => `[${l.lane}]\n  coverage: ${l.coverage}\n  top3: ${(l.top3 || []).join(' | ')}`).join('\n\n')
+const keptTitles = kept.map(f => `${f.severity} (${f.lane}): ${f.title}`).join('\n') || '(none)'
+const promoteRes = await agent(
+  `You are the completeness/promotion critic for a Predict smart-contract audit. Read ${SKILL}/primer.md for the module map, prior-awareness, and report format.\n\n`
+  + `Below are every lens's COVERAGE notes + top-3, and the findings ALREADY captured. Lenses sometimes state a real issue inside coverage/aside text (a "VERIFIED-SOUND" note that hides a caveat, a sharp observation about a dropped gate, a missing-coverage admission) without promoting it to a finding. Identify any HIGH-SIGNAL observation in the coverage that is NOT already represented in the findings list, confirm it against the actual code (grep/read), and emit it as a proper finding. Do NOT duplicate existing findings, do NOT invent issues ungrounded in the coverage, and tag anything matching a settled decision with its D-id (settled_ref). Do not run sui build/test or localnet.\n\n`
+  + `ALREADY-CAPTURED FINDINGS:\n${keptTitles}\n\nCOVERAGE NOTES:\n${coverageBlob}`,
+  { schema: PROMOTE_SCHEMA, phase: 'Promote', label: 'promote:coverage-critic' })
+const promoted = (promoteRes && promoteRes.findings) || []
+if (promoted.length) log(`Promoted ${promoted.length} buried observation(s) from coverage into findings`)
+
 return {
-  summary: { lenses: lanes.length, candidates: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length },
-  kept, settled: settledOut, refuted: refutedOut,
+  summary: { lenses: lanes.length, candidates: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length, promoted: promoted.length },
+  kept, settled: settledOut, refuted: refutedOut, promoted,
   coverage: lanes.map(l => ({ lane: l.lane, coverage: l.coverage, top3: l.top3 })),
 }

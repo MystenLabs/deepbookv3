@@ -1,0 +1,184 @@
+// Predict ownership walk — recursive per-module ownership/boundary/policy conformance audit.
+//
+// Shape: Map (barrier) -> Check (per-module fan-out) -> Verify. The barrier is REAL: a conformance verdict
+// for a function depends on knowing what the modules it composes are SUPPOSED to own, so the full
+// responsibility map must exist before any check runs. Checks R1-R7 from references/ownership-rules.md.
+//
+// args = {
+//   units?:  string[],   // subset of MAP_UNIT keys to walk (default: all) — use to scope cost
+//   groundTruth?: string,
+//   maxViolations?: number, // cap per check unit (default 10)
+// }
+// Subagents are READ-ONLY on source; no sui build/test or localnet (watchdog) — reason from source + grep + git.
+
+export const meta = {
+  name: 'predict-ownership-walk',
+  description: 'Recursive per-module ownership/boundary/policy conformance audit of Predict (map -> check -> verify) against references/ownership-rules.md R1-R7',
+  phases: [
+    { title: 'Map', detail: 'build the responsibility map per subsystem (BARRIER — checks need the whole map)' },
+    { title: 'Check', detail: 'per-module fan-out: walk every function vs R1-R7 + the map' },
+    { title: 'Verify', detail: 'adversarially refute each violation vs the map + DECISION_JOURNAL' },
+  ],
+}
+
+const SKILL = '.claude/skills/predict-audit'
+let A = args
+if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
+if (!A || typeof A !== 'object') A = {}
+const groundTruth = A.groundTruth || '(none provided)'
+const maxViolations = A.maxViolations || 10
+
+// Map units = subsystem clusters. Each map agent builds the responsibility-map entries for its modules.
+const MAP_UNITS = [
+  { key: 'predict-core', pkg: 'predict', paths: 'sources/expiry_market.move sources/expiry_cash.move sources/order.move sources/ewma.move sources/builder_code.move sources/predict_account.move sources/constants.move' },
+  { key: 'predict-strike', pkg: 'predict', paths: 'sources/strike_exposure' },
+  { key: 'predict-plp', pkg: 'predict', paths: 'sources/plp' },
+  { key: 'predict-pricing', pkg: 'predict', paths: 'sources/pricing' },
+  { key: 'predict-registry', pkg: 'predict', paths: 'sources/registry' },
+  { key: 'predict-config', pkg: 'predict', paths: 'sources/config' },
+  { key: 'predict-capabilities', pkg: 'predict', paths: 'sources/capabilities' },
+  { key: 'predict-events', pkg: 'predict', paths: 'sources/events' },
+  { key: 'propbook', pkg: 'propbook', paths: 'sources' },
+  { key: 'account', pkg: 'account', paths: 'sources' },
+  { key: 'block_scholes_oracle', pkg: 'block_scholes_oracle', paths: 'sources' },
+]
+const wantUnits = Array.isArray(A.units) ? A.units : null
+const UNITS = wantUnits && wantUnits.length ? MAP_UNITS.filter(u => wantUnits.indexOf(u.key) >= 0) : MAP_UNITS
+const unknownUnits = wantUnits ? wantUnits.filter(k => !MAP_UNITS.some(u => u.key === k)) : []
+log(`ownership-walk config — units: ${wantUnits ? wantUnits.join(',') : `ALL ${MAP_UNITS.length}`} | maxViolations/module: ${maxViolations} | groundTruth: ${String(groundTruth).slice(0, 60)}`
+  + (unknownUnits.length ? ` | ⚠ UNKNOWN UNIT KEYS IGNORED: ${unknownUnits.join(',')} (valid: ${MAP_UNITS.map(u => u.key).join(',')})` : ''))
+if (wantUnits && !UNITS.length) {
+  log('⚠ unit filter matched nothing — aborting')
+  return { error: 'no_units_matched', requested: wantUnits, valid_keys: MAP_UNITS.map(u => u.key) }
+}
+
+const PRELUDE = `You are an agent in the Predict OWNERSHIP WALK — a recursive conformance audit of the ownership/boundary/policy rules. FIRST read these and follow them exactly:
+  1. ${SKILL}/primer.md           (protocol, current module map, scope, prior-awareness, report format)
+  2. ${SKILL}/references/ownership-rules.md  (R1-R7 — the rule-set you enforce, with intentional exceptions)
+Be prior-aware: ${SKILL}/../predict-design/DECISION_JOURNAL.md + AGENTS.md settled list + ROUNDING_POLICY.md — a candidate matching a settled/accepted decision is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
+
+const MODULE_ENTRY = {
+  type: 'object',
+  properties: {
+    module: { type: 'string', description: 'pkg::module, e.g. predict::expiry_market' },
+    file: { type: 'string' },
+    role: { type: 'string', enum: ['state-owner', 'composer', 'leaf', 'flow-entry', 'config', 'events', 'mixed'] },
+    owns: { type: 'string', description: 'the facts/state/policy/guards it is the source of truth for' },
+    must_not_own: { type: 'string', description: 'concerns that belong to a neighbor' },
+    composes: { type: 'array', items: { type: 'string' }, description: 'module names it orchestrates/depends on for domain facts' },
+    functions: { type: 'array', items: { type: 'string' }, description: 'every public/package/private function name' },
+  },
+  required: ['module', 'file', 'role', 'owns', 'must_not_own', 'composes', 'functions'],
+}
+const MAP_SCHEMA = {
+  type: 'object',
+  properties: { unit: { type: 'string' }, modules: { type: 'array', items: MODULE_ENTRY } },
+  required: ['unit', 'modules'],
+}
+
+const VIOLATION = {
+  type: 'object',
+  properties: {
+    rule_family: { type: 'string', enum: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'] },
+    node: { type: 'string', description: 'pkg::module::function:line' },
+    claim: { type: 'string', description: 'what responsibility is misplaced' },
+    expected_owner: { type: 'string' },
+    actual_owner: { type: 'string' },
+    data_flow: { type: 'string', description: 'the call chain / value path that proves it' },
+    severity: { type: 'string', enum: ['high', 'correctness', 'cleanup'] },
+    settled_ref: { type: 'string' },
+    recommendation: { type: 'string' },
+  },
+  // Soft fields (expected_owner/actual_owner/data_flow/settled_ref) are optional: a slightly-incomplete
+  // violation still validates instead of burning the 5-retry cap (which lost 2/8 units on the first smoke).
+  required: ['rule_family', 'node', 'claim', 'severity', 'recommendation'],
+}
+const CHECK_SCHEMA = {
+  type: 'object',
+  properties: { module: { type: 'string' }, coverage: { type: 'string' }, violations: { type: 'array', items: VIOLATION } },
+  required: ['module', 'coverage', 'violations'],
+}
+const VERDICT_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['confirmed', 'refuted', 'settled', 'uncertain'] },
+    classification: { type: 'string', enum: ['fix-code', 'update-rule', 'design-decision', 'false-positive'] },
+    adjusted_severity: { type: 'string', enum: ['high', 'correctness', 'cleanup'] },
+    reasoning: { type: 'string' },
+    evidence: { type: 'string' },
+  },
+  required: ['verdict', 'classification', 'adjusted_severity', 'reasoning', 'evidence'],
+}
+
+// ---------- Pass 1: MAP (barrier) ----------
+phase('Map')
+const mapResults = await parallel(UNITS.map(u => () => agent(
+  `${PRELUDE}\n\n=== MAP PASS — unit "${u.key}" (${u.pkg}/${u.paths}) ===\n`
+  + `Build the RESPONSIBILITY MAP for every module under those path(s) in packages/${u.pkg}/. For each module emit its entry: role (state-owner/composer/leaf/flow-entry/config/events/mixed — a module that declares Balance/liability fields is a state-owner; one that imports many domain objects to sequence them is a composer; a math/index/data-structure module is a leaf), owns (the facts/state/policy/guards it is the source of truth for — it owns the fields it declares + derivations purely within its domain), must_not_own (what belongs to a neighbor), composes (modules it orchestrates), and functions (EVERY function name — public/package/private; this drives the per-function check). This map is the SPEC the check pass measures against, so be precise about ownership boundaries.`,
+  { schema: MAP_SCHEMA, phase: 'Map', label: `map:${u.key}` })))
+
+const allModules = mapResults.filter(Boolean).flatMap(r => r.modules || [])
+const mapByModule = {}
+allModules.forEach(m => { mapByModule[m.module] = m })
+log(`Responsibility map: ${allModules.length} modules across ${UNITS.length} units`)
+if (!allModules.length) return { error: 'empty_map', units: UNITS.map(u => u.key) }
+
+// God-module split: hold the module context, walk a bounded slice of functions per agent.
+function checkUnitsFor(m) {
+  const fns = m.functions || []
+  const CHUNK = 9
+  if (fns.length <= 20) return [{ module: m.module, file: m.file, entry: m, fnFocus: null, label: m.module }]
+  const out = []
+  for (let i = 0; i < fns.length; i += CHUNK) {
+    out.push({ module: m.module, file: m.file, entry: m, fnFocus: fns.slice(i, i + CHUNK), label: `${m.module}#${out.length + 1}` })
+  }
+  return out
+}
+const CHECK_UNITS = allModules.flatMap(checkUnitsFor)
+
+// ---------- Pass 2 + 3: CHECK -> VERIFY (pipelined; verify needs no cross-module barrier) ----------
+phase('Check')
+function composedContext(entry) {
+  return (entry.composes || []).map(name => mapByModule[name]).filter(Boolean)
+    .map(e => `  - ${e.module} [${e.role}] owns: ${e.owns}`).join('\n') || '  (none mapped in scope)'
+}
+
+const checkVerified = await pipeline(
+  CHECK_UNITS,
+  cu => agent(
+    `${PRELUDE}\n\n=== CHECK PASS — module ${cu.module} (${cu.file}) ===\n`
+    + `This module's responsibility-map entry:\n  role: ${cu.entry.role}\n  owns: ${cu.entry.owns}\n  must_not_own: ${cu.entry.must_not_own}\n`
+    + `Modules it composes (their owned facts — use to judge binding/derivation/producer-fact):\n${composedContext(cu.entry)}\n\n`
+    + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (just the essential call-chain; the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence violations.`,
+    { schema: CHECK_SCHEMA, effort: 'high', phase: 'Check', label: `check:${cu.label}` }),
+  (checkRes) => {
+    if (!checkRes) return []
+    const vs = checkRes.violations || []
+    return parallel(vs.map((v, vi) => () => agent(
+      `${PRELUDE}\n\nYou are the ADVERSARIAL VERIFIER for one ownership-walk violation. TEST it; do not agree by default — R1-R7 false-positive heavily on intentional architecture (the index_terms single evaluator, D033 deferred-carry, saturating_sub-as-deliberate-policy, documented post-mutation calcs). Read the cited code + the data_flow + the responsibility map. Verdict: confirmed (real misplaced responsibility) / refuted (the responsibility IS correctly placed, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite the D-id) / uncertain. Also classify: fix-code / update-rule (defensible → narrowest rule exception) / design-decision / false-positive.\n\nVIOLATION (module ${checkRes.module}):\n${JSON.stringify(v, null, 2)}`,
+      { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${checkRes.module}:${vi}` })
+      .then(verdict => ({ ...v, module: checkRes.module, verdict }))))
+  },
+)
+
+const all = checkVerified.filter(Boolean).flat().filter(Boolean)
+const confirmed = all.filter(x => x.verdict && (x.verdict.verdict === 'confirmed' || x.verdict.verdict === 'uncertain'))
+const settledOut = all.filter(x => x.verdict && x.verdict.verdict === 'settled')
+const refutedOut = all.filter(x => x.verdict && x.verdict.verdict === 'refuted')
+
+// Calibration: rules tripped repeatedly by intentional architecture are candidate rule-exceptions, not N findings.
+const byRule = {}
+all.forEach(x => { byRule[x.rule_family] = byRule[x.rule_family] || { confirmed: 0, defensible: 0 } })
+confirmed.forEach(x => { byRule[x.rule_family].confirmed++ })
+all.filter(x => x.verdict && (x.verdict.classification === 'update-rule' || x.verdict.classification === 'design-decision')).forEach(x => { byRule[x.rule_family].defensible++ })
+
+log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | violations: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
+
+return {
+  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
+  responsibility_map: allModules.map(m => ({ module: m.module, role: m.role, owns: m.owns, composes: m.composes })),
+  confirmed: confirmed.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, expected_owner: x.expected_owner, actual_owner: x.actual_owner, severity: (x.verdict && x.verdict.adjusted_severity) || x.severity, classification: x.verdict && x.verdict.classification, settled_ref: x.settled_ref, recommendation: x.recommendation, data_flow: x.data_flow, proof: x.verdict && x.verdict.evidence })),
+  settled: settledOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, settled_ref: (x.verdict && x.verdict.evidence) || x.settled_ref })),
+  refuted: refutedOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, why: x.verdict && x.verdict.reasoning })),
+  calibration: byRule,
+}
