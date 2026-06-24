@@ -379,7 +379,6 @@ public fun set_protocol_reserve_profit_share(
     protocol_reserve_profit_share: u64,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
     config_events::emit_risk_config_updated(

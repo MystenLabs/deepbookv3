@@ -12,13 +12,12 @@ unit tests.
 - `Account.receive_address()` returns the canonical inner account address.
 - `Account.balance<T>(root, clock)` returns stored balance plus unsettled funds
   visible in `AccumulatorRoot`.
-- `Account.deposit<T>(coin, root, clock)` and `Account.withdraw<T>(amount, root,
-  clock, ctx)` passively call `settle_unchecked<T>` before changing stored
-  balances.
-- `settle_unchecked<T>` reads `balance::settled_funds_value<T>(root,
-  account_id.to_address())`, withdraws from the account object's address
-  balance, redeems the withdrawal, and deposits into the account's stored
-  balance.
+- `Account.settle<T>(wrapper, root, clock)` reads
+  `balance::settled_funds_value<T>(root, wrapper.id.to_address())`, withdraws
+  from the wrapper object's address balance, redeems the withdrawal, and deposits
+  into the account's stored balance.
+- `Account.deposit<T>(coin)` and `Account.withdraw<T>(amount, ctx)` operate only
+  on stored balance; callers settle accumulator funds at the flow boundary first.
 - The last settlement timestamp is tracked per coin type with `CoinKey<T>` in a
   `Bag`. If a second transaction reaches settlement for the same coin at the
   same `Clock.timestamp_ms()`, Account skips the accumulator withdrawal attempt.
