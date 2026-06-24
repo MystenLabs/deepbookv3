@@ -52,7 +52,7 @@ public struct CadenceConfig has copy, drop, store {
     /// Minimum DUSDC cash target snapshotted into pool accounting for each created expiry.
     initial_expiry_cash: u64,
     /// Number of future cadence slots that deployment may keep filled.
-    /// Zero disables this cadence.
+    /// Zero disables this cadence; enabled cadences are capped by an upgrade-required bound.
     window_size: u64,
 }
 
@@ -321,6 +321,7 @@ fun assert_cadence_config(
         EInvalidCadenceConfig,
     );
     config_constants::assert_market_tick_size_bounds(tick_size);
+    config_constants::assert_cadence_window_size(window_size);
     assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }

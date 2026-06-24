@@ -29,6 +29,7 @@ const EInvalidEwmaZScoreThreshold: u64 = 18;
 const EInvalidEwmaPenaltyRate: u64 = 19;
 const EInvalidBackingBufferLambda: u64 = 20;
 const EInvalidMaxAdmissionLeverage: u64 = 21;
+const EInvalidCadenceWindowSize: u64 = 22;
 
 // === Fees ===
 
@@ -182,6 +183,12 @@ public(package) fun assert_market_tick_size_bounds(value: u64) {
         value <= std::u64::max_value!() / deepbook_predict::constants::pos_inf_tick!(),
         EInvalidMarketTickSize,
     );
+}
+
+public(package) macro fun max_cadence_window_size(): u64 { 10 }
+
+public(package) fun assert_cadence_window_size(value: u64) {
+    assert!(value <= max_cadence_window_size!(), EInvalidCadenceWindowSize);
 }
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }

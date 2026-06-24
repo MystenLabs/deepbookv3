@@ -16,6 +16,7 @@ const ETH_MAX_EXPIRY_ALLOCATION: u64 = 100_000_000_000;
 const BTC_INITIAL_EXPIRY_CASH: u64 = 50_000_000_000;
 const ETH_INITIAL_EXPIRY_CASH: u64 = 25_000_000_000;
 const WINDOW_SIZE_THREE: u64 = 3;
+const ABOVE_MAX_CADENCE_WINDOW_SIZE: u64 = 11;
 const DISABLED_VALUE: u64 = 0;
 const INVALID_CADENCE_ID: u8 = 6;
 const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
@@ -172,6 +173,22 @@ fun set_cadence_config_unaligned_tick_size_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidCadenceWindowSize)]
+fun set_cadence_config_above_max_window_size_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_minute!(),
+        BTC_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        ABOVE_MAX_CADENCE_WINDOW_SIZE,
     );
     abort EUnexpectedSuccess
 }
