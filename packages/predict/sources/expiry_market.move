@@ -596,7 +596,6 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
 
 fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
     math::mul(fee_amount, constants::fee_incentive_subsidy_rate!())
-        .min(fee_amount)
         .min(market.fee_incentive_balance.value())
 }
 

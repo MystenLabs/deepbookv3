@@ -15,11 +15,11 @@ module deepbook_predict::order;
 use deepbook_predict::constants;
 
 const EInvalidOrderId: u64 = 0;
-const EInvalidTick: u64 = 2;
-const EInvalidFloorShares: u64 = 3;
-const EInvalidRange: u64 = 4;
-const EInvalidQuantity: u64 = 5;
-const EInvalidSequence: u64 = 6;
+const EInvalidTick: u64 = 1;
+const EInvalidFloorShares: u64 = 2;
+const EInvalidRange: u64 = 3;
+const EInvalidQuantity: u64 = 4;
+const EInvalidSequence: u64 = 5;
 
 // Active order id fields are dense in the low bits. Any unused bits are leading
 // bits rejected by ORDER_ID_BITS during decode validation.
