@@ -145,7 +145,7 @@ public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 
 // === Strike Tick Domain ===
 
-/// Bit width of each strike tick field in the packed range key and order ID.
+/// Bit width of each strike tick field packed into an order ID.
 public(package) macro fun tick_bits(): u8 { 24 }
 
 /// Positive-infinity sentinel tick, maximum finite-tick bound, and u24 mask for

@@ -199,9 +199,6 @@ public fun setup_market_default(): Fixture {
     setup_market(test_constants::default_tick_size())
 }
 
-/// Back-compat alias for the default bring-up.
-public fun setup_pool_with_pyth(): Fixture { setup_market_default() }
-
 /// One-shot composite bring-up over `(expiry_ms, live_price)`: a default market
 /// already past `create_expiry` + `prepare_live_oracle` + test-only cash seeding,
 /// plus a funded alice trader, so a flow test starts at the first interesting

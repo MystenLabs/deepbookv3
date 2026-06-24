@@ -3,10 +3,10 @@
 
 /// Sparse strike exposure index for payout-liability accounting.
 ///
-/// The tree keys finite interval boundaries by absolute tick, aligning its keys
-/// with the packed order ID and the public range key. Raw strikes are recovered
-/// only at the pricing/settlement boundary, where callers pass the owning market's
-/// `tick_size` (`raw_strike = tick * tick_size`); the tree stores no grid geometry.
+/// The tree keys finite interval boundaries by absolute tick, matching the tick
+/// pair packed into the durable order ID. Raw strikes are recovered only at the
+/// pricing/settlement boundary, where callers pass the owning market's `tick_size`
+/// (`raw_strike = tick * tick_size`); the tree stores no grid geometry.
 ///
 /// This treap stores finite interval boundaries touched by positions. It tracks
 /// each order's quantity and static floor shares, deriving net payout (`quantity -

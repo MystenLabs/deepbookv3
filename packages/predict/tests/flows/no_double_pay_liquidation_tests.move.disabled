@@ -16,9 +16,9 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-/// 2x ATM mint of quantity 1e9 on [min_strike, +inf): entry_value
-/// = floor(0.5 * 1e9) = 500_000_000 (p = Φ(0) = 0.5 exactly);
-/// net_premium = floor(entry_value / 2) = 250_000_000.
+/// 2x ATM mint of quantity 1e9 on `(default_strike_tick, +inf]`: entry_value =
+/// floor(0.5 * 1e9) = 500_000_000 (p = Φ(0) = 0.5 exactly); net_premium =
+/// floor(entry_value / 2) = 250_000_000.
 const MINT_CONTRIBUTION: u64 = 250_000_000;
 /// Fee floors at min_fee (fixture base_fee = 1 makes the raw Bernoulli fee
 /// round to 0; the default max-multiplier 1.0 keeps the short-expiry ramp inert).

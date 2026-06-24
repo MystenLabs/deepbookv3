@@ -191,11 +191,12 @@ public fun load_live_pricer(
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.exact_live_liability(pricer);
-    // Floor at 0 rather than abort: a degenerate underwater market marks at 0, and
-    // partial-close `walk_linear` survivors can leave residual ulp dust that makes
-    // liability exceed free cash by ~1-2 ulp/order, biasing the supply mark down by
-    // that dust. Intentional per ROUNDING_POLICY R1/R2 (liveness; the supply mark
-    // never *over*-counts TRUE, so incumbents are never diluted).
+    // Floor at 0 rather than abort: a degenerate underwater market has zero
+    // limited-recourse value, and partial-close `walk_linear` survivors can leave
+    // residual ulp dust that makes liability exceed free cash by ~1-2 ulp/order.
+    // This is a ROUNDING_POLICY R1/R2 liveness/dust clamp, not a conservative
+    // supply mark: a lower pool mark would mint more PLP to new suppliers, so the
+    // exact-mark invariant remains the governing safety property.
     market.cash.free_cash().saturating_sub(liability)
 }
 
