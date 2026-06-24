@@ -26,8 +26,10 @@ operator-pushed Block-Scholes spot/forward/SVI surface data — both now served 
   to understand cross-package trust, but every finding must be about the four in-scope packages.
 
 ## Actors / roles
-- **Trader** — acts through a `PredictManager`-equivalent account (`predict_account`) wrapping an
-  `account::Account` for DUSDC custody; directly as owner or via delegated caps + a trade proof.
+- **Trader** — acts through `predict_account` (wraps an `account::Account` for DUSDC custody); authorizes
+  either directly as owner (`account::Auth`) or via the account package's app-auth (`Permit<PredictApp>` +
+  registry authorization → `generate_auth_as_app`). The old predict-side manager cap/proof model
+  (`PredictTradeCap`/`DepositCap`/`WithdrawCap`/`PredictTradeProof`) was removed when custody moved to `account`.
 - **LP** — supplies/withdraws DUSDC to the PLP vault (async request → privileged flush); may stake DEEP.
 - **Keeper** — permissionless: triggers budgeted passive liquidation and pool syncs.
 - **Builder** — earns attributed add-on fees via a `BuilderCode`.
@@ -48,7 +50,7 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 ### `predict` (31 modules — the protocol core)
 - `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap & lifecycle-cap allowlists, `create_expiry_market`.
 - `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
-- `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions, per-expiry summaries, DEEP stake mirror; cap/proof authorization.
+- `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions, per-expiry summaries, DEEP stake mirror; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
 - `order.move` — packs immutable position terms (absolute boundary ticks, quantity, floor_shares, sequence) into a u256 order id; validates shape.
 - `expiry_market.move` — per-expiry risk engine; mint / live redeem / settled redeem / passive liquidation / settlement / compaction state machine; routes DUSDC; produces per-expiry `current_nav`.

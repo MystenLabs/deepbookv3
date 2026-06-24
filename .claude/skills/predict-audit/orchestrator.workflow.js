@@ -23,9 +23,13 @@ export const meta = {
 }
 
 const SKILL = '.claude/skills/predict-audit'
-const groundTruth = (args && args.groundTruth) || '(no ground-truth provided — note this in coverage)'
-const scope = (args && args.scope) || 'full protocol at current HEAD'
-const maxFindings = (args && args.maxFindings) || 12
+// Normalize args: the Workflow runtime may deliver `args` as an object OR a JSON string.
+let A = args
+if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
+if (!A || typeof A !== 'object') A = {}
+const groundTruth = A.groundTruth || '(no ground-truth provided — note this in coverage)'
+const scope = A.scope || 'full protocol at current HEAD'
+const maxFindings = A.maxFindings || 12
 
 const ALL_LANES = [
   { key: 'invariants', file: '01-invariants.md' },
@@ -38,8 +42,18 @@ const ALL_LANES = [
   { key: 'cross-package', file: '08-cross-package-trust.md' },
   { key: 'econ-sim', file: '09-economic-simulation.md' },
 ]
-const want = args && args.lenses
+const want = Array.isArray(A.lenses) ? A.lenses : null
 const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0) : ALL_LANES
+const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
+// Echo the resolved config so /workflows shows whether scope/lenses actually applied (a silent
+// full-fleet run is exactly what burned us once — never run 9 lenses without saying so).
+log(`audit config — scope: "${scope}" | lenses: ${want ? want.join(',') : 'ALL 9 (no filter)'} | maxFindings: ${maxFindings}`
+  + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
+  + ` | groundTruth: ${String(groundTruth).slice(0, 80)}`)
+if (want && !LANES.length) {
+  log('⚠ lens filter matched nothing — aborting (check the lens keys)')
+  return { error: 'no_lenses_matched', requested: want, valid_keys: ALL_LANES.map(l => l.key) }
+}
 
 const FINDINGS_SCHEMA = {
   type: 'object', additionalProperties: false,
