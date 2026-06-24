@@ -182,7 +182,16 @@ public fun setup_market(tick: u64): Fixture {
 
     scenario.next_tx(test_constants::admin());
 
-    Fixture { scenario, admin_cap, propbook_admin_cap, lifecycle_cap, clock, vault_id, pyth_id, bs_spot_id }
+    Fixture {
+        scenario,
+        admin_cap,
+        propbook_admin_cap,
+        lifecycle_cap,
+        clock,
+        vault_id,
+        pyth_id,
+        bs_spot_id,
+    }
 }
 
 /// `setup_market` with the default tick size.
@@ -226,7 +235,14 @@ fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fi
         mut market,
         config,
     ) = fx.take_market(expiry_id);
-    fx.prepare_live_oracle(&market, &mut pyth, &mut bs_spot, &mut bs_forward, &mut bs_svi, live_price);
+    fx.prepare_live_oracle(
+        &market,
+        &mut pyth,
+        &mut bs_spot,
+        &mut bs_forward,
+        &mut bs_svi,
+        live_price,
+    );
     fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
     return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
     fx.scenario.next_tx(test_constants::admin());
@@ -695,15 +711,20 @@ public fun mint_exact_quantity(
     max_probability: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.mint_exact_quantity(
-        wrapper,
-        auth,
+    let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        &self.clock,
+    );
+    market.mint_exact_quantity(
+        wrapper,
+        auth,
+        config,
+        &pricer,
         lower_tick,
         higher_tick,
         quantity,
@@ -735,15 +756,20 @@ public fun mint_exact_amount(
     leverage: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.mint_exact_amount(
-        wrapper,
-        auth,
+    let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        &self.clock,
+    );
+    market.mint_exact_amount(
+        wrapper,
+        auth,
+        config,
+        &pricer,
         lower_tick,
         higher_tick,
         amount,
@@ -772,15 +798,20 @@ public fun redeem(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.redeem(
-        wrapper,
-        auth,
+    let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        &self.clock,
+    );
+    market.redeem_live(
+        wrapper,
+        auth,
+        config,
+        &pricer,
         order_id,
         close_quantity,
         root,
@@ -844,7 +875,16 @@ public fun liquidate(
     bs_svi: &BlockScholesSVIFeed,
     budget: u64,
 ): u64 {
-    market.liquidate(config, oracle_registry, pyth, bs_spot, bs_forward, bs_svi, budget, &self.clock)
+    let pricer = market.load_live_pricer(
+        config,
+        oracle_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        &self.clock,
+    );
+    market.liquidate(config, &pricer, budget)
 }
 
 /// Try to liquidate one active leveraged order by ID. Returns whether it was
@@ -860,15 +900,19 @@ public fun liquidate_order(
     bs_svi: &BlockScholesSVIFeed,
     order_id: u256,
 ): bool {
-    market.liquidate_order(
+    let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
-        order_id,
         &self.clock,
+    );
+    market.liquidate_order(
+        config,
+        &pricer,
+        order_id,
     )
 }
 
@@ -918,7 +962,16 @@ public fun current_nav(
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
 ): u64 {
-    market.current_nav(config, oracle_registry, pyth, bs_spot, bs_forward, bs_svi, &self.clock)
+    let pricer = market.load_live_pricer(
+        config,
+        oracle_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        &self.clock,
+    );
+    market.current_nav(&pricer)
 }
 
 public fun load_pricer(
@@ -931,15 +984,13 @@ public fun load_pricer(
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
 ): pricing::Pricer {
-    pricing::load_live_pricer(
-        config.pricing_config(),
+    market.load_live_pricer(
+        config,
         oracle_registry,
-        market.propbook_underlying_id(),
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
-        market.expiry(),
         &self.clock,
     )
 }

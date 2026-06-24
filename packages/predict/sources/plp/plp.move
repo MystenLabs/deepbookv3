@@ -234,7 +234,16 @@ public fun value_expiry(
     let nav = if (settled) {
         0
     } else {
-        market.current_nav(config, propbook_registry, pyth, bs_spot, bs_forward, bs_svi, clock)
+        let pricer = market.load_live_pricer(
+            config,
+            propbook_registry,
+            pyth,
+            bs_spot,
+            bs_forward,
+            bs_svi,
+            clock,
+        );
+        market.current_nav(&pricer)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;

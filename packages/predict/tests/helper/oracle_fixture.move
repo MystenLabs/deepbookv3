@@ -223,6 +223,7 @@ public fun load_pricer(
     pricing::load_live_pricer(
         config.pricing_config(),
         oracle_registry,
+        self.expiry_id,
         test_constants::propbook_underlying_id(),
         pyth,
         bs_spot,
@@ -282,7 +283,10 @@ public fun prepare_real_oracle(
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
     store_pyth_spot(pyth, spot, live_ts, live_ts);
-    bs_spot.update(update::new_spot_update(test_constants::pyth_feed_id(), live_ts, spot), &self.clock);
+    bs_spot.update(
+        update::new_spot_update(test_constants::pyth_feed_id(), live_ts, spot),
+        &self.clock,
+    );
     bs_forward.update(
         update::new_forward_update(test_constants::pyth_feed_id(), self.expiry, live_ts, forward),
         &self.clock,

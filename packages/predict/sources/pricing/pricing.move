@@ -19,10 +19,12 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use sui::clock::Clock;
+use sui::{clock::Clock, object::ID};
 
-/// Value snapshot of live oracle inputs for one or more price calculations.
+/// Value snapshot of live oracle inputs for one market's price calculations.
 public struct Pricer has copy, drop {
+    /// Expiry market this snapshot was loaded for.
+    expiry_market_id: ID,
     forward: u64,
     svi: SVIParams,
 }
@@ -52,10 +54,17 @@ macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+// === Public Functions ===
+
+/// Return the expiry market this pricer was loaded for.
+public fun expiry_market_id(pricer: &Pricer): ID {
+    pricer.expiry_market_id
+}
+
 // === Public-Package Functions ===
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
-/// `expiry`'s repeated quote calculations.
+/// one market's repeated quote calculations.
 ///
 /// This is the only path from raw Propbook oracle objects into Predict business
 /// logic. It first checks that `pyth`, `bs_spot`, `bs_forward`, and `bs_svi` are
@@ -65,6 +74,7 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
+    expiry_market_id: ID,
     propbook_underlying_id: u32,
     pyth: &PythFeed,
     bs_spot: &BlockScholesSpotFeed,
@@ -84,7 +94,7 @@ public(package) fun load_live_pricer(
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
     let (forward, svi) = live_inputs(config, pyth, bs_spot, bs_forward, bs_svi, clock);
-    Pricer { forward, svi }
+    Pricer { expiry_market_id, forward, svi }
 }
 
 /// Return the current UP tail price for one strike.
