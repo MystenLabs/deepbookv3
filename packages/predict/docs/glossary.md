@@ -139,8 +139,10 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 
 - **Knock-out** — the extinguishing of a leveraged contract once its gross
   value reaches the knock-out level. Code and event vocabulary: liquidation,
-  `OrderLiquidated`. Predict's knock-out pays **zero rebate**: the holder
-  receives nothing, and a tombstone remains until cleared.
+  `OrderLiquidated`. Predict's knock-out pays **zero order payout**: the holder
+  receives nothing from the knocked-out order, and a tombstone remains until
+  cleared. The separate settled trading-loss rebate still follows the normal
+  expiry-level PnL and fee-basis rules.
 - **Knock-out level** — `floor_amount / liquidation_ltv`, the gross value at
   which the contract is extinguished. It sits above the financing balance by
   the LTV buffer; that gap is the pool's recovery margin against gap risk.
@@ -214,4 +216,4 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem` (live) | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
 | `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
-| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero rebate. |
+| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |

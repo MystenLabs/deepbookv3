@@ -1,6 +1,6 @@
 # Liquidation
 
-Liquidation removes a leveraged Predict position whose live value has decayed to or below its floor-derived knock-out level. It is a knock-out in the barrier-option sense — extinguishment with zero rebate — not an auction: the holder receives nothing beyond what they already paid, the position is struck from the live valuation indexes, and a tombstone remains until the holder's manager closes it. Only leveraged positions are subject to liquidation; an unleveraged (1x) position has no floor and cannot be liquidated. This document describes the trigger condition, the data structure that selects candidates, the bounded scan budgets, and what those bounds imply for liquidity providers.
+Liquidation removes a leveraged Predict position whose live value has decayed to or below its floor-derived knock-out level. It is a knock-out in the barrier-option sense — extinguishment with zero order payout — not an auction: the holder receives nothing from the knocked-out order, the position is struck from the live valuation indexes, and a tombstone remains until the holder's manager closes it. Only leveraged positions are subject to liquidation; an unleveraged (1x) position has no floor and cannot be liquidated. This document describes the trigger condition, the data structure that selects candidates, the bounded scan budgets, and what those bounds imply for liquidity providers.
 
 For the contract model behind a position's floor and leverage, see [./leverage-and-floor.md](./leverage-and-floor.md). For LP exposure to bounded scans, see [../risks.md](../risks.md). Tunable parameters referenced below are defined in [../design/configuration.md](../design/configuration.md).
 
@@ -30,13 +30,13 @@ At mint, the same threshold relation is enforced in the opposite direction: entr
 
 ## What liquidation does
 
-Liquidation is a pure knock-out with zero rebate. When the condition holds, the protocol:
+Liquidation is a pure knock-out with zero order payout. When the condition holds, the protocol:
 
 1. Marks the order liquidated in the liquidation index, removing it from the active candidate set and recording a tombstone (`liquidated_orders`).
 2. Removes the order's full live-index terms from both NAV and payout backing, so it no longer contributes to live pool valuation.
 3. Emits `OrderLiquidated`.
 
-No payout is computed and no cash moves at liquidation time. The holder's `PredictManager` is not touched — liquidation does not know which manager holds the position, which is why `OrderLiquidated` carries no owner or manager field and consumers join it to the original `OrderMinted` by `order_id`. The tombstone persists until the holder (or any keeper, since the path is permissionless and pays nothing) redeems the worthless order: that step removes the position from the manager, clears the tombstone, and emits `LiquidatedOrderRedeemed` with a zero payout. A redeem that targets an already-liquidated order is short-circuited to this cleanup path in any market state, before any live or settled pricing runs.
+No payout is computed and no cash moves at liquidation time. The holder's `PredictManager` is not touched — liquidation does not know which manager holds the position, which is why `OrderLiquidated` carries no owner or manager field and consumers join it to the original `OrderMinted` by `order_id`. The tombstone persists until the holder (or any keeper, since the path is permissionless and pays nothing) redeems the worthless order: that step removes the position from the manager, clears the tombstone, and emits `LiquidatedOrderRedeemed` with a zero payout. A redeem that targets an already-liquidated order is short-circuited to this cleanup path in any market state, before any live or settled pricing runs. This zero-payout cleanup does not exclude the manager from the separate settled trading-loss rebate flow; after all of the manager's positions in the expiry are closed, any rebate is computed from the normal expiry-level PnL and trader-paid fee basis.
 
 ```mermaid
 stateDiagram-v2
