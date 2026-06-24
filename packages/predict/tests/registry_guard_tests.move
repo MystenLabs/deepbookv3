@@ -35,11 +35,7 @@ use propbook::{
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{
-    clock::{Self, Clock},
-    object,
-    test_scenario::{Self, Scenario, return_shared}
-};
+use sui::{clock::{Self, Clock}, object, test_scenario::{Self, Scenario, return_shared}};
 
 /// A Propbook underlying id the registry never approves.
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
@@ -301,8 +297,14 @@ fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
 
 #[test]
 fun create_expiry_market_skips_occupied_lower_rank_collision() {
-    let (mut scenario, registry_id, admin_cap, propbook_admin_cap, pyth_id, bs_spot_id) =
-        setup_registered_feeds();
+    let (
+        mut scenario,
+        registry_id,
+        admin_cap,
+        propbook_admin_cap,
+        pyth_id,
+        bs_spot_id,
+    ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_pyth_and_spot(&scenario, &propbook_admin_cap, pyth_id, bs_spot_id);
@@ -441,8 +443,14 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
 fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     // Pyth source approved + feeds created, but nothing is bound to the underlying,
     // so the Pyth canonical-binding check (after the approval gate) fails first.
-    let (mut scenario, registry_id, admin_cap, _propbook_admin_cap, _pyth_id, _bs_spot_id) =
-        setup_registered_feeds();
+    let (
+        mut scenario,
+        registry_id,
+        admin_cap,
+        _propbook_admin_cap,
+        _pyth_id,
+        _bs_spot_id,
+    ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -468,8 +476,14 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
 #[test, expected_failure(abort_code = market_manager::EBlockScholesSpotFeedNotBoundToUnderlying)]
 fun create_expiry_market_with_unbound_block_scholes_spot_feed_aborts() {
     // Only the Pyth feed is bound to the underlying; the BS spot check then fails.
-    let (mut scenario, registry_id, admin_cap, propbook_admin_cap, pyth_id, _bs_spot_id) =
-        setup_registered_feeds();
+    let (
+        mut scenario,
+        registry_id,
+        admin_cap,
+        propbook_admin_cap,
+        pyth_id,
+        _bs_spot_id,
+    ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_only_pyth(&scenario, &propbook_admin_cap, pyth_id);
@@ -499,8 +513,14 @@ fun create_expiry_market_with_unbound_block_scholes_spot_feed_aborts() {
 fun create_expiry_market_with_unbound_block_scholes_expiry_feed_aborts() {
     // Pyth and BS spot are bound, but no forward/SVI pair is bound for the target
     // expiry, so the forward check fails first.
-    let (mut scenario, registry_id, admin_cap, propbook_admin_cap, pyth_id, bs_spot_id) =
-        setup_registered_feeds();
+    let (
+        mut scenario,
+        registry_id,
+        admin_cap,
+        propbook_admin_cap,
+        pyth_id,
+        bs_spot_id,
+    ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_pyth_and_spot(&scenario, &propbook_admin_cap, pyth_id, bs_spot_id);
@@ -577,13 +597,23 @@ fun setup_bound_creation_context(
     AdminCap,
     Clock,
 ) {
-    let (mut scenario, registry_id, admin_cap, propbook_admin_cap, pyth_id, bs_spot_id) =
-        setup_registered_feeds();
+    let (
+        mut scenario,
+        registry_id,
+        admin_cap,
+        propbook_admin_cap,
+        pyth_id,
+        bs_spot_id,
+    ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_pyth_and_spot(&scenario, &propbook_admin_cap, pyth_id, bs_spot_id);
     scenario.next_tx(test_constants::admin());
-    prebind_one_minute_expiry_feeds(&mut scenario, &propbook_admin_cap, PREBOUND_ONE_MINUTE_EXPIRIES);
+    prebind_one_minute_expiry_feeds(
+        &mut scenario,
+        &propbook_admin_cap,
+        PREBOUND_ONE_MINUTE_EXPIRIES,
+    );
     destroy(propbook_admin_cap);
 
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
