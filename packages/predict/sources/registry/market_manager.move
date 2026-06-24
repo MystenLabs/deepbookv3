@@ -118,8 +118,9 @@ public(package) fun cadence_config(manager: &MarketManager, cadence_id: u8): (u6
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
-/// slot after the current clock time. Reserved higher-rank cadence slots are skipped,
-/// and the selected expiry must still fit inside the cadence window.
+/// slot after the current clock time. Reserved higher-rank cadence slots and
+/// already-created markets are skipped, and the selected expiry must still fit
+/// inside the cadence window.
 public(package) fun next_deployable_market(
     manager: &MarketManager,
     propbook_registry: &OracleRegistry,
@@ -140,11 +141,13 @@ public(package) fun next_deployable_market(
     let window_end = now_ms + cadence.window_size * period_ms;
 
     while (expiry <= window_end) {
-        if (manager.has_higher_rank_overlap(cadence_id, expiry)) {
+        let key = MarketKey { propbook_underlying_id, expiry };
+        if (
+            manager.has_higher_rank_overlap(cadence_id, expiry)
+                || manager.market_ids.contains(key)
+        ) {
             expiry = expiry + period_ms;
         } else {
-            let key = MarketKey { propbook_underlying_id, expiry };
-            assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
             assert!(
                 propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
                 EPythFeedNotBoundToUnderlying,

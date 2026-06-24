@@ -35,7 +35,11 @@ use propbook::{
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock::{Self, Clock}, test_scenario::{Scenario, return_shared}};
+use sui::{
+    clock::{Self, Clock},
+    object,
+    test_scenario::{Self, Scenario, return_shared}
+};
 
 /// A Propbook underlying id the registry never approves.
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
@@ -295,8 +299,8 @@ fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_manager::EMarketAlreadyCreated)]
-fun create_expiry_market_duplicate_expiry_aborts() {
+#[test]
+fun create_expiry_market_skips_occupied_lower_rank_collision() {
     let (mut scenario, registry_id, admin_cap, propbook_admin_cap, pyth_id, bs_spot_id) =
         setup_registered_feeds();
 
@@ -304,6 +308,11 @@ fun create_expiry_market_duplicate_expiry_aborts() {
     bind_pyth_and_spot(&scenario, &propbook_admin_cap, pyth_id, bs_spot_id);
     scenario.next_tx(test_constants::admin());
     create_and_bind_bs_expiry_feeds(&mut scenario, &propbook_admin_cap, constants::one_week_ms!());
+    create_and_bind_bs_expiry_feeds(
+        &mut scenario,
+        &propbook_admin_cap,
+        2 * constants::one_week_ms!(),
+    );
 
     let mut daily_clock = clock::create_for_testing(scenario.ctx());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
@@ -321,7 +330,7 @@ fun create_expiry_market_duplicate_expiry_aborts() {
         test_constants::default_cadence_window_size(),
     );
     daily_clock.set_for_testing(constants::one_week_ms!() - constants::one_day_ms!());
-    let _daily_id = reg.create_expiry_market(
+    let daily_id = reg.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -339,11 +348,11 @@ fun create_expiry_market_duplicate_expiry_aborts() {
         test_constants::default_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
-        test_constants::default_cadence_window_size(),
+        WINDOW_SIZE_THREE,
     );
     let mut weekly_clock = clock::create_for_testing(scenario.ctx());
     weekly_clock.set_for_testing(START_OF_TIME_MS);
-    let _weekly_id = reg.create_expiry_market(
+    let weekly_id = reg.create_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -352,6 +361,39 @@ fun create_expiry_market_duplicate_expiry_aborts() {
         market_manager::cadence_one_week!(),
         &weekly_clock,
         scenario.ctx(),
+    );
+    assert_market_id(&reg, constants::one_week_ms!(), daily_id);
+    assert_market_id(&reg, 2 * constants::one_week_ms!(), weekly_id);
+
+    weekly_clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(propbook_admin_cap);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = market_manager::EMarketAlreadyCreated)]
+fun record_expiry_creation_duplicate_expiry_aborts() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+    let mut manager = market_manager::new(scenario.ctx());
+    let expiry = constants::one_week_ms!();
+
+    manager.register_underlying(test_constants::propbook_underlying_id());
+    manager.record_expiry_creation(
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_day!(),
+        expiry,
+        object::id_from_address(@0xCAFE),
+    );
+    manager.record_expiry_creation(
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_week!(),
+        expiry,
+        object::id_from_address(@0xF00D),
     );
     abort 999
 }

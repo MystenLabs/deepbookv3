@@ -199,8 +199,8 @@ public fun set_cadence_config(
 /// Requires an allowlisted `MarketLifecycleCap`. The market manager enforces one
 /// market per `(propbook_underlying_id, expiry)`, that the underlying is
 /// admin-approved for Predict, that the cadence is enabled and inside its
-/// deployment window after skipping enabled higher-rank cadence slots, and — via
-/// Propbook's admin-gated canonical binding — that both
+/// deployment window after skipping enabled higher-rank cadence slots and already
+/// created markets, and — via Propbook's admin-gated canonical binding — that both
 /// required oracle kinds are currently bound for the underlying. The market
 /// snapshots the cadence tick size, while pool accounting snapshots the cadence
 /// allocation cap and initial expiry cash target. Priced flows resolve current
