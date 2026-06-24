@@ -53,11 +53,11 @@ export const publishPackage = (txb: Transaction, path: string, configPath?: stri
 export const getSigner = () => {
 	if (process.env.PRIVATE_KEY) {
 		console.log('Using supplied private key.');
-		const { schema, secretKey } = decodeSuiPrivateKey(process.env.PRIVATE_KEY);
+		const { scheme, secretKey } = decodeSuiPrivateKey(process.env.PRIVATE_KEY);
 
-		if (schema === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
-		if (schema === 'Secp256k1') return Secp256k1Keypair.fromSecretKey(secretKey);
-		if (schema === 'Secp256r1') return Secp256r1Keypair.fromSecretKey(secretKey);
+		if (scheme === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
+		if (scheme === 'Secp256k1') return Secp256k1Keypair.fromSecretKey(secretKey);
+		if (scheme === 'Secp256r1') return Secp256r1Keypair.fromSecretKey(secretKey);
 
 		throw new Error('Keypair not supported.');
 	}

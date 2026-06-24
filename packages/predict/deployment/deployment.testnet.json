@@ -55,5 +55,63 @@
     "account": "7aaL1SiSjFnfzbyBfon27rR2G5WifCNJzxAxnHxGh4j6",
     "propbook": "BHbuBnA2EPBG4ktK4ne7PjkoVUGKczoWxsvoxDAx1QTn",
     "predict": "6xS3jHFx8cYJpwCJ2iowLKrYk66qBT7UBaQrWRKSCczS"
+  },
+  "wiring": {
+    "version": 1,
+    "network": "testnet",
+    "operator": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+    "updatedAt": "2026-06-24T20:19:24.000Z",
+    "account": {
+      "predictAppAuthorized": true,
+      "authorizeTx": "FZhbDpVz6E3asKjUr7fRMZFecTnWyCacFQtD2oiyKB1w",
+      "accountWrapperId": "0x1c8e64b06907fd0916cdb5530b9fc2ed19968efa16cd6ba1561e3bda32641a04",
+      "createAccountTx": "GdME1i4B38MtrHqN2stoexkVXxhRSkXvi5hY1DFwmuqc"
+    },
+    "lifecycleCap": {
+      "id": "0x452a64eafae0f10839db3f325ff6c46da4ff307bf8ef39297d3a8b8be204a3ed",
+      "recipient": "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82",
+      "owner": "recipient",
+      "mintTx": "DPjLZYb7GTSoPWeNzxRvUsgmQZcTv3qEZCh4wj71kx1y",
+      "transferTx": "5HWWFYPJ9XAG4cf89C2fUMoqpGS62SUmoLgTXEymHg3N"
+    },
+    "asset": {
+      "name": "BTC_USD",
+      "propbookUnderlyingId": 1,
+      "pythLazerFeedId": 1,
+      "blockScholesSourceId": 1,
+      "globalFeedsCreatedTx": "3h866vKwqtGi4MgfGLZDrE6CeD2JFWYekvqBr3viR1Qc",
+      "pythFeedId": "0x01b2746e5b90ab53e139ec1046fea1d34432779ab5901ac890bd84959df5dbeb",
+      "blockScholesSpotFeedId": "0x348c5fc25e8c546ad5842dbeb145d516c066ee4a99f025dcf309ca6c50c59995",
+      "globalFeedsBoundTx": "Fu41MWgvgSd1KfkDfdDcS2zBjXimaxpop8AtfTJoCJyM",
+      "predictUnderlyingRegistered": true,
+      "predictUnderlyingRegisteredTx": "9JRkpgJ16wPxZw9v2z2t9w5yFKf3FULHVPbkeK6yoExu"
+    },
+    "cadences": [
+      {
+        "id": 1,
+        "name": "5m",
+        "tickSize": "1000000000",
+        "maxExpiryAllocation": "50000000000",
+        "initialExpiryCash": "10000000000",
+        "windowSize": "3",
+        "setTx": "5YLMrwjdSLX5Pbs2szUB6Xc7VqZgUpa2e8pzRQi24TaY"
+      },
+      {
+        "id": 2,
+        "name": "1h",
+        "tickSize": "1000000000",
+        "maxExpiryAllocation": "250000000000",
+        "initialExpiryCash": "50000000000",
+        "windowSize": "3",
+        "setTx": "5YLMrwjdSLX5Pbs2szUB6Xc7VqZgUpa2e8pzRQi24TaY"
+      }
+    ],
+    "bootstrap": {
+      "lockCapitalAmount": "10000000",
+      "supplyAmount": "10000000000000",
+      "lockCapitalTx": "He6wtHAXGK9fBwKG31x9gcLcGKqsiR9wxuMRQkbcd6DA",
+      "supplyRequestTx": "7Qfk7uFGeScmEmtSWe6x8hfUwQHSjbJ5kZbCieHnxKfK",
+      "flushTx": "BXGs6KKYRRVbDnhGgFkjzfA86WFTohSftPwmJBcrrfeE"
+    }
   }
 }
