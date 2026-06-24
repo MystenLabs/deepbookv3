@@ -21,7 +21,9 @@ const ECadenceWindowExceeded: u64 = 5;
 const EInvalidDeploymentExpiry: u64 = 6;
 const EInvalidCadenceConfig: u64 = 7;
 const EPythFeedNotBoundToUnderlying: u64 = 8;
-const EBlockScholesFeedNotBoundToUnderlying: u64 = 9;
+const EBlockScholesSpotFeedNotBoundToUnderlying: u64 = 9;
+const EBlockScholesForwardFeedNotBoundToUnderlying: u64 = 10;
+const EBlockScholesSVIFeedNotBoundToUnderlying: u64 = 11;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size, allocation cap, and initial cash target are
@@ -50,8 +52,14 @@ public struct CadenceConfig has copy, drop, store {
     /// Minimum DUSDC cash target snapshotted into pool accounting for each created expiry.
     initial_expiry_cash: u64,
     /// Number of future cadence slots that deployment may keep filled.
-    /// Zero disables this cadence.
+    /// Zero disables this cadence; enabled cadences are capped by an upgrade-required bound.
     window_size: u64,
+}
+
+/// Next market selected for creation plus the cadence terms to snapshot into it.
+public struct DeployableMarket has copy, drop {
+    expiry: u64,
+    cadence: CadenceConfig,
 }
 
 /// Stored deployment watermarks for one Propbook underlying.
@@ -103,28 +111,19 @@ public(package) fun expiry_market_id(
     }
 }
 
-public(package) fun cadence_config(manager: &MarketManager, cadence_id: u8): (u64, u64, u64, u64) {
-    let cadence = &manager.cadences[cadence_index(cadence_id)];
-    (
-        cadence.tick_size,
-        cadence.max_expiry_allocation,
-        cadence.initial_expiry_cash,
-        cadence.window_size,
-    )
-}
-
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
-/// slot after the current clock time. Reserved higher-rank cadence slots are skipped,
-/// and the selected expiry must still fit inside the cadence window.
+/// slot after the current clock time. Reserved higher-rank cadence slots and
+/// already-created markets are skipped, and the selected expiry must still fit
+/// inside the cadence window.
 public(package) fun next_deployable_market(
     manager: &MarketManager,
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     cadence_id: u8,
     clock: &Clock,
-): (u64, u64, u64, u64) {
+): DeployableMarket {
     let cadence_index = cadence_index(cadence_id);
     let cadence = &manager.cadences[cadence_index];
     assert!(cadence.window_size > 0, ECadenceDisabled);
@@ -138,32 +137,66 @@ public(package) fun next_deployable_market(
     let window_end = now_ms + cadence.window_size * period_ms;
 
     while (expiry <= window_end) {
-        if (manager.has_higher_rank_overlap(cadence_id, expiry)) {
+        let key = MarketKey { propbook_underlying_id, expiry };
+        if (
+            manager.has_higher_rank_overlap(cadence_id, expiry)
+                || manager.market_ids.contains(key)
+        ) {
             expiry = expiry + period_ms;
         } else {
-            let key = MarketKey { propbook_underlying_id, expiry };
-            assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
             assert!(
                 propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
                 EPythFeedNotBoundToUnderlying,
             );
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_id_for_underlying(propbook_underlying_id)
+                    .propbook_block_scholes_spot_id_for_underlying(propbook_underlying_id)
                     .is_some(),
-                EBlockScholesFeedNotBoundToUnderlying,
+                EBlockScholesSpotFeedNotBoundToUnderlying,
+            );
+            assert!(
+                propbook_registry
+                    .propbook_block_scholes_forward_id_for_underlying_expiry(
+                        propbook_underlying_id,
+                        expiry,
+                    )
+                    .is_some(),
+                EBlockScholesForwardFeedNotBoundToUnderlying,
+            );
+            assert!(
+                propbook_registry
+                    .propbook_block_scholes_svi_id_for_underlying_expiry(
+                        propbook_underlying_id,
+                        expiry,
+                    )
+                    .is_some(),
+                EBlockScholesSVIFeedNotBoundToUnderlying,
             );
 
-            return (
+            return DeployableMarket {
                 expiry,
-                cadence.tick_size,
-                cadence.max_expiry_allocation,
-                cadence.initial_expiry_cash,
-            )
+                cadence: *cadence,
+            }
         }
     };
 
     abort ECadenceWindowExceeded
+}
+
+public(package) fun expiry(deployable: &DeployableMarket): u64 {
+    deployable.expiry
+}
+
+public(package) fun tick_size(deployable: &DeployableMarket): u64 {
+    deployable.cadence.tick_size
+}
+
+public(package) fun max_expiry_allocation(deployable: &DeployableMarket): u64 {
+    deployable.cadence.max_expiry_allocation
+}
+
+public(package) fun initial_expiry_cash(deployable: &DeployableMarket): u64 {
+    deployable.cadence.initial_expiry_cash
 }
 
 public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {
@@ -298,6 +331,7 @@ fun assert_cadence_config(
         EInvalidCadenceConfig,
     );
     config_constants::assert_market_tick_size_bounds(tick_size);
+    config_constants::assert_cadence_window_size(window_size);
     assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }

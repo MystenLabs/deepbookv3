@@ -333,10 +333,7 @@ fun settled_liability_zero_above_winning_range() {
     insert_range(&mut tree, 2, 6, 50, 0);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 0);
-    assert_eq!(
-        tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE),
-        0,
-    );
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -362,10 +359,7 @@ fun settled_liability_pos_inf_range_owed_from_lower() {
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 100);
-    assert_eq!(
-        tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE),
-        100,
-    );
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 100);
     destroy(tree);
 }
 

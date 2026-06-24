@@ -63,7 +63,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   two-level skip-tree with slack certificates; a bucketed leverage book.
 - **Liquidation priority is largest-quantity-first, not most-under-floor-first.**
   The sort key lives in the immutable packed id, and an order's health changes
-  with the live surface — it cannot be a static key. Largest-first is the best
+  with the live forward/SVI state — it cannot be a static key. Largest-first is the best
   feasible static proxy for the quantity that matters (how much a stale order can
   overstate NAV). *Rejected:* most-under-floor-first (would require re-keying the
   book whenever marks move).
@@ -141,11 +141,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **The oracle moved out of Predict into the standalone `propbook` package.** The
 	  in-package `MarketOracle`, `PythSource`, `settlement_state`,
 	  `market_oracle_config`, `market_oracle_writer_cap`, and `oracle_events` modules
-	  were deleted. Live data now comes from two Predict-unaware feeds —
-	  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed) and
-	  `propbook::block_scholes_feed::BlockScholesFeed` (one per source id, with
-	  per-expiry surfaces plus exact timestamp history) — each updated permissionlessly
-	  from a self-authenticating verified `Update`, so there is no writer capability.
+	  were deleted. Live data now comes from Predict-unaware Propbook feeds:
+	  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed), a source-level
+	  `propbook::block_scholes_spot_feed::BlockScholesSpotFeed`, and per-expiry
+	  `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` /
+	  `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` objects. Each is updated
+	  permissionlessly from a self-authenticating verified update, so there is no writer capability.
   *Rationale:* the oracle suite is reusable by the wider ecosystem and has a clean,
   Predict-agnostic boundary; possessing a verified `Update` is the only proof
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
@@ -161,14 +162,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   into business logic.
 - **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
-  fresh, else the normalized Block Scholes `forward`;
-	  the Block Scholes *surface* must be fresh either way (`EBlockScholesSurfaceStale`).
-	  *Rationale:* the surface alone carries a usable forward, so a momentarily stale
-	  or non-positive/unrepresentable spot should not block trading. An oversized
-	  normalized Pyth spot still aborts under Predict's pricing envelope. The freshness
-	  windows for Pyth spot and the BS surface collapsed to one window each — the surface
-	  row writes spot + forward + SVI together, so the former separate price and SVI
-	  windows became one.
+  fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
+	  be fresh under the BS price window, and SVI must be fresh under its own looser
+	  window (`EBlockScholesPriceStale` / `EBlockScholesSVIStale`).
+	  *Rationale:* the BS forward feed alone carries a usable forward, so a momentarily
+	  stale or non-positive/unrepresentable Pyth spot should not block trading. An oversized
+	  normalized Pyth spot still aborts under Predict's pricing envelope. BS spot, forward,
+	  and SVI are independent Propbook feeds, so price freshness and SVI freshness remain
+	  separate policy windows.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
@@ -195,7 +196,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **No-spot market creation.** Because the tick domain is absolute, market creation
   reads no live spot — it snapshots the cadence `tick_size` and starts with zero cash.
   `MarketCreated` carries `tick_size`, `max_expiry_allocation`, and
-  `initial_expiry_cash`, not min/max strike.
+  `initial_expiry_cash` plus the immutable per-expiry policy snapshot, not min/max strike.
   *Rationale:* the only reason creation needed a fresh spot was to center the deleted grid; a market simply
   cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
   re-adding a creation-time spot read purely to sanity-check the tick size against the

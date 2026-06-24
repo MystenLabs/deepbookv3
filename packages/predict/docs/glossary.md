@@ -78,11 +78,11 @@ grid, no boundary indices).
   (code `gross_value`) — the collateral value securing the financing.
 - **Forward** — the model's forecast of the underlying at expiry, the input the
   range probability is differenced off. Predict builds it as `spot × basis` when
-  the Pyth spot is fresh and falls back to the Block Scholes surface forward
-  otherwise. Code: built in `pricing` from `normalized_surface(expiry)`.
-- **Basis** — the surface's `forward / spot` ratio for an expiry, supplied by
-  the Block Scholes feed; it carries the spot to the forward when live spot is
-  applied. Code: derived in `pricing` from `surface_forward / surface_spot`.
+  the Pyth spot is fresh and falls back to the Block Scholes forward otherwise.
+  Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
+- **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
+  the spot to the forward when live spot is applied. Code: derived in `pricing`
+  from `BlockScholesForwardFeed / BlockScholesSpotFeed`.
 
 ## Oracles (propbook feeds)
 
@@ -94,17 +94,18 @@ Predict reads it but does not own it.
   updated permissionlessly from a verified Lazer payload (`update`). Predict
   reads `normalized_spot()` and the read's `source_timestamp_ms`. Code module
   `propbook::pyth_feed`.
-- **`BlockScholesFeed`** — one object per source id holding per-expiry raw
-  surfaces plus exact timestamp history; written by a trusted off-chain operator
-  (`update`). Predict reads `normalized_surface(expiry)`, the surface getters,
+- **`BlockScholesSpotFeed`** — one source-level BS spot object plus exact
+  timestamp history. Predict reads `normalized_spot()` and the read's
+  `source_timestamp_ms`. Code module `propbook::block_scholes_spot_feed`.
+- **`BlockScholesForwardFeed`** — one BS forward object per `(source id,
+  expiry_ms)` plus exact timestamp history. Predict reads `normalized_forward()`
   and the read's `source_timestamp_ms`. Code module
-  `propbook::block_scholes_feed`.
-- **Surface** — the per-expiry pricing snapshot a `BlockScholesFeed` stores for
-  one expiry: `{spot, forward, SVI parameters, timestamps}`. Freshness is a
-  single window over the whole surface (no separate price/SVI windows). Code
-  `Surface`.
+  `propbook::block_scholes_forward_feed`.
+- **`BlockScholesSVIFeed`** — one BS SVI object per `(source id, expiry_ms)` plus
+  exact timestamp history. Predict reads `normalized_svi()` and the read's
+  `source_timestamp_ms`. Code module `propbook::block_scholes_svi_feed`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
-  volatility smile the surface carries; the curve range probabilities are
+  volatility smile; the curve range probabilities are
   differenced off. Predict enforces its pricing-safe SVI envelope at read time
   (`|rho| <= 1`, bounded inputs, bounded sigma). Code `SVIParams`.
 - **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
@@ -138,8 +139,10 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 
 - **Knock-out** — the extinguishing of a leveraged contract once its gross
   value reaches the knock-out level. Code and event vocabulary: liquidation,
-  `OrderLiquidated`. Predict's knock-out pays **zero rebate**: the holder
-  receives nothing, and a tombstone remains until cleared.
+  `OrderLiquidated`. Predict's knock-out pays **zero order payout**: the holder
+  receives nothing from the knocked-out order, and a tombstone remains until
+  cleared. The separate settled trading-loss rebate still follows the normal
+  expiry-level PnL and fee-basis rules.
 - **Knock-out level** — `floor_amount / liquidation_ltv`, the gross value at
   which the contract is extinguished. It sits above the financing balance by
   the LTV buffer; that gap is the pool's recovery margin against gap risk.
@@ -213,4 +216,4 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem` (live) | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
 | `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
-| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero rebate. |
+| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |

@@ -84,15 +84,8 @@ public fun default_initial_expiry_cash(): u64 { constants::expiry_cash_floor!() 
 /// `(strike_tick, +inf)` UP range).
 public fun default_strike_tick(): u64 { 100 }
 
-/// A representative finite raw strike (`default_strike_tick * default_tick_size =
-/// 100e9`), used by the direct-pricing tests that take raw strikes.
-public fun min_finite_strike(): u64 { 100_000_000_000 }
-
 /// Default DUSDC cash seeded into expiry markets while pool funding is absent.
 public fun default_seeded_expiry_cash(): u64 { 300_000_000_000 }
-
-/// Back-compat alias for older fixture call sites.
-public fun default_initial_supply(): u64 { default_seeded_expiry_cash() }
 
 /// Protocol-reserve profit share the default fixture sets (40% in FLOAT_SCALING).
 public fun protocol_reserve_share(): u64 { 400_000_000 }
@@ -105,7 +98,8 @@ public fun protocol_reserve_share(): u64 { 400_000_000 }
 public fun default_expiry_ms(): u64 { 31_536_120_000 }
 
 /// Default live price seeded by `prepare_live_oracle` in the composite bring-up;
-/// sits at `min_finite_strike` (≈50% for a `[min_strike, +inf)` range).
+/// sits at `default_strike_tick * default_tick_size` (≈50% for a
+/// `(default_strike_tick, +inf]` range).
 public fun default_live_price(): u64 { 100_000_000_000 }
 
 /// Default SVI `a` for live oracle test fixtures.

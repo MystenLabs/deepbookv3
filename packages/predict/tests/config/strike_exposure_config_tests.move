@@ -16,8 +16,8 @@ module deepbook_predict::strike_exposure_config_tests;
 
 use deepbook_predict::{
     admin::{Self, AdminCap},
-    constants,
     config_constants,
+    constants,
     protocol_config::{Self, ProtocolConfig},
     strike_exposure_config,
     test_constants

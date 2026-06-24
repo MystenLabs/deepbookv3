@@ -1,6 +1,6 @@
 # Liquidation
 
-Liquidation removes a leveraged Predict position whose live value has decayed to or below its floor-derived knock-out level. It is a knock-out in the barrier-option sense — extinguishment with zero rebate — not an auction: the holder receives nothing beyond what they already paid, the position is struck from the live valuation indexes, and a tombstone remains until the holder's manager closes it. Only leveraged positions are subject to liquidation; an unleveraged (1x) position has no floor and cannot be liquidated. This document describes the trigger condition, the data structure that selects candidates, the bounded scan budgets, and what those bounds imply for liquidity providers.
+Liquidation removes a leveraged Predict position whose live value has decayed to or below its floor-derived knock-out level. It is a knock-out in the barrier-option sense — extinguishment with zero order payout — not an auction: the holder receives nothing from the knocked-out order, the position is struck from the live valuation indexes, and a tombstone remains until the holder's manager closes it. Only leveraged positions are subject to liquidation; an unleveraged (1x) position has no floor and cannot be liquidated. This document describes the trigger condition, the data structure that selects candidates, the bounded scan budgets, and what those bounds imply for liquidity providers.
 
 For the contract model behind a position's floor and leverage, see [./leverage-and-floor.md](./leverage-and-floor.md). For LP exposure to bounded scans, see [../risks.md](../risks.md). Tunable parameters referenced below are defined in [../design/configuration.md](../design/configuration.md).
 
@@ -24,24 +24,24 @@ The order is liquidated when
 gross_value <= floor(floor_amount × 1e9 / liquidation_ltv)
 ```
 
-The right-hand side is the **knock-out level**: the gross value at which the floor reaches the configured fraction (the LTV) of the position's value. Multiplications and divisions here are Predict's 1e9 fixed-point operations that round down, so the threshold is `floor(floor_amount × 1e9 / liquidation_ltv)`. In probability space the same barrier is the **knock-out probability** `p* = floor_amount / (liquidation_ltv × quantity)`: the order knocks out when its range probability falls to `p*`. Because the floor amount is static, a position becomes liquidatable when `range_probability` drops far enough -- the market moves away from the order's range or the live surface reprices the range lower.
+The right-hand side is the **knock-out level**: the gross value at which the floor reaches the configured fraction (the LTV) of the position's value. Multiplications and divisions here are Predict's 1e9 fixed-point operations that round down, so the threshold is `floor(floor_amount × 1e9 / liquidation_ltv)`. In probability space the same barrier is the **knock-out probability** `p* = floor_amount / (liquidation_ltv × quantity)`: the order knocks out when its range probability falls to `p*`. Because the floor amount is static, a position becomes liquidatable when `range_probability` drops far enough -- the market moves away from the order's range or the live SVI curve reprices the range lower.
 
 At mint, the same threshold relation is enforced in the opposite direction: entry must sit strictly above the liquidation threshold (`entry_value > floor(financed_amount × 1e9 / liquidation_ltv)`), where `entry_value = entry_probability × quantity`. A position therefore always begins solvent and only crosses the threshold later if its range value falls.
 
 ## What liquidation does
 
-Liquidation is a pure knock-out with zero rebate. When the condition holds, the protocol:
+Liquidation is a pure knock-out with zero order payout. When the condition holds, the protocol:
 
 1. Marks the order liquidated in the liquidation index, removing it from the active candidate set and recording a tombstone (`liquidated_orders`).
 2. Removes the order's full live-index terms from both NAV and payout backing, so it no longer contributes to live pool valuation.
 3. Emits `OrderLiquidated`.
 
-No payout is computed and no cash moves at liquidation time. The holder's `PredictManager` is not touched — liquidation does not know which manager holds the position, which is why `OrderLiquidated` carries no owner or manager field and consumers join it to the original `OrderMinted` by `order_id`. The tombstone persists until the holder (or any keeper, since the path is permissionless and pays nothing) redeems the worthless order: that step removes the position from the manager, clears the tombstone, and emits `LiquidatedOrderRedeemed` with a zero payout. A redeem that targets an already-liquidated order is short-circuited to this cleanup path in any market state, before any live or settled pricing runs.
+No payout is computed and no cash moves at liquidation time. The holder's `PredictManager` is not touched — liquidation does not know which manager holds the position, which is why `OrderLiquidated` carries no owner or manager field and consumers join it to the original `OrderMinted` by `order_id`. The tombstone persists until the holder (or any keeper, since the path is permissionless and pays nothing) redeems the worthless order: that step removes the position from the manager, clears the tombstone, and emits `LiquidatedOrderRedeemed` with a zero payout. A redeem that targets an already-liquidated order is short-circuited to this cleanup path in any market state, before any live or settled pricing runs. This zero-payout cleanup does not exclude the manager from the separate settled trading-loss rebate flow; after all of the manager's positions in the expiry are closed, any rebate is computed from the normal expiry-level PnL and trader-paid fee basis.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Active: leveraged mint
-    Active --> Active: market moves / surface reprices
+    Active --> Active: market moves / SVI reprices
     Active --> Liquidated: gross_value <= threshold
     Liquidated --> Cleared: holder/keeper redeems (zero payout)
     Active --> Closed: live or settled redeem
@@ -51,7 +51,7 @@ stateDiagram-v2
 
 ## Permissionless liquidation
 
-Anyone may run a liquidation pass; no capability or admin authority is required. Both entrypoints take Propbook `PythFeed` and `BlockScholesFeed` objects, and a pass is gated on the package version being allowed for the market, the protocol not being mid-valuation, those feeds matching Propbook's current canonical bindings for the market's underlying, and the market still being pre-expiry for live pricing. There are two entry shapes: a bounded pass that the caller hands a budget, and a single-order attempt by ID. Both re-derive the threshold from current feed state and liquidate only orders that are genuinely under their floor; an order that is checked but still solvent is left untouched.
+Anyone may run a liquidation pass; no capability or admin authority is required. Both entrypoints take Propbook `PythFeed` plus BS spot/forward/SVI feed objects, and a pass is gated on the package version being allowed for the market, the protocol not being mid-valuation, those feeds matching Propbook's current canonical bindings for the market's underlying and expiry, and the market still being pre-expiry for live pricing. There are two entry shapes: a bounded pass that the caller hands a budget, and a single-order attempt by ID. Both re-derive the threshold from current feed state and liquidate only orders that are genuinely under their floor; an order that is checked but still solvent is left untouched.
 
 Liquidation passes are also folded into the hot trade paths. Mint and live redeem each run a bounded pass (sized by the `trade_liquidation_budget`) before they touch exposure, so ordinary trading continuously clears under-floor positions even if no dedicated keeper is active. A live redeem additionally re-checks whether its own target became liquidated during that pass and, if so, diverts to the zero-payout cleanup path.
 

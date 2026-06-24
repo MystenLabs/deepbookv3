@@ -7,6 +7,7 @@
 /// rises linearly from 0 to half of max over `0..lower_benefit_power`, then from
 /// half to full over `lower_benefit_power..upper_benefit_power`, capped at full
 /// above. That ratio scales the fixed `constants::max_fee_discount` for fees.
+/// The same benefit ratio scales settled trading-loss rebates.
 module deepbook_predict::stake_config;
 
 use deepbook_predict::{config_constants, constants};
@@ -40,6 +41,15 @@ public(package) fun fee_amount_after_discount(
         constants::max_fee_discount!(),
     );
     amount - math::mul(amount, discount_fraction)
+}
+
+/// Trading-loss rebate amount paid for an active stake.
+public(package) fun rebate_amount(
+    config: &StakeConfig,
+    eligible_rebate: u64,
+    active_stake: u64,
+): u64 {
+    math::mul(eligible_rebate, config.benefit_ratio(active_stake))
 }
 
 public(package) fun new(): StakeConfig {

@@ -17,6 +17,16 @@ const SEQUENCE: u64 = 7;
 const PRIORITY_QUANTITY_LOTS: u64 = 10;
 const LOW_FLOOR_SHARES: u64 = 10_000;
 const HIGH_FLOOR_SHARES: u64 = 20_000;
+const ORDERS_OVER_ONE_PAGE: u64 = 70;
+const EXPECTED_SPLIT_PAGE_COUNT: u64 = 2;
+const EXPECTED_LEFT_SPLIT_LEN: u64 = 32;
+const EXPECTED_RIGHT_SPLIT_LEN: u64 = 38;
+const REMOVED_FOR_MERGE: u64 = 6;
+const EXPECTED_MERGED_PAGE_LEN: u64 = 64;
+const PASSIVE_SCAN_BUDGET: u64 = 30;
+const PASSIVE_HEAD_COUNT: u64 = 20;
+const PASSIVE_TAIL_COUNT: u64 = 10;
+const PASSIVE_TAIL_START_INDEX: u64 = 20;
 
 /// One lot above zero so the order is structurally valid; floor_shares > 0
 /// makes it leveraged (the book ignores 1x orders).
@@ -135,4 +145,123 @@ fun head_candidate_prefers_higher_floor_for_equal_quantity() {
     assert_eq!(candidates.length(), 1);
     assert_eq!(candidates[0], high_floor.id());
     destroy(book);
+}
+
+#[test]
+fun insert_over_page_capacity_splits_and_preserves_candidate_order() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    let inserted = insert_sequential_orders(&mut book, ORDERS_OVER_ONE_PAGE);
+
+    assert_eq!(book.active_order_count(), ORDERS_OVER_ONE_PAGE);
+    assert_eq!(book.page_count(), EXPECTED_SPLIT_PAGE_COUNT);
+    assert_eq!(book.page_order_count(0), EXPECTED_LEFT_SPLIT_LEN);
+    assert_eq!(book.page_order_count(1), EXPECTED_RIGHT_SPLIT_LEN);
+
+    let candidates = book.select_liquidation_candidates(ORDERS_OVER_ONE_PAGE);
+    assert_eq!(candidates.length(), ORDERS_OVER_ONE_PAGE);
+    assert_eq!(candidates[0], inserted[0]);
+    assert_eq!(candidates[EXPECTED_LEFT_SPLIT_LEN - 1], inserted[EXPECTED_LEFT_SPLIT_LEN - 1]);
+    assert_eq!(candidates[EXPECTED_LEFT_SPLIT_LEN], inserted[EXPECTED_LEFT_SPLIT_LEN]);
+    assert_eq!(candidates[ORDERS_OVER_ONE_PAGE - 1], inserted[ORDERS_OVER_ONE_PAGE - 1]);
+
+    destroy(book);
+}
+
+#[test]
+fun removing_from_small_left_page_merges_pages_without_losing_orders() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    let inserted = insert_sequential_orders(&mut book, ORDERS_OVER_ONE_PAGE);
+
+    let mut i = 0;
+    while (i < REMOVED_FOR_MERGE) {
+        book.remove_order(&leveraged_order_with_sequence(i));
+        i = i + 1;
+    };
+
+    assert_eq!(book.active_order_count(), EXPECTED_MERGED_PAGE_LEN);
+    assert_eq!(book.page_count(), 1);
+    assert_eq!(book.page_order_count(0), EXPECTED_MERGED_PAGE_LEN);
+    assert!(!book.contains_active_order(&leveraged_order_with_sequence(0)));
+    assert!(book.contains_active_order(&leveraged_order_with_sequence(REMOVED_FOR_MERGE)));
+
+    let candidates = book.select_liquidation_candidates(1);
+    assert_eq!(candidates.length(), 1);
+    assert_eq!(candidates[0], inserted[REMOVED_FOR_MERGE]);
+
+    destroy(book);
+}
+
+#[test]
+fun passive_tail_scan_resumes_and_wraps_after_watermark() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    let inserted = insert_sequential_orders(&mut book, ORDERS_OVER_ONE_PAGE);
+
+    let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
+    assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX);
+
+    let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
+    assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX + PASSIVE_TAIL_COUNT);
+
+    let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
+    assert_passive_window(
+        &candidates,
+        &inserted,
+        PASSIVE_TAIL_START_INDEX + 2 * PASSIVE_TAIL_COUNT,
+    );
+
+    let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
+    assert_passive_window(
+        &candidates,
+        &inserted,
+        PASSIVE_TAIL_START_INDEX + 3 * PASSIVE_TAIL_COUNT,
+    );
+
+    let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
+    assert_passive_window(
+        &candidates,
+        &inserted,
+        PASSIVE_TAIL_START_INDEX + 4 * PASSIVE_TAIL_COUNT,
+    );
+
+    let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
+    assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX);
+
+    destroy(book);
+}
+
+fun leveraged_order_with_sequence(sequence: u64): Order {
+    let quantity = constants::position_lot_size!();
+    order::new_from_ticks(
+        LOWER_TICK,
+        HIGHER_TICK,
+        quantity / 2,
+        quantity,
+        sequence,
+    )
+}
+
+fun insert_sequential_orders(
+    book: &mut liquidation_book::LiquidationBook,
+    count: u64,
+): vector<u256> {
+    let mut inserted = vector[];
+    let mut i = 0;
+    while (i < count) {
+        let order = leveraged_order_with_sequence(i);
+        inserted.push_back(order.id());
+        book.insert_order(&order);
+        i = i + 1;
+    };
+    inserted
+}
+
+fun assert_passive_window(candidates: &vector<u256>, inserted: &vector<u256>, start_index: u64) {
+    assert_eq!(candidates.length(), PASSIVE_SCAN_BUDGET);
+    assert_eq!(candidates[0], inserted[0]);
+    assert_eq!(candidates[PASSIVE_HEAD_COUNT - 1], inserted[PASSIVE_HEAD_COUNT - 1]);
+    assert_eq!(candidates[PASSIVE_HEAD_COUNT], inserted[start_index]);
+    assert_eq!(candidates[PASSIVE_SCAN_BUDGET - 1], inserted[start_index + PASSIVE_TAIL_COUNT - 1]);
 }

@@ -19,7 +19,7 @@ from python_indexes.strike_payout_tree import StrikePayoutTree
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v2"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 ORACLE_REFRESH_FIELDS = (
@@ -1139,15 +1139,16 @@ def compute_pool_value(
     curve: list[dict[str, int]] | None = None,
     position_liability: int | None = None,
 ) -> int:
-    # Pool NAV = lp_pool_value(idle, credits, debits, share, active), where the
-    # single active market's NAV is the EXACT `current_nav` above (settled markets
+    # Pool NAV = lp_pool_value(idle, credits, debits, share, active, pending), where
+    # the single active market's NAV is the EXACT `current_nav` above (settled markets
     # contribute 0 — not modelled here, settlement is stubbed). Mirrors
-    # plp::lp_pool_value's saturating exclusion of pending protocol profit.
+    # plp::lp_pool_value's saturating exclusion of unmaterialized and carried
+    # protocol profit.
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     active_expiry_value = current_nav(model, state)
-    pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
-    return max(0, state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit)
+    exclusion = unmaterialized_protocol_profit_exclusion(state, active_expiry_value)
+    return max(0, state["vault_idle_balance"] + active_expiry_value - exclusion - state["pending_protocol_profit"])
 
 
 def expiry_net_funding(state: dict[str, int]) -> int:
@@ -1182,6 +1183,19 @@ def record_received_from_expiry(state: dict[str, int], amount: int) -> None:
     state["profit_basis_credits"] += amount
 
 
+def realize_pending_protocol_profit(state: dict[str, int]) -> int:
+    draw = min(state["pending_protocol_profit"], state["vault_idle_balance"])
+    state["pending_protocol_profit"] -= draw
+    state["vault_idle_balance"] -= draw
+    state["vault_protocol_reserve_balance"] += draw
+    return draw
+
+
+def realize_protocol_profit(state: dict[str, int], amount: int) -> int:
+    state["pending_protocol_profit"] += amount
+    return realize_pending_protocol_profit(state)
+
+
 def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
     initial_loss = 0
     if not state["terminal_accounting_started"]:
@@ -1211,8 +1225,7 @@ def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
     state["profit_basis_debits"] += materialized_profit
     protocol_profit = deepbook_mul(materialized_profit, PROTOCOL_RESERVE_PROFIT_SHARE)
     lp_profit = materialized_profit - protocol_profit
-    state["vault_idle_balance"] -= protocol_profit
-    state["vault_protocol_reserve_balance"] += protocol_profit
+    realize_protocol_profit(state, protocol_profit)
     return (materialized_profit, lp_profit, protocol_profit)
 
 
@@ -1242,10 +1255,7 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
                 "amount": str(top_up),
                 "to_expiry": True,
                 "target_cash": str(target_cash),
-                "expiry_cash_after": str(state["expiry_cash_balance"]),
-                "idle_balance_after": str(state["vault_idle_balance"]),
-                "sent_to_expiry_after": str(state["expiry_sent_to_expiry"]),
-                "received_from_expiry_after": str(state["expiry_received_from_expiry"]),
+                "protocol_profit_realized": "0",
             }
         ]
     if cash_balance <= sweep_threshold_cash:
@@ -1255,16 +1265,14 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
     state["expiry_cash_balance"] -= returned_cash
     state["vault_idle_balance"] += returned_cash
     record_received_from_expiry(state, returned_cash)
+    protocol_profit_realized = realize_pending_protocol_profit(state)
     return [
         {
             "type": "expiry_cash_rebalanced",
             "amount": str(returned_cash),
             "to_expiry": False,
             "target_cash": str(target_cash),
-            "expiry_cash_after": str(state["expiry_cash_balance"]),
-            "idle_balance_after": str(state["vault_idle_balance"]),
-            "sent_to_expiry_after": str(state["expiry_sent_to_expiry"]),
-            "received_from_expiry_after": str(state["expiry_received_from_expiry"]),
+            "protocol_profit_realized": str(protocol_profit_realized),
         }
     ]
 
@@ -1290,7 +1298,7 @@ def flush_valuation(
     return updates, pool_value, synced_state
 
 
-def pending_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
+def unmaterialized_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
     aggregate_credits = state["profit_basis_credits"] + active_expiry_value
     aggregate_debits = state["profit_basis_debits"]
     if aggregate_credits <= aggregate_debits:
@@ -1340,6 +1348,7 @@ def initial_state() -> dict[str, int]:
         "expiry_unresolved_trading_fees": 0,
         "vault_idle_balance": VAULT_SEED - INITIAL_EXPIRY_CASH,
         "vault_protocol_reserve_balance": 0,
+        "pending_protocol_profit": 0,
         "expiry_sent_to_expiry": INITIAL_EXPIRY_CASH,
         "expiry_received_from_expiry": 0,
         "terminal_accounting_started": 0,
@@ -1360,6 +1369,7 @@ CANONICAL_STATE_KEYS = (
     "expiry_unresolved_trading_fees",
     "vault_idle_balance",
     "vault_protocol_reserve_balance",
+    "pending_protocol_profit",
     "profit_basis_debits",
     "profit_basis_credits",
     "vault_total_plp_supply",
@@ -1371,11 +1381,6 @@ CANONICAL_STATE_KEYS = (
 
 def state_snapshot(state: dict[str, int]) -> dict[str, str]:
     return {key: str(state[key]) for key in CANONICAL_STATE_KEYS}
-
-
-def apply_expiry_flow_after(state: dict[str, int], update: dict[str, Any]) -> None:
-    state["expiry_sent_to_expiry"] = int(update["sent_to_expiry_after"])
-    state["expiry_received_from_expiry"] = int(update["received_from_expiry_after"])
 
 
 def svi_input(row: dict[str, Any]) -> dict[str, str]:
@@ -1442,9 +1447,9 @@ def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
     }
 
 
-# Propbook Block Scholes oracle_lane::ObservationRecorded normalized view: this
-# expiry's surface (spot + forward + SVI). `basis` is no longer an event field
-# (derived as forward/spot).
+# Synthetic normalized view collapsed from Propbook's split Block Scholes spot,
+# forward, and SVI feed events. `basis` is no longer an event field (derived as
+# forward/spot).
 def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
     return {
         "type": "block_scholes_surface_updated",
@@ -1541,23 +1546,30 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         state["open_order_quantity"] -= quantity_closed
     elif update["type"] == "expiry_cash_rebalanced":
         amount = int(update["amount"])
-        state["expiry_cash_balance"] = int(update["expiry_cash_after"])
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
         if update["to_expiry"]:
+            state["expiry_cash_balance"] += amount
+            state["vault_idle_balance"] -= amount
             record_sent_to_expiry(state, amount)
         else:
+            protocol_profit_realized = int(update.get("protocol_profit_realized", 0))
+            state["expiry_cash_balance"] -= amount
+            state["vault_idle_balance"] += amount - protocol_profit_realized
+            state["vault_protocol_reserve_balance"] += protocol_profit_realized
+            state["pending_protocol_profit"] -= protocol_profit_realized
             record_received_from_expiry(state, amount)
-        apply_expiry_flow_after(state, update)
     elif update["type"] == "expiry_cash_received":
         amount = int(update["amount"])
         state["expiry_cash_balance"] -= amount
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
+        state["vault_idle_balance"] += amount
         record_received_from_expiry(state, amount)
-        apply_expiry_flow_after(state, update)
     elif update["type"] == "expiry_profit_materialized":
         profit_basis_after = int(update["profit_basis_after"])
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
-        state["vault_protocol_reserve_balance"] = int(update["protocol_reserve_balance_after"])
+        reserve_after = int(update["protocol_reserve_balance_after"])
+        pending_after = int(update["pending_protocol_profit_after"])
+        protocol_profit_realized = reserve_after - state["vault_protocol_reserve_balance"]
+        state["vault_idle_balance"] -= protocol_profit_realized
+        state["vault_protocol_reserve_balance"] = reserve_after
+        state["pending_protocol_profit"] = pending_after
         state["profit_basis_debits"] = profit_basis_after
     elif update["type"] in ("supply_filled", "withdraw_filled"):
         state["vault_idle_balance"] = int(update["idle_balance_after"])
@@ -2053,6 +2065,7 @@ def terminal_closeout_update(
         "manager_balance_after": str(state["manager_balance"]),
         "vault_idle_balance_after": str(state["vault_idle_balance"]),
         "vault_protocol_reserve_balance_after": str(state["vault_protocol_reserve_balance"]),
+        "pending_protocol_profit_after": str(state["pending_protocol_profit"]),
         "profit_basis_debits_after": str(state["profit_basis_debits"]),
         "profit_basis_credits_after": str(state["profit_basis_credits"]),
         "expiry_cash_balance_after": str(state["expiry_cash_balance"]),
@@ -2364,12 +2377,17 @@ def build_derived_record(
             vault_value = None
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
     active_expiry_value = None
-    pending_protocol_profit = None
+    unmaterialized_protocol_profit = None
+    protocol_profit_exclusion = None
     if liability is not None:
         reserved_cash = liability + rebate_reserve
         if state["expiry_cash_balance"] >= reserved_cash:
             active_expiry_value = state["expiry_cash_balance"] - reserved_cash
-            pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
+            unmaterialized_protocol_profit = unmaterialized_protocol_profit_exclusion(
+                state,
+                active_expiry_value,
+            )
+            protocol_profit_exclusion = unmaterialized_protocol_profit + state["pending_protocol_profit"]
 
     liquidation_observability: dict[str, Any] | None = None
     liquidatable_count: int | None = None
@@ -2458,8 +2476,8 @@ def build_derived_record(
     expiry_funding_basis = expiry_net_funding(state)
     lp_live_mtm_pnl = (
         None
-        if active_expiry_value is None or pending_protocol_profit is None
-        else active_expiry_value - pending_protocol_profit - expiry_funding_basis
+        if active_expiry_value is None or protocol_profit_exclusion is None
+        else active_expiry_value - protocol_profit_exclusion - expiry_funding_basis
     )
     active_book_live_pnl = None if liability is None else active_contribution - liability
     position_liability_over_funding = None if liability is None else ratio_scaled(liability, expiry_funding_basis)
@@ -2494,7 +2512,13 @@ def build_derived_record(
             "active_expiry_value": None if active_expiry_value is None else str(active_expiry_value),
             "position_liability": None if liability is None else str(liability),
             "rebate_reserve": str(rebate_reserve),
-            "pending_protocol_profit": None if pending_protocol_profit is None else str(pending_protocol_profit),
+            "unmaterialized_protocol_profit_exclusion": None
+            if unmaterialized_protocol_profit is None
+            else str(unmaterialized_protocol_profit),
+            "pending_protocol_profit": str(state["pending_protocol_profit"]),
+            "protocol_profit_exclusion": None
+            if protocol_profit_exclusion is None
+            else str(protocol_profit_exclusion),
             "active_open_contribution": str(active_contribution),
             "lp_live_mtm_pnl": None if lp_live_mtm_pnl is None else str(lp_live_mtm_pnl),
             "active_book_live_pnl": None if active_book_live_pnl is None else str(active_book_live_pnl),

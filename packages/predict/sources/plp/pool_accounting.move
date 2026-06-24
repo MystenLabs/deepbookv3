@@ -92,6 +92,7 @@ public(package) fun pending_protocol_profit(ledger: &Ledger): u64 {
 }
 
 /// Return DUSDC sent to and received from one expiry market.
+#[test_only]
 public(package) fun expiry_flow_amounts(ledger: &Ledger, expiry_market_id: ID): (u64, u64) {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);

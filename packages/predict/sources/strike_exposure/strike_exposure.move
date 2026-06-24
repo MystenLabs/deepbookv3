@@ -234,9 +234,7 @@ public(package) fun quote_mint_entry_probability(
         exposure.tick_size,
     );
     let entry_probability = pricer.range_price(lower, higher);
-    exposure
-        .config
-        .assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+    exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
     entry_probability
 }
 
@@ -264,8 +262,8 @@ public(package) fun close_and_quote_live_order(
     let remaining_quantity = old_quantity - close_quantity;
     let remaining_floor_shares = old_floor_shares - remove_floor_shares;
 
-    // Remove only the closed slice; the remaining quantity/floor atoms stay indexed
-    // as the survivor's exact reserve terms.
+    // Remove only the closed slice; floor-share dust stays with the survivor, so
+    // reserve accounting remains conservative across partial closes.
     exposure
         .payout
         .remove_range(

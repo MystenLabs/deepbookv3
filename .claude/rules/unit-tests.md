@@ -307,7 +307,7 @@ is incomplete (see also "Predict public flow coverage").
 
 Only `init_for_testing` (one-time-witness / shared-object init, mirroring the
 production `init`) and a genuinely irreducible state seam like
-`pyth_source::set_state_for_testing` (a real `pyth_lazer::Update` has no Move test
+`propbook::pyth_feed::record_raw_for_testing` (a real `pyth_lazer::Update` has no Move test
 constructor) belong as `#[test_only]` functions in `sources/**`. Do **not** add
 `*_for_testing` constructors that exist only to support test ergonomics (owned
 fixtures holding unshared objects) — use `init_for_testing` + `take_shared`

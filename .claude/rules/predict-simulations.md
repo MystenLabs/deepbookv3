@@ -8,13 +8,10 @@ paths:
 Before editing `packages/predict/simulations/**`, read:
 - `packages/predict/simulations/README.md`
 - `packages/predict/simulations/docs/ANALYSIS_NOTES.md` when touching economics, derived metrics, charts, liquidation policy, risk analysis, or interpretation of outputs.
-- `packages/predict/simulations/docs/GAS_EXPERIMENTS.md` when analyzing gas/performance, comparing run gas, or proposing contract changes for gas reasons. It logs prior experiments (including dead ends) and the run-to-run noise caveat (scenarios differ per run, so action-level averages are not a controlled A/B by default).
 
-## Gas Experiments
+## Gas / Performance Analysis
 
-- **Before running or proposing a gas/performance experiment, read `packages/predict/simulations/docs/GAS_EXPERIMENTS.md` first** to avoid repeating logged dead ends.
-- When you analyze a gas/performance experiment (a contract change measured for gas, a run-to-run gas comparison, or a perf hypothesis), ask the user **"should I add this to the experiments doc?"** before finishing. If yes, append a compact ~5-line entry to `GAS_EXPERIMENTS.md` in its existing format (date · change · decision, then hypothesis/method/result). Keep the doc tight — do not let entries bloat.
-- Gas verdicts must respect the determinism caveat in that doc: different `run.sh` invocations use different generated scenarios, so treat per-action deltas below the run-to-run noise floor (watch an untouched action like `supply`/`withdraw`) as neutral. Only a pinned-scenario A/B gives a trustworthy signal.
+- Gas verdicts must respect the simulation determinism caveat: different `run.sh` invocations use different generated scenarios, so treat per-action deltas below the run-to-run noise floor (watch an untouched action like `supply`/`withdraw`) as neutral. Only a pinned-scenario A/B gives a trustworthy signal.
 
 ## Common Commands
 

@@ -5,7 +5,7 @@ contract paired with a separate debt ledger. A leveraged order is still one rang
 digital written by the pool, but the pool finances part of the entry premium and
 the holder's payoff is reduced by a static floor. If the contract's gross value
 falls to the floor-derived knock-out level, the order can be liquidated with zero
-rebate. A 1x order is the special case where the floor is zero and no knock-out
+order payout. A 1x order is the special case where the floor is zero and no knock-out
 exists.
 
 This document explains the 1x payoff, the leveraged payoff with its floor, mint
@@ -28,7 +28,7 @@ settled_value = quantity   if settlement is inside the range, else 0
 
 `quantity` is the contract's notional -- the digital's fixed cash payout --
 denominated in 6-decimal DUSDC quote units and a multiple of the lot size.
-`probability(range)` is the live range probability quoted from the SVI surface
+`probability(range)` is the live range probability quoted from the SVI curve
 (see [pricing and oracles](./pricing-and-oracles.md)), expressed in Predict's
 1e9 fixed-point scale where `1_000_000_000` is probability 1. At settlement the
 range probability collapses to 0 or 1, so the contract is worth either the full
@@ -92,7 +92,7 @@ A leveraged order decomposes into three standard pieces:
    premium. The static floor is repaid out of the contract's own value at close,
    settlement, or knock-out, never from the holder's other assets.
 3. **A sold knock-out.** The holder writes the pool a knock-out: the contract is
-   extinguished, with zero rebate, when its gross value falls to the knock-out
+   extinguished with no order payout when its gross value falls to the knock-out
    level `floor_shares / liquidation_ltv` (see
    [liquidation](./liquidation.md)).
 

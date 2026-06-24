@@ -4,14 +4,14 @@
 /// Minimal production-valid feed bring-up for `pricing` error-path and exact-pricing
 /// tests.
 ///
-/// Stands up the two standalone propbook feeds — a `PythFeed` (global spot) and a
-/// `BlockScholesFeed` (per-expiry surface) — and an `ExpiryMarket` for one expiry
-/// through the production `registry::create_expiry_market` path. This reaches the
-/// pricing/freshness guards more cheaply than the full `flow_test_helpers` market:
-/// no manager setup or expiry-cash seeding. The Pyth spot is seeded through
+/// Stands up the standalone propbook feeds — `PythFeed`, BS spot, BS forward, and
+/// BS SVI — and an `ExpiryMarket` for one expiry through the production
+/// `registry::create_expiry_market` path. This reaches the pricing/freshness guards
+/// more cheaply than the full `flow_test_helpers` market: no manager setup or
+/// expiry-cash seeding. The Pyth spot is seeded through
 /// `pyth_feed::record_raw_for_testing` because a real `pyth_lazer::Update` has no
-/// public Move constructor; the BS surface uses the stub verifier's public
-/// `update::new_update`. `ProtocolConfig`/`Registry`/`OracleRegistry` are taken
+/// public Move constructor; the BS feeds use the stub verifier's split public update
+/// constructors. `ProtocolConfig`/`Registry`/`OracleRegistry` are taken
 /// per-transaction (never held), mirroring `flow_test_helpers`.
 #[test_only]
 module deepbook_predict::oracle_fixture;
@@ -28,7 +28,9 @@ use deepbook_predict::{
     test_helpers
 };
 use propbook::{
-    block_scholes_feed::BlockScholesFeed,
+    block_scholes_forward_feed::BlockScholesForwardFeed,
+    block_scholes_spot_feed::BlockScholesSpotFeed,
+    block_scholes_svi_feed::BlockScholesSVIFeed,
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry}
 };
@@ -45,7 +47,9 @@ public struct OracleFixture {
     lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
     pyth_id: ID,
-    bs_id: ID,
+    bs_spot_id: ID,
+    bs_forward_id: ID,
+    bs_svi_id: ID,
     expiry_id: ID,
     expiry: u64,
 }
@@ -83,9 +87,21 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
-    let bs_id = propbook_registry::create_and_share_block_scholes_feed(
+    let bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
+        scenario.ctx(),
+    );
+    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
+        &mut oracle_registry,
+        test_constants::pyth_feed_id(),
+        expiry,
+        scenario.ctx(),
+    );
+    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
+        &mut oracle_registry,
+        test_constants::pyth_feed_id(),
+        expiry,
         scenario.ctx(),
     );
     return_shared(oracle_registry);
@@ -94,7 +110,13 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
 
     // tx2: bind both feeds to the canonical underlying.
     scenario.next_tx(test_constants::admin());
-    test_helpers::bind_feeds_to_underlying(&scenario, pyth_id, bs_id);
+    test_helpers::bind_feeds_to_underlying(
+        &scenario,
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
+    );
 
     // tx3: create the expiry market on the unfunded vault through the registry.
     scenario.next_tx(test_constants::admin());
@@ -127,7 +149,18 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
 
     scenario.next_tx(test_constants::admin());
 
-    OracleFixture { scenario, admin_cap, lifecycle_cap, clock, pyth_id, bs_id, expiry_id, expiry }
+    OracleFixture {
+        scenario,
+        admin_cap,
+        lifecycle_cap,
+        clock,
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
+        expiry_id,
+        expiry,
+    }
 }
 
 /// `setup_oracle` with the default tick and the default (far) expiry.
@@ -143,10 +176,19 @@ public fun setup_oracle_default(): OracleFixture {
 /// `return_oracle`.
 public fun take_oracle(
     self: &mut OracleFixture,
-): (PythFeed, BlockScholesFeed, OracleRegistry, ProtocolConfig) {
+): (
+    PythFeed,
+    BlockScholesSpotFeed,
+    BlockScholesForwardFeed,
+    BlockScholesSVIFeed,
+    OracleRegistry,
+    ProtocolConfig,
+) {
     (
         self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
-        self.scenario.take_shared_by_id<BlockScholesFeed>(self.bs_id),
+        self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
+        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
+        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
         self.scenario.take_shared<OracleRegistry>(),
         self.scenario.take_shared<ProtocolConfig>(),
     )
@@ -155,11 +197,15 @@ public fun take_oracle(
 /// Return the three shared objects taken by `take_oracle`.
 public fun return_oracle(
     pyth: PythFeed,
-    bs: BlockScholesFeed,
+    bs_spot: BlockScholesSpotFeed,
+    bs_forward: BlockScholesForwardFeed,
+    bs_svi: BlockScholesSVIFeed,
     oracle_registry: OracleRegistry,
     config: ProtocolConfig,
 ) {
-    return_shared(bs);
+    return_shared(bs_svi);
+    return_shared(bs_forward);
+    return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
     return_shared(config);
@@ -170,14 +216,19 @@ public fun load_pricer(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
 ): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
         oracle_registry,
+        self.expiry_id,
         test_constants::propbook_underlying_id(),
         pyth,
-        bs,
+        bs_spot,
+        bs_forward,
+        bs_svi,
         self.expiry,
         &self.clock,
     )
@@ -188,12 +239,16 @@ public fun load_pricer(
 /// and forward (basis = 1.0).
 public fun prepare_live_oracle(
     self: &mut OracleFixture,
-    bs: &mut BlockScholesFeed,
+    bs_spot: &mut BlockScholesSpotFeed,
+    bs_forward: &mut BlockScholesForwardFeed,
+    bs_svi: &mut BlockScholesSVIFeed,
     pyth: &mut PythFeed,
     live_price: u64,
 ) {
     self.prepare_real_oracle(
-        bs,
+        bs_spot,
+        bs_forward,
+        bs_svi,
         pyth,
         live_price,
         live_price,
@@ -212,7 +267,9 @@ public fun prepare_live_oracle(
 /// path pricing derives the live forward as `mul(spot, forward/spot)`.
 public fun prepare_real_oracle(
     self: &mut OracleFixture,
-    bs: &mut BlockScholesFeed,
+    bs_spot: &mut BlockScholesSpotFeed,
+    bs_forward: &mut BlockScholesForwardFeed,
+    bs_svi: &mut BlockScholesSVIFeed,
     pyth: &mut PythFeed,
     spot: u64,
     forward: u64,
@@ -226,21 +283,29 @@ public fun prepare_real_oracle(
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
     store_pyth_spot(pyth, spot, live_ts, live_ts);
-    let bs_update = update::new_update(
-        test_constants::pyth_feed_id(),
-        self.expiry,
-        live_ts,
-        spot,
-        forward,
-        svi_a,
-        svi_b,
-        svi_sigma,
-        svi_rho_magnitude,
-        svi_rho_is_negative,
-        svi_m_magnitude,
-        svi_m_is_negative,
+    bs_spot.update(
+        update::new_spot_update(test_constants::pyth_feed_id(), live_ts, spot),
+        &self.clock,
     );
-    bs.update(bs_update, &self.clock, self.scenario.ctx());
+    bs_forward.update(
+        update::new_forward_update(test_constants::pyth_feed_id(), self.expiry, live_ts, forward),
+        &self.clock,
+    );
+    bs_svi.update(
+        update::new_svi_update(
+            test_constants::pyth_feed_id(),
+            self.expiry,
+            live_ts,
+            svi_a,
+            svi_b,
+            svi_sigma,
+            svi_rho_magnitude,
+            svi_rho_is_negative,
+            svi_m_magnitude,
+            svi_m_is_negative,
+        ),
+        &self.clock,
+    );
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
@@ -268,7 +333,11 @@ public fun scenario_mut(self: &mut OracleFixture): &mut Scenario { &mut self.sce
 
 public fun pyth_id(self: &OracleFixture): ID { self.pyth_id }
 
-public fun bs_id(self: &OracleFixture): ID { self.bs_id }
+public fun bs_spot_id(self: &OracleFixture): ID { self.bs_spot_id }
+
+public fun bs_forward_id(self: &OracleFixture): ID { self.bs_forward_id }
+
+public fun bs_svi_id(self: &OracleFixture): ID { self.bs_svi_id }
 
 public fun expiry_id(self: &OracleFixture): ID { self.expiry_id }
 
@@ -283,7 +352,9 @@ public fun finish(self: OracleFixture) {
         lifecycle_cap,
         clock,
         pyth_id: _,
-        bs_id: _,
+        bs_spot_id: _,
+        bs_forward_id: _,
+        bs_svi_id: _,
         expiry_id: _,
         expiry: _,
     } = self;

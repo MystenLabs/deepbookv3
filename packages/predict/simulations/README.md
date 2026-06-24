@@ -5,12 +5,12 @@ package. It simulates protocol behavior and economic activity, not client
 latency.
 
 The current topology is intentionally narrow: one pool vault, one expiry market,
-one oracle, one manager, and many orders. The generated CSV is the transaction
-ledger. Each row is one executable transaction, and only these row actions are
-supported:
+one Propbook source set, one manager, and many orders. The generated CSV is the
+transaction ledger. Each row is one executable transaction, and only these row
+actions are supported:
 
--   `oracle_mint_ptb`: update Block Scholes prices, update SVI, and mint one
-    order in one PTB.
+-   `oracle_mint_ptb`: update Pyth plus Block Scholes spot/forward/SVI data and
+    mint one order in one PTB.
 -   `redeem`: refresh oracle data and redeem one referenced order.
 -   `supply`: refresh oracle data, value the active expiry, and supply DUSDC.
 -   `withdraw`: refresh oracle data, value the active expiry, and withdraw one
@@ -73,8 +73,6 @@ interface.
 -   `data/generate_scenario.py`: random normal/long scenario generator.
 -   `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
     follow-up analysis questions (economics).
--   `docs/GAS_EXPERIMENTS.md`: running log of gas/performance experiments on the
-    Predict contracts — hypothesis, change, measurement, and keep/revert decision.
 -   `charts/chart_*.py`: standalone chart scripts; one script writes one chart
     file.
 -   `charts/chart_common.py`: shared chart styling and timeline helpers.
@@ -265,10 +263,10 @@ and tracked state deltas. Runner-synthesized maintenance transactions such as
 LP flushes and expiry-cash rebalances are traced for gas and to keep localnet
 flows executable under the configured cadence; they are not generated CSV rows.
 
-Live pool-sync sweeps increase aggregate pricing credits but do not materialize
-protocol profit. Protocol reserves move only when terminal expiry accounting
-materializes profit after that expiry's terminal losses and watermarks are
-applied.
+Live pool-sync sweeps increase aggregate pricing credits and can also realize
+previously carried protocol profit into the reserve when returned idle cash is
+available. Fresh protocol profit materializes only after terminal expiry
+accounting applies that expiry's terminal losses and watermarks.
 
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
@@ -302,8 +300,9 @@ never compared against localnet.
 
 Important fields:
 
--   `valuation.lp_live_mtm_pnl`: active expiry value after pending protocol-profit
-    exclusion, minus current expiry funding basis.
+-   `valuation.lp_live_mtm_pnl`: active expiry value after the protocol-profit
+    exclusion (unmaterialized reserve share plus carried pending protocol
+    profit), minus current expiry funding basis.
 -   `valuation.active_book_live_pnl`: open-order contribution minus current live
     liability.
 -   `flows.trading_fee`: trading fee collected in that transaction.

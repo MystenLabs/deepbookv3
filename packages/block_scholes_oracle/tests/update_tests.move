@@ -22,13 +22,30 @@ const M_MAG: u64 = 25_000_000;
 const M_NEG: bool = false;
 
 #[test]
-fun update_getters_round_trip_inputs() {
-    let upd = update::new_update(
+fun spot_update_getters_round_trip_inputs() {
+    let upd = update::new_spot_update(SOURCE_ID, PUBLISHED_AT_MS, SPOT);
+
+    assert_eq!(upd.spot_source_id(), SOURCE_ID);
+    assert_eq!(upd.spot_published_at_ms(), PUBLISHED_AT_MS);
+    assert_eq!(upd.spot(), SPOT);
+}
+
+#[test]
+fun forward_update_getters_round_trip_inputs() {
+    let upd = update::new_forward_update(SOURCE_ID, EXPIRY_MS, PUBLISHED_AT_MS, FORWARD);
+
+    assert_eq!(upd.forward_source_id(), SOURCE_ID);
+    assert_eq!(upd.forward_expiry_ms(), EXPIRY_MS);
+    assert_eq!(upd.forward_published_at_ms(), PUBLISHED_AT_MS);
+    assert_eq!(upd.forward(), FORWARD);
+}
+
+#[test]
+fun svi_update_getters_round_trip_inputs() {
+    let upd = update::new_svi_update(
         SOURCE_ID,
         EXPIRY_MS,
         PUBLISHED_AT_MS,
-        SPOT,
-        FORWARD,
         SVI_A,
         SVI_B,
         SVI_SIGMA,
@@ -38,11 +55,9 @@ fun update_getters_round_trip_inputs() {
         M_NEG,
     );
 
-    assert_eq!(upd.source_id(), SOURCE_ID);
-    assert_eq!(upd.expiry_ms(), EXPIRY_MS);
-    assert_eq!(upd.published_at_ms(), PUBLISHED_AT_MS);
-    assert_eq!(upd.spot(), SPOT);
-    assert_eq!(upd.forward(), FORWARD);
+    assert_eq!(upd.svi_source_id(), SOURCE_ID);
+    assert_eq!(upd.svi_expiry_ms(), EXPIRY_MS);
+    assert_eq!(upd.svi_published_at_ms(), PUBLISHED_AT_MS);
     assert_eq!(upd.svi_a(), SVI_A);
     assert_eq!(upd.svi_b(), SVI_B);
     assert_eq!(upd.svi_sigma(), SVI_SIGMA);

@@ -8,36 +8,28 @@ module deepbook_predict::vault_events;
 
 use sui::event;
 
-/// Emitted when a settled expiry returns its free cash to the pool (during the
-/// settled-market sweep): the expiry is deactivated and all cash above settled
-/// backing is returned to idle.
+/// Emitted when expiry-local cash returns to pool idle: either settled free cash
+/// during the terminal sweep, or residual rebate reserve returned by a settled
+/// rebate claim.
 public struct ExpiryCashReceived has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
     settlement_price: u64,
     amount: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
 }
 
 /// Emitted when an active expiry's cash is rebalanced toward target: a top-up from
 /// idle (`to_expiry = true`) or a surplus-sweep back to idle (`to_expiry = false`).
-/// On a sweep, any carried protocol cut a prior settled sweep could not cover is also
-/// realized from the returned idle into the reserve, so `protocol_reserve_balance_after`
-/// and `pending_protocol_profit_after` report the post-drain state.
+/// On a sweep, any carried protocol cut a prior settled sweep could not cover can
+/// also be realized from the returned idle into the reserve; that sub-effect is
+/// reported as the `protocol_profit_realized` delta.
 public struct ExpiryCashRebalanced has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,
     to_expiry: bool,
     target_cash: u64,
-    expiry_cash_after: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
-    protocol_reserve_balance_after: u64,
-    pending_protocol_profit_after: u64,
+    protocol_profit_realized: u64,
 }
 
 /// Emitted when a terminal expiry's profit is materialized: the LP cut stays in idle
@@ -48,10 +40,18 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     expiry_market_id: ID,
     lp_profit: u64,
     protocol_profit: u64,
-    idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
     pending_protocol_profit_after: u64,
+}
+
+/// Emitted when a keeper resolves one account's settled trading-loss rebate.
+public struct TradingLossRebateClaimed has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    account_id: ID,
+    rebate_amount: u64,
+    residual_returned: u64,
 }
 
 /// Emitted when an account stakes DEEP for trading benefits.
@@ -198,18 +198,12 @@ public(package) fun emit_expiry_cash_received(
     expiry_market_id: ID,
     settlement_price: u64,
     amount: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
 ) {
     event::emit(ExpiryCashReceived {
         pool_vault_id,
         expiry_market_id,
         settlement_price,
         amount,
-        idle_balance_after,
-        sent_to_expiry_after,
-        received_from_expiry_after,
     });
 }
 
@@ -219,12 +213,7 @@ public(package) fun emit_expiry_cash_rebalanced(
     amount: u64,
     to_expiry: bool,
     target_cash: u64,
-    expiry_cash_after: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
-    protocol_reserve_balance_after: u64,
-    pending_protocol_profit_after: u64,
+    protocol_profit_realized: u64,
 ) {
     event::emit(ExpiryCashRebalanced {
         pool_vault_id,
@@ -232,12 +221,7 @@ public(package) fun emit_expiry_cash_rebalanced(
         amount,
         to_expiry,
         target_cash,
-        expiry_cash_after,
-        idle_balance_after,
-        sent_to_expiry_after,
-        received_from_expiry_after,
-        protocol_reserve_balance_after,
-        pending_protocol_profit_after,
+        protocol_profit_realized,
     });
 }
 
@@ -246,7 +230,6 @@ public(package) fun emit_expiry_profit_materialized(
     expiry_market_id: ID,
     lp_profit: u64,
     protocol_profit: u64,
-    idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
     pending_protocol_profit_after: u64,
@@ -256,10 +239,25 @@ public(package) fun emit_expiry_profit_materialized(
         expiry_market_id,
         lp_profit,
         protocol_profit,
-        idle_balance_after,
         protocol_reserve_balance_after,
         profit_basis_after,
         pending_protocol_profit_after,
+    });
+}
+
+public(package) fun emit_trading_loss_rebate_claimed(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    account_id: ID,
+    rebate_amount: u64,
+    residual_returned: u64,
+) {
+    event::emit(TradingLossRebateClaimed {
+        pool_vault_id,
+        expiry_market_id,
+        account_id,
+        rebate_amount,
+        residual_returned,
     });
 }
 

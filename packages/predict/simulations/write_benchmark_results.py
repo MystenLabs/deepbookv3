@@ -80,7 +80,7 @@ def main() -> None:
 
     trace_path = Path(sys.argv[1])
     out_path = Path(sys.argv[2])
-    trace = load_json_object(trace_path, "predict_local_trace_v2")
+    trace = load_json_object(trace_path, "predict_local_trace_v3")
     write_json(out_path, build_results(trace))
     print(f"wrote {out_path}")
 
