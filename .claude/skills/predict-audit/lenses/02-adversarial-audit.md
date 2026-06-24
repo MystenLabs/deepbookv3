@@ -14,7 +14,7 @@ handed back to the main loop).
 
 **Work actor-by-actor.** Enumerate what each can call, then ask "what is the worst thing they can do to
 someone else?":
-- Malicious TRADER (owner + delegated cap/proof holder) — vs LPs, other traders, protocol.
+- Malicious TRADER (owner, or an app holding `Permit<PredictApp>` app-auth) — vs LPs, other traders, protocol.
 - Malicious LP — async supply/withdraw timing against the frozen flush mark; incentive-vesting grab; NAV-mark gaming.
 - Malicious/greedy KEEPER — passive-liquidation candidate selection, budget exhaustion, sync ordering side effects.
 - Malicious BUILDER — fee attribution / claim paths.
@@ -30,7 +30,7 @@ someone else?":
   mark-to-flush timing** (supply before / withdraw after a favorable mark; price against a half-built NAV),
   settled-vs-live payout arbitrage, fee/penalty/builder-cap interactions, the exact-amount vs exact-quantity
   mint variants gamed against each other.
-- Authorization bypass: any custody/payout move without the right proof/cap/owner; proof/cap reuse,
+- Authorization bypass: any custody/payout move without the right auth (owner `account::Auth` / app `Permit<PredictApp>`); auth reuse,
   forged-by-construction, or aimed at the wrong manager/market/expiry; the `account` app-auth boundary.
 - Cross-object confusion: mismatched market ↔ propbook feed ↔ underlying ↔ manager bindings; passing one
   expiry's object into another's flow; stale mirrored state (versions, stake epoch).
@@ -47,6 +47,7 @@ someone else?":
 - Unbounded/growing computation on hot paths (NAV valuation, treap `walk_linear`, liquidation-book paging/scan).
 - Starvation of a needed risk-reducing action (under-floor liquidation, surplus release, settlement, flush).
 - Funds trapped: value owed but unwithdrawable.
+- **Griefing / forced-work / fee-shifting (own this class explicitly).** On every permissionless entrypoint (keeper liquidation, the budgeted passive scan, pool sync, settled redeem): can an attacker cheaply enqueue work that *victims* pay gas for; force a victim's mint/redeem/supply to absorb a large liquidation pass; advance a watermark/scan cursor past unprocessed candidates so real work is skipped; or repeatedly trigger a costly path to inflate others' costs? Quantify attacker-cost vs victim-cost.
 
 ## Output
 For each finding: the concrete PTB-ordered call sequence, the exploited state, realistic profit/damage,

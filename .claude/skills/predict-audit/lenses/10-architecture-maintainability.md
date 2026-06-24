@@ -43,7 +43,7 @@ when it cites the specific repo rule it violates.
 
 4. **Duplication / DRY.** Repeated logic that should be one owned function — the canonical example here is
    the three BS feeds' near-identical `update`/`insert_at` guard+construct blocks. Distinguish *true*
-   duplication (should be unified) from the intentional bit-equal round-trip rule (the `index_terms`
+   duplication (should be unified) from the intentional bit-equal round-trip rule (the `strike_payout_tree::payout_terms`
    evaluator MUST be one function — that's not duplication, that's the rule).
 
 5. **Readability & idiom.** Naming that obscures intent; comments that don't match the code (a real

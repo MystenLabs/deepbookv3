@@ -63,7 +63,7 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 - `plp/plp.move` — LP vault: idle DUSDC, PLP treasury, staked DEEP, per-expiry rebalancing, incentive streams, full-pool valuation (`PoolValuation` hot potato), the privileged flush.
 - `plp/pool_accounting.move` — durable per-expiry sent/received flows, profit basis, loss watermarks, funding caps, `pending_protocol_profit` (D033 deferred-carry).
 - `plp/lp_book.move` — async supply/withdraw request queues + FIFO drain at the frozen mark.
-- `strike_exposure/strike_exposure.move` — exposure accounting engine for one strike grid (mint insert / partial-close / remove / settlement recompute; the `index_terms` canonical evaluator).
+- `strike_exposure/strike_exposure.move` — exposure accounting engine for one strike grid (mint insert / partial-close / remove / settlement recompute; `strike_payout_tree::payout_terms` is the canonical bit-equal term evaluator).
 - `strike_exposure/range_codec.move` — absolute-tick ⟷ raw conversion, settlement prefix, sentinels (`raw = tick * tick_size`; no centered grid, no boundary indices).
 - `strike_exposure/index/strike_payout_tree.move` — payout-liability + max-live-backing index (treap; `walk_linear`).
 - `strike_exposure/index/liquidation_book.move` — paged, priority-sorted liquidation candidate index + passive-watermark scan.

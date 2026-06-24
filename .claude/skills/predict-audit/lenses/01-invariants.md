@@ -18,7 +18,7 @@ Produce:
    across ALL touching flows. Give special weight to **cross-module and cross-package** invariants — a
    property established in one module/package and silently relied on in another (e.g. `expiry_cash`'s
    `cash_balance >= payout_liability + rebate_reserve`; the exact `current_nav` mark used identically for PLP
-   supply and withdraw; the `index_terms` round-trip — mint insert must add bit-equal what remove subtracts).
+   supply and withdraw; the `strike_payout_tree::payout_terms` round-trip — mint insert must add bit-equal what remove subtracts).
 
 2. **ECONOMIC FLOW MAP** — trace every path where value (DUSDC, DEEP, SUI, PLP) enters, moves, or leaves:
    mint, live redeem, settled redeem, passive liquidation, rebate claim, async supply/withdraw + privileged
@@ -50,6 +50,8 @@ Produce:
   basis / loss watermarks / funding caps / `pending_protocol_profit` deferred-carry.
 - Any accumulator using unchecked arithmetic; the partial-close → reinsert path keeping the
   exposure/payout-tree/accounting machines in lockstep.
+- Event-VALUE correctness (not naming/hygiene — that's the rule-sweep): are the amounts emitted by money events (`OrderMinted` net_premium/financed_amount, vault/fill events) the REAL economic quantities, and do they suffice + round-trip for an off-chain solvency/PnL reconstruction? A wrong-but-well-named field misprices every downstream consumer and is invisible to the hygiene sweep.
+- Sibling-package internal invariants (NOT just the trust boundary lens 08 owns): propbook's `oracle_lane` exact-timestamp/latest store + feed accept/no-op conditions, and `account`'s deposit/withdraw/settle balance conservation, each have their OWN solvency/consistency invariants — audit them first-class, not only through "what predict trusts them for."
 
 ## Empirical mandate (required — do not skip)
 Back the load-bearing invariants with a sim, written to the scratchpad:

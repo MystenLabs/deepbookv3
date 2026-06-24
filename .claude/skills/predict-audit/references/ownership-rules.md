@@ -56,7 +56,7 @@ never re-implemented per site.
 - **Signatures:** a helper chain that only shuttles a derived value; a formula duplicated across mint-insert
   and settlement-recompute; a lossy repack of `quantity`/`floor_shares`/`opened_at_ms` through the packed
   order id.
-- **Intentional exceptions:** `strike_exposure_config::index_terms` IS the one canonical evaluator — every
+- **Intentional exceptions:** `strike_payout_tree::payout_terms` IS the one canonical evaluator — every
   site calling it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
   above a loop) is not "should compute at use"; values returned because the caller genuinely cannot derive
   them (order ids, payouts, fees, event data) or that must be sampled once (expensive / must stay identical

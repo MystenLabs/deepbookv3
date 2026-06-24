@@ -1,36 +1,46 @@
-// Predict smart-contract audit orchestrator.
+// ⛔ DO NOT launch without EXPLICIT user confirmation (see the SKILL.md gate) — a full run is hundreds of
+//    subagents / up to ~100M tokens. Present the run plan + cost and wait for an explicit "yes" first.
+// Predict smart-contract audit orchestrator — MAXIMAL MODE (budget-aware loop-until-dry).
 //
-// Launch from the MAIN LOOP after running ground-truth (sui build/test all 4 packages + a sim smoke),
-// passing the results in via `args`. This workflow does the parallel find -> adversarial-verify fan-out
-// and returns structured findings; the MAIN LOOP synthesizes the final report (and runs any localnet PoC).
+// Findings are SAMPLED, not enumerated: re-running a lens surfaces different issues each pass. So this runs
+// each lens across ROUNDS, unions new findings, and keeps going until K consecutive rounds add nothing new
+// OR the token-budget floor is hit — converting sampling variance into near-enumeration AND auto-retrying
+// flaky (StructuredOutput-failed) units (a failed unit is just an empty round that re-runs). Launch from the
+// MAIN LOOP after ground-truth; the main loop synthesizes the report. Cost is intentionally high (last line
+// of defense); control it with scope + the budget, not by cutting coverage.
 //
 // args = {
-//   groundTruth: string,   // build/test/sim summary from the main loop (e.g. "predict 223/223 green; ...")
-//   scope:       string,   // what to audit ("full protocol at HEAD" | a git range "A..B" | a file list)
-//   lenses?:     string[], // optional subset of lens keys to run (default: all 9) — use for a cheap dry run
-//   maxFindings?: number,  // optional cap on findings returned per lens (default: 12)
+//   groundTruth: string, scope: string,
+//   lenses?:     string[],  // subset of lens keys (default: all 10)
+//   maxFindings?: number,   // cap NEW findings per lens per round (default: 12)
+//   dryRounds?:  number,    // stop after this many consecutive no-new-finding rounds (default: 3)
+//   maxRounds?:  number,    // hard round cap (default: 20)
 // }
+// The `budget` global (set by a "+NNNm" turn directive, e.g. +100m) gates the loop: it stops when
+// budget.remaining() drops below a reserve. With no budget set, dryRounds/maxRounds bound it.
 //
-// Subagents are READ-ONLY on source and must NOT run `sui build/test` or localnet (watchdog) — only Python.
+// Subagents are READ-ONLY on source; no sui build/test or localnet (watchdog) — Python sims only.
 
 export const meta = {
   name: 'predict-audit-orchestrator',
-  description: 'Parallel multi-lens smart-contract audit of Predict (+ propbook, block_scholes_oracle, account): find -> adversarially verify -> structured findings',
+  description: 'Maximal multi-lens audit of Predict (+ siblings): loop-until-dry find -> diverse adversarial verify -> structured findings',
   phases: [
-    { title: 'Find', detail: '10 prior-aware lenses fan out over the four packages' },
-    { title: 'Verify', detail: 'refute / settled / repro panel per candidate finding' },
+    { title: 'Find', detail: 'loop-until-dry: 10 lenses re-sample across rounds until no new findings or budget floor' },
+    { title: 'Verify', detail: 'diverse refute/settled/repro panel per unique candidate' },
     { title: 'Promote', detail: 'elevate high-signal observations buried in coverage into findings' },
   ],
 }
 
 const SKILL = '.claude/skills/predict-audit'
-// Normalize args: the Workflow runtime may deliver `args` as an object OR a JSON string.
 let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(no ground-truth provided — note this in coverage)'
 const scope = A.scope || 'full protocol at current HEAD'
 const maxFindings = A.maxFindings || 12
+const DRY_TARGET = A.dryRounds || 3
+const MAX_ROUNDS = A.maxRounds || 20
+const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget.total * 0.3)) : 5_000_000 // reserve ~30% of the budget for verify + promote + synthesis
 
 const ALL_LANES = [
   { key: 'invariants', file: '01-invariants.md' },
@@ -47,9 +57,8 @@ const ALL_LANES = [
 const want = Array.isArray(A.lenses) ? A.lenses : null
 const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0) : ALL_LANES
 const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
-// Echo the resolved config so /workflows shows whether scope/lenses actually applied (a silent
-// full-fleet run is exactly what burned us once — never run the full fleet without saying so).
-log(`audit config — scope: "${scope}" | lenses: ${want ? want.join(',') : `ALL ${ALL_LANES.length} (no filter)`} | maxFindings: ${maxFindings}`
+function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
+log(`audit config — scope: "${scope}" | lenses: ${want ? want.join(',') : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
   + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 80)}`)
 if (want && !LANES.length) {
@@ -97,27 +106,28 @@ const VERDICT_SCHEMA = {
   required: ['verdict', 'adjusted_severity', 'reasoning', 'evidence'],
 }
 
-function finderPrompt(lane) {
-  return `You are the "${lane.key}" lens of a deep, prior-aware smart-contract audit of DeepBook Predict and its split-out sibling packages (propbook, block_scholes_oracle, account).
+function finderPrompt(lane, round, known) {
+  return `You are the "${lane.key}" lens of a deep, prior-aware smart-contract audit of DeepBook Predict and its split-out sibling packages (propbook, block_scholes_oracle, account). This is a MAXIMAL last-line-of-defense audit — be exhaustive.
 
 FIRST read these two files and follow them exactly:
   1. ${SKILL}/primer.md          (protocol, current module map, scope, prior-awareness, empirical toolbox, report format)
   2. ${SKILL}/lenses/${lane.file}  (your lens: deliverables, focus areas, empirical mandate, output)
-You may also cite ${SKILL}/references/*.md (Move/Sui checklist, invariant classes, attack catalog).
+You may also cite ${SKILL}/references/*.md.
 
 SCOPE: ${scope}
-GROUND TRUTH (from the main loop — do NOT re-run sui build/test or localnet; the watchdog kills subagents): ${groundTruth}
+GROUND TRUTH (do NOT re-run sui build/test or localnet; the watchdog kills subagents): ${groundTruth}
+
+THIS IS FIND ROUND ${round} OF A LOOP-UNTIL-DRY AUDIT. The following candidates were ALREADY found by earlier rounds — do NOT re-report them. Hunt DIFFERENT, deeper, rarer issues, and explore functions/branches/edges not yet covered. Return ONLY findings not already in this list:
+${known || '(none yet — first round)'}
 
 DISCIPLINE (binding):
 - Read-only on packages/*/sources/**. Verify every claim against the actual function body + call sites (grep), not its name.
-- Be prior-aware: a candidate matching a settled decision (DECISION_JOURNAL D000+, AGENTS settled list, ROUNDING_POLICY) gets settled_ref=<D-id> and severity Info — do not raise it as new.
-- You MAY write and run Python sims in the scratchpad (fast, safe). You may NOT run sui build/test or localnet bash run.sh (hand those to the main loop as a recipe in evidence).
-- Prefer a few verified findings over many speculative ones; rank uncertain items low-confidence. Cap at your ${maxFindings} highest-value findings. High/Critical findings MUST have concrete evidence.
+- Be prior-aware: a candidate matching a settled decision (DECISION_JOURNAL D000+, AGENTS settled list, ROUNDING_POLICY) gets settled_ref=<D-id> and severity Info.
+- You MAY write and run Python sims in the scratchpad. You may NOT run sui build/test or localnet (hand those to the main loop as a recipe in evidence).
+- Quality over noise, but in maximal mode err toward surfacing a code-grounded candidate (verify will refute the wrong ones). Cap at your ${maxFindings} highest-value NEW findings this round. High/Critical MUST have concrete evidence.
 
 Emit ONLY via the StructuredOutput schema. settled_ref="" and evidence="" only when truly empty.`
 }
-
-phase('Find')
 
 function isHigh(sev) { return sev === 'Critical' || sev === 'High' }
 
@@ -152,32 +162,48 @@ function aggregate(f, laneKey, verdicts) {
   }
 }
 
-const results = await pipeline(
-  LANES,
-  lane => agent(finderPrompt(lane), { schema: FINDINGS_SCHEMA, phase: 'Find', label: `find:${lane.key}` }),
-  async (review, lane) => {
-    if (!review) return { lane: lane.key, coverage: '(finder failed/skipped)', top3: [], findings: [] }
-    const fs = review.findings || []
-    const verified = await parallel(fs.map((f, fi) => async () => {
-      const panel = isHigh(f.severity) ? LENSES : LENSES.slice(0, 2)
-      const verdicts = await parallel(panel.map(lens => () =>
-        agent(verifyPrompt(f, lane.key, lens), { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${lane.key}:${fi}:${lens.tag}` })))
-      return aggregate(f, lane.key, verdicts)
-    }))
-    return { lane: lane.key, coverage: review.coverage, top3: review.top3 || [], findings: verified.filter(Boolean) }
-  },
-)
+// ---------- FIND: budget-aware loop-until-dry ----------
+phase('Find')
+function fkey(f) { return `${f.lane}|${(f.location || '').toLowerCase()}|${(f.title || '').toLowerCase()}`.slice(0, 200) }
+const seen = new Set()
+const candidates = []
+const coverageByLane = {}
+let dry = 0, round = 0
+while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
+  round++
+  const known = candidates.map(f => `- [${f.severity}] (${f.lane}) ${f.title} @ ${f.location}`).join('\n')
+  const roundRes = await parallel(LANES.map(lane => () => agent(finderPrompt(lane, round, known),
+    { schema: FINDINGS_SCHEMA, effort: 'max', phase: 'Find', label: `find:${lane.key}:r${round}` })))
+  let freshCount = 0
+  roundRes.filter(Boolean).forEach(r => {
+    coverageByLane[r.lane] = { coverage: r.coverage, top3: r.top3 || [] }
+    ;(r.findings || []).forEach(f => {
+      const ff = { ...f, lane: r.lane }
+      const k = fkey(ff)
+      if (!seen.has(k)) { seen.add(k); candidates.push(ff); freshCount++ }
+    })
+  })
+  log(`Find round ${round}: +${freshCount} new (total ${candidates.length}) | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
+  if (freshCount === 0) dry++; else dry = 0
+}
+log(`Find converged after ${round} rounds (${dry} dry): ${candidates.length} unique candidates`)
 
-const lanes = results.filter(Boolean)
-const all = lanes.flatMap(l => l.findings)
+// ---------- VERIFY: every candidate gets the full diverse panel (maximal mode) ----------
+phase('Verify')
+const verified = await parallel(candidates.map((f, fi) => async () => {
+  const verdicts = await parallel(LENSES.map(lens => () =>
+    agent(verifyPrompt(f, f.lane, lens), { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.lane}:${fi}:${lens.tag}` })))
+  return aggregate(f, f.lane, verdicts)
+}))
+
+const all = verified.filter(Boolean)
 const kept = all.filter(f => f.status === 'confirmed' || f.status === 'uncertain')
 const settledOut = all.filter(f => f.status === 'settled')
 const refutedOut = all.filter(f => f.status === 'refuted')
+const lanes = Object.keys(coverageByLane).map(k => ({ lane: k, coverage: coverageByLane[k].coverage, top3: coverageByLane[k].top3 }))
+log(`Verify: candidates ${all.length} | kept ${kept.length} | settled ${settledOut.length} | refuted ${refutedOut.length}`)
 
-log(`Lenses: ${lanes.length} | candidates: ${all.length} | kept: ${kept.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
-
-// Promotion pass: lenses sometimes bury a real issue inside their Coverage/aside text without raising it
-// as a finding. One critic scans all coverage + the captured findings and elevates anything high-signal.
+// ---------- PROMOTE: elevate high-signal observations buried in coverage ----------
 phase('Promote')
 const PROMOTE_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -190,12 +216,12 @@ const promoteRes = await agent(
   `You are the completeness/promotion critic for a Predict smart-contract audit. Read ${SKILL}/primer.md for the module map, prior-awareness, and report format.\n\n`
   + `Below are every lens's COVERAGE notes + top-3, and the findings ALREADY captured. Lenses sometimes state a real issue inside coverage/aside text (a "VERIFIED-SOUND" note that hides a caveat, a sharp observation about a dropped gate, a missing-coverage admission) without promoting it to a finding. Identify any HIGH-SIGNAL observation in the coverage that is NOT already represented in the findings list, confirm it against the actual code (grep/read), and emit it as a proper finding. Do NOT duplicate existing findings, do NOT invent issues ungrounded in the coverage, and tag anything matching a settled decision with its D-id (settled_ref). Do not run sui build/test or localnet.\n\n`
   + `ALREADY-CAPTURED FINDINGS:\n${keptTitles}\n\nCOVERAGE NOTES:\n${coverageBlob}`,
-  { schema: PROMOTE_SCHEMA, phase: 'Promote', label: 'promote:coverage-critic' })
+  { schema: PROMOTE_SCHEMA, effort: 'high', phase: 'Promote', label: 'promote:coverage-critic' })
 const promoted = (promoteRes && promoteRes.findings) || []
 if (promoted.length) log(`Promoted ${promoted.length} buried observation(s) from coverage into findings`)
 
 return {
-  summary: { lenses: lanes.length, candidates: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length, promoted: promoted.length },
+  summary: { lenses: lanes.length, rounds: round, candidates: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length, promoted: promoted.length },
   kept, settled: settledOut, refuted: refutedOut, promoted,
   coverage: lanes.map(l => ({ lane: l.lane, coverage: l.coverage, top3: l.top3 })),
 }

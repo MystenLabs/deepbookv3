@@ -1,3 +1,5 @@
+// ⛔ DO NOT launch without EXPLICIT user confirmation (see the SKILL.md gate) — present the run plan + cost
+//    and wait for an explicit "yes" first.
 // Predict rule sweep — per-RULE conformance sweep for the MECHANICAL/local repo rules.
 // Refreshed successor to the old root rule-auditor.md. Each agent owns ONE rule family and sweeps every
 // relevant module for that rule only (broad-shallow — correct for rules that mean the same thing everywhere).
@@ -60,6 +62,9 @@ const RULE_FAMILIES = [
   { key: 'events-hygiene', scope: ALL,
     rule: "Avoid 'created' events unless a concrete indexer/off-chain discovery need exists. Events are emitted by the module owning the lifecycle/action, AFTER the state transition completes, with semantic field names (`expiry_market_id`, `pool_vault_id`, `pyth_feed_id` — not generic `owner_id`/`object_id`/`config_id`). Embedded helper modules do not emit parent-scoped events.",
     focus: 'Every event struct + `event::emit` across predict events/, propbook events, account_events. Flag created-events without an indexer need, generic id fields, helper modules emitting parent-scoped events, and events emitted before their postcondition.' },
+  { key: 'dead-field-liveness', scope: ALL,
+    rule: 'Every declared struct field should have BOTH a writer AND a reader on a LIVE (non-test, non-.disabled) path. A WRITE-ONLY field (set/incremented but never read by live logic for a decision/payout/event) or a READ-ONLY mirror (read but never maintained) is an ownership/liveness defect. Canonical case: the rebate-reserve became write-only when its consumer (claim_trading_loss_rebate) was deleted in the rework, silently walling off ~50% of trading fees.',
+    focus: 'Enumerate EVERY struct field across all four packages. For each, grep its writers and its readers on LIVE paths (exclude tests + .disabled). Flag (a) write-only fields, (b) read-only mirrors, (c) a field whose sole consumer was removed by the oracle/custody/async-LP rework. This is the exhaustive MECHANICAL complement to the ownership-walk R7 contextual catch — list the fields you cleared too, so coverage is provable.' },
 ]
 
 const wantRules = Array.isArray(A.rules) ? A.rules : null
@@ -105,32 +110,57 @@ const VERDICT_SCHEMA = {
   required: ['verdict', 'classification', 'reasoning', 'evidence'],
 }
 
-phase('Sweep')
-const swept = await pipeline(
-  FAMILIES,
-  rf => agent(
-    `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\nInspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output and losing the whole sweep. Cap at your ${maxFindings} highest-value findings.`,
-    { schema: SWEEP_SCHEMA, effort: 'medium', phase: 'Sweep', label: `sweep:${rf.key}` }),
-  (res) => {
-    if (!res) return []
-    return parallel((res.findings || []).map((f, fi) => () => agent(
-      `${PRELUDE}\n\nADVERSARIALLY VERIFY this single rule-sweep finding (rule family ${res.rule_family}). Read the cited code; decide: confirmed (real violation) / refuted (not a violation, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite it). Then classify: fix-code / update-rule (defensible → narrowest exception) / design-decision / false-positive. Be skeptical; mechanical rules have many intentional exceptions (getters retained by D003, public APIs needed for PTBs, disabled test suites).\n\nFINDING:\n${JSON.stringify(f, null, 2)}`,
-      { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${res.rule_family}:${fi}` })
-      .then(verdict => ({ ...f, rule_family: res.rule_family, verdict }))))
-  },
-)
+// MAXIMAL MODE: loop-until-dry SWEEP. Re-sweep each rule family across rounds (each told what's already
+// found for that family so it hunts new sites), union new findings, until K dry rounds or the budget floor.
+const DRY_TARGET = A.dryRounds || 2
+const MAX_ROUNDS = A.maxRounds || 10
+const RESERVE = (budget && budget.total) ? Math.max(3_000_000, Math.floor(budget.total * 0.3)) : 3_000_000
+function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
+function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase()}`.slice(0, 180) }
+function sweepPrompt(rf, round, known) {
+  return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} (round ${round}) ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n`
+    + (known ? `ALREADY-FOUND violations of this rule (do NOT re-report — find DIFFERENT ones, in modules/branches not yet covered):\n${known}\n\n` : '')
+    + `Inspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output. Cap at your ${maxFindings} highest-value NEW findings.`
+}
 
-const all = swept.filter(Boolean).flat().filter(Boolean)
+phase('Sweep')
+const seen = new Set()
+const candidates = []
+let dry = 0, round = 0
+while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
+  round++
+  const knownByFamily = {}
+  candidates.forEach(f => { (knownByFamily[f.rule_family] = knownByFamily[f.rule_family] || []).push(`- ${f.location}: ${(f.claim || '').slice(0, 120)}`) })
+  const roundRes = await parallel(FAMILIES.map(rf => () => agent(sweepPrompt(rf, round, (knownByFamily[rf.key] || []).join('\n')),
+    { schema: SWEEP_SCHEMA, effort: 'high', phase: 'Sweep', label: `sweep:${rf.key}:r${round}` })))
+  let freshCount = 0
+  roundRes.filter(Boolean).forEach(r => {
+    ;(r.findings || []).forEach(f => {
+      const ff = { ...f, rule_family: r.rule_family }
+      const k = fkey(ff)
+      if (!seen.has(k)) { seen.add(k); candidates.push(ff); freshCount++ }
+    })
+  })
+  log(`Sweep round ${round}: +${freshCount} new (total ${candidates.length}) | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
+  if (freshCount === 0) dry++; else dry = 0
+}
+log(`Sweep converged after ${round} rounds (${dry} dry): ${candidates.length} unique candidate findings`)
+
+phase('Verify')
+const all = (await parallel(candidates.map((f, fi) => () => agent(
+  `${PRELUDE}\n\nADVERSARIALLY VERIFY this single rule-sweep finding (rule family ${f.rule_family}). Read the cited code; decide: confirmed (real violation) / refuted (not a violation, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite it). Then classify: fix-code / update-rule (defensible → narrowest exception) / design-decision / false-positive. Be skeptical; mechanical rules have many intentional exceptions (getters retained by D003, public APIs needed for PTBs, disabled test suites).\n\nFINDING:\n${JSON.stringify(f, null, 2)}`,
+  { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.rule_family}:${fi}` })
+  .then(verdict => ({ ...f, verdict }))))).filter(Boolean)
 const confirmed = all.filter(x => x.verdict && x.verdict.verdict === 'confirmed')
 const settledOut = all.filter(x => x.verdict && x.verdict.verdict === 'settled')
 const refutedOut = all.filter(x => x.verdict && x.verdict.verdict === 'refuted')
-log(`Rule families: ${FAMILIES.length} | findings: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
+log(`Rule families: ${FAMILIES.length} | rounds: ${round} | findings: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
 
 function shape(x) {
   return { rule_family: x.rule_family, location: x.location, claim: x.claim, classification: (x.verdict && x.verdict.classification) || x.classification, recommendation: x.recommendation, evidence: x.verdict && x.verdict.evidence }
 }
 return {
-  summary: { rule_families: FAMILIES.length, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
+  summary: { rule_families: FAMILIES.length, rounds: round, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
   confirmed: confirmed.map(shape),
   settled: settledOut.map(shape),
   refuted: refutedOut.map(x => ({ rule_family: x.rule_family, location: x.location, claim: x.claim, why: x.verdict && x.verdict.reasoning })),

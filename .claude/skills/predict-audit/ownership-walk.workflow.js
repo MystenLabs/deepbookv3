@@ -1,3 +1,5 @@
+// ⛔ DO NOT launch without EXPLICIT user confirmation (see the SKILL.md gate) — present the run plan + cost
+//    and wait for an explicit "yes" first.
 // Predict ownership walk — recursive per-module ownership/boundary/policy conformance audit.
 //
 // Shape: Map (barrier) -> Check (per-module fan-out) -> Verify. The barrier is REAL: a conformance verdict
@@ -143,25 +145,52 @@ function composedContext(entry) {
     .map(e => `  - ${e.module} [${e.role}] owns: ${e.owns}`).join('\n') || '  (none mapped in scope)'
 }
 
-const checkVerified = await pipeline(
-  CHECK_UNITS,
-  cu => agent(
-    `${PRELUDE}\n\n=== CHECK PASS — module ${cu.module} (${cu.file}) ===\n`
+// MAXIMAL MODE: loop-until-dry CHECK. Violations are sampled, so re-walk each module across rounds (each
+// told what's already found FOR THAT MODULE so it hunts new ground), union new violations, until K dry
+// rounds or the budget floor. Auto-retries flaky units (a failed unit is an empty round that re-runs).
+const DRY_TARGET = A.dryRounds || 2
+const MAX_ROUNDS = A.maxRounds || 12
+const RESERVE = (budget && budget.total) ? Math.max(4_000_000, Math.floor(budget.total * 0.3)) : 4_000_000
+function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
+function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase()}`.slice(0, 200) }
+
+function checkPrompt(cu, round, known) {
+  return `${PRELUDE}\n\n=== CHECK PASS (round ${round}) — module ${cu.module} (${cu.file}) ===\n`
     + `This module's responsibility-map entry:\n  role: ${cu.entry.role}\n  owns: ${cu.entry.owns}\n  must_not_own: ${cu.entry.must_not_own}\n`
     + `Modules it composes (their owned facts — use to judge binding/derivation/producer-fact):\n${composedContext(cu.entry)}\n\n`
-    + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (just the essential call-chain; the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence violations.`,
-    { schema: CHECK_SCHEMA, effort: 'high', phase: 'Check', label: `check:${cu.label}` }),
-  (checkRes) => {
-    if (!checkRes) return []
-    const vs = checkRes.violations || []
-    return parallel(vs.map((v, vi) => () => agent(
-      `${PRELUDE}\n\nYou are the ADVERSARIAL VERIFIER for one ownership-walk violation. TEST it; do not agree by default — R1-R7 false-positive heavily on intentional architecture (the index_terms single evaluator, D033 deferred-carry, saturating_sub-as-deliberate-policy, documented post-mutation calcs). Read the cited code + the data_flow + the responsibility map. Verdict: confirmed (real misplaced responsibility) / refuted (the responsibility IS correctly placed, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite the D-id) / uncertain. Also classify: fix-code / update-rule (defensible → narrowest rule exception) / design-decision / false-positive.\n\nVIOLATION (module ${checkRes.module}):\n${JSON.stringify(v, null, 2)}`,
-      { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${checkRes.module}:${vi}` })
-      .then(verdict => ({ ...v, module: checkRes.module, verdict }))))
-  },
-)
+    + (known ? `ALREADY-FOUND violations in this module (do NOT re-report — hunt DIFFERENT, deeper, rarer ones, and functions not yet covered):\n${known}\n\n` : '')
+    + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence NEW violations.`
+}
+function verifyPromptV(v) {
+  return `${PRELUDE}\n\nYou are the ADVERSARIAL VERIFIER for one ownership-walk violation. TEST it; do not agree by default — R1-R7 false-positive heavily on intentional architecture (the strike_payout_tree::payout_terms single evaluator, D033 deferred-carry, saturating_sub-as-deliberate-policy, documented post-mutation calcs). Read the cited code + the data_flow + the responsibility map. Verdict: confirmed (real misplaced responsibility) / refuted (the responsibility IS correctly placed, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite the D-id) / uncertain. Also classify: fix-code / update-rule (defensible → narrowest rule exception) / design-decision / false-positive.\n\nVIOLATION (module ${v.module}):\n${JSON.stringify(v, null, 2)}`
+}
 
-const all = checkVerified.filter(Boolean).flat().filter(Boolean)
+const seen = new Set()
+const candidates = []
+let dry = 0, round = 0
+while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
+  round++
+  const knownByModule = {}
+  candidates.forEach(v => { (knownByModule[v.module] = knownByModule[v.module] || []).push(`- [${v.rule_family}] ${v.node}: ${(v.claim || '').slice(0, 120)}`) })
+  const roundRes = await parallel(CHECK_UNITS.map(cu => () => agent(checkPrompt(cu, round, (knownByModule[cu.module] || []).join('\n')),
+    { schema: CHECK_SCHEMA, effort: 'max', phase: 'Check', label: `check:${cu.label}:r${round}` })))
+  let freshCount = 0
+  roundRes.filter(Boolean).forEach(r => {
+    ;(r.violations || []).forEach(v => {
+      const vv = { ...v, module: r.module }
+      const k = vkey(vv)
+      if (!seen.has(k)) { seen.add(k); candidates.push(vv); freshCount++ }
+    })
+  })
+  log(`Check round ${round}: +${freshCount} new (total ${candidates.length}) | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
+  if (freshCount === 0) dry++; else dry = 0
+}
+log(`Check converged after ${round} rounds (${dry} dry): ${candidates.length} unique candidate violations`)
+
+phase('Verify')
+const all = (await parallel(candidates.map((v, vi) => () => agent(verifyPromptV(v),
+  { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${v.module}:${vi}` })
+  .then(verdict => ({ ...v, verdict }))))).filter(Boolean)
 const confirmed = all.filter(x => x.verdict && (x.verdict.verdict === 'confirmed' || x.verdict.verdict === 'uncertain'))
 const settledOut = all.filter(x => x.verdict && x.verdict.verdict === 'settled')
 const refutedOut = all.filter(x => x.verdict && x.verdict.verdict === 'refuted')
@@ -172,10 +201,10 @@ all.forEach(x => { byRule[x.rule_family] = byRule[x.rule_family] || { confirmed:
 confirmed.forEach(x => { byRule[x.rule_family].confirmed++ })
 all.filter(x => x.verdict && (x.verdict.classification === 'update-rule' || x.verdict.classification === 'design-decision')).forEach(x => { byRule[x.rule_family].defensible++ })
 
-log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | violations: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
+log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | rounds: ${round} | violations: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length}`)
 
 return {
-  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
+  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, rounds: round, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
   responsibility_map: allModules.map(m => ({ module: m.module, role: m.role, owns: m.owns, composes: m.composes })),
   confirmed: confirmed.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, expected_owner: x.expected_owner, actual_owner: x.actual_owner, severity: (x.verdict && x.verdict.adjusted_severity) || x.severity, classification: x.verdict && x.verdict.classification, settled_ref: x.settled_ref, recommendation: x.recommendation, data_flow: x.data_flow, proof: x.verdict && x.verdict.evidence })),
   settled: settledOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, settled_ref: (x.verdict && x.verdict.evidence) || x.settled_ref })),

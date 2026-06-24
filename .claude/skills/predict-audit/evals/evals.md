@@ -8,8 +8,7 @@ audit, then check these by hand.
 A run over the current tree should surface these (or note they were fixed). Update as they're resolved.
 - **Cadence hard-abort** — `next_deployable_market` aborts (not skips) on an occupied non-overlap slot when
   cadences are enabled out of rank order (lens 04/07). Medium.
-- **`window_size` overflow** — no upper bound in `assert_cadence_config`; `now + window_size*period_ms` can
-  overflow (lens 06). Low.
+- ~~**`window_size` overflow**~~ — RESOLVED: `assert_cadence_window_size` now caps it at `max_cadence_window_size!()=10` (config_constants.move:188-191, called from market_manager.move). Kept as a closed-item record; a run should NOT still flag it.
 - **Coverage gaps** — #1080 liquidated-settled-redeem fix has no enabled public-flow test; liquidation-book
   paging (>64) + passive scan untested (lens 01/07/09).
 

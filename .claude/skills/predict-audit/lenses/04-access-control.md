@@ -24,10 +24,11 @@ loss/compromise/leak is recoverable.
 - **MarketLifecycleCap** (`capabilities/market_lifecycle_cap`) — the **privileged flush** gate (the
   permissionless flush was removed to close the NAV-manipulation gate; admin keeps break-glass by minting
   itself one). Revocation by id; can a revoked cap still flush?
-- **predict_account cap/proof model** — TradeCap / DepositCap / WithdrawCap + trade proof. THE high-value
-  user-custody surface. Verify: what each cap authorizes; proof bound to the right manager/market/expiry;
-  withdraw authority cannot exceed intent; revocation actually kills a still-existing cap; cap-set capacity
-  bound; owner-direct vs self-owned-manager authority models (which paths are dead, is the remaining set exact).
+- **predict_account custody auth** — THE high-value user-custody surface. NOTE: the old predict-side
+  `TradeCap`/`DepositCap`/`WithdrawCap`/trade-proof model was REMOVED when custody moved to the `account`
+  package; do not hunt for it. The current model (`account::Auth` owner-auth + `Permit<PredictApp>` app-auth)
+  is detailed under Cross-package auth below — verify here only the predict-side surface: which predict
+  entrypoints require owner vs app auth, and that withdraw authority cannot exceed intent.
 - **Cross-package auth (first-class here):**
   - `account` custody: `generate_auth_as_app<PredictApp>` requires both a `Permit<PredictApp>` (provable only
     inside predict) AND registry app-authorization — confirm a keeper/anon cannot forge app-auth to move funds.
@@ -50,6 +51,14 @@ loss/compromise/leak is recoverable.
   for each, deliberate escape hatch or oversight? The mirror-sync model (allowed_versions on Registry copied to
   each object via permissionless sync): failure modes of a partially-synced fleet; can the running version be
   disabled out from under live flows?
+- **Cross-package version skew + permissionless `migrate` (the unowned seam — audit it here).** THREE
+  independent version schemes coexist: predict's `ProtocolConfig.version_watermark`/`current_version!()`,
+  propbook's PER-FEED `version`, and `account` has NO version gate at all. Nothing reconciles them — predict
+  never reads `feed.version()`. Each propbook feed exposes a **`public` permissionless `migrate(feed)`** gated
+  only by `current_version!() > feed.version`, and feed reads abort on version mismatch. Audit: can a
+  half-migrated feed fleet (some feeds at the old version) silently abort predict's priced reads →
+  market-wide liveness brick? Is forward-only `migrate` (no field re-init / struct-layout-drift handling) safe
+  across a real upgrade? Can predict-frozen + propbook-feed-newer + account-ungated mis-authorize or strand custody?
 
 ## Output
 For each finding: the exact gate, the over/under-authorized action, the recovery path (or lack), confidence,

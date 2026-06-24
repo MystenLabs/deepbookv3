@@ -53,6 +53,9 @@ Use Python (subagent-safe) to: sweep rounding direction across the mul_div call 
 check normal_cdf / SVI-variance accuracy at the extreme price ranges and show the numeric discrepancy; and
 fuzz freshness-skew between spot/forward/svi feeds. Localnet only via the main loop.
 
+### Part 3 — freshness-threshold ADEQUACY (economic, not just mechanical)
+Beyond auditing whether freshness gating is *implemented* correctly, ask whether the configured windows are economically *adequate*: a staleness bound that is fine mid-life can be the entire edge near expiry (a 60s window on a near-expiry binary lets a stale-but-in-window price misprice the tail — see the known oracle-calibration drain). For each freshness knob (pyth spot, BS price, BS svi), reason about the worst in-window price move at the worst time (near expiry / high gamma) and whether it lets an attacker — or just unlucky timing — extract value. Hand the deep economic quantification to lens 09 if it needs a sim.
+
 ## Output
 Deliver a per-input trust table (input | supplier | verified | trusted | gating | worst-case error) and a
 per-operation rounding/overflow table; show concrete inputs + the numeric discrepancy for any math finding.
