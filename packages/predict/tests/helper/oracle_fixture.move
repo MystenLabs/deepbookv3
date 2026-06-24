@@ -95,13 +95,11 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
-        expiry,
         scenario.ctx(),
     );
     let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
-        expiry,
         scenario.ctx(),
     );
     return_shared(oracle_registry);
@@ -290,6 +288,7 @@ public fun prepare_real_oracle(
     bs_forward.update(
         update::new_forward_update(test_constants::pyth_feed_id(), self.expiry, live_ts, forward),
         &self.clock,
+        self.scenario.ctx(),
     );
     bs_svi.update(
         update::new_svi_update(
@@ -305,6 +304,28 @@ public fun prepare_real_oracle(
             svi_m_is_negative,
         ),
         &self.clock,
+        self.scenario.ctx(),
+    );
+}
+
+/// Overwrite only the BS forward row for this fixture's expiry through the real
+/// ingest path. Used by stale-surface guard tests that need fresh prices but a
+/// stale SVI row.
+public fun set_bs_forward_for_testing(
+    self: &mut OracleFixture,
+    bs_forward: &mut BlockScholesForwardFeed,
+    source_timestamp_ms: u64,
+    forward: u64,
+) {
+    bs_forward.update(
+        update::new_forward_update(
+            test_constants::pyth_feed_id(),
+            self.expiry,
+            source_timestamp_ms,
+            forward,
+        ),
+        &self.clock,
+        self.scenario.ctx(),
     );
 }
 

@@ -22,7 +22,6 @@ const PYTH_SOURCE_B: u32 = 11;
 const PYTH_SOURCE_UNKNOWN: u32 = 99;
 const BS_SOURCE_A: u32 = 20;
 const BS_SOURCE_B: u32 = 21;
-const EXPIRY_A: u64 = 1_700_100_000_000;
 
 #[test]
 fun bind_pyth_to_underlying_records_typed_lookup_and_metadata() {
@@ -81,7 +80,7 @@ fun bind_block_scholes_to_underlying_records_typed_lookups_and_metadata() {
     let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_a_id);
 
     registry.bind_block_scholes_spot_to_underlying(&admin_cap, &bs_spot, BTC_UNDERLYING_ID);
-    registry.bind_block_scholes_expiry_to_underlying(
+    registry.bind_block_scholes_surface_to_underlying(
         &admin_cap,
         &bs_forward,
         &bs_svi,
@@ -100,51 +99,43 @@ fun bind_block_scholes_to_underlying_records_typed_lookups_and_metadata() {
     );
     assert_eq!(
         registry
-            .propbook_block_scholes_forward_id_for_underlying_expiry(
-                BTC_UNDERLYING_ID,
-                EXPIRY_A,
-            )
+            .propbook_block_scholes_forward_id_for_underlying(BTC_UNDERLYING_ID)
             .destroy_some(),
         bs_forward_a_id,
     );
-    assert_expiry_metadata(
+    assert_metadata(
         registry
-            .block_scholes_forward_metadata_for_underlying_expiry(
-                BTC_UNDERLYING_ID,
-                EXPIRY_A,
-            )
+            .block_scholes_forward_metadata_for_underlying(BTC_UNDERLYING_ID)
             .destroy_some(),
         BTC_UNDERLYING_ID,
         BS_SOURCE_A,
         bs_forward_a_id,
-        EXPIRY_A,
     );
     assert_eq!(
         registry
-            .propbook_block_scholes_svi_id_for_underlying_expiry(BTC_UNDERLYING_ID, EXPIRY_A)
+            .propbook_block_scholes_svi_id_for_underlying(BTC_UNDERLYING_ID)
             .destroy_some(),
         bs_svi_a_id,
     );
-    assert_expiry_metadata(
+    assert_metadata(
         registry
-            .block_scholes_svi_metadata_for_underlying_expiry(BTC_UNDERLYING_ID, EXPIRY_A)
+            .block_scholes_svi_metadata_for_underlying(BTC_UNDERLYING_ID)
             .destroy_some(),
         BTC_UNDERLYING_ID,
         BS_SOURCE_A,
         bs_svi_a_id,
-        EXPIRY_A,
     );
     assert!(
         registry.propbook_block_scholes_spot_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
     );
     assert!(
         registry
-            .propbook_block_scholes_forward_id_for_underlying_expiry(ETH_UNDERLYING_ID, EXPIRY_A)
+            .propbook_block_scholes_forward_id_for_underlying(ETH_UNDERLYING_ID)
             .is_none(),
     );
     assert!(
         registry
-            .propbook_block_scholes_svi_id_for_underlying_expiry(ETH_UNDERLYING_ID, EXPIRY_A)
+            .propbook_block_scholes_svi_id_for_underlying(ETH_UNDERLYING_ID)
             .is_none(),
     );
 
@@ -280,25 +271,21 @@ fun setup_registry_with_feeds(): (Scenario, ID, ID, ID, ID, ID, ID, ID, ID) {
     let bs_forward_a_id = registry::create_and_share_block_scholes_forward_feed(
         &mut registry,
         BS_SOURCE_A,
-        EXPIRY_A,
         scenario.ctx(),
     );
     let bs_forward_b_id = registry::create_and_share_block_scholes_forward_feed(
         &mut registry,
         BS_SOURCE_B,
-        EXPIRY_A,
         scenario.ctx(),
     );
     let bs_svi_a_id = registry::create_and_share_block_scholes_svi_feed(
         &mut registry,
         BS_SOURCE_A,
-        EXPIRY_A,
         scenario.ctx(),
     );
     let bs_svi_b_id = registry::create_and_share_block_scholes_svi_feed(
         &mut registry,
         BS_SOURCE_B,
-        EXPIRY_A,
         scenario.ctx(),
     );
     return_shared(registry);
@@ -326,16 +313,4 @@ fun assert_metadata(
     assert_eq!(registry::propbook_underlying_id(&metadata), expected_underlying_id);
     assert_eq!(registry::source_id(&metadata), expected_source_id);
     assert_eq!(registry::propbook_oracle_id(&metadata), expected_oracle_id);
-}
-
-fun assert_expiry_metadata(
-    metadata: OracleMetadata,
-    expected_underlying_id: u32,
-    expected_source_id: u32,
-    expected_oracle_id: ID,
-    expected_expiry_ms: u64,
-) {
-    assert_metadata(metadata, expected_underlying_id, expected_source_id, expected_oracle_id);
-    assert_eq!(registry::has_expiry(&metadata), true);
-    assert_eq!(registry::expiry_ms(&metadata), expected_expiry_ms);
 }

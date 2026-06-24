@@ -126,7 +126,7 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 | `Registry` | Underlying approval, minimum tick sizes, expiry uniqueness, versions, pause caps, creation entrypoints | package init | shared |
 | `PythFeed` (propbook) | One Pyth Lazer feed's global spot | `propbook` (permissionless) | shared |
 | `BlockScholesSpotFeed` (propbook) | One source id's BS spot + exact timestamp history | `propbook` (permissionless) | shared |
-| `BlockScholesForwardFeed` / `BlockScholesSVIFeed` (propbook) | One expiry's BS forward and SVI streams + exact timestamp history | `propbook` (permissionless) | shared |
+| `BlockScholesForwardFeed` / `BlockScholesSVIFeed` (propbook) | One source id's BS forward and SVI surfaces with per-expiry streams + exact timestamp history | `propbook` (permissionless) | shared |
 | `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_expiry_market` (one per underlying and expiry) | shared |
 | `PredictManager` | DUSDC custody + positions keyed by `(expiry_market_id, order_id)` | `create_manager` / `create_self_owned_manager` | owned or shared |
 

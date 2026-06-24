@@ -23,6 +23,7 @@ const UNDERLYING_ID: u32 = 42;
 const SPOT: u64 = 50_000_000_000_000;
 const SPOT_LATER: u64 = 49_000_000_000_000;
 const FORWARD_A: u64 = 50_500_000_000_000;
+const FORWARD_B: u64 = 51_500_000_000_000;
 const EXPIRY_A: u64 = 1_700_100_000_000;
 const EXPIRY_B: u64 = 1_700_200_000_000;
 const UNKNOWN_TIMESTAMP: u64 = 9_999_999_999;
@@ -75,12 +76,11 @@ fun forward_update_records_raw_and_normalized_latest() {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_EARLY);
 
-    feed.update(forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A), &clock);
+    feed.update(forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A), &clock, scenario.ctx());
 
     assert_eq!(feed.bs_source_id(), BS_SOURCE_ID);
-    assert_eq!(feed.expiry_ms(), EXPIRY_A);
     assert_eq!(feed.version(), propbook::constants::current_version!());
-    let raw_read = feed.raw_forward();
+    let raw_read = feed.raw_forward(EXPIRY_A);
     assert_eq!(raw_read.read_source_timestamp_ms(), T_EARLY);
     assert_eq!(raw_read.read_update_timestamp_ms(), LANDED_EARLY);
     let raw = raw_read.read_value();
@@ -88,12 +88,12 @@ fun forward_update_records_raw_and_normalized_latest() {
     assert_eq!(forward_feed::raw_expiry_ms(&raw), EXPIRY_A);
     assert_eq!(forward_feed::raw_forward_value(&raw), FORWARD_A);
     assert_price_read(
-        &feed.normalized_forward().destroy_some(),
+        &feed.normalized_forward(EXPIRY_A).destroy_some(),
         FORWARD_A,
         T_EARLY,
         LANDED_EARLY,
     );
-    assert!(feed.normalized_forward_at(T_EARLY).is_none());
+    assert!(feed.normalized_forward_at(EXPIRY_A, T_EARLY).is_none());
 
     clock.destroy_for_testing();
     return_shared(feed);
@@ -107,20 +107,19 @@ fun svi_update_records_raw_and_normalized_latest() {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_EARLY);
 
-    feed.update(svi_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock);
+    feed.update(svi_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock, scenario.ctx());
 
     assert_eq!(feed.bs_source_id(), BS_SOURCE_ID);
-    assert_eq!(feed.expiry_ms(), EXPIRY_A);
     assert_eq!(feed.version(), propbook::constants::current_version!());
-    let raw_read = feed.raw_svi();
+    let raw_read = feed.raw_svi(EXPIRY_A);
     assert_eq!(raw_read.read_source_timestamp_ms(), T_EARLY);
     assert_eq!(raw_read.read_update_timestamp_ms(), LANDED_EARLY);
     let raw = raw_read.read_value();
     assert_eq!(svi_feed::raw_bs_source_id(&raw), BS_SOURCE_ID);
     assert_eq!(svi_feed::raw_expiry_ms(&raw), EXPIRY_A);
     assert_svi_params(&svi_feed::raw_svi_params(&raw));
-    assert_svi_read(&feed.normalized_svi().destroy_some(), T_EARLY, LANDED_EARLY);
-    assert!(feed.normalized_svi_at(T_EARLY).is_none());
+    assert_svi_read(&feed.normalized_svi(EXPIRY_A).destroy_some(), T_EARLY, LANDED_EARLY);
+    assert!(feed.normalized_svi_at(EXPIRY_A, T_EARLY).is_none());
 
     clock.destroy_for_testing();
     return_shared(feed);
@@ -137,23 +136,27 @@ fun exact_inserts_do_not_mutate_latest_reads() {
     clock.set_for_testing(LANDED_HIGH);
 
     spot.insert_at(spot_update(BS_SOURCE_ID, T_EARLY, SPOT), &clock);
-    forward.insert_at(forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A), &clock);
-    svi.insert_at(svi_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock);
+    forward.insert_at(
+        forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A),
+        &clock,
+        scenario.ctx(),
+    );
+    svi.insert_at(svi_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock, scenario.ctx());
 
     assert!(spot.normalized_spot().is_none());
-    assert!(forward.normalized_forward().is_none());
-    assert!(svi.normalized_svi().is_none());
+    assert!(forward.normalized_forward(EXPIRY_A).is_none());
+    assert!(svi.normalized_svi(EXPIRY_A).is_none());
     assert_price_read(&spot.normalized_spot_at(T_EARLY).destroy_some(), SPOT, T_EARLY, LANDED_HIGH);
     assert_price_read(
-        &forward.normalized_forward_at(T_EARLY).destroy_some(),
+        &forward.normalized_forward_at(EXPIRY_A, T_EARLY).destroy_some(),
         FORWARD_A,
         T_EARLY,
         LANDED_HIGH,
     );
-    assert_svi_read(&svi.normalized_svi_at(T_EARLY).destroy_some(), T_EARLY, LANDED_HIGH);
+    assert_svi_read(&svi.normalized_svi_at(EXPIRY_A, T_EARLY).destroy_some(), T_EARLY, LANDED_HIGH);
     assert!(spot.normalized_spot_at(T_LATE).is_none());
-    assert!(forward.normalized_forward_at(T_LATE).is_none());
-    assert!(svi.normalized_svi_at(T_LATE).is_none());
+    assert!(forward.normalized_forward_at(EXPIRY_A, T_LATE).is_none());
+    assert!(svi.normalized_svi_at(EXPIRY_A, T_LATE).is_none());
 
     clock.destroy_for_testing();
     return_shared(svi);
@@ -214,7 +217,11 @@ fun updates_accept_raw_values_without_pricing_envelope_validation() {
     clock.set_for_testing(LANDED_HIGH);
 
     spot.update(spot_update(BS_SOURCE_ID, T_EARLY, 0), &clock);
-    forward.update(forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, 0), &clock);
+    forward.update(
+        forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, 0),
+        &clock,
+        scenario.ctx(),
+    );
     svi.update(
         update::new_svi_update(
             BS_SOURCE_ID,
@@ -229,13 +236,14 @@ fun updates_accept_raw_values_without_pricing_envelope_validation() {
             M_NEG,
         ),
         &clock,
+        scenario.ctx(),
     );
 
     assert_eq!(spot_feed::raw_spot_value(&spot.raw_spot().read_value()), 0);
-    assert_eq!(forward_feed::raw_forward_value(&forward.raw_forward().read_value()), 0);
+    assert_eq!(forward_feed::raw_forward_value(&forward.raw_forward(EXPIRY_A).read_value()), 0);
     assert!(spot.normalized_spot().is_none());
-    assert!(forward.normalized_forward().is_none());
-    let params = svi.normalized_svi().destroy_some().read_value();
+    assert!(forward.normalized_forward(EXPIRY_A).is_none());
+    let params = svi.normalized_svi(EXPIRY_A).destroy_some().read_value();
     assert_eq!(params.sigma(), 0);
     assert_eq!(params.rho().magnitude(), FLOAT_SCALING + 1);
     assert_eq!(params.m().magnitude(), FLOAT_SCALING + 2);
@@ -253,20 +261,20 @@ fun registry_records_split_bs_source_feeds() {
     let registry = scenario.take_shared<OracleRegistry>();
 
     assert!(registry.contains_block_scholes_spot_source(BS_SOURCE_ID));
-    assert!(registry.contains_block_scholes_forward_source(BS_SOURCE_ID, EXPIRY_A));
-    assert!(registry.contains_block_scholes_svi_source(BS_SOURCE_ID, EXPIRY_A));
+    assert!(registry.contains_block_scholes_forward_source(BS_SOURCE_ID));
+    assert!(registry.contains_block_scholes_svi_source(BS_SOURCE_ID));
     assert_eq!(
         registry.propbook_block_scholes_spot_id_for_source(BS_SOURCE_ID).destroy_some(),
         spot_id,
     );
     assert_eq!(
         registry
-            .propbook_block_scholes_forward_id_for_source(BS_SOURCE_ID, EXPIRY_A)
+            .propbook_block_scholes_forward_id_for_source(BS_SOURCE_ID)
             .destroy_some(),
         forward_id,
     );
     assert_eq!(
-        registry.propbook_block_scholes_svi_id_for_source(BS_SOURCE_ID, EXPIRY_A).destroy_some(),
+        registry.propbook_block_scholes_svi_id_for_source(BS_SOURCE_ID).destroy_some(),
         svi_id,
     );
 
@@ -289,13 +297,11 @@ fun pyth_and_split_bs_share_numeric_source_id_across_kinds() {
     let forward_id = registry::create_and_share_block_scholes_forward_feed(
         &mut registry,
         SHARED_SOURCE_ID,
-        EXPIRY_A,
         scenario.ctx(),
     );
     let svi_id = registry::create_and_share_block_scholes_svi_feed(
         &mut registry,
         SHARED_SOURCE_ID,
-        EXPIRY_A,
         scenario.ctx(),
     );
     let pyth_id = registry::create_and_share_pyth_feed(
@@ -313,13 +319,13 @@ fun pyth_and_split_bs_share_numeric_source_id_across_kinds() {
     );
     assert_eq!(
         registry
-            .propbook_block_scholes_forward_id_for_source(SHARED_SOURCE_ID, EXPIRY_A)
+            .propbook_block_scholes_forward_id_for_source(SHARED_SOURCE_ID)
             .destroy_some(),
         forward_id,
     );
     assert_eq!(
         registry
-            .propbook_block_scholes_svi_id_for_source(SHARED_SOURCE_ID, EXPIRY_A)
+            .propbook_block_scholes_svi_id_for_source(SHARED_SOURCE_ID)
             .destroy_some(),
         svi_id,
     );
@@ -340,20 +346,20 @@ fun create_duplicate_spot_source_aborts() {
 }
 
 #[test, expected_failure(abort_code = registry::EBlockScholesSpotNotBound)]
-fun bind_expiry_without_spot_binding_aborts() {
+fun bind_surface_without_spot_binding_aborts() {
     let (scenario, _spot_id, forward_id, svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
     let forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(forward_id);
     let svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(svi_id);
 
-    registry.bind_block_scholes_expiry_to_underlying(&admin_cap, &forward, &svi, UNDERLYING_ID);
+    registry.bind_block_scholes_surface_to_underlying(&admin_cap, &forward, &svi, UNDERLYING_ID);
 
     abort 999
 }
 
 #[test, expected_failure(abort_code = registry::EWrongBlockScholesSource)]
-fun bind_expiry_with_different_spot_source_aborts() {
+fun bind_surface_with_different_spot_source_aborts() {
     let (mut scenario, spot_id, _forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
     let (other_forward_id, other_svi_id) = create_forward_and_svi(
         &mut scenario,
@@ -368,15 +374,15 @@ fun bind_expiry_with_different_spot_source_aborts() {
     let svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(other_svi_id);
 
     registry.bind_block_scholes_spot_to_underlying(&admin_cap, &spot, UNDERLYING_ID);
-    registry.bind_block_scholes_expiry_to_underlying(&admin_cap, &forward, &svi, UNDERLYING_ID);
+    registry.bind_block_scholes_surface_to_underlying(&admin_cap, &forward, &svi, UNDERLYING_ID);
 
     abort 999
 }
 
-#[test, expected_failure(abort_code = registry::EWrongBlockScholesExpiry)]
-fun bind_mismatched_forward_and_svi_expiry_aborts() {
+#[test, expected_failure(abort_code = registry::EWrongBlockScholesSource)]
+fun bind_surface_with_mismatched_forward_and_svi_sources_aborts() {
     let (mut scenario, spot_id, forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
-    let mismatched_svi_id = registry_svi(&mut scenario, BS_SOURCE_ID, EXPIRY_B);
+    let mismatched_svi_id = registry_svi(&mut scenario, OTHER_BS_SOURCE_ID);
     scenario.next_tx(ADMIN);
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
@@ -385,7 +391,7 @@ fun bind_mismatched_forward_and_svi_expiry_aborts() {
     let svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(mismatched_svi_id);
 
     registry.bind_block_scholes_spot_to_underlying(&admin_cap, &spot, UNDERLYING_ID);
-    registry.bind_block_scholes_expiry_to_underlying(&admin_cap, &forward, &svi, UNDERLYING_ID);
+    registry.bind_block_scholes_surface_to_underlying(&admin_cap, &forward, &svi, UNDERLYING_ID);
 
     abort 999
 }
@@ -402,16 +408,46 @@ fun spot_update_wrong_source_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = forward_feed::EWrongExpiry)]
-fun forward_update_wrong_expiry_aborts() {
+#[test]
+fun forward_and_svi_updates_store_independent_expiry_rows() {
     let (mut scenario, _spot_id, forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
-    let mut feed = scenario.take_shared_by_id<BlockScholesForwardFeed>(forward_id);
+    let mut forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(forward_id);
+    let mut svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(_svi_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.update(forward_update(BS_SOURCE_ID, EXPIRY_B, T_EARLY, FORWARD_A), &clock);
+    forward.update(
+        forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A),
+        &clock,
+        scenario.ctx(),
+    );
+    forward.update(
+        forward_update(BS_SOURCE_ID, EXPIRY_B, T_LATE, FORWARD_B),
+        &clock,
+        scenario.ctx(),
+    );
+    svi.update(svi_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock, scenario.ctx());
+    svi.update(svi_update(BS_SOURCE_ID, EXPIRY_B, T_LATE), &clock, scenario.ctx());
 
-    abort 999
+    assert_price_read(
+        &forward.normalized_forward(EXPIRY_A).destroy_some(),
+        FORWARD_A,
+        T_EARLY,
+        LANDED_HIGH,
+    );
+    assert_price_read(
+        &forward.normalized_forward(EXPIRY_B).destroy_some(),
+        FORWARD_B,
+        T_LATE,
+        LANDED_HIGH,
+    );
+    assert_svi_read(&svi.normalized_svi(EXPIRY_A).destroy_some(), T_EARLY, LANDED_HIGH);
+    assert_svi_read(&svi.normalized_svi(EXPIRY_B).destroy_some(), T_LATE, LANDED_HIGH);
+
+    clock.destroy_for_testing();
+    return_shared(svi);
+    return_shared(forward);
+    scenario.end();
 }
 
 #[test, expected_failure(abort_code = svi_feed::EWrongSource)]
@@ -421,7 +457,7 @@ fun svi_update_wrong_source_aborts() {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.update(svi_update(OTHER_BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock);
+    feed.update(svi_update(OTHER_BS_SOURCE_ID, EXPIRY_A, T_EARLY), &clock, scenario.ctx());
 
     abort 999
 }
@@ -484,8 +520,12 @@ fun raw_forward_at_unknown_timestamp_aborts() {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(LANDED_HIGH);
 
-    feed.insert_at(forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A), &clock);
-    feed.raw_forward_at(UNKNOWN_TIMESTAMP);
+    feed.insert_at(
+        forward_update(BS_SOURCE_ID, EXPIRY_A, T_EARLY, FORWARD_A),
+        &clock,
+        scenario.ctx(),
+    );
+    feed.raw_forward_at(EXPIRY_A, UNKNOWN_TIMESTAMP);
 
     abort 999
 }
@@ -544,7 +584,7 @@ fun svi_update(source_id: u32, expiry: u64, published: u64): SVIUpdate {
     )
 }
 
-fun setup_feeds(source_id: u32, expiry: u64): (Scenario, ID, ID, ID) {
+fun setup_feeds(source_id: u32, _expiry: u64): (Scenario, ID, ID, ID) {
     let mut scenario = test::begin(ADMIN);
     registry::init_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
@@ -558,13 +598,11 @@ fun setup_feeds(source_id: u32, expiry: u64): (Scenario, ID, ID, ID) {
     let forward_id = registry::create_and_share_block_scholes_forward_feed(
         &mut registry,
         source_id,
-        expiry,
         scenario.ctx(),
     );
     let svi_id = registry::create_and_share_block_scholes_svi_feed(
         &mut registry,
         source_id,
-        expiry,
         scenario.ctx(),
     );
     return_shared(registry);
@@ -576,31 +614,28 @@ fun setup_feeds(source_id: u32, expiry: u64): (Scenario, ID, ID, ID) {
 fun create_forward_and_svi(
     scenario: &mut Scenario,
     source_id: u32,
-    expiry: u64,
+    _expiry: u64,
 ): (ID, ID) {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let forward_id = registry::create_and_share_block_scholes_forward_feed(
         &mut registry,
         source_id,
-        expiry,
         scenario.ctx(),
     );
     let svi_id = registry::create_and_share_block_scholes_svi_feed(
         &mut registry,
         source_id,
-        expiry,
         scenario.ctx(),
     );
     return_shared(registry);
     (forward_id, svi_id)
 }
 
-fun registry_svi(scenario: &mut Scenario, source_id: u32, expiry: u64): ID {
+fun registry_svi(scenario: &mut Scenario, source_id: u32): ID {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let id = registry::create_and_share_block_scholes_svi_feed(
         &mut registry,
         source_id,
-        expiry,
         scenario.ctx(),
     );
     return_shared(registry);

@@ -28,9 +28,9 @@ import {
     POOL_VAULT_ID,
     PROTOCOL_CONFIG_ID,
     address,
-    bindBlockScholesExpiryFeedsToUnderlyingTx,
+    bindBlockScholesSurfaceToUnderlyingTx,
     bindFeedsToUnderlyingTx,
-    createBlockScholesExpiryFeedsTx,
+    createBlockScholesSurfaceFeedsTx,
     createAccountTx,
     createExpiryMarketTx,
     depositToAccountTx,
@@ -1126,8 +1126,8 @@ async function setupSimulation(
 
     const expectedExpiryMs = await nextOneMonthExpiryMs();
     result = await executeAndWait(
-        createBlockScholesExpiryFeedsTx(expectedExpiryMs),
-        "create_block_scholes_expiry_feeds",
+        createBlockScholesSurfaceFeedsTx(),
+        "create_block_scholes_surface_feeds",
     );
     const bsForwardFeedChange = result.objectChanges.find(
         (change: any) =>
@@ -1142,14 +1142,14 @@ async function setupSimulation(
     const bsForwardFeedId: string = bsForwardFeedChange.objectId;
     const bsSviFeedId: string = bsSviFeedChange.objectId;
     console.log(
-        `[${ts()}]   BlockScholes expiry feeds: expiry=${expectedExpiryMs} forward=${bsForwardFeedId} svi=${bsSviFeedId}`,
+        `[${ts()}]   BlockScholes surface feeds: forward=${bsForwardFeedId} svi=${bsSviFeedId}`,
     );
 
     await executeAndWait(
-        bindBlockScholesExpiryFeedsToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }),
-        "bind_block_scholes_expiry_feeds",
+        bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }),
+        "bind_block_scholes_surface_feeds",
     );
-    console.log(`[${ts()}]   BlockScholes expiry feeds bound to underlying`);
+    console.log(`[${ts()}]   BlockScholes surface feeds bound to underlying`);
 
     result = await executeAndWait(
         createExpiryMarketTx({
