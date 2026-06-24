@@ -469,11 +469,7 @@ fun seed_idle(ledger: &mut Ledger, amount: u64) {
 
 /// Queue one withdraw request escrowing a `mint_for_testing` LP stand-in for
 /// accumulator-delivered shares.
-fun enqueue_withdraw(
-    scenario: &mut Scenario,
-    book: &mut LpBook<LP_BOOK_TESTS>,
-    amount: u64,
-): u64 {
+fun enqueue_withdraw(scenario: &mut Scenario, book: &mut LpBook<LP_BOOK_TESTS>, amount: u64): u64 {
     let lp = coin::mint_for_testing<LP_BOOK_TESTS>(amount, scenario.ctx());
     book.request_withdraw(alice_id(), ALICE, lp)
 }

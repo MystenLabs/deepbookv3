@@ -11,15 +11,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Leverage is a deterministic floor, not a debt overlay.** A position is one
   binary (digital) contract whose live value is `range-probability value − a
-  deterministic, time-varying floor`, floored at 0 (1× = zero floor); the floor is
+  static floor`, floored at 0 (1× = zero floor); the floor is
   limited-recourse to its own order. *Rejected:* a borrow-index / normalized-debt
   overlay (leverage as a separable debt) and utilization-based borrow rates — the
-  floor model keeps one contract with a time-varying floor, with no separate debt
-  to track, price, or liquidate.
-- **Time-only floor schedule.** The floor index rises deterministically with time
-  (quadratic ramp) toward a terminal value, independent of spot. *Rejected:*
-  double-sided range leverage and spot-dependent rates — double-sided leverage is
-  non-monotonic in spot, so there is no exact global liquidation index.
+  floor model keeps one contract with a static per-order floor, with no separate
+  debt to track, price, or liquidate.
+- **Static per-order floor.** The floor is snapshotted as `floor_shares` at mint
+  and is independent of time, spot, and later admission-policy changes. Leveraged
+  orders can use the same generic `(lower_tick, higher_tick]` range shape as 1x
+  orders; liquidation remains mark-based against the order's current range value.
+  *Rejected:* spot-dependent rates.
 - **Pure knock-out liquidation.** A leveraged order is removed without paying the
   holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
   persists until the holder redeems and clears it. *Rejected:* residual-paying
@@ -36,17 +37,18 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Data structures
 
 - **The order id is a packed `u256` — the single on-chain term store.** It packs
-  the durable post-mint terms (quantity, floor shares, opened-at, two strike
-  ticks, sequence); there is no separate order table. It is self-authenticating,
+  the durable post-mint terms (quantity, floor shares, two strike ticks,
+  sequence); there is no separate order table. It is self-authenticating,
   costs zero per-order storage, and doubles as the liquidation sort key.
   *Rejected:* unpacking to a sequence + `Table<u64, Order>`.
-- **Mint-admission policy is kept out of the order id.** Leverage tiers and price
+- **Mint-admission policy is kept out of the order id.** Admission caps and price
   thresholds live in config, not in order decoding, so a future policy change can
   never retroactively invalidate an existing packed id.
 - **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
-  (terminal-payout + live-backing prefixes) and a flat liquidation book coexist;
-  the exact live NAV is read by decomposing the per-order liability across the two
-  (`Σ qty·P` over the tree minus the leveraged floor-correction scan over the book).
+  (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
+  book coexist; the exact live NAV is read by decomposing the per-order liability
+  across the two (`Σ qty·P` over the tree minus the leveraged floor-correction
+  scan over the book).
   *Superseded:* a dense paged NAV matrix (`{quantity, floor_shares}` with
   strike-weighted prefix sums), which existed only to make every LP supply/withdraw
   a cheap synchronous read. It and its whole mitigation stack (the valuation
@@ -60,11 +62,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   an ascending id sort is largest-quantity-first with no decode. *Rejected:* a
   two-level skip-tree with slack certificates; a bucketed leverage book.
 - **Liquidation priority is largest-quantity-first, not most-under-floor-first.**
-  The sort key lives in the immutable packed id, and an order's floor deficit is
-  time-varying — it cannot be a static key. Largest-first is the best feasible
-  static proxy for the quantity that matters (how much a stale order can
+  The sort key lives in the immutable packed id, and an order's health changes
+  with the live forward/SVI state — it cannot be a static key. Largest-first is the best
+  feasible static proxy for the quantity that matters (how much a stale order can
   overstate NAV). *Rejected:* most-under-floor-first (would require re-keying the
-  book on every index tick).
+  book whenever marks move).
 
 ## Accounting and rounding
 
@@ -86,7 +88,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Backing and solvency (recent)
 
 - **The live cash-backing reserve is a settlement floor plus a tunable liquidity
-  buffer**: `max_live_backing + λ · (Σ live_backing − max_live_backing)`, with
+  buffer**: `max_net_payout + λ · (Σ net_payout − max_net_payout)`, with
   `λ` (`backing_buffer_lambda`) an admin template value, default 0.25. The floor
   — the maximum summed payout at any *single* settlement price — pays every
   settlement winner in full on every price path, because exactly one price
@@ -111,7 +113,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (`idle ≥ Σ active (max_funding − net_funding)`), which pinned the full cap of
   pool capital per active market regardless of book shape and whose backing
   duty became void under the settlement-floor guarantee.
-- **Keep the payout tree.** The tree's max-live term is the enforced settlement
+- **Keep the payout tree.** The tree's max-net-payout term is the enforced settlement
   floor that anchors the live reserve — an O(1) root read, and the structural
   proof that any reserve ≥ it always pays in full at settlement. The same tree now
   also serves the exact NAV linear walk (`Σ qty·P` over its live boundaries), so it
@@ -139,11 +141,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **The oracle moved out of Predict into the standalone `propbook` package.** The
 	  in-package `MarketOracle`, `PythSource`, `settlement_state`,
 	  `market_oracle_config`, `market_oracle_writer_cap`, and `oracle_events` modules
-	  were deleted. Live data now comes from two Predict-unaware feeds —
-	  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed) and
-	  `propbook::block_scholes_feed::BlockScholesFeed` (one per source id, with
-	  per-expiry surfaces plus exact timestamp history) — each updated permissionlessly
-	  from a self-authenticating verified `Update`, so there is no writer capability.
+	  were deleted. Live data now comes from Predict-unaware Propbook feeds:
+	  `propbook::pyth_feed::PythFeed` (one global spot per Lazer feed), a source-level
+	  `propbook::block_scholes_spot_feed::BlockScholesSpotFeed`, and per-expiry
+	  `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` /
+	  `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` objects. Each is updated
+	  permissionlessly from a self-authenticating verified update, so there is no writer capability.
   *Rationale:* the oracle suite is reusable by the wider ecosystem and has a clean,
   Predict-agnostic boundary; possessing a verified `Update` is the only proof
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
@@ -159,14 +162,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   into business logic.
 - **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
-  fresh, else the normalized Block Scholes `forward`;
-	  the Block Scholes *surface* must be fresh either way (`EBlockScholesSurfaceStale`).
-	  *Rationale:* the surface alone carries a usable forward, so a momentarily stale
-	  or non-positive/unrepresentable spot should not block trading. An oversized
-	  normalized Pyth spot still aborts under Predict's pricing envelope. The freshness
-	  windows for Pyth spot and the BS surface collapsed to one window each — the surface
-	  row writes spot + forward + SVI together, so the former separate price and SVI
-	  windows became one.
+  fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
+	  be fresh under the BS price window, and SVI must be fresh under its own looser
+	  window (`EBlockScholesPriceStale` / `EBlockScholesSVIStale`).
+	  *Rationale:* the BS forward feed alone carries a usable forward, so a momentarily
+	  stale or non-positive/unrepresentable Pyth spot should not block trading. An oversized
+	  normalized Pyth spot still aborts under Predict's pricing envelope. BS spot, forward,
+	  and SVI are independent Propbook feeds, so price freshness and SVI freshness remain
+	  separate policy windows.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
@@ -192,7 +195,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   fit), and an opaque id with a separate order table.
 - **No-spot market creation.** Because the tick domain is absolute, market creation
   reads no live spot — it snapshots the cadence `tick_size` and starts with zero cash.
-  `MarketCreated` carries `tick_size` and `max_expiry_allocation`, not min/max strike.
+  `MarketCreated` carries `tick_size`, `max_expiry_allocation`, and
+  `initial_expiry_cash` plus the immutable per-expiry policy snapshot, not min/max strike.
   *Rationale:* the only reason creation needed a fresh spot was to center the deleted grid; a market simply
   cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
   re-adding a creation-time spot read purely to sanity-check the tick size against the

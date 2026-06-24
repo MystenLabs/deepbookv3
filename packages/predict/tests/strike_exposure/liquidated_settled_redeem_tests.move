@@ -18,7 +18,13 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
+use propbook::{
+    block_scholes_forward_feed::BlockScholesForwardFeed,
+    block_scholes_spot_feed::BlockScholesSpotFeed,
+    block_scholes_svi_feed::BlockScholesSVIFeed,
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use std::unit_test::assert_eq;
 use sui::{object::{Self, UID}, test_scenario::return_shared};
 
@@ -38,7 +44,17 @@ const SETTLED_WINNING_SPOT: u64 = 101_000_000_000;
 
 #[test]
 fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
-    let (fx, pyth, bs, oracle_registry, config, mut harness, order) = liquidated_order_fixture();
+    let (
+        fx,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        config,
+        mut harness,
+        order,
+    ) = liquidated_order_fixture();
 
     assert!(harness.exposure.is_liquidated_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
@@ -49,7 +65,7 @@ fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
     assert!(!harness.exposure.is_liquidated_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
 
-    cleanup(fx, pyth, bs, oracle_registry, config, harness);
+    cleanup(fx, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, harness);
 }
 
 #[test, expected_failure(abort_code = liquidation_book::EActiveOrderNotFound)]
@@ -57,7 +73,9 @@ fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
     let (
         _fx,
         _pyth,
-        _bs,
+        _bs_spot,
+        _bs_forward,
+        _bs_svi,
         _oracle_registry,
         _config,
         mut harness,
@@ -73,7 +91,9 @@ fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
 fun liquidated_order_fixture(): (
     OracleFixture,
     PythFeed,
-    BlockScholesFeed,
+    BlockScholesSpotFeed,
+    BlockScholesForwardFeed,
+    BlockScholesSVIFeed,
     OracleRegistry,
     ProtocolConfig,
     ExposureHarness,
@@ -88,10 +108,23 @@ fun liquidated_order_fixture(): (
     let harness_id = share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
-    fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
+    fx.prepare_live_oracle(
+        &mut bs_spot,
+        &mut bs_forward,
+        &mut bs_svi,
+        &mut pyth,
+        test_constants::default_live_price(),
+    );
 
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs_spot, &bs_forward, &bs_svi);
     let (order, _, _) = harness
         .exposure
         .allocate_mint_order(
@@ -100,14 +133,20 @@ fun liquidated_order_fixture(): (
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             LEVERAGE_TWO_X,
-            fx.clock(),
         );
 
     fx.set_pyth(&mut pyth, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
-    let liquidation_pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
-    assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order, fx.clock()));
+    let liquidation_pricer = fx.load_pricer(
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+    );
+    assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order));
 
-    (fx, pyth, bs, oracle_registry, config, harness, order)
+    (fx, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, harness, order)
 }
 
 fun share_exposure_harness(fx: &mut OracleFixture): ID {
@@ -129,12 +168,14 @@ fun share_exposure_harness(fx: &mut OracleFixture): ID {
 fun cleanup(
     fx: OracleFixture,
     pyth: PythFeed,
-    bs: BlockScholesFeed,
+    bs_spot: BlockScholesSpotFeed,
+    bs_forward: BlockScholesForwardFeed,
+    bs_svi: BlockScholesSVIFeed,
     oracle_registry: OracleRegistry,
     config: ProtocolConfig,
     harness: ExposureHarness,
 ) {
     return_shared(harness);
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
     fx.finish();
 }

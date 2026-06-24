@@ -59,11 +59,6 @@ public fun expiry_market_id(
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
 }
 
-/// Return `(tick_size, max_expiry_allocation, window_size)` for a cadence.
-public fun cadence_config(registry: &Registry, cadence_id: u8): (u64, u64, u64) {
-    registry.market_manager.cadence_config(cadence_id)
-}
-
 // === PauseCap Lifecycle (admin) ===
 
 /// Mint a new `PauseCap`. Admin-only and bypasses the version gate so the
@@ -162,7 +157,7 @@ public fun register_underlying(
     registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
-/// Set all deployment terms for one cadence. Passing zero for all three values
+/// Set all deployment terms for one cadence. Passing zero for all four values
 /// disables the cadence; otherwise all values must be nonzero and valid.
 public fun set_cadence_config(
     registry: &mut Registry,
@@ -171,19 +166,19 @@ public fun set_cadence_config(
     cadence_id: u8,
     tick_size: u64,
     max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
     window_size: u64,
 ) {
     config.assert_version();
     registry
         .market_manager
-        .set_cadence_config(cadence_id, tick_size, max_expiry_allocation, window_size);
-    config_events::emit_cadence_config_updated(
-        registry.id(),
-        cadence_id,
-        tick_size,
-        max_expiry_allocation,
-        window_size,
-    );
+        .set_cadence_config(
+            cadence_id,
+            tick_size,
+            max_expiry_allocation,
+            initial_expiry_cash,
+            window_size,
+        );
 }
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
@@ -191,14 +186,15 @@ public fun set_cadence_config(
 /// Requires an allowlisted `MarketLifecycleCap`. The market manager enforces one
 /// market per `(propbook_underlying_id, expiry)`, that the underlying is
 /// admin-approved for Predict, that the cadence is enabled and inside its
-/// deployment window after skipping enabled higher-rank cadence slots, and — via
-/// Propbook's admin-gated canonical binding — that both
-/// required oracle kinds are currently bound for the underlying. The market
-/// snapshots the cadence tick size, while pool accounting snapshots the cadence
-/// allocation cap. Priced flows resolve current canonical oracle object IDs from
-/// Propbook so a Propbook rebind affects existing markets. The market is created
-/// with zero cash and registered with the pool vault as an accounting row only; it
-/// is not mintable until `plp::rebalance_expiry_cash` funds it.
+/// deployment window after skipping enabled higher-rank cadence slots and already
+/// created markets, and — via Propbook's admin-gated canonical binding — that
+/// Pyth spot, BS spot, and the selected expiry's BS forward/SVI feeds are bound
+/// for the underlying. The market snapshots the cadence tick size, while pool
+/// accounting snapshots the cadence allocation cap and initial expiry cash
+/// target. Priced flows resolve the canonical oracle object IDs from Propbook's
+/// insert-only bindings. The market is created with zero cash and registered
+/// with the pool vault as an accounting row only; it is not mintable until
+/// `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -214,9 +210,13 @@ public fun create_expiry_market(
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
-    let (expiry, tick_size, max_expiry_allocation) = registry
+    let deployable = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
+    let expiry = deployable.expiry();
+    let tick_size = deployable.tick_size();
+    let max_expiry_allocation = deployable.max_expiry_allocation();
+    let initial_expiry_cash = deployable.initial_expiry_cash();
     let pool_vault_id = pool_vault.id();
     let expiry_market_id = expiry_market::create_and_share(
         config,
@@ -225,7 +225,7 @@ public fun create_expiry_market(
         tick_size,
         ctx,
     );
-    pool_vault.register_expiry(expiry_market_id, max_expiry_allocation);
+    pool_vault.register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
     registry
         .market_manager
         .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
@@ -236,6 +236,9 @@ public fun create_expiry_market(
         expiry,
         tick_size,
         max_expiry_allocation,
+        initial_expiry_cash,
+        config.strike_exposure_template_config(),
+        config.expiry_cash_template_config(),
     );
 
     expiry_market_id

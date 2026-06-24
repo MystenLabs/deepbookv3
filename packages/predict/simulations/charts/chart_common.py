@@ -26,6 +26,7 @@ FLOW_ACTION_LABELS = {
     "supply": "supply",
     "withdraw": "withdraw",
     "flush": "flush",
+    "rebalance_expiry_cash": "cash rebalance",
 }
 FLOW_ACTION_COLORS = {
     "mint": "#2563eb",
@@ -33,6 +34,7 @@ FLOW_ACTION_COLORS = {
     "supply": "#0891b2",
     "withdraw": "#f97316",
     "flush": "#dc2626",
+    "rebalance_expiry_cash": "#16a34a",
 }
 
 LIQUIDATION_ACTION_ORDER = ("mint", "redeem", "supply", "withdraw")

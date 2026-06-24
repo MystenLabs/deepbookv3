@@ -67,9 +67,9 @@ export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
     step: number;
-    // `flush` is the runner-synthesized privileged LP drain — not a CSV row action,
-    // so it widens the trace action set without touching `ScenarioActionName`.
-    action: ScenarioActionName | "flush";
+    // Synthetic runner maintenance txs are not CSV row actions, so they widen
+    // the trace action set without touching `ScenarioActionName`.
+    action: ScenarioActionName | "flush" | "rebalance_expiry_cash";
     digest: string;
     wallMs: number;
     gas: GasLike;
@@ -117,17 +117,21 @@ export interface SimState {
     // Expiry timestamp chosen on-chain by the registry cadence manager and emitted
     // in MarketCreated. Stored as a decimal string so state.json stays plain JSON.
     expiryMs: string;
-    // propbook feeds replace the in-package oracle + Pyth source. There is no
-    // writer cap anymore (BS surface updates are permissionless via the verified
-    // `Update`).
+    // Propbook feeds replace the in-package oracle + Pyth source. There is no
+    // writer cap anymore; BS updates are permissionless via verified split `Update`
+    // values.
     pythFeedId: string;
-    bsFeedId: string;
+    bsSpotFeedId: string;
+    bsForwardFeedId: string;
+    bsSviFeedId: string;
     // The sender's canonical derived account wrapper (replaces the predict manager).
     // Owner auth is minted per-call from the tx sender, so there are no capital caps.
     accountWrapperId: string;
     // Sole flush-start authority: the market-deployer MarketLifecycleCap, used to
     // mint a per-flush lifecycle proof for `plp::start_pool_valuation`.
     lifecycleCapId: string;
+    // Per-cadence initial expiry cash target snapshotted into pool accounting.
+    initialExpiryCash: string;
 }
 
 type RawScenarioRow = Record<string, string>;
@@ -350,8 +354,8 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
 
 const instanceDir = resolveInstanceDir();
 
-export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v2";
-export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v2";
+export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v3";
+export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v3";
 export const SCENARIO_PATH = fileURLToPath(
     new URL("../data/generated/normal_scenario.csv", import.meta.url),
 );

@@ -13,8 +13,7 @@
 #[test_only]
 module deepbook_predict::accumulator_support;
 
-use sui::accumulator::AccumulatorRoot;
-use sui::test_scenario::Scenario;
+use sui::{accumulator::AccumulatorRoot, test_scenario::Scenario};
 
 /// No-op on the testnet framework (the nightly `create_for_testing` is unavailable).
 public fun create_shared_root(_scenario: &mut Scenario) {}

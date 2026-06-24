@@ -54,19 +54,19 @@ const EInvalidLotSize: u64 = 4;
 const EInvalidMinSize: u64 = 5;
 const EInvalidQuantityIn: u64 = 6;
 const EIneligibleReferencePool: u64 = 7;
-const EInvalidOrderBalanceManager: u64 = 9;
-const EIneligibleTargetPool: u64 = 10;
-const EPackageVersionDisabled: u64 = 11;
-const EMinimumQuantityOutNotMet: u64 = 12;
-const EInvalidStake: u64 = 13;
-const EPoolNotRegistered: u64 = 14;
-const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
-const EInvalidReferralMultiplier: u64 = 16;
-const EInvalidEWMAAlpha: u64 = 17;
-const EInvalidZScoreThreshold: u64 = 18;
-const EInvalidAdditionalTakerFee: u64 = 19;
-const EWrongPoolReferral: u64 = 20;
-const EInvalidDeepPrice: u64 = 21;
+const EInvalidOrderBalanceManager: u64 = 8;
+const EIneligibleTargetPool: u64 = 9;
+const EPackageVersionDisabled: u64 = 10;
+const EMinimumQuantityOutNotMet: u64 = 11;
+const EInvalidStake: u64 = 12;
+const EPoolNotRegistered: u64 = 13;
+const EPoolCannotBeBothWhitelistedAndStable: u64 = 14;
+const EInvalidReferralMultiplier: u64 = 15;
+const EInvalidEWMAAlpha: u64 = 16;
+const EInvalidZScoreThreshold: u64 = 17;
+const EInvalidAdditionalTakerFee: u64 = 18;
+const EWrongPoolReferral: u64 = 19;
+const EInvalidDeepPrice: u64 = 20;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {

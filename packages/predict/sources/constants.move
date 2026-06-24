@@ -43,10 +43,6 @@ public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 
-/// Minimum per-expiry allocation cap an enabled cadence may configure:
-/// 10,000 whole DUSDC in 6-decimal quote units.
-public(package) macro fun min_expiry_allocation(): u64 { 10_000_000_000 }
-
 // === Async LP Requests ===
 // Minimums and the per-flush cap are upgrade-required for now. A per-vault
 // admin-tunable minimum is a deferred follow-up (see config rules in move.md).
@@ -94,17 +90,6 @@ public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
 
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { one_year_ms!() }
-
-// === Leverage ===
-
-/// Window before expiry over which the leverage floor index rises.
-public(package) macro fun leverage_floor_window_ms(): u64 { one_year_ms!() }
-
-/// Entry probability below which only 1x mints are allowed.
-public(package) macro fun leverage_one_x_only_price_threshold(): u64 { 100_000_000 }
-
-/// Entry probability below which leverage is capped at 2x.
-public(package) macro fun leverage_two_x_max_price_threshold(): u64 { 200_000_000 }
 
 // === Staking ===
 
@@ -160,7 +145,7 @@ public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 
 // === Strike Tick Domain ===
 
-/// Bit width of each strike tick field in the packed range key and order ID.
+/// Bit width of each strike tick field packed into an order ID.
 public(package) macro fun tick_bits(): u8 { 24 }
 
 /// Positive-infinity sentinel tick, maximum finite-tick bound, and u24 mask for

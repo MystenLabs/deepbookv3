@@ -14,12 +14,12 @@ use std::unit_test::assert_eq;
 /// Per-trade fee floors at `min_fee` (base_fee floored to 1 in the fixture).
 const MINT_MIN_FEE: u64 = 5_000_000;
 /// Independent derivation of the post-mint free balance:
-///   The order is `[min_finite_strike, +inf)` and the live forward == the strike,
-///   so its entry probability is the at-the-money digital Φ(0) = 0.5 (the SVI wing
-///   rounds to zero, leaving d2 = 0). A 1x order fronts its full premium, so
-///   net_premium = floor(0.5 * mint_quantity) = 500_000_000, and the fee floors at
-///   min_fee = 5_000_000. balance = mint_deposit - net_premium - fee
-///           = 1_000_000_000 - 500_000_000 - 5_000_000 = 495_000_000.
+///   The order is `(default_strike_tick, +inf]` and the live forward equals that
+///   tick's raw strike, so its entry probability is the at-the-money digital Φ(0)
+///   = 0.5 (the SVI wing rounds to zero, leaving d2 = 0). A 1x order fronts its
+///   full premium, so net_premium = floor(0.5 * mint_quantity) = 500_000_000, and
+///   the fee floors at min_fee = 5_000_000. balance = mint_deposit - net_premium
+///   - fee = 1_000_000_000 - 500_000_000 - 5_000_000 = 495_000_000.
 const POST_MINT_BALANCE: u64 = 495_000_000;
 
 #[test]

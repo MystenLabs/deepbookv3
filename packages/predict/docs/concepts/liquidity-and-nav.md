@@ -109,7 +109,7 @@ where:
 - **`free_cash = cash_balance − rebate_reserve`** — the expiry's DUSDC net of the rebate it still owes.
 - **`exact_live_liability = walk_linear − correction_value`**, floored at zero, is the exact mark-to-model liability of every open order:
   - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer (no piecewise-linear curve, no sampling band; the interpolation tolerance is fixed at 0).
-  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares × floor_index(now))` — the floor offset, scanned exactly over the active leveraged book.
+  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book.
 
 Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The leftover after the floor is the order's recoverable equity, and `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 
@@ -136,7 +136,7 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle DUSDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
-- **Settled sweep:** a settled expiry is deactivated, its free cash returned, and its terminal profit materialized (see [Profit materialization](#profit-materialization-at-settlement)).
+- **Settled sweep:** a settled expiry is deactivated, cash above settled payout liability plus unresolved rebate reserve is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)). Later rebate claims pay owed rebates and return residual reserve through the same pool accounting path.
 
 Funding room is bounded by the **per-expiry allocation cap** snapshotted from cadence config when the market is created. The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
 
@@ -155,20 +155,20 @@ cash_balance ≥ payout_liability + rebate_reserve
 For a live market, `payout_liability` is a **settlement floor plus a liquidity buffer**:
 
 ```
-payout_liability = max_live_backing + backing_buffer_lambda × (Σ live_backing − max_live_backing)
+payout_liability = max_net_payout + backing_buffer_lambda × (Σ net_payout − max_net_payout)
 ```
 
-The floor is `max_live_backing` — the maximum summed payout at any *single* settlement price (the payout tree's O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum live payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A `backing_buffer_lambda` of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. After settlement, `payout_liability` becomes the exact terminal payout at the settlement price, which is always at or below the floor.
+The floor is `max_net_payout` — the maximum summed net payout at any *single* settlement price (the payout tree's O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum net payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A `backing_buffer_lambda` of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. After settlement, `payout_liability` becomes the exact settled payout at the settlement price, which is always at or below the floor.
 
 - **Receiving cash** joins the funds without re-checking backing (receiving cash can only improve it).
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
-The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and its owed rebates. No flow lets cash drop below this line.
+The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and unresolved rebate claims. A claim first shrinks the unresolved basis for the resolved manager, then pays the rebate and returns any residual reserve; no flow lets cash drop below the post-claim backing line.
 
 ## Profit materialization at settlement
 
-Profit is recognized only when it is **cash-backed and irreversible** — when an expiry settles and cash actually flows back to the pool — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
+Profit is recognized only when it is **cash-backed and irreversible** — when terminal cash actually flows back to the pool from a settled expiry, either during the settled sweep or as residual reserve from a rebate claim — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
 
 The ledger tracks profit per expiry against a **watermark**:
 

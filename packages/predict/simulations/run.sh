@@ -428,7 +428,7 @@ done
   mv "$FIXED_MATH_DIR/Move.toml.bak" "$FIXED_MATH_DIR/Move.toml"
 
   # Publish block_scholes_oracle (stub BS signed-data verifier; leaf, no deps).
-  # Consumed by both propbook (block_scholes_feed::update) and predict test fixtures.
+  # Consumed by propbook's split BS feed updates and predict test fixtures.
   echo "==> Phase 2a2: Publishing block_scholes_oracle..."
   inject_env "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$CHAIN_ID"
   cp "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock.bak"

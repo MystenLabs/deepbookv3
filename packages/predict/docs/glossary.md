@@ -3,9 +3,8 @@
 Technical definitions for the terms the Predict docs and code use, with the
 established options / structured-product term each one maps to and the code
 identifier it corresponds to. Mint-economics identifiers (`entry_value`,
-`net_premium`, `financed_amount`) match these terms directly; the floor family
-keeps its payoff-oriented code names (`floor_shares`, `floor_index`), bridged
-here.
+`net_premium`, `financed_amount`) match these terms directly; the floor amount
+keeps its payoff-oriented code name (`floor_shares`), bridged here.
 
 ## The product
 
@@ -28,7 +27,7 @@ here.
 - **Writer** — the seller of an option, who owes its payout. The pool
   (`PoolVault` plus each expiry's `ExpiryCash`) is the writer of record for
   every Predict contract and fully collateralizes its written payouts (code:
-  `payout_liability`, `live_backing_payout`).
+  `payout_liability`, `net_payout`).
 - **Expiry market** — all contracts sharing one `(feed, expiry)` pair; code
   `ExpiryMarket`. Its tick grid is the expiry's option chain.
 
@@ -79,11 +78,11 @@ grid, no boundary indices).
   (code `gross_value`) — the collateral value securing the financing.
 - **Forward** — the model's forecast of the underlying at expiry, the input the
   range probability is differenced off. Predict builds it as `spot × basis` when
-  the Pyth spot is fresh and falls back to the Block Scholes surface forward
-  otherwise. Code: built in `pricing` from `normalized_surface(expiry)`.
-- **Basis** — the surface's `forward / spot` ratio for an expiry, supplied by
-  the Block Scholes feed; it carries the spot to the forward when live spot is
-  applied. Code: derived in `pricing` from `surface_forward / surface_spot`.
+  the Pyth spot is fresh and falls back to the Block Scholes forward otherwise.
+  Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
+- **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
+  the spot to the forward when live spot is applied. Code: derived in `pricing`
+  from `BlockScholesForwardFeed / BlockScholesSpotFeed`.
 
 ## Oracles (propbook feeds)
 
@@ -95,17 +94,18 @@ Predict reads it but does not own it.
   updated permissionlessly from a verified Lazer payload (`update`). Predict
   reads `normalized_spot()` and the read's `source_timestamp_ms`. Code module
   `propbook::pyth_feed`.
-- **`BlockScholesFeed`** — one object per source id holding per-expiry raw
-  surfaces plus exact timestamp history; written by a trusted off-chain operator
-  (`update`). Predict reads `normalized_surface(expiry)`, the surface getters,
+- **`BlockScholesSpotFeed`** — one source-level BS spot object plus exact
+  timestamp history. Predict reads `normalized_spot()` and the read's
+  `source_timestamp_ms`. Code module `propbook::block_scholes_spot_feed`.
+- **`BlockScholesForwardFeed`** — one BS forward object per `(source id,
+  expiry_ms)` plus exact timestamp history. Predict reads `normalized_forward()`
   and the read's `source_timestamp_ms`. Code module
-  `propbook::block_scholes_feed`.
-- **Surface** — the per-expiry pricing snapshot a `BlockScholesFeed` stores for
-  one expiry: `{spot, forward, SVI parameters, timestamps}`. Freshness is a
-  single window over the whole surface (no separate price/SVI windows). Code
-  `Surface`.
+  `propbook::block_scholes_forward_feed`.
+- **`BlockScholesSVIFeed`** — one BS SVI object per `(source id, expiry_ms)` plus
+  exact timestamp history. Predict reads `normalized_svi()` and the read's
+  `source_timestamp_ms`. Code module `propbook::block_scholes_svi_feed`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
-  volatility smile the surface carries; the curve range probabilities are
+  volatility smile; the curve range probabilities are
   differenced off. Predict enforces its pricing-safe SVI envelope at read time
   (`|rho| <= 1`, bounded inputs, bounded sigma). Code `SVIParams`.
 - **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
@@ -122,35 +122,27 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 - **Financed amount** — the slice of the full premium the pool funds at mint,
   `full premium − net premium`; code `financed_amount`. The structured-product
   analogue is a turbo warrant's financing level at issuance.
-- **Floor (financing balance)** — the financed amount accreted to time `t`; the
-  value the contract must cover before the holder owns anything above it. It
-  enters the payoff itself (`payout = quantity − terminal floor` for a winner),
-  so it is part of the contract, not a separable debt position. Code
-  `floor_amount`.
-- **Financing index (floor index)** — the deterministic accrual schedule the
-  financing balance grows along (quadratic ramp to a terminal value) — the
-  same role a borrow index plays in a money market. Code `floor_index`,
-  `terminal_floor_index`.
-- **Financing shares (floor shares)** — the financing balance normalized by the
-  index at open, so every contract in an expiry accrues along one curve:
-  `floor_shares = financed_amount / floor_index(opened_at)` and
-  `balance(t) = floor_shares × floor_index(t)`. The same convention as a
-  scaled (share-denominated) debt balance in lending protocols. Code
-  `floor_shares`.
+- **Floor (financing balance)** — the static financed amount the contract must
+  cover before the holder owns anything above it. It enters the payoff itself
+  (`payout = quantity − floor_shares` for a winner), so it is part of the
+  contract, not a separable debt position. Code `floor_shares`.
 - **Limited recourse** — the financing is secured by its own contract only: the
   floor can consume that one order's value or payout, capped at it, and never
   creates a claim on the holder's other assets.
-- **Leverage** — premium leverage: full premium over net premium, in discrete
-  tiers 1x–3x. This is financing leverage on the premium, on top of the high
-  gearing a digital already has relative to the underlying. (The symbol λ is
-  reserved in these docs for `backing_buffer_lambda`.)
+- **Leverage** — premium leverage: full premium over net premium, represented as
+  a 1e9-scaled multiplier and admitted by a probability-sensitive cap. This is
+  financing leverage on the premium, on top of the high gearing a digital already
+  has relative to the underlying. (The symbol λ is reserved in these docs for
+  `backing_buffer_lambda`.)
 
 ## Knock-out (liquidation)
 
 - **Knock-out** — the extinguishing of a leveraged contract once its gross
   value reaches the knock-out level. Code and event vocabulary: liquidation,
-  `OrderLiquidated`. Predict's knock-out pays **zero rebate**: the holder
-  receives nothing, and a tombstone remains until cleared.
+  `OrderLiquidated`. Predict's knock-out pays **zero order payout**: the holder
+  receives nothing from the knocked-out order, and a tombstone remains until
+  cleared. The separate settled trading-loss rebate still follows the normal
+  expiry-level PnL and fee-basis rules.
 - **Knock-out level** — `floor_amount / liquidation_ltv`, the gross value at
   which the contract is extinguished. It sits above the financing balance by
   the LTV buffer; that gap is the pool's recovery margin against gap risk.
@@ -223,5 +215,5 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem` (live) | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
-| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − terminal floor`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
-| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero rebate. |
+| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
+| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |
