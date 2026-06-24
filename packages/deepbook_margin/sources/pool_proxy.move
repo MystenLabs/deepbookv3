@@ -396,11 +396,9 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     } else {
         margin_manager.calculate_debts(quote_margin_pool, clock)
     };
-    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
+    let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
 
-    let (effective_price, quote_quantity) = calculate_effective_price(
+    let (effective_price, _) = calculate_effective_price(
         pool,
         quantity,
         is_bid,
@@ -408,14 +406,14 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // Reduce-only (legacy net-debt cap; ask still uses the old quote net cap).
-    // The bid cap rounds the net short up to the next lot and floors it at one
-    // `min_size` (`reduce_only_bid_cap`) so a non-lot-aligned/sub-lot debt can be
-    // covered. This entry is superseded for closing (see the doc above); the cap
-    // only keeps it consistent with the live reduce-only entries.
+    // Reduce-only, same cap as the other entries: the ask sells up to the gross
+    // base held; the bid covers the net short rounded up to the next lot and
+    // floored at one `min_size` (`reduce_only_bid_cap`). Superseded for closing
+    // (see the doc above) — a market taker fill can't satisfy the monotonic check
+    // without a repay, so use `place_reduce_only_market_order_and_repay_loan`.
     assert!(
         (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
-            (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
+            (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
 
@@ -1009,7 +1007,12 @@ fun reduce_only_bid_cap<BaseAsset, QuoteAsset>(
     net_debt: u64,
 ): u64 {
     let (_, lot_size, min_size) = pool.pool_book_params();
-    (net_debt.div_ceil(lot_size) * lot_size).max(min_size)
+    // Ceil `net_debt` up to a whole multiple of `lot_size`, then floor at one
+    // `min_size`. Written as modulo arithmetic (rather than `div_ceil`) to build
+    // on every Sui std version.
+    let remainder = net_debt % lot_size;
+    let rounded_up = if (remainder == 0) net_debt else net_debt - remainder + lot_size;
+    rounded_up.max(min_size)
 }
 
 /// Calculates the effective price for a market order by querying the pool.

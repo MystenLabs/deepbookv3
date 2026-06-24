@@ -2361,8 +2361,9 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_ask() {
     );
     destroy(coin);
 
-    // User has USDT debt of 100, tries to sell enough to get more than 100 USDT (quote_quantity > debt)
-    // Selling 150 USDC at ~1:1 should yield ~150 USDT, exceeding the 100 USDT debt
+    // User holds 10000 USDC base and has USDT (quote) debt. The reduce-only ask
+    // cap is the gross base held, so selling more base than held (11000 > 10000)
+    // is not a reduce-only order.
     test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
@@ -2372,7 +2373,7 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_ask() {
         &mut pool,
         5,
         constants::self_matching_allowed(),
-        150 * test_constants::usdc_multiplier(),
+        11000 * test_constants::usdc_multiplier(),
         false,
         // is_bid = false (selling USDC to get USDT)
         false,
