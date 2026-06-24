@@ -63,7 +63,7 @@ const RULE_FAMILIES = [
     rule: "Avoid 'created' events unless a concrete indexer/off-chain discovery need exists. Events are emitted by the module owning the lifecycle/action, AFTER the state transition completes, with semantic field names (`expiry_market_id`, `pool_vault_id`, `pyth_feed_id` — not generic `owner_id`/`object_id`/`config_id`). Embedded helper modules do not emit parent-scoped events.",
     focus: 'Every event struct + `event::emit` across predict events/, propbook events, account_events. Flag created-events without an indexer need, generic id fields, helper modules emitting parent-scoped events, and events emitted before their postcondition.' },
   { key: 'dead-field-liveness', scope: ALL,
-    rule: 'Every declared struct field should have BOTH a writer AND a reader on a LIVE (non-test, non-.disabled) path. A WRITE-ONLY field (set/incremented but never read by live logic for a decision/payout/event) or a READ-ONLY mirror (read but never maintained) is an ownership/liveness defect. Canonical case: the rebate-reserve became write-only when its consumer (claim_trading_loss_rebate) was deleted in the rework, silently walling off ~50% of trading fees.',
+    rule: 'Every declared struct field should have BOTH a writer AND a reader on a LIVE (non-test, non-.disabled) path. A WRITE-ONLY field (set/incremented but never read by live logic for a decision/payout/event) or a READ-ONLY mirror (read but never maintained) is an ownership/liveness defect. Canonical bug class to hunt: a field whose sole consumer is removed by a rework, leaving it write-only — e.g. a rebate reserve still accrued but no longer read/paid, silently walling off fees.',
     focus: 'Enumerate EVERY struct field across all four packages. For each, grep its writers and its readers on LIVE paths (exclude tests + .disabled). Flag (a) write-only fields, (b) read-only mirrors, (c) a field whose sole consumer was removed by the oracle/custody/async-LP rework. This is the exhaustive MECHANICAL complement to the ownership-walk R7 contextual catch — list the fields you cleared too, so coverage is provable.' },
 ]
 
@@ -128,6 +128,7 @@ function sweepPrompt(rf, round, known) {
 phase('Sweep')
 const seen = new Set()
 const candidates = []
+const coverageByFamily = {}
 let dry = 0, round = 0
 while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   round++
@@ -137,6 +138,7 @@ while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
     { schema: SWEEP_SCHEMA, effort: 'high', phase: 'Sweep', label: `sweep:${rf.key}:r${round}` })))
   let freshCount = 0
   roundRes.filter(Boolean).forEach(r => {
+    if (r.coverage) coverageByFamily[r.rule_family] = r.coverage
     ;(r.findings || []).forEach(f => {
       const ff = { ...f, rule_family: r.rule_family }
       const k = fkey(ff)
@@ -163,6 +165,7 @@ function shape(x) {
 }
 return {
   summary: { rule_families: FAMILIES.length, rounds: round, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
+  coverage: Object.keys(coverageByFamily).map(rf => ({ lane: rf, coverage: coverageByFamily[rf] })),
   confirmed: confirmed.map(shape),
   settled: settledOut.map(shape),
   refuted: refutedOut.map(x => ({ rule_family: x.rule_family, location: x.location, claim: x.claim, why: x.verdict && x.verdict.reasoning })),

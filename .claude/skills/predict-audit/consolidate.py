@@ -63,14 +63,14 @@ def collect(res, harness):
     # open / actionable buckets differ by harness key name
     for key in ('kept', 'confirmed'):
         for f in res.get(key, []) or []:
-            out.append(norm(f, harness, 'open'))
+            r = norm(f, harness, 'open'); r['verdict'] = f.get('status', 'confirmed') or 'confirmed'; out.append(r)
     for f in res.get('settled', []) or []:
         out.append(norm(f, harness, 'settled'))
     for f in res.get('refuted', []) or []:
         out.append(norm(f, harness, 'refuted'))
     promoted = res.get('promoted', []) or []
     for f in promoted:
-        out.append(norm(f, harness, 'open'))  # promoted = elevated into open findings
+        r = norm(f, harness, 'open'); r['verdict'] = 'promoted-unverified'; out.append(r)  # not panel-verified
     return out, len(promoted)
 
 def main():
@@ -125,7 +125,8 @@ def main():
         acct += f"\n⛔ {len(parse_failures)} INPUT FILE(S) FAILED TO PARSE (findings NOT in this report): " \
                 + "; ".join(f"{p} ({e})" for p, e in parse_failures)
 
-    dedup_open.sort(key=lambda f: -SEV.get(f['severity'].lower(), 1))
+    # severity desc, then panel-confirmed before uncertain/promoted-unverified
+    dedup_open.sort(key=lambda f: (-SEV.get(f['severity'].lower(), 1), 0 if f.get('verdict', 'confirmed') in ('confirmed', '') else 1))
     L = []
     L.append(f"# Predict audit — consolidated report ({datetime.date.today()})\n")
     L.append("## Accounting (no-slip guarantee)\n" + acct + "\n")
@@ -135,7 +136,9 @@ def main():
     if not dedup_open: L.append("_(none)_\n")
     for f in dedup_open:
         also = f" (also: {', '.join(f['also'])})" if f['also'] else ""
-        L.append(f"### [{f['severity'] or '?'}] {f['title']}\n"
+        vd = f.get('verdict', '')
+        vtag = ' · ⚠ UNCERTAIN (verifier split)' if vd == 'uncertain' else (' · ⚠ UNVERIFIED (promoted)' if vd == 'promoted-unverified' else '')
+        L.append(f"### [{f['severity'] or '?'}] {f['title']}{vtag}\n"
                  f"- Source: {f['harness']}/{f['source']}{also}\n- Location: {f['location']}\n"
                  f"- Claim: {f['claim']}\n- Recommendation: {f['recommendation']}\n"
                  f"- Evidence: {f['evidence']}\n")

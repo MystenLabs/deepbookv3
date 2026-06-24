@@ -171,6 +171,7 @@ function verifyPromptV(v) {
 
 const seen = new Set()
 const candidates = []
+const coverageByModule = {}
 let dry = 0, round = 0
 while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   round++
@@ -180,6 +181,7 @@ while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
     { schema: CHECK_SCHEMA, effort: 'max', phase: 'Check', label: `check:${cu.label}:r${round}` })))
   let freshCount = 0
   roundRes.filter(Boolean).forEach(r => {
+    if (r.coverage) coverageByModule[r.module] = r.coverage
     ;(r.violations || []).forEach(v => {
       const vv = { ...v, module: r.module }
       const k = vkey(vv)
@@ -210,6 +212,7 @@ log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | rounds
 return {
   summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, unmapped_units: unmappedUnits, rounds: round, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
   responsibility_map: allModules.map(m => ({ module: m.module, role: m.role, owns: m.owns, composes: m.composes })),
+  coverage: Object.keys(coverageByModule).map(m => ({ lane: m, coverage: coverageByModule[m] })),
   confirmed: confirmed.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, expected_owner: x.expected_owner, actual_owner: x.actual_owner, severity: (x.verdict && x.verdict.adjusted_severity) || x.severity, classification: x.verdict && x.verdict.classification, settled_ref: x.settled_ref, recommendation: x.recommendation, data_flow: x.data_flow, proof: x.verdict && x.verdict.evidence })),
   settled: settledOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, settled_ref: (x.verdict && x.verdict.evidence) || x.settled_ref })),
   refuted: refutedOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, why: x.verdict && x.verdict.reasoning })),

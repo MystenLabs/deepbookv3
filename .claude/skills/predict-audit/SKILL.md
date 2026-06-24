@@ -65,9 +65,9 @@ sui move test  --path packages/<pkg> --gas-limit 100000000000   # each of the fo
 Workflow({ scriptPath: '.claude/skills/predict-audit/orchestrator.workflow.js',
            args: { groundTruth: '<build/test summary>', scope: 'full protocol at HEAD', lenses: ['invariants','adversarial'], maxFindings: 8 } })
 Workflow({ scriptPath: '.claude/skills/predict-audit/ownership-walk.workflow.js',
-           args: { units: ['predict-plp'], maxViolations: 6 } })
+           args: { groundTruth: '<build/test summary>', units: ['predict-plp'], maxViolations: 6 } })
 Workflow({ scriptPath: '.claude/skills/predict-audit/rule-sweep.workflow.js',
-           args: { rules: ['events-hygiene'], maxFindings: 8 } })
+           args: { groundTruth: '<build/test summary>', rules: ['events-hygiene'], maxFindings: 8 } })
 ```
 **Step 3 — consolidate in the MAIN LOOP (no-slip guarantee).** Each harness's FULL result is persisted to its task output file — **the notification preview is TRUNCATED; never synthesize from it.** Re-run any failed units first (`Workflow({ scriptPath, resumeFromRunId })`), then run the deterministic consolidator over the full files:
 ```
