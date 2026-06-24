@@ -576,6 +576,118 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     order_info
 }
 
+/// Reduce-only **limit** order that atomically repays the loan with the taker
+/// fills. It is the limit/maker behaviour of `place_reduce_only_limit_order_v2`
+/// plus the repay-then-net-monotonic gate of
+/// `place_reduce_only_market_order_and_repay_loan`: the portion that crosses the
+/// book fills immediately and settles, the rest rests as a maker, then the
+/// settled (taker) proceeds repay the debt before the monotonic check on the net
+/// (post-repay) state.
+///
+/// This is the danger-band tool for a *price-bounded* reduce: a crossing
+/// reduce-only limit pays the spread on its taker fills, which alone would abort
+/// `place_reduce_only_limit_order_v2`'s swap-only monotonic check; repaying first
+/// deleverages so the net ratio holds. The resting remainder only locks balance
+/// (counted in assets), so it doesn't move the ratio. Unfilled-and-resting
+/// behaves exactly like `place_reduce_only_limit_order_v2` (nothing to repay).
+public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    registry.load_inner();
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+
+    registry.assert_price(pool.id(), price, is_bid, clock);
+    let expire_timestamp = registry.clamp_expire_timestamp(pool.id(), expire_timestamp, clock);
+
+    let (base_debt, quote_debt) = if (margin_manager.has_base_debt()) {
+        margin_manager.calculate_debts(base_margin_pool, clock)
+    } else {
+        margin_manager.calculate_debts(quote_margin_pool, clock)
+    };
+    let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
+
+    // Same reduce-only cap as `place_reduce_only_limit_order_v2` (see there): the
+    // ask sells up to gross base held; the bid covers up to the net short rounded
+    // up to a lot and floored at one `min_size`.
+    assert!(
+        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
+            (!is_bid && quote_debt > 0 && quantity <= base_asset),
+        ENotReduceOnlyOrder,
+    );
+
+    let risk_ratio_before = margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    let order_info = pool.place_limit_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    );
+
+    // Repay the debt side with the settled taker fills before the monotonic
+    // check, so a crossing reduce-only limit deleverages instead of aborting. A
+    // fully-resting order has no taker proceeds, so this repays nothing.
+    if (margin_manager.has_base_debt()) {
+        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
+    } else {
+        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
+    };
+
+    // Net-state solvency: if debt remains, the order must not have worsened the
+    // ratio. A full repay clears the debt, so the check is skipped.
+    if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        let risk_ratio_after = margin_manager.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+        assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
+    };
+
+    order_info
+}
+
 /// Atomically places a market order and repays the loan with the proceeds,
 /// gating post-repay solvency on `min_open_risk_ratio`. This is the everyday
 /// close / deleverage tool: unlike `place_market_order_v2`, the repay runs
