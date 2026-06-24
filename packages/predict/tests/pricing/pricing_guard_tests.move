@@ -199,8 +199,14 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
 #[test]
 fun deep_itm_up_price_saturates_to_one() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     // Fresh spot == forward == 100e9.
     fx.prepare_live_oracle(
         &mut bs_spot,
@@ -222,8 +228,14 @@ fun deep_itm_up_price_saturates_to_one() {
 #[test]
 fun deep_otm_up_price_saturates_to_zero() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     // Fresh spot == forward == 1 (a tiny forward, so a finite u64 strike can clear
     // the saturation threshold without being the pos_inf sentinel).
     fx.prepare_live_oracle(&mut bs_spot, &mut bs_forward, &mut bs_svi, &mut pyth, 1);
@@ -317,8 +329,14 @@ fun surface_with_svi_sigma_above_max_aborts() {
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     let spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
     fx.prepare_real_oracle(
         &mut bs_spot,
@@ -355,8 +373,14 @@ fun re_anchored_zero_forward_aborts() {
 #[test, expected_failure(abort_code = pricing::EZeroVariance)]
 fun zero_total_variance_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_real_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -456,8 +480,14 @@ fun load_pricer_with_full_svi_and_spot(
     svi_m_is_negative: bool,
 ) {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_real_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -500,8 +530,14 @@ fun setup_live(): (
     ProtocolConfig,
 ) {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,

@@ -43,8 +43,14 @@ const DIVERGED_PYTH_SOURCE_MS: u64 = 119_500;
 #[test]
 fun complementary_ranges_sum_to_one_at_the_forward() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -76,8 +82,14 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
 #[test]
 fun whole_line_range_is_certain() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -100,8 +112,14 @@ fun whole_line_range_is_certain() {
 #[test]
 fun digital_above_probability_is_non_increasing_in_strike() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -134,8 +152,14 @@ fun digital_above_probability_is_non_increasing_in_strike() {
 #[test]
 fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     // Block Scholes spot = forward = 100e9, so basis = div(100e9, 100e9) = 1.0
     // exactly.
     fx.prepare_live_oracle(

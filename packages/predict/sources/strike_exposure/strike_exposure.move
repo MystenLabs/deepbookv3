@@ -234,9 +234,7 @@ public(package) fun quote_mint_entry_probability(
         exposure.tick_size,
     );
     let entry_probability = pricer.range_price(lower, higher);
-    exposure
-        .config
-        .assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+    exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
     entry_probability
 }
 

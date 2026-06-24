@@ -72,10 +72,7 @@ fun set_pyth_spot_freshness_ms_above_max_aborts() {
 fun set_block_scholes_price_freshness_ms_updates() {
     let mut config = pricing_config::new();
     config.set_block_scholes_price_freshness_ms(VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS);
-    assert_eq!(
-        config.block_scholes_price_freshness_ms(),
-        VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS,
-    );
+    assert_eq!(config.block_scholes_price_freshness_ms(), VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS);
     destroy(config);
 }
 
@@ -109,10 +106,7 @@ fun set_block_scholes_price_freshness_ms_above_max_aborts() {
 fun set_block_scholes_svi_freshness_ms_updates() {
     let mut config = pricing_config::new();
     config.set_block_scholes_svi_freshness_ms(VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
-    assert_eq!(
-        config.block_scholes_svi_freshness_ms(),
-        VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS,
-    );
+    assert_eq!(config.block_scholes_svi_freshness_ms(), VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
     destroy(config);
 }
 

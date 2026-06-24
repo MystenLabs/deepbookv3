@@ -508,8 +508,10 @@ public(package) fun claim_trading_loss_rebate(
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
-    let (trading_fees_paid, gross_profit) =
-        predict_account::resolve_expiry_summary(account, market.id());
+    let (trading_fees_paid, gross_profit) = predict_account::resolve_expiry_summary(
+        account,
+        market.id(),
+    );
     if (trading_fees_paid == 0) {
         return (balance::zero(), 0)
     };
@@ -519,9 +521,7 @@ public(package) fun claim_trading_loss_rebate(
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
     let active_stake = predict_account::active_stake_mut(account, ctx);
-    let rebate_amount = config
-        .stake_config()
-        .rebate_amount(eligible_rebate, active_stake);
+    let rebate_amount = config.stake_config().rebate_amount(eligible_rebate, active_stake);
 
     if (rebate_amount > 0) {
         let payout = market.cash.pay_authorized(rebate_amount);
@@ -632,8 +632,9 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
 }
 
 fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
-    math::mul(fee_amount, constants::fee_incentive_subsidy_rate!())
-        .min(market.fee_incentive_balance.value())
+    math::mul(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
+        .fee_incentive_balance
+        .value())
 }
 
 fun redeem_liquidated_order(

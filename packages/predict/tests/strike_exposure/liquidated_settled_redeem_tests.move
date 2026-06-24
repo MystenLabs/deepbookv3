@@ -44,8 +44,17 @@ const SETTLED_WINNING_SPOT: u64 = 101_000_000_000;
 
 #[test]
 fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
-    let (fx, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, mut harness, order) =
-        liquidated_order_fixture();
+    let (
+        fx,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        config,
+        mut harness,
+        order,
+    ) = liquidated_order_fixture();
 
     assert!(harness.exposure.is_liquidated_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
@@ -99,8 +108,14 @@ fun liquidated_order_fixture(): (
     let harness_id = share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -121,8 +136,14 @@ fun liquidated_order_fixture(): (
         );
 
     fx.set_pyth(&mut pyth, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
-    let liquidation_pricer =
-        fx.load_pricer(&config, &oracle_registry, &pyth, &bs_spot, &bs_forward, &bs_svi);
+    let liquidation_pricer = fx.load_pricer(
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+    );
     assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order));
 
     (fx, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, harness, order)

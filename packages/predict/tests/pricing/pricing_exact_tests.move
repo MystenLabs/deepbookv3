@@ -47,8 +47,14 @@ fun run_scenario(s: u64) {
         ref_data::tick_size(s),
         test_constants::default_expiry_ms(),
     );
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_real_oracle(
         &mut bs_spot,
         &mut bs_forward,
@@ -97,8 +103,14 @@ fun real_scenario_small_variance() { run_scenario(2); }
 #[test]
 fun at_the_forward_is_exactly_one_half() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fx.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fx.take_oracle();
     fx.prepare_live_oracle(
         &mut bs_spot,
         &mut bs_forward,

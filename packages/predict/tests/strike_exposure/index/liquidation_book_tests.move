@@ -206,13 +206,25 @@ fun passive_tail_scan_resumes_and_wraps_after_watermark() {
     assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX + PASSIVE_TAIL_COUNT);
 
     let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
-    assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX + 2 * PASSIVE_TAIL_COUNT);
+    assert_passive_window(
+        &candidates,
+        &inserted,
+        PASSIVE_TAIL_START_INDEX + 2 * PASSIVE_TAIL_COUNT,
+    );
 
     let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
-    assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX + 3 * PASSIVE_TAIL_COUNT);
+    assert_passive_window(
+        &candidates,
+        &inserted,
+        PASSIVE_TAIL_START_INDEX + 3 * PASSIVE_TAIL_COUNT,
+    );
 
     let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
-    assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX + 4 * PASSIVE_TAIL_COUNT);
+    assert_passive_window(
+        &candidates,
+        &inserted,
+        PASSIVE_TAIL_START_INDEX + 4 * PASSIVE_TAIL_COUNT,
+    );
 
     let candidates = book.select_liquidation_candidates(PASSIVE_SCAN_BUDGET);
     assert_passive_window(&candidates, &inserted, PASSIVE_TAIL_START_INDEX);
@@ -231,7 +243,10 @@ fun leveraged_order_with_sequence(sequence: u64): Order {
     )
 }
 
-fun insert_sequential_orders(book: &mut liquidation_book::LiquidationBook, count: u64): vector<u256> {
+fun insert_sequential_orders(
+    book: &mut liquidation_book::LiquidationBook,
+    count: u64,
+): vector<u256> {
     let mut inserted = vector[];
     let mut i = 0;
     while (i < count) {
@@ -248,8 +263,5 @@ fun assert_passive_window(candidates: &vector<u256>, inserted: &vector<u256>, st
     assert_eq!(candidates[0], inserted[0]);
     assert_eq!(candidates[PASSIVE_HEAD_COUNT - 1], inserted[PASSIVE_HEAD_COUNT - 1]);
     assert_eq!(candidates[PASSIVE_HEAD_COUNT], inserted[start_index]);
-    assert_eq!(
-        candidates[PASSIVE_SCAN_BUDGET - 1],
-        inserted[start_index + PASSIVE_TAIL_COUNT - 1],
-    );
+    assert_eq!(candidates[PASSIVE_SCAN_BUDGET - 1], inserted[start_index + PASSIVE_TAIL_COUNT - 1]);
 }

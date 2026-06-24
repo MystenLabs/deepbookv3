@@ -61,8 +61,16 @@ const DUST_QUANTITY: u64 = 100_000;
 
 #[test]
 fun exact_walk_matches_per_order_reference() {
-    let (mut fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, pricer) =
-        live_pricer();
+    let (
+        mut fixture,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        config,
+        pricer,
+    ) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
@@ -81,8 +89,16 @@ fun exact_walk_matches_per_order_reference() {
 
 #[test]
 fun interpolation_collapses_subtree_within_bound() {
-    let (mut fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, pricer) =
-        live_pricer();
+    let (
+        mut fixture,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        config,
+        pricer,
+    ) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
@@ -116,8 +132,16 @@ fun interpolation_collapses_subtree_within_bound() {
 
 #[test]
 fun skip_zero_delta_ignores_dead_boundaries() {
-    let (mut fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, pricer) =
-        live_pricer();
+    let (
+        mut fixture,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        config,
+        pricer,
+    ) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
@@ -137,8 +161,16 @@ fun skip_zero_delta_ignores_dead_boundaries() {
 
 #[test]
 fun walk_linear_clamps_boundary_aggregation_dust() {
-    let (mut fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, pricer) =
-        live_pricer_at(FLAT_REGION_FORWARD);
+    let (
+        mut fixture,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        config,
+        pricer,
+    ) = live_pricer_at(FLAT_REGION_FORWARD);
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let t0 = test_constants::default_strike_tick();
@@ -226,8 +258,14 @@ fun live_pricer_at(
     Pricer,
 ) {
     let mut fixture = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs_spot, mut bs_forward, mut bs_svi, oracle_registry, config) =
-        fixture.take_oracle();
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        config,
+    ) = fixture.take_oracle();
     // Inflated base variance, otherwise the default (positive) SVI shape; spot ==
     // forward gives basis 1.0. sigma == the propbook floor (default_svi_sigma).
     fixture.prepare_real_oracle(
@@ -245,8 +283,14 @@ fun live_pricer_at(
         test_constants::default_svi_m(),
         false,
     );
-    let pricer =
-        fixture.load_pricer(&config, &oracle_registry, &pyth, &bs_spot, &bs_forward, &bs_svi);
+    let pricer = fixture.load_pricer(
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+    );
     (fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, pricer)
 }
 
