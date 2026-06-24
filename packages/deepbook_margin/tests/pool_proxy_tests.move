@@ -1209,7 +1209,7 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
 // reduce-only fills must monotonically improve (or hold) solvency. The
 // matching limit-order path (placed at exact oracle price) still passes its
 // `_ok` test above.
-#[test, expected_failure(abort_code = pool_proxy::EReduceOnlyMustImproveRiskRatio)]
+#[test, expected_failure(abort_code = pool_proxy::ERiskRatioMustNotWorsen)]
 fun test_place_reduce_only_market_order_ok() {
     let (
         mut scenario,
@@ -1313,7 +1313,7 @@ fun test_place_reduce_only_market_order_ok() {
 // Symmetric to `test_place_reduce_only_market_order_ok` — sell-side reduce-only
 // market hits bids at $0.99 (1% below oracle), degrading risk_ratio. Aborts on
 // the monotonic invariant.
-#[test, expected_failure(abort_code = pool_proxy::EReduceOnlyMustImproveRiskRatio)]
+#[test, expected_failure(abort_code = pool_proxy::ERiskRatioMustNotWorsen)]
 fun test_place_reduce_only_market_order_ok_ask() {
     let (
         mut scenario,
@@ -1804,6 +1804,165 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
     assert!(mm.borrowed_quote_shares() < shares_before);
     assert!(rr_after > rr_before);
     assert!(rr_after >= registry.min_borrow_risk_ratio(pool_id_inner));
+
+    return_shared_3!(mm, pool, quote_pool);
+    return_shared(base_pool);
+    destroy(usdc_drifted);
+    destroy(usdt_price);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
+    // The monotonic gate (vs. the min_open floor) lets a danger-band position
+    // improve *partially* without reaching min_open. Long: 2000 USDC collateral,
+    // 1000 USDT debt; drift USDC to $0.60 -> ratio 1.20. min_open is raised to the
+    // borrow floor so the post-close ratio stays below it; a small ask (sell 200
+    // USDC, repay ~118 USDT) lifts the ratio but leaves it under min_open. The old
+    // min_open gate would abort this; the monotonic gate passes it because the
+    // ratio improved.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    setup_orderbook_liquidity_at_prices<USDC, USDT>(
+        &mut scenario,
+        pool_id,
+        590_000_000,
+        610_000_000,
+        &clock,
+    );
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(2000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdt_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdt_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(withdrawn);
+    destroy(usdc_price);
+
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+        &mut scenario,
+        60_000_000,
+        &clock,
+    );
+    pool_proxy::update_current_price<USDC, USDT>(
+        &mut registry,
+        &pool,
+        &usdc_drifted,
+        &usdt_price,
+        &clock,
+    );
+
+    let pool_id_inner = pool.id();
+    // Raise min_open to the borrow floor so the post-close ratio is guaranteed to
+    // stay below it — isolating the monotonic gate as the reason the close passes.
+    let strict_floor = registry.min_borrow_risk_ratio(pool_id_inner);
+    registry.set_min_open_risk_ratio<USDC, USDT>(
+        &_admin_cap,
+        &pool,
+        strict_floor,
+        &clock,
+    );
+
+    let shares_before = mm.borrowed_quote_shares();
+    let rr_before = mm.risk_ratio(
+        &registry,
+        &usdc_drifted,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+    assert!(rr_before < registry.min_open_risk_ratio(pool_id_inner));
+    assert!(rr_before >= registry.liquidation_risk_ratio(pool_id_inner));
+
+    let order_info = pool_proxy::place_market_order_and_repay_loan<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        &mut base_pool,
+        &mut quote_pool,
+        &usdc_drifted,
+        &usdt_price,
+        2,
+        constants::self_matching_allowed(),
+        200 * test_constants::usdc_multiplier(),
+        false, // ask: sell USDC base to repay the USDT debt
+        false,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_info);
+
+    let rr_after = mm.risk_ratio(
+        &registry,
+        &usdc_drifted,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+
+    // Debt partially repaid (not cleared), the ratio improved, and it is still
+    // below min_open — exactly the state the old floor gate would have rejected.
+    assert!(mm.borrowed_quote_shares() > 0);
+    assert!(mm.borrowed_quote_shares() < shares_before);
+    assert!(rr_after > rr_before);
+    assert!(rr_after < registry.min_open_risk_ratio(pool_id_inner));
 
     return_shared_3!(mm, pool, quote_pool);
     return_shared(base_pool);
@@ -7155,7 +7314,7 @@ fun reduce_only_limit_and_repay_partial_taker_fill_repays() {
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pool_proxy::EReduceOnlyMustImproveRiskRatio)]
+#[test, expected_failure(abort_code = pool_proxy::ERiskRatioMustNotWorsen)]
 fun reduce_only_limit_v2_taker_fill_aborts() {
     // The same crossing reduce-only ask, but via the non-repay
     // place_reduce_only_limit_order_v2: the taker fill pays the spread, lowering

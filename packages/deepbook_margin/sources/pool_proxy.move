@@ -26,10 +26,11 @@ const ENoLiquidityInOrderbook: u64 = 5;
 /// order placement entries when an opening trade would leave the manager in the
 /// liquidatable zone.
 const EInsufficientRiskRatioAfterTrade: u64 = 6;
-/// Reduce-only fill leaked value to the counterparty: the manager's
-/// risk_ratio after the trade is lower than before. Reduce-only orders must
-/// monotonically improve (or hold) solvency.
-const EReduceOnlyMustImproveRiskRatio: u64 = 7;
+/// A risk-reducing fill left the manager's net (post-repay) risk_ratio lower
+/// than before the trade. The reduce-only entries and the market close+repay
+/// tool (`place_market_order_and_repay_loan`) require the post-trade ratio to
+/// monotonically improve (or hold).
+const ERiskRatioMustNotWorsen: u64 = 7;
 /// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
 /// post-trade risk_ratio invariant.
 const EDeprecatedUseV2: u64 = 8;
@@ -568,7 +569,7 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
             quote_margin_pool,
             clock,
         );
-        assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
+        assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
     };
 
     order_info
@@ -680,25 +681,30 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
             quote_margin_pool,
             clock,
         );
-        assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
+        assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
     };
 
     order_info
 }
 
 /// Atomically places a market order and repays the loan with the proceeds,
-/// gating post-repay solvency on `min_open_risk_ratio`. This is the everyday
-/// close / deleverage tool: unlike `place_market_order_v2`, the repay runs
-/// *before* the solvency check, so the deleverage credit lets a position close
-/// cleanly even in the `liquidation..min_borrow` band — a full close drives debt
-/// to 0 (`risk_ratio` MAX), which always passes.
+/// gating on a **monotonic** net-state check: if any debt remains after the
+/// repay, the post-repay `risk_ratio` must be at least the pre-trade ratio
+/// (improve-or-hold). A full close drives debt to 0 (`risk_ratio` MAX), which
+/// always passes.
 ///
-/// Not reduce-only: there is no quantity cap, so a close may overshoot the debt
-/// (e.g. round past accrued-interest dust that isn't lot-aligned). That is safe
-/// — the repay only ever reduces debt, zero debt has no bad-debt risk to the
-/// lending pool, any surplus base/quote is the manager's own holding, and
-/// `assert_price` still bounds slippage. The repay is the safety mechanism here,
-/// not a quantity cap. Requires margin trading enabled; in reduce-only mode use
+/// This is the everyday close / deleverage tool. The monotonic gate — rather than
+/// the `min_open` opening floor used by `place_market_order_v2` — lets a position
+/// in the `liquidation..min_borrow` danger band wind down *partially*: a small
+/// close that lifts the ratio from, say, 1.12 to 1.15 is allowed even though 1.15
+/// is still below `min_open`, which the opening floor would reject.
+///
+/// Not reduce-only and uncapped, but the monotonic check makes a quantity cap
+/// unnecessary: a market (taker) fill settles immediately, so any genuinely
+/// exposure-*increasing* trade lowers the ratio and aborts here, while any
+/// deleveraging trade is allowed at any size — an overshoot past the debt is fine
+/// (surplus is the manager's own holding) and `assert_price` still bounds
+/// slippage. Requires margin trading enabled; in reduce-only mode use
 /// `place_reduce_only_market_order_and_repay_loan`.
 public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
@@ -729,6 +735,25 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     );
     registry.assert_price(pool.id(), effective_price, is_bid, clock);
 
+    // Capture the pre-trade ratio for the monotonic gate, but only while the
+    // manager has debt — `risk_ratio` is only meaningful against a debt.
+    let risk_ratio_before = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        margin_manager.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        )
+    } else {
+        0
+    };
+
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
     let order_info = pool.place_market_order(
@@ -752,16 +777,25 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
     };
 
-    assert_post_trade_solvent(
-        margin_manager,
-        registry,
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        base_oracle,
-        quote_oracle,
-        clock,
-    );
+    // Net-state monotonic gate: if debt remains, the trade+repay must not have
+    // worsened the ratio. A full repay clears the debt (`risk_ratio` -> MAX), so
+    // the check is skipped. Debt only decreases here, so surviving debt implies
+    // there was debt before and `risk_ratio_before` is a real ratio.
+    if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        let risk_ratio_after = margin_manager.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+        assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
+    };
 
     order_info
 }
@@ -1103,5 +1137,5 @@ fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
+    assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
 }
