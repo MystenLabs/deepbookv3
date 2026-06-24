@@ -117,8 +117,9 @@ const DRY_TARGET = A.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || 10
 const RESERVE = (budget && budget.total) ? Math.max(3_000_000, Math.floor(budget.total * 0.3)) : 3_000_000
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-// strip line numbers so a same violation at a shifted line still dedups across rounds.
-function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '')}`.slice(0, 160) }
+// strip line numbers (so a shifted-line same violation dedups) but KEEP a claim digest, so two DISTINCT
+// violations of the same rule in the same file stay distinct and the 2nd is not silently dropped.
+function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '')}|${(f.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 50)}`.slice(0, 220) }
 function sweepPrompt(rf, round, known) {
   return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} (round ${round}) ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n`
     + (known ? `ALREADY-FOUND violations of this rule (do NOT re-report — find DIFFERENT ones, in modules/branches not yet covered):\n${known}\n\n` : '')

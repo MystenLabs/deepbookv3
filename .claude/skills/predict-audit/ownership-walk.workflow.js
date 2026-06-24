@@ -156,7 +156,7 @@ const RESERVE = (budget && budget.total) ? Math.max(4_000_000, Math.floor(budget
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 // strip line numbers from node so a same violation at a shifted line still dedups across rounds (else the
 // loop never dries — see orchestrator nloc comment).
-function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9:_]/g, '')}` }
+function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9:_]/g, '')}|${(v.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40)}` }
 
 function checkPrompt(cu, round, known) {
   return `${PRELUDE}\n\n=== CHECK PASS (round ${round}) — module ${cu.module} (${cu.file}) ===\n`
@@ -213,7 +213,7 @@ return {
   summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, unmapped_units: unmappedUnits, rounds: round, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
   responsibility_map: allModules.map(m => ({ module: m.module, role: m.role, owns: m.owns, composes: m.composes })),
   coverage: Object.keys(coverageByModule).map(m => ({ lane: m, coverage: coverageByModule[m] })),
-  confirmed: confirmed.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, expected_owner: x.expected_owner, actual_owner: x.actual_owner, severity: (x.verdict && x.verdict.adjusted_severity) || x.severity, classification: x.verdict && x.verdict.classification, settled_ref: x.settled_ref, recommendation: x.recommendation, data_flow: x.data_flow, proof: x.verdict && x.verdict.evidence })),
+  confirmed: confirmed.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, expected_owner: x.expected_owner, actual_owner: x.actual_owner, severity: (x.verdict && x.verdict.adjusted_severity) || x.severity, status: (x.verdict && x.verdict.verdict) || 'confirmed', classification: x.verdict && x.verdict.classification, settled_ref: x.settled_ref, recommendation: x.recommendation, data_flow: x.data_flow, proof: x.verdict && x.verdict.evidence })),
   settled: settledOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, settled_ref: (x.verdict && x.verdict.evidence) || x.settled_ref })),
   refuted: refutedOut.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, why: x.verdict && x.verdict.reasoning })),
   calibration: byRule,

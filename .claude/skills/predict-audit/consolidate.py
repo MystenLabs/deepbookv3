@@ -17,25 +17,39 @@ SEV = {  # unify the two severity vocabularies into one rank (higher = worse)
     'critical': 6, 'high': 5, 'medium': 4, 'correctness': 4, 'low': 3, 'cleanup': 2, 'info': 2, '': 1,
 }
 
+MARKERS = {'summary', 'kept', 'confirmed', 'findings', 'violations', 'settled', 'refuted', 'coverage', 'responsibility_map'}
+
 def load(path):
-    """Tolerant: scan successive '{' and raw_decode (ignores leading prose / trailing logs) so a task
-    output file that isn't pure JSON can't crash the whole consolidation."""
+    """Scan ALL successive '{' and raw_decode, but accept ONLY an object that looks like a harness RESULT
+    (carries a marker key) — so a leading log/preamble object (e.g. {"event":"start"}) can't be silently
+    returned in place of the findings. Returns the richest qualifying object; raises if none qualifies
+    (-> a VISIBLE parse_failure, never a silent zero-findings slip)."""
     raw = open(path, encoding='utf-8', errors='replace').read()
     dec = json.JSONDecoder()
-    i = raw.find('{')
+    best, i = None, raw.find('{')
     while i != -1:
         try:
-            data, _ = dec.raw_decode(raw, i)
-            return data.get('result', data) if isinstance(data, dict) else data
+            obj, end = dec.raw_decode(raw, i)
+            o = obj.get('result', obj) if isinstance(obj, dict) else obj
+            if isinstance(o, dict) and (MARKERS & set(o.keys())) and (best is None or len(o) > len(best)):
+                best = o
+            i = raw.find('{', max(end, i + 1))
         except json.JSONDecodeError:
             i = raw.find('{', i + 1)
-    raise ValueError(f"no parseable JSON object in {path}")
+    if best is not None:
+        return best
+    raise ValueError(f"no harness-result JSON object (needs one of {sorted(MARKERS)}) in {path}")
 
-def _fp(location, title):
-    """Stable fingerprint: file path WITHOUT line numbers (survives line drift) + normalized title."""
+def _fp(location, title, claim=''):
+    """Fingerprint = file WITHOUT line numbers + normalized title + a claim digest. The claim is included so
+    two DISTINCT findings at the same file+title (different claim) get DIFFERENT ids; consolidate dedups by
+    this id and track.py keys on it, so the two layers agree and a distinct finding is never silently
+    collapsed downstream. (Cost: a heavily re-worded claim across runs yields a new id — a VISIBLE duplicate,
+    the lesser evil vs a silent drop.)"""
     file = re.sub(r'[^a-z0-9/_.]', '', re.split(r':\d', (location or '').lower())[0])
     t = re.sub(r'[^a-z0-9]+', '', (title or '').lower())[:60]
-    return f"{file}::{t}"
+    c = re.sub(r'[^a-z0-9]+', '', (claim or '').lower())[:60]
+    return f"{file}::{t}::{c}"
 
 def norm(f, harness, status):
     """Normalize a finding from any harness shape into one record (lossless), with a stable fingerprint +
@@ -53,7 +67,7 @@ def norm(f, harness, status):
         'why': f.get('why', ''),
         'classification': f.get('classification', ''),
     }
-    rec['fingerprint'] = _fp(rec['location'], rec['title'])
+    rec['fingerprint'] = _fp(rec['location'], rec['title'], rec['claim'])
     rec['id'] = hashlib.sha1(rec['fingerprint'].encode()).hexdigest()[:6]
     return rec
 
@@ -78,7 +92,7 @@ def main():
         print(__doc__); sys.exit(2)
     out_dir, files = sys.argv[1], sys.argv[2:]
     os.makedirs(out_dir, exist_ok=True)
-    all_findings, per_harness, coverage_blocks, parse_failures = [], [], [], []
+    all_findings, per_harness, coverage_blocks, parse_failures, empty_harnesses, errored_harnesses = [], [], [], [], [], []
     for path in files:
         try:
             res = load(path)
@@ -94,6 +108,13 @@ def main():
                             sum(1 for f in findings if f['status'] == 'open'),
                             sum(1 for f in findings if f['status'] == 'settled'),
                             sum(1 for f in findings if f['status'] == 'refuted'), npromoted))
+        err = res.get('error')
+        if err:  # a harness that ABORTED must be loud (non-zero exit), not a quiet 0-finding line
+            errored_harnesses.append((hname, err))
+        elif not findings:  # 0 findings could be clean OR silently scoped-out — warn, don't fail
+            empty_harnesses.append((hname, '0 findings — confirm it ran, not silently scoped out'))
+        for u in (res.get('summary') or {}).get('unmapped_units', []) or []:  # walk map-failures = real holes
+            coverage_blocks.append((hname, u, '⚠ NOT EXAMINED — map agent failed; resume to fill', []))
         for c in res.get('coverage', []) or []:
             coverage_blocks.append((hname, c.get('lane', ''), c.get('coverage', ''), c.get('top3', [])))
         # ownership-walk also carries a responsibility_map worth keeping
@@ -105,9 +126,10 @@ def main():
     # dedup OPEN findings across harnesses by (location, title) — record merges, never drop
     seen, dedup_open, merges = {}, [], 0
     for f in [x for x in all_findings if x['status'] == 'open']:
-        # conservative: collapse ONLY true duplicates (same location AND title AND claim-prefix); two
-        # distinct findings at the same location are BOTH kept, so a merge can never hide a real claim.
-        k = (f['location'].lower().strip(), f['title'].lower().strip()[:80], (f['claim'] or '').lower().strip()[:80])
+        # Dedup by the SAME id track.py keys on, so the two layers agree: findings.json never contains two
+        # records that share an id (which track would silently collapse). The id already folds in
+        # location+title+claim, so distinct findings have distinct ids and are NOT merged here.
+        k = f['id']
         if k in seen:
             seen[k]['also'].append(f['harness']); merges += 1
         else:
@@ -124,6 +146,12 @@ def main():
     if parse_failures:
         acct += f"\n⛔ {len(parse_failures)} INPUT FILE(S) FAILED TO PARSE (findings NOT in this report): " \
                 + "; ".join(f"{p} ({e})" for p, e in parse_failures)
+    if errored_harnesses:
+        acct += "\n⛔ harness(es) ABORTED (findings NOT in this report): " \
+                + "; ".join(f"{h} ({e})" for h, e in errored_harnesses)
+    if empty_harnesses:
+        acct += "\n⚠ harness(es) contributed 0 findings (confirm they ran, not silently scoped out): " \
+                + "; ".join(f"{h} ({e})" for h, e in empty_harnesses)
 
     # severity desc, then panel-confirmed before uncertain/promoted-unverified
     dedup_open.sort(key=lambda f: (-SEV.get(f['severity'].lower(), 1), 0 if f.get('verdict', 'confirmed') in ('confirmed', '') else 1))
@@ -160,7 +188,7 @@ def main():
               open(os.path.join(out_dir, 'findings.json'), 'w', encoding='utf-8'), indent=1)
     print(acct)
     print(f"wrote {rpt} ({len(dedup_open)} open, {len(settled)} settled, {len(refuted)} refuted)")
-    sys.exit(0 if (dropped == 0 and not parse_failures) else 1)
+    sys.exit(0 if (dropped == 0 and not parse_failures and not errored_harnesses) else 1)
 
 if __name__ == '__main__':
     main()

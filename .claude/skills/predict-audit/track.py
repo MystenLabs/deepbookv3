@@ -17,7 +17,7 @@ Merge after each audit (consolidate.py first):
 STATEDIR (default .claude/predict-review/) holds OPEN-ITEMS.md (human) + .audit-state.json (source of truth).
 The id-derived-from-fingerprint means the same issue keeps the same id across runs, so dedup is reliable.
 """
-import json, sys, os, re, datetime
+import json, sys, os, re, hashlib, datetime
 
 SEV = {'critical': 6, 'high': 5, 'medium': 4, 'correctness': 4, 'low': 3, 'cleanup': 2, 'info': 2, '': 1}
 
@@ -58,25 +58,31 @@ def merge(d, run, findings_path):
     new = data.get('open', data if isinstance(data, list) else [])
     added = updated = reopened = 0
     for f in new:
-        iid = f.get('id') or 'xxxxxx'
+        # synthesize a per-item id from content if missing, so id-less findings do NOT all collapse onto
+        # one shared sentinel (which would silently merge unrelated findings into a single tracker item).
+        iid = f.get('id') or hashlib.sha1(
+            (f.get('location', '') + '|' + f.get('title', '') + '|' + f.get('claim', '')).encode()).hexdigest()[:6]
         it = state['items'].get(iid)
         if it is None:
             state['items'][iid] = {
                 'id': iid, 'fingerprint': f.get('fingerprint', ''), 'status': 'open',
+                'verdict': f.get('verdict', ''),
                 'severity': f.get('severity', ''), 'title': f.get('title', ''), 'location': f.get('location', ''),
                 'source': f.get('source', ''), 'claim': f.get('claim', ''), 'recommendation': f.get('recommendation', ''),
-                'evidence': f.get('evidence', ''), 'harnesses': [h for h in [f.get('harness', '')] if h],
+                'evidence': f.get('evidence', ''), 'harnesses': [h for h in [f.get('harness', '')] + f.get('also', []) if h],
                 'first_seen': run, 'last_seen': run, 'notes': []}
             added += 1
         elif it['status'] == 'wontfix':
             it['last_seen'] = run  # confirmed false-positive — stays suppressed
         elif it['status'] == 'resolved':
             it['status'] = 'open'; it['last_seen'] = run; it['evidence'] = f.get('evidence') or it.get('evidence', '')
-            it['notes'].append(f"⚠ RE-DETECTED run {run} after being marked resolved — the fix may not have taken")
+            it['verdict'] = f.get('verdict') or it.get('verdict', '')
+            it['notes'].append(f"⚠ RE-DETECTED run {run} — was marked resolved (block deleted/checked) but the audit still finds it; re-check the fix")
             reopened += 1
         else:  # open
             it['last_seen'] = run
             it['severity'] = f.get('severity', it['severity']); it['evidence'] = f.get('evidence') or it.get('evidence', '')
+            it['verdict'] = f.get('verdict') or it.get('verdict', '')
             h = f.get('harness', '')
             if h and h not in it['harnesses']:
                 it['harnesses'].append(h)
@@ -100,7 +106,9 @@ def write(d, state, run, ch):
     for it in opens:
         hs = it.get('harnesses', [])
         src = '/'.join(filter(None, [hs[0] if hs else '', it.get('source', '')]))
-        L.append(f"### `#{it['id']}` · [{it['severity'] or '?'}] {it['title']}")
+        vd = it.get('verdict', '')
+        vtag = ' · ⚠ UNCERTAIN (verifier split)' if vd == 'uncertain' else (' · ⚠ UNVERIFIED (promoted)' if vd == 'promoted-unverified' else '')
+        L.append(f"### `#{it['id']}` · [{it['severity'] or '?'}] {it['title']}{vtag}")
         L.append("- [ ] fixed")
         L.append(f"- **Location:** {it['location']}")
         L.append(f"- **Source:** {src}" + (f" (also: {', '.join(hs[1:])})" if len(hs) > 1 else '')

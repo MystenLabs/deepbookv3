@@ -152,9 +152,14 @@ function aggregate(f, laneKey, verdicts) {
   if (settled) status = 'settled'
   else if (refuted > confirmed) status = 'refuted'
   else if (confirmed > 0) status = 'confirmed'
+  // severity = MAX of the finder's and the CONFIRMING verifiers' adjusted_severity — the panel exists to
+  // re-rank, so a fund-loss bug the finder under-rated must not sink. Upgrades only; never downgrade a real one.
+  const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
+  const severity = [f.severity, ...vs.filter(v => v.verdict === 'confirmed').map(v => v.adjusted_severity)]
+    .filter(Boolean).sort((a, b) => (SEVRANK[(b || '').toLowerCase()] || 0) - (SEVRANK[(a || '').toLowerCase()] || 0))[0] || f.severity
   return {
     lane: laneKey, status,
-    severity: f.severity, title: f.title, location: f.location, claim: f.claim,
+    severity, title: f.title, location: f.location, claim: f.claim,
     scenario: f.scenario, impact: f.impact, confidence: f.confidence,
     recommendation: f.recommendation, settled_ref: settled ? (settled.evidence || f.settled_ref) : f.settled_ref,
     evidence: f.evidence,
