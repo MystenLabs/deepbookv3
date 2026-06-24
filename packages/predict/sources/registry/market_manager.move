@@ -56,6 +56,12 @@ public struct CadenceConfig has copy, drop, store {
     window_size: u64,
 }
 
+/// Next market selected for creation plus the cadence terms to snapshot into it.
+public struct DeployableMarket has copy, drop {
+    expiry: u64,
+    cadence: CadenceConfig,
+}
+
 /// Stored deployment watermarks for one Propbook underlying.
 public struct UnderlyingMarketConfig has copy, drop, store {
     /// Highest deployed expiry timestamp indexed by cadence ID.
@@ -105,16 +111,6 @@ public(package) fun expiry_market_id(
     }
 }
 
-public(package) fun cadence_config(manager: &MarketManager, cadence_id: u8): (u64, u64, u64, u64) {
-    let cadence = &manager.cadences[cadence_index(cadence_id)];
-    (
-        cadence.tick_size,
-        cadence.max_expiry_allocation,
-        cadence.initial_expiry_cash,
-        cadence.window_size,
-    )
-}
-
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
@@ -127,7 +123,7 @@ public(package) fun next_deployable_market(
     propbook_underlying_id: u32,
     cadence_id: u8,
     clock: &Clock,
-): (u64, u64, u64, u64) {
+): DeployableMarket {
     let cadence_index = cadence_index(cadence_id);
     let cadence = &manager.cadences[cadence_index];
     assert!(cadence.window_size > 0, ECadenceDisabled);
@@ -177,16 +173,30 @@ public(package) fun next_deployable_market(
                 EBlockScholesSVIFeedNotBoundToUnderlying,
             );
 
-            return (
+            return DeployableMarket {
                 expiry,
-                cadence.tick_size,
-                cadence.max_expiry_allocation,
-                cadence.initial_expiry_cash,
-            )
+                cadence: *cadence,
+            }
         }
     };
 
     abort ECadenceWindowExceeded
+}
+
+public(package) fun expiry(deployable: &DeployableMarket): u64 {
+    deployable.expiry
+}
+
+public(package) fun tick_size(deployable: &DeployableMarket): u64 {
+    deployable.cadence.tick_size
+}
+
+public(package) fun max_expiry_allocation(deployable: &DeployableMarket): u64 {
+    deployable.cadence.max_expiry_allocation
+}
+
+public(package) fun initial_expiry_cash(deployable: &DeployableMarket): u64 {
+    deployable.cadence.initial_expiry_cash
 }
 
 public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {

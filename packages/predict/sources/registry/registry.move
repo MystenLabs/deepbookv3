@@ -59,11 +59,6 @@ public fun expiry_market_id(
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
 }
 
-/// Return `(tick_size, max_expiry_allocation, initial_expiry_cash, window_size)` for a cadence.
-public fun cadence_config(registry: &Registry, cadence_id: u8): (u64, u64, u64, u64) {
-    registry.market_manager.cadence_config(cadence_id)
-}
-
 // === PauseCap Lifecycle (admin) ===
 
 /// Mint a new `PauseCap`. Admin-only and bypasses the version gate so the
@@ -223,9 +218,13 @@ public fun create_expiry_market(
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
     config.assert_not_valuation_in_progress();
-    let (expiry, tick_size, max_expiry_allocation, initial_expiry_cash) = registry
+    let deployable = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
+    let expiry = deployable.expiry();
+    let tick_size = deployable.tick_size();
+    let max_expiry_allocation = deployable.max_expiry_allocation();
+    let initial_expiry_cash = deployable.initial_expiry_cash();
     let pool_vault_id = pool_vault.id();
     let expiry_market_id = expiry_market::create_and_share(
         config,
