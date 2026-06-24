@@ -77,11 +77,13 @@ skews became large exposure skews.
 `chart_market_overview.png` uses live pre-terminal vault PnL:
 
 ```text
-active expiry value - pending protocol profit exclusion - expiry funding basis
+active expiry value - protocol profit exclusion - expiry funding basis
 ```
 
-Fees and realized cash movements are included, but the chart is still a live
-mark. It can fall sharply when liability reprices faster than fees accumulate.
+The protocol profit exclusion includes both the unmaterialized reserve share and
+any carried pending protocol profit. Fees and realized cash movements are
+included, but the chart is still a live mark. It can fall sharply when liability
+reprices faster than fees accumulate.
 
 In the old split-balance `may29-1738` run, the hour 19-20 drop was mostly
 liability repricing:

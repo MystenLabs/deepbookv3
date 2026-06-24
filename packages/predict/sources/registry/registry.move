@@ -179,14 +179,6 @@ public fun set_cadence_config(
             initial_expiry_cash,
             window_size,
         );
-    config_events::emit_cadence_config_updated(
-        registry.id(),
-        cadence_id,
-        tick_size,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        window_size,
-    );
 }
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
@@ -245,6 +237,8 @@ public fun create_expiry_market(
         tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
+        config.strike_exposure_template_config(),
+        config.expiry_cash_template_config(),
     );
 
     expiry_market_id

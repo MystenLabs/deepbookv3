@@ -21,7 +21,7 @@ The `Registry` enforces uniqueness, admin approval, and cadence policy:
 3. **Compute expiry and snapshot config.** The market manager picks the next missing expiry from the cadence watermark and current clock, then the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, stores `propbook_underlying_id`, and snapshots the cadence `tick_size`. Pool accounting snapshots the cadence `max_expiry_allocation` and `initial_expiry_cash`. Creation needs **no live spot** — strikes are absolute ticks, so there is no grid to center on a price.
 4. **Create, share, and register.** The `ExpiryMarket` is shared, registered with the pool vault as an active-expiry accounting row, and indexed by expiry in the registry.
 
-The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, `tick_size`, `max_expiry_allocation`, and `initial_expiry_cash`. The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`. The event also carries the immutable per-expiry pool allocation cap and initial cash target, since the cadence config that produced them can change later.
+The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and the immutable policy snapshot applied to that expiry (`liquidation_ltv`, `max_admission_leverage`, `backing_buffer_lambda`, fee bounds, entry-probability bounds, expiry-fee ramp terms, and `trading_loss_rebate_rate`). The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`. The event also carries the immutable per-expiry pool allocation cap, initial cash target, and policy because the cadence and protocol template configs that produced them can change later.
 
 ```mermaid
 flowchart TD
@@ -31,7 +31,7 @@ flowchart TD
   D -->|pass| E["compute next expiry<br/>snapshot config + cadence terms<br/>(no live spot read)"]
   E --> F["share ExpiryMarket with propbook_underlying_id"]
   F --> G["PoolVault.register_expiry (accounting row)"]
-  G --> H["emit MarketCreated (carries tick_size + allocation cap + initial cash)"]
+  G --> H["emit MarketCreated (carries tick_size + allocation cap + initial cash + policy snapshot)"]
 ```
 
 ## Strikes are absolute integer ticks

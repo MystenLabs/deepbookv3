@@ -444,8 +444,13 @@ public fun claim_trading_loss_rebate(
         .expiry_accounting
         .receive_expiry_cash(expiry_market_id, residual_cash);
     if (returned_cash_amount > 0) {
+        vault_events::emit_expiry_cash_received(
+            vault_id,
+            expiry_market_id,
+            settlement_price,
+            returned_cash_amount,
+        );
         vault.materialize_expiry_profit(config, expiry_market_id);
-        vault.emit_expiry_cash_received(market, returned_cash_amount, settlement_price);
     };
     vault_events::emit_trading_loss_rebate_claimed(
         vault_id,
@@ -453,7 +458,6 @@ public fun claim_trading_loss_rebate(
         account_id,
         rebate_amount,
         residual_returned,
-        vault.expiry_accounting.idle_balance(),
     );
 }
 
@@ -685,7 +689,14 @@ fun top_up_live_expiry_cash(
 
     let cash = vault.expiry_accounting.send_expiry_cash(expiry_market_id, top_up);
     market.receive_pool_cash(cash);
-    vault.emit_expiry_cash_rebalanced(market, expiry_market_id, top_up, true, target_cash);
+    vault_events::emit_expiry_cash_rebalanced(
+        vault.id(),
+        expiry_market_id,
+        top_up,
+        true,
+        target_cash,
+        0,
+    );
 }
 
 fun sweep_live_expiry_surplus(
@@ -701,14 +712,16 @@ fun sweep_live_expiry_surplus(
         .receive_expiry_cash(expiry_market_id, returned_cash);
     // Surplus just returned to idle — realize any protocol cut a prior settled
     // sweep could not cover because idle was deployed in other active markets.
-    // Drain before emitting so the event's reserve/pending/idle reflect it.
-    vault.protocol_reserve_balance.join(vault.expiry_accounting.realize_pending_protocol_profit());
-    vault.emit_expiry_cash_rebalanced(
-        market,
+    let realized_profit = vault.expiry_accounting.realize_pending_protocol_profit();
+    let protocol_profit_realized = realized_profit.value();
+    vault.protocol_reserve_balance.join(realized_profit);
+    vault_events::emit_expiry_cash_rebalanced(
+        vault.id(),
         expiry_market_id,
         returned_cash_amount,
         false,
         target_cash,
+        protocol_profit_realized,
     );
 }
 
@@ -803,14 +816,19 @@ fun sweep_settled_expiry(
     let returned_cash_amount = vault
         .expiry_accounting
         .receive_expiry_cash(expiry_market_id, returned_cash);
+    if (deactivated || returned_cash_amount > 0) {
+        vault_events::emit_expiry_cash_received(
+            vault.id(),
+            expiry_market_id,
+            settlement_price,
+            returned_cash_amount,
+        );
+    };
     vault.materialize_expiry_profit(config, expiry_market_id);
     let returned_incentives = market.release_fee_incentives();
     let returned_incentive_amount = returned_incentives.value();
     vault.fee_incentive_reserve.join(returned_incentives);
 
-    if (deactivated || returned_cash_amount > 0) {
-        vault.emit_expiry_cash_received(market, returned_cash_amount, settlement_price);
-    };
     if (returned_incentive_amount > 0) {
         vault_events::emit_fee_incentives_returned(
             vault.id(),
@@ -843,59 +861,8 @@ fun materialize_expiry_profit(
         expiry_market_id,
         lp_profit,
         protocol_profit,
-        vault.expiry_accounting.idle_balance(),
         vault.protocol_reserve_balance.value(),
         vault.expiry_accounting.profit_basis_debits(),
-        vault.expiry_accounting.pending_protocol_profit(),
-    );
-}
-
-fun emit_expiry_cash_received(
-    vault: &PoolVault,
-    market: &ExpiryMarket,
-    amount: u64,
-    settlement_price: u64,
-) {
-    let expiry_market_id = market.id();
-    let (sent_to_expiry_after, received_from_expiry_after) = vault
-        .expiry_accounting
-        .expiry_flow_amounts(expiry_market_id);
-    vault_events::emit_expiry_cash_received(
-        vault.id(),
-        expiry_market_id,
-        settlement_price,
-        amount,
-        vault.expiry_accounting.idle_balance(),
-        sent_to_expiry_after,
-        received_from_expiry_after,
-    );
-}
-
-/// Emit an `ExpiryCashRebalanced` for a live top-up (`to_expiry = true`) or
-/// surplus-sweep (`to_expiry = false`), reading the post-move expiry cash, idle, and
-/// cumulative flow watermarks.
-fun emit_expiry_cash_rebalanced(
-    vault: &PoolVault,
-    market: &ExpiryMarket,
-    expiry_market_id: ID,
-    amount: u64,
-    to_expiry: bool,
-    target_cash: u64,
-) {
-    let (sent_to_expiry_after, received_from_expiry_after) = vault
-        .expiry_accounting
-        .expiry_flow_amounts(expiry_market_id);
-    vault_events::emit_expiry_cash_rebalanced(
-        vault.id(),
-        expiry_market_id,
-        amount,
-        to_expiry,
-        target_cash,
-        market.cash_balance(),
-        vault.expiry_accounting.idle_balance(),
-        sent_to_expiry_after,
-        received_from_expiry_after,
-        vault.protocol_reserve_balance.value(),
         vault.expiry_accounting.pending_protocol_profit(),
     );
 }

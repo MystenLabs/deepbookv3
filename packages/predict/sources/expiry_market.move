@@ -588,11 +588,6 @@ public(package) fun create_and_share(
     let expiry_market_id = id.to_inner();
     let cash_config = config.expiry_cash_config_snapshot();
     let strike_exposure_config = config.strike_exposure_config_snapshot();
-    config_events::emit_market_config_snapshot(
-        expiry_market_id,
-        &strike_exposure_config,
-        &cash_config,
-    );
     let market = ExpiryMarket {
         id,
         propbook_underlying_id,

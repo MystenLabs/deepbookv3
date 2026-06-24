@@ -263,10 +263,10 @@ and tracked state deltas. Runner-synthesized maintenance transactions such as
 LP flushes and expiry-cash rebalances are traced for gas and to keep localnet
 flows executable under the configured cadence; they are not generated CSV rows.
 
-Live pool-sync sweeps increase aggregate pricing credits but do not materialize
-protocol profit. Protocol reserves move only when terminal expiry accounting
-materializes profit after that expiry's terminal losses and watermarks are
-applied.
+Live pool-sync sweeps increase aggregate pricing credits and can also realize
+previously carried protocol profit into the reserve when returned idle cash is
+available. Fresh protocol profit materializes only after terminal expiry
+accounting applies that expiry's terminal losses and watermarks.
 
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
@@ -300,8 +300,9 @@ never compared against localnet.
 
 Important fields:
 
--   `valuation.lp_live_mtm_pnl`: active expiry value after pending protocol-profit
-    exclusion, minus current expiry funding basis.
+-   `valuation.lp_live_mtm_pnl`: active expiry value after the protocol-profit
+    exclusion (unmaterialized reserve share plus carried pending protocol
+    profit), minus current expiry funding basis.
 -   `valuation.active_book_live_pnl`: open-order contribution minus current live
     liability.
 -   `flows.trading_fee`: trading fee collected in that transaction.

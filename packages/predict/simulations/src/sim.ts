@@ -91,6 +91,7 @@ interface EconomicState {
     expiryUnresolvedTradingFees: bigint;
     vaultIdleBalance: bigint;
     vaultProtocolReserveBalance: bigint;
+    vaultPendingProtocolProfit: bigint;
     profitBasisDebits: bigint;
     profitBasisCredits: bigint;
     vaultTotalPlpSupply: bigint;
@@ -146,7 +147,10 @@ function scenarioPath(): string {
     return configured && configured.length > 0 ? configured : DEFAULT_SCENARIO_PATH;
 }
 
-function initialEconomicState(capital: SimulationCapital, initialExpiryCash: bigint): EconomicState {
+function initialEconomicState(
+    capital: SimulationCapital,
+    initialExpiryCash: bigint,
+): EconomicState {
     if (capital.vaultSeed < initialExpiryCash) {
         throw new Error("vault seed is below the setup expiry cash floor");
     }
@@ -157,6 +161,7 @@ function initialEconomicState(capital: SimulationCapital, initialExpiryCash: big
         expiryUnresolvedTradingFees: 0n,
         vaultIdleBalance: capital.vaultSeed - initialExpiryCash,
         vaultProtocolReserveBalance: 0n,
+        vaultPendingProtocolProfit: 0n,
         profitBasisDebits: initialExpiryCash,
         profitBasisCredits: 0n,
         vaultTotalPlpSupply: capital.initialTotalPlpSupply,
@@ -293,7 +298,10 @@ function mintInput(row: MintRow): Record<string, string> {
 
 // Ticks for a binary range. UP `(strike, +inf)` -> (strike/tick, POS_INF_TICK);
 // DOWN `(-inf, strike)` -> (0 = neg-inf, strike/tick). Mirrors range_codec.
-function binaryRangeTicks(strike: bigint, isUp: boolean): { lowerTick: bigint; higherTick: bigint } {
+function binaryRangeTicks(
+    strike: bigint,
+    isUp: boolean,
+): { lowerTick: bigint; higherTick: bigint } {
     const tick = strike / ORACLE_TICK_SIZE;
     return isUp
         ? { lowerTick: tick, higherTick: POS_INF_TICK }
@@ -560,10 +568,9 @@ function normalizeWithdrawFilled(event: any): Record<string, unknown> {
     };
 }
 
-// FlushExecuted now carries the frozen valuation the former PoolValued event held
-// (pool_value, active_market_nav, market_count, idle_balance_before) plus the drain
-// counts and post-drain idle. Only idle_balance_after feeds tracked state; the rest
-// are observability/parity fields.
+// FlushExecuted carries the frozen valuation plus the drain counts and post-drain
+// idle. `idle_balance_after` is the pool-idle reconciliation anchor for LP queue
+// fills; expiry cash/profit events below are now applied from deltas.
 function normalizeFlushExecuted(event: any): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
@@ -587,10 +594,7 @@ function normalizeExpiryCashRebalanced(event: any): Record<string, unknown> {
         amount: decimal(json.amount),
         to_expiry: booleanField(json.to_expiry),
         target_cash: decimal(json.target_cash),
-        expiry_cash_after: decimal(json.expiry_cash_after),
-        idle_balance_after: decimal(json.idle_balance_after),
-        sent_to_expiry_after: decimal(json.sent_to_expiry_after),
-        received_from_expiry_after: decimal(json.received_from_expiry_after),
+        protocol_profit_realized: decimal(json.protocol_profit_realized),
     };
 }
 
@@ -600,9 +604,6 @@ function normalizeExpiryCashReceived(event: any): Record<string, unknown> {
         type: "expiry_cash_received",
         settlement_price: decimal(json.settlement_price),
         amount: decimal(json.amount),
-        idle_balance_after: decimal(json.idle_balance_after),
-        sent_to_expiry_after: decimal(json.sent_to_expiry_after),
-        received_from_expiry_after: decimal(json.received_from_expiry_after),
     };
 }
 
@@ -613,9 +614,9 @@ function normalizeExpiryProfitMaterialized(event: any): Record<string, unknown> 
         expiry_market_id: json.expiry_market_id ?? null,
         lp_profit: decimal(json.lp_profit),
         protocol_profit: decimal(json.protocol_profit),
-        idle_balance_after: decimal(json.idle_balance_after),
         protocol_reserve_balance_after: decimal(json.protocol_reserve_balance_after),
         profit_basis_after: decimal(json.profit_basis_after),
+        pending_protocol_profit_after: decimal(json.pending_protocol_profit_after),
     };
 }
 
@@ -661,8 +662,8 @@ function normalizeUpdates(
                 updates.push(update);
                 pendingBs = {};
             }
-        }
-        else if (name === "OrderLiquidated") updates.push(normalizeOrderLiquidated(event, aliases));
+        } else if (name === "OrderLiquidated")
+            updates.push(normalizeOrderLiquidated(event, aliases));
         else if (name === "OrderMinted") updates.push(normalizeOrderMinted(event, row));
         else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
         else if (name === "LiquidatedOrderRedeemed")
@@ -733,22 +734,31 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
         state.openOrderQuantity -= quantityClosed;
     } else if (update.type === "expiry_cash_rebalanced") {
         const amount = BigInt(decimal(update.amount));
-        state.expiryCashBalance = BigInt(decimal(update.expiry_cash_after));
-        state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+        const protocolProfitRealized = BigInt(decimal(update.protocol_profit_realized ?? 0));
         if (update.to_expiry === true) {
+            state.expiryCashBalance += amount;
+            state.vaultIdleBalance -= amount;
             state.profitBasisDebits += amount;
         } else {
+            state.expiryCashBalance -= amount;
+            state.vaultIdleBalance += amount - protocolProfitRealized;
+            state.vaultProtocolReserveBalance += protocolProfitRealized;
+            state.vaultPendingProtocolProfit -= protocolProfitRealized;
             state.profitBasisCredits += amount;
         }
     } else if (update.type === "expiry_cash_received") {
         const amount = BigInt(decimal(update.amount));
         state.expiryCashBalance -= amount;
-        state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+        state.vaultIdleBalance += amount;
         state.profitBasisCredits += amount;
     } else if (update.type === "expiry_profit_materialized") {
         const profitBasisAfter = BigInt(decimal(update.profit_basis_after));
-        state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-        state.vaultProtocolReserveBalance = BigInt(decimal(update.protocol_reserve_balance_after));
+        const protocolReserveAfter = BigInt(decimal(update.protocol_reserve_balance_after));
+        const pendingProtocolProfitAfter = BigInt(decimal(update.pending_protocol_profit_after));
+        const protocolProfitRealized = protocolReserveAfter - state.vaultProtocolReserveBalance;
+        state.vaultIdleBalance -= protocolProfitRealized;
+        state.vaultProtocolReserveBalance = protocolReserveAfter;
+        state.vaultPendingProtocolProfit = pendingProtocolProfitAfter;
         state.profitBasisDebits = profitBasisAfter;
     } else if (update.type === "supply_filled") {
         // A supply fill mints PLP and joins its escrowed DUSDC into idle. PLP supply
@@ -781,6 +791,7 @@ function stateSnapshot(state: EconomicState): Record<string, string> {
         expiry_unresolved_trading_fees: state.expiryUnresolvedTradingFees.toString(),
         vault_idle_balance: state.vaultIdleBalance.toString(),
         vault_protocol_reserve_balance: state.vaultProtocolReserveBalance.toString(),
+        vault_pending_protocol_profit: state.vaultPendingProtocolProfit.toString(),
         profit_basis_debits: state.profitBasisDebits.toString(),
         profit_basis_credits: state.profitBasisCredits.toString(),
         vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),
@@ -1047,7 +1058,8 @@ async function setupSimulation(
 
     result = await executeAndWait(mintLifecycleCapTx(address), "mint_lifecycle_cap");
     const lifecycleCapChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("MarketLifecycleCap"),
+        (change: any) =>
+            change.type === "created" && change.objectType.includes("MarketLifecycleCap"),
     );
     const lifecycleCapId: string = lifecycleCapChange.objectId;
     console.log(`[${ts()}]   LifecycleCap: ${lifecycleCapId}`);
@@ -1060,7 +1072,8 @@ async function setupSimulation(
         "register_underlying_and_create_feeds",
     );
     const pythFeedChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("pyth_feed::PythFeed"),
+        (change: any) =>
+            change.type === "created" && change.objectType.includes("pyth_feed::PythFeed"),
     );
     const bsSpotFeedChange = result.objectChanges.find(
         (change: any) =>
@@ -1154,7 +1167,9 @@ async function setupSimulation(
     const expiryMsString = eventDecimalField(result, "MarketCreated", "expiry");
     const expiryMs = BigInt(expiryMsString);
     if (expiryMs !== expectedExpiryMs) {
-        throw new Error(`expected cadence expiry ${expectedExpiryMs}, got market expiry ${expiryMs}`);
+        throw new Error(
+            `expected cadence expiry ${expectedExpiryMs}, got market expiry ${expiryMs}`,
+        );
     }
     console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId} expiry=${expiryMsString}`);
 
