@@ -110,7 +110,15 @@ fun init(witness: PLP, ctx: &mut TxContext) {
         ctx,
     );
     let metadata_cap = initializer.finalize(ctx);
-    create_and_share(treasury_cap, ctx);
+    let vault = PoolVault {
+        id: object::new(ctx),
+        protocol_reserve_balance: balance::zero(),
+        fee_incentive_reserve: balance::zero(),
+        staked_deep: balance::zero(),
+        lp: lp_book::new(treasury_cap, ctx),
+        expiry_accounting: pool_accounting::new(ctx),
+    };
+    transfer::share_object(vault);
     transfer::public_transfer(metadata_cap, ctx.sender());
 }
 
@@ -600,28 +608,6 @@ public fun cancel_withdraw_request(
     vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, false);
 }
 
-// === Public-Package Functions ===
-
-/// Create an empty pool vault from the PLP treasury cap.
-public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): PoolVault {
-    PoolVault {
-        id: object::new(ctx),
-        protocol_reserve_balance: balance::zero(),
-        fee_incentive_reserve: balance::zero(),
-        staked_deep: balance::zero(),
-        lp: lp_book::new(treasury_cap, ctx),
-        expiry_accounting: pool_accounting::new(ctx),
-    }
-}
-
-/// Create and share an empty pool vault from the PLP treasury cap.
-public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
-    let vault = new(treasury_cap, ctx);
-    let id = vault.id();
-    transfer::share_object(vault);
-    id
-}
-
 /// Register a freshly created expiry market with the pool as an accounting row.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_expiry_market`.
@@ -636,6 +622,8 @@ public(package) fun register_expiry(
         .register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
 }
 
+// === Private Functions ===
+
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
 ///
 /// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
@@ -646,7 +634,7 @@ public(package) fun register_expiry(
 /// deployed elsewhere) has left that debit-basis exclusion, so the carried
 /// `pending_protocol_profit` is subtracted separately to keep it out of LP value
 /// until it is drained into the reserve.
-public(package) fun lp_pool_value(
+fun lp_pool_value(
     idle_balance: u64,
     profit_basis_credits: u64,
     profit_basis_debits: u64,
@@ -667,8 +655,6 @@ public(package) fun lp_pool_value(
     // prevents the subtraction from underflowing and bricking all PLP supply/withdraw.
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
-
-// === Private Functions ===
 
 fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
     vault.sync_fee_incentives(market, expiry_market_id);
@@ -956,11 +942,4 @@ fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
 /// Register PLP in tests.
 public fun init_for_testing(ctx: &mut TxContext) {
     init(PLP {}, ctx);
-}
-
-#[test_only]
-/// Seed idle DUSDC directly. The production supply flow is pruned, so this is the
-/// only way to fund idle in tests (mirrors `expiry_market::receive_cash_for_testing`).
-public fun receive_idle_for_testing(vault: &mut PoolVault, funds: Coin<DUSDC>) {
-    vault.expiry_accounting.receive_idle(funds.into_balance());
 }
