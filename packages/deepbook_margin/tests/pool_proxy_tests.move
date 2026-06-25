@@ -7537,6 +7537,96 @@ fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
+#[test, expected_failure(abort_code = pool_proxy::ERiskRatioMustNotWorsen)]
+fun place_market_order_and_repay_loan_worsening_aborts() {
+    // The monotonic gate fires on this entry too (the after-repay check, distinct
+    // from the v2 swap-only check). A long that spends almost all its quote buying
+    // base at a +4% premium increases exposure with too little leftover quote to
+    // repay, so the net ratio drops -> abort. Confirms this entry cannot be used to
+    // worsen a position.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    // Ask at $1.04 (within the 5% band) for the manager's bid to overpay into.
+    setup_orderbook_liquidity_at_prices<USDC, USDT>(
+        &mut scenario,
+        pool_id,
+        950_000_000,
+        1_040_000_000,
+        &clock,
+    );
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // M1 long: 1100 USDC collateral + 1000 USDT (quote) debt, holding the borrowed
+    // USDT (ratio ~2.1).
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(1100 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdt_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Spend almost all the USDT buying USDC at the $1.04 premium -> exposure up,
+    // tiny repay, net ratio drops -> ERiskRatioMustNotWorsen.
+    let order_info = test_helpers::place_market_order_and_repay_loan_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &mut mm,
+        &mut pool,
+        &mut base_pool,
+        &mut quote_pool,
+        1,
+        constants::self_matching_allowed(),
+        950 * test_constants::usdc_multiplier(),
+        true,
+        false,
+        &clock,
+    );
+    destroy(order_info);
+
+    abort 999
+}
+
 #[test, expected_failure(abort_code = pool_proxy::EPoolNotEnabledForMarginTrading)]
 fun place_market_order_and_repay_loan_aborts_when_pool_disabled() {
     // Unlike the reduce-only and-repay siblings, the non-reduce-only and-repay
