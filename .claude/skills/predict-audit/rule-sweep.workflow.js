@@ -8,7 +8,12 @@
 // Before Mutate", and the leaf-self-consistency half of 9) are NOT here — they need deep per-module context
 // and live in ownership-walk.workflow.js (R1-R7). Do not duplicate them.
 //
-// args = { rules?: string[] (subset of family keys), maxFindings?: number, groundTruth?: string }
+// args = { rules?: string[] (subset of family keys), maxFindings?: number, groundTruth?: string,
+//          dryRounds?: number (default 2), maxRounds?: number (default 3), verifyCap?: number (default 60) }
+// COST IS BOUNDED BY CONSTRUCTION: agents <= maxRounds*families (sweep) + verifyCap (verify), so a run cannot
+// hit the 1000-agent cap. The `budget` global (a "+NNNm" turn directive) is only an optional early-stop and
+// often does NOT propagate into a background workflow — never rely on it. Verify is SEVERITY-GATED: low/cleanup
+// hygiene findings are reported RAW (unverified, no subagent); high/medium (or fix-code) get one verifier each.
 // Subagents READ-ONLY; no sui build/test or localnet (watchdog) — the main loop runs the compiler in the
 // parent-reconciliation pass (rule-auditor's build/test step).
 
@@ -17,7 +22,7 @@ export const meta = {
   description: 'Per-rule sweep of the mechanical/local repo rules across the Predict packages (refreshed rule-auditor): sweep -> verify/classify',
   phases: [
     { title: 'Sweep', detail: 'one agent per rule family sweeps every relevant module for that rule' },
-    { title: 'Verify', detail: 'refute / classify each violation (fix-code / update-rule / design-decision / false-positive)' },
+    { title: 'Verify', detail: 'severity-gated: refute/classify each high/medium finding; low/cleanup hygiene reported raw' },
   ],
 }
 
@@ -114,7 +119,8 @@ const VERDICT_SCHEMA = {
 // MAXIMAL MODE: loop-until-dry SWEEP. Re-sweep each rule family across rounds (each told what's already
 // found for that family so it hunts new sites), union new findings, until K dry rounds or the budget floor.
 const DRY_TARGET = A.dryRounds || 2
-const MAX_ROUNDS = A.maxRounds || 10
+const MAX_ROUNDS = A.maxRounds || 3
+const VERIFY_CAP = A.verifyCap || 60
 const RESERVE = (budget && budget.total) ? Math.max(3_000_000, Math.floor(budget.total * 0.3)) : 3_000_000
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 // strip line numbers (so a shifted-line same violation dedups) but KEEP a claim digest, so two DISTINCT
@@ -151,8 +157,18 @@ while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
 }
 log(`Sweep converged after ${round} rounds (${dry} dry): ${candidates.length} unique candidate findings`)
 
+// SEVERITY-GATED + CAPPED: only high/medium (or fix-code) findings get a verifier; low/cleanup hygiene is
+// reported RAW (unverified). Capped at VERIFY_CAP by severity so the agent count stays bounded.
 phase('Verify')
-const all = (await parallel(candidates.map((f, fi) => () => agent(
+const sevRankF = { high: 4, medium: 3, low: 2, cleanup: 1 }
+const effSev = f => f.severity || (f.classification === 'fix-code' ? 'medium' : 'low')
+const ruleShouldVerify = f => { const s = effSev(f); return s === 'high' || s === 'medium' }
+const verifyAll = candidates.filter(ruleShouldVerify).sort((a, b) => (sevRankF[effSev(b)] || 0) - (sevRankF[effSev(a)] || 0))
+const toVerify = verifyAll.slice(0, VERIFY_CAP)
+const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // beyond the cap -> reported unverified (logged, never silently dropped)
+const unverifiedF = candidates.filter(f => !ruleShouldVerify(f)).concat(verifyOverflow)
+if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} finding(s) reported UNVERIFIED — raise verifyCap to verify them all`)
+const all = (await parallel(toVerify.map((f, fi) => () => agent(
   `${PRELUDE}\n\nADVERSARIALLY VERIFY this single rule-sweep finding (rule family ${f.rule_family}). Read the cited code; decide: confirmed (real violation) / refuted (not a violation, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite it). Then classify: fix-code / update-rule (defensible → narrowest exception) / design-decision / false-positive. Be skeptical; mechanical rules have many intentional exceptions (getters retained by D003, public APIs needed for PTBs, disabled test suites).\n\nFINDING:\n${JSON.stringify(f, null, 2)}`,
   { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.rule_family}:${fi}` })
   .then(verdict => ({ ...f, verdict }))))).filter(Boolean)
@@ -165,9 +181,10 @@ function shape(x) {
   return { rule_family: x.rule_family, severity: x.severity || (x.classification === 'fix-code' ? 'medium' : 'low'), location: x.location, claim: x.claim, classification: (x.verdict && x.verdict.classification) || x.classification, recommendation: x.recommendation, evidence: x.verdict && x.verdict.evidence }
 }
 return {
-  summary: { rule_families: FAMILIES.length, rounds: round, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length },
+  summary: { rule_families: FAMILIES.length, rounds: round, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length, unverified: unverifiedF.length },
   coverage: Object.keys(coverageByFamily).map(rf => ({ lane: rf, coverage: coverageByFamily[rf] })),
   confirmed: confirmed.map(shape),
   settled: settledOut.map(shape),
   refuted: refutedOut.map(x => ({ rule_family: x.rule_family, location: x.location, claim: x.claim, why: x.verdict && x.verdict.reasoning })),
+  unverified: unverifiedF.map(x => ({ rule_family: x.rule_family, severity: effSev(x), location: x.location, claim: x.claim, classification: x.classification, recommendation: x.recommendation, status: 'unverified' })),
 }
