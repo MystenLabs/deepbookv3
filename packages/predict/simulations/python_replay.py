@@ -45,7 +45,8 @@ MAX_ENTRY_PROBABILITY = 990_000_000
 # 0 is the neg-inf sentinel (lower side) and POS_INF_TICK is the pos-inf sentinel
 # (higher side). The on-chain pos-inf raw strike sentinel is u64::MAX.
 ORACLE_TICK_SIZE = FLOAT_SCALING
-TICK_BITS = 24
+ADMISSION_TICK_SIZE = ORACLE_TICK_SIZE
+TICK_BITS = 30
 POS_INF_TICK = (1 << TICK_BITS) - 1
 NEG_INF_STRIKE = 0
 POS_INF_STRIKE = (1 << 64) - 1  # constants::pos_inf!() == u64::MAX
@@ -298,18 +299,19 @@ def signed_svi_value(magnitude: int, is_negative: bool) -> str:
 
 
 def align_strike_to_tick(strike: int) -> int:
-    # Snap a raw strike DOWN to its whole-tick multiple. The absolute-tick domain
-    # has no grid to center; alignment is just flooring. The tick must land in the
-    # finite domain 1..POS_INF_TICK-1.
+    # Snap a raw strike DOWN to its admission boundary. The absolute-tick domain has
+    # no grid to center; admission alignment is just flooring to the configured
+    # mint-entry multiple. The tick must land in the finite domain 1..POS_INF_TICK-1.
     if strike <= 0:
         raise ValueError("strike must be positive")
-    tick = strike // ORACLE_TICK_SIZE
+    aligned = (strike // ADMISSION_TICK_SIZE) * ADMISSION_TICK_SIZE
+    tick = aligned // ORACLE_TICK_SIZE
     if tick <= 0 or tick >= POS_INF_TICK:
         raise ValueError(
             "strike tick outside the finite tick domain (1..POS_INF_TICK-1); "
             "raise the oracle tick size to cover a higher strike"
         )
-    return tick * ORACLE_TICK_SIZE
+    return aligned
 
 
 def binary_range_bounds(strike: int, is_up: bool) -> tuple[int, int]:

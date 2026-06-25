@@ -27,6 +27,8 @@ public struct MarketCreated has copy, drop, store {
     expiry: u64,
     /// Raw-price-per-tick factor; indexers/SDKs derive raw strikes as `tick * tick_size`.
     tick_size: u64,
+    /// Coarser raw-price step that new finite mint boundaries must align to.
+    admission_tick_size: u64,
     /// DUSDC pool allocation cap snapshotted for this expiry.
     max_expiry_allocation: u64,
     /// Minimum DUSDC cash target snapshotted for this expiry.
@@ -47,6 +49,16 @@ public struct MarketCreated has copy, drop, store {
 public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
     expiry_market_id: ID,
     paused: bool,
+}
+
+/// Emitted when a market records its reference fine-grid tick from the exact
+/// previous-window Propbook Pyth observation.
+public struct ReferenceTickSet has copy, drop, store {
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    source_timestamp_ms: u64,
+    spot: u64,
+    tick: u64,
 }
 
 /// Emitted once when a market crosses into terminal settlement: `ensure_settled`
@@ -79,6 +91,7 @@ public(package) fun emit_market_created(
     propbook_underlying_id: u32,
     expiry: u64,
     tick_size: u64,
+    admission_tick_size: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     strike_exposure_config: &StrikeExposureConfig,
@@ -90,6 +103,7 @@ public(package) fun emit_market_created(
         propbook_underlying_id,
         expiry,
         tick_size,
+        admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
         liquidation_ltv: strike_exposure_config.liquidation_ltv(),
@@ -109,6 +123,22 @@ public(package) fun emit_expiry_market_mint_paused_updated(expiry_market_id: ID,
     event::emit(ExpiryMarketMintPausedUpdated {
         expiry_market_id,
         paused,
+    });
+}
+
+public(package) fun emit_reference_tick_set(
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    source_timestamp_ms: u64,
+    spot: u64,
+    tick: u64,
+) {
+    event::emit(ReferenceTickSet {
+        expiry_market_id,
+        propbook_underlying_id,
+        source_timestamp_ms,
+        spot,
+        tick,
     });
 }
 

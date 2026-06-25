@@ -18,7 +18,7 @@ from sim_artifacts import (
     load_records,
 )
 
-POS_INF_TICK = (1 << 24) - 1
+POS_INF_TICK = (1 << 30) - 1
 
 
 def to_price(value: int | None) -> float | None:

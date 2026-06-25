@@ -3,21 +3,29 @@
 // Predict smart-contract audit orchestrator — MAXIMAL MODE (budget-aware loop-until-dry).
 //
 // Findings are SAMPLED, not enumerated: re-running a lens surfaces different issues each pass. So this runs
-// each lens across ROUNDS, unions new findings, and keeps going until K consecutive rounds add nothing new
-// OR the token-budget floor is hit — converting sampling variance into near-enumeration AND auto-retrying
-// flaky (StructuredOutput-failed) units (a failed unit is just an empty round that re-runs). Launch from the
-// MAIN LOOP after ground-truth; the main loop synthesizes the report. Cost is intentionally high (last line
-// of defense); control it with scope + the budget, not by cutting coverage.
+// each lens across a few ROUNDS, unions new findings (deduped ACROSS lenses), and stops at the round cap or
+// when every lens has CONVERGED. Lenses retire PER-LANE: a lens that produces no new finding for dryRounds
+// consecutive rounds drops out, so later rounds only re-run lenses still surfacing issues (the sequence trim).
+// Launch from the MAIN LOOP after ground-truth; the main loop synthesizes the report.
+// Cost is BOUNDED BY CONSTRUCTION (see the agent-count note below) — deepen a run with maxRounds/verifyCap,
+// not by removing the caps.
 //
 // args = {
 //   groundTruth: string, scope: string,
 //   lenses?:     string[],  // subset of lens keys (default: all 10)
 //   maxFindings?: number,   // cap NEW findings per lens per round (default: 12)
-//   dryRounds?:  number,    // stop after this many consecutive no-new-finding rounds (default: 3)
-//   maxRounds?:  number,    // hard round cap (default: 20)
+//   dryRounds?:  number,    // stop after this many consecutive no-new-finding rounds (default: 2)
+//   maxRounds?:  number,    // hard round cap (default: 3)
+//   verifyCap?:  number,    // max Medium+ candidates sent to the verify panel (default: 60)
 // }
-// The `budget` global (set by a "+NNNm" turn directive, e.g. +100m) gates the loop: it stops when
-// budget.remaining() drops below a reserve. With no budget set, dryRounds/maxRounds bound it.
+// COST IS BOUNDED BY CONSTRUCTION: total agents <= maxRounds*lenses (find) + verifyCap*3 (verify) + 1, so a
+// run CANNOT hit the 1000-agent cap even when no token budget binds. The `budget` global (a "+NNNm" turn
+// directive) is only an ADDITIONAL early-stop — it often does NOT propagate into a background workflow
+// (budget.total comes through null), so never rely on it as the bound. Verify is SEVERITY-GATED + CROSS-MODEL:
+// Info/Low + cleanup-only findings are reported RAW (unverified, no subagent); Medium gets one codex verifier;
+// High/Critical get a MIXED panel (codex refute + codex repro + Claude settled) so every escalated finding
+// clears two different models — a finder-model bias check. Needs the codex CLI; if codex is unavailable the
+// codex verdicts return null and aggregate() degrades to the Claude verdict(s) (a lone Medium -> 'uncertain').
 //
 // Subagents are READ-ONLY on source; no sui build/test or localnet (watchdog) — Python sims only.
 
@@ -25,8 +33,8 @@ export const meta = {
   name: 'predict-audit-orchestrator',
   description: 'Maximal multi-lens audit of Predict (+ siblings): loop-until-dry find -> diverse adversarial verify -> structured findings',
   phases: [
-    { title: 'Find', detail: 'loop-until-dry: 10 lenses re-sample across rounds until no new findings or budget floor' },
-    { title: 'Verify', detail: 'diverse refute/settled/repro panel per unique candidate' },
+    { title: 'Find', detail: 'loop-until-dry with per-lane retirement: each lens re-samples until it converges, then drops out; deduped ACROSS lenses' },
+    { title: 'Verify', detail: 'severity-gated + CROSS-MODEL: High/Critical = mixed panel (codex refute+repro, Claude settled), Medium = 1 codex verifier, Info/Low/cleanup left unverified' },
     { title: 'Promote', detail: 'elevate high-signal observations buried in coverage into findings' },
   ],
 }
@@ -37,9 +45,17 @@ if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(no ground-truth provided — note this in coverage)'
 const scope = A.scope || 'full protocol at current HEAD'
-const maxFindings = A.maxFindings || 12
-const DRY_TARGET = A.dryRounds || 3
-const MAX_ROUNDS = A.maxRounds || 20
+// DEPTH preset — ORTHOGONAL to breadth/scope: it tunes how hard each lens digs (rounds / verify / findings),
+// NOT how many lenses run. So depth:'low' is still a FULL-breadth audit (all lenses) — just a single pass per
+// lens. Precedence: an explicit cap arg wins over the depth preset, which wins over the hardcoded default.
+// Tiers: low = quick full-coverage pass; standard = the bounded default; max = reserve for high-budget runs.
+const DEPTH = { low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxFindings: 16 } }
+const depthName = DEPTH[A.depth] ? A.depth : 'standard'
+const D = DEPTH[depthName]
+const maxFindings = A.maxFindings || D.maxFindings || 12
+const DRY_TARGET = A.dryRounds || D.dryRounds || 2
+const MAX_ROUNDS = A.maxRounds || D.maxRounds || 3
+const VERIFY_CAP = A.verifyCap || D.verifyCap || 60
 const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget.total * 0.3)) : 5_000_000 // reserve ~30% of the budget for verify + promote + synthesis
 
 const ALL_LANES = [
@@ -58,7 +74,7 @@ const want = Array.isArray(A.lenses) ? A.lenses : null
 const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0) : ALL_LANES
 const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-log(`audit config — scope: "${scope}" | lenses: ${want ? want.join(',') : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
+log(`audit config — scope: "${scope}" | depth: ${depthName} | lenses: ${want ? want.join(',') : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
   + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 80)}`)
 if (want && !LANES.length) {
@@ -130,14 +146,31 @@ Emit ONLY via the StructuredOutput schema. settled_ref="" and evidence="" only w
 }
 
 function isHigh(sev) { return sev === 'Critical' || sev === 'High' }
+const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
+function sevOf(s) { return SEVRANK[(s || '').toLowerCase()] || 0 }
+// Verify is worth a subagent only for Medium+ findings that aren't pure cleanup. Info/Low + cleanup-only
+// findings are reported RAW (unverified) — this is the gate that bounds the agent count (and was the cost
+// blow-up: ~575 candidates x 3 verifiers hit the 1000-agent cap).
+function shouldVerify(f) { return f.impact !== 'cleanup-only' && sevOf(f.severity) >= SEVRANK.medium }
 
+// Verify panel is CROSS-MODEL for bias reduction: the refute + repro lenses run on codex (a DIFFERENT model
+// than the Claude finder — scoped adversarial code checks are codex's strength and catch finder-model blind
+// spots), while the settled-decision lens stays on Claude (it leans on Claude's familiarity with the design
+// journal). agentType:null => the default Claude subagent. If codex is unavailable these agents return null
+// and aggregate() falls back to whatever verdicts returned. (Spike: codex emits schema-valid VERDICT JSON and
+// re-derives findings from its own git/grep evidence — see the codex-verify spike that validated this path.)
+const CODEX = 'codex:codex-rescue'
 const LENSES = [
-  { tag: 'refute', build: () => 'ADVERSARIAL LENS = REFUTE-BY-CORRECTNESS. Try to prove this finding FALSE from the actual code. Read the cited lines, grep all call sites, check whether the precondition can hold. If you cannot construct a concrete code-grounded triggering path, verdict "refuted". When the claim is an empirical/economic break, attempt a quick Python check. Cite file:line / sim evidence.' },
-  { tag: 'settled', build: () => 'ADVERSARIAL LENS = SETTLED-DECISION CHECK. Search .claude/predict-design/DECISION_JOURNAL.md, HISTORY.md, AGENTS.md settled list, ROUNDING_POLICY.md. Is this an accepted/rejected design decision or a documented ACCEPT? If yes, verdict "settled" with the D-id in evidence. Otherwise pass through.' },
-  { tag: 'repro', build: () => 'ADVERSARIAL LENS = REPRODUCE. Trace the exact PTB-ordered sequence through the real mint/redeem/liquidate/settle/flush code (and write a Python sim if the break is economic). Does it actually reach the cited line with all preconditions co-occurring? If they cannot co-exist, verdict "refuted"; if it genuinely triggers, "confirmed". Cite the call chain / sim seed.' },
+  { tag: 'refute', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REFUTE-BY-CORRECTNESS. Try to prove this finding FALSE from the actual code. Read the cited lines, grep all call sites, check whether the precondition can hold. If you cannot construct a concrete code-grounded triggering path, verdict "refuted". When the claim is an empirical/economic break, attempt a quick Python check. Cite file:line / sim evidence.' },
+  { tag: 'settled', agentType: null, build: () => 'ADVERSARIAL LENS = SETTLED-DECISION CHECK. Search .claude/predict-design/DECISION_JOURNAL.md, HISTORY.md, AGENTS.md settled list, ROUNDING_POLICY.md. Is this an accepted/rejected design decision or a documented ACCEPT? If yes, verdict "settled" with the D-id in evidence. Otherwise pass through.' },
+  { tag: 'repro', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REPRODUCE. Trace the exact PTB-ordered sequence through the real mint/redeem/liquidate/settle/flush code (and write a Python sim if the break is economic). Does it actually reach the cited line with all preconditions co-occurring? If they cannot co-exist, verdict "refuted"; if it genuinely triggers, "confirmed". Cite the call chain / sim seed.' },
 ]
 
-const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md for the module map + prior-awareness. The .claude/predict-review/ files are STALE — trust the current tree. Do NOT run sui build/test or localnet; reason from source, grep, git, and Python. Verdicts: confirmed (real, reproducible) / refuted (wrong, preconditions can't co-occur, or already mitigated) / settled (matches a D-id, cite it) / uncertain. Provide file:line / git / sim evidence. adjusted_severity = your independent severity (Info if refuted/settled).`
+// Single-pass verifier for MEDIUM findings — does refute+settled+repro in one agent (High/Critical still get
+// the full 3-lens LENSES panel above). Keeps Medium verified without paying 3 subagents each.
+const COMBINED_VERIFY = { tag: 'verify', agentType: CODEX, build: () => 'ADVERSARIAL VERIFY (single pass — do ALL THREE): (1) REFUTE — try to prove the finding FALSE from the actual code; read the cited lines + grep call sites; if no concrete triggering path exists, verdict "refuted". (2) SETTLED — check DECISION_JOURNAL.md / HISTORY.md / AGENTS settled list / ROUNDING_POLICY.md; if it matches an accepted/rejected decision, verdict "settled" with the D-id in evidence. (3) REPRODUCE — trace the PTB-ordered path through the real mint/redeem/liquidate/settle/flush code (Python sim if economic); if preconditions genuinely co-occur, "confirmed", else "refuted". Cite file:line / D-id / sim.' }
+
+const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md for the module map + prior-awareness. The .claude/predict-review/ files are STALE — trust the current tree. Do NOT run sui build/test or localnet; reason from source, grep, git, and Python. STAY SCOPED: read the cited files + their direct callers/feeds, not the whole repo; keep it tight (a quick scoped check, not an exploration). Verdicts: confirmed (real, reproducible) / refuted (wrong, preconditions can't co-occur, or already mitigated) / settled (matches a D-id, cite it) / uncertain. Provide file:line / git / sim evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object (no markdown fences, no prose around it).`
 
 function verifyPrompt(f, laneKey, lens) {
   return `${VERIFY_PREAMBLE}\n\nFINDING (lane "${laneKey}"):\n${JSON.stringify(f, null, 2)}\n\n${lens.build()}`
@@ -154,7 +187,6 @@ function aggregate(f, laneKey, verdicts) {
   else if (confirmed > 0) status = 'confirmed'
   // severity = MAX of the finder's and the CONFIRMING verifiers' adjusted_severity — the panel exists to
   // re-rank, so a fund-loss bug the finder under-rated must not sink. Upgrades only; never downgrade a real one.
-  const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
   const severity = [f.severity, ...vs.filter(v => v.verdict === 'confirmed').map(v => v.adjusted_severity)]
     .filter(Boolean).sort((a, b) => (SEVRANK[(b || '').toLowerCase()] || 0) - (SEVRANK[(a || '').toLowerCase()] || 0))[0] || f.severity
   return {
@@ -167,45 +199,80 @@ function aggregate(f, laneKey, verdicts) {
   }
 }
 
-// ---------- FIND: budget-aware loop-until-dry ----------
+// ---------- FIND: loop-until-dry with PER-LANE retirement (the sequence trim) ----------
 phase('Find')
 // Dedup key strips line numbers + normalizes the title, so a re-worded or line-shifted SAME finding still
 // matches across rounds — otherwise "fresh" never goes to 0, the loop never dries, and it burns the whole
 // budget on rewording churn instead of converging.
 function nloc(s) { return (s || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '') }
 function ntitle(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 50) }
-function fkey(f) { return `${f.lane}|${nloc(f.location).slice(0, 80)}|${ntitle(f.title)}` }
-const seen = new Set()
+// Dedup key is location+title with NO lane, so the SAME issue surfaced by N lenses collapses to ONE candidate
+// (it used to include the lane, so e.g. one liveness bug found by 5 lenses became 5 candidates -> 15 verify
+// agents). The lens that found it is kept as metadata in `lanes[]`.
+function fkey(f) { return `${nloc(f.location).slice(0, 80)}|${ntitle(f.title)}` }
+const byKey = new Map()
 const candidates = []
 const coverageByLane = {}
-let dry = 0, round = 0
-while (dry < DRY_TARGET && round < MAX_ROUNDS && budgetLeft() > RESERVE) {
+// PER-LANE retirement (sequence trim): each lens carries its own consecutive-dry counter. A lens that
+// produces no NEW finding for DRY_TARGET rounds retires and is not re-run, so later rounds spend ONLY on
+// lenses still surfacing issues — instead of re-running all of them every round until a single GLOBAL dry
+// counter trips. dryRounds:1 => re-run only lenses that were fresh last round; maxRounds:1 => single pass.
+// A lens whose agent ERRORED (null result) is NOT counted dry — it stays active and retries next round.
+const dryByLane = {}
+LANES.forEach(l => { dryByLane[l.key] = 0 })
+let round = 0
+while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
+  const activeLanes = LANES.filter(l => dryByLane[l.key] < DRY_TARGET)
+  if (!activeLanes.length) break   // every lens has converged (retired)
   round++
   // Per-lane known list (not the whole cross-lane union) so the prompt doesn't grow super-linearly and
-  // trip StructuredOutput truncation on big runs.
+  // trip StructuredOutput truncation on big runs. A merged candidate is suppressed for EVERY lane that found it.
   const knownByLane = {}
-  candidates.forEach(f => { (knownByLane[f.lane] = knownByLane[f.lane] || []).push(`- [${f.severity}] ${f.title} @ ${f.location}`) })
-  const roundRes = await parallel(LANES.map(lane => () => agent(finderPrompt(lane, round, (knownByLane[lane.key] || []).join('\n')),
+  candidates.forEach(f => (f.lanes || [f.lane]).forEach(ln => { (knownByLane[ln] = knownByLane[ln] || []).push(`- [${f.severity}] ${f.title} @ ${f.location}`) }))
+  const roundRes = await parallel(activeLanes.map(lane => () => agent(finderPrompt(lane, round, (knownByLane[lane.key] || []).join('\n')),
     { schema: FINDINGS_SCHEMA, effort: 'max', phase: 'Find', label: `find:${lane.key}:r${round}` })))
-  let freshCount = 0
-  roundRes.filter(Boolean).forEach(r => {
-    coverageByLane[r.lane] = { coverage: r.coverage, top3: r.top3 || [] }
+  const freshByLane = {}
+  // Index by the lane we DISPATCHED (activeLanes[i]), not the agent-returned r.lane: parallel() preserves
+  // order, and the dispatched key is the stable identity (some lenses fill `lane` with their file name).
+  roundRes.forEach((r, i) => {
+    if (!r) return
+    const laneKey = activeLanes[i].key
+    coverageByLane[laneKey] = { coverage: r.coverage, top3: r.top3 || [] }
     ;(r.findings || []).forEach(f => {
-      const ff = { ...f, lane: r.lane }
-      const k = fkey(ff)
-      if (!seen.has(k)) { seen.add(k); candidates.push(ff); freshCount++ }
+      const k = fkey(f)
+      const ex = byKey.get(k)
+      if (!ex) { const ff = { ...f, lane: laneKey, lanes: [laneKey] }; byKey.set(k, ff); candidates.push(ff); freshByLane[laneKey] = (freshByLane[laneKey] || 0) + 1 }
+      else {  // same issue from another lens/round — merge: record the lens, keep the worst severity + real impact
+        if (ex.lanes.indexOf(laneKey) < 0) ex.lanes.push(laneKey)
+        if (sevOf(f.severity) > sevOf(ex.severity)) ex.severity = f.severity
+        if (ex.impact === 'cleanup-only' && f.impact !== 'cleanup-only') ex.impact = f.impact
+      }
     })
   })
-  log(`Find round ${round}: +${freshCount} new (total ${candidates.length}) | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
-  if (freshCount === 0) dry++; else dry = 0
+  // Advance each active lens's dry counter (retire at DRY_TARGET); reset it for productive ones. A lens that
+  // ERRORED (no result) is skipped — neither advanced nor reset — so it retries next round without retiring.
+  activeLanes.forEach((l, i) => { if (!roundRes[i]) return; if ((freshByLane[l.key] || 0) === 0) dryByLane[l.key]++; else dryByLane[l.key] = 0 })
+  const freshTotal = Object.values(freshByLane).reduce((a, b) => a + b, 0)
+  const retired = LANES.filter(l => dryByLane[l.key] >= DRY_TARGET).length
+  log(`Find round ${round}: ran ${activeLanes.length} lens(es), +${freshTotal} new (total ${candidates.length}) | ${retired}/${LANES.length} retired | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
 }
-log(`Find converged after ${round} rounds (${dry} dry): ${candidates.length} unique candidates`)
+const retiredFinal = LANES.filter(l => dryByLane[l.key] >= DRY_TARGET).length
+log(`Find converged after ${round} round(s): ${candidates.length} unique candidates (${retiredFinal}/${LANES.length} lenses retired)`)
 
-// ---------- VERIFY: every candidate gets the full diverse panel (maximal mode) ----------
+// ---------- VERIFY: SEVERITY-GATED (bounds the agent count) ----------
+// Only Medium+ non-cleanup findings are verified; Info/Low + cleanup-only are reported RAW (unverified).
+// High/Critical get the full refute/settled/repro panel; Medium gets one combined verifier. The verify set
+// is capped at VERIFY_CAP (by severity) so total agents stay well under the 1000-agent cap even with no budget.
 phase('Verify')
-const verified = await parallel(candidates.map((f, fi) => async () => {
-  const verdicts = await parallel(LENSES.map(lens => () =>
-    agent(verifyPrompt(f, f.lane, lens), { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.lane}:${fi}:${lens.tag}` })))
+const verifyAll = candidates.filter(shouldVerify).sort((a, b) => sevOf(b.severity) - sevOf(a.severity))
+const toVerify = verifyAll.slice(0, VERIFY_CAP)
+const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // Medium+ beyond the cap -> reported unverified (logged, never silently dropped)
+const unverified = candidates.filter(f => !shouldVerify(f)).concat(verifyOverflow)
+if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} Medium+ candidate(s) reported UNVERIFIED — raise verifyCap to panel them all`)
+const verified = await parallel(toVerify.map((f, fi) => async () => {
+  const panel = isHigh(f.severity) ? LENSES : [COMBINED_VERIFY]   // cross-model panel for High/Critical, 1 codex verifier for Medium
+  const verdicts = await parallel(panel.map(lens => () =>
+    agent(verifyPrompt(f, f.lane, lens), { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.lane}:${fi}:${lens.tag}`, ...(lens.agentType ? { agentType: lens.agentType } : {}) })))
   return aggregate(f, f.lane, verdicts)
 }))
 
@@ -214,7 +281,7 @@ const kept = all.filter(f => f.status === 'confirmed' || f.status === 'uncertain
 const settledOut = all.filter(f => f.status === 'settled')
 const refutedOut = all.filter(f => f.status === 'refuted')
 const lanes = Object.keys(coverageByLane).map(k => ({ lane: k, coverage: coverageByLane[k].coverage, top3: coverageByLane[k].top3 }))
-log(`Verify: candidates ${all.length} | kept ${kept.length} | settled ${settledOut.length} | refuted ${refutedOut.length}`)
+log(`Verify: verified ${all.length} (kept ${kept.length} | settled ${settledOut.length} | refuted ${refutedOut.length}) | unverified ${unverified.length} (Info/Low/cleanup, raw)`)
 
 // ---------- PROMOTE: elevate high-signal observations buried in coverage ----------
 phase('Promote')
@@ -234,7 +301,8 @@ const promoted = (promoteRes && promoteRes.findings) || []
 if (promoted.length) log(`Promoted ${promoted.length} buried observation(s) from coverage into findings`)
 
 return {
-  summary: { lenses: lanes.length, rounds: round, candidates: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length, promoted: promoted.length },
+  summary: { lenses: lanes.length, rounds: round, candidates: candidates.length, verified: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length, unverified: unverified.length, promoted: promoted.length },
   kept, settled: settledOut, refuted: refutedOut, promoted,
+  unverified: unverified.map(f => ({ ...f, status: 'unverified' })),
   coverage: lanes.map(l => ({ lane: l.lane, coverage: l.coverage, top3: l.top3 })),
 }

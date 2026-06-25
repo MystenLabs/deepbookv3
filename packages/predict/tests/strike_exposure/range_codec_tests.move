@@ -13,8 +13,8 @@ use std::unit_test::assert_eq;
 
 /// `default_tick_size` used by the conversion tests (1e9 raw per tick).
 const TICK_SIZE: u64 = 1_000_000_000;
-/// `pos_inf_tick` = 2^24 − 1, the open upper-bound sentinel and max finite tick.
-const POS_INF_TICK: u64 = 16_777_215;
+/// `pos_inf_tick` = 2^30 - 1, the open upper-bound sentinel and max finite tick.
+const POS_INF_TICK: u64 = 1_073_741_823;
 
 // === strikes_from_ticks (tick -> raw, with sentinels) ===
 

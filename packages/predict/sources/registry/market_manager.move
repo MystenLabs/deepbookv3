@@ -47,6 +47,8 @@ public struct MarketManager has store {
 public struct CadenceConfig has copy, drop, store {
     /// Raw-price-per-tick factor snapshotted into each created market.
     tick_size: u64,
+    /// Coarser raw-price step that new finite mint boundaries must align to.
+    admission_tick_size: u64,
     /// DUSDC pool allocation cap snapshotted into pool accounting for each created expiry.
     max_expiry_allocation: u64,
     /// Minimum DUSDC cash target snapshotted into pool accounting for each created expiry.
@@ -185,6 +187,27 @@ public(package) fun tick_size(deployable: &DeployableMarket): u64 {
     deployable.cadence.tick_size
 }
 
+public(package) fun admission_tick_size(deployable: &DeployableMarket): u64 {
+    deployable.cadence.admission_tick_size
+}
+
+public(package) fun cadence_period_ms(cadence_id: u8): u64 {
+    if (cadence_id == cadence_one_minute!()) {
+        constants::one_minute_ms!()
+    } else if (cadence_id == cadence_five_minute!()) {
+        constants::five_minutes_ms!()
+    } else if (cadence_id == cadence_one_hour!()) {
+        constants::one_hour_ms!()
+    } else if (cadence_id == cadence_one_day!()) {
+        constants::one_day_ms!()
+    } else if (cadence_id == cadence_one_week!()) {
+        constants::one_week_ms!()
+    } else {
+        assert!(cadence_id == cadence_one_month!(), EInvalidCadence);
+        constants::one_month_ms!()
+    }
+}
+
 public(package) fun max_expiry_allocation(deployable: &DeployableMarket): u64 {
     deployable.cadence.max_expiry_allocation
 }
@@ -210,13 +233,21 @@ public(package) fun set_cadence_config(
     manager: &mut MarketManager,
     cadence_id: u8,
     tick_size: u64,
+    admission_tick_size: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
 ) {
-    assert_cadence_config(tick_size, max_expiry_allocation, initial_expiry_cash, window_size);
+    assert_cadence_config(
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        window_size,
+    );
     let cadence = &mut manager.cadences[cadence_index(cadence_id)];
     cadence.tick_size = tick_size;
+    cadence.admission_tick_size = admission_tick_size;
     cadence.max_expiry_allocation = max_expiry_allocation;
     cadence.initial_expiry_cash = initial_expiry_cash;
     cadence.window_size = window_size;
@@ -267,25 +298,14 @@ fun underlying_config_mut(
     manager.underlying_configs.borrow_mut(propbook_underlying_id)
 }
 
-fun cadence_period_ms(cadence_id: u8): u64 {
-    if (cadence_id == cadence_one_minute!()) {
-        constants::one_minute_ms!()
-    } else if (cadence_id == cadence_five_minute!()) {
-        constants::five_minutes_ms!()
-    } else if (cadence_id == cadence_one_hour!()) {
-        constants::one_hour_ms!()
-    } else if (cadence_id == cadence_one_day!()) {
-        constants::one_day_ms!()
-    } else if (cadence_id == cadence_one_week!()) {
-        constants::one_week_ms!()
-    } else {
-        assert!(cadence_id == cadence_one_month!(), EInvalidCadence);
-        constants::one_month_ms!()
-    }
-}
-
 fun disabled_cadence(): CadenceConfig {
-    CadenceConfig { tick_size: 0, max_expiry_allocation: 0, initial_expiry_cash: 0, window_size: 0 }
+    CadenceConfig {
+        tick_size: 0,
+        admission_tick_size: 0,
+        max_expiry_allocation: 0,
+        initial_expiry_cash: 0,
+        window_size: 0,
+    }
 }
 
 fun disabled_cadences(): vector<CadenceConfig> {
@@ -306,12 +326,14 @@ fun cadence_index(cadence_id: u8): u64 {
 
 fun assert_cadence_config(
     tick_size: u64,
+    admission_tick_size: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
 ) {
     let disabled =
         tick_size == 0
+            && admission_tick_size == 0
             && max_expiry_allocation == 0
             && initial_expiry_cash == 0
             && window_size == 0;
@@ -319,12 +341,16 @@ fun assert_cadence_config(
 
     assert!(
         tick_size > 0
+            && admission_tick_size > 0
             && max_expiry_allocation > 0
             && initial_expiry_cash > 0
             && window_size > 0,
         EInvalidCadenceConfig,
     );
     config_constants::assert_market_tick_size_bounds(tick_size);
+    config_constants::assert_market_tick_size_bounds(admission_tick_size);
+    assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
+    assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
     config_constants::assert_cadence_window_size(window_size);
     assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
