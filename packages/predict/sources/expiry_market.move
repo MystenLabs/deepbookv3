@@ -46,8 +46,8 @@ const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
 const EMintQuantityBelowMin: u64 = 6;
 const EWrongPricer: u64 = 7;
-const ESpecificTickObservationMissing: u64 = 8;
-const ESpecificTickTimestampMismatch: u64 = 9;
+const EReferenceTickObservationMissing: u64 = 8;
+const EReferenceTickTimestampMismatch: u64 = 9;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -144,14 +144,14 @@ public fun admission_tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.admission_tick_size()
 }
 
-/// Return the specific fine-grid tick admitted for this expiry, if it has been set.
-public fun specific_tick(market: &ExpiryMarket): Option<u64> {
-    market.strike_exposure.specific_tick()
+/// Return the reference fine-grid tick admitted for this expiry, if it has been set.
+public fun reference_tick(market: &ExpiryMarket): Option<u64> {
+    market.strike_exposure.reference_tick()
 }
 
-/// Return the exact Propbook Pyth source timestamp used to derive `specific_tick`.
-public fun specific_tick_source_timestamp_ms(market: &ExpiryMarket): u64 {
-    market.strike_exposure.specific_tick_source_timestamp_ms()
+/// Return the exact Propbook Pyth source timestamp used to derive `reference_tick`.
+public fun reference_tick_source_timestamp_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.reference_tick_source_timestamp_ms()
 }
 
 /// Return buffered live reserve, or exact remaining settled payout liability once materialized.
@@ -442,11 +442,11 @@ public fun liquidate_order(
     market.strike_exposure.liquidate_live_order(pricer, &order)
 }
 
-/// Set this expiry's specific fine-grid tick from the exact previous-window
+/// Set this expiry's reference fine-grid tick from the exact previous-window
 /// Propbook Pyth observation. The source observation must be inserted into the
-/// feed at `specific_tick_source_timestamp_ms` before this call, and the
+/// feed at `reference_tick_source_timestamp_ms` before this call, and the
 /// normalized spot is floored to the market's `tick_size`.
-public fun set_specific_tick(
+public fun set_reference_tick(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
@@ -456,20 +456,20 @@ public fun set_specific_tick(
     config.assert_not_valuation_in_progress();
     market.assert_pyth_bound(propbook_registry, pyth);
 
-    let source_timestamp_ms = market.strike_exposure.specific_tick_source_timestamp_ms();
+    let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
     let read = pyth.normalized_spot_at(source_timestamp_ms);
-    assert!(read.is_some(), ESpecificTickObservationMissing);
+    assert!(read.is_some(), EReferenceTickObservationMissing);
     let read = read.destroy_some();
     assert!(
         read.read_source_timestamp_ms() == source_timestamp_ms,
-        ESpecificTickTimestampMismatch,
+        EReferenceTickTimestampMismatch,
     );
 
     let spot = read.read_value();
     let tick_size = market.strike_exposure.tick_size();
     let tick = spot / tick_size;
-    if (market.strike_exposure.set_specific_tick(tick)) {
-        config_events::emit_specific_tick_set(
+    if (market.strike_exposure.set_reference_tick(tick)) {
+        config_events::emit_reference_tick_set(
             market.id(),
             market.propbook_underlying_id,
             source_timestamp_ms,
@@ -633,7 +633,7 @@ public(package) fun create_and_share(
     expiry: u64,
     tick_size: u64,
     admission_tick_size: u64,
-    specific_tick_source_timestamp_ms: u64,
+    reference_tick_source_timestamp_ms: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -652,7 +652,7 @@ public(package) fun create_and_share(
             expiry,
             tick_size,
             admission_tick_size,
-            specific_tick_source_timestamp_ms,
+            reference_tick_source_timestamp_ms,
             strike_exposure_config,
             ctx,
         ),

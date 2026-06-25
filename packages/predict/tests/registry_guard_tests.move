@@ -262,7 +262,7 @@ fun create_expiry_market_skips_higher_rank_overlap() {
 }
 
 #[test]
-fun create_expiry_market_snapshots_five_minute_specific_tick_source() {
+fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
     let (
         mut scenario,
         registry_id,
@@ -317,8 +317,8 @@ fun create_expiry_market_snapshots_five_minute_specific_tick_source() {
     let market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
     assert_eq!(market.expiry(), expected_expiry);
     assert_eq!(market.admission_tick_size(), test_constants::default_admission_tick_size());
-    assert_eq!(market.specific_tick_source_timestamp_ms(), period_ms);
-    assert!(market.specific_tick().is_none());
+    assert_eq!(market.reference_tick_source_timestamp_ms(), period_ms);
+    assert!(market.reference_tick().is_none());
 
     return_shared(market);
     lifecycle_cap.destroy();

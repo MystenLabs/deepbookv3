@@ -51,9 +51,9 @@ public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
     paused: bool,
 }
 
-/// Emitted when a market records its specific fine-grid tick from the exact
+/// Emitted when a market records its reference fine-grid tick from the exact
 /// previous-window Propbook Pyth observation.
-public struct SpecificTickSet has copy, drop, store {
+public struct ReferenceTickSet has copy, drop, store {
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
@@ -126,14 +126,14 @@ public(package) fun emit_expiry_market_mint_paused_updated(expiry_market_id: ID,
     });
 }
 
-public(package) fun emit_specific_tick_set(
+public(package) fun emit_reference_tick_set(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
 ) {
-    event::emit(SpecificTickSet {
+    event::emit(ReferenceTickSet {
         expiry_market_id,
         propbook_underlying_id,
         source_timestamp_ms,

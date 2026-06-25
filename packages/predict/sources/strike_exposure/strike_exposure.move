@@ -28,8 +28,8 @@ use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
 const EInvalidAdmissionTick: u64 = 1;
-const EInvalidSpecificTick: u64 = 2;
-const ESpecificTickAlreadySet: u64 = 3;
+const EInvalidReferenceTick: u64 = 2;
+const EReferenceTickAlreadySet: u64 = 3;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -41,10 +41,10 @@ public struct StrikeExposure has store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
-    /// Exact Propbook Pyth source timestamp used to derive the specific tick.
-    specific_tick_source_timestamp_ms: u64,
-    /// Fine-grid tick that may bypass the coarser admission grid once set.
-    specific_tick: Option<u64>,
+    /// Exact Propbook Pyth source timestamp used to derive the reference tick.
+    reference_tick_source_timestamp_ms: u64,
+    /// Reference fine-grid tick that may bypass the coarser admission grid once set.
+    reference_tick: Option<u64>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
     next_order_sequence: u64,
@@ -125,12 +125,12 @@ public(package) fun admission_tick_size(exposure: &StrikeExposure): u64 {
     exposure.admission_tick_size
 }
 
-public(package) fun specific_tick_source_timestamp_ms(exposure: &StrikeExposure): u64 {
-    exposure.specific_tick_source_timestamp_ms
+public(package) fun reference_tick_source_timestamp_ms(exposure: &StrikeExposure): u64 {
+    exposure.reference_tick_source_timestamp_ms
 }
 
-public(package) fun specific_tick(exposure: &StrikeExposure): Option<u64> {
-    exposure.specific_tick
+public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
+    exposure.reference_tick
 }
 
 /// Return the raw per-trade fee for a live price and quantity.
@@ -164,7 +164,7 @@ public(package) fun new(
     expiry_ms: u64,
     tick_size: u64,
     admission_tick_size: u64,
-    specific_tick_source_timestamp_ms: u64,
+    reference_tick_source_timestamp_ms: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
@@ -173,8 +173,8 @@ public(package) fun new(
         expiry_ms,
         tick_size,
         admission_tick_size,
-        specific_tick_source_timestamp_ms,
-        specific_tick: option::none(),
+        reference_tick_source_timestamp_ms,
+        reference_tick: option::none(),
         config,
         next_order_sequence: 0,
         settled_payout_liability: 0,
@@ -247,16 +247,16 @@ public(package) fun allocate_mint_order(
     (allocated_order, entry_probability, net_premium)
 }
 
-/// Set the fine-grid tick that can bypass coarser mint admission once wired.
+/// Set the reference fine-grid tick that can bypass coarser mint admission once wired.
 /// Returns `true` only when this call records the tick for the first time.
 /// Repeated calls are idempotent for the same tick and abort for a different one.
-public(package) fun set_specific_tick(exposure: &mut StrikeExposure, tick: u64): bool {
-    assert!(tick > 0 && tick < constants::pos_inf_tick!(), EInvalidSpecificTick);
-    if (exposure.specific_tick.is_some()) {
-        assert!(*exposure.specific_tick.borrow() == tick, ESpecificTickAlreadySet);
+public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64): bool {
+    assert!(tick > 0 && tick < constants::pos_inf_tick!(), EInvalidReferenceTick);
+    if (exposure.reference_tick.is_some()) {
+        assert!(*exposure.reference_tick.borrow() == tick, EReferenceTickAlreadySet);
         return false
     };
-    exposure.specific_tick = option::some(tick);
+    exposure.reference_tick = option::some(tick);
     true
 }
 
@@ -450,13 +450,13 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
     assert!(
         lower_tick == 0
             || lower_tick % admission_multiple == 0
-            || exposure.specific_tick.contains(&lower_tick),
+            || exposure.reference_tick.contains(&lower_tick),
         EInvalidAdmissionTick,
     );
     assert!(
         higher_tick == constants::pos_inf_tick!()
             || higher_tick % admission_multiple == 0
-            || exposure.specific_tick.contains(&higher_tick),
+            || exposure.reference_tick.contains(&higher_tick),
         EInvalidAdmissionTick,
     );
 }

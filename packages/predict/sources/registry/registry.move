@@ -218,7 +218,7 @@ public fun create_expiry_market(
     let expiry = deployable.expiry();
     let tick_size = deployable.tick_size();
     let admission_tick_size = deployable.admission_tick_size();
-    let specific_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
+    let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
     let max_expiry_allocation = deployable.max_expiry_allocation();
     let initial_expiry_cash = deployable.initial_expiry_cash();
     let pool_vault_id = pool_vault.id();
@@ -228,7 +228,7 @@ public fun create_expiry_market(
         expiry,
         tick_size,
         admission_tick_size,
-        specific_tick_source_timestamp_ms,
+        reference_tick_source_timestamp_ms,
         ctx,
     );
     pool_vault.register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
