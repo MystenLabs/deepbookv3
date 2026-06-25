@@ -67,6 +67,11 @@ const EInsufficientRiskRatioAfterTrade: u64 = 19;
 /// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
 /// post-trade risk_ratio invariant.
 const EDeprecatedUseV2: u64 = 20;
+/// A triggered conditional **market** order settled outside the oracle price
+/// bounds. The pre-check simulates the fill against the whole book, but
+/// `cancel_maker` can remove the manager's own resting orders and fill deeper
+/// into worse liquidity, so we re-check the *actual* executed price.
+const EFillOutsidePriceBounds: u64 = 21;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -1882,6 +1887,23 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
             );
 
             if (!pending_order.is_limit_order()) {
+                // Self-match-aware safety net: the price-bound pre-check above
+                // simulated the fill against the full book, but a market order
+                // with `cancel_maker` can cancel the manager's own resting orders
+                // and fill deeper into worse liquidity. Re-check the *actual*
+                // executed price so a self-match can't bypass the oracle bounds.
+                // (Limit fills are already bounded by their own limit price.)
+                let executed = order_info.executed_quantity();
+                if (executed > 0) {
+                    let actual_price = math::div(
+                        order_info.cumulative_quote_quantity(),
+                        executed,
+                    );
+                    assert!(
+                        (is_bid && actual_price <= upper_bound) || (!is_bid && actual_price >= lower_bound),
+                        EFillOutsidePriceBounds,
+                    );
+                };
                 market_filled = true;
             };
             order_infos.push_back(order_info);
