@@ -2408,7 +2408,7 @@ fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
 }
 
 #[test]
-fun attack_resting_fill_from_danger_band_cannot_go_underwater() {
+fun resting_fill_from_danger_band_cannot_go_underwater() {
     // Worst case for the self-trade vector: M1 starts *at liquidation* (1.10) via a
     // price drift, then a counterparty M2 takes a maximal band-edge resting bid.
     // Even this ungated, maximal one-shot conversion leaves M1 at ~1.05 — still
@@ -2591,7 +2591,7 @@ fun attack_resting_fill_from_danger_band_cannot_go_underwater() {
 }
 
 #[test, expected_failure(abort_code = pool_proxy::ENoLiquidityInOrderbook)]
-fun attack_market_and_repay_empty_book_aborts() {
+fun market_and_repay_empty_book_aborts() {
     // An empty book gives no execution surface: a market-and-repay aborts on
     // ENoLiquidityInOrderbook (in calculate_effective_price) before any trade, so a
     // manager can't be manipulated via a market order when the book is empty.
@@ -2668,7 +2668,7 @@ fun attack_market_and_repay_empty_book_aborts() {
 }
 
 #[test]
-fun attack_resting_order_by_itself_is_ratio_neutral() {
+fun resting_order_by_itself_is_ratio_neutral() {
     // "By itself" (no counterparty fill) a manager can't move its own ratio:
     // placing a reduce-only resting order locks balance that still counts as
     // assets, so the ratio is unchanged. Only a real fill can move it — and a
