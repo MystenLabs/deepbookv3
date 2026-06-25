@@ -33,6 +33,7 @@ const DUSDC_DECIMALS = 1_000_000n;
 const LOCK_CAPITAL_AMOUNT = 10n * DUSDC_DECIMALS;
 const BOOTSTRAP_SUPPLY_AMOUNT = 10_000_000n * DUSDC_DECIMALS;
 const TICK_SIZE = 1_000_000_000n;
+const ADMISSION_TICK_SIZE = 10n * TICK_SIZE;
 
 const ASSET = {
   name: "BTC_USD",
@@ -49,6 +50,7 @@ const CADENCES = [
     windowSize: 3n,
     marketsToCreate: 3,
     tickSize: TICK_SIZE,
+    admissionTickSize: ADMISSION_TICK_SIZE,
     initialExpiryCash: 10_000n * DUSDC_DECIMALS,
     maxExpiryAllocation: 50_000n * DUSDC_DECIMALS,
   },
@@ -59,6 +61,7 @@ const CADENCES = [
     windowSize: 3n,
     marketsToCreate: 3,
     tickSize: TICK_SIZE,
+    admissionTickSize: ADMISSION_TICK_SIZE,
     initialExpiryCash: 50_000n * DUSDC_DECIMALS,
     maxExpiryAllocation: 250_000n * DUSDC_DECIMALS,
   },
@@ -110,6 +113,7 @@ interface WiringState {
     id: number;
     name: string;
     tickSize: string;
+    admissionTickSize: string;
     maxExpiryAllocation: string;
     initialExpiryCash: string;
     windowSize: string;
@@ -359,6 +363,16 @@ function parseOptionId(bytes: number[] | undefined): string | null {
     .join("")}`;
 }
 
+function parseAddress(bytes: number[] | undefined): string {
+  if (!bytes || bytes.length < 32) {
+    throw new Error("missing address return value");
+  }
+  return `0x${bytes
+    .slice(0, 32)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
 function parseBool(bytes: number[] | undefined): boolean {
   return bytes?.[0] === 1;
 }
@@ -424,6 +438,15 @@ async function inspectOptionId(
   const tx = new Transaction();
   build(tx);
   return parseOptionId(await devInspectReturn(tx, label));
+}
+
+async function inspectAddress(
+  label: string,
+  build: (tx: Transaction) => void,
+): Promise<string> {
+  const tx = new Transaction();
+  build(tx);
+  return parseAddress(await devInspectReturn(tx, label));
 }
 
 async function ensurePredictAppAuthorized(
@@ -828,16 +851,11 @@ async function ensureBlockScholesSurfaceFeeds(
 }
 
 async function registerUnderlying(deployment: DeploymentJson): Promise<void> {
-  if (
-    deployment.wiring?.asset?.globalFeedsBoundTx &&
-    deployment.wiring?.asset?.pythFeedId
-  ) {
-    // The underlying registration has no public getter; this flag means this script got
-    // through the one-time registration step during the current deployment wiring.
-    if ((deployment.wiring.asset as any).predictUnderlyingRegistered) {
-      console.log("[wire] Predict underlying already recorded as registered");
-      return;
-    }
+  // The underlying registration has no public getter; this flag means this script
+  // got through the one-time registration step during the current deployment wiring.
+  if ((deployment.wiring?.asset as any)?.predictUnderlyingRegistered) {
+    console.log("[wire] Predict underlying already recorded as registered");
+    return;
   }
 
   const tx = new Transaction();
@@ -868,6 +886,7 @@ async function configureCadences(deployment: DeploymentJson): Promise<void> {
         tx.object(adminCapId(deployment)),
         tx.pure.u8(cadence.id),
         tx.pure.u64(cadence.tickSize),
+        tx.pure.u64(cadence.admissionTickSize),
         tx.pure.u64(cadence.maxExpiryAllocation),
         tx.pure.u64(cadence.initialExpiryCash),
         tx.pure.u64(cadence.windowSize),
@@ -879,6 +898,7 @@ async function configureCadences(deployment: DeploymentJson): Promise<void> {
     id: cadence.id,
     name: cadence.name,
     tickSize: cadence.tickSize.toString(),
+    admissionTickSize: cadence.admissionTickSize.toString(),
     maxExpiryAllocation: cadence.maxExpiryAllocation.toString(),
     initialExpiryCash: cadence.initialExpiryCash.toString(),
     windowSize: cadence.windowSize.toString(),
@@ -895,6 +915,43 @@ async function ensureAccountWrapper(
       `[wire] Account wrapper already recorded: ${deployment.wiring.account.accountWrapperId}`,
     );
     return deployment.wiring.account.accountWrapperId;
+  }
+
+  const exists = await inspectBool("derived_wrapper_exists", (tx) => {
+    tx.moveCall({
+      target: accountTarget(
+        deployment,
+        "account_registry",
+        "derived_wrapper_exists",
+      ),
+      arguments: [
+        tx.object(accountRegistryId(deployment)),
+        tx.pure.address(sender),
+      ],
+    });
+  });
+  if (exists) {
+    const accountWrapperId = await inspectAddress(
+      "derived_wrapper_address",
+      (tx) => {
+        tx.moveCall({
+          target: accountTarget(
+            deployment,
+            "account_registry",
+            "derived_wrapper_address",
+          ),
+          arguments: [
+            tx.object(accountRegistryId(deployment)),
+            tx.pure.address(sender),
+          ],
+        });
+      },
+    );
+    deployment.wiring!.account ??= {};
+    deployment.wiring!.account.accountWrapperId = accountWrapperId;
+    writeDeployment(deployment);
+    console.log(`[wire] Reusing existing account wrapper: ${accountWrapperId}`);
+    return accountWrapperId;
   }
 
   const tx = new Transaction();
@@ -1110,7 +1167,22 @@ async function createMarkets(
           tx.object(CLOCK_ID),
         ],
       });
-      const receipt = await execute(`create_${cadence.name}_market`, tx);
+      let receipt: Receipt;
+      try {
+        receipt = await execute(`create_${cadence.name}_market`, tx);
+      } catch (error) {
+        const message = String(error);
+        if (
+          message.includes("market_manager") &&
+          message.includes("}, 5)")
+        ) {
+          console.log(
+            `[wire] ${cadence.name} cadence window is full; stopping market creation for this cadence`,
+          );
+          break;
+        }
+        throw error;
+      }
       const expiryMarketId = createdObjectId(
         receipt,
         "expiry_market::ExpiryMarket",

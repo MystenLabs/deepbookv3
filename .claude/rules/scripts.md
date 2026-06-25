@@ -90,6 +90,9 @@ To decode:
    - `EBorrowRiskRatioExceeded (7)` - Borrow would exceed risk ratio
    - `EWithdrawRiskRatioExceeded (8)` - Withdraw would exceed risk ratio
 
+### Predict Testnet Wiring Reruns
+`scripts/transactions/predictWire.ts` must be idempotent across partial runs. The Account package permits only one canonical account wrapper per owner, so reruns should reuse `account_registry::derived_wrapper_address` when `derived_wrapper_exists` is true instead of calling `account_registry::new` again. Predict underlying registration has no public getter; use the deployment JSON `predictUnderlyingRegistered` marker to avoid duplicate registration after a partial run. A `market_manager::ECadenceWindowExceeded` abort can mean the configured market window is already full, not that deployment failed.
+
 ### Environment Variables
 - `PRIVATE_KEY` - Use instead of local keystore
 - `RPC_URL` - Custom RPC endpoint

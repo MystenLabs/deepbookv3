@@ -7,7 +7,7 @@
     "block_scholes_oracle": "0x8192932b70d5946217d0f09aad44f84ad5c27ee4c1ca31b09f46200fbd31d3de",
     "account": "0xb9389eac8d59170ffd1427c1a66e5c8306263464fcc6615e825c1f5b3e15da3b",
     "propbook": "0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b",
-    "predict": "0x5bd280579da47e117849eef7290ffe12cf85a2f313a082ce9684d42a76c3711a"
+    "predict": "0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e"
   },
   "linked": {
     "dusdc": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
@@ -23,9 +23,9 @@
       "registry::OracleRegistry": "0xf3deaff68cbd081a35ec21653af6f671d2ad5f012f3b4d817d81752843374136"
     },
     "predict": {
-      "plp::PoolVault": "0x2cff1feb01aaebba18789d4a40e19b9168f0561e516739b6ef6e634b5d17f1d0",
-      "protocol_config::ProtocolConfig": "0xc9ff8aa8fc2585da49cdb63c21b75e6faaaece14eceb9f94fb8c0c84b0dc40b3",
-      "registry::Registry": "0xd823c6a045fe241fe3a8f1e3132673fea98fe80118f60debb5f88e82aad4fbd2"
+      "plp::PoolVault": "0xfde98c636eb8a7aba59c3a238cfee6b576b7118d1e5ffa2952876c4b270a3a2a",
+      "protocol_config::ProtocolConfig": "0x2325224629b4bd96d1f1d7ee937e07f8a06f861018a130bbb26db09cb0394cb6",
+      "registry::Registry": "0x54afbf245caf42466cedb5756ed7816f34f544afdfa13579a862eccf3afa21ca"
     }
   },
   "ownedCaps": {
@@ -44,9 +44,9 @@
       "registry::RegistryAdminCap": "0xe8053a0cefe5d62892e018e8f09ec641c1dd2d0f3735ab5bd94c176d11a263de"
     },
     "predict": {
-      "coin_registry::MetadataCap<0x5bd280579da47e117849eef7290ffe12cf85a2f313a082ce9684d42a76c3711a::plp::PLP>": "0x99bff75941170cbcc01adbb5edae12bdcdb099d4bd7a54a4f4b9b84332c6f938",
-      "package::UpgradeCap": "0xb91cc09dcad5462fb791ee02bacb41e0736f23864bb4815dfb3a42a744766a20",
-      "admin::AdminCap": "0xd7b3e30fe2f3661f95ddd972709c3f8a722115f549d90dfcdccd9d6f9aeeefc4"
+      "coin_registry::MetadataCap<0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e::plp::PLP>": "0x3d9d147c03ac02ec9eca4dd7988bd524fde2b74e76dd931bba665b7c65242cc7",
+      "package::UpgradeCap": "0xb85c0ae4e5a38bb757bd87d619dc557aef5c3a64352915c92547b6a84db2a26b",
+      "admin::AdminCap": "0x4c4f5f3a1d065df87b0575922db495db85d9c7cb994cae95efb2b1bcdedc9489"
     }
   },
   "publishTx": {
@@ -54,68 +54,65 @@
     "block_scholes_oracle": "GqEmSqA7udvcsp6MFSuujYj7uUV9Uruy9NSt432W7dYr",
     "account": "7pYFmYn5Ysfpn3Gch154frPdA2a2MwyAeJmDYuL6GWAM",
     "propbook": "C9hBaz7PV1pThgDzH7FsxnTj9TME6zDLgyuwk8AqM92Q",
-    "predict": "3Q7UzHqQ2ZnqQ3H3z5FWvQCcsVNQkEbn8qH2cGwGgz2k"
+    "predict": "JCpHTPpiuDYqteHruMqF4QTsgJxK2yRqw4MUmv5nPsXj"
   },
   "wiring": {
     "version": 1,
     "network": "testnet",
     "operator": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
-    "updatedAt": "2026-06-24T21:32:00.508Z",
+    "updatedAt": "2026-06-25T18:56:23.118Z",
     "account": {
       "predictAppAuthorized": true,
-      "authorizeTx": "EFxcgB2pkNdgDiiq8BBoVLGw2JD4sXqQDtsThEonAuvP",
-      "accountWrapperId": "0x747fbd571a6cdaece5ae28843a1868d9ee4629e23c36166c38cc778c195cbd9d",
-      "createAccountTx": "4foA8r5evqCd4wANmuMJ6styp4dLfCnLRufqCpQwREXo"
+      "authorizeTx": "493xj5Jd88u3VTBYrWD7XnN8bFADX3cq7p1mdFZZurzu",
+      "accountWrapperId": "0x747fbd571a6cdaece5ae28843a1868d9ee4629e23c36166c38cc778c195cbd9d"
     },
     "lifecycleCap": {
-      "id": "0x06f30ae80b9549dcca3b7d6245a492cc328deb09cf30920ae30c2eb69475a8c9",
+      "id": "0xb0291812a6fe9664cffcbdfadea75e8703e844854083d4149585282aed41ac84",
       "recipient": "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82",
       "owner": "recipient",
-      "mintTx": "ChiaxnTUDiyw5x674gCLHqkwtv2cQrWRiQH3CQgMoULJ",
-      "transferTx": "Cy4WhdSRD5GAQgFoTSjdtwW1aPden83Vc37xMAzxtyRR"
+      "mintTx": "7QkQgXeuykvs2bTonyzWxkGznBDBsWbxQNEZ1EKc3pHw",
+      "transferTx": "FHBYD2kNcpPVxLyq3rvSjtmL6tTnFMbgLU1ykA9TZoqu"
     },
     "asset": {
       "name": "BTC_USD",
       "propbookUnderlyingId": 1,
       "pythLazerFeedId": 1,
       "blockScholesSourceId": 1,
-      "globalFeedsCreatedTx": "FKUK9TNmks6MJsFbwxzi8quzjrK3NvaDkQWWheDHsoQ8",
       "pythFeedId": "0xc78d7de16217d46d21b92ae475da799448be30b71a758dc6d7bb3ac2f1c35afb",
       "blockScholesSpotFeedId": "0xcdc5fa7364e60fd2504aa96f65b707dc0734e507a919b1a7d7d63164fd67b745",
-      "globalFeedsBoundTx": "7oU3DhdNwdvuiHkoSgsFRsL6UZqyxUZepcdn98hDrqzd",
-      "surfaceFeedsCreatedTx": "5wcVoh9RqLbiUvuVvwFmUWhGbKkJKUKUy5fxoagxvkGM",
       "blockScholesForwardFeedId": "0xe72c734ea8d8dcbc9183d9d8f96f51aaa1fb5034d5ed33ac60d67d261e15b48a",
       "blockScholesSviFeedId": "0xdc2f8270676bd05fb28491e8d4a41a495722fda7a454926dd66dbba256a21c69",
-      "surfaceFeedsBoundTx": "FuuFTF5gBzMzGewinTUWj1at1r5Fe9ZAW27HMLjwLSsw",
       "predictUnderlyingRegistered": true,
-      "predictUnderlyingRegisteredTx": "AcRvkH8N3Eh2phJVA23AiKGi5D9BVP8aJ7QFP2qqaoqe"
+      "predictUnderlyingRegisteredTx": "FZjgkWfjA3fkR6Lye83udCBMyEPavXjP5d9rQcyweMDh"
     },
     "cadences": [
       {
         "id": 1,
         "name": "5m",
         "tickSize": "1000000000",
+        "admissionTickSize": "10000000000",
         "maxExpiryAllocation": "50000000000",
         "initialExpiryCash": "10000000000",
         "windowSize": "3",
-        "setTx": "8pCFMuX4CcTfAUKGrva2qiY9E5DYZgimoVjn5hb7yXuk"
+        "setTx": "BFDjCqBax5PqiMRmyE2gVUcQbnwoFsdKmTYzwMnZ3F6Y"
       },
       {
         "id": 2,
         "name": "1h",
         "tickSize": "1000000000",
+        "admissionTickSize": "10000000000",
         "maxExpiryAllocation": "250000000000",
         "initialExpiryCash": "50000000000",
         "windowSize": "3",
-        "setTx": "8pCFMuX4CcTfAUKGrva2qiY9E5DYZgimoVjn5hb7yXuk"
+        "setTx": "BFDjCqBax5PqiMRmyE2gVUcQbnwoFsdKmTYzwMnZ3F6Y"
       }
     ],
     "bootstrap": {
       "lockCapitalAmount": "10000000",
       "supplyAmount": "10000000000000",
-      "lockCapitalTx": "3a7Gg8Rn1rZexsXL2dseu7V1PNjDzRgWeDVWAU7kKXsF",
-      "supplyRequestTx": "2Bd52KQ7VM8eWfJRwMiNprjdpDY3SbsrHnH1xzWweqLK",
-      "flushTx": "GbaebfiaVnmXaMySaPA43i7tHvJZD2rUC7QArPyXybXR"
+      "lockCapitalTx": "2NGWZZxTuWnyrYXxNsJ82mhUSJd2F1grZSqET2N8Jh5W",
+      "supplyRequestTx": "BzinE2L5SRJFb1GEAeEPKAjqdsqBEk7TivJiLBe1gzdN",
+      "flushTx": "HpN68LH4GBScbDmChZGmfB2EKFArcCAYeXJtH8gkFsJC"
     }
   }
 }
