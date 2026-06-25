@@ -46,7 +46,9 @@ const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
 const EMintQuantityBelowMin: u64 = 6;
 const EWrongPricer: u64 = 7;
-const EMintRedeemSameTimestamp: u64 = 8;
+const EReferenceTickObservationMissing: u64 = 8;
+const EReferenceTickTimestampMismatch: u64 = 9;
+const EMintRedeemSameTimestamp: u64 = 10;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -136,6 +138,21 @@ public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
 /// derived off-chain / by the SDK as `tick * tick_size`.
 public fun tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.tick_size()
+}
+
+/// Return the coarser raw-price step that new finite mint boundaries must align to.
+public fun admission_tick_size(market: &ExpiryMarket): u64 {
+    market.strike_exposure.admission_tick_size()
+}
+
+/// Return the reference fine-grid tick admitted for this expiry, if it has been set.
+public fun reference_tick(market: &ExpiryMarket): Option<u64> {
+    market.strike_exposure.reference_tick()
+}
+
+/// Return the exact Propbook Pyth source timestamp used to derive `reference_tick`.
+public fun reference_tick_source_timestamp_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.reference_tick_source_timestamp_ms()
 }
 
 /// Return buffered live reserve, or exact remaining settled payout liability once materialized.
@@ -426,6 +443,44 @@ public fun liquidate_order(
     market.strike_exposure.liquidate_live_order(pricer, &order)
 }
 
+/// Set this expiry's reference fine-grid tick from the exact previous-window
+/// Propbook Pyth observation. The source observation must be inserted into the
+/// feed at `reference_tick_source_timestamp_ms` before this call, and the
+/// normalized spot is floored to the market's `tick_size`.
+public fun set_reference_tick(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+): u64 {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    market.assert_pyth_bound(propbook_registry, pyth);
+
+    let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
+    let read = pyth.normalized_spot_at(source_timestamp_ms);
+    assert!(read.is_some(), EReferenceTickObservationMissing);
+    let read = read.destroy_some();
+    assert!(
+        read.read_source_timestamp_ms() == source_timestamp_ms,
+        EReferenceTickTimestampMismatch,
+    );
+
+    let spot = read.read_value();
+    let tick_size = market.strike_exposure.tick_size();
+    let tick = spot / tick_size;
+    if (market.strike_exposure.set_reference_tick(tick)) {
+        config_events::emit_reference_tick_set(
+            market.id(),
+            market.propbook_underlying_id,
+            source_timestamp_ms,
+            spot,
+            tick,
+        );
+    };
+    tick
+}
+
 /// Set whether new mints are paused on this expiry market. Admin-only and
 /// version-gated. A `PauseCap` holder can force-engage the pause one-way under a
 /// version freeze via `registry::pause_expiry_market_mint_pause_cap`.
@@ -459,12 +514,7 @@ public(package) fun ensure_settled(
 ): bool {
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
-    assert!(
-        propbook_registry
-            .propbook_pyth_id_for_underlying(market.propbook_underlying_id)
-            .contains(&pyth.id()),
-        EWrongPythFeed,
-    );
+    market.assert_pyth_bound(propbook_registry, pyth);
 
     let read = pyth.normalized_spot_at(market.expiry);
     if (read.is_none()) return false;
@@ -574,15 +624,17 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balan
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, tick size, and per-market config and
-/// starts with zero expiry cash; it needs no live spot at creation (strikes are
-/// absolute ticks, so there is no grid to center). Current oracle object IDs stay
-/// in Propbook and are resolved on every priced flow.
+/// The market snapshots the underlying, accounting/admission tick sizes, and
+/// per-market config and starts with zero expiry cash; it needs no live spot at
+/// creation (strikes are absolute ticks, so there is no grid to center). Current
+/// oracle object IDs stay in Propbook and are resolved on every priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     propbook_underlying_id: u32,
     expiry: u64,
     tick_size: u64,
+    admission_tick_size: u64,
+    reference_tick_source_timestamp_ms: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -600,6 +652,8 @@ public(package) fun create_and_share(
             expiry_market_id,
             expiry,
             tick_size,
+            admission_tick_size,
+            reference_tick_source_timestamp_ms,
             strike_exposure_config,
             ctx,
         ),
@@ -664,6 +718,15 @@ fun redeem_liquidated_order(
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     market.cash.assert_backing(market.payout_liability());
+}
+
+fun assert_pyth_bound(market: &ExpiryMarket, propbook_registry: &OracleRegistry, pyth: &PythFeed) {
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(market.propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
+    );
 }
 
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {

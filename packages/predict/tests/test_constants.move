@@ -61,6 +61,10 @@ public fun live_source_timestamp_ms(): u64 { 119_000 }
 /// Strikes are absolute ticks: `raw_strike = tick * tick_size`.
 public fun default_tick_size(): u64 { 1_000_000_000 }
 
+/// Default mint-admission raw strike step. This is coarser than `default_tick_size`
+/// so tests can distinguish the fine accounting grid from the public admission grid.
+public fun default_admission_tick_size(): u64 { 10 * default_tick_size() }
+
 /// Default cadence used by fixtures that need an exact explicit expiry. The test
 /// clock is positioned one period before the target expiry before creation.
 public fun default_cadence_id(): u8 { market_manager::cadence_one_minute!() }

@@ -66,12 +66,12 @@ const ACCUMULATOR_ROOT_ID = "0xacc";
 // that underlying, so a single source id serves both.
 const PYTH_FEED_ID = 1;
 const BS_UNDERLYING_ID = PYTH_FEED_ID;
-// Strike range encoding (range_codec / constants.move): two u24 ticks packed
+// Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
 // side). The harness tick size is $1 (1e9-scaled), mirroring the registered market
 // tick size for this Propbook underlying.
-const TICK_BITS = 24n;
+const TICK_BITS = 30n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 const ORACLE_TICK_SIZE = 1_000_000_000n;
 const U64_MAX = (1n << 64n) - 1n;
@@ -608,6 +608,7 @@ export function createBlockScholesSurfaceFeedsTx(): Transaction {
 export function setCadenceConfigTx(params: {
     cadenceId: number;
     tickSize: bigint;
+    admissionTickSize: bigint;
     maxExpiryAllocation: bigint;
     initialExpiryCash: bigint;
     windowSize: bigint;
@@ -621,6 +622,7 @@ export function setCadenceConfigTx(params: {
             tx.object(ADMIN_CAP_ID),
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
+            tx.pure.u64(params.admissionTickSize),
             tx.pure.u64(params.maxExpiryAllocation),
             tx.pure.u64(params.initialExpiryCash),
             tx.pure.u64(params.windowSize),

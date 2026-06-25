@@ -23,13 +23,13 @@ const EInvalidSequence: u64 = 5;
 
 // Active order id fields are dense in the low bits. Any unused bits are leading
 // bits rejected by ORDER_ID_BITS during decode validation.
-const QUANTITY_LOTS_OFFSET: u8 = 152;
-const FLOOR_SHARES_OFFSET: u8 = 88;
-const LOWER_TICK_OFFSET: u8 = 64;
+const QUANTITY_LOTS_OFFSET: u8 = 164;
+const FLOOR_SHARES_OFFSET: u8 = 100;
+const LOWER_TICK_OFFSET: u8 = 70;
 const HIGHER_TICK_OFFSET: u8 = 40;
-const ORDER_ID_BITS: u8 = 184;
+const ORDER_ID_BITS: u8 = 196;
 
-const U24_MASK: u256 = (1u256 << 24) - 1;
+const TICK_MASK: u256 = (1u256 << 30) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;
 const U40_MASK: u256 = (1u256 << 40) - 1;
 const U64_MASK: u256 = (1u256 << 64) - 1;
@@ -55,13 +55,13 @@ public(package) fun id(order: &Order): u256 {
 
 /// Return the lower strike tick encoded in this order (`0` is the `neg_inf` lower).
 public(package) fun lower_tick(order: &Order): u64 {
-    decode_u24(order.id, LOWER_TICK_OFFSET)
+    decode_tick(order.id, LOWER_TICK_OFFSET)
 }
 
 /// Return the higher strike tick encoded in this order (`pos_inf_tick` is the
 /// `pos_inf` higher).
 public(package) fun higher_tick(order: &Order): u64 {
-    decode_u24(order.id, HIGHER_TICK_OFFSET)
+    decode_tick(order.id, HIGHER_TICK_OFFSET)
 }
 
 /// Return the encoded quantity in position lots.
@@ -140,8 +140,8 @@ fun new(
     quantity_lots: u64,
     sequence: u64,
 ): Order {
-    assert!(lower_tick <= U24_MASK as u64, EInvalidTick);
-    assert!(higher_tick <= U24_MASK as u64, EInvalidTick);
+    assert!(lower_tick <= TICK_MASK as u64, EInvalidTick);
+    assert!(higher_tick <= TICK_MASK as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     let quantity = quantity_lots * constants::position_lot_size!();
@@ -162,8 +162,8 @@ fun new(
 
 // === Private Functions ===
 
-fun decode_u24(id: u256, offset: u8): u64 {
-    ((id >> offset) & U24_MASK) as u64
+fun decode_tick(id: u256, offset: u8): u64 {
+    ((id >> offset) & TICK_MASK) as u64
 }
 
 fun decode_u32(id: u256, offset: u8): u64 {
