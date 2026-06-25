@@ -35,6 +35,17 @@ public struct PositionKey has copy, drop, store {
     order_id: u256,
 }
 
+/// Per-position state stored under a `PositionKey`.
+public struct Position has store {
+    /// Root order ID, carried forward unchanged across partial-close replacements.
+    root_id: u256,
+    /// On-chain time (`clock.timestamp_ms()`) the position was opened, carried
+    /// forward unchanged across partial-close replacements. A live redeem in the
+    /// same timestamp is rejected, blocking an atomic mint -> oracle-update ->
+    /// redeem in one transaction.
+    opened_at_ms: u64,
+}
+
 /// Aggregate trading cash flow and open-position count for one expiry market.
 public struct ExpiryTradingSummary has store {
     open_position_count: u64,
@@ -45,9 +56,8 @@ public struct ExpiryTradingSummary has store {
 
 /// Predict's per-account state, attached to an `Account` under `PredictApp`.
 public struct PredictData has store {
-    /// Open positions scoped by expiry market; the value is the position's root
-    /// order ID, carried forward unchanged across partial-close replacements.
-    positions: Table<PositionKey, u256>,
+    /// Open positions scoped by expiry market.
+    positions: Table<PositionKey, Position>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// DEEP staked and active for trading benefits, in raw units. Custody is
@@ -146,19 +156,33 @@ public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
     registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
 }
 
+/// Return the on-chain time (`clock.timestamp_ms()`) a held position was opened.
+public(package) fun position_opened_at_ms(
+    account: &Account,
+    expiry_market_id: ID,
+    order_id: u256,
+): u64 {
+    let d = data(account);
+    let key = position_key(expiry_market_id, order_id);
+    assert!(d.positions.contains(key), EPositionNotFound);
+    d.positions[key].opened_at_ms
+}
+
 /// Add an order position keyed to its root order ID. At mint the root equals the
 /// order's own ID; a partial-close replacement passes the parent's root forward.
+/// `opened_at_ms` is the original open time, also carried forward unchanged.
 public(package) fun add_position(
     account: &mut Account,
     expiry_market_id: ID,
     order_id: u256,
     position_root_id: u256,
+    opened_at_ms: u64,
     ctx: &mut TxContext,
 ) {
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(!d.positions.contains(key), EPositionAlreadyExists);
-    d.positions.add(key, position_root_id);
+    d.positions.add(key, Position { root_id: position_root_id, opened_at_ms });
     let summary = d.summary_mut(expiry_market_id);
     summary.open_position_count = summary.open_position_count + 1;
 }
@@ -173,11 +197,11 @@ public(package) fun remove_position(
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
-    let position_root_id = d.positions.remove(key);
+    let Position { root_id, opened_at_ms: _ } = d.positions.remove(key);
     let summary = d.summary_mut(expiry_market_id);
     assert!(summary.open_position_count > 0, EInsufficientPosition);
     summary.open_position_count = summary.open_position_count - 1;
-    position_root_id
+    root_id
 }
 
 /// Record pool trading fees paid by this account for one expiry market.

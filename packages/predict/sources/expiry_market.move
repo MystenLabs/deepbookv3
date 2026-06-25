@@ -46,6 +46,7 @@ const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
 const EMintQuantityBelowMin: u64 = 6;
 const EWrongPricer: u64 = 7;
+const EMintRedeemSameTimestamp: u64 = 8;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -740,6 +741,7 @@ fun mint_prepared_exact_quantity(
         net_premium,
         fee_amount,
         penalty_amount,
+        clock,
         ctx,
     );
     order_events::emit_order_minted(
@@ -794,6 +796,14 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
+    // Reject redeeming a position in the same timestamp it was opened. A single
+    // transaction reads one `Clock`, so this blocks an atomic mint -> oracle-update
+    // -> redeem that would round-trip a freshly minted order against a price the
+    // same tx just pushed. The open time is carried forward across partial-close
+    // replacements, so seasoned positions stay closable in multiple steps.
+    let opened_at_ms = predict_account::position_opened_at_ms(account, market.id(), order.id());
+    assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
+
     let active_stake = predict_account::active_stake_mut(account, ctx);
     let position_root_id = predict_account::remove_position(
         account,
@@ -825,6 +835,7 @@ fun redeem_live_internal(
             market.id(),
             replacement_order_id,
             position_root_id,
+            opened_at_ms,
             ctx,
         );
         option::some(replacement_order_id)
@@ -904,6 +915,7 @@ fun settle_mint_payment(
     net_premium: u64,
     fee_amount: u64,
     penalty_amount: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64) {
     let quantity = order.quantity();
@@ -913,7 +925,14 @@ fun settle_mint_payment(
     let trader_fee_amount = fee_amount - fee_subsidy_amount;
     let withdraw_amount = net_premium + trader_fee_amount + builder_fee_amount + penalty_amount;
 
-    predict_account::add_position(account, market.id(), order.id(), order.id(), ctx);
+    predict_account::add_position(
+        account,
+        market.id(),
+        order.id(),
+        order.id(),
+        clock.timestamp_ms(),
+        ctx,
+    );
     predict_account::record_gross_paid_to_expiry(account, market.id(), net_premium, ctx);
     let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
