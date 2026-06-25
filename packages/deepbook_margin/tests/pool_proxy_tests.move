@@ -999,7 +999,10 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
 }
 
 #[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
-fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
+fun test_place_reduce_only_limit_order_bid_requires_base_debt() {
+    // A reduce-only bid covers a *short*, so it requires base (short-side) debt.
+    // A manager with only quote debt (a long) placing a bid would increase its
+    // long, so the direction guard rejects it as not reduce-only.
     let (
         mut scenario,
         clock,
@@ -1014,8 +1017,8 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
-    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
-    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     margin_manager::new<USDC, USDT>(
         &pool,
@@ -1031,46 +1034,28 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
-    // Deposit some USDT to use as collateral
-    mm.deposit<USDC, USDT, USDT>(
+    // USDC collateral + USDT (quote) debt -> a long, no base debt.
+    mm.deposit<USDC, USDT, USDC>(
         &registry,
         &usdc_price,
         &usdt_price,
-        mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdt_multiplier(),
         &clock,
         scenario.ctx(),
     );
     destroy_2!(usdc_price, usdt_price);
 
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    // Borrow some USDC
-    mm.borrow_base<USDC, USDT>(
-        &registry,
-        &mut base_pool,
-        &usdc_price,
-        &usdt_price,
-        &pool,
-        100 * test_constants::usdc_multiplier(), // Small borrow amount
-        &clock,
-        scenario.ctx(),
-    );
-
-    let coin = mm.withdraw<USDC, USDT, USDC>(
-        &registry,
-        &base_pool,
-        &quote_pool, // Pass quote_pool since we have USDT debt
-        &usdc_price,
-        &usdt_price,
-        &pool,
-        100 * test_constants::usdc_multiplier(), // Withdraw some USDC so we have have net debt
-        &clock,
-        scenario.ctx(),
-    );
-    destroy(coin);
-
-    // User has USDC debt, tries to buy more USDC than debt
-    // This should fail because user is trying to buy more USDC than debt
+    // Bid (buy USDC) with no base debt -> not reduce-only (direction guard).
     test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
@@ -1078,27 +1063,18 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
         &quote_pool,
         &mut mm,
         &mut pool,
-        // Pass quote_pool since we have USDT debt
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
         constants::float_scaling(),
-        // price
-        101 * test_constants::usdc_multiplier(),
-        // quantity
+        50 * test_constants::usdc_multiplier(),
         true,
-        // is_bid = true (buying USDC)
         false,
         2000000,
-        // expire_timestamp
         &clock,
     );
 
-    return_shared_2!(mm, pool);
-    return_shared_2!(base_pool, quote_pool);
-    destroy(usdc_price);
-    destroy(usdt_price);
-    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+    abort 999
 }
 
 #[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
@@ -2077,12 +2053,13 @@ fun reduce_only_and_repay_fully_closes_selling_above_net_debt() {
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
-// A reduce-only-and-repay bid whose quantity exceeds the net base debt is
-// rejected: the bid covers a short, so it stays capped at the net short
-// (500 - 200 = 300) to avoid flipping into a long. A 400 USDC bid is not
-// reduce-only.
-#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
-fun reduce_only_and_repay_quantity_exceeds_debt_aborts() {
+// A reduce-only-and-repay bid may now exceed the net base debt. Over-covering a
+// short just converts USDC into USDC-debt coverage, which is price-invariant, so
+// the size cap was dropped (only the direction guard remains). A 400 USDC bid
+// against a 300 net short (500 borrowed, 200 held) over-covers, and the repay
+// clears the whole 500 debt.
+#[test]
+fun reduce_only_and_repay_bid_over_net_debt_fully_closes() {
     let (
         mut scenario,
         clock,
@@ -2146,9 +2123,11 @@ fun reduce_only_and_repay_quantity_exceeds_debt_aborts() {
         scenario.ctx(),
     );
     destroy(withdrawn);
+    destroy_2!(usdc_price, usdt_price);
 
-    // Short position: net base debt is 500 - 200 = 300, so a 400 USDC bid
-    // overshoots the net short and is not reduce-only.
+    // Net base debt is 500 - 200 = 300; the 400 USDC bid overshoots it and is now
+    // allowed (no size cap). Buying 400 (held 200 -> 600) and repaying clears the
+    // whole 500 debt.
     let order_info = test_helpers::place_reduce_only_market_order_and_repay_loan_for_test<
         USDC,
         USDT,
@@ -2168,7 +2147,12 @@ fun reduce_only_and_repay_quantity_exceeds_debt_aborts() {
     );
     destroy(order_info);
 
-    abort
+    // Over-covered past the net short and fully closed.
+    assert_eq!(mm.borrowed_base_shares(), 0);
+
+    return_shared_3!(mm, pool, base_pool);
+    return_shared(quote_pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
 #[test, expected_failure(abort_code = pool_proxy::EIncorrectDeepBookPool)]
@@ -2365,7 +2349,10 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
 }
 
 #[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
-fun test_place_reduce_only_market_order_not_reduce_only_quantity_bid() {
+fun test_place_reduce_only_market_order_bid_requires_base_debt() {
+    // Market sibling of the limit direction-guard test: a reduce-only bid needs
+    // base (short-side) debt. A long (quote debt, no base debt) bidding is not
+    // reduce-only.
     let (
         mut scenario,
         clock,
@@ -2382,8 +2369,8 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_bid() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
-    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
-    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     margin_manager::new<USDC, USDT>(
         &pool,
@@ -2399,40 +2386,28 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_bid() {
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    // USDC collateral + USDT (quote) debt -> a long, no base debt.
+    mm.deposit<USDC, USDT, USDC>(
         &registry,
         &usdc_price,
         &usdt_price,
-        mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
         &clock,
         scenario.ctx(),
     );
-
-    mm.borrow_base<USDC, USDT>(
+    mm.borrow_quote<USDC, USDT>(
         &registry,
-        &mut base_pool,
-        &usdc_price,
-        &usdt_price,
-        &pool,
-        100 * test_constants::usdc_multiplier(),
-        &clock,
-        scenario.ctx(),
-    );
-
-    let coin = mm.withdraw<USDC, USDT, USDC>(
-        &registry,
-        &base_pool,
-        &quote_pool,
+        &mut quote_pool,
         &usdc_price,
         &usdt_price,
         &pool,
-        100 * test_constants::usdc_multiplier(),
+        100 * test_constants::usdt_multiplier(),
         &clock,
         scenario.ctx(),
     );
-    destroy(coin);
+    destroy_2!(usdc_price, usdt_price);
 
-    // User has USDC debt of 100, tries to buy 101 USDC (more than debt)
+    // Bid (buy USDC) with no base debt -> not reduce-only (direction guard).
     test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
@@ -2442,14 +2417,13 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_bid() {
         &mut pool,
         4,
         constants::self_matching_allowed(),
-        101 * test_constants::usdc_multiplier(),
+        50 * test_constants::usdc_multiplier(),
         true,
-        // is_bid
         false,
         &clock,
     );
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
@@ -7007,12 +6981,11 @@ fun place_market_order_and_repay_loan_aborts_when_pool_disabled() {
 }
 
 #[test]
-fun reduce_only_bid_allows_min_size_when_net_debt_is_sub_lot() {
-    // Reduce-only "not stuck" floor: when the net short is below one min_size
-    // order, the bid is still allowed up to min_size so a dust debt can be
-    // covered. Borrow 100 USDC, withdraw only min_size/2 (5000) of it, leaving a
-    // net short of 5000 — below the 10000 min_size. A reduce-only limit bid for
-    // min_size is accepted; the unfloored net cap (5000) would have rejected it.
+fun reduce_only_bid_covers_sub_min_size_net_debt() {
+    // Dust coverage: a sub-`min_size` net short can still be covered. With no size
+    // cap, the bid just has to clear the orderbook `min_size`. Borrow 100 USDC,
+    // withdraw min_size/2 (5000), leaving a net short of 5000 — below the 10000
+    // `min_size`. A reduce-only limit bid for `min_size` is accepted.
     let (
         mut scenario,
         clock,
@@ -7107,13 +7080,12 @@ fun reduce_only_bid_allows_min_size_when_net_debt_is_sub_lot() {
 }
 
 #[test]
-fun reduce_only_and_repay_rounds_net_debt_up_to_lot_to_fully_close() {
-    // Reduce-only round-up-to-lot floor: a non-lot-aligned net short can be fully
-    // closed by buying the next lot up. Borrow 30 USDC, withdraw all but 500 raw,
-    // leaving a net short of ~29_999_500 (not lot-aligned, lot = 1000). The
-    // reduce-only and-repay bid for 30_000_000 (the net rounded up to the next
-    // lot) is accepted and clears the loan; the un-rounded net cap would reject
-    // it, stranding the dust.
+fun reduce_only_and_repay_closes_non_lot_aligned_debt() {
+    // A non-lot-aligned net short can be fully closed. With no size cap, the bid
+    // can be any valid lot-aligned quantity at or past the debt. Borrow 30 USDC,
+    // withdraw all but 500 raw, leaving a net short of ~29_999_500 (not lot-
+    // aligned, lot = 1000). A reduce-only and-repay bid for 30_000_000 (the next
+    // lot up) is accepted and clears the loan.
     let (
         mut scenario,
         clock,

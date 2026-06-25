@@ -304,15 +304,15 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     };
     let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
 
-    // Reduce-only. The ask (closing a long) may sell up to the full base the
-    // manager holds, so a long can be fully unwound — selling base can only
-    // shrink base exposure, never flip it short. The bid (covering a short) is
-    // capped at the net short rounded up to the next lot and floored at one
-    // `min_size` order (`reduce_only_bid_cap`), so a non-lot-aligned or sub-lot
-    // net debt (e.g. accrued-interest dust) can still be fully covered. The
-    // monotonic risk-ratio check below guards value leak.
+    // Reduce-only *direction* guard, symmetric for both sides — no debt-relative
+    // size cap. A bid requires base (short-side) debt and may buy any size:
+    // funding bounds it, and over-buying past the debt only converts quote into
+    // base, which for a base-denominated debt is price-invariant (it *reduces*
+    // price exposure, never increases it). The ask requires quote (long-side) debt
+    // and sells up to the gross base held. The monotonic risk-ratio check below
+    // guards value leak.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
+        (is_bid && base_debt > 0) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -407,13 +407,13 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // Reduce-only, same cap as the other entries: the ask sells up to the gross
-    // base held; the bid covers the net short rounded up to the next lot and
-    // floored at one `min_size` (`reduce_only_bid_cap`). Superseded for closing
-    // (see the doc above) — a market taker fill can't satisfy the monotonic check
-    // without a repay, so use `place_reduce_only_market_order_and_repay_loan`.
+    // Reduce-only *direction* guard, same as the other entries — no size cap: a
+    // bid needs base (short-side) debt, the ask needs quote (long-side) debt and
+    // sells up to gross base held. Superseded for closing (see the doc above) — a
+    // market taker fill can't satisfy the monotonic check without a repay, so use
+    // `place_reduce_only_market_order_and_repay_loan`.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
+        (is_bid && base_debt > 0) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -507,15 +507,15 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // Reduce-only. The ask (closing a long) may sell up to the full base the
-    // manager holds — selling can only shrink base exposure, never flip it
-    // short. The bid (covering a short) is capped at the net short rounded up to
-    // the next lot and floored at one `min_size` order (`reduce_only_bid_cap`),
-    // so a non-lot-aligned or sub-lot net debt (e.g. accrued-interest dust) can
-    // still be fully covered. The net-state monotonic check below guards value
-    // leak.
+    // Reduce-only *direction* guard, symmetric for both sides — no debt-relative
+    // size cap. A bid requires base (short-side) debt and may buy any size:
+    // over-buying past the debt converts quote into base, price-invariant for a
+    // base-denominated debt (it *reduces* price exposure, never increases it), and
+    // the repay below caps the actual debt paydown at the outstanding debt. The
+    // ask requires quote (long-side) debt and sells up to gross base held. The
+    // net-state monotonic check below guards value leak.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
+        (is_bid && base_debt > 0) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -621,11 +621,12 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
     };
     let (base_asset, _) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
 
-    // Same reduce-only cap as `place_reduce_only_limit_order_v2` (see there): the
-    // ask sells up to gross base held; the bid covers up to the net short rounded
-    // up to a lot and floored at one `min_size`.
+    // Same reduce-only direction guard as `place_reduce_only_limit_order_v2` (see
+    // there) — no size cap: a bid needs base (short-side) debt (any size, funding-
+    // bounded), the ask needs quote (long-side) debt and sells up to gross base
+    // held.
     assert!(
-        (is_bid && base_debt > base_asset && quantity <= reduce_only_bid_cap(pool, base_debt - base_asset)) ||
+        (is_bid && base_debt > 0) ||
             (!is_bid && quote_debt > 0 && quantity <= base_asset),
         ENotReduceOnlyOrder,
     );
@@ -1030,28 +1031,6 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
 }
 
 // === Internal Functions ===
-
-/// Reduce-only bid quantity cap for covering a short. The net short is rounded
-/// *up* to the next lot so a non-lot-aligned debt (e.g. accrued interest) can be
-/// fully cleared, and floored at one `min_size` so a sub-`min_size` net debt
-/// isn't stuck below the orderbook minimum. The over-cover is therefore bounded
-/// by one lot (round-up branch) or one `min_size` (floor branch — which can
-/// exceed a lot when `min_size > lot_size`); either way it's a fixed bound, not
-/// open-ended exposure. The reduce-only monotonic check — or, in the and-repay
-/// entries, the post-repay solvency gate — is what actually guards value; this
-/// cap only enforces reduce-only *semantics*.
-fun reduce_only_bid_cap<BaseAsset, QuoteAsset>(
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    net_debt: u64,
-): u64 {
-    let (_, lot_size, min_size) = pool.pool_book_params();
-    // Ceil `net_debt` up to a whole multiple of `lot_size`, then floor at one
-    // `min_size`. Written as modulo arithmetic (rather than `div_ceil`) to build
-    // on every Sui std version.
-    let remainder = net_debt % lot_size;
-    let rounded_up = if (remainder == 0) net_debt else net_debt - remainder + lot_size;
-    rounded_up.max(min_size)
-}
 
 /// Calculates the effective price for a market order by querying the pool.
 /// Returns (effective_price, quote_amount) where quote_amount is quote_in for bids and quote_out for asks.
