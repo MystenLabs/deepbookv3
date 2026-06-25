@@ -269,14 +269,22 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
         propbook_admin_cap,
         pyth_id,
         bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
     ) = setup_registered_feeds();
     let period_ms = constants::five_minutes_ms!();
     let expected_expiry = 2 * period_ms;
 
     scenario.next_tx(test_constants::admin());
-    bind_pyth_and_spot(&scenario, &propbook_admin_cap, pyth_id, bs_spot_id);
+    bind_pyth_spot_and_surface(
+        &scenario,
+        &propbook_admin_cap,
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
+    );
     scenario.next_tx(test_constants::admin());
-    create_and_bind_bs_expiry_feeds(&mut scenario, &propbook_admin_cap, expected_expiry);
 
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(period_ms);
