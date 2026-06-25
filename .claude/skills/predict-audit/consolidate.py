@@ -85,6 +85,10 @@ def collect(res, harness):
     promoted = res.get('promoted', []) or []
     for f in promoted:
         r = norm(f, harness, 'open'); r['verdict'] = 'promoted-unverified'; out.append(r)  # not panel-verified
+    # Info/Low/cleanup findings the orchestrator triaged out of the verify panel: recorded (so they are NOT
+    # silently dropped + the accounting stays honest), but kept OUT of the open tracker — raw, low-priority.
+    for f in res.get('unverified', []) or []:
+        out.append(norm(f, harness, 'unverified'))
     return out, len(promoted)
 
 def main():
@@ -136,12 +140,13 @@ def main():
             f['also'] = []; seen[k] = f; dedup_open.append(f)
     settled = [x for x in all_findings if x['status'] == 'settled']
     refuted = [x for x in all_findings if x['status'] == 'refuted']
+    unverified = [x for x in all_findings if x['status'] == 'unverified']
 
-    # ACCOUNTING: every input finding is either a unique open, a merge, a settled, or a refuted.
-    accounted = len(dedup_open) + merges + len(settled) + len(refuted)
+    # ACCOUNTING: every input finding is either a unique open, a merge, a settled, a refuted, or an unverified.
+    accounted = len(dedup_open) + merges + len(settled) + len(refuted) + len(unverified)
     dropped = total_in - accounted
     acct = (f"ACCOUNTING — parsed {total_in} | open {len(dedup_open)} (+{merges} dup-merges) | "
-            f"settled {len(settled)} | refuted {len(refuted)} | DROPPED {dropped} "
+            f"settled {len(settled)} | refuted {len(refuted)} | unverified {len(unverified)} | DROPPED {dropped} "
             + ("✅ 0 dropped" if dropped == 0 else "⚠️ MISMATCH — investigate"))
     if parse_failures:
         acct += f"\n⛔ {len(parse_failures)} INPUT FILE(S) FAILED TO PARSE (findings NOT in this report): " \
@@ -176,6 +181,11 @@ def main():
     L.append("\n## Refuted (second-guess these — a wrong refutation hides a real bug)\n")
     for f in refuted:
         L.append(f"- [{f['harness']}/{f['source']}] {f['location']} — {f['title']} → {f['why']}")
+    L.append("\n## Unverified (raw finder output — Info/Low/cleanup, NOT panel-verified; triage manually)\n")
+    if not unverified: L.append("_(none)_")
+    for f in sorted(unverified, key=lambda f: -SEV.get(f['severity'].lower(), 1)):
+        sref = f" → {f['settled_ref']}" if f.get('settled_ref') else ""
+        L.append(f"- [{f['severity'] or '?'}] {f['title']} — {f['location']} ({f['harness']}/{f['source']}){sref}")
     L.append("\n## Coverage — what was examined and (esp.) NOT examined\n")
     for h, lane, cov, top3 in coverage_blocks:
         L.append(f"- **{h}/{lane}**: {cov}")
@@ -183,11 +193,13 @@ def main():
 
     rpt = os.path.join(out_dir, 'consolidated-report.md')
     open(rpt, 'w', encoding='utf-8').write("\n".join(L) + "\n")
-    # findings.json (open findings with stable ids) feeds track.py, the live OPEN-ITEMS.md tracker.
-    json.dump({'open': dedup_open, 'settled': settled, 'refuted': refuted},
+    # findings.json (open findings with stable ids) feeds track.py, the live OPEN-ITEMS.md tracker. `unverified`
+    # is recorded here too but under its OWN key, so track.py (which keys on `open`) never floods the tracker
+    # with Info/Low/cleanup noise.
+    json.dump({'open': dedup_open, 'settled': settled, 'refuted': refuted, 'unverified': unverified},
               open(os.path.join(out_dir, 'findings.json'), 'w', encoding='utf-8'), indent=1)
     print(acct)
-    print(f"wrote {rpt} ({len(dedup_open)} open, {len(settled)} settled, {len(refuted)} refuted)")
+    print(f"wrote {rpt} ({len(dedup_open)} open, {len(settled)} settled, {len(refuted)} refuted, {len(unverified)} unverified)")
     sys.exit(0 if (dropped == 0 and not parse_failures and not errored_harnesses) else 1)
 
 if __name__ == '__main__':
