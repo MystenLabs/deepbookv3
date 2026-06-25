@@ -75,6 +75,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &admin_cap,
         test_constants::default_cadence_id(),
         tick,
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -317,6 +318,25 @@ public fun set_pyth(
     source_timestamp_ms: u64,
 ) {
     store_pyth_spot(pyth, price, source_timestamp_ms, self.clock.timestamp_ms());
+}
+
+/// Insert an exact historical Pyth spot keyed by `source_timestamp_ms`.
+public fun insert_exact_pyth(
+    _self: &OracleFixture,
+    pyth: &mut PythFeed,
+    price: u64,
+    source_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        pyth,
+        price,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        source_timestamp_ms * 1000,
+        source_timestamp_ms,
+        true,
+    );
 }
 
 // === Accessors ===

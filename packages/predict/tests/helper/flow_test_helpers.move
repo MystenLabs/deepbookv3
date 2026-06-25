@@ -124,6 +124,7 @@ public fun setup_market(tick: u64): Fixture {
         &admin_cap,
         test_constants::default_cadence_id(),
         tick,
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
