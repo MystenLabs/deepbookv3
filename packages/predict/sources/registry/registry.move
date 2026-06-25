@@ -157,7 +157,7 @@ public fun register_underlying(
     registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
-/// Set all deployment terms for one cadence. Passing zero for all four values
+/// Set all deployment terms for one cadence. Passing zero for all five values
 /// disables the cadence; otherwise all values must be nonzero and valid.
 public fun set_cadence_config(
     registry: &mut Registry,
@@ -165,6 +165,7 @@ public fun set_cadence_config(
     _admin_cap: &AdminCap,
     cadence_id: u8,
     tick_size: u64,
+    admission_tick_size: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
@@ -175,6 +176,7 @@ public fun set_cadence_config(
         .set_cadence_config(
             cadence_id,
             tick_size,
+            admission_tick_size,
             max_expiry_allocation,
             initial_expiry_cash,
             window_size,
@@ -189,12 +191,12 @@ public fun set_cadence_config(
 /// deployment window after skipping enabled higher-rank cadence slots and already
 /// created markets, and — via Propbook's admin-gated canonical binding — that
 /// Pyth spot, BS spot, and the selected expiry's BS forward/SVI feeds are bound
-/// for the underlying. The market snapshots the cadence tick size, while pool
-/// accounting snapshots the cadence allocation cap and initial expiry cash
-/// target. Priced flows resolve the canonical oracle object IDs from Propbook's
-/// insert-only bindings. The market is created with zero cash and registered
-/// with the pool vault as an accounting row only; it is not mintable until
-/// `plp::rebalance_expiry_cash` funds it.
+/// for the underlying. The market snapshots the cadence tick size and admission
+/// tick size, while pool accounting snapshots the cadence allocation cap and
+/// initial expiry cash target. Priced flows resolve the canonical oracle object IDs
+/// from Propbook's insert-only bindings. The market is created with zero cash and
+/// registered with the pool vault as an accounting row only; it is not mintable
+/// until `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -215,6 +217,8 @@ public fun create_expiry_market(
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
     let expiry = deployable.expiry();
     let tick_size = deployable.tick_size();
+    let admission_tick_size = deployable.admission_tick_size();
+    let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
     let max_expiry_allocation = deployable.max_expiry_allocation();
     let initial_expiry_cash = deployable.initial_expiry_cash();
     let pool_vault_id = pool_vault.id();
@@ -223,6 +227,8 @@ public fun create_expiry_market(
         propbook_underlying_id,
         expiry,
         tick_size,
+        admission_tick_size,
+        reference_tick_source_timestamp_ms,
         ctx,
     );
     pool_vault.register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
@@ -235,6 +241,7 @@ public fun create_expiry_market(
         propbook_underlying_id,
         expiry,
         tick_size,
+        admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
         config.strike_exposure_template_config(),

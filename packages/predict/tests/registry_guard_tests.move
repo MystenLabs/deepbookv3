@@ -18,6 +18,7 @@ use deepbook_predict::{
     admin::AdminCap,
     builder_code::{Self, BuilderCode},
     constants,
+    expiry_market::ExpiryMarket,
     flow_test_helpers,
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
@@ -208,6 +209,7 @@ fun create_expiry_market_skips_higher_rank_overlap() {
         &admin_cap,
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -258,6 +260,80 @@ fun create_expiry_market_skips_higher_rank_overlap() {
     scenario.end();
 }
 
+#[test]
+fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
+    let (
+        mut scenario,
+        registry_id,
+        admin_cap,
+        propbook_admin_cap,
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
+    ) = setup_registered_feeds();
+    let period_ms = constants::five_minutes_ms!();
+    let expected_expiry = 2 * period_ms;
+
+    scenario.next_tx(test_constants::admin());
+    bind_pyth_spot_and_surface(
+        &scenario,
+        &propbook_admin_cap,
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
+    );
+    scenario.next_tx(test_constants::admin());
+
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(period_ms);
+    let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let oracle_registry = scenario.take_shared<OracleRegistry>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        market_manager::cadence_five_minute!(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
+        test_constants::default_cadence_window_size(),
+    );
+
+    let expiry_id = reg.create_expiry_market(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_five_minute!(),
+        &clock,
+        scenario.ctx(),
+    );
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+
+    scenario.next_tx(test_constants::admin());
+    let market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    assert_eq!(market.expiry(), expected_expiry);
+    assert_eq!(market.admission_tick_size(), test_constants::default_admission_tick_size());
+    assert_eq!(market.reference_tick_source_timestamp_ms(), period_ms);
+    assert!(market.reference_tick().is_none());
+
+    return_shared(market);
+    lifecycle_cap.destroy();
+    destroy(propbook_admin_cap);
+    destroy(admin_cap);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = market_manager::ECadenceWindowExceeded)]
 fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
     let (
@@ -276,6 +352,7 @@ fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
         &admin_cap,
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -329,6 +406,7 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
         &admin_cap,
         market_manager::cadence_one_day!(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -350,6 +428,7 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
         &admin_cap,
         market_manager::cadence_one_week!(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         WINDOW_SIZE_THREE,
@@ -413,6 +492,7 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
         &admin_cap,
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -567,6 +647,7 @@ fun setup_registered_feeds(): (Scenario, ID, AdminCap, RegistryAdminCap, ID, ID,
         &admin_cap,
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -657,6 +738,7 @@ fun setup_bound_creation_context(
         &admin_cap,
         market_manager::cadence_one_minute!(),
         test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         window_size,
