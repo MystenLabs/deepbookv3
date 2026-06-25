@@ -1078,6 +1078,90 @@ fun test_place_reduce_only_limit_order_bid_requires_base_debt() {
 }
 
 #[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
+fun test_place_reduce_only_limit_order_ask_requires_quote_debt() {
+    // Mirror of the bid guard, and the *one-way* property that bounds the
+    // resting-fill ratchet: a reduce-only ask closes a long, so it requires quote
+    // (long-side) debt. A short (base debt, no quote debt) is rejected. So a short
+    // can only ever *bid* (convert quote->base) and a long can only *ask*
+    // (base->quote) — neither can trade back and forth, capping any value leak to
+    // one conversion (~the price band) and keeping the manager solvent. Without
+    // this guard, a manager could ratchet quote->base->quote... unboundedly via
+    // ungated resting fills and drive itself underwater.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // USDT collateral + USDC (base) debt -> a short, no quote debt.
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Ask (sell USDC) with no quote debt -> not reduce-only (direction guard).
+    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(),
+        50 * test_constants::usdc_multiplier(),
+        false,
+        false,
+        2000000,
+        &clock,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
     let (
         mut scenario,
@@ -2149,6 +2233,174 @@ fun reduce_only_and_repay_bid_over_net_debt_fully_closes() {
 
     // Over-covered past the net short and fully closed.
     assert_eq!(mm.borrowed_base_shares(), 0);
+
+    return_shared_3!(mm, pool, base_pool);
+    return_shared(quote_pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
+    // PoC for the "empty book + self-trade" concern: M1 (a short) rests a
+    // reduce-only bid at the +5% band edge ($1.05) — it only rests because the
+    // book is empty — and a counterparty M2 (a plain balance manager) takes it.
+    // M1 overpays 5% with NO margin re-check at the fill. We assert the leak is
+    // real (ratio drops) but bounded: M1 stays solvent (> 1.0), so its borrowed
+    // principal is still covered and it remains liquidatable. Repeating is
+    // impossible because a short can't ask (see
+    // test_place_reduce_only_limit_order_ask_requires_quote_debt), so the one-way
+    // direction guard caps total leak at one conversion.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+    // No orderbook liquidity: the band-edge bid will rest (nothing to cross).
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // M1 short: deposit 3000 USDT, borrow 1000 USDC, withdraw it -> holds 3000
+    // USDT, owes 1000 USDC (ratio 3.0).
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(3000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(withdrawn);
+
+    let rr_before = mm.risk_ratio(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+
+    // M1 rests a reduce-only-and-repay bid at $1.05 (the +5% band edge) to buy
+    // 1000 USDC. Empty book -> it rests (no taker fill, no repay at placement).
+    let order_info = test_helpers::place_reduce_only_limit_order_and_repay_loan_for_test<
+        USDC,
+        USDT,
+    >(
+        &mut scenario,
+        &registry,
+        &mut mm,
+        &mut pool,
+        &mut base_pool,
+        &mut quote_pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_050_000_000,
+        1000 * test_constants::usdc_multiplier(),
+        true,
+        false,
+        2_000_000,
+        &clock,
+    );
+    destroy(order_info);
+    destroy_2!(usdc_price, usdt_price);
+
+    // Counterparty M2 (a plain balance manager) takes M1's resting bid at $1.05,
+    // selling 1000 USDC for 1050 USDT. M1 overpays 5%, with no margin re-check.
+    scenario.next_tx(test_constants::user2());
+    let mut m2 = deepbook::balance_manager::new(scenario.ctx());
+    m2.deposit(
+        mint_coin<USDC>(2000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    m2.deposit(
+        mint_coin<USDT>(2000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    m2.deposit(
+        mint_coin<DEEP>(10000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    let m2_proof = m2.generate_proof_as_owner(scenario.ctx());
+    pool.place_limit_order<USDC, USDT>(
+        &mut m2,
+        &m2_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_050_000_000,
+        1000 * test_constants::usdc_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+        &clock,
+        scenario.ctx(),
+    );
+    sui::transfer::public_transfer(m2, test_constants::user2());
+
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let rr_after = mm.risk_ratio(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // The ungated self-trade leaked value (ratio dropped)...
+    assert!(rr_after < rr_before);
+    // ...but it stays bounded: M1 remains solvent (> 1.0), borrowed principal
+    // covered, still liquidatable. The one-way guard stops M1 repeating it.
+    assert!(rr_after > constants::float_scaling());
 
     return_shared_3!(mm, pool, base_pool);
     return_shared(quote_pool);
