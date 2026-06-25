@@ -158,19 +158,13 @@ public(package) fun next_deployable_market(
             );
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_forward_id_for_underlying_expiry(
-                        propbook_underlying_id,
-                        expiry,
-                    )
+                    .propbook_block_scholes_forward_id_for_underlying(propbook_underlying_id)
                     .is_some(),
                 EBlockScholesForwardFeedNotBoundToUnderlying,
             );
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_svi_id_for_underlying_expiry(
-                        propbook_underlying_id,
-                        expiry,
-                    )
+                    .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
                     .is_some(),
                 EBlockScholesSVIFeedNotBoundToUnderlying,
             );

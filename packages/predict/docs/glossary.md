@@ -97,13 +97,14 @@ Predict reads it but does not own it.
 - **`BlockScholesSpotFeed`** — one source-level BS spot object plus exact
   timestamp history. Predict reads `normalized_spot()` and the read's
   `source_timestamp_ms`. Code module `propbook::block_scholes_spot_feed`.
-- **`BlockScholesForwardFeed`** — one BS forward object per `(source id,
-  expiry_ms)` plus exact timestamp history. Predict reads `normalized_forward()`
-  and the read's `source_timestamp_ms`. Code module
+- **`BlockScholesForwardFeed`** — one BS forward object per source id, with
+  per-expiry rows plus exact timestamp history. Predict reads
+  `normalized_forward(expiry_ms)` and the read's `source_timestamp_ms`. Code module
   `propbook::block_scholes_forward_feed`.
-- **`BlockScholesSVIFeed`** — one BS SVI object per `(source id, expiry_ms)` plus
-  exact timestamp history. Predict reads `normalized_svi()` and the read's
-  `source_timestamp_ms`. Code module `propbook::block_scholes_svi_feed`.
+- **`BlockScholesSVIFeed`** — one BS SVI object per source id, with per-expiry
+  rows plus exact timestamp history. Predict reads `normalized_svi(expiry_ms)`
+  and the read's `source_timestamp_ms`. Code module
+  `propbook::block_scholes_svi_feed`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are
   differenced off. Predict enforces its pricing-safe SVI envelope at read time

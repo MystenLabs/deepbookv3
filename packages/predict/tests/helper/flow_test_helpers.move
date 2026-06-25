@@ -75,6 +75,8 @@ public struct Fixture {
     vault_id: ID,
     pyth_id: ID,
     bs_spot_id: ID,
+    bs_forward_id: ID,
+    bs_svi_id: ID,
 }
 
 /// A trader handle: the canonical `AccountWrapper` ID plus its owner. The wrapper is
@@ -86,12 +88,11 @@ public struct Trader has copy, drop, store {
     owner: address,
 }
 
-/// Stand up a registry + protocol config + an empty PLP vault + the global Pyth and
-/// BS spot feeds for the default cadence's `tick` size. Per-expiry BS forward/SVI
-/// feeds are created and bound when each expiry is created. base_fee is floored to 1
-/// and min_ask to 0 so small test quantities are admissible. Creation reads no spot
-/// (strikes are absolute ticks), so no spot is seeded here — `prepare_live_oracle`
-/// seeds the live spot + surface for pricing.
+/// Stand up a registry + protocol config + an empty PLP vault + the permanent
+/// Pyth, BS spot, BS forward, and BS SVI feeds for the default cadence's `tick`
+/// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
+/// admissible. Creation reads no spot (strikes are absolute ticks), so no spot is
+/// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     // Ask the accumulator seam to construct the shared root up front. On this
@@ -142,6 +143,16 @@ public fun setup_market(tick: u64): Fixture {
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
+    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
+        &mut oracle_registry,
+        test_constants::pyth_feed_id(),
+        scenario.ctx(),
+    );
+    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
+        &mut oracle_registry,
+        test_constants::pyth_feed_id(),
+        scenario.ctx(),
+    );
     return_shared(oracle_registry);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
@@ -153,6 +164,8 @@ public fun setup_market(tick: u64): Fixture {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
     let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
+    let bs_forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
+    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         &propbook_admin_cap,
@@ -165,6 +178,15 @@ public fun setup_market(tick: u64): Fixture {
         &bs_spot,
         test_constants::propbook_underlying_id(),
     );
+    propbook_registry::bind_block_scholes_surface_to_underlying(
+        &mut oracle_registry,
+        &propbook_admin_cap,
+        &bs_forward,
+        &bs_svi,
+        test_constants::propbook_underlying_id(),
+    );
+    return_shared(bs_svi);
+    return_shared(bs_forward);
     return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
@@ -192,6 +214,8 @@ public fun setup_market(tick: u64): Fixture {
         vault_id,
         pyth_id,
         bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
     }
 }
 
@@ -250,7 +274,6 @@ fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fi
 /// Create the market for `expiry` through the production path, returning its id.
 public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     self.scenario.next_tx(test_constants::admin());
-    self.create_and_bind_bs_expiry_feeds(expiry);
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
@@ -278,8 +301,6 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
 
 public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): ID {
     self.scenario.next_tx(test_constants::admin());
-    let expiry = self.next_expiry_for_cadence(cadence_id);
-    self.create_and_bind_bs_expiry_feeds(expiry);
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
@@ -300,60 +321,6 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
     expiry_id
-}
-
-fun create_and_bind_bs_expiry_feeds(self: &mut Fixture, expiry: u64) {
-    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        expiry,
-        self.scenario.ctx(),
-    );
-    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        expiry,
-        self.scenario.ctx(),
-    );
-    return_shared(oracle_registry);
-
-    self.scenario.next_tx(test_constants::admin());
-    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let bs_forward = self.scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
-    let bs_svi = self.scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
-    propbook_registry::bind_block_scholes_expiry_to_underlying(
-        &mut oracle_registry,
-        &self.propbook_admin_cap,
-        &bs_forward,
-        &bs_svi,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(oracle_registry);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-fun next_expiry_for_cadence(self: &Fixture, cadence_id: u8): u64 {
-    let period_ms = cadence_period_ms(cadence_id);
-    ((self.clock.timestamp_ms() / period_ms) + 1) * period_ms
-}
-
-fun cadence_period_ms(cadence_id: u8): u64 {
-    if (cadence_id == market_manager::cadence_one_minute!()) {
-        constants::one_minute_ms!()
-    } else if (cadence_id == market_manager::cadence_five_minute!()) {
-        constants::five_minutes_ms!()
-    } else if (cadence_id == market_manager::cadence_one_hour!()) {
-        constants::one_hour_ms!()
-    } else if (cadence_id == market_manager::cadence_one_day!()) {
-        constants::one_day_ms!()
-    } else if (cadence_id == market_manager::cadence_one_week!()) {
-        constants::one_week_ms!()
-    } else {
-        constants::one_month_ms!()
-    }
 }
 
 public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolConfig, budget: u64) {
@@ -417,23 +384,11 @@ public fun take_market(
 ) {
     let market = self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let bs_forward_id = oracle_registry
-        .propbook_block_scholes_forward_id_for_underlying_expiry(
-            market.propbook_underlying_id(),
-            market.expiry(),
-        )
-        .destroy_some();
-    let bs_svi_id = oracle_registry
-        .propbook_block_scholes_svi_id_for_underlying_expiry(
-            market.propbook_underlying_id(),
-            market.expiry(),
-        )
-        .destroy_some();
     (
         self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
         self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
-        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id),
-        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id),
+        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
+        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
         oracle_registry,
         self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
         market,
@@ -633,6 +588,7 @@ public fun seed_bs_surface(
             forward,
         ),
         &self.clock,
+        self.scenario.ctx(),
     );
     bs_svi.update(
         update::new_svi_update(
@@ -648,6 +604,7 @@ public fun seed_bs_surface(
             false,
         ),
         &self.clock,
+        self.scenario.ctx(),
     );
 }
 
@@ -1152,6 +1109,8 @@ public fun finish(self: Fixture) {
         vault_id: _,
         pyth_id: _,
         bs_spot_id: _,
+        bs_forward_id: _,
+        bs_svi_id: _,
     } = self;
     lifecycle_cap.destroy();
     destroy(propbook_admin_cap);

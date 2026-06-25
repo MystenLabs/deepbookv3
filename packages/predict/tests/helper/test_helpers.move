@@ -151,7 +151,7 @@ public fun bind_feeds_to_underlying(
         &bs_spot,
         test_constants::propbook_underlying_id(),
     );
-    propbook_registry::bind_block_scholes_expiry_to_underlying(
+    propbook_registry::bind_block_scholes_surface_to_underlying(
         &mut oracle_registry,
         &admin_cap,
         &bs_forward,
