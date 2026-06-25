@@ -72,10 +72,11 @@ const SCENARIO_CONFIG_PATH = fileURLToPath(
 );
 // Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
 // tick * tick_size`, no centered grid. The harness tick size is $1 (1e9-scaled).
-// A strike is encoded as a tick; the only validity bound is the finite tick
-// domain `1..POS_INF_TICK - 1`.
+// Admission uses the same $1 grid so existing generated scenarios keep the old
+// behavior while matching the two-tick-size cadence interface.
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
-const TICK_BITS = 24n;
+const ADMISSION_TICK_SIZE = ORACLE_TICK_SIZE;
+const TICK_BITS = 30n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
 
@@ -181,19 +182,21 @@ function initialAliases(): AliasState {
     };
 }
 
-// Snap a raw strike DOWN to its tick boundary, then back to a raw strike. With the
-// absolute-tick domain there is no grid to center; alignment is just flooring to a
-// whole tick multiple. The tick must land in the finite domain `1..POS_INF_TICK-1`.
+// Snap a raw strike DOWN to its admission boundary, then back to a raw strike.
+// With the absolute-tick domain there is no grid to center; admission alignment is
+// just flooring to the configured mint-entry multiple. The tick must land in the
+// finite domain `1..POS_INF_TICK-1`.
 function alignStrikeToTick(strike: bigint): bigint {
     if (strike <= 0n) throw new Error("strike must be positive");
-    const tick = strike / ORACLE_TICK_SIZE;
+    const aligned = (strike / ADMISSION_TICK_SIZE) * ADMISSION_TICK_SIZE;
+    const tick = aligned / ORACLE_TICK_SIZE;
     if (tick <= 0n || tick >= POS_INF_TICK) {
         throw new Error(
             `strike tick ${tick} outside the finite tick domain (1..POS_INF_TICK-1); ` +
                 "raise the oracle tick size to cover a higher strike",
         );
     }
-    return tick * ORACLE_TICK_SIZE;
+    return aligned;
 }
 
 function direction(row: MintRow): "UP" | "DN" {
@@ -1111,6 +1114,7 @@ async function setupSimulation(
         setCadenceConfigTx({
             cadenceId: SIM_CADENCE_ONE_MONTH,
             tickSize: ORACLE_TICK_SIZE,
+            admissionTickSize: ADMISSION_TICK_SIZE,
             maxExpiryAllocation,
             initialExpiryCash,
             windowSize: SIM_CADENCE_WINDOW_SIZE,
@@ -1118,7 +1122,7 @@ async function setupSimulation(
         "set_cadence_config",
     );
     console.log(
-        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC initial_cash=${initialExpiryCash / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
+        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} admission_tick=$${scaledUsd(ADMISSION_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC initial_cash=${initialExpiryCash / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
     );
 
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
