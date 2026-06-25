@@ -146,10 +146,10 @@ public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 // === Strike Tick Domain ===
 
 /// Bit width of each strike tick field packed into an order ID.
-public(package) macro fun tick_bits(): u8 { 24 }
+public(package) macro fun tick_bits(): u8 { 30 }
 
-/// Positive-infinity sentinel tick, maximum finite-tick bound, and u24 mask for
-/// unpacking a tick. As the higher tick it is the open upper bound; finite ticks
+/// Positive-infinity sentinel tick and maximum finite-tick bound. As the higher
+/// tick it is the open upper bound; finite ticks
 /// occupy `1..pos_inf_tick - 1`, and tick `0` is the negative-infinity sentinel
 /// as the lower tick. Read by `order` (shape validation) and the range/tick codec.
 public(package) macro fun pos_inf_tick(): u64 { (1u64 << tick_bits!()) - 1 }

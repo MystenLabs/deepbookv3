@@ -4,14 +4,14 @@ Predict prices its range digitals (binary options) off external Propbook feeds a
 
 ## Propbook feeds
 
-Predict separates the *spot* of the underlying asset, the per-expiry forward, and the SVI shape of the implied distribution into separate `propbook` feed objects. The feeds are permissionless to update — a verified provider payload is its own provenance proof — and none of them knows anything about Predict, markets, expiries, or positions.
+Predict separates the *spot* of the underlying asset, the forward surface, and the SVI shape of the implied distribution into separate permanent `propbook` feed objects. Forward and SVI values are keyed by expiry inside those feeds. The feeds are permissionless to update — a verified provider payload is its own provenance proof — and none of them knows anything about Predict, markets, expiries, or positions.
 
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |
 | Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
 | Block Scholes spot | `propbook::block_scholes_spot_feed::BlockScholesSpotFeed` | One source-level BS spot stream plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
-| Block Scholes forward | `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` | One forward stream per `(source id, expiry_ms)` plus exact timestamp inserts | `normalized_forward()` and its `OracleRead` timestamp |
-| SVI params | `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` | One SVI stream per `(source id, expiry_ms)` plus exact timestamp inserts | `normalized_svi()` and its `OracleRead` timestamp |
+| Block Scholes forward | `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` | One source-level forward object with per-expiry streams plus exact timestamp inserts | `normalized_forward(expiry_ms)` and its `OracleRead` timestamp |
+| SVI params | `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` | One source-level SVI object with per-expiry streams plus exact timestamp inserts | `normalized_svi(expiry_ms)` and its `OracleRead` timestamp |
 
 The `pricing` module is a stateless read layer over these feeds. It resolves them on demand, checks BS price and SVI freshness, computes prices, and never mutates feed, pool, expiry, or position state.
 
@@ -30,7 +30,7 @@ The generic Propbook lane records a latest update only when the publisher timest
 
 ### Block Scholes spot, forward, and SVI
 
-Block Scholes data is split into three feed types. A `BlockScholesSpotFeed` exists per BS source id. A `BlockScholesForwardFeed` and a `BlockScholesSVIFeed` exist per `(source id, expiry_ms)`. The Propbook registry binds the source-level BS spot first, then binds each expiry's forward/SVI pair with `bind_block_scholes_expiry_to_underlying`, which asserts that the forward feed, SVI feed, and already-bound spot feed all share the same `bs_source_id`.
+Block Scholes data is split into three feed types. A `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, and `BlockScholesSVIFeed` each exist once per BS source id. The forward and SVI feeds keep per-expiry rows internally, so the oracle objects are permanent while updates can target any expiry. The Propbook registry binds the source-level BS spot first, then binds the permanent forward/SVI surface pair with `bind_block_scholes_surface_to_underlying`, which asserts that the forward feed, SVI feed, and already-bound spot feed all share the same `bs_source_id`.
 
 Predict uses the latest fresh BS spot and the latest fresh expiry forward to compute the **basis** = `forward / spot`. That basis lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)). The spot and forward are independent lanes, so they have independent timestamps, but both must be fresh under the BS price freshness window before Predict uses either one.
 

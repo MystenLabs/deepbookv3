@@ -11,15 +11,15 @@ from bisect import bisect_left, bisect_right
 
 PAGE_CAPACITY = 64
 
-QUANTITY_LOTS_OFFSET = 152
-FLOOR_SHARES_OFFSET = 88
-# Absolute u24 ticks pack at these offsets (order.move LOWER_TICK_OFFSET /
+QUANTITY_LOTS_OFFSET = 164
+FLOOR_SHARES_OFFSET = 100
+# Absolute u30 ticks pack at these offsets (order.move LOWER_TICK_OFFSET /
 # HIGHER_TICK_OFFSET). The grid-relative boundary-index encoding is gone: the
 # order now stores absolute ticks directly.
-LOWER_TICK_OFFSET = 64
+LOWER_TICK_OFFSET = 70
 HIGHER_TICK_OFFSET = 40
 
-U24_MASK = (1 << 24) - 1
+U30_MASK = (1 << 30) - 1
 U32_MASK = (1 << 32) - 1
 U40_MASK = (1 << 40) - 1
 U64_MASK = (1 << 64) - 1
@@ -58,13 +58,13 @@ def encode_order_id(
     sequence: int,
     position_lot_size: int,
 ) -> int:
-    # Mirrors order::new / assert_valid_order_shape exactly (absolute u24 ticks).
+    # Mirrors order::new / assert_valid_order_shape exactly (absolute u30 ticks).
     quantity_lots = quantity // position_lot_size
     if quantity_lots <= 0 or quantity_lots > U32_MASK or quantity % position_lot_size != 0:
         raise ValueError("invalid order quantity")
     if floor_shares < 0 or floor_shares > U64_MASK or floor_shares > quantity:
         raise ValueError("invalid floor shares")
-    if lower_tick > U24_MASK or higher_tick > U24_MASK:
+    if lower_tick > U30_MASK or higher_tick > U30_MASK:
         raise ValueError("tick does not fit in order id")
     if lower_tick > pos_inf_tick or higher_tick > pos_inf_tick:
         raise ValueError("tick outside protocol domain")

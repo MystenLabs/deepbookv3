@@ -48,8 +48,8 @@ exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
 
-For Block Scholes, raw reads expose source spot, per-expiry forward, and
-per-expiry SVI payloads from separate feed objects. Normalized spot and forward
+For Block Scholes, raw reads expose source spot plus per-expiry forward and SVI
+payloads from permanent source-level feed objects. Normalized spot and forward
 reads return `none` when the requested observation is absent or zero; normalized
 SVI reads expose the stored SVI parameters directly.
 
@@ -93,13 +93,14 @@ Block Scholes data is split across three shared-object types:
 
 - `block_scholes_spot_feed::BlockScholesSpotFeed`: one source-level spot stream
   per Block Scholes source id.
-- `block_scholes_forward_feed::BlockScholesForwardFeed`: one forward stream per
-  `(source id, expiry_ms)`.
-- `block_scholes_svi_feed::BlockScholesSVIFeed`: one SVI stream per
-  `(source id, expiry_ms)`.
+- `block_scholes_forward_feed::BlockScholesForwardFeed`: one source-level
+  forward object per Block Scholes source id, with per-expiry lanes.
+- `block_scholes_svi_feed::BlockScholesSVIFeed`: one source-level SVI object per
+  Block Scholes source id, with per-expiry lanes.
 
-Each feed wraps one `OracleLane`, so every BS value uses the same mutation
-pattern as Pyth: latest update, exact timestamp insert, and generic lane events.
+The spot feed wraps one `OracleLane`; the forward and SVI feeds keep a table of
+`expiry_ms -> OracleLane`. Every BS value still uses the same mutation pattern as
+Pyth: latest update, exact timestamp insert, and generic lane events.
 
 The BS payloads store raw source fields:
 
@@ -116,23 +117,22 @@ Its `Update` values are forgeable until the real BS signature verifier replaces
 the stub. Permissionless BS live updates and exact inserts are not production-safe
 while this is true.
 
-Binding caveat: Propbook binds the source-level BS spot feed first, then binds a
-forward/SVI pair for each expiry with
-`registry::bind_block_scholes_expiry_to_underlying`. That function asserts that
+Binding caveat: Propbook binds the source-level BS spot feed first, then binds
+the permanent forward/SVI surface pair with
+`registry::bind_block_scholes_surface_to_underlying`. That function asserts that
 the forward feed, SVI feed, and already-bound spot feed all share the same
 `bs_source_id`, so consumers do not accidentally combine BS spot/basis data from
-different sources for one underlying/expiry.
+different sources for one underlying.
 
 ## Registry And Identifiers
 
 `registry::OracleRegistry` owns source discovery and canonical Propbook bindings.
 It keeps two namespaces:
 
-- Source catalog: one Propbook oracle object per source key. Source-level feeds
-  key by `(oracle_kind, source_id)`; per-expiry feeds also carry `expiry_ms`.
+- Source catalog: one Propbook oracle object per source key, keyed by
+  `(oracle_kind, source_id)`.
 - Canonical binding: one active oracle per
-  `(propbook_underlying_id, oracle_kind, value_kind)`, with `expiry_ms` included
-  for expiry-level values.
+  `(propbook_underlying_id, oracle_kind, value_kind)`.
 
 Identifier pattern:
 
@@ -165,10 +165,10 @@ Typical discovery question:
 Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
 equivalent BS spot lookup is
 `propbook_block_scholes_spot_id_for_underlying(registry, propbook_underlying_id)`.
-Per-expiry BS lookups are
-`propbook_block_scholes_forward_id_for_underlying_expiry(registry, propbook_underlying_id, expiry_ms)`
+The BS surface lookups are
+`propbook_block_scholes_forward_id_for_underlying(registry, propbook_underlying_id)`
 and
-`propbook_block_scholes_svi_id_for_underlying_expiry(registry, propbook_underlying_id, expiry_ms)`.
+`propbook_block_scholes_svi_id_for_underlying(registry, propbook_underlying_id)`.
 
 ## Events
 
@@ -177,7 +177,7 @@ Propbook emits generic oracle events:
 - `ObservationRecorded<OracleRead<Payload>>`
 - `ObservationInserted<OracleRead<Payload>>`
 
-For per-expiry BS forward and SVI feeds, the payload includes the expiry, so the
+For BS forward and SVI rows, the payload includes the expiry, so the
 generic event is enough to index per-expiry writes. BS spot is source-level and
 does not carry an expiry. Exact-insert events include the source timestamp in the
 `OracleRead` envelope.

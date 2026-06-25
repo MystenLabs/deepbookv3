@@ -109,8 +109,8 @@ graph TD
         OR[OracleRegistry<br/>canonical bindings]
         PF[PythFeed<br/>global spot]
         BSS[BlockScholesSpotFeed<br/>source spot]
-        BSF[BlockScholesForwardFeed<br/>per-expiry forward]
-        BSV[BlockScholesSVIFeed<br/>per-expiry SVI]
+        BSF[BlockScholesForwardFeed<br/>source forward surface]
+        BSV[BlockScholesSVIFeed<br/>source SVI surface]
     end
 
     subgraph Owned caps
@@ -179,10 +179,10 @@ The live oracle data is fully outside Predict, in standalone, Predict-unaware sh
 
 - **`propbook::pyth_feed::PythFeed`** — one global source-native Pyth payload per Pyth Lazer feed ID plus exact timestamp inserts. Updated permissionlessly by anyone holding a verified `pyth_lazer::Update` (`update`); the verified update is its own provenance proof, so there is no writer cap. Predict reads `normalized_spot()` and the read's `source_timestamp_ms`, while raw source fields remain available through raw getters.
 - **`propbook::block_scholes_spot_feed::BlockScholesSpotFeed`** — one source-level BS spot payload plus exact timestamp inserts.
-- **`propbook::block_scholes_forward_feed::BlockScholesForwardFeed`** — one BS forward payload per `(source_id, expiry_ms)` plus exact timestamp inserts.
-- **`propbook::block_scholes_svi_feed::BlockScholesSVIFeed`** — one BS SVI payload per `(source_id, expiry_ms)` plus exact timestamp inserts.
+- **`propbook::block_scholes_forward_feed::BlockScholesForwardFeed`** — one source-level BS forward surface with per-expiry rows plus exact timestamp inserts.
+- **`propbook::block_scholes_svi_feed::BlockScholesSVIFeed`** — one source-level BS SVI surface with per-expiry rows plus exact timestamp inserts.
 
-Propbook binds the BS spot feed first, then binds an expiry's forward/SVI pair with a same-`bs_source_id` invariant. `pricing.move` resolves the live forward from these feeds: if the normalized Pyth spot is present and fresh, `forward = pyth_spot * (bs.forward / bs.spot)`; otherwise it falls back to the normalized Block Scholes `forward`. Missing, stale, or non-positive/unrepresentable Pyth spot is a fallback; an oversized normalized Pyth spot still aborts under Predict's pricing envelope. BS spot and forward must be fresh under `block_scholes_price_freshness_ms`, and SVI must be fresh under the looser `block_scholes_svi_freshness_ms`. `pricing` owns current Propbook binding, pre-expiry live-pricing liveness, feed freshness, the pricing-safe envelope, and the SVI binary-pricing math. The feeds carry their own package version and a forward-only `migrate`; Predict does **not** gate them under its version set. See [pricing and oracles](../concepts/pricing-and-oracles.md).
+Propbook binds the BS spot feed first, then binds the permanent forward/SVI surface pair with a same-`bs_source_id` invariant. `pricing.move` resolves the live forward from these feeds: if the normalized Pyth spot is present and fresh, `forward = pyth_spot * (bs.forward / bs.spot)`; otherwise it falls back to the normalized Block Scholes `forward` for the market expiry. Missing, stale, or non-positive/unrepresentable Pyth spot is a fallback; an oversized normalized Pyth spot still aborts under Predict's pricing envelope. BS spot and forward must be fresh under `block_scholes_price_freshness_ms`, and SVI must be fresh under the looser `block_scholes_svi_freshness_ms`. `pricing` owns current Propbook binding, pre-expiry live-pricing liveness, feed freshness, the pricing-safe envelope, and the SVI binary-pricing math. The feeds carry their own package version and a forward-only `migrate`; Predict does **not** gate them under its version set. See [pricing and oracles](../concepts/pricing-and-oracles.md).
 
 ## The pool, NAV, and the async LP layer
 

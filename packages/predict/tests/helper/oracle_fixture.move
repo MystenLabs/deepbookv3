@@ -75,6 +75,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &admin_cap,
         test_constants::default_cadence_id(),
         tick,
+        test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
@@ -95,13 +96,11 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
-        expiry,
         scenario.ctx(),
     );
     let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
         &mut oracle_registry,
         test_constants::pyth_feed_id(),
-        expiry,
         scenario.ctx(),
     );
     return_shared(oracle_registry);
@@ -290,6 +289,7 @@ public fun prepare_real_oracle(
     bs_forward.update(
         update::new_forward_update(test_constants::pyth_feed_id(), self.expiry, live_ts, forward),
         &self.clock,
+        self.scenario.ctx(),
     );
     bs_svi.update(
         update::new_svi_update(
@@ -305,6 +305,28 @@ public fun prepare_real_oracle(
             svi_m_is_negative,
         ),
         &self.clock,
+        self.scenario.ctx(),
+    );
+}
+
+/// Overwrite only the BS forward row for this fixture's expiry through the real
+/// ingest path. Used by stale-surface guard tests that need fresh prices but a
+/// stale SVI row.
+public fun set_bs_forward_for_testing(
+    self: &mut OracleFixture,
+    bs_forward: &mut BlockScholesForwardFeed,
+    source_timestamp_ms: u64,
+    forward: u64,
+) {
+    bs_forward.update(
+        update::new_forward_update(
+            test_constants::pyth_feed_id(),
+            self.expiry,
+            source_timestamp_ms,
+            forward,
+        ),
+        &self.clock,
+        self.scenario.ctx(),
     );
 }
 
@@ -317,6 +339,25 @@ public fun set_pyth(
     source_timestamp_ms: u64,
 ) {
     store_pyth_spot(pyth, price, source_timestamp_ms, self.clock.timestamp_ms());
+}
+
+/// Insert an exact historical Pyth spot keyed by `source_timestamp_ms`.
+public fun insert_exact_pyth(
+    _self: &OracleFixture,
+    pyth: &mut PythFeed,
+    price: u64,
+    source_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        pyth,
+        price,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        source_timestamp_ms * 1000,
+        source_timestamp_ms,
+        true,
+    );
 }
 
 // === Accessors ===
