@@ -24,7 +24,6 @@ const EPositionAlreadyExists: u64 = 0;
 const EPositionNotFound: u64 = 1;
 const EInsufficientPosition: u64 = 2;
 const EExpirySummaryHasOpenPositions: u64 = 3;
-const ESameTimestampRedeem: u64 = 4;
 
 /// App witness that namespaces Predict's data slot on an `Account`. Only this
 /// module can construct it, so only Predict can write its own slot.
@@ -157,24 +156,17 @@ public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
     registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
 }
 
-/// Assert a held position was not opened at `now_ms`, returning its stored open
-/// time. Redeem calls this with `clock.timestamp_ms()` to reject closing a
-/// position in the same timestamp it was opened: a single transaction reads one
-/// `Clock`, so equal timestamps mean an atomic mint -> oracle-update -> redeem in
-/// one transaction. The returned open time is carried forward to partial-close
-/// replacements.
-public(package) fun assert_not_opened_at(
+/// Return the on-chain time (`clock.timestamp_ms()`) a held position was opened.
+/// Carried forward unchanged across partial-close replacements.
+public(package) fun position_opened_at_ms(
     account: &Account,
     expiry_market_id: ID,
     order_id: u256,
-    now_ms: u64,
 ): u64 {
     let d = data(account);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
-    let opened_at_ms = d.positions[key].opened_at_ms;
-    assert!(now_ms != opened_at_ms, ESameTimestampRedeem);
-    opened_at_ms
+    d.positions[key].opened_at_ms
 }
 
 /// Add an order position keyed to its root order ID. At mint the root equals the

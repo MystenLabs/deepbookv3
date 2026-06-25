@@ -57,9 +57,8 @@ fun add_then_remove_position_round_trips_root_id() {
     );
     assert!(predict_account::has_position(account, eid(EXPIRY_A), ORDER_A));
     assert_eq!(predict_account::expiry_position_count(account, eid(EXPIRY_A)), 1);
-    // A later timestamp passes the guard and reads back the stored open time.
     assert_eq!(
-        predict_account::assert_not_opened_at(account, eid(EXPIRY_A), ORDER_A, OPENED_AT_MS + 1),
+        predict_account::position_opened_at_ms(account, eid(EXPIRY_A), ORDER_A),
         OPENED_AT_MS,
     );
 
@@ -74,12 +73,7 @@ fun add_then_remove_position_round_trips_root_id() {
     );
     assert_eq!(predict_account::expiry_position_count(account, eid(EXPIRY_A)), 2);
     assert_eq!(
-        predict_account::assert_not_opened_at(
-            account,
-            eid(EXPIRY_A),
-            ORDER_B,
-            REPLACEMENT_OPENED_AT_MS + 1,
-        ),
+        predict_account::position_opened_at_ms(account, eid(EXPIRY_A), ORDER_B),
         REPLACEMENT_OPENED_AT_MS,
     );
 
@@ -151,28 +145,11 @@ fun remove_unknown_position_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = predict_account::ESameTimestampRedeem)]
-fun assert_not_opened_at_same_timestamp_aborts() {
-    let (mut scenario, mut wrapper) = new_account();
-    let account = wrapper.load_account_mut(auth(&mut scenario));
-    predict_account::add_position(
-        account,
-        eid(EXPIRY_A),
-        ORDER_A,
-        ORDER_A,
-        OPENED_AT_MS,
-        scenario.ctx(),
-    );
-    // Closing in the exact timestamp the position was opened is rejected.
-    predict_account::assert_not_opened_at(account, eid(EXPIRY_A), ORDER_A, OPENED_AT_MS);
-    abort 999
-}
-
 #[test, expected_failure(abort_code = predict_account::EPositionNotFound)]
-fun assert_not_opened_at_unknown_position_aborts() {
+fun opened_at_ms_unknown_position_aborts() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    // Attach the slot with one position so the check reaches the missing-row guard
+    // Attach the slot with one position so the getter reaches the missing-row guard
     // rather than the empty-app-data path.
     predict_account::add_position(
         account,
@@ -182,7 +159,7 @@ fun assert_not_opened_at_unknown_position_aborts() {
         OPENED_AT_MS,
         scenario.ctx(),
     );
-    predict_account::assert_not_opened_at(account, eid(EXPIRY_A), ORDER_B, OPENED_AT_MS + 1);
+    predict_account::position_opened_at_ms(account, eid(EXPIRY_A), ORDER_B);
     abort 999
 }
 
