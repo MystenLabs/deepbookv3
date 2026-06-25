@@ -46,7 +46,6 @@ const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
 const EMintQuantityBelowMin: u64 = 6;
 const EWrongPricer: u64 = 7;
-const EMintRedeemSameTimestamp: u64 = 8;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -796,13 +795,14 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    // Reject redeeming a position in the same timestamp it was opened. A single
-    // transaction reads one `Clock`, so this blocks an atomic mint -> oracle-update
-    // -> redeem that would round-trip a freshly minted order against a price the
-    // same tx just pushed. The open time is carried forward across partial-close
-    // replacements, so seasoned positions stay closable in multiple steps.
-    let opened_at_ms = predict_account::position_opened_at_ms(account, market.id(), order.id());
-    assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
+    // Block an atomic mint -> oracle-update -> redeem: reject closing a position in
+    // the same timestamp it was opened (carried forward across partial closes).
+    let opened_at_ms = predict_account::assert_not_opened_at(
+        account,
+        market.id(),
+        order.id(),
+        clock.timestamp_ms(),
+    );
 
     let active_stake = predict_account::active_stake_mut(account, ctx);
     let position_root_id = predict_account::remove_position(

@@ -8,7 +8,7 @@
 #[test_only]
 module deepbook_predict::mint_redeem_guard_tests;
 
-use deepbook_predict::{constants, expiry_market, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{constants, flow_test_helpers as helpers, predict_account, test_constants};
 use std::unit_test::assert_eq;
 
 /// Lot-aligned position size minted in both tests.
@@ -20,7 +20,7 @@ const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 const REDEEM_MS: u64 = 121_000;
 const REDEEM_SOURCE_TS: u64 = 120_000;
 
-#[test, expected_failure(abort_code = expiry_market::EMintRedeemSameTimestamp)]
+#[test, expected_failure(abort_code = predict_account::ESameTimestampRedeem)]
 fun redeem_in_mint_timestamp_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::default_expiry_ms(),
