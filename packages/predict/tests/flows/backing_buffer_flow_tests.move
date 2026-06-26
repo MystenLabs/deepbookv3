@@ -17,20 +17,16 @@ use deepbook_predict::{
     constants,
     expiry_cash,
     expiry_market::ExpiryMarket,
-    flow_test_helpers as helpers,
+    flow_test_helpers::{Self as helpers, BlockScholesFeed},
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use sui::accumulator::AccumulatorRoot;
 use fixed_math::math::{Self, float_scaling as float};
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::assert_eq;
+use sui::accumulator::AccumulatorRoot;
 
 const QUANTITY: u64 = 1_000_000_000;
 const LEVERAGED_QUANTITY: u64 = 2_000_000_000;
@@ -75,8 +71,26 @@ fun disjoint_range_book_uses_default_gap_buffer() {
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let _down = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
-    let _up = mint_up(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _down = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
+    let _up = mint_up(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
 
     // M = 1e9, Σ = 2e9, λ(default) * gap = 250e6, reserve = 1.25e9.
     assert_eq!(
@@ -96,8 +110,26 @@ fun overlapping_range_book_has_zero_gap() {
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let _first = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
-    let _second = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _first = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
+    let _second = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
 
     // Both orders win at the same settlement points: M = Σ = 2e9, gap = 0.
     assert_eq!(math::mul(config_constants::default_backing_buffer_lambda!(), 0), 0);
@@ -117,8 +149,26 @@ fun lambda_one_is_summed_backing_identity() {
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let _down = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
-    let _up = mint_up(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _down = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
+    let _up = mint_up(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
 
     // λ = 1e9 makes mul(λ, gap) exactly gap under the fixed-point identity.
     assert_eq!(market.backing_buffer_lambda(), float!());
@@ -139,9 +189,27 @@ fun mint_succeeds_when_cash_between_buffered_reserve_and_old_sum() {
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let _down = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _down = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
     assert_eq!(market.cash_balance(), CAPITAL_EFFICIENT_PRE_SECOND_MINT_CASH);
-    let _up = mint_leveraged_up(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _up = mint_leveraged_up(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
 
     // Cash is 1.8e9: above new required cash 1.7575e9, below old Σ
     // requirement 2.5075e9. The second mint would have failed under the old
@@ -165,12 +233,30 @@ fun mint_below_buffered_reserve_aborts() {
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let _down = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _down = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
     assert_eq!(market.cash_balance(), FIRST_ORDER_REQUIRED_CASH);
 
     // The 2x UP mint adds 510e6 cash, leaving 1.5125e9 cash against the
     // 1.7575e9 buffered required cash for the disjoint live orders.
-    let _up = mint_leveraged_up(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _up = mint_leveraged_up(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
     abort 999
 }
 
@@ -181,16 +267,35 @@ fun exact_reserve_full_close_hits_single_number_wall() {
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let down = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
-    let _up = mint_leveraged_up(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let down = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
+    let _up = mint_leveraged_up(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
     assert_eq!(market.cash_balance(), LEVERAGED_REQUIRED_CASH);
 
     // Closing the DOWN side would pay 495e6 net, but the remaining leveraged
     // UP reserve still needs 1.5e9 plus the higher rebate reserve.
+    fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     let (_closed, _replacement) = fx.redeem(
         &config,
         &oracle_registry,
@@ -212,17 +317,36 @@ fun exact_reserve_partial_close_preserves_live_floor() {
         option::none(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
-    let _down = mint_down(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
-    let up = mint_leveraged_up(&mut fx, &config, &oracle_registry, &mut wrapper, &root, &mut market, &pyth, &bs);
+    let _down = mint_down(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
+    let up = mint_leveraged_up(
+        &mut fx,
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs,
+    );
     assert_eq!(market.cash_balance(), LEVERAGED_REQUIRED_CASH);
 
     // Closing half of the leveraged UP side pays 250e6 gross, with 5e6 retained
     // as fee, and lowers the live reserve to 1.1875e9.
     let balance_before_close = fx.account_balance<DUSDC>(&wrapper, &root);
+    fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     let (_closed, replacement) = fx.redeem(
         &config,
         &oracle_registry,

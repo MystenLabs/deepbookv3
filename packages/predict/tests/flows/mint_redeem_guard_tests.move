@@ -27,16 +27,7 @@ fun redeem_in_mint_timestamp_aborts() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        _vault,
-        mut market,
-        config,
-    ) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
@@ -47,9 +38,7 @@ fun redeem_in_mint_timestamp_aborts() {
         &root,
         &mut market,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
@@ -64,9 +53,7 @@ fun redeem_in_mint_timestamp_aborts() {
         &root,
         &mut market,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
         order,
         QUANTITY,
     );
@@ -81,16 +68,7 @@ fun redeem_after_clock_advances_succeeds() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        vault,
-        mut market,
-        config,
-    ) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
@@ -101,9 +79,7 @@ fun redeem_after_clock_advances_succeeds() {
         &root,
         &mut market,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
@@ -117,9 +93,7 @@ fun redeem_after_clock_advances_succeeds() {
     fx.prepare_live_oracle_at(
         &market,
         &mut pyth,
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         test_constants::default_live_price(),
         REDEEM_SOURCE_TS,
     );
@@ -131,9 +105,7 @@ fun redeem_after_clock_advances_succeeds() {
         &root,
         &mut market,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
         order,
         QUANTITY,
     );
@@ -143,15 +115,6 @@ fun redeem_after_clock_advances_succeeds() {
     assert!(!helpers::has_position(&wrapper, expiry_id, order));
 
     helpers::return_account(wrapper, root);
-    helpers::return_market(
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        vault,
-        market,
-        config,
-    );
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.finish();
 }

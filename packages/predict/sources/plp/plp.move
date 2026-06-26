@@ -910,3 +910,37 @@ fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
 public fun init_for_testing(ctx: &mut TxContext) {
     init(PLP {}, ctx);
 }
+
+#[test_only]
+/// Construct an unshared vault for wrong-vault tests.
+public fun new_vault_for_testing(ctx: &mut TxContext): PoolVault {
+    let treasury_cap = sui::coin::create_treasury_cap_for_testing<PLP>(ctx);
+    PoolVault {
+        id: object::new(ctx),
+        protocol_reserve_balance: balance::zero(),
+        fee_incentive_reserve: balance::zero(),
+        staked_deep: balance::zero(),
+        lp: lp_book::new(treasury_cap, ctx),
+        expiry_accounting: pool_accounting::new(ctx),
+    }
+}
+
+#[test_only]
+/// Expose the LP-attributable pool-value formula to flow tests.
+public fun lp_pool_value_for_testing(
+    idle_balance: u64,
+    profit_basis_credits: u64,
+    profit_basis_debits: u64,
+    protocol_reserve_profit_share: u64,
+    active_expiry_value: u64,
+    pending_protocol_profit: u64,
+): u64 {
+    lp_pool_value(
+        idle_balance,
+        profit_basis_credits,
+        profit_basis_debits,
+        protocol_reserve_profit_share,
+        active_expiry_value,
+        pending_protocol_profit,
+    )
+}

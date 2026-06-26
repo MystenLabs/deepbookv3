@@ -39,7 +39,7 @@ const REBATE_AFTER_CLOSE: u64 = 8_750_000;
 fun cash_sheet_exact_after_every_flow() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
@@ -141,6 +141,7 @@ fun cash_sheet_exact_after_every_flow() {
     // grows the rebate basis); cancel-and-replace leaves M = 2e9 and gap =
     // surviving UP backing 0.5e9, so default reserve = 2.125e9. The
     // replacement keeps the position count at 2.
+    fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     let (_closed_id, replacement) = fx.redeem(
         &config,
         &oracle_registry,

@@ -8,17 +8,13 @@ module deepbook_predict::settlement_flow_tests;
 
 use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket},
-    flow_test_helpers as helpers,
+    flow_test_helpers::{Self as helpers, BlockScholesFeed},
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::{Self as propbook_registry, OracleRegistry}
-};
+use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
 use std::unit_test::assert_eq;
 use sui::{coin, test_scenario::return_shared};
 
@@ -59,7 +55,7 @@ fun passive_settlement_requires_exact_expiry_spot() {
         &pyth,
         &bs,
         helpers::strike_tick(),
-        helpers::strike_tick() + 1,
+        helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -124,7 +120,7 @@ fun passive_settled_redeem_pays_terminal_payout() {
         &pyth,
         &bs,
         helpers::strike_tick(),
-        helpers::strike_tick() + 1,
+        helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -192,7 +188,7 @@ fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
         &pyth,
         &bs,
         helpers::strike_tick(),
-        helpers::strike_tick() + 1,
+        helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -244,7 +240,7 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(expiry_id);
@@ -270,7 +266,7 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
 
     return_shared(config);
     return_shared(pyth);
-    return_shared(bs);
+    helpers::return_bs(bs);
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);

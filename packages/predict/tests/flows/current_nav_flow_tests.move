@@ -23,7 +23,7 @@ module deepbook_predict::current_nav_flow_tests;
 use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers as helpers,
+    flow_test_helpers::{Self as helpers, BlockScholesFeed},
     order,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
@@ -31,11 +31,7 @@ use deepbook_predict::{
     test_constants
 };
 use fixed_math::math::{Self, float_scaling as float};
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.

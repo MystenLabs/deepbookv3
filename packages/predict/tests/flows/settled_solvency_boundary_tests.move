@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// S1/L1 live-solvency boundary for a thin FINITE-range 1x order: minted on
-/// `(min_strike, min_strike + tick]` exactly at the money, then partially closed
+/// S1/L1 live-solvency boundary for a thin FINITE-range 1x order: minted on the
+/// first admitted finite range above min_strike exactly at the money, then partially closed
 /// live. Pins that the close removes the order's entire live terms and reinserts
 /// the exact residual (cancel-and-replace) so liability drops to the surviving
 /// half, that the survivor carries zero floor (a 1x order), and that custody
@@ -20,9 +20,9 @@ use std::unit_test::assert_eq;
 /// raw Bernoulli fee mul(1, sqrt(0.5 * 0.5)) rounds to 0 and the floor binds.
 /// The default expiry-fee ramp multiplier is exactly 1.0 (ramp disabled).
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// The order is `(min_strike, min_strike + tick]` and the live forward ==
+/// The order is the first admitted finite range above min_strike and the live forward ==
 /// min_strike, so the entry probability is the at-the-money digital
-/// Φ(0) = 0.5 exactly (the SVI wing rounds to zero), and up(min_strike + tick)
+/// Φ(0) = 0.5 exactly (the SVI wing rounds to zero), and the upper tail
 /// clamps to exactly 0 (|d2| ≈ 315σ, far past the Φ clamp at 8σ).
 /// A 1x order fronts its full premium: floor(0.5 * 1e9) = 500_000_000.
 const MINT_PRINCIPAL: u64 = 500_000_000;
@@ -50,7 +50,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
@@ -64,7 +64,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
         expiry_id,
         helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
     );
-    // --- Mint one 1x order on the finite range (min_strike, min_strike + tick],
+    // --- Mint one 1x order on the first admitted finite range above min_strike,
     // exactly at the money. Principal + fee land in expiry cash; live backing
     // for a zero-floor 1x order is its full quantity.
     let order_id = fx.mint(
@@ -76,7 +76,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
         &pyth,
         &bs,
         helpers::strike_tick(),
-        helpers::strike_tick() + 1,
+        helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
@@ -99,6 +99,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     // --- Partial live close of exactly half at the unchanged ATM mark. The
     // close removes the order's entire live terms and reinserts the exact
     // residual (cancel-and-replace), so liability drops to the surviving half.
+    fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
     let (_closed, replacement) = fx.redeem(
         &config,
         &oracle_registry,

@@ -22,13 +22,13 @@ use deepbook_predict::{
     admin,
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers as helpers,
+    flow_test_helpers::{Self as helpers, BlockScholesFeed},
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants
 };
 use fixed_math::math::float_scaling as float;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
@@ -99,7 +99,7 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m_a = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e_a);
@@ -130,7 +130,7 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
 
     return_shared(config);
     return_shared(pyth);
-    return_shared(bs);
+    helpers::return_bs(bs);
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(m_a);

@@ -88,6 +88,15 @@ public struct Trader has copy, drop, store {
     owner: address,
 }
 
+/// Transaction-local bundle for the split Block Scholes feeds. Production Propbook
+/// stores spot, forward, and SVI separately; flow tests usually need all three as
+/// one pricing surface and must hold them across repeated same-transaction ops.
+public struct BlockScholesFeed {
+    spot: BlockScholesSpotFeed,
+    forward: BlockScholesForwardFeed,
+    svi: BlockScholesSVIFeed,
+}
+
 /// Stand up a registry + protocol config + an empty PLP vault + the permanent
 /// Pyth, BS spot, BS forward, and BS SVI feeds for the default cadence's `tick`
 /// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
@@ -246,26 +255,15 @@ fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fi
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        vault,
-        mut market,
-        config,
-    ) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     fx.prepare_live_oracle(
         &market,
         &mut pyth,
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         live_price,
     );
     fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
-    return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
+    return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.scenario.next_tx(test_constants::admin());
     (fx, expiry_id, trader)
 }
@@ -371,23 +369,12 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
 public fun take_market(
     self: &mut Fixture,
     expiry_id: ID,
-): (
-    PythFeed,
-    BlockScholesSpotFeed,
-    BlockScholesForwardFeed,
-    BlockScholesSVIFeed,
-    OracleRegistry,
-    PoolVault,
-    ExpiryMarket,
-    ProtocolConfig,
-) {
+): (PythFeed, BlockScholesFeed, OracleRegistry, PoolVault, ExpiryMarket, ProtocolConfig) {
     let market = self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     (
         self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
-        self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
-        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
-        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
+        self.take_bs(),
         oracle_registry,
         self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
         market,
@@ -398,9 +385,7 @@ public fun take_market(
 /// Return the five shared objects taken by `take_market` (pairs 1:1 with it).
 public fun return_market(
     pyth: PythFeed,
-    bs_spot: BlockScholesSpotFeed,
-    bs_forward: BlockScholesForwardFeed,
-    bs_svi: BlockScholesSVIFeed,
+    bs: BlockScholesFeed,
     oracle_registry: OracleRegistry,
     vault: PoolVault,
     market: ExpiryMarket,
@@ -408,12 +393,36 @@ public fun return_market(
 ) {
     return_shared(market);
     return_shared(vault);
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
+    return_bs(bs);
     return_shared(pyth);
     return_shared(oracle_registry);
     return_shared(config);
+}
+
+/// Take the split Block Scholes feeds as one transaction-local bundle.
+public fun take_bs(self: &Fixture): BlockScholesFeed {
+    BlockScholesFeed {
+        spot: self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
+        forward: self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
+        svi: self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
+    }
+}
+
+/// Return a `take_bs` / `take_market` Block Scholes bundle.
+public fun return_bs(bs: BlockScholesFeed) {
+    let BlockScholesFeed { spot, forward, svi } = bs;
+    return_shared(svi);
+    return_shared(forward);
+    return_shared(spot);
+}
+
+/// Bundle explicitly-created split Block Scholes feeds for wrong-feed tests.
+public fun block_scholes_feed_for_testing(
+    spot: BlockScholesSpotFeed,
+    forward: BlockScholesForwardFeed,
+    svi: BlockScholesSVIFeed,
+): BlockScholesFeed {
+    BlockScholesFeed { spot, forward, svi }
 }
 
 /// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
@@ -509,17 +518,13 @@ public fun prepare_live_oracle(
     self: &mut Fixture,
     market: &ExpiryMarket,
     pyth: &mut PythFeed,
-    bs_spot: &mut BlockScholesSpotFeed,
-    bs_forward: &mut BlockScholesForwardFeed,
-    bs_svi: &mut BlockScholesSVIFeed,
+    bs: &mut BlockScholesFeed,
     live_price: u64,
 ) {
     self.prepare_live_oracle_at(
         market,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs,
         live_price,
         test_constants::live_source_timestamp_ms(),
     );
@@ -530,9 +535,7 @@ public fun prepare_live_oracle_at(
     self: &mut Fixture,
     market: &ExpiryMarket,
     pyth: &mut PythFeed,
-    bs_spot: &mut BlockScholesSpotFeed,
-    bs_forward: &mut BlockScholesForwardFeed,
-    bs_svi: &mut BlockScholesSVIFeed,
+    bs: &mut BlockScholesFeed,
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
@@ -548,7 +551,7 @@ public fun prepare_live_oracle_at(
         source_timestamp_ms
     };
     store_pyth_spot(pyth, live_price, ts, ts);
-    self.seed_bs_surface(market, bs_spot, bs_forward, bs_svi, live_price, live_price, ts);
+    self.seed_bs_surface(market, bs, live_price, live_price, ts);
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
@@ -568,43 +571,47 @@ public fun set_pyth_price_for_testing(
 public fun seed_bs_surface(
     self: &mut Fixture,
     market: &ExpiryMarket,
-    bs_spot: &mut BlockScholesSpotFeed,
-    bs_forward: &mut BlockScholesForwardFeed,
-    bs_svi: &mut BlockScholesSVIFeed,
+    bs: &mut BlockScholesFeed,
     spot: u64,
     forward: u64,
     source_timestamp_ms: u64,
 ) {
-    bs_spot.update(
-        update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
-        &self.clock,
-    );
-    bs_forward.update(
-        update::new_forward_update(
-            test_constants::pyth_feed_id(),
-            market.expiry(),
-            source_timestamp_ms,
-            forward,
-        ),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    bs_svi.update(
-        update::new_svi_update(
-            test_constants::pyth_feed_id(),
-            market.expiry(),
-            source_timestamp_ms,
-            test_constants::default_svi_a(),
-            test_constants::default_svi_b(),
-            test_constants::default_svi_sigma(),
-            test_constants::default_svi_rho_magnitude(),
-            false,
-            test_constants::default_svi_m(),
-            false,
-        ),
-        &self.clock,
-        self.scenario.ctx(),
-    );
+    bs
+        .spot
+        .update(
+            update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
+            &self.clock,
+        );
+    bs
+        .forward
+        .update(
+            update::new_forward_update(
+                test_constants::pyth_feed_id(),
+                market.expiry(),
+                source_timestamp_ms,
+                forward,
+            ),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    bs
+        .svi
+        .update(
+            update::new_svi_update(
+                test_constants::pyth_feed_id(),
+                market.expiry(),
+                source_timestamp_ms,
+                test_constants::default_svi_a(),
+                test_constants::default_svi_b(),
+                test_constants::default_svi_sigma(),
+                test_constants::default_svi_rho_magnitude(),
+                false,
+                test_constants::default_svi_m(),
+                false,
+            ),
+            &self.clock,
+            self.scenario.ctx(),
+        );
 }
 
 /// Mint one order for `wrapper`'s account over the tick range `(lower_tick,
@@ -618,9 +625,7 @@ public fun mint(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -633,9 +638,7 @@ public fun mint(
         root,
         market,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs,
         lower_tick,
         higher_tick,
         quantity,
@@ -654,9 +657,7 @@ public fun mint_exact_quantity(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -669,9 +670,9 @@ public fun mint_exact_quantity(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
     market.mint_exact_quantity(
@@ -700,9 +701,7 @@ public fun mint_exact_amount(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     lower_tick: u64,
     higher_tick: u64,
     amount: u64,
@@ -714,9 +713,9 @@ public fun mint_exact_amount(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
     market.mint_exact_amount(
@@ -745,9 +744,7 @@ public fun redeem(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
@@ -756,9 +753,9 @@ public fun redeem(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
     market.redeem_live(
@@ -824,18 +821,16 @@ public fun liquidate(
     oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     budget: u64,
 ): u64 {
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
     market.liquidate(config, &pricer, budget)
@@ -849,18 +844,16 @@ public fun liquidate_order(
     oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
 ): bool {
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
     market.liquidate_order(
@@ -878,9 +871,7 @@ public fun value_expiry(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
 ) {
     valuation.value_expiry(
         vault,
@@ -888,9 +879,9 @@ public fun value_expiry(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
 }
@@ -912,17 +903,15 @@ public fun current_nav(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
 ): u64 {
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     );
     market.current_nav(&pricer)
@@ -934,17 +923,15 @@ public fun load_pricer(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
 ): pricing::Pricer {
     market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        &bs.spot,
+        &bs.forward,
+        &bs.svi,
         &self.clock,
     )
 }
@@ -1070,6 +1057,20 @@ public fun clock(self: &Fixture): &Clock { &self.clock }
 
 public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
     self.clock.set_for_testing(timestamp_ms);
+}
+
+/// Advance the fixture clock by one millisecond and reseed the default live oracle.
+/// Use before live redeems in tests that mint and close inside one scenario tx.
+public fun advance_live_oracle(
+    self: &mut Fixture,
+    market: &ExpiryMarket,
+    pyth: &mut PythFeed,
+    bs: &mut BlockScholesFeed,
+    live_price: u64,
+) {
+    let timestamp_ms = self.clock.timestamp_ms() + 1;
+    self.clock.set_for_testing(timestamp_ms);
+    self.prepare_live_oracle_at(market, pyth, bs, live_price, timestamp_ms);
 }
 
 public fun insert_exact_settlement_spot(

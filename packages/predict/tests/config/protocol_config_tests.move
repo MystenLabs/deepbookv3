@@ -12,16 +12,7 @@ use deepbook_predict::{flow_test_helpers as helpers, protocol_config, test_const
 fun expiry_market_mint_pause_defaults_false_and_toggles() {
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    let (
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        vault,
-        mut market,
-        config,
-    ) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
 
     assert!(!market.mint_paused());
     fx.set_expiry_mint_paused(&mut market, &config, true);
@@ -29,16 +20,7 @@ fun expiry_market_mint_pause_defaults_false_and_toggles() {
     fx.set_expiry_mint_paused(&mut market, &config, false);
     assert!(!market.mint_paused());
 
-    helpers::return_market(
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        vault,
-        market,
-        config,
-    );
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.finish();
 }
 

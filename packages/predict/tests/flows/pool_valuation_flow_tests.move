@@ -19,16 +19,15 @@ use deepbook_predict::{
     config_constants,
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers as helpers,
-    plp::{Self, PoolVault, PLP},
+    flow_test_helpers::{Self as helpers, BlockScholesFeed},
+    plp::{Self, PoolVault},
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math::float_scaling as float;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
-use sui::{coin, test_scenario::return_shared};
+use sui::test_scenario::return_shared;
 
 /// 1x ATM up range, quantity 2e9 (well under the 50e9 cash floor that backs it).
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
@@ -50,7 +49,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
@@ -73,7 +72,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     // skipped a market or threaded the wrong idle/basis, this mismatches.
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    let expected = plp::lp_pool_value(
+    let expected = plp::lp_pool_value_for_testing(
         vault.idle_balance(),
         vault.profit_basis_credits(),
         vault.profit_basis_debits(),
@@ -89,7 +88,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
 
     return_shared(config);
     return_shared(pyth);
-    return_shared(bs);
+    helpers::return_bs(bs);
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(m1);
@@ -110,7 +109,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
@@ -143,7 +142,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
 
     return_shared(config);
     return_shared(pyth);
-    return_shared(bs);
+    helpers::return_bs(bs);
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(m1);
@@ -193,7 +192,7 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
@@ -222,7 +221,7 @@ fun value_expiry_aborts_on_double_value() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
@@ -246,7 +245,7 @@ fun mint_during_valuation_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
     let mut wrapper = fx.take_account(&trader);
@@ -318,7 +317,7 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.scenario_mut().take_shared_by_id<BlockScholesFeed>(fx.bs_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
@@ -360,7 +359,7 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     helpers::return_account(wrapper, root);
     return_shared(config);
     return_shared(pyth);
-    return_shared(bs);
+    helpers::return_bs(bs);
     return_shared(oracle_registry);
     return_shared(vault);
     return_shared(market);
@@ -378,8 +377,7 @@ fun finish_with_wrong_vault_aborts() {
 
     let val = fx.start_flush(&mut config, &vault);
     // A second, unrelated vault: finishing against it must fail the binding check.
-    let cap = coin::create_treasury_cap_for_testing<PLP>(fx.scenario_mut().ctx());
-    let mut wrong_vault = plp::new(cap, fx.scenario_mut().ctx());
+    let mut wrong_vault = plp::new_vault_for_testing(fx.scenario_mut().ctx());
     let _ = val.finish_flush(
         &mut wrong_vault,
         &mut config,
@@ -409,20 +407,20 @@ fun end_valuation_without_start_aborts() {
 fun lp_pool_value_excludes_protocol_share_and_floors_at_zero() {
     // No unrealized profit (credits + active <= debits): full gross is LP value.
     // gross = 100 + 150 = 250; profit = max(0, (0+150) - 200) = 0; exclusion = 0.
-    assert_eq!(plp::lp_pool_value(100, 0, 200, 400_000_000, 150, 0), 250);
+    assert_eq!(plp::lp_pool_value_for_testing(100, 0, 200, 400_000_000, 150, 0), 250);
     // Unrealized profit excluded at the protocol share.
     // gross = 100 + 100 = 200; profit = (50 + 100) - 0 = 150; exclusion = 150 * 0.5 = 75.
-    assert_eq!(plp::lp_pool_value(100, 50, 0, 500_000_000, 100, 0), 125);
+    assert_eq!(plp::lp_pool_value_for_testing(100, 50, 0, 500_000_000, 100, 0), 125);
     // Sticky exclusion exceeds gross -> floored at 0.
     // gross = 10; profit = (1000 + 0) - 0 = 1000; exclusion = 1000 -> floored to 0.
-    assert_eq!(plp::lp_pool_value(10, 1000, 0, 1_000_000_000, 0, 0), 0);
+    assert_eq!(plp::lp_pool_value_for_testing(10, 1000, 0, 1_000_000_000, 0, 0), 0);
     // Carried pending protocol cut is excluded on top of the unrealized exclusion.
     // gross = 300 + 100 = 400; profit = (0+100) - 0 = 100; exclusion = 100 * 0.5 = 50;
     // pending = 40; 400 - 50 - 40 = 310.
-    assert_eq!(plp::lp_pool_value(300, 0, 0, 500_000_000, 100, 40), 310);
+    assert_eq!(plp::lp_pool_value_for_testing(300, 0, 0, 500_000_000, 100, 40), 310);
     // Pending alone exceeding gross floors LP value at 0.
     // gross = 100; exclusion = 0; pending = 150 > gross -> floored to 0.
-    assert_eq!(plp::lp_pool_value(100, 0, 0, 0, 0, 150), 0);
+    assert_eq!(plp::lp_pool_value_for_testing(100, 0, 0, 0, 0, 150), 0);
 }
 
 // === protocol_reserve_profit_share config ===

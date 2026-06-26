@@ -4,9 +4,9 @@
 /// Guard coverage for the registry's creation/version/pause abort codes and the
 /// builder-code owner guard.
 ///
-/// `builder_code::ENotOwner` is covered by the disabled root-dependent test below
-/// once an empty `AccumulatorRoot` can be constructed: `claim_all_builder_fees`
-/// runs `assert_owner` before touching accumulator funds. The non-zero builder-fee
+/// `builder_code::ENotOwner` is covered with an empty `AccumulatorRoot`:
+/// `claim_all_builder_fees` runs `assert_owner` before touching accumulator funds.
+/// The non-zero builder-fee
 /// claim itself, where fees are delivered to the builder-code object address
 /// through the system settlement barrier, still needs integration coverage; see
 /// `packages/account/ACCUMULATOR_TESTING_STATUS.md`.
@@ -45,7 +45,6 @@ const WINDOW_SIZE_THREE: u64 = 3;
 
 // === builder_code owner guard ===
 
-/* DISABLED(testnet-fw): needs AccumulatorRoot — nightly create_for_testing is absent on testnet; see accumulator_support.move. Restore the file/test when stable Sui ships it.
 #[test, expected_failure(abort_code = builder_code::ENotOwner)]
 fun claim_builder_fees_by_non_owner_aborts() {
     let (mut scenario, registry_id) = test_helpers::setup_test();
@@ -72,7 +71,6 @@ fun claim_builder_fees_by_non_owner_aborts() {
     abort 999
 }
 
-*/
 // === create_expiry_market ===
 
 #[test, expected_failure(abort_code = market_manager::ECadenceDisabled)]

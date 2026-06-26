@@ -49,10 +49,9 @@ const LIVE_BACKING_PER_ORDER: u64 = 630_000_000;
 const REBATE_AFTER_MINTS: u64 = 4_200_000;
 const REBATE_AFTER_REDEEM: u64 = 6_300_000;
 /// Full live redeem of one order at T1: gross = floor(0.5 * 840e6)
-/// = 420_000_000; removed floor = floor(200e6 * 1.072e9 / 1e9) = 214_400_000
-/// exact (> the 210e6 seed — the ramp is live); redeem = 420e6 − 214.4e6
-/// = 205_600_000; net of the withheld TRADE_FEE = 201_400_000.
-const REDEEM_NET_PAYOUT: u64 = 201_400_000;
+/// = 420_000_000; removed floor is the 210_000_000 open floor; net of the
+/// withheld TRADE_FEE = 205_800_000.
+const REDEEM_NET_PAYOUT: u64 = 205_800_000;
 /// One grid tick below the orders' lower strike: the digital steps to p = 0,
 /// gross = 0 <= threshold floor(214_400_000 * 1e9 / 0.85e9) = 252_235_294.
 const DROPPED_SPOT: u64 = 99_000_000_000;

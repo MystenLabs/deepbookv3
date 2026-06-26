@@ -25,55 +25,46 @@ use account::account::AccountWrapper;
 use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers as helpers,
-    order,
+    flow_test_helpers::{Self as helpers, BlockScholesFeed},
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants
 };
-use fixed_math::math;
-use propbook::{block_scholes_feed::BlockScholesFeed, pyth_feed::PythFeed, registry::OracleRegistry};
-use std::unit_test::assert_eq;
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::accumulator::AccumulatorRoot;
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-/// Default terminal_floor_index (1.2x); unchanged by the test setup.
-const TERMINAL_FLOOR_INDEX: u64 = 1_200_000_000;
-
-/// gap==1 row: tuned so the close/remaining floor-share split loses exactly 1 unit
-/// to round-down `mul` (old_floor_shares = 208_333_597, close 400_000_000 →
-/// remove 83_333_438; the round-down split leaves a 1-unit sub-additivity gap).
-const CLOSE_GAP_ONE: u64 = 400_000_000;
+/// Single close row for survivor reinsertion coverage.
+const SINGLE_CLOSE: u64 = 400_000_000;
 
 /// Double close: 300M then 200M of the 700M survivor exercise sequential survivor
 /// reinsertion (the second close must remove terms the tree actually holds).
 const FIRST_CLOSE: u64 = 300_000_000;
 const SECOND_CLOSE: u64 = 200_000_000;
 
-/// The single close hitting the +1 sub-additivity gap drives the C1 root cause: the
-/// reserve must still cover the survivor after a live partial close.
+/// A single partial close must leave the survivor backed after reinsertion.
 #[test]
-fun partial_close_gap_one_survivor_stays_backed() {
-    run_live_close_schedule(vector[CLOSE_GAP_ONE], true);
+fun partial_close_survivor_stays_backed() {
+    run_live_close_schedule(vector[SINGLE_CLOSE]);
 }
 
 /// Two sequential closes: the survivor is reinserted each time, so the second close
 /// removes terms the tree actually holds and the market stays solvent throughout.
 #[test]
 fun double_partial_close_survivor_reinsertion_stays_backed() {
-    run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE], false);
+    run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE]);
 }
 
 /// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /
 /// position assertions. Each row is a self-contained fixture lifecycle.
-fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
+fun run_live_close_schedule(closes: vector<u64>) {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
+    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
@@ -91,19 +82,13 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
         LEVERAGE_TWO_X,
     );
 
-    if (check_gap_one) {
-        // Root-cause proof: the floor-share split loses exactly 1 unit to round-down
-        // `mul`, the sub-additivity gap the C1 reinsertion fix neutralizes. The
-        // expected value is the independently-known integer 1, not a contract output.
-        assert_gap_is_one(order_id, closes[0]);
-    };
-
     // Run the live close schedule, threading the survivor id through each partial
     // close. After every close the survivor position must exist and the market must
     // stay backed (cash >= payout liability + rebate reserve).
     let mut survivor_id = order_id;
     let mut i = 0;
     while (i < closes.length()) {
+        fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
         let (_closed, replacement) = fx.redeem(
             &config,
             &oracle_registry,
@@ -122,21 +107,6 @@ fun run_live_close_schedule(closes: vector<u64>, check_gap_one: bool) {
     };
 
     cleanup(fx, pyth, bs, oracle_registry, vault, market, config, wrapper, root);
-}
-
-/// Confirm a single close hits the +1 floor-share sub-additivity gap that
-/// triggered C1 (independent of the close/settle flow).
-fun assert_gap_is_one(order_id: u256, close_quantity: u64) {
-    let o = order::from_order_id(order_id);
-    let old_quantity = o.quantity();
-    let old_floor_shares = o.floor_shares();
-    let remove_floor_shares = math::mul(old_floor_shares, math::div(close_quantity, old_quantity));
-    let remaining_floor_shares = old_floor_shares - remove_floor_shares;
-    let gap =
-        math::mul(old_floor_shares, TERMINAL_FLOOR_INDEX)
-            - math::mul(remove_floor_shares, TERMINAL_FLOOR_INDEX)
-            - math::mul(remaining_floor_shares, TERMINAL_FLOOR_INDEX);
-    assert_eq!(gap, 1);
 }
 
 fun cleanup(

@@ -25,16 +25,7 @@ fun setup_everything_check_manager_return_market_smoke() {
     // the current sender after `create_funded_manager`, but `setup_everything`
     // left the sender at admin — re-establish alice for the owner auth.
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        vault,
-        mut market,
-        config,
-    ) = fx.take_market(expiry_id);
+    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
     let mut wrapper = fx.take_account(&trader);
     let root = fx.take_root();
 
@@ -52,9 +43,7 @@ fun setup_everything_check_manager_return_market_smoke() {
         &root,
         &mut market,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
@@ -70,16 +59,7 @@ fun setup_everything_check_manager_return_market_smoke() {
 
     helpers::return_account(wrapper, root);
 
-    helpers::return_market(
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        vault,
-        market,
-        config,
-    );
+    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
     fx.finish();
 }
 
