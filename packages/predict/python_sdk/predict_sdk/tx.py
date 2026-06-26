@@ -80,9 +80,12 @@ class TransactionClient:
         gas_coin = gas_coin or self.pick_gas_coin()
         gas_ref = (gas_coin["coinObjectId"], int(gas_coin["version"]), gas_coin["digest"])
 
-        # Dry run first to validate + estimate gas (uses a generous probe budget).
+        # Dry run first to validate + estimate gas. The probe budget must not exceed
+        # the gas coin's balance (the node rejects a budget the coin can't cover),
+        # which matters for small pooled gas coins used in parallel execution.
+        probe_budget = min(5_000_000_000, int(gas_coin["balance"]))
         probe = bcs.build_transaction_data(
-            self.signer.address, ptb, [gas_ref], self.signer.address, gas_price, 5_000_000_000
+            self.signer.address, ptb, [gas_ref], self.signer.address, gas_price, probe_budget
         )
         dry = self._dry_run(probe)
         status = dry.get("effects", {}).get("status", {})

@@ -23,6 +23,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "status": _status, "markets": _markets, "account": _account,
         "deposit": _deposit, "withdraw": _withdraw, "trade": _trade,
         "positions": _positions, "redeem": _redeem,
+        "bot": _bot, "dashboard": _dashboard,
     }
     handler = handlers.get(args.command)
     if handler is None:
@@ -76,6 +77,18 @@ def _build_parser() -> argparse.ArgumentParser:
     redeem.add_argument("order_id", help="order id (u256, decimal)")
     redeem.add_argument("--market", required=True, help="market id holding the position")
     redeem.add_argument("--quantity", type=float, default=None, help="DUSDC to close (default: full)")
+
+    bot = trader("bot", "run the range-around-spot strategy engine")
+    bot.add_argument("--half-width", type=int, default=50, help="range half-width in ticks")
+    bot.add_argument("--notional", type=float, default=100.0, help="position size in DUSDC")
+    bot.add_argument("--band", default="0.15,0.85", help="entry probability band 'low,high'")
+    bot.add_argument("--max-open", type=int, default=5, help="max concurrent open positions")
+    bot.add_argument("--loop", type=float, default=None, help="loop every N seconds (default: one shot)")
+
+    dashboard = subcommands.add_parser("dashboard", help="live TUI account monitor")
+    dashboard.add_argument("--rpc-url", default=DEFAULT_TESTNET_RPC_URL)
+    dashboard.add_argument("--asset", default="BTC_USD")
+    dashboard.add_argument("--refresh", type=int, default=5, help="refresh interval seconds")
 
     return parser
 
@@ -215,6 +228,49 @@ def _redeem(args) -> int:
             return 2
     res = acts.redeem_live(args.market, int(args.order_id), qty, execute=args.execute)
     return _print_tx(res, args.execute, f"redeem {qty/1e6:.2f} DUSDC")
+
+
+def _bot(args) -> int:
+    from .strategy import Engine, RangeAroundSpotStrategy, RiskLimits
+    acts = _build_actions(args)
+    acts.ensure_account(execute=args.execute)
+    low, high = (float(x) for x in args.band.split(","))
+    strategy = RangeAroundSpotStrategy(
+        half_width_ticks=args.half_width,
+        notional=_dusdc(args.notional),
+        probability_band=(low, high),
+    )
+    reader = SuiRpcObjectReader(args.rpc_url, timeout=20)
+    engine = Engine.from_actions(acts, reader, strategy, limits=RiskLimits(max_open_positions=args.max_open))
+
+    def report(run) -> None:
+        tag = "EXECUTED" if args.execute else "DRY RUN"
+        print(f"[{tag}] proposed {len(run.proposed)} | planned {len(run.planned)} | skipped {len(run.skipped)}")
+        for pt in run.planned:
+            it = pt.intent
+            print(f"  mint {it.market_id[:10]}… [{it.lower_tick},{it.higher_tick}] "
+                  f"prob {pt.quote.entry_probability/1e9:.1%} premium {pt.quote.net_premium/1e6:.2f}"
+                  f"{' ✓' if pt.executed else ''}")
+        for it, why in run.skipped:
+            print(f"  skip {it.market_id[:10]}…: {why}")
+
+    if args.loop:
+        print(f"running strategy every {args.loop}s (Ctrl-C to stop)…")
+        try:
+            while True:
+                report(engine.run_once(execute=args.execute))
+                time.sleep(args.loop)
+        except KeyboardInterrupt:
+            print("stopped")
+    else:
+        report(engine.run_once(execute=args.execute))
+    return 0
+
+
+def _dashboard(args) -> int:
+    from .dashboard import run_dashboard
+    run_dashboard(refresh_s=args.refresh, asset=args.asset, rpc_url=args.rpc_url)
+    return 0
 
 
 def _resolve_market(acts, market: str) -> tuple[str, int]:

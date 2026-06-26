@@ -99,7 +99,7 @@ class PredictActions:
 
     # === custody ===
 
-    def deposit(self, amount: int, *, execute: bool = False) -> TxResult:
+    def deposit(self, amount: int, *, execute: bool = False, gas_coin: dict | None = None) -> TxResult:
         """Deposit `amount` (raw 6-dp DUSDC) from a wallet coin into account custody."""
         wrapper = self._require_account()
         coin = self._largest_coin(self.m.dusdc_type)
@@ -112,9 +112,12 @@ class PredictActions:
             [self._shared(ptb, wrapper, True), arg_result(auth), arg_nested_result(split, 0),
              self._root(ptb), self._clock(ptb)],
         )
-        return self.client.run(ptb, execute=execute)
+        return self.client.run(ptb, execute=execute, gas_coin=gas_coin)
 
-    def withdraw(self, amount: int, *, coin_type: str | None = None, execute: bool = False) -> TxResult:
+    def withdraw(
+        self, amount: int, *, coin_type: str | None = None,
+        execute: bool = False, gas_coin: dict | None = None,
+    ) -> TxResult:
         wrapper = self._require_account()
         coin_type = coin_type or self.m.dusdc_type
         ptb = Ptb()
@@ -125,7 +128,7 @@ class PredictActions:
              self._root(ptb), self._clock(ptb)],
         )
         ptb.transfer_objects([arg_result(withdrawn)], ptb.pure_address(self.signer.address))
-        return self.client.run(ptb, execute=execute)
+        return self.client.run(ptb, execute=execute, gas_coin=gas_coin)
 
     # === trading ===
 
@@ -140,6 +143,7 @@ class PredictActions:
         max_cost: int,
         max_probability: int,
         execute: bool = False,
+        gas_coin: dict | None = None,
     ) -> TxResult:
         """Mint a live range position (mint_exact_quantity), pricing it in the same PTB."""
         wrapper = self._require_account()
@@ -160,10 +164,10 @@ class PredictActions:
              ptb.pure_u64(leverage), ptb.pure_u64(max_cost), ptb.pure_u64(max_probability),
              self._root(ptb), self._clock(ptb)],
         )
-        return self.client.run(ptb, execute=execute)
+        return self.client.run(ptb, execute=execute, gas_coin=gas_coin)
 
     def redeem_live(
-        self, market_id: str, order_id: int, close_quantity: int, *, execute: bool = False
+        self, market_id: str, order_id: int, close_quantity: int, *, execute: bool = False, gas_coin: dict | None = None
     ) -> TxResult:
         """Close (fully or partially) a live position at its current live value."""
         wrapper = self._require_account()
@@ -182,10 +186,10 @@ class PredictActions:
              self._shared(ptb, self.m.protocol_config, False), arg_result(pricer),
              ptb.pure_u256(order_id), ptb.pure_u64(close_quantity), self._root(ptb), self._clock(ptb)],
         )
-        return self.client.run(ptb, execute=execute)
+        return self.client.run(ptb, execute=execute, gas_coin=gas_coin)
 
     def redeem_settled(
-        self, market_id: str, order_id: int, close_quantity: int, *, execute: bool = False
+        self, market_id: str, order_id: int, close_quantity: int, *, execute: bool = False, gas_coin: dict | None = None
     ) -> TxResult:
         """Redeem a fully-closed position from a settled market (permissionless)."""
         wrapper = self._require_account()
@@ -197,7 +201,7 @@ class PredictActions:
              self._shared(ptb, self.m.oracle_registry, False), self._shared(ptb, self.m.pyth, False),
              ptb.pure_u256(order_id), ptb.pure_u64(close_quantity), self._root(ptb), self._clock(ptb)],
         )
-        return self.client.run(ptb, execute=execute)
+        return self.client.run(ptb, execute=execute, gas_coin=gas_coin)
 
     def portfolio(self):
         from .portfolio import PortfolioReader

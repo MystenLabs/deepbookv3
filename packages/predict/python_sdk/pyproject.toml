@@ -9,6 +9,7 @@ dependencies = []
 # so the write path (signer/tx/actions) requires the optional `tx` extra.
 [project.optional-dependencies]
 tx = ["pynacl>=1.5"]
+tui = ["textual>=0.50"]
 
 [project.scripts]
 predict-sdk = "predict_sdk.cli:main"
