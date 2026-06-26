@@ -138,6 +138,19 @@ class ObservabilityClient:
     def __init__(self, config: DeploymentConfig, reader: ObjectReader):
         self.config = config
         self.reader = reader
+        self._cache: dict[str, dict | None] = {}
+
+    def _prefetch(self, object_ids: list[str]) -> None:
+        """Batch object reads into one multiGetObjects call when the reader supports it."""
+        batch = getattr(self.reader, "multi_get_objects", None)
+        if batch is None:
+            return  # reader (e.g. a test fake) has no batch API; fall back per-object
+        self._cache.update(batch([oid for oid in object_ids if oid not in self._cache]))
+
+    def _cached_get(self, object_id: str) -> dict | None:
+        if object_id in self._cache:
+            return self._cache[object_id]
+        return self.reader.get_object(object_id)
 
     def status(self, asset: str = "BTC_USD", now_ms: int | None = None) -> PredictStatusReport:
         now_ms = _now_ms() if now_ms is None else now_ms
@@ -148,8 +161,20 @@ class ObservabilityClient:
         )
         pool_vault_id = self.config.shared_object_id("predict", "plp::PoolVault")
 
+        # Batch the fixed object reads (config, pool, registry, oracle feeds) into one
+        # multiGetObjects call instead of ~7 sequential getObject round-trips.
+        self._cache = {}
+        registry_id = _safe_id(self.config, "predict", "registry::Registry")
+        self._prefetch([
+            object_id for object_id in (
+                protocol_config_id, pool_vault_id, registry_id,
+                asset_config.feed_ids.pyth, asset_config.feed_ids.bs_spot,
+                asset_config.feed_ids.bs_forward, asset_config.feed_ids.bs_svi,
+            ) if object_id is not None
+        ])
+
         blockers: list[str] = []
-        protocol_fields = _object_fields(self.reader.get_object(protocol_config_id))
+        protocol_fields = _object_fields(self._cached_get(protocol_config_id))
         if not protocol_fields:
             blockers.append("protocol config object missing")
         elif _as_bool(protocol_fields.get("trading_paused")):
@@ -157,7 +182,7 @@ class ObservabilityClient:
         elif _as_bool(protocol_fields.get("valuation_in_progress")):
             blockers.append("pool valuation is in progress")
 
-        pool_fields = _object_fields(self.reader.get_object(pool_vault_id))
+        pool_fields = _object_fields(self._cached_get(pool_vault_id))
         expiry_accounting_fields = _fields(pool_fields.get("expiry_accounting"))
         if not pool_fields:
             blockers.append("pool vault object missing")
@@ -170,8 +195,10 @@ class ObservabilityClient:
             if not active_market_ids:
                 blockers.append("no active expiry markets")
 
+        # One more batched read for every active market object.
+        self._prefetch(list(active_market_ids))
         market_fields = {
-            market_id: _object_fields(self.reader.get_object(market_id))
+            market_id: _object_fields(self._cached_get(market_id))
             for market_id in active_market_ids
         }
         live_expiries = tuple(
@@ -184,7 +211,10 @@ class ObservabilityClient:
         )
 
         freshness = _freshness_config(protocol_fields)
-        oracle = self._oracle_status(asset, now_ms, freshness, live_expiries)
+        # forward/svi freshness lives in a per-expiry table (one getDynamicFieldObject
+        # each, not batchable by name). The keeper updates all live expiries together,
+        # so probe only the nearest one as the freshness signal instead of all N.
+        oracle = self._oracle_status(asset, now_ms, freshness, live_expiries[:1])
         blockers.extend(oracle.blockers)
 
         lp_fields = _fields(pool_fields.get("lp"))
@@ -258,7 +288,7 @@ class ObservabilityClient:
             _feed_status(
                 name,
                 object_id,
-                self.reader.get_object(object_id),
+                self._cached_get(object_id),
                 now_ms,
                 freshness_ms,
                 self.reader,
@@ -350,7 +380,7 @@ class ObservabilityClient:
         except KeyError:
             registry_id = None
         if registry_id:
-            chain = _cadences_from_registry(_object_fields(self.reader.get_object(registry_id)))
+            chain = _cadences_from_registry(_object_fields(self._cached_get(registry_id)))
             if chain:
                 return chain
         by_id = {c.id: c for c in self.config.cadences.values()}
@@ -380,6 +410,13 @@ def _cadences_from_registry(registry_fields: dict[str, Any]) -> list[CadenceConf
             )
         )
     return cadences
+
+
+def _safe_id(config: DeploymentConfig, package: str, object_type: str) -> str | None:
+    try:
+        return config.shared_object_id(package, object_type)
+    except KeyError:
+        return None
 
 
 def _build_cadence_timelines(

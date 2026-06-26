@@ -45,6 +45,33 @@ class SuiRpcObjectReader:
             return None
         return result if result.get("data") is not None else None
 
+    def multi_get_objects(self, object_ids: list[str]) -> dict[str, dict[str, Any] | None]:
+        """Batch many object reads into one sui_multiGetObjects call.
+
+        Returns {requested_id: {"data": ...} | None}, keyed by the exact id passed
+        (the RPC preserves request order, so no address-normalization mismatch).
+        """
+        if not object_ids:
+            return {}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sui_multiGetObjects",
+            "params": [
+                object_ids,
+                {"showContent": True, "showType": True, "showOwner": True},
+            ],
+        }
+        response = self.transport(self.rpc_url, payload, self.timeout)
+        if response.get("error") is not None:
+            raise RuntimeError(response["error"])
+        results = response.get("result") or []
+        out: dict[str, dict[str, Any] | None] = {}
+        for object_id, entry in zip(object_ids, results):
+            data = entry.get("data") if isinstance(entry, dict) else None
+            out[object_id] = {"data": data} if data is not None else None
+        return out
+
     def get_dynamic_field_object(
         self,
         parent_id: str,
