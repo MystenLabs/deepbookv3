@@ -162,6 +162,47 @@ class PredictActions:
         )
         return self.client.run(ptb, execute=execute)
 
+    def redeem_live(
+        self, market_id: str, order_id: int, close_quantity: int, *, execute: bool = False
+    ) -> TxResult:
+        """Close (fully or partially) a live position at its current live value."""
+        wrapper = self._require_account()
+        ptb = Ptb()
+        pricer = ptb.move_call(
+            self.m.predict_pkg, "expiry_market", "load_live_pricer", [],
+            [self._shared(ptb, market_id, True), self._shared(ptb, self.m.protocol_config, False),
+             self._shared(ptb, self.m.oracle_registry, False), self._shared(ptb, self.m.pyth, False),
+             self._shared(ptb, self.m.bs_spot, False), self._shared(ptb, self.m.bs_forward, False),
+             self._shared(ptb, self.m.bs_svi, False), self._clock(ptb)],
+        )
+        auth = ptb.move_call(self.m.account_pkg, "account", "generate_auth", [], [])
+        ptb.move_call(
+            self.m.predict_pkg, "expiry_market", "redeem_live", [],
+            [self._shared(ptb, market_id, True), self._shared(ptb, wrapper, True), arg_result(auth),
+             self._shared(ptb, self.m.protocol_config, False), arg_result(pricer),
+             ptb.pure_u256(order_id), ptb.pure_u64(close_quantity), self._root(ptb), self._clock(ptb)],
+        )
+        return self.client.run(ptb, execute=execute)
+
+    def redeem_settled(
+        self, market_id: str, order_id: int, close_quantity: int, *, execute: bool = False
+    ) -> TxResult:
+        """Redeem a fully-closed position from a settled market (permissionless)."""
+        wrapper = self._require_account()
+        ptb = Ptb()
+        ptb.move_call(
+            self.m.predict_pkg, "expiry_market", "redeem_settled", [],
+            [self._shared(ptb, market_id, True), self._shared(ptb, self.m.account_registry, False),
+             self._shared(ptb, wrapper, True), self._shared(ptb, self.m.protocol_config, False),
+             self._shared(ptb, self.m.oracle_registry, False), self._shared(ptb, self.m.pyth, False),
+             ptb.pure_u256(order_id), ptb.pure_u64(close_quantity), self._root(ptb), self._clock(ptb)],
+        )
+        return self.client.run(ptb, execute=execute)
+
+    def portfolio(self):
+        from .portfolio import PortfolioReader
+        return PortfolioReader(self.signer.address, self.m.predict_pkg, self.client.rpc_url).load()
+
     # === helpers ===
 
     def _shared(self, ptb: Ptb, object_id: str, mutable: bool) -> bytes:
