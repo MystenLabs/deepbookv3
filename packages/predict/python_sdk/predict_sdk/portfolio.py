@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
+
+from ._http import post_json
 
 # Account portfolio + PnL reconstruction from on-chain order events. Positions are
 # keyed by `position_root_id` (stable across partial-close replacements). This reads
@@ -137,13 +137,11 @@ class PortfolioReader:
         return out
 
     def _rpc(self, method: str, params: list) -> Any:
-        payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-        request = urllib.request.Request(
-            self.rpc_url, data=payload.encode("utf-8"),
-            headers={"content-type": "application/json"}, method="POST",
+        body = post_json(
+            self.rpc_url,
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            self.timeout,
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
         if body.get("error") is not None:
             raise RuntimeError(f"RPC {method} error: {body['error']}")
         return body["result"]

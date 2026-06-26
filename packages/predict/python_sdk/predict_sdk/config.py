@@ -102,27 +102,6 @@ class DeploymentConfig:
             servers=dict(data.get("servers", {})),
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "network": self.network,
-            "chainId": self.chain_id,
-            "packages": dict(self.packages),
-            "linked": dict(self.linked),
-            "sharedObjects": {
-                package: dict(objects)
-                for package, objects in self.shared_objects.items()
-            },
-            "wiring": {
-                "asset": _asset_to_deployment_dict(next(iter(self.assets.values()))),
-                "cadences": [
-                    _cadence_to_deployment_dict(cadence)
-                    for key, cadence in self.cadences.items()
-                    if isinstance(key, int)
-                ],
-            },
-            "servers": dict(self.servers),
-        }
-
     def package_id(self, name: str) -> str:
         return self.packages[name]
 
@@ -144,28 +123,3 @@ class DeploymentConfig:
 
 def load_testnet_config() -> DeploymentConfig:
     return DeploymentConfig.from_dict(TESTNET_DEPLOYMENT)
-
-
-def _asset_to_deployment_dict(asset: AssetConfig) -> dict[str, Any]:
-    return {
-        "name": asset.name,
-        "propbookUnderlyingId": asset.propbook_underlying_id,
-        "pythLazerFeedId": asset.pyth_lazer_feed_id,
-        "blockScholesSourceId": asset.block_scholes_source_id,
-        "pythFeedId": asset.feed_ids.pyth,
-        "blockScholesSpotFeedId": asset.feed_ids.bs_spot,
-        "blockScholesForwardFeedId": asset.feed_ids.bs_forward,
-        "blockScholesSviFeedId": asset.feed_ids.bs_svi,
-    }
-
-
-def _cadence_to_deployment_dict(cadence: CadenceConfig) -> dict[str, Any]:
-    return {
-        "id": cadence.id,
-        "name": cadence.name,
-        "tickSize": str(cadence.tick_size),
-        "admissionTickSize": str(cadence.admission_tick_size),
-        "maxExpiryAllocation": str(cadence.max_expiry_allocation),
-        "initialExpiryCash": str(cadence.initial_expiry_cash),
-        "windowSize": str(cadence.window_size),
-    }

@@ -97,6 +97,36 @@ class PredictActions:
             raise RuntimeError(f"account creation failed: {result.error}")
         return "<dry-run: not created>"
 
+    def custody_balance(self, coin_type: str | None = None) -> int:
+        """Return the raw balance held in the signer's AccountWrapper custody bag."""
+        wrapper = self._require_account()
+        coin_type = coin_type or self.m.dusdc_type
+        obj = self.client._rpc(
+            "sui_getObject",
+            [wrapper, {"showContent": True, "showType": True}],
+        )
+        fields = _object_fields(obj)
+        balances_id = _object_id(
+            _fields(_fields(fields.get("account")).get("balances")).get("id")
+        )
+        if balances_id is None:
+            return 0
+
+        cursor = None
+        while True:
+            page = self.client._rpc("suix_getDynamicFields", [balances_id, cursor, 50])
+            for item in page.get("data", []):
+                if not _is_balance_field(item, coin_type):
+                    continue
+                entry = self.client._rpc(
+                    "suix_getDynamicFieldObject",
+                    [balances_id, item["name"]],
+                )
+                return _optional_int(_object_fields(entry).get("value")) or 0
+            if not page.get("hasNextPage") or not page.get("nextCursor"):
+                return 0
+            cursor = page["nextCursor"]
+
     # === custody ===
 
     def deposit(self, amount: int, *, execute: bool = False, gas_coin: dict | None = None) -> TxResult:
@@ -248,3 +278,52 @@ def _created_object(result: TxResult, type_suffix: str) -> str | None:
         if change.get("type") == "created" and change.get("objectType", "").endswith(type_suffix):
             return change.get("objectId")
     return None
+
+
+def _object_fields(obj: dict | None) -> dict:
+    current = obj
+    if isinstance(current, dict) and "data" in current:
+        current = current["data"]
+    if isinstance(current, dict) and "content" in current:
+        current = current["content"]
+    return _fields(current)
+
+
+def _fields(value) -> dict:
+    if isinstance(value, dict) and isinstance(value.get("fields"), dict):
+        return value["fields"]
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _object_id(value) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("id"), str):
+        return value["id"]
+    return None
+
+
+def _optional_int(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value)
+    if isinstance(value, dict):
+        fields = _fields(value)
+        if "value" in fields:
+            return _optional_int(fields["value"])
+    return None
+
+
+def _is_balance_field(item: dict, coin_type: str) -> bool:
+    object_type = str(item.get("objectType", ""))
+    name = item.get("name")
+    name_type = str(name.get("type", "")) if isinstance(name, dict) else ""
+    return (
+        object_type.endswith(f"::balance::Balance<{coin_type}>")
+        or name_type.endswith(f"::account::CoinKey<{coin_type}>")
+    )

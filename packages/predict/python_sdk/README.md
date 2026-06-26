@@ -4,16 +4,15 @@ A Python SDK + CLI for the DeepBook **Predict** protocol on Sui — binary range
 options markets. It covers the full lifecycle: **observe** the protocol, **trade**
 (account custody, mint/redeem), and **monitor** an account's positions & PnL.
 
-The read/observability path is **pure standard library**. Signing transactions needs
-Ed25519, so the write path requires the optional `tx` extra (PyNaCl).
+Read commands do not require a key. Trading is included in the default install and
+uses PyNaCl for Ed25519 transaction signatures.
 
 ## Install
 
 ```bash
 cd packages/predict/python_sdk
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .            # read-only (status, markets) — pure stdlib
-pip install -e ".[tx]"      # + trading (account, deposit, trade, redeem)
+pip install -e .            # full SDK + CLI (observe, trade, portfolio)
 pip install -e ".[tui]"     # + live dashboard
 ```
 
@@ -35,7 +34,7 @@ Every write command is **dry-run by default**; add `--execute` to submit. Amount
 human DUSDC.
 
 ```bash
-predict-sdk account                                  # account + balances + PnL summary
+predict-sdk account                                  # wallet/custody balances + PnL summary
 predict-sdk deposit 5000 --execute                   # fund account custody from wallet
 predict-sdk trade --notional 100 --width 1000        # dry-run a range mint around spot
 predict-sdk trade --notional 100 --width 1000 --execute
@@ -71,10 +70,12 @@ A read-only, auto-refreshing terminal monitor for one account — no trading inp
 
 ## Parallel execution
 
-Concurrent Sui transactions must not share an owned object (the gas coin) or they
-equivocate. `GasPool` pre-splits SUI into distinct gas coins and hands one to each
-in-flight tx; because Predict custody/markets are shared objects, parallel trades
-only need a distinct gas coin each:
+Concurrent Sui transactions must not share an owned object or they equivocate.
+`GasPool` pre-splits SUI into distinct gas coins and hands one to each in-flight tx.
+Because Predict custody/markets are shared objects, parallel **mint/redeem** touch no
+owned object other than gas, so a distinct gas coin each is sufficient. `deposit` and
+`withdraw` additionally consume an owned DUSDC coin, so running those concurrently
+needs distinct input coins too — a distinct gas coin alone is not enough.
 
 ```python
 from predict_sdk.gas import GasPool
@@ -107,6 +108,8 @@ history/health and fails open. The write path abstracts the owner `Auth` hot-pot
 the shared `AccountWrapper` custody lifecycle, DUSDC coin splitting, the
 `AccumulatorRoot`/`Clock` plumbing, and the `load_live_pricer → mint` two-step. There
 is no off-chain pricer — current entry probability/cost is discovered via a dry-run mint.
+
+For deeper development context, read `AGENTS.md` and `docs/sdk-map.md`.
 
 ## Safety
 

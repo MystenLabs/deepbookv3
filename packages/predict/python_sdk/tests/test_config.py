@@ -1,7 +1,6 @@
 import unittest
 
 from predict_sdk import ACCUMULATOR_ROOT_ID, CLOCK_ID, POS_INF_TICK, load_testnet_config
-from predict_sdk.config import DeploymentConfig
 
 
 class ConfigTests(unittest.TestCase):
@@ -55,14 +54,6 @@ class ConfigTests(unittest.TestCase):
             "https://predict-server-beta.testnet.mystenlabs.com",
         )
         self.assertIsNone(config.server_url("missing"))
-
-    def test_can_build_config_from_copied_dictionary(self) -> None:
-        config = load_testnet_config()
-        copied = DeploymentConfig.from_dict(config.to_dict())
-
-        self.assertEqual(copied.asset("BTC_USD").feed_ids.bs_forward, config.asset("BTC_USD").feed_ids.bs_forward)
-        self.assertEqual(copied.cadence(2).name, "1h")
-        self.assertEqual(copied.server_url("propbook"), config.server_url("propbook"))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 from dataclasses import dataclass
@@ -10,8 +11,7 @@ import nacl.signing
 # CLI export format) from the environment or a .env file, derives the address, and
 # signs transaction bytes with Sui's intent + blake2b scheme.
 #
-# This is the one module that needs a crypto dependency (PyNaCl); it is only
-# imported on the write path, so the observability core stays stdlib-only.
+# This is the one module that needs PyNaCl; the CLI imports it only on the write path.
 
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _ED25519_FLAG = 0x00
@@ -30,8 +30,6 @@ class Signer:
         digest = hashlib.blake2b(_INTENT + tx_bytes, digest_size=32).digest()
         signature = nacl.signing.SigningKey(self.private_key).sign(digest).signature
         serialized = bytes([_ED25519_FLAG]) + signature + self.public_key
-        import base64
-
         return base64.b64encode(serialized).decode("ascii")
 
 

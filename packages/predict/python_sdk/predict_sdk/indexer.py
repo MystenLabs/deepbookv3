@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
+
+from ._http import get_json
 
 # Thin HTTP client for the public Predict indexer/server (deepbook-services).
 # Complements SuiRpcObjectReader: the RPC reader gives current object state, the
@@ -29,7 +28,7 @@ class IndexerHealth:
 class PredictIndexerClient:
     def __init__(self, base_url: str, *, transport: Transport | None = None, timeout: float = 10):
         self.base_url = base_url.rstrip("/")
-        self.transport = transport or _get_json
+        self.transport = transport or get_json
         self.timeout = timeout
 
     def health(self) -> IndexerHealth:
@@ -61,9 +60,3 @@ class PredictIndexerClient:
         except Exception:
             return []
         return payload if isinstance(payload, list) else []
-
-
-def _get_json(url: str, timeout: float) -> Any:
-    request = urllib.request.Request(url, headers={"accept": "application/json"}, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))

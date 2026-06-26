@@ -162,10 +162,14 @@ def _account(args) -> int:
         wrapper = acts.ensure_account(execute=args.execute)
     bals = {b["coinType"].split("::")[-1]: int(b["totalBalance"])
             for b in acts.client._rpc("suix_getAllBalances", [acts.signer.address])}
+    wallet_dusdc = bals.get("DUSDC", 0)
+    custody_dusdc = acts.custody_balance() if str(wrapper).startswith("0x") else 0
     pf = acts.portfolio()
     print(f"address      {acts.signer.address}")
     print(f"account      {wrapper}")
-    print(f"wallet       {bals.get('SUI', 0) / 1e9:.4f} SUI | {bals.get('DUSDC', 0) / 1e6:,.2f} DUSDC")
+    print(f"wallet       {bals.get('SUI', 0) / 1e9:.4f} SUI | {wallet_dusdc / 1e6:,.2f} DUSDC")
+    print(f"custody      {custody_dusdc / 1e6:,.2f} DUSDC")
+    print(f"total        {(wallet_dusdc + custody_dusdc) / 1e6:,.2f} DUSDC")
     print(f"positions    {pf.open_count} open | {pf.closed_count} closed")
     print(f"premium risk {pf.open_premium / 1e6:,.2f} DUSDC")
     print(f"realized PnL {pf.realized_pnl / 1e6:+,.4f} DUSDC")

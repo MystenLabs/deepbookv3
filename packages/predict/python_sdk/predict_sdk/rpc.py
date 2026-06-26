@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
-import urllib.request
 from typing import Any, Callable
+
+from ._http import post_json
 
 
 Transport = Callable[[str, dict[str, Any], float], dict[str, Any]]
@@ -17,7 +17,7 @@ class SuiRpcObjectReader:
         timeout: float = 10,
     ):
         self.rpc_url = rpc_url
-        self.transport = transport or _post_json
+        self.transport = transport or post_json
         self.timeout = timeout
 
     def get_object(self, object_id: str) -> dict[str, Any] | None:
@@ -97,15 +97,3 @@ class SuiRpcObjectReader:
         if not isinstance(result, dict):
             return None
         return result if result.get("data") is not None else None
-
-
-def _post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"content-type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))

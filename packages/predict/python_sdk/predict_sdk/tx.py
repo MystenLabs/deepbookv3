@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
-import urllib.request
+import base64
 from dataclasses import dataclass, field
 from typing import Any
 
 from . import bcs
+from ._http import post_json
 from .bcs import Ptb
 from .signer import Signer
 
@@ -108,8 +108,6 @@ class TransactionClient:
         tx_bytes = bcs.build_transaction_data(
             self.signer.address, ptb, [gas_ref], self.signer.address, gas_price, budget
         )
-        import base64
-
         signature = self.signer.sign_transaction(tx_bytes)
         result = self._rpc(
             "sui_executeTransactionBlock",
@@ -144,18 +142,14 @@ class TransactionClient:
         return data
 
     def _dry_run(self, tx_bytes: bytes) -> dict:
-        import base64
-
         return self._rpc("sui_dryRunTransactionBlock", [base64.b64encode(tx_bytes).decode("ascii")])
 
     def _rpc(self, method: str, params: list) -> Any:
-        payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-        request = urllib.request.Request(
-            self.rpc_url, data=payload.encode("utf-8"),
-            headers={"content-type": "application/json"}, method="POST",
+        body = post_json(
+            self.rpc_url,
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            self.timeout,
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
         if body.get("error") is not None:
             raise RuntimeError(f"RPC {method} error: {body['error']}")
         return body["result"]

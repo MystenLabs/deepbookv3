@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-import urllib.request
 from dataclasses import dataclass, field
 
+from ._http import post_json
 from .config import DeploymentConfig, load_testnet_config
 from .constants import POS_INF_TICK
 from .observability import ObservabilityClient, PredictStatusReport
 from .portfolio import Portfolio, PortfolioReader
+from .rpc import SuiRpcObjectReader
 
 log = logging.getLogger("predict_sdk.dashboard")
 
@@ -22,7 +22,6 @@ def configure_logging(path: str, level: int = logging.INFO) -> None:
     root = logging.getLogger("predict_sdk")
     root.setLevel(level)
     root.handlers = [handler]
-from .rpc import SuiRpcObjectReader
 
 # Live TUI "dashboard mode": a clean, READ-ONLY monitor for one Predict account.
 # It never trades — it only assembles a Portfolio + PredictStatusReport into panels
@@ -228,15 +227,11 @@ def build_dashboard_data(
 # === network loaders (I/O; kept off the pure path and out of the UI thread) ===
 
 def _fetch_balance(rpc_url: str, address: str, coin_type: str, timeout: float) -> int:
-    payload = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": "suix_getBalance", "params": [address, coin_type]}
+    body = post_json(
+        rpc_url,
+        {"jsonrpc": "2.0", "id": 1, "method": "suix_getBalance", "params": [address, coin_type]},
+        timeout,
     )
-    request = urllib.request.Request(
-        rpc_url, data=payload.encode("utf-8"),
-        headers={"content-type": "application/json"}, method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = json.loads(response.read().decode("utf-8"))
     if body.get("error") is not None:
         raise RuntimeError(f"suix_getBalance error: {body['error']}")
     result = body.get("result") or {}
