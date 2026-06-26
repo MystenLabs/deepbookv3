@@ -78,8 +78,7 @@ pool.parallel([lambda c: actions.mint(..., gas_coin=c) for _ in range(4)])
 |---|---|
 | `config` / `deployments/` | deployment manifest (packages, objects, assets, cadences, servers) |
 | `constants` | decimals, cadence periods, reserved object ids |
-| `rpc` | read-only Sui object reader |
-| `indexer` | public indexer client (`/status`, `/markets`), fails open |
+| `indexer` | data-plane clients: predict-server + oracle service, fail open |
 | `observability` | `status()` → report: gates, oracle, pool, per-cadence timelines |
 | `render` | boxed terminal dashboard + markets table |
 | `signer` | bech32 key → address → Ed25519 sign (Sui intent + blake2b) |
@@ -90,8 +89,10 @@ pool.parallel([lambda c: actions.mint(..., gas_coin=c) for _ in range(4)])
 | `gas` | parallel-execution gas pool (distinct gas coin per in-flight tx) |
 | `dashboard` | Textual read-only account monitor |
 
-**Design notes.** RPC is the source of truth for live state; the indexer only layers
-history/health and fails open. The write path abstracts the owner `Auth` hot-potato,
+**Design notes.** The indexer is the data plane — all observe/monitor reads (status,
+positions, account) come from the predict-server + oracle service, which fail open. The
+chain is the execution plane: dry-run, submit, refs, and the one live value the indexer
+lacks (a market's `reference_tick`). The write path abstracts the owner `Auth` hot-potato,
 the shared `AccountWrapper` custody lifecycle, DUSDC coin splitting, the
 `AccumulatorRoot`/`Clock` plumbing, and the `load_live_pricer → mint` two-step. There
 is no off-chain pricer — current entry probability/cost is discovered via a dry-run mint.

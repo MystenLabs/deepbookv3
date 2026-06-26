@@ -12,10 +12,10 @@ implemented directly in Python.
 `predict-sdk status`:
 
 1. `cli.py` loads the testnet `DeploymentConfig`.
-2. `rpc.py` reads Sui objects with `sui_getObject` and dynamic fields with
-   `suix_getDynamicFieldObject`.
-3. `observability.py` turns raw object fields into a `PredictStatusReport`.
-4. `indexer.py` optionally checks `/status` for indexer health.
+2. `indexer.py` reads markets / market-state / vault-state / config from the
+   predict-server, and `OracleClient` reads latest pyth + block-scholes for freshness.
+3. `observability.py` assembles those into a `PredictStatusReport`.
+4. `indexer.py` also checks `/status` for indexer lag/health.
 5. `render.py` prints the boxed status dashboard or markets table.
 
 ### Trade
@@ -42,10 +42,9 @@ implemented directly in Python.
 |---|---|
 | `config.py` / `deployments/` | Testnet package IDs, shared objects, feeds, cadences, servers |
 | `constants.py` | Decimals, cadence periods, reserved object IDs, tick constants |
-| `_http.py` | Shared urllib JSON transport (POST/GET) for every RPC/indexer caller |
-| `rpc.py` | Minimal read-only Sui object reader |
-| `indexer.py` | Best-effort Predict server client for `/status` and `/markets` |
-| `observability.py` | Protocol gates, oracle freshness, pool state, market status, timelines |
+| `_http.py` | Shared urllib JSON transport (POST/GET) for every service caller |
+| `indexer.py` | Data-plane clients: `PredictIndexerClient` (predict-server) + `OracleClient` (oracle service), all fail-open |
+| `observability.py` | Assembles the indexer data into gates, oracle freshness, pool/market status, timelines |
 | `render.py` | Terminal dashboard and markets table rendering |
 | `signer.py` | Ed25519 key loading, address derivation, Sui intent signing |
 | `bcs.py` | Narrow BCS encoder and PTB builder for this SDK's transaction shapes |
@@ -58,9 +57,10 @@ implemented directly in Python.
 ## Data Boundaries
 
 - Deployment data is static SDK wiring. It is not live protocol state.
-- Sui RPC object reads are the live source of truth.
-- The Predict indexer adds history and health. It should not be required for the
-  live status path to work.
+- The indexer is the data plane: all observe/monitor reads come from the predict-server
+  and oracle service (D001).
+- The chain is the execution plane: dry-run, submit, refs, and the one live value the
+  indexer lacks — a market's `reference_tick` (D002).
 - The signer's `AccountWrapper` id is resolved from the indexer (`/managers?owner=`)
   and cached in memory for the session; the SDK keeps no local state file.
 - Amounts inside SDK internals are raw integers: DUSDC uses 6 decimals, SUI uses
@@ -72,8 +72,7 @@ implemented directly in Python.
 - Import package: `predict_sdk`.
 - Stable high-level classes/functions for reuse:
   - `load_testnet_config`
-  - `SuiRpcObjectReader`
-  - `PredictIndexerClient`
+  - `PredictIndexerClient`, `OracleClient`
   - `ObservabilityClient`
   - `PredictActions`
   - `PortfolioReader`

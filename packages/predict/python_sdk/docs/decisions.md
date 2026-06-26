@@ -3,19 +3,29 @@
 This is the settled-decision log for the Python SDK. Update it when SDK behavior
 changes in a way future agents should not re-litigate.
 
-## D001 - RPC Is The Live Source Of Truth
+## D001 - Indexer Is The Data Plane
 
-The SDK reads live Predict state from Sui JSON-RPC objects. The Predict indexer is
-used for history and health, not as the authoritative live state source.
+The SDK reads all observe/monitor data — markets, market/vault/config state, positions,
+PnL, and oracle freshness — from the indexer services (predict-server + the oracle
+service), not from Sui object reads. Reads default to the indexer; there is no
+chain-read fallback on the observe path.
 
-Reason: the protocol state lives on-chain, while the indexer can lag or be unavailable.
+Reason: the indexers are operated as a high-availability public good and serve
+per-entity aggregates (a manager's positions, history) that a point-in-time object read
+cannot. Clients still fail open — observe commands surface "unavailable" rather than
+crashing — and trading still works when the indexer is down (it only needs the chain).
+(This reverses the original RPC-as-source-of-truth stance.)
 
-## D002 - Indexer Fails Open
+## D002 - Chain Is The Execution Plane
 
-`PredictIndexerClient.health()` and `markets()` degrade instead of raising for normal
-transport or malformed-response failures.
+The chain is used only for execution: dry-run pricing (D004), transaction submission,
+and the refs a transaction needs (shared initial versions, owned coin refs, gas price/
+coin), plus the one live value the indexer does not carry — a market's `reference_tick`,
+read on the trade path. Custody balance (checked before a withdraw) is also a chain read.
 
-Reason: `predict-sdk status` should remain useful during indexer outages.
+Reason: you cannot build a transaction from indexed data, and a write must never be
+gated on lagging data. Mintability is enforced by the dry-run, so a stale observe read
+can never cause a bad write.
 
 ## D003 - Write Commands Dry-Run By Default
 
@@ -71,3 +81,13 @@ API is intentionally kept multi-asset-shaped so adding assets later needs no API
 change; `from_dict` builds the single wired asset.
 
 Reason: documents the shape so it is not "simplified" away or mistaken for a bug.
+
+## D010 - Status Display Drops Live-Only Fields
+
+`status()` omits fields the indexer does not serve: per-market `cash_balance` /
+`payout_liability`, the `valuation_in_progress` gate, the pool queue counts, and the
+`unfunded` slot state. Oracle freshness shows two feeds (pyth + block-scholes surface),
+matching the config thresholds and the oracle service.
+
+Reason: these are live-only chain values. Since mintability is enforced by the dry-run
+(D002), dropping them from the display is safe and keeps the read path indexer-only.

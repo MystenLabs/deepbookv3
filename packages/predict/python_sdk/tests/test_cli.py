@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 import predict_sdk.cli as cli
 from predict_sdk.cli import main
-from predict_sdk.rpc import SuiRpcObjectReader
 
 
 class CliTests(unittest.TestCase):
@@ -82,56 +81,6 @@ class CliTests(unittest.TestCase):
         self.assertIn("custody      9,898.00 DUSDC", output)
         self.assertIn("total        99,901.00 DUSDC", output)
         self.assertIn("realized PnL -99.0010 DUSDC", output)
-
-    def test_rpc_reader_fetches_move_object_content(self) -> None:
-        calls = []
-
-        def transport(url, payload, timeout):
-            calls.append((url, payload, timeout))
-            return {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {
-                    "data": {
-                        "objectId": payload["params"][0],
-                        "content": {"fields": {"value": "7"}},
-                    }
-                },
-            }
-
-        reader = SuiRpcObjectReader("https://example.test", transport=transport, timeout=3)
-        result = reader.get_object("0xabc")
-
-        self.assertEqual(result["data"]["content"]["fields"]["value"], "7")
-        self.assertEqual(calls[0][0], "https://example.test")
-        self.assertEqual(calls[0][1]["method"], "sui_getObject")
-        self.assertEqual(calls[0][1]["params"][0], "0xabc")
-        self.assertTrue(calls[0][1]["params"][1]["showContent"])
-        self.assertEqual(calls[0][2], 3)
-
-    def test_rpc_reader_fetches_dynamic_field_object(self) -> None:
-        calls = []
-
-        def transport(url, payload, timeout):
-            calls.append((url, payload, timeout))
-            return {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {
-                    "data": {
-                        "objectId": "0xdynamic",
-                        "content": {"fields": {"name": "1782421200000"}},
-                    }
-                },
-            }
-
-        reader = SuiRpcObjectReader("https://example.test", transport=transport)
-        result = reader.get_dynamic_field_object("0xtable", "u64", "1782421200000")
-
-        self.assertEqual(result["data"]["content"]["fields"]["name"], "1782421200000")
-        self.assertEqual(calls[0][1]["method"], "suix_getDynamicFieldObject")
-        self.assertEqual(calls[0][1]["params"][0], "0xtable")
-        self.assertEqual(calls[0][1]["params"][1], {"type": "u64", "value": "1782421200000"})
 
 
 if __name__ == "__main__":

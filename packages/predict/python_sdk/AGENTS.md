@@ -15,8 +15,11 @@ apply; this file only adds SDK-specific routing.
 
 - Trading is included in the base package install; PyNaCl is not a `tx` extra.
 - CLI write commands are dry-run by default and submit only with `--execute`.
-- RPC is the source of truth for live protocol state.
-- The Predict indexer is history/health only and must fail open.
+- The indexer is the data plane: observe/monitor reads come from the predict-server +
+  oracle service (D001). The chain is the execution plane — dry-run, submit, refs, and
+  the one live value the indexer lacks, a market's `reference_tick` (D002).
+- The data-plane clients fail open: observe commands degrade to "unavailable" rather
+  than crashing, and trading still works when the indexer is down.
 - There is no off-chain Predict pricer in this SDK. Discover entry probability and
   premium by dry-running a real mint and reading the returned `OrderMinted` event.
 - Keep tests offline by default. Do not require live testnet, private keys, or funded
@@ -29,7 +32,7 @@ Before editing these files, read the matching context doc:
 
 - `predict_sdk/actions.py`, `tx.py`, `bcs.py`, `signer.py`, `gas.py`:
   read `docs/write-path.md`.
-- `predict_sdk/observability.py`, `rpc.py`, `indexer.py`, `render.py`:
+- `predict_sdk/observability.py`, `indexer.py`, `render.py`:
   read `docs/read-path.md`.
 - `predict_sdk/cli.py`: read `docs/sdk-map.md`, then `docs/read-path.md` or
   `docs/write-path.md` depending on the command surface.

@@ -17,11 +17,9 @@ Trading requires `SUI_PRIVATE_KEY` in the environment or local `.env`.
 ```python
 from predict_sdk import load_testnet_config
 from predict_sdk.observability import ObservabilityClient
-from predict_sdk.rpc import SuiRpcObjectReader
 
-config = load_testnet_config()
-reader = SuiRpcObjectReader("https://fullnode.testnet.sui.io:443")
-report = ObservabilityClient(config, reader).status("BTC_USD")
+config = load_testnet_config()  # carries the indexer + oracle service URLs
+report = ObservabilityClient(config).status("BTC_USD")
 
 print(report.is_live, report.is_mintable)
 print(report.mintable_market_ids)
@@ -34,14 +32,10 @@ import time
 
 from predict_sdk import load_testnet_config, render_dashboard
 from predict_sdk.observability import ObservabilityClient
-from predict_sdk.rpc import SuiRpcObjectReader
 
 now_ms = int(time.time() * 1000)
 config = load_testnet_config()
-report = ObservabilityClient(
-    config,
-    SuiRpcObjectReader("https://fullnode.testnet.sui.io:443"),
-).status("BTC_USD", now_ms=now_ms)
+report = ObservabilityClient(config).status("BTC_USD", now_ms=now_ms)
 
 print(render_dashboard(report, now_ms, color=False))
 ```

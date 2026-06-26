@@ -5,11 +5,11 @@ from typing import Any, Callable
 
 from ._http import get_json
 
-# Thin HTTP client for the public Predict indexer/server (deepbook-services).
-# Complements SuiRpcObjectReader: the RPC reader gives current object state, the
-# indexer gives history/aggregates from indexed events. Every call is best-effort
-# and degrades gracefully (health.reachable=False / markets() -> []) so the CLI
-# never fails just because the indexer is down.
+# HTTP clients for the public Predict indexer/server and oracle service — the SDK's
+# read/data plane (markets, market/vault/config state, positions, oracle freshness).
+# The chain is used only for execution (dry-run, submit, refs). Every call is
+# best-effort and degrades gracefully (health.reachable=False / markets() -> []) so
+# observe commands surface "unavailable" rather than crashing on an indexer outage.
 
 # (url, timeout) -> parsed JSON
 Transport = Callable[[str, float], Any]
