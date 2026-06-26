@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .constants import CADENCE_PERIOD_MS
-from .deployments.testnet import TESTNET_DEPLOYMENT
 
 
 @dataclass(frozen=True)
@@ -55,8 +56,11 @@ class DeploymentConfig:
     packages: dict[str, str]
     linked: dict[str, str]
     shared_objects: dict[str, dict[str, str]]
+    # The manifest currently wires a single asset (BTC_USD). The dict + `asset(name)`
+    # API is kept multi-asset-shaped so adding assets later needs no API change.
     assets: dict[str, AssetConfig]
-    cadences: dict[int | str, CadenceConfig]
+    # Keyed by cadence id; `cadence()` also accepts the short name (e.g. "5m").
+    cadences: dict[int, CadenceConfig]
     # Public indexer/server base URLs keyed by service ("predict", "propbook").
     servers: dict[str, str] = field(default_factory=dict)
 
@@ -79,7 +83,7 @@ class DeploymentConfig:
             )
         }
 
-        cadences: dict[int | str, CadenceConfig] = {}
+        cadences: dict[int, CadenceConfig] = {}
         for cadence_data in wiring.get("cadences", []):
             cadence = CadenceConfig(
                 id=int(cadence_data["id"]),
@@ -91,7 +95,6 @@ class DeploymentConfig:
                 window_size=int(cadence_data["windowSize"]),
             )
             cadences[cadence.id] = cadence
-            cadences[cadence.name] = cadence
 
         return cls(
             network=data["network"],
@@ -120,11 +123,31 @@ class DeploymentConfig:
         return self.assets[name]
 
     def cadence(self, key: int | str) -> CadenceConfig:
+        if isinstance(key, str):
+            return next(c for c in self.cadences.values() if c.name == key)
         return self.cadences[key]
 
     def server_url(self, name: str) -> str | None:
         return self.servers.get(name)
 
 
+# The SDK reads the canonical deployment manifest as its single source of wiring.
+# Wheels bundle a copy at predict_sdk/deployments/testnet.json (pyproject
+# force-include); editable/in-repo installs fall back to the canonical artifact.
+_PACKAGED_DEPLOYMENT = Path(__file__).parent / "deployments" / "testnet.json"
+_CANONICAL_DEPLOYMENT = (
+    Path(__file__).resolve().parents[2] / "deployment" / "deployment.testnet.json"
+)
+# Public service endpoints are an SDK-side overlay; the deployment manifest does
+# not carry them.
+_TESTNET_SERVERS = {
+    "predict": "https://predict-server-beta.testnet.mystenlabs.com",
+    "propbook": "https://propbook.api.testnet.mystenlabs.com",
+}
+
+
 def load_testnet_config() -> DeploymentConfig:
-    return DeploymentConfig.from_dict(TESTNET_DEPLOYMENT)
+    path = _PACKAGED_DEPLOYMENT if _PACKAGED_DEPLOYMENT.exists() else _CANONICAL_DEPLOYMENT
+    data = json.loads(path.read_text())
+    data.setdefault("servers", _TESTNET_SERVERS)
+    return DeploymentConfig.from_dict(data)

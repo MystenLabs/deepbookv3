@@ -52,3 +52,22 @@ Reason: contributors and agents need fast, repeatable verification.
 a general-purpose Sui BCS library.
 
 Reason: keeping the scope narrow makes it easier to audit and test.
+
+## D008 - SDK Reads The Canonical Deployment Manifest
+
+`load_testnet_config()` reads `packages/predict/deployment/deployment.testnet.json`
+(the deploy tooling's output) as the single source of wiring, applying an SDK-side
+`servers` overlay (the manifest does not carry service URLs). Wheels bundle a copy at
+`predict_sdk/deployments/testnet.json` via a hatchling force-include; editable / in-repo
+runs read the repo artifact directly.
+
+Reason: the previous hand-copied Python literal drifted from the canonical manifest
+(`servers` existed only in the copy). One source removes that drift.
+
+## D009 - Config Is Single-Asset Today, Multi-Asset-Shaped
+
+The deployment manifest wires one asset (BTC_USD). The `assets` dict + `asset(name)`
+API is intentionally kept multi-asset-shaped so adding assets later needs no API
+change; `from_dict` builds the single wired asset.
+
+Reason: documents the shape so it is not "simplified" away or mistaken for a bug.

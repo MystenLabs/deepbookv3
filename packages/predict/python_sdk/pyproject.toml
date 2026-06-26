@@ -19,3 +19,9 @@ build-backend = "hatchling.build"
 # Distribution name (deepbook-predict-sdk) differs from the import package, so
 # point hatchling at the package explicitly.
 packages = ["predict_sdk"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Bundle the canonical deployment manifest into the package so installed wheels
+# carry the wiring; in-repo/editable runs read the repo artifact directly
+# (see config.load_testnet_config). This keeps a single source of deployment truth.
+"../deployment/deployment.testnet.json" = "predict_sdk/deployments/testnet.json"

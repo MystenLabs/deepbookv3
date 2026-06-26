@@ -383,8 +383,7 @@ class ObservabilityClient:
             chain = _cadences_from_registry(_object_fields(self._cached_get(registry_id)))
             if chain:
                 return chain
-        by_id = {c.id: c for c in self.config.cadences.values()}
-        return [c for c in by_id.values() if c.window_size > 0]
+        return [c for c in self.config.cadences.values() if c.window_size > 0]
 
 
 def _cadences_from_registry(registry_fields: dict[str, Any]) -> list[CadenceConfig]:
