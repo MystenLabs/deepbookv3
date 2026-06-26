@@ -23,9 +23,10 @@ module deepbook_predict::strike_exposure_c1_tests;
 
 use account::account::AccountWrapper;
 use deepbook_predict::{
+    block_scholes_feed::BlockScholesFeed,
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers::{Self as helpers, BlockScholesFeed},
+    flow_test_helpers as helpers,
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants

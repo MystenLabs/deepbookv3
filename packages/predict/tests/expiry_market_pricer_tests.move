@@ -16,18 +16,9 @@ use deepbook_predict::{
 fun current_nav_rejects_pricer_loaded_for_another_market() {
     let mut fx = oracle_fixture::setup_oracle_default();
 
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        config,
-    ) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     fx.prepare_live_oracle(
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         &mut pyth,
         test_constants::default_live_price(),
     );
@@ -37,9 +28,9 @@ fun current_nav_rejects_pricer_loaded_for_another_market() {
         pyth.id(),
         test_constants::propbook_underlying_id(),
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         fx.expiry(),
         fx.clock(),
     );
@@ -54,18 +45,9 @@ fun current_nav_rejects_pricer_loaded_for_another_market() {
 fun liquidate_rejects_pricer_loaded_for_another_market() {
     let mut fx = oracle_fixture::setup_oracle_default();
 
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        config,
-    ) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     fx.prepare_live_oracle(
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         &mut pyth,
         test_constants::default_live_price(),
     );
@@ -75,9 +57,9 @@ fun liquidate_rejects_pricer_loaded_for_another_market() {
         pyth.id(),
         test_constants::propbook_underlying_id(),
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         fx.expiry(),
         fx.clock(),
     );

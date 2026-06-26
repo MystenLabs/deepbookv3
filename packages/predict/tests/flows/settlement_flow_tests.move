@@ -7,8 +7,9 @@
 module deepbook_predict::settlement_flow_tests;
 
 use deepbook_predict::{
+    block_scholes_feed::BlockScholesFeed,
     expiry_market::{Self, ExpiryMarket},
-    flow_test_helpers::{Self as helpers, BlockScholesFeed},
+    flow_test_helpers as helpers,
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants

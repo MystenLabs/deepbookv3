@@ -20,9 +20,10 @@ module deepbook_predict::protocol_profit_deferral_tests;
 
 use deepbook_predict::{
     admin,
+    block_scholes_feed::BlockScholesFeed,
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers::{Self as helpers, BlockScholesFeed},
+    flow_test_helpers as helpers,
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants

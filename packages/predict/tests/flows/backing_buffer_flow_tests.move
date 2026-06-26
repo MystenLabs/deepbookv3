@@ -13,11 +13,12 @@ module deepbook_predict::backing_buffer_flow_tests;
 
 use account::account::AccountWrapper;
 use deepbook_predict::{
+    block_scholes_feed::BlockScholesFeed,
     config_constants,
     constants,
     expiry_cash,
     expiry_market::ExpiryMarket,
-    flow_test_helpers::{Self as helpers, BlockScholesFeed},
+    flow_test_helpers as helpers,
     plp::PoolVault,
     protocol_config::ProtocolConfig,
     test_constants

@@ -42,7 +42,7 @@ public struct ExposureHarness has key {
 #[test, expected_failure(abort_code = expiry_market::EReferenceTickObservationMissing)]
 fun set_reference_tick_missing_exact_history_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (pyth, _bs_spot, _bs_forward, _bs_svi, oracle_registry, config) = fx.take_oracle();
+    let (pyth, _bs, oracle_registry, config) = fx.take_oracle();
     let mut market = take_market(&mut fx);
 
     market.set_reference_tick(&config, &oracle_registry, &pyth);
@@ -74,7 +74,7 @@ fun set_reference_tick_wrong_pyth_feed_aborts() {
 #[test]
 fun set_reference_tick_floors_spot_and_is_idempotent() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config) = fx.take_oracle();
+    let (mut pyth, bs, oracle_registry, config) = fx.take_oracle();
     let mut market = take_market(&mut fx);
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
     assert_eq!(
@@ -91,14 +91,14 @@ fun set_reference_tick_floors_spot_and_is_idempotent() {
     assert_eq!(market.reference_tick().destroy_some(), REFERENCE_TICK);
 
     return_market(market);
-    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidReferenceTick)]
 fun set_reference_tick_floor_to_zero_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, _bs_spot, _bs_forward, _bs_svi, oracle_registry, config) = fx.take_oracle();
+    let (mut pyth, _bs, oracle_registry, config) = fx.take_oracle();
     let mut market = take_market(&mut fx);
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
 
@@ -173,18 +173,9 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
 
 fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        config,
-    ) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
     fx.prepare_real_oracle(
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         &mut pyth,
         ref_data::spot(LARGE_VARIANCE_SCENARIO),
         ref_data::forward(LARGE_VARIANCE_SCENARIO),
@@ -200,11 +191,9 @@ fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
         &config,
         &oracle_registry,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
     );
-    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     let harness_id = share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);

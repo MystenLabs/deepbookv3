@@ -66,19 +66,10 @@ fun setup_everything_check_manager_return_market_smoke() {
 #[test]
 fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        config,
-    ) = fx.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
 
     fx.prepare_live_oracle(
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         &mut pyth,
         test_constants::default_live_price(),
     );
@@ -92,9 +83,7 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
         &config,
         &oracle_registry,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
     );
     let up = pricer.range_price(
         test_constants::default_strike_tick() * test_constants::default_tick_size(),
@@ -103,6 +92,6 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     assert!(up > 0);
     assert!(up < test_constants::float());
 
-    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fx.finish();
 }

@@ -25,6 +25,7 @@
 module deepbook_predict::payout_tree_walk_tests;
 
 use deepbook_predict::{
+    block_scholes_feed::BlockScholesFeed,
     constants,
     oracle_fixture::{Self, OracleFixture},
     pricing::Pricer,
@@ -34,13 +35,7 @@ use deepbook_predict::{
     test_helpers
 };
 use fixed_math::math;
-use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes
@@ -61,16 +56,7 @@ const DUST_QUANTITY: u64 = 100_000;
 
 #[test]
 fun exact_walk_matches_per_order_reference() {
-    let (
-        mut fixture,
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        config,
-        pricer,
-    ) = live_pricer();
+    let (mut fixture, pyth, bs, oracle_registry, config, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
@@ -84,21 +70,12 @@ fun exact_walk_matches_per_order_reference() {
     assert_eq!(exact, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
 
     destroy(tree);
-    cleanup(fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
 #[test]
 fun interpolation_collapses_subtree_within_bound() {
-    let (
-        mut fixture,
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        config,
-        pricer,
-    ) = live_pricer();
+    let (mut fixture, pyth, bs, oracle_registry, config, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
@@ -127,21 +104,12 @@ fun interpolation_collapses_subtree_within_bound() {
     test_helpers::assert_within(interpolated, reference, math::mul(span, total_quantity));
 
     destroy(tree);
-    cleanup(fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
 #[test]
 fun skip_zero_delta_ignores_dead_boundaries() {
-    let (
-        mut fixture,
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        config,
-        pricer,
-    ) = live_pricer();
+    let (mut fixture, pyth, bs, oracle_registry, config, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
@@ -156,21 +124,14 @@ fun skip_zero_delta_ignores_dead_boundaries() {
     assert_eq!(walk, up_reference(&pricer, vector[t0], vector[LIVE_QUANTITY]));
 
     destroy(tree);
-    cleanup(fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
 #[test]
 fun walk_linear_clamps_boundary_aggregation_dust() {
-    let (
-        mut fixture,
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        oracle_registry,
-        config,
-        pricer,
-    ) = live_pricer_at(FLAT_REGION_FORWARD);
+    let (mut fixture, pyth, bs, oracle_registry, config, pricer) = live_pricer_at(
+        FLAT_REGION_FORWARD,
+    );
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let t0 = test_constants::default_strike_tick();
@@ -194,7 +155,7 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     assert_eq!(tree.walk_linear(&pricer, tick_size(), 0), 0);
 
     destroy(tree);
-    cleanup(fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    cleanup(fixture, pyth, bs, oracle_registry, config);
 }
 
 // === Helpers ===
@@ -234,9 +195,7 @@ fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): 
 fun live_pricer(): (
     OracleFixture,
     PythFeed,
-    BlockScholesSpotFeed,
-    BlockScholesForwardFeed,
-    BlockScholesSVIFeed,
+    BlockScholesFeed,
     OracleRegistry,
     ProtocolConfig,
     Pricer,
@@ -247,31 +206,13 @@ fun live_pricer(): (
 /// `live_pricer` with an explicit forward (used to reach the deep-ITM flat tail).
 fun live_pricer_at(
     forward: u64,
-): (
-    OracleFixture,
-    PythFeed,
-    BlockScholesSpotFeed,
-    BlockScholesForwardFeed,
-    BlockScholesSVIFeed,
-    OracleRegistry,
-    ProtocolConfig,
-    Pricer,
-) {
+): (OracleFixture, PythFeed, BlockScholesFeed, OracleRegistry, ProtocolConfig, Pricer) {
     let mut fixture = oracle_fixture::setup_oracle_default();
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        config,
-    ) = fixture.take_oracle();
+    let (mut pyth, mut bs, oracle_registry, config) = fixture.take_oracle();
     // Inflated base variance, otherwise the default (positive) SVI shape; spot ==
     // forward gives basis 1.0. sigma == the propbook floor (default_svi_sigma).
     fixture.prepare_real_oracle(
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
+        &mut bs,
         &mut pyth,
         forward,
         forward,
@@ -287,22 +228,18 @@ fun live_pricer_at(
         &config,
         &oracle_registry,
         &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &bs,
     );
-    (fixture, pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config, pricer)
+    (fixture, pyth, bs, oracle_registry, config, pricer)
 }
 
 fun cleanup(
     fixture: OracleFixture,
     pyth: PythFeed,
-    bs_spot: BlockScholesSpotFeed,
-    bs_forward: BlockScholesForwardFeed,
-    bs_svi: BlockScholesSVIFeed,
+    bs: BlockScholesFeed,
     oracle_registry: OracleRegistry,
     config: ProtocolConfig,
 ) {
-    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
     fixture.finish();
 }

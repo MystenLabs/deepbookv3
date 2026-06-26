@@ -21,9 +21,10 @@
 module deepbook_predict::current_nav_flow_tests;
 
 use deepbook_predict::{
+    block_scholes_feed::BlockScholesFeed,
     constants,
     expiry_market::ExpiryMarket,
-    flow_test_helpers::{Self as helpers, BlockScholesFeed},
+    flow_test_helpers as helpers,
     order,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
