@@ -50,6 +50,7 @@ const EReferenceTickObservationMissing: u64 = 8;
 const EReferenceTickTimestampMismatch: u64 = 9;
 const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
+const ERedeemProceedsBelowMin: u64 = 12;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -349,10 +350,14 @@ public fun mint_exact_amount(
 /// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
 /// only when a live partial close leaves quantity open.
 ///
-/// `min_probability` is the close-side slippage floor on the quoted per-contract
-/// range probability (same units as mint's `max_probability`); pass `0` to
-/// disable. It only gates the live-priced path — a liquidated tombstone closes at
-/// zero payout regardless, since its value is deterministic, not market-quoted.
+/// Two close-side slippage floors, the mirror of mint's `max_probability` /
+/// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
+/// quoted per-contract range probability (same units as mint's `max_probability`).
+/// `min_proceeds` floors the all-in net DUSDC credited to the account
+/// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
+/// of mint's all-in `max_cost`. Both only gate the live-priced path — a liquidated
+/// tombstone closes at zero payout regardless, since its value is deterministic,
+/// not market-quoted.
 public fun redeem_live(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -362,6 +367,7 @@ public fun redeem_live(
     order_id: u256,
     close_quantity: u64,
     min_probability: u64,
+    min_proceeds: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -383,6 +389,7 @@ public fun redeem_live(
         &redeemed_order,
         close_quantity,
         min_probability,
+        min_proceeds,
         clock,
         ctx,
     );
@@ -865,6 +872,7 @@ fun redeem_live_internal(
     order: &Order,
     close_quantity: u64,
     min_probability: u64,
+    min_proceeds: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
@@ -923,6 +931,15 @@ fun redeem_live_internal(
         penalty_amount,
         close_quantity,
         ctx,
+    );
+    // Close-side all-in slippage floor: the net credited to the account is
+    // `redeem_amount` minus the (post-clamp) fee, builder fee, and penalty that
+    // `settle_live_redeem_payment` just deducted. Subtraction is exact — each
+    // deduction is clamped at or below the running remainder inside settle. `0`
+    // disables. Mirror of mint's `max_cost`.
+    assert!(
+        redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
+        ERedeemProceedsBelowMin,
     );
 
     order_events::emit_live_order_redeemed(
