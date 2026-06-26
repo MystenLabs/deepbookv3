@@ -64,8 +64,8 @@ public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
 /// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`/
 /// `OracleRegistry`/`AccountRegistry` are real shared objects taken per-transaction,
-/// not held here. `AccumulatorRoot` follows the same pattern only on root-enabled
-/// test paths; this stable-framework branch leaves the root seam as a no-op.
+/// not held here. `AccumulatorRoot` follows the same pattern: setup creates one
+/// shared empty root, and root-dependent tests take/return it per transaction.
 public struct Fixture {
     scenario: Scenario,
     admin_cap: AdminCap,
@@ -95,11 +95,10 @@ public struct Trader has copy, drop, store {
 /// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
-    // Ask the accumulator seam to construct the shared root up front. On this
-    // stable-framework branch the seam is a no-op and the root-dependent flow files
-    // are disabled; on the nightly/stable-constructor path it creates an empty root
-    // and flows fund accounts through stored balance.
+    // The framework root constructor is a system-only test seam.
+    scenario.next_tx(@0x0);
     accumulator_support::create_shared_root(&mut scenario);
+    scenario.next_tx(test_constants::admin());
     account_registry::init_for_testing(scenario.ctx());
     plp::init_for_testing(scenario.ctx());
     registry::init_for_testing(scenario.ctx());

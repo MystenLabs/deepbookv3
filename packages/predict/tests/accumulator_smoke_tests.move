@@ -4,8 +4,7 @@
 #[test_only]
 module deepbook_predict::accumulator_smoke_tests;
 
-use account::account::{Self, AccountWrapper};
-use account::account_registry::{Self, AccountRegistry};
+use account::{account::{Self, AccountWrapper}, account_registry::{Self, AccountRegistry}};
 use deepbook_predict::accumulator_support;
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
@@ -16,10 +15,8 @@ const ALICE: address = @0xA;
 #[test]
 fun root_constructs_and_funds_stored_balance() {
     let mut scenario = test::begin(@0x0);
-    // Disabled on the stable/testnet framework: this helper can construct the shared
-    // AccumulatorRoot only on the nightly verification path or after stable Sui exposes
-    // the test constructor. Even then, the root is empty; unit tests cannot populate
-    // real barrier-settled funds (see ACCUMULATOR_TESTING_STATUS.md).
+    // The framework test seam creates an empty root. Unit tests still cannot
+    // populate real barrier-settled funds (see ACCUMULATOR_TESTING_STATUS.md).
     accumulator_support::create_shared_root(&mut scenario);
     account_registry::init_for_testing(scenario.ctx());
     scenario.next_tx(ALICE);
@@ -40,13 +37,13 @@ fun root_constructs_and_funds_stored_balance() {
 
     let auth = account::generate_auth(scenario.ctx());
     let acct = wrapper.load_account_mut(auth);
-    acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(1000, scenario.ctx()), &root, &clk);
+    acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(1000, scenario.ctx()));
     assert_eq!(wrapper.load_account().balance<DUSDC>(&root, &clk), 1000);
 
     // Second op in the SAME tx, holding the same objects (no re-take).
     let auth = account::generate_auth(scenario.ctx());
     let acct = wrapper.load_account_mut(auth);
-    let withdrawn = acct.withdraw<DUSDC>(400, &root, &clk, scenario.ctx());
+    let withdrawn = acct.withdraw<DUSDC>(400, scenario.ctx());
     assert_eq!(withdrawn.value(), 400);
     assert_eq!(wrapper.load_account().balance<DUSDC>(&root, &clk), 600);
 
