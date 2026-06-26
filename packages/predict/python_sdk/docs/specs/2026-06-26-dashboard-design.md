@@ -32,7 +32,10 @@ the same on-chain snapshot; this spec is the dashboard side of that.
   data effort owns these.
 - Trends/sparkline band, fees/revenue panel, config-snapshot panel (not selected; easy
   to add later).
-- Account/portfolio view — see Open Questions.
+- Account/portfolio view *in the dashboard* — the protocol monitor replaces the default
+  `dashboard`; the account positions/PnL/balances view stays available via the
+  `positions` and `account` CLI commands. An in-dashboard account section is revisited
+  later (it pairs with the deferred solvency/PLP work).
 
 ## Approved layout (v3)
 
@@ -73,7 +76,8 @@ Zones:
 6. **Keepers · Ops panel** — settlement backlog (count + oldest), unfunded markets,
    rebalance "funded through +N", oracle-feeder heartbeat, valuation state, indexer lag,
    chain checkpoint.
-7. **Activity feed** — recent mints / settlements / liquidations (live, newest first).
+7. **Activity feed** *(follow-up — not in v1)* — recent mints / settlements / liquidations
+   (live, newest first); ships once the indexer event-feed wiring (dep 5) lands.
 
 ## Data sources
 
@@ -126,8 +130,9 @@ Keep the existing three-layer separation in `dashboard.py` (load → assemble �
   worker reusing the existing exclusive "skip if a load is in flight" pattern; a loader
   that gathers inputs off the UI thread.
 - **Reuse:** observability's cadence-timeline + slot-state logic; the on-chain snapshot
-  reader; indexer clients; the box/colour vocabulary from `render.py` (shared helper or a
-  Textual widget — see Open Questions).
+  reader; indexer clients; the box/colour vocabulary from `render.py`. The cadence hero is
+  built as **native Textual widgets** that share the slot-state + box-label logic with
+  `render.py` (not embedded `render.py` strings), so it can refresh and grow drill-in later.
 
 ## Attention-strip rules (derived, ordered by severity)
 
@@ -163,16 +168,17 @@ of the dashboard still renders. Read-only, so stale data is never a safety risk.
 - Textual app: a fake loader returns a fixed view-model; assert widgets populate (mirror
   existing `test_dashboard` patterns). No live RPC.
 
-## Open questions (resolve at spec review)
+## Resolved decisions (spec review)
 
-1. **Account view** — today's dashboard is account-centric. Does the protocol monitor
-   *replace* it, or do we keep an account mode (e.g. `dashboard --account` or a toggle)?
-   Recommendation: the protocol monitor becomes the default `dashboard`; account/portfolio
-   stays available via the `positions`/`account` CLI commands, and an in-dashboard account
-   section is revisited later (it pairs with the deferred solvency/PLP work).
-2. **Cadence hero rendering** — reuse `render.py`'s string boxes inside a `Static` widget
-   (fast, less code), or build native Textual widgets (more aesthetic/interactive)?
-   Recommendation: native widgets for the hero, sharing the slot-state + box-label logic
-   with `render.py`.
-3. **Activity feed in MVP** vs defer — it needs the indexer event feed wired (dep 5). Keep
-   it in the first cut or ship the snapshot-driven zones first?
+1. **Account view** — the protocol monitor replaces the default `dashboard`;
+   account/portfolio stays available via the `positions` / `account` CLI commands.
+2. **Activity feed** — deferred to a follow-up. v1 ships the snapshot-driven zones
+   (verdict, attention, vitals, cadence hero, oracle, keepers).
+3. **Cadence hero** — native Textual widgets, sharing slot-state / box-label logic with
+   `render.py`.
+
+## v1 scope
+
+Zones 1–6 (banner/verdict, attention strip, vitals strip, cadence hero, oracle panel,
+keepers/ops panel), snapshot- + indexer-discovery-driven, native Textual widgets,
+auto-refresh, read-only. The activity feed (zone 7) and the deferred panels follow later.
