@@ -39,17 +39,13 @@
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
-use block_scholes_oracle::update;
 use deepbook_predict::{
-    block_scholes_feed::BlockScholesFeed,
     constants,
-    oracle_fixture::{Self, OracleFixture},
+    oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
-    protocol_config::ProtocolConfig,
     test_constants
 };
 use fixed_math::math::float_scaling as float;
-use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
@@ -75,15 +71,12 @@ const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
 
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]
 fun live_quote_with_equal_range_bounds_aborts() {
-    let (fx, pyth, bs, oracle_registry, config) = setup_live();
+    let (fx, oracle) = setup_live();
     // lower must be strictly below higher; the empty (degenerate) range aborts
     // after the freshness gates pass.
     live_quote(
         &fx,
-        &pyth,
-        &bs,
-        &oracle_registry,
-        &config,
+        &oracle,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
     );
@@ -92,20 +85,17 @@ fun live_quote_with_equal_range_bounds_aborts() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
 fun live_quote_with_stale_block_scholes_surface_aborts() {
-    let (mut fx, pyth, bs, oracle_registry, config) = setup_live();
+    let (mut fx, oracle) = setup_live();
     // One ms past the BS price freshness window, the spot and forward feeds are
     // stale and the quote aborts before any pricing.
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + config.pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
     live_quote(
         &fx,
-        &pyth,
-        &bs,
-        &oracle_registry,
-        &config,
+        &oracle,
         test_constants::default_live_price(),
         constants::pos_inf!(),
     );
@@ -114,29 +104,17 @@ fun live_quote_with_stale_block_scholes_surface_aborts() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
 fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
-    let (mut fx, pyth, mut bs, oracle_registry, config) = setup_live();
+    let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + config.pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
-    bs
-        .spot_mut()
-        .update(
-            update::new_spot_update(
-                test_constants::pyth_feed_id(),
-                stale_now,
-                test_constants::default_live_price(),
-            ),
-            fx.clock(),
-        );
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
 
     live_quote(
         &fx,
-        &pyth,
-        &bs,
-        &oracle_registry,
-        &config,
+        &oracle,
         test_constants::default_live_price(),
         constants::pos_inf!(),
     );
@@ -145,30 +123,22 @@ fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
 fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
-    let (mut fx, pyth, mut bs, oracle_registry, config) = setup_live();
+    let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + config.pricing_config().block_scholes_svi_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
-    bs
-        .spot_mut()
-        .update(
-            update::new_spot_update(
-                test_constants::pyth_feed_id(),
-                stale_now,
-                test_constants::default_live_price(),
-            ),
-            fx.clock(),
-        );
-    fx.set_bs_forward_for_testing(&mut bs, stale_now, test_constants::default_live_price());
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        stale_now,
+        test_constants::default_live_price(),
+    );
 
     live_quote(
         &fx,
-        &pyth,
-        &bs,
-        &oracle_registry,
-        &config,
+        &oracle,
         test_constants::default_live_price(),
         constants::pos_inf!(),
     );
@@ -182,18 +152,14 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
 #[test]
 fun deep_itm_up_price_saturates_to_one() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    let mut oracle = fx.take_oracle_bundle();
     // Fresh spot == forward == 100e9.
-    fx.prepare_live_oracle(
-        &mut bs,
-        &mut pyth,
-        test_constants::default_live_price(),
-    );
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.up_price(DEEP_ITM_STRIKE), float!());
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }
 
@@ -202,15 +168,15 @@ fun deep_itm_up_price_saturates_to_one() {
 #[test]
 fun deep_otm_up_price_saturates_to_zero() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    let mut oracle = fx.take_oracle_bundle();
     // Fresh spot == forward == 1 (a tiny forward, so a finite u64 strike can clear
     // the saturation threshold without being the pos_inf sentinel).
-    fx.prepare_live_oracle(&mut bs, &mut pyth, 1);
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    fx.prepare_live_oracle_bundle(&mut oracle, 1);
+    let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.up_price(DEEP_OTM_STRIKE), 0);
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }
 
@@ -296,11 +262,10 @@ fun surface_with_svi_sigma_above_max_aborts() {
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    let mut oracle = fx.take_oracle_bundle();
     let spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
-    fx.prepare_real_oracle(
-        &mut bs,
-        &mut pyth,
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
         spot,
         1, // forward == 1: div(1, 1e17) == 0, so spot * 0 == 0
         default_svi_a(),
@@ -311,11 +276,11 @@ fun re_anchored_zero_forward_aborts() {
         default_svi_m_magnitude(),
         false,
     );
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    let pricer = fx.load_pricer_bundle(&oracle);
 
     pricer.up_price(test_constants::default_live_price());
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
     abort EUnexpectedSuccess
 }
@@ -331,10 +296,9 @@ fun re_anchored_zero_forward_aborts() {
 #[test, expected_failure(abort_code = pricing::EZeroVariance)]
 fun zero_total_variance_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
-    fx.prepare_real_oracle(
-        &mut bs,
-        &mut pyth,
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         0, // svi_a == 0
@@ -345,11 +309,11 @@ fun zero_total_variance_aborts() {
         default_svi_m_magnitude(),
         false,
     );
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    let pricer = fx.load_pricer_bundle(&oracle);
 
     pricer.up_price(test_constants::default_live_price());
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
     abort EUnexpectedSuccess
 }
@@ -429,10 +393,9 @@ fun load_pricer_with_full_svi_and_spot(
     svi_m_is_negative: bool,
 ) {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
-    fx.prepare_real_oracle(
-        &mut bs,
-        &mut pyth,
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
         spot,
         forward,
         svi_a,
@@ -445,40 +408,23 @@ fun load_pricer_with_full_svi_and_spot(
     );
     // `load_pricer` runs `assert_surface_pricing_safe`; the invalid surface aborts
     // here before the pricer is returned.
-    let _pricer = fx.load_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs,
-    );
+    let _pricer = fx.load_pricer_bundle(&oracle);
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }
 
 /// Bring up the default live oracle: fresh Pyth spot + split Block Scholes feeds,
 /// quotable at the fixture clock (forward == 100e9).
-fun setup_live(): (OracleFixture, PythFeed, BlockScholesFeed, OracleRegistry, ProtocolConfig) {
+fun setup_live(): (OracleFixture, OracleBundle) {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
-    fx.prepare_live_oracle(
-        &mut bs,
-        &mut pyth,
-        test_constants::default_live_price(),
-    );
-    (fx, pyth, bs, oracle_registry, config)
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    (fx, oracle)
 }
 
 /// Worker: one live quote over `(lower, higher]` against the fixture market.
-fun live_quote(
-    fx: &OracleFixture,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    oracle_registry: &OracleRegistry,
-    config: &ProtocolConfig,
-    lower: u64,
-    higher: u64,
-): u64 {
-    let pricer = fx.load_pricer(config, oracle_registry, pyth, bs);
+fun live_quote(fx: &OracleFixture, oracle: &OracleBundle, lower: u64, higher: u64): u64 {
+    let pricer = fx.load_pricer_bundle(oracle);
     pricer.range_price(lower, higher)
 }

@@ -20,6 +20,7 @@ use block_scholes_oracle::update;
 use deepbook_predict::{
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
+    expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
     plp::{Self, PoolVault},
     pricing::{Self, Pricer},
@@ -53,6 +54,14 @@ public struct OracleFixture {
     bs_svi_id: ID,
     expiry_id: ID,
     expiry: u64,
+}
+
+/// Transaction-local oracle/config objects used by pricing tests.
+public struct OracleBundle {
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
+    oracle_registry: OracleRegistry,
+    config: ProtocolConfig,
 }
 
 /// Stand up a registry + config + the two propbook feeds + an `ExpiryMarket` for
@@ -172,30 +181,23 @@ public fun setup_oracle_default(): OracleFixture {
     )
 }
 
-/// Take the Pyth feed, Block Scholes bundle, oracle registry, and protocol config
-/// for a pricing test. Pair with `return_oracle`.
-public fun take_oracle(
-    self: &mut OracleFixture,
-): (PythFeed, BlockScholesFeed, OracleRegistry, ProtocolConfig) {
-    (
-        self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
-        bs_feed::new(
+/// Take oracle/config objects as one named bundle to avoid wide tuple plumbing.
+public fun take_oracle_bundle(self: &mut OracleFixture): OracleBundle {
+    OracleBundle {
+        pyth: self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        bs: bs_feed::new(
             self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
             self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
             self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
         ),
-        self.scenario.take_shared<OracleRegistry>(),
-        self.scenario.take_shared<ProtocolConfig>(),
-    )
+        oracle_registry: self.scenario.take_shared<OracleRegistry>(),
+        config: self.scenario.take_shared<ProtocolConfig>(),
+    }
 }
 
-/// Return the shared objects taken by `take_oracle`.
-public fun return_oracle(
-    pyth: PythFeed,
-    bs: BlockScholesFeed,
-    oracle_registry: OracleRegistry,
-    config: ProtocolConfig,
-) {
+/// Return the shared objects taken by `take_oracle_bundle`.
+public fun return_oracle_bundle(bundle: OracleBundle) {
+    let OracleBundle { pyth, bs, oracle_registry, config } = bundle;
     bs.return_feed();
     return_shared(pyth);
     return_shared(oracle_registry);
@@ -223,6 +225,11 @@ public fun load_pricer(
     )
 }
 
+/// Load a live pricer from an oracle bundle.
+public fun load_pricer_bundle(self: &OracleFixture, oracle: &OracleBundle): Pricer {
+    self.load_pricer(&oracle.config, &oracle.oracle_registry, &oracle.pyth, &oracle.bs)
+}
+
 /// Seed a fresh live Pyth spot + Block Scholes surface so quotes are available, at
 /// the fixture's default live source timestamp. `live_price` is used as both spot
 /// and forward (basis = 1.0).
@@ -245,6 +252,15 @@ public fun prepare_live_oracle(
         test_constants::default_svi_m(),
         false,
     );
+}
+
+/// Seed a fresh live oracle through an oracle bundle.
+public fun prepare_live_oracle_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    live_price: u64,
+) {
+    self.prepare_live_oracle(&mut oracle.bs, &mut oracle.pyth, live_price);
 }
 
 /// Seed a fresh Pyth spot + an explicit Block Scholes surface (real spot/forward +
@@ -304,6 +320,60 @@ public fun prepare_real_oracle(
         );
 }
 
+/// Seed a fresh explicit oracle surface through an oracle bundle.
+public fun prepare_real_oracle_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    spot: u64,
+    forward: u64,
+    svi_a: u64,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    self.prepare_real_oracle(
+        &mut oracle.bs,
+        &mut oracle.pyth,
+        spot,
+        forward,
+        svi_a,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
+}
+
+/// Overwrite only the BS spot row through the real ingest path.
+public fun set_bs_spot_for_testing(
+    self: &OracleFixture,
+    bs: &mut BlockScholesFeed,
+    source_timestamp_ms: u64,
+    spot: u64,
+) {
+    bs
+        .spot_mut()
+        .update(
+            update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
+            &self.clock,
+        );
+}
+
+/// Overwrite only the BS spot row through an oracle bundle.
+public fun set_bs_spot_for_testing_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    spot: u64,
+) {
+    self.set_bs_spot_for_testing(&mut oracle.bs, source_timestamp_ms, spot);
+}
+
 /// Overwrite only the BS forward row for this fixture's expiry through the real
 /// ingest path. Used by stale-surface guard tests that need fresh prices but a
 /// stale SVI row.
@@ -327,6 +397,16 @@ public fun set_bs_forward_for_testing(
         );
 }
 
+/// Overwrite only the BS forward row through an oracle bundle.
+public fun set_bs_forward_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    forward: u64,
+) {
+    self.set_bs_forward_for_testing(&mut oracle.bs, source_timestamp_ms, forward);
+}
+
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
 /// the fixture clock as the on-chain landing timestamp.
 public fun set_pyth(
@@ -336,6 +416,16 @@ public fun set_pyth(
     source_timestamp_ms: u64,
 ) {
     store_pyth_spot(pyth, price, source_timestamp_ms, self.clock.timestamp_ms());
+}
+
+/// Overwrite the bundled Pyth spot directly.
+public fun set_pyth_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    price: u64,
+    source_timestamp_ms: u64,
+) {
+    self.set_pyth(&mut oracle.pyth, price, source_timestamp_ms);
 }
 
 /// Insert an exact historical Pyth spot keyed by `source_timestamp_ms`.
@@ -357,7 +447,36 @@ public fun insert_exact_pyth(
     );
 }
 
+/// Insert an exact historical Pyth spot into a bundle.
+public fun insert_exact_pyth_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    price: u64,
+    source_timestamp_ms: u64,
+) {
+    self.insert_exact_pyth(&mut oracle.pyth, price, source_timestamp_ms);
+}
+
+/// Take this fixture's expiry market for direct market-boundary tests.
+public fun take_expiry_market(self: &mut OracleFixture): ExpiryMarket {
+    let expiry_id = self.expiry_id;
+    self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id)
+}
+
+/// Return the expiry market taken by `take_expiry_market`.
+public fun return_expiry_market(market: ExpiryMarket) {
+    return_shared(market);
+}
+
 // === Accessors ===
+
+public fun pyth(oracle: &OracleBundle): &PythFeed { &oracle.pyth }
+
+public fun bs(oracle: &OracleBundle): &BlockScholesFeed { &oracle.bs }
+
+public fun oracle_registry(oracle: &OracleBundle): &OracleRegistry { &oracle.oracle_registry }
+
+public fun config(oracle: &OracleBundle): &ProtocolConfig { &oracle.config }
 
 public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }
 

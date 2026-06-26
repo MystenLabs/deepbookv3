@@ -58,25 +58,16 @@ fun setup_everything_check_manager_return_market_smoke() {
 #[test]
 fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
+    let mut oracle = fx.take_oracle_bundle();
 
-    fx.prepare_live_oracle(
-        &mut bs,
-        &mut pyth,
-        test_constants::default_live_price(),
-    );
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
 
     // The unfunded oracle bring-up produces a working quote surface: the
     // probability of the upper tick range `(default_strike_tick, +inf]` is a
     // valid probability strictly inside (0, 1). (Independent bound: any
     // probability is in [0, FLOAT_SCALING]; a non-degenerate range is strictly
     // inside.)
-    let pricer = fx.load_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs,
-    );
+    let pricer = fx.load_pricer_bundle(&oracle);
     let up = pricer.range_price(
         test_constants::default_strike_tick() * test_constants::default_tick_size(),
         constants::pos_inf!(),
@@ -84,6 +75,6 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     assert!(up > 0);
     assert!(up < test_constants::float());
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }

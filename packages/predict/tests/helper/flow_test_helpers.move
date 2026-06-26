@@ -247,7 +247,7 @@ public fun setup_market_default(): Fixture {
 /// already past `create_expiry` + `prepare_live_oracle` + test-only cash seeding,
 /// plus a funded alice trader, so a flow test starts at the first interesting
 /// line. The market objects are returned to the shared pool; the caller
-/// `take_market`s them. Returns `(fixture, expiry_id, trader)`.
+/// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
 }
@@ -266,15 +266,10 @@ fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fi
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
-    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    fx.prepare_live_oracle(
-        &market,
-        &mut pyth,
-        &mut bs,
-        live_price,
-    );
-    fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
-    return_market(pyth, bs, oracle_registry, vault, market, config);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, live_price);
+    fx.seed_market_cash(&mut market.market, test_constants::default_seeded_expiry_cash());
+    return_market_bundle(market);
     fx.scenario.next_tx(test_constants::admin());
     (fx, expiry_id, trader)
 }
@@ -394,53 +389,28 @@ public fun sponsor_fee_incentives_bundle(
     market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
 }
 
-/// Take the four shared market objects + the protocol config a flow test mutates.
-/// The config is threaded into the flow-phase methods as a parameter (it cannot be
-/// a `Fixture` field — see module doc) and returned by the test.
-public fun take_market(
-    self: &mut Fixture,
-    expiry_id: ID,
-): (PythFeed, BlockScholesFeed, OracleRegistry, PoolVault, ExpiryMarket, ProtocolConfig) {
-    let market = self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
-    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    (
-        self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
-        self.take_bs(),
-        oracle_registry,
-        self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
-        market,
-        self.scenario.take_shared<ProtocolConfig>(),
-    )
-}
-
 /// Take the market transaction objects as a named bundle to avoid wide positional
 /// tuple plumbing in flow tests.
 public fun take_market_bundle(self: &mut Fixture, expiry_id: ID): MarketBundle {
-    let (pyth, bs, oracle_registry, vault, market, config) = self.take_market(expiry_id);
-    MarketBundle { pyth, bs, oracle_registry, vault, market, config }
+    MarketBundle {
+        pyth: self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        bs: self.take_bs(),
+        oracle_registry: self.scenario.take_shared<OracleRegistry>(),
+        vault: self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
+        market: self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id),
+        config: self.scenario.take_shared<ProtocolConfig>(),
+    }
 }
 
-/// Return the shared objects taken by `take_market` (pairs 1:1 with it).
-public fun return_market(
-    pyth: PythFeed,
-    bs: BlockScholesFeed,
-    oracle_registry: OracleRegistry,
-    vault: PoolVault,
-    market: ExpiryMarket,
-    config: ProtocolConfig,
-) {
+/// Return the shared objects taken by `take_market_bundle`.
+public fun return_market_bundle(bundle: MarketBundle) {
+    let MarketBundle { pyth, bs, oracle_registry, vault, market, config } = bundle;
     return_shared(market);
     return_shared(vault);
     return_bs(bs);
     return_shared(pyth);
     return_shared(oracle_registry);
     return_shared(config);
-}
-
-/// Return the shared objects taken by `take_market_bundle`.
-public fun return_market_bundle(bundle: MarketBundle) {
-    let MarketBundle { pyth, bs, oracle_registry, vault, market, config } = bundle;
-    return_market(pyth, bs, oracle_registry, vault, market, config);
 }
 
 /// Take the split Block Scholes feeds as one transaction-local bundle.
@@ -489,41 +459,26 @@ public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit:
     acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
-    // caller's `take_market`/`take_account`. Sender stays `owner`, so a subsequent
+    // caller's bundle takes. Sender stays `owner`, so a subsequent
     // owner auth is still valid.
     self.scenario.next_tx(owner);
     Trader { wrapper_id, owner }
-}
-
-/// Take the trader's shared `AccountWrapper` for the duration of a trade transaction.
-public fun take_account(self: &Fixture, trader: &Trader): AccountWrapper {
-    self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id)
-}
-
-/// Take the single shared `AccumulatorRoot` on root-enabled test paths.
-public fun take_root(self: &Fixture): AccumulatorRoot {
-    accumulator_support::take_root(&self.scenario)
 }
 
 /// Take a trader's wrapper and the accumulator root as one transaction-local
 /// account bundle.
 public fun take_account_bundle(self: &Fixture, trader: &Trader): AccountBundle {
     AccountBundle {
-        wrapper: self.take_account(trader),
-        root: self.take_root(),
+        wrapper: self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id),
+        root: accumulator_support::take_root(&self.scenario),
     }
-}
-
-/// Return the wrapper + root taken by `take_account` / `take_root`.
-public fun return_account(wrapper: AccountWrapper, root: AccumulatorRoot) {
-    return_shared(wrapper);
-    return_shared(root);
 }
 
 /// Return the shared objects taken by `take_account_bundle`.
 public fun return_account_bundle(bundle: AccountBundle) {
     let AccountBundle { wrapper, root } = bundle;
-    return_account(wrapper, root);
+    return_shared(wrapper);
+    return_shared(root);
 }
 
 /// The trader's account owner address.
