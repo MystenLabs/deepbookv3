@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from .indexer import PredictIndexerClient, Transport
+
+log = logging.getLogger("predict_sdk.portfolio")
 
 # Account portfolio + PnL reconstruction from the Predict indexer's per-manager order
 # feed (`GET /managers/{manager}/orders`). The feed is already scoped to one
@@ -158,6 +161,15 @@ class PortfolioReader:
             fresh = [e for e in page if e.get("event_digest") not in seen]
             seen.update(e["event_digest"] for e in fresh)
             out.extend(fresh)
+            if not fresh and len(page) >= page_limit:
+                # A full page that is entirely already-seen means >page_limit events
+                # share the boundary second; the end_time window can't page past it,
+                # so older same-second orders are dropped. Implausible for one account.
+                log.warning(
+                    "manager %s has >%d orders in one second; older same-second "
+                    "orders may be omitted from the portfolio",
+                    self.manager_id, page_limit,
+                )
             if len(page) < page_limit or not fresh:
                 break
             end_time_s = min(int(e["checkpoint_timestamp_ms"]) for e in page) // 1000

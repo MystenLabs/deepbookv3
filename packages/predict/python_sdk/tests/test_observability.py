@@ -108,6 +108,23 @@ class ObservabilityTests(unittest.TestCase):
         self.assertFalse(report.oracle.fresh)
         self.assertIn("oracle binding unavailable", report.markets[0].blockers)
 
+    def test_markets_read_is_window_bounded_not_flat_newest_n(self) -> None:
+        # The timeline needs markets by expiry while the feed is created-time ordered,
+        # so status() must bound the read by a created-time window (start_time) at the
+        # 500 cap, not a small flat limit a high-frequency cadence floods past.
+        config = load_testnet_config()
+        urls: list[str] = []
+        served = _transport(_responses(config))
+
+        def recording(url, timeout):
+            urls.append(url)
+            return served(url, timeout)
+
+        ObservabilityClient(config, transport=recording).status("BTC_USD", now_ms=NOW_MS)
+        markets_url = next(u for u in urls if "/markets?" in u)
+        self.assertIn("start_time=", markets_url)
+        self.assertIn("limit=500", markets_url)
+
 
 if __name__ == "__main__":
     unittest.main()

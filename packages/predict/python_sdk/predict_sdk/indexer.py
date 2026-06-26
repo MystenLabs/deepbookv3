@@ -51,8 +51,16 @@ class PredictIndexerClient:
         except Exception:
             return IndexerHealth(False, False, None, None, None, None)
 
-    def markets(self, *, limit: int = 50, expiry_market_id: str | None = None) -> list[dict[str, Any]]:
+    def markets(
+        self,
+        *,
+        limit: int = 50,
+        expiry_market_id: str | None = None,
+        start_time_s: int | None = None,
+    ) -> list[dict[str, Any]]:
         query = f"?limit={int(limit)}"
+        if start_time_s is not None:
+            query += f"&start_time={int(start_time_s)}"
         if expiry_market_id is not None:
             query += f"&expiry_market_id={expiry_market_id}"
         try:

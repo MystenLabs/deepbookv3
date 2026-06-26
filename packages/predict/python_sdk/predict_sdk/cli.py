@@ -250,16 +250,17 @@ def _resolve_market(acts, market: str) -> tuple[str, int]:
             raise RuntimeError(f"market {market} has no reference tick")
         return market, ref
     report = ObservabilityClient(acts.config).status(now_ms=_now_ms())
-    best = None
-    for m in report.markets:
-        if not (m.mintable and m.time_to_expiry_ms and m.time_to_expiry_ms > 120_000):
-            continue
+    candidates = [
+        m for m in report.markets
+        if m.mintable and m.time_to_expiry_ms and m.time_to_expiry_ms > 120_000
+    ]
+    # Try longest-dated first and read the reference tick (one chain read) only until
+    # one resolves, instead of reading it for every candidate.
+    for m in sorted(candidates, key=lambda m: m.time_to_expiry_ms, reverse=True):
         ref = acts.market_reference_tick(m.market_id)
-        if ref is not None and (best is None or m.time_to_expiry_ms > best[2]):
-            best = (m.market_id, ref, m.time_to_expiry_ms)
-    if best is None:
-        raise RuntimeError("no live mintable market with a reference tick found")
-    return best[0], best[1]
+        if ref is not None:
+            return m.market_id, ref
+    raise RuntimeError("no live mintable market with a reference tick found")
 
 
 def _fixture_transport(config: DeploymentConfig, now_ms: int):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -11,6 +12,12 @@ from .indexer import OracleClient, PredictIndexerClient
 # (markets / market-state / vault-state / config) and the oracle service (latest
 # pyth + block-scholes for freshness). No chain reads — mintability is ultimately
 # enforced by the chain dry-run, so a slightly-stale read can never cause a bad write.
+
+log = logging.getLogger("predict_sdk.observability")
+
+# Cap on the created-markets read. The window (below) keeps the row count well under
+# this for the current cadence set; the cap is a backstop and is logged if hit.
+_MARKETS_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -149,7 +156,20 @@ class ObservabilityClient:
         cadences = _resolve_cadences(self.config)
         slot_expiries = _all_slot_expiries(cadences, now_ms)
 
-        created = self.predict.markets(limit=100)
+        # /markets is ordered by CREATED time, but the timeline needs markets by EXPIRY.
+        # A high-frequency cadence (e.g. 1m) floods the feed, so bound the read by a
+        # created-time window wide enough to include every market whose expiry lands in
+        # the slot window (a market is created at most window_size periods before its
+        # expiry) rather than a flat newest-N that coarse cadences fall out of.
+        horizon_ms = max((c.period_ms * (c.window_size + 2) for c in cadences), default=0)
+        start_time_s = max(0, (now_ms - horizon_ms) // 1000)
+        created = self.predict.markets(start_time_s=start_time_s, limit=_MARKETS_LIMIT)
+        if len(created) >= _MARKETS_LIMIT:
+            log.warning(
+                "markets feed hit the %d-row cap within the timeline window; "
+                "coarse-cadence slots may be incomplete",
+                _MARKETS_LIMIT,
+            )
         created_by_expiry = {
             int(row["expiry"]): row for row in created if row.get("expiry") is not None
         }
@@ -220,6 +240,9 @@ class ObservabilityClient:
         underlying_id = _num(row.get("propbook_underlying_id"))
         tick_size = _num(row.get("tick_size"))
 
+        # If the per-market state read fails open ({}), the market degrades to
+        # not-paused / not-settled and may look mintable; the chain dry-run is the
+        # real gate, so this can only waste a dry-run, never cause a bad write.
         state = self.predict.market_state(market_id)
         mint_paused = _get(state, "mint_paused", "paused") if state else None
         settlement = state.get("settlement") if state else None
