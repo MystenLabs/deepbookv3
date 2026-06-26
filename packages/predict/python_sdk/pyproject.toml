@@ -1,0 +1,18 @@
+[project]
+name = "deepbook-predict-sdk"
+version = "0.1.0"
+description = "Read-only observability client for the DeepBook Predict protocol"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+predict-sdk = "predict_sdk.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Distribution name (deepbook-predict-sdk) differs from the import package, so
+# point hatchling at the package explicitly.
+packages = ["predict_sdk"]
