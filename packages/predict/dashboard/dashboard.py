@@ -97,7 +97,7 @@ def _progress_bar(frac: float, width: int = 8) -> str:
     """Plain-text elapsed bar (must stay markup-free: the tile cell escapes it)."""
     frac = 0.0 if frac < 0 else 1.0 if frac > 1 else frac
     filled = round(frac * width)
-    return "▕" + "█" * filled + "░" * (width - filled) + "▏"
+    return "█" * filled + "░" * (width - filled)
 
 
 def _slot_body(slot, period_ms: int, now_ms: int) -> str:
@@ -154,11 +154,9 @@ def _market_tile(slot, period_ms: int, now_ms: int, markets_snapshot=None, width
         title = f"{source_label} {title}"
     body = _slot_body(slot, period_ms, now_ms)
     clock = _clock(slot.expiry_ms, now_ms)
-    # 3rd line: prefer the market's reference strike; fall back to its id
+    addr = "-" if slot.market is None else fmt.short_id(slot.market.market_id)
     ref = _reference_tick(slot, markets_snapshot)
-    tail = f"ref {ref:,}" if ref is not None else (
-        "-" if slot.market is None else fmt.short_id(slot.market.market_id)
-    )
+    ref_line = f"ref {ref:,}" if ref is not None else "ref -"
 
     def cell(text: str) -> str:
         clean = text if len(text) <= width else text[:width - 1] + "…"
@@ -172,7 +170,8 @@ def _market_tile(slot, period_ms: int, now_ms: int, markets_snapshot=None, width
         top,
         cell(clock),
         cell(body),
-        cell(tail),
+        cell(ref_line),
+        cell(addr),
         bottom,
     ]
 

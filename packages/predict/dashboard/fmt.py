@@ -15,7 +15,7 @@ def money(raw: int | None, decimals: int = 2) -> str:
 
 
 def price(raw_1e9: int | None) -> str:
-    return "-" if raw_1e9 is None else f"{raw_1e9 / FLOAT_SCALING:,.0f}"
+    return "-" if raw_1e9 is None else f"{raw_1e9 / FLOAT_SCALING:,.2f}"
 
 
 def short_id(value: str) -> str:
