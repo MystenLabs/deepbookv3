@@ -17,7 +17,6 @@ from .constants import (
 from .indexer import PredictIndexerClient
 from .observability import ObservabilityClient, PredictStatusReport
 from .portfolio import Portfolio, PortfolioReader
-from .rpc import SuiRpcObjectReader
 
 log = logging.getLogger("predict_sdk.dashboard")
 
@@ -251,8 +250,7 @@ def load_dashboard_data(
 ) -> DashboardData:
     """Fetch everything one refresh needs over JSON-RPC, then assemble (pure) it."""
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
-    reader = SuiRpcObjectReader(rpc_url, timeout=timeout)
-    report = ObservabilityClient(config, reader).status(asset, now_ms=now_ms)
+    report = ObservabilityClient(config).status(asset, now_ms=now_ms)
     dusdc_type = config.linked_package_id("dusdc") + "::dusdc::DUSDC"
     server = config.server_url("predict")
     managers = PredictIndexerClient(server, timeout=timeout).managers(owner=address) if server else []

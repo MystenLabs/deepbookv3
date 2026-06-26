@@ -18,7 +18,7 @@ LIVE_ID = "0x1111111111111111111111111111111111111111111111111111111111111111"
 PREV_ID = "0x2222222222222222222222222222222222222222222222222222222222222222"
 
 
-def _market(market_id, expiry, *, settled=False, blockers=None, reference_tick=None):
+def _market(market_id, expiry, *, settled=False, blockers=None, settlement_price=None):
     return MarketStatus(
         market_id=market_id,
         propbook_underlying_id=1,
@@ -26,28 +26,25 @@ def _market(market_id, expiry, *, settled=False, blockers=None, reference_tick=N
         time_to_expiry_ms=expiry - NOW_MS,
         mint_paused=False,
         settled=settled,
-        cash_balance=10_000_000_000,  # 10,000.00 dUSDC at 6 decimals
-        payout_liability=420_000_000,  # 420.00
-        rebate_reserve=0,
         tick_size=1_000_000_000,
         blockers=blockers or [],
-        reference_tick=reference_tick,
+        settlement_price=settlement_price,
     )
 
 
 def _feeds(fresh=True):
     # latest slightly AHEAD of now models the real sub-second clock skew we observed
     return (
-        OracleFeedStatus("pyth", "0xpyth", NOW_MS + 500, 2_000, fresh, None if fresh else "pyth stale"),
-        OracleFeedStatus("block_scholes_spot", "0xbss", NOW_MS + 300, 3_000, True, None),
+        OracleFeedStatus("pyth", NOW_MS + 500, 2_000, fresh, None if fresh else "pyth stale"),
+        OracleFeedStatus("block_scholes", NOW_MS + 300, 3_000, True, None),
     )
 
 
 def _report(*, cadences, blockers=None, oracle_feeds=None, is_live=True, is_mintable=True):
     oracle = OracleStatus("BTC_USD", 1, oracle_feeds or _feeds())
-    live_market = _market(LIVE_ID, NOW_MS + PERIOD, reference_tick=64_250)
+    live_market = _market(LIVE_ID, NOW_MS + PERIOD)
     prev_market = _market(PREV_ID, NOW_MS, blockers=["market is expired"])
-    pool = PoolStatus(POOL_ID, 19_990_000_000, 0, 20_000_000_000, 0, 0, (LIVE_ID, PREV_ID))
+    pool = PoolStatus(POOL_ID, 19_990_000_000, 0, 20_000_000_000, (LIVE_ID, PREV_ID))
     return PredictStatusReport(
         network="testnet",
         chain_id="4c78adac",
@@ -65,7 +62,7 @@ def _report(*, cadences, blockers=None, oracle_feeds=None, is_live=True, is_mint
 
 
 def _five_minute_timeline(*, live=True):
-    live_market = _market(LIVE_ID, NOW_MS + PERIOD, reference_tick=64_250)
+    live_market = _market(LIVE_ID, NOW_MS + PERIOD)
     prev_market = _market(PREV_ID, NOW_MS, blockers=["market is expired"])
     slots = (
         TimelineSlot(NOW_MS - PERIOD, -2, "expired_gone", None),
@@ -84,35 +81,15 @@ class RenderTests(unittest.TestCase):
         self.assertIn("PREDICT", out)
         self.assertIn("● LIVE", out)
         self.assertIn("5m", out)
-        self.assertIn("10,000.00", out)   # box cash (2 decimals)
-        self.assertIn("420.00", out)      # payout liability
+        self.assertIn("19,990.00", out)    # pool idle balance (2 decimals)
         self.assertIn("awaiting settle", out)
         self.assertIn("not created", out)  # pending future slots
         self.assertIn("5m 00s", out)       # live countdown (ttl == one period)
 
-    def test_unfunded_live_market(self) -> None:
-        live_market = MarketStatus(
-            LIVE_ID, 1, NOW_MS + PERIOD, PERIOD, False, False,
-            0, 0, 0, 1_000_000_000, ["market has no expiry cash"],
-        )
-        slots = (
-            TimelineSlot(NOW_MS - 2 * PERIOD, -2, "expired_gone", None),
-            TimelineSlot(NOW_MS - PERIOD, -1, "expired_gone", None),
-            TimelineSlot(NOW_MS + PERIOD, 0, "unfunded", live_market),
-            TimelineSlot(NOW_MS + 2 * PERIOD, 1, "pending", None),
-            TimelineSlot(NOW_MS + 3 * PERIOD, 2, "pending", None),
-        )
-        cadence = CadenceTimeline(1, "5m", PERIOD, 3, 1_000_000_000, slots, backlog_count=0)
-        out = render_dashboard(_report(cadences=[cadence], is_mintable=False), NOW_MS, color=False)
-
-        self.assertIn("LIVE · UNFUNDED", out)
-        self.assertIn("unfunded", out)
-
     def test_settled_box_shows_price(self) -> None:
         settled_market = MarketStatus(
-            PREV_ID, 1, NOW_MS - PERIOD, -PERIOD, False, True,
-            10_000_000_000, 0, 0, 1_000_000_000, ["market is settled"],
-            settlement_price=64_300_000_000_000,  # 64,300 in 1e9 price scaling
+            PREV_ID, 1, NOW_MS - PERIOD, -PERIOD, False, True, 1_000_000_000,
+            ["market is settled"], settlement_price=64_300_000_000_000,  # 64,300 in 1e9 scaling
         )
         slots = (
             TimelineSlot(NOW_MS - 2 * PERIOD, -2, "expired_gone", None),

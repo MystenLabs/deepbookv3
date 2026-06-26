@@ -31,7 +31,6 @@ _N_PAST, _N_NEXT = 2, 2
 # state -> (border color, top-border label)
 _STATE_STYLE = {
     "live": (_GREEN, "● LIVE"),
-    "unfunded": (_YELLOW, "⚠ UNFUNDED"),
     "scheduled": (_CYAN, "next"),
     "pending": (_DIM, "next"),
     "awaiting_settle": (_YELLOW, "expired"),
@@ -104,8 +103,6 @@ def _verdict(report: PredictStatusReport) -> tuple[str, str]:
         return "⚠ ORACLE STALE", _YELLOW
     if report.is_mintable:
         return "● LIVE", _GREEN
-    if any(slot.state == "unfunded" for cadence in report.cadences for slot in cadence.slots):
-        return "⚠ LIVE · UNFUNDED", _YELLOW
     return "⚠ DEGRADED", _YELLOW
 
 
@@ -163,17 +160,11 @@ def _oracle_lines(report: PredictStatusReport, now_ms: int, paint: _Paint) -> li
 
 def _pool_lines(report: PredictStatusReport, paint: _Paint) -> list[str]:
     pool = report.pool
-    allocated = sum(m.cash_balance or 0 for m in report.markets)
     rows = [
         ("idle", _money(pool.idle_balance)),
-        ("allocated", _money(allocated)),
         ("PLP supply", _money(pool.plp_total_supply)),
         ("reserve", _money(pool.protocol_reserve_balance)),
-        (
-            "queues",
-            f"supply {_count(pool.supply_requests_pending)} "
-            f"{paint('·', _DIM)} wd {_count(pool.withdraw_requests_pending)}",
-        ),
+        ("markets", str(pool.active_market_count)),
     ]
     lines = [paint("POOL", _BOLD)]
     lines.extend(f"{paint(_pad(label, 11), _DIM)} {value}" for label, value in rows)
@@ -257,12 +248,9 @@ def _cadence_section(cadence: CadenceTimeline, now_ms: int, paint: _Paint) -> li
 
 def _market_box(slot: TimelineSlot, period_ms: int, now_ms: int, paint: _Paint) -> list[str]:
     color, label = _STATE_STYLE[slot.state]
-    market = slot.market
     interior = [
         _clock(slot.expiry_ms, now_ms),
         _box_status(slot, period_ms, now_ms),
-        f"cash {_money(market.cash_balance) if market else '—'}",
-        f"liab {_money(market.payout_liability) if market and market.payout_liability is not None else '—'}",
     ]
     lines = [_box_top(label, color, paint)]
     lines.extend(_box_side(text, color, paint) for text in interior)
@@ -275,8 +263,6 @@ def _box_status(slot: TimelineSlot, period_ms: int, now_ms: int) -> str:
         ttl = slot.expiry_ms - now_ms
         frac = (period_ms - ttl) / period_ms if period_ms else 0.0
         return f"{_progress_bar(frac)} {_format_duration(ttl)}"
-    if slot.state == "unfunded":
-        return "⚠ unfunded"
     if slot.state == "scheduled":
         return f"opens {_format_duration(slot.expiry_ms - now_ms)}"
     if slot.state == "awaiting_settle":
@@ -351,10 +337,6 @@ def _money(raw: int | None, decimals: int = 2) -> str:
 def _price(raw_1e9: int | None) -> str:
     # settlement price is FLOAT_SCALING (1e9); show as a whole quote-price figure
     return "—" if raw_1e9 is None else f"{raw_1e9 / FLOAT_SCALING:,.0f}"
-
-
-def _count(value: int | None) -> str:
-    return "—" if value is None else str(value)
 
 
 def _as_int(value) -> int | None:

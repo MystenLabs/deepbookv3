@@ -99,12 +99,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def _status(args: argparse.Namespace) -> int:
     config = load_testnet_config()
     now_ms = _now_ms() if args.now_ms is None else args.now_ms
-    reader = (
-        _FixtureLiveReader(config, now_ms)
-        if args.fixture_live
-        else SuiRpcObjectReader(args.rpc_url, timeout=args.timeout)
-    )
-    report = ObservabilityClient(config, reader).status(args.asset, now_ms=now_ms)
+    transport = _fixture_transport(config, now_ms) if args.fixture_live else None
+    report = ObservabilityClient(config, transport=transport).status(args.asset, now_ms=now_ms)
     # Indexer health is best-effort and offline-skipped (fixture mode / opt-out).
     indexer = None
     indexer_url = config.server_url("predict")
@@ -250,7 +246,7 @@ def _resolve_market(acts, market: str) -> tuple[str, int]:
     if market != "auto":
         fields = reader.get_object(market)["data"]["content"]["fields"]
         return market, int(fields["strike_exposure"]["fields"]["reference_tick"])
-    report = ObservabilityClient(acts.config, reader).status(now_ms=_now_ms())
+    report = ObservabilityClient(acts.config).status(now_ms=_now_ms())
     best = None
     for m in report.markets:
         if not (m.mintable and m.time_to_expiry_ms and m.time_to_expiry_ms > 120_000):
@@ -263,96 +259,60 @@ def _resolve_market(acts, market: str) -> tuple[str, int]:
     return best[0], best[1]
 
 
-class _FixtureLiveReader:
-    def __init__(self, config: DeploymentConfig, now_ms: int):
-        self.objects = _fixture_live_objects(config, now_ms)
-
-    def get_object(self, object_id: str):
-        return self.objects.get(object_id)
-
-    def get_dynamic_field_object(self, parent_id: str, name_type: str, name_value: str):
-        return None
-
-
-def _fixture_live_objects(config: DeploymentConfig, now_ms: int):
-    asset = config.asset("BTC_USD")
-    # Place markets on real 5m cadence boundaries so they land in the timeline's
-    # live / just-expired slots.
+def _fixture_transport(config: DeploymentConfig, now_ms: int):
+    """A `(url, timeout) -> JSON` transport serving canned indexer responses for
+    `status --fixture-live` — one live 5m market + one just-expired, fresh oracle."""
     period = config.cadence("5m").period_ms
     live_expiry = ((now_ms // period) + 1) * period
+    prev_expiry = live_expiry - period
     live_id = "0x1111111111111111111111111111111111111111111111111111111111111111"
     prev_id = "0x2222222222222222222222222222222222222222222222222222222222222222"
-    return {
-        config.shared_object_id("predict", "protocol_config::ProtocolConfig"): _object(
-            {
-                "trading_paused": False,
-                "valuation_in_progress": False,
-                "pricing_config": {
-                    "fields": {
-                        "pyth_spot_freshness_ms": "30000",
-                        "block_scholes_price_freshness_ms": "30000",
-                        "block_scholes_svi_freshness_ms": "60000",
-                    }
-                },
-            }
-        ),
-        config.shared_object_id("predict", "plp::PoolVault"): _object(
-            {
-                "protocol_reserve_balance": _balance("0"),
-                "lp": {
-                    "fields": {
-                        "treasury_cap": {
-                            "fields": {"total_supply": {"fields": {"value": "20000000000"}}}
-                        },
-                        "supply_queue": {"fields": {"pending": "0"}},
-                        "withdraw_queue": {"fields": {"pending": "0"}},
-                    }
-                },
-                "expiry_accounting": {
-                    "fields": {
-                        "idle_balance": _balance("19990000000"),
-                        "active_expiry_markets": [live_id, prev_id],
-                    }
-                },
-            }
-        ),
-        live_id: _market(live_expiry, "10000000000", reference_tick="64250"),
-        prev_id: _market(live_expiry - period, "10000000000"),
-        asset.feed_ids.pyth: _object({"latest_source_timestamp_ms": str(now_ms - 10_000)}),
-        asset.feed_ids.bs_spot: _object({"latest_source_timestamp_ms": str(now_ms - 10_000)}),
-        asset.feed_ids.bs_forward: _object({"latest_source_timestamp_ms": str(now_ms - 10_000)}),
-        asset.feed_ids.bs_svi: _object({"latest_source_timestamp_ms": str(now_ms - 10_000)}),
+    oracle_id = "0xoracle"
+    fresh = str(now_ms - 10_000)
+    vault_id = config.shared_object_id("predict", "plp::PoolVault")
+    underlying = config.asset("BTC_USD").propbook_underlying_id
+
+    def _state(expiry: int) -> dict:
+        return {
+            "market": {"expiry": expiry, "tick_size": "1000000000", "propbook_underlying_id": underlying},
+            "mint_paused": {"paused": False},
+            "settlement": None,
+        }
+
+    market_state = {live_id: _state(live_expiry), prev_id: _state(prev_expiry)}
+    responses = {
+        "/config": {
+            "trading_paused": {"paused": False},
+            "pricing": {"pyth_spot_freshness_ms": 30000, "block_scholes_surface_freshness_ms": 30000},
+        },
+        "/markets": [
+            {"expiry_market_id": live_id, "expiry": live_expiry,
+             "propbook_underlying_id": underlying, "tick_size": "1000000000"},
+            {"expiry_market_id": prev_id, "expiry": prev_expiry,
+             "propbook_underlying_id": underlying, "tick_size": "1000000000"},
+        ],
+        f"/vaults/{vault_id}/state": {"current": {
+            "idle_balance_after": "19990000000",
+            "protocol_reserve_balance_after": "0",
+            "total_supply": "20000000000",
+        }},
+        f"/underlyings/{underlying}/binding": {"propbook_oracle_id": oracle_id},
+        f"/oracles/{oracle_id}/pyth/latest": {"source_timestamp_ms": fresh},
     }
 
+    def transport(url: str, timeout: float):
+        base = url.split("?", 1)[0]
+        for market_id, state in market_state.items():
+            if base.endswith(f"/markets/{market_id}/state"):
+                return state
+        if base.endswith(f"/oracles/{oracle_id}/block-scholes"):
+            return [{"source_timestamp_ms": fresh}]
+        for path, value in responses.items():
+            if base.endswith(path):
+                return value
+        return {}
 
-def _market(expiry: int, cash: str, *, reference_tick: str | None = None):
-    strike_exposure = {"tick_size": "1000000000"}
-    if reference_tick is not None:
-        strike_exposure["reference_tick"] = {"fields": {"vec": [reference_tick]}}
-    return _object(
-        {
-            "propbook_underlying_id": "1",
-            "expiry": str(expiry),
-            "settlement_price": {"fields": {"vec": []}},
-            "cash": {
-                "fields": {
-                    "cash_balance": _balance(cash),
-                    "unresolved_trading_fees_paid": "0",
-                }
-            },
-            "strike_exposure": {"fields": strike_exposure},
-            "payout_liability": "0",
-            "mint_paused": False,
-        }
-    )
-
-
-def _object(fields):
-    return {"data": {"content": {"fields": fields}}}
-
-
-def _balance(value: str):
-    return {"fields": {"value": value}}
+    return transport
 
 
 def _now_ms() -> int:

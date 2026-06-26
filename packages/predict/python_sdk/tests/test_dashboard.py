@@ -53,17 +53,16 @@ def _portfolio(positions, *, realized_pnl=12_340_000, premium_paid=200_000_000,
 
 def _report(*, is_live=True, is_mintable=True, oracle_fresh=True, live_slots=1):
     feeds = (
-        OracleFeedStatus("pyth", "0xpyth", NOW_MS + 500, 2_000, oracle_fresh,
+        OracleFeedStatus("pyth", NOW_MS + 500, 2_000, oracle_fresh,
                          None if oracle_fresh else "pyth stale"),
     )
     oracle = OracleStatus("BTC_USD", 1, feeds)
     market = MarketStatus(
         market_id=MARKET_ID, propbook_underlying_id=1, expiry_ms=NOW_MS + PERIOD,
         time_to_expiry_ms=PERIOD, mint_paused=False, settled=False,
-        cash_balance=10_000_000_000, payout_liability=0, rebate_reserve=0,
         tick_size=1_000_000_000, blockers=[],
     )
-    pool = PoolStatus("0xpool", 0, 0, 0, 0, 0, (MARKET_ID,))
+    pool = PoolStatus("0xpool", 0, 0, 0, (MARKET_ID,))
     slots = tuple(
         TimelineSlot(NOW_MS + PERIOD, 0, "live" if i < live_slots else "pending", market)
         for i in range(1)

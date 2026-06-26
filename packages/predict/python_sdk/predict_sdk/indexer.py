@@ -90,3 +90,65 @@ class PredictIndexerClient:
         except Exception:
             return []
         return payload if isinstance(payload, list) else []
+
+    def market_state(self, expiry_market_id: str) -> dict[str, Any]:
+        """Current per-market snapshot (market/config/mint_paused/settlement)."""
+        return self._object(f"/markets/{expiry_market_id}/state")
+
+    def vault_state(self, pool_vault_id: str) -> dict[str, Any]:
+        """Current pool-vault snapshot (idle/reserve/total-supply under `current`)."""
+        return self._object(f"/vaults/{pool_vault_id}/state")
+
+    def protocol_config(self) -> dict[str, Any]:
+        """Latest protocol config snapshot (gates + oracle freshness thresholds)."""
+        return self._object("/config")
+
+    def _object(self, path: str) -> dict[str, Any]:
+        try:
+            payload = self.transport(f"{self.base_url}{path}", self.timeout)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+
+class OracleClient:
+    """Thin client for the public oracle service (block-scholes-oracle), keyed by
+    `propbook_oracle_id`. Resolve the oracle id from the underlying binding, then read
+    the latest pyth + block-scholes observations for freshness. Fails open like
+    PredictIndexerClient so the status path never crashes on an oracle outage.
+    """
+
+    def __init__(self, base_url: str, *, transport: Transport | None = None, timeout: float = 10):
+        self.base_url = base_url.rstrip("/")
+        self.transport = transport or get_json
+        self.timeout = timeout
+
+    def underlying_binding(self, propbook_underlying_id: int) -> dict[str, Any]:
+        """The oracle bound to an underlying; carries `propbook_oracle_id`."""
+        try:
+            payload = self.transport(
+                f"{self.base_url}/underlyings/{int(propbook_underlying_id)}/binding", self.timeout
+            )
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def pyth_latest(self, propbook_oracle_id: str) -> dict[str, Any]:
+        try:
+            payload = self.transport(
+                f"{self.base_url}/oracles/{propbook_oracle_id}/pyth/latest", self.timeout
+            )
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def block_scholes_latest(self, propbook_oracle_id: str) -> dict[str, Any]:
+        """Newest block-scholes observation (the surface has no /latest endpoint)."""
+        try:
+            payload = self.transport(
+                f"{self.base_url}/oracles/{propbook_oracle_id}/block-scholes?limit=1", self.timeout
+            )
+        except Exception:
+            return {}
+        rows = payload if isinstance(payload, list) else []
+        return rows[0] if rows else {}
