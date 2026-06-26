@@ -89,6 +89,25 @@ public struct Trader has copy, drop, store {
     owner: address,
 }
 
+/// Transaction-local borrow of an expiry market and the shared objects normally
+/// needed to exercise it. Pair with `return_market_bundle` before advancing the
+/// scenario transaction.
+public struct MarketBundle {
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
+    oracle_registry: OracleRegistry,
+    vault: PoolVault,
+    market: ExpiryMarket,
+    config: ProtocolConfig,
+}
+
+/// Transaction-local borrow of a trader account plus the accumulator root used
+/// for balance reads and trade settlement.
+public struct AccountBundle {
+    wrapper: AccountWrapper,
+    root: AccumulatorRoot,
+}
+
 /// Stand up a registry + protocol config + an empty PLP vault + the permanent
 /// Pyth, BS spot, BS forward, and BS SVI feeds for the default cadence's `tick`
 /// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
@@ -374,6 +393,13 @@ public fun take_market(
     )
 }
 
+/// Take the market transaction objects as a named bundle to avoid wide positional
+/// tuple plumbing in flow tests.
+public fun take_market_bundle(self: &mut Fixture, expiry_id: ID): MarketBundle {
+    let (pyth, bs, oracle_registry, vault, market, config) = self.take_market(expiry_id);
+    MarketBundle { pyth, bs, oracle_registry, vault, market, config }
+}
+
 /// Return the shared objects taken by `take_market` (pairs 1:1 with it).
 public fun return_market(
     pyth: PythFeed,
@@ -389,6 +415,12 @@ public fun return_market(
     return_shared(pyth);
     return_shared(oracle_registry);
     return_shared(config);
+}
+
+/// Return the shared objects taken by `take_market_bundle`.
+public fun return_market_bundle(bundle: MarketBundle) {
+    let MarketBundle { pyth, bs, oracle_registry, vault, market, config } = bundle;
+    return_market(pyth, bs, oracle_registry, vault, market, config);
 }
 
 /// Take the split Block Scholes feeds as one transaction-local bundle.
@@ -453,10 +485,25 @@ public fun take_root(self: &Fixture): AccumulatorRoot {
     accumulator_support::take_root(&self.scenario)
 }
 
+/// Take a trader's wrapper and the accumulator root as one transaction-local
+/// account bundle.
+public fun take_account_bundle(self: &Fixture, trader: &Trader): AccountBundle {
+    AccountBundle {
+        wrapper: self.take_account(trader),
+        root: self.take_root(),
+    }
+}
+
 /// Return the wrapper + root taken by `take_account` / `take_root`.
 public fun return_account(wrapper: AccountWrapper, root: AccumulatorRoot) {
     return_shared(wrapper);
     return_shared(root);
+}
+
+/// Return the shared objects taken by `take_account_bundle`.
+public fun return_account_bundle(bundle: AccountBundle) {
+    let AccountBundle { wrapper, root } = bundle;
+    return_account(wrapper, root);
 }
 
 /// The trader's account owner address.
@@ -519,6 +566,20 @@ public fun prepare_live_oracle(
         bs,
         live_price,
         test_constants::live_source_timestamp_ms(),
+    );
+}
+
+/// Seed a fresh live oracle for a market bundle.
+public fun prepare_live_oracle_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+) {
+    self.prepare_live_oracle(
+        &market.market,
+        &mut market.pyth,
+        &mut market.bs,
+        live_price,
     );
 }
 
@@ -637,6 +698,32 @@ public fun mint(
         leverage,
         std::u64::max_value!(),
         std::u64::max_value!(),
+    )
+}
+
+/// Mint one order through a market/account bundle while still using the production
+/// mint path.
+public fun mint_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): u256 {
+    self.mint(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
     )
 }
 
@@ -909,6 +996,17 @@ public fun current_nav(
     market.current_nav(&pricer)
 }
 
+/// Read live NAV through a market bundle.
+public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
+    self.current_nav(
+        &market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        &market.bs,
+    )
+}
+
 public fun load_pricer(
     self: &Fixture,
     market: &ExpiryMarket,
@@ -925,6 +1023,17 @@ public fun load_pricer(
         bs.forward(),
         bs.svi(),
         &self.clock,
+    )
+}
+
+/// Load the live pricer through a market bundle.
+public fun load_pricer_bundle(self: &Fixture, market: &MarketBundle): pricing::Pricer {
+    self.load_pricer(
+        &market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        &market.bs,
     )
 }
 
@@ -1050,6 +1159,9 @@ public fun clock(self: &Fixture): &Clock { &self.clock }
 public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
     self.clock.set_for_testing(timestamp_ms);
 }
+
+/// Borrow the expiry market inside a bundle for independent assertions.
+public fun market(bundle: &MarketBundle): &ExpiryMarket { &bundle.market }
 
 /// Advance the fixture clock by one millisecond and reseed the default live oracle.
 /// Use before live redeems in tests that mint and close inside one scenario tx.
