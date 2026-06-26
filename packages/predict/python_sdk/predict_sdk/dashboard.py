@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -10,6 +11,17 @@ from .config import DeploymentConfig, load_testnet_config
 from .constants import POS_INF_TICK
 from .observability import ObservabilityClient, PredictStatusReport
 from .portfolio import Portfolio, PortfolioReader
+
+log = logging.getLogger("predict_sdk.dashboard")
+
+
+def configure_logging(path: str, level: int = logging.INFO) -> None:
+    """Send predict_sdk logs to a file (a TUI owns the terminal, so stdout is unusable)."""
+    handler = logging.FileHandler(path)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger("predict_sdk")
+    root.setLevel(level)
+    root.handlers = [handler]
 from .rpc import SuiRpcObjectReader
 
 # Live TUI "dashboard mode": a clean, READ-ONLY monitor for one Predict account.
@@ -239,6 +251,7 @@ def load_dashboard_data(
     *,
     timeout: float = 10,
     now_ms: int | None = None,
+    page_limit: int = 150,
 ) -> DashboardData:
     """Fetch everything one refresh needs over JSON-RPC, then assemble (pure) it."""
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
@@ -246,7 +259,7 @@ def load_dashboard_data(
     report = ObservabilityClient(config, reader).status(asset, now_ms=now_ms)
     predict_pkg = config.package_id("predict")
     dusdc_type = config.linked_package_id("dusdc") + "::dusdc::DUSDC"
-    portfolio = PortfolioReader(address, predict_pkg, rpc_url, timeout=timeout).load()
+    portfolio = PortfolioReader(address, predict_pkg, rpc_url, timeout=timeout).load(page_limit=page_limit)
     dusdc_raw = _fetch_balance(rpc_url, address, dusdc_type, timeout)
     sui_raw = _fetch_balance(rpc_url, address, "0x2::sui::SUI", timeout)
     return build_dashboard_data(
@@ -336,6 +349,7 @@ if _TEXTUAL_AVAILABLE:
             super().__init__()
             self._loader = loader
             self._refresh_s = max(1, int(refresh_s))
+            self._loading = False
             self.theme = "nord"
 
         def compose(self) -> ComposeResult:
@@ -358,22 +372,35 @@ if _TEXTUAL_AVAILABLE:
             self.set_interval(self._refresh_s, self.refresh_data)
 
         def refresh_data(self) -> None:
-            # Exclusive worker: never stack refreshes if a fetch runs long.
+            # Skip if a fetch is already running. The periodic interval can fire
+            # faster than a slow load (RPC fan-out); without this guard an exclusive
+            # worker gets cancelled+restarted every tick and never completes.
+            if self._loading:
+                log.debug("refresh skipped: load already in progress")
+                return
             self.run_worker(self._load(), exclusive=True, group="load")
 
         def action_refresh(self) -> None:
             self.refresh_data()
 
         async def _load(self) -> None:
+            self._loading = True
             self.sub_title = "refreshing…"
+            started = time.time()
+            log.info("refresh started")
             try:
                 data = await asyncio.to_thread(self._loader)
             except Exception as exc:  # surface, don't crash the UI
+                log.exception("refresh failed")
                 self.sub_title = "error"
                 self.query_one("#status", Static).update(f"[{_RED}]load error:[/] {exc}")
                 return
+            finally:
+                self._loading = False
             self._apply(data)
-            self.sub_title = f"updated {time.strftime('%H:%M:%S')}"
+            elapsed = time.time() - started
+            log.info("refresh ok in %.1fs (%d positions)", elapsed, len(data.positions))
+            self.sub_title = f"updated {time.strftime('%H:%M:%S')} ({elapsed:.0f}s)"
 
         def _apply(self, data: DashboardData) -> None:
             self.query_one("#summary", Static).update(self._summary_markup(data))
@@ -433,13 +460,17 @@ def run_dashboard(
     *,
     asset: str = "BTC_USD",
     rpc_url: str | None = None,
+    log_file: str | None = None,
 ) -> None:
     """Wire a PortfolioReader + ObservabilityClient loader and launch the TUI monitor."""
     if not _TEXTUAL_AVAILABLE:
         raise RuntimeError(_MISSING_TEXTUAL) from _TEXTUAL_IMPORT_ERROR
+    if log_file:
+        configure_logging(log_file)
     config = load_testnet_config()
     rpc_url = rpc_url or DEFAULT_RPC_URL
     address = address or _default_address()
+    log.info("dashboard starting: address=%s asset=%s refresh=%ss", address, asset, refresh_s)
 
     def loader() -> DashboardData:
         return load_dashboard_data(config, address, asset, rpc_url)

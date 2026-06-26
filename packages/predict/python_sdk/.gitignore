@@ -6,3 +6,4 @@ venv/
 build/
 dist/
 .predict_state.json
+*.log

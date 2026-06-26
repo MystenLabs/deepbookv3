@@ -88,7 +88,8 @@ def _build_parser() -> argparse.ArgumentParser:
     dashboard = subcommands.add_parser("dashboard", help="live TUI account monitor")
     dashboard.add_argument("--rpc-url", default=DEFAULT_TESTNET_RPC_URL)
     dashboard.add_argument("--asset", default="BTC_USD")
-    dashboard.add_argument("--refresh", type=int, default=5, help="refresh interval seconds")
+    dashboard.add_argument("--refresh", type=int, default=10, help="refresh interval seconds")
+    dashboard.add_argument("--log-file", default="predict-dashboard.log", help="log file path")
 
     return parser
 
@@ -269,7 +270,8 @@ def _bot(args) -> int:
 
 def _dashboard(args) -> int:
     from .dashboard import run_dashboard
-    run_dashboard(refresh_s=args.refresh, asset=args.asset, rpc_url=args.rpc_url)
+    print(f"launching dashboard… (logs → {args.log_file})")
+    run_dashboard(refresh_s=args.refresh, asset=args.asset, rpc_url=args.rpc_url, log_file=args.log_file)
     return 0
 
 
