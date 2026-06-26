@@ -1,0 +1,175 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// Flow coverage for the live-redeem close-side slippage floor: `redeem_live`'s
+/// `min_probability` rejects a close whose quoted per-contract range probability
+/// has slipped below the caller's bound, and admits the close when the bound is
+/// disabled. Both tests advance the clock and re-seed the oracle first so the
+/// same-timestamp mint -> redeem guard does not pre-empt the floor.
+#[test_only]
+module deepbook_predict::redeem_limit_price_tests;
+
+use deepbook_predict::{constants, expiry_market, flow_test_helpers as helpers, test_constants};
+use std::unit_test::assert_eq;
+
+/// Lot-aligned position size minted in both tests.
+const QUANTITY: u64 = 840_000_000;
+/// 1x leverage in 1e9 fixed point: no floor, so no liquidation interaction.
+const LEVERAGE_ONE_X: u64 = 1_000_000_000;
+/// One second past the fixture's `now_ms()` open time — distinct timestamp, still
+/// inside the oracle freshness window.
+const REDEEM_MS: u64 = 121_000;
+const REDEEM_SOURCE_TS: u64 = 120_000;
+/// Probability 1.0 in 1e9 fixed point. A finite-strike digital can never quote
+/// certainty, so a floor at this value always trips.
+const MIN_PROBABILITY_CERTAIN: u64 = 1_000_000_000;
+/// Disabled floor: every non-negative quote clears it.
+const MIN_PROBABILITY_DISABLED: u64 = 0;
+
+#[test, expected_failure(abort_code = expiry_market::ERedeemProbabilityBelowMin)]
+fun redeem_below_min_probability_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        _vault,
+        mut market,
+        config,
+    ) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
+
+    let order = fx.mint(
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_ONE_X,
+    );
+
+    // Advance past the open timestamp and re-seed a fresh live oracle so the
+    // same-timestamp guard passes and the probability floor is the live gate.
+    fx.set_clock_for_testing(REDEEM_MS);
+    fx.prepare_live_oracle_at(
+        &market,
+        &mut pyth,
+        &mut bs_spot,
+        &mut bs_forward,
+        &mut bs_svi,
+        test_constants::default_live_price(),
+        REDEEM_SOURCE_TS,
+    );
+
+    // Demanding certainty is unsatisfiable for a finite-strike digital: the floor trips.
+    fx.redeem(
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        order,
+        QUANTITY,
+        MIN_PROBABILITY_CERTAIN,
+    );
+
+    abort 999
+}
+
+#[test]
+fun redeem_with_disabled_floor_succeeds() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let (
+        mut pyth,
+        mut bs_spot,
+        mut bs_forward,
+        mut bs_svi,
+        oracle_registry,
+        vault,
+        mut market,
+        config,
+    ) = fx.take_market(expiry_id);
+    let mut wrapper = fx.take_account(&trader);
+    let root = fx.take_root();
+
+    let order = fx.mint(
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_ONE_X,
+    );
+
+    fx.set_clock_for_testing(REDEEM_MS);
+    fx.prepare_live_oracle_at(
+        &market,
+        &mut pyth,
+        &mut bs_spot,
+        &mut bs_forward,
+        &mut bs_svi,
+        test_constants::default_live_price(),
+        REDEEM_SOURCE_TS,
+    );
+
+    let (closed, replacement) = fx.redeem(
+        &config,
+        &oracle_registry,
+        &mut wrapper,
+        &root,
+        &mut market,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        order,
+        QUANTITY,
+        MIN_PROBABILITY_DISABLED,
+    );
+
+    assert_eq!(closed, order);
+    assert!(replacement.is_none());
+    assert!(!helpers::has_position(&wrapper, expiry_id, order));
+
+    helpers::return_account(wrapper, root);
+    helpers::return_market(
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        oracle_registry,
+        vault,
+        market,
+        config,
+    );
+    fx.finish();
+}

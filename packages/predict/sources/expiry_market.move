@@ -49,6 +49,7 @@ const EWrongPricer: u64 = 7;
 const EReferenceTickObservationMissing: u64 = 8;
 const EReferenceTickTimestampMismatch: u64 = 9;
 const EMintRedeemSameTimestamp: u64 = 10;
+const ERedeemProbabilityBelowMin: u64 = 11;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -347,6 +348,11 @@ public fun mint_exact_amount(
 /// fully closed with zero payout. Settled orders must use `redeem_settled`.
 /// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
 /// only when a live partial close leaves quantity open.
+///
+/// `min_probability` is the close-side slippage floor on the quoted per-contract
+/// range probability (same units as mint's `max_probability`); pass `0` to
+/// disable. It only gates the live-priced path — a liquidated tombstone closes at
+/// zero payout regardless, since its value is deterministic, not market-quoted.
 public fun redeem_live(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -355,6 +361,7 @@ public fun redeem_live(
     pricer: &Pricer,
     order_id: u256,
     close_quantity: u64,
+    min_probability: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -375,6 +382,7 @@ public fun redeem_live(
         pricer,
         &redeemed_order,
         close_quantity,
+        min_probability,
         clock,
         ctx,
     );
@@ -856,6 +864,7 @@ fun redeem_live_internal(
     pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
+    min_probability: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
@@ -877,6 +886,9 @@ fun redeem_live_internal(
     let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
         .close_and_quote_live_order(pricer, order, close_quantity);
+    // Close-side slippage floor: reject if the quoted per-contract probability has
+    // slipped below the caller's bound. `0` disables.
+    assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
     let fee_amount = market
         .strike_exposure
         .trading_fee(

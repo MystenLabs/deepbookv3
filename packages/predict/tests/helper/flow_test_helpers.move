@@ -751,6 +751,7 @@ public fun redeem(
     bs_svi: &BlockScholesSVIFeed,
     order_id: u256,
     close_quantity: u64,
+    min_probability: u64,
 ): (u256, Option<u256>) {
     let auth = account::generate_auth(self.scenario.ctx());
     let pricer = market.load_live_pricer(
@@ -769,6 +770,7 @@ public fun redeem(
         &pricer,
         order_id,
         close_quantity,
+        min_probability,
         root,
         &self.clock,
         self.scenario.ctx(),
