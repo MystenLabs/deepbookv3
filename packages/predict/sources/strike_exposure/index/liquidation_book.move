@@ -69,21 +69,6 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
     offset < page.order_ids.length() && page.order_ids[offset] == order_id
 }
 
-#[test_only]
-public(package) fun active_order_count(book: &LiquidationBook): u64 {
-    book.active_order_count
-}
-
-#[test_only]
-public(package) fun page_count(book: &LiquidationBook): u64 {
-    book.page_ids.length()
-}
-
-#[test_only]
-public(package) fun page_order_count(book: &LiquidationBook, page_ix: u64): u64 {
-    book.page_length(page_ix)
-}
-
 /// Sum the NAV floor-correction term over the active leveraged book:
 /// `Σ min(qty·range_price(lower, higher), floor_shares)`.
 ///

@@ -4,13 +4,12 @@
 /// Flow coverage for the pool NAV hot potato (`start_flush` /
 /// `value_expiry` / `finish_flush`) and its unified per-market cash
 /// flush. Tests build production-valid markets through the real creation + funding
-/// path, then assert: the aggregated pool NAV equals an INDEPENDENT reference
-/// (idle + Σ current_nav, with a zero profit-basis exclusion — unit-tests rule 1),
+/// path, then assert: the aggregated pool NAV equals an independently assembled
+/// reference from public vault/config getters and per-market `current_nav`,
 /// the exactly-once completeness proof fires on a missed / double-valued market,
-/// the valuation lock blocks NAV-changing ops between start and finish, and the
-/// `lp_pool_value` pricing primitive excludes the protocol profit share and floors
-/// at zero. Passive settled-market sweep coverage lives in
-/// `settlement_flow_tests`.
+/// and the valuation lock blocks NAV-changing ops between start and finish.
+/// Passive settled-market sweep and pending-profit exclusion coverage live in
+/// `settlement_flow_tests` and `protocol_profit_deferral_tests`.
 #[test_only]
 module deepbook_predict::pool_valuation_flow_tests;
 
@@ -25,7 +24,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
-use fixed_math::math::float_scaling as float;
+use fixed_math::math::{Self, float_scaling as float};
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
@@ -67,21 +66,21 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
         fx.scenario_mut().ctx(),
     );
 
-    // Independent reference: each market's NAV is read DIRECTLY (not via the
-    // potato) and summed by hand, then priced by the separately unit-tested
-    // `lp_pool_value` over independently-read idle + profit basis. If the potato
-    // skipped a market or threaded the wrong idle/basis, this mismatches.
+    // Independent reference for this aggregation flow: each market's NAV is read
+    // DIRECTLY (not via the potato), then combined with public vault/config facts.
+    // If the potato skipped a market or threaded the wrong idle/basis, this mismatches.
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    let expected = plp::lp_pool_value_for_testing(
-        vault.idle_balance(),
-        vault.profit_basis_credits(),
-        vault.profit_basis_debits(),
-        config.protocol_reserve_profit_share(),
-        nav1 + nav2,
-        vault.pending_protocol_profit(),
+    let active_nav = nav1 + nav2;
+    let gross_pool_value = vault.idle_balance() + active_nav;
+    let profit = (
+        vault.profit_basis_credits() + active_nav,
+    ).saturating_sub(vault.profit_basis_debits());
+    let protocol_exclusion = math::mul(profit, config.protocol_reserve_profit_share());
+    assert_eq!(
+        pool_nav,
+        gross_pool_value.saturating_sub(protocol_exclusion + vault.pending_protocol_profit()),
     );
-    assert_eq!(pool_nav, expected);
     // The orders took effect: each market's NAV is liability-reduced below its
     // funded cash floor.
     assert!(nav1 < constants::expiry_cash_floor!());
@@ -373,12 +372,20 @@ fun finish_with_wrong_vault_aborts() {
     fx.bootstrap_lock(constants::min_bootstrap_liquidity!()); // flush start requires a bootstrapped pool
 
     fx.scenario_mut().next_tx(test_constants::admin());
+    plp::init_for_testing(fx.scenario_mut().ctx());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let wrong_vault = fx.scenario_mut().take_shared<PoolVault>();
+    let wrong_vault_id = wrong_vault.id();
+    return_shared(wrong_vault);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
 
     let val = fx.start_flush(&mut config, &vault);
-    // A second, unrelated vault: finishing against it must fail the binding check.
-    let mut wrong_vault = plp::new_vault_for_testing(fx.scenario_mut().ctx());
+    // A second, unrelated vault created through the normal test init path:
+    // finishing against it must fail the binding check.
+    let mut wrong_vault = fx.scenario_mut().take_shared_by_id<PoolVault>(wrong_vault_id);
     let _ = val.finish_flush(
         &mut wrong_vault,
         &mut config,
@@ -400,28 +407,6 @@ fun end_valuation_without_start_aborts() {
     config.end_valuation();
 
     abort 999
-}
-
-// === lp_pool_value pricing primitive ===
-
-#[test]
-fun lp_pool_value_excludes_protocol_share_and_floors_at_zero() {
-    // No unrealized profit (credits + active <= debits): full gross is LP value.
-    // gross = 100 + 150 = 250; profit = max(0, (0+150) - 200) = 0; exclusion = 0.
-    assert_eq!(plp::lp_pool_value_for_testing(100, 0, 200, 400_000_000, 150, 0), 250);
-    // Unrealized profit excluded at the protocol share.
-    // gross = 100 + 100 = 200; profit = (50 + 100) - 0 = 150; exclusion = 150 * 0.5 = 75.
-    assert_eq!(plp::lp_pool_value_for_testing(100, 50, 0, 500_000_000, 100, 0), 125);
-    // Sticky exclusion exceeds gross -> floored at 0.
-    // gross = 10; profit = (1000 + 0) - 0 = 1000; exclusion = 1000 -> floored to 0.
-    assert_eq!(plp::lp_pool_value_for_testing(10, 1000, 0, 1_000_000_000, 0, 0), 0);
-    // Carried pending protocol cut is excluded on top of the unrealized exclusion.
-    // gross = 300 + 100 = 400; profit = (0+100) - 0 = 100; exclusion = 100 * 0.5 = 50;
-    // pending = 40; 400 - 50 - 40 = 310.
-    assert_eq!(plp::lp_pool_value_for_testing(300, 0, 0, 500_000_000, 100, 40), 310);
-    // Pending alone exceeding gross floors LP value at 0.
-    // gross = 100; exclusion = 0; pending = 150 > gross -> floored to 0.
-    assert_eq!(plp::lp_pool_value_for_testing(100, 0, 0, 0, 0, 150), 0);
 }
 
 // === protocol_reserve_profit_share config ===

@@ -233,10 +233,7 @@ fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
 
 fun new_raw_insert_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
     let source_timestamp_us = raw.source_timestamp_us;
-    assert!(
-        source_timestamp_us % 1000 == 0,
-        EInsertTimestampNotExactMillisecond,
-    );
+    assert!(source_timestamp_us % 1000 == 0, EInsertTimestampNotExactMillisecond);
     oracle_lane::new_read(source_timestamp_us / 1000, update_timestamp_ms, raw)
 }
 
@@ -354,9 +351,4 @@ public fun record_raw_for_testing(
     } else {
         feed.lane.update(id, read);
     };
-}
-
-#[test_only]
-public fun set_version_for_testing(feed: &mut PythFeed, version: u64) {
-    feed.version = version;
 }

@@ -45,10 +45,8 @@ fun send_and_receive_track_profit_basis() {
     assert_eq!(ledger.profit_basis_credits(), 250);
     assert_eq!(ledger.idle_balance(), 550);
 
-    // Flow amounts mirror the two moves.
-    let (sent, received) = ledger.expiry_flow_amounts(id);
-    assert_eq!(sent, 700);
-    assert_eq!(received, 250);
+    // Net funding room mirrors the two moves: 1000 cap - (700 sent - 250 returned).
+    assert_eq!(ledger.available_expiry_funding(id), 550);
 
     destroy(ledger);
 }

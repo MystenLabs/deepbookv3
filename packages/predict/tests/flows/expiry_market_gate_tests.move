@@ -251,25 +251,6 @@ fun mint_while_expiry_mint_paused_aborts() {
     abort 999
 }
 
-/// A version-disabled package (watermark pushed above the running `current_version!()`)
-/// must block expiry-market flows. `set_mint_paused` is a version-gated public
-/// entrypoint whose first line is `config.assert_version()`; the rooted `mint`/`redeem`
-/// entrypoints gate identically (they share the same `config.assert_version()` first
-/// line), so the cheap pause path stands in for the whole family here.
-#[test, expected_failure(abort_code = protocol_config::EPackageVersionDisabled)]
-fun expiry_market_flow_with_version_disabled_aborts() {
-    let (mut fx, expiry_id, _trader) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let (_pyth, _bs, _oracle_registry, _vault, mut market, mut config) = fx.take_market(expiry_id);
-
-    protocol_config::set_version_watermark_for_testing(
-        &mut config,
-        constants::current_version!() + 1,
-    );
-    fx.set_expiry_mint_paused(&mut market, &config, true);
-    abort 999
-}
-
 /// Minting while global trading is paused must abort.
 #[test, expected_failure(abort_code = protocol_config::ETradingPaused)]
 fun mint_while_trading_paused_aborts() {

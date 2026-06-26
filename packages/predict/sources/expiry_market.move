@@ -1083,10 +1083,3 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     let builder_code_id = builder_code_id.destroy_some();
     balance::send_funds(fee, builder_code_id.to_address());
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun receive_cash_for_testing(market: &mut ExpiryMarket, funds: Coin<DUSDC>) {
-    market.cash.receive(funds.into_balance());
-}

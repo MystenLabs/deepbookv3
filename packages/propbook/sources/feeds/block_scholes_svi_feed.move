@@ -184,10 +184,7 @@ public fun migrate(feed: &mut BlockScholesSVIFeed) {
 
 /// Create and share a BS SVI feed for `bs_source_id`.
 /// Package-only: `registry` owns source-catalog uniqueness.
-public(package) fun create_and_share(
-    bs_source_id: u32,
-    ctx: &mut TxContext,
-): ID {
+public(package) fun create_and_share(bs_source_id: u32, ctx: &mut TxContext): ID {
     let feed = BlockScholesSVIFeed {
         id: object::new(ctx),
         bs_source_id,
@@ -264,11 +261,4 @@ fun normalized_svi_from_read(read: &OracleRead<RawSVI>): OracleRead<SVIParams> {
         read.read_update_timestamp_ms(),
         raw.svi,
     )
-}
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun set_version_for_testing(feed: &mut BlockScholesSVIFeed, version: u64) {
-    feed.version = version;
 }

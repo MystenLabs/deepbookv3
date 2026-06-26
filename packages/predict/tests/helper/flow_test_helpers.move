@@ -498,7 +498,10 @@ public fun inactive_stake(wrapper: &AccountWrapper): u64 {
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
-    market.receive_cash_for_testing(coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx()));
+    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+        amount,
+        self.scenario.ctx(),
+    ).into_balance());
 }
 
 /// Seed a fresh live Pyth spot + Block Scholes surface for `market`'s expiry so
