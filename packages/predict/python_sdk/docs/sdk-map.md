@@ -85,5 +85,7 @@ implemented directly in Python.
   default behavior.
 - New read/status field: update `docs/read-path.md`, render tests, and fixture
   coverage.
+- New/changed service endpoint or response field (incl. drift fixes): update
+  `docs/api.md` (hand-maintained; the services own the real contract).
 - New package/deployment wiring: update `docs/sdk-map.md`, config tests, and
   `docs/decisions.md` if behavior changed.
