@@ -60,7 +60,7 @@
     "version": 1,
     "network": "testnet",
     "operator": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
-    "updatedAt": "2026-06-25T18:56:23.118Z",
+    "updatedAt": "2026-06-25T21:48:55.000Z",
     "account": {
       "predictAppAuthorized": true,
       "authorizeTx": "493xj5Jd88u3VTBYrWD7XnN8bFADX3cq7p1mdFZZurzu",
@@ -86,6 +86,16 @@
       "predictUnderlyingRegisteredTx": "FZjgkWfjA3fkR6Lye83udCBMyEPavXjP5d9rQcyweMDh"
     },
     "cadences": [
+      {
+        "id": 0,
+        "name": "1m",
+        "tickSize": "1000000000",
+        "admissionTickSize": "10000000000",
+        "maxExpiryAllocation": "50000000000",
+        "initialExpiryCash": "10000000000",
+        "windowSize": "3",
+        "setTx": "EPVvwEbaNreURAjqMvDjECxPaNpnEehLbFcyoAczBvia"
+      },
       {
         "id": 1,
         "name": "5m",
