@@ -7,6 +7,7 @@ from typing import Any
 from . import bcs
 from ._http import post_json
 from .bcs import Ptb
+from .constants import DEFAULT_TESTNET_RPC_URL
 from .signer import Signer
 
 # Transaction executor: resolves object/gas refs over JSON-RPC, builds + signs the
@@ -14,7 +15,6 @@ from .signer import Signer
 # Gas budget is estimated from the dry run. Owned-object equivocation is avoided by
 # never reusing a gas coin that's also a tx input (the gas pool in gas.py extends this).
 
-DEFAULT_RPC_URL = "https://fullnode.testnet.sui.io:443"
 _GAS_BUFFER = 2_000_000  # extra MIST headroom over the dry-run estimate
 
 
@@ -33,7 +33,7 @@ class TxResult:
 
 
 class TransactionClient:
-    def __init__(self, signer: Signer, rpc_url: str = DEFAULT_RPC_URL, *, timeout: float = 30):
+    def __init__(self, signer: Signer, rpc_url: str = DEFAULT_TESTNET_RPC_URL, *, timeout: float = 30):
         self.signer = signer
         self.rpc_url = rpc_url
         self.timeout = timeout

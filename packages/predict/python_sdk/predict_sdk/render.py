@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 
-from .constants import CADENCE_NAMES, CADENCE_PERIOD_MS
+from .constants import CADENCE_NAMES, CADENCE_PERIOD_MS, DUSDC_DECIMALS, FLOAT_SCALING
 from .indexer import IndexerHealth
 from .observability import CadenceTimeline, PredictStatusReport, TimelineSlot
 
@@ -228,7 +228,7 @@ def _cadence_label(expiry: int | None) -> str:
 
 
 def _leverage(raw_1e9: int | None) -> str:
-    return "—" if raw_1e9 is None else f"{raw_1e9 / 1e9:g}x"
+    return "—" if raw_1e9 is None else f"{raw_1e9 / FLOAT_SCALING:g}x"
 
 
 # === per-cadence timeline ===
@@ -241,7 +241,7 @@ def _cadence_section(cadence: CadenceTimeline, now_ms: int, paint: _Paint) -> li
         summary += f" · {cadence.backlog_count} backlog"
     detail = (
         f"period {_format_duration(cadence.period_ms)} "
-        f"· window {cadence.window_size} · tick {cadence.tick_size / 1e9:g}"
+        f"· window {cadence.window_size} · tick {cadence.tick_size / FLOAT_SCALING:g}"
     )
     header = _rule_between(
         f"  ── {paint(cadence.name, _BOLD)} ── ",
@@ -342,15 +342,15 @@ def _money(raw: int | None, decimals: int = 2) -> str:
         return "—"
     negative = raw < 0
     raw = -raw if negative else raw
-    whole, frac = divmod(raw, 10**6)
-    frac_str = f"{frac:06d}"[:decimals]
+    whole, frac = divmod(raw, 10**DUSDC_DECIMALS)
+    frac_str = f"{frac:0{DUSDC_DECIMALS}d}"[:decimals]
     formatted = f"{whole:,}.{frac_str}" if decimals else f"{whole:,}"
     return f"-{formatted}" if negative else formatted
 
 
 def _price(raw_1e9: int | None) -> str:
     # settlement price is FLOAT_SCALING (1e9); show as a whole quote-price figure
-    return "—" if raw_1e9 is None else f"{raw_1e9 / 1e9:,.0f}"
+    return "—" if raw_1e9 is None else f"{raw_1e9 / FLOAT_SCALING:,.0f}"
 
 
 def _count(value: int | None) -> str:

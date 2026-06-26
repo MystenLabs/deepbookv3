@@ -42,6 +42,11 @@ class CadenceConfig:
     def period_ms(self) -> int:
         return CADENCE_PERIOD_MS[self.id]
 
+    @property
+    def admission_grid_ticks(self) -> int:
+        """Valid finite ticks are multiples of this (admission_tick_size / tick_size)."""
+        return self.admission_tick_size // self.tick_size if self.tick_size else 0
+
 
 @dataclass(frozen=True)
 class DeploymentConfig:

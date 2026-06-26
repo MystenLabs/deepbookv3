@@ -4,13 +4,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ._http import post_json
+from .constants import DEFAULT_TESTNET_RPC_URL
 
 # Account portfolio + PnL reconstruction from on-chain order events. Positions are
 # keyed by `position_root_id` (stable across partial-close replacements). This reads
 # events directly over JSON-RPC; a dedicated indexer endpoint would scale better but
 # isn't exposed yet. Amounts are raw 6-dp DUSDC base units.
 
-DEFAULT_RPC_URL = "https://fullnode.testnet.sui.io:443"
 _EVENT_TYPES = ["OrderMinted", "LiveOrderRedeemed", "SettledOrderRedeemed", "LiquidatedOrderRedeemed"]
 
 
@@ -50,7 +50,7 @@ class Portfolio:
 
 
 class PortfolioReader:
-    def __init__(self, address: str, predict_pkg: str, rpc_url: str = DEFAULT_RPC_URL, *, timeout: float = 30):
+    def __init__(self, address: str, predict_pkg: str, rpc_url: str = DEFAULT_TESTNET_RPC_URL, *, timeout: float = 30):
         self.address = address
         self.predict_pkg = predict_pkg
         self.rpc_url = rpc_url

@@ -8,12 +8,21 @@ from dataclasses import asdict
 from typing import Sequence
 
 from .config import DeploymentConfig, load_testnet_config
+from .constants import DEFAULT_TESTNET_RPC_URL, DUSDC_DECIMALS, FLOAT_SCALING
 from .indexer import PredictIndexerClient
 from .observability import ObservabilityClient
 from .render import render_dashboard, render_markets_table
 from .rpc import SuiRpcObjectReader
 
-DEFAULT_TESTNET_RPC_URL = "https://fullnode.testnet.sui.io:443"
+# Admission grid: valid finite ticks are multiples of admission_tick_size/tick_size.
+# Every current cadence shares a grid of 10 (see CadenceConfig.admission_grid_ticks);
+# deriving it from the resolved market's cadence is a follow-up (needs cadence
+# resolution on the write path).
+_GRID_TICKS = 10
+# Mint quantity lot size in 6-dp DUSDC base units; manual trades snap down to it.
+_POSITION_LOT_BASE_UNITS = 10_000
+# Default cap on entry probability for a manual `trade` (0.99, 1e9-scaled).
+_DEFAULT_MAX_PROBABILITY = 99 * FLOAT_SCALING // 100
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -140,7 +149,7 @@ def _build_actions(args):
 
 
 def _dusdc(amount: float) -> int:
-    return int(round(amount * 1_000_000))
+    return int(round(amount * 10**DUSDC_DECIMALS))
 
 
 def _print_tx(res, execute: bool, label: str) -> int:
@@ -193,15 +202,15 @@ def _trade(args) -> int:
     acts = _build_actions(args)
     acts.ensure_account(execute=args.execute)
     market_id, ref = _resolve_market(acts, args.market)
-    base = (ref // 10) * 10
-    width = max(10, (args.width // 10) * 10)
+    base = (ref // _GRID_TICKS) * _GRID_TICKS
+    width = max(_GRID_TICKS, (args.width // _GRID_TICKS) * _GRID_TICKS)
     lower, higher = base - width, base + width
-    quantity = (_dusdc(args.notional) // 10_000) * 10_000  # snap to position lot size
+    quantity = (_dusdc(args.notional) // _POSITION_LOT_BASE_UNITS) * _POSITION_LOT_BASE_UNITS
     max_cost = _dusdc(args.max_cost) if args.max_cost else _dusdc(args.notional)
     res = acts.mint(
         market_id, lower_tick=lower, higher_tick=higher, quantity=quantity,
-        leverage=int(round(args.leverage * 1_000_000_000)), max_cost=max_cost,
-        max_probability=990_000_000, execute=args.execute,
+        leverage=int(round(args.leverage * FLOAT_SCALING)), max_cost=max_cost,
+        max_probability=_DEFAULT_MAX_PROBABILITY, execute=args.execute,
     )
     print(f"market {market_id[:14]}… range [{lower},{higher}] qty {quantity/1e6:.2f} DUSDC")
     for ev in res.events:

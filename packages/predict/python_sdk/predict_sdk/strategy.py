@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from .constants import U64_MAX
+from .constants import DUSDC_DECIMALS, FLOAT_SCALING, U64_MAX
 from .observability import ObservabilityClient
 
 if TYPE_CHECKING:  # type-only: keep this module import-light (no nacl/tx/actions at runtime)
@@ -25,8 +25,8 @@ if TYPE_CHECKING:  # type-only: keep this module import-light (no nacl/tx/action
 # Money units: probabilities are 1e9-scaled (ONE == 100%); cash amounts (premium,
 # max_cost, quantity) are raw 6-dp DUSDC base units.
 
-ONE = 1_000_000_000  # 1e9 == probability of 1.0 (matches OrderMinted.entry_probability scale)
-MIN_NET_PREMIUM = 1_000_000  # 1 DUSDC: the chain's minimum priced premium for a mint
+ONE = FLOAT_SCALING  # 1e9 == probability of 1.0 (matches OrderMinted.entry_probability scale)
+MIN_NET_PREMIUM = 10**DUSDC_DECIMALS  # 1 DUSDC: the chain's minimum priced premium for a mint
 ORDER_MINTED_SUFFIX = "::order_events::OrderMinted"
 
 
@@ -254,7 +254,7 @@ class RiskLimits:
     """Caps applied across a run (and over existing holdings) before any submit."""
 
     max_open_positions: int = 5
-    max_total_premium: int = 1_000_000_000  # 1,000 DUSDC (6-dp base units)
+    max_total_premium: int = 1_000 * 10**DUSDC_DECIMALS  # 1,000 DUSDC (6-dp base units)
 
 
 @dataclass

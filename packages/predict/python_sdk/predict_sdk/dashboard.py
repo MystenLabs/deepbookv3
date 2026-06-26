@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 
 from ._http import post_json
 from .config import DeploymentConfig, load_testnet_config
-from .constants import POS_INF_TICK
+from .constants import (
+    DEFAULT_TESTNET_RPC_URL,
+    DUSDC_DECIMALS,
+    FLOAT_SCALING,
+    POS_INF_TICK,
+    SUI_DECIMALS,
+)
 from .observability import ObservabilityClient, PredictStatusReport
 from .portfolio import Portfolio, PortfolioReader
 from .rpc import SuiRpcObjectReader
@@ -32,12 +38,6 @@ def configure_logging(path: str, level: int = logging.INFO) -> None:
 # `textual` is an OPTIONAL dependency (the `[tui]` extra): the import is guarded so the
 # module — and every pure data function — imports fine even when Textual is absent.
 
-DEFAULT_RPC_URL = "https://fullnode.testnet.sui.io:443"
-
-# Decimals of the on-chain assets we display (raw integer amounts -> human strings).
-_DUSDC_DECIMALS = 6
-_SUI_DECIMALS = 9
-
 # pnl coloring decisions surface as plain color names so the pure layer stays
 # Textual-free; the widgets wrap them in Rich markup.
 _GREEN, _RED, _DIM = "green", "red", "dim"
@@ -60,12 +60,12 @@ def fmt_units(raw: int | None, decimals_in: int, decimals_out: int = 2) -> str:
 
 def fmt_money(raw: int | None, decimals: int = 2) -> str:
     """Raw 6-dp DUSDC -> money string, e.g. 98_500_000 -> "98.50"."""
-    return fmt_units(raw, _DUSDC_DECIMALS, decimals)
+    return fmt_units(raw, DUSDC_DECIMALS, decimals)
 
 
 def fmt_sui(raw: int | None) -> str:
     """Raw 9-dp MIST -> SUI string, e.g. 1_500_000_000 -> "1.5000"."""
-    return fmt_units(raw, _SUI_DECIMALS, 4)
+    return fmt_units(raw, SUI_DECIMALS, 4)
 
 
 def fmt_signed_money(raw: int | None) -> str:
@@ -87,7 +87,7 @@ def fmt_prob(raw_1e9: int | None) -> str:
     """1e9-scaled probability -> percent, e.g. 985009513 -> "98.5%"."""
     if raw_1e9 is None:
         return "—"
-    return f"{raw_1e9 / 1e9 * 100:.1f}%"
+    return f"{raw_1e9 / FLOAT_SCALING * 100:.1f}%"
 
 
 def fmt_ticks(lower: int, higher: int) -> str:
@@ -463,7 +463,7 @@ def run_dashboard(
     if log_file:
         configure_logging(log_file)
     config = load_testnet_config()
-    rpc_url = rpc_url or DEFAULT_RPC_URL
+    rpc_url = rpc_url or DEFAULT_TESTNET_RPC_URL
     address = address or _default_address()
     log.info("dashboard starting: address=%s asset=%s refresh=%ss", address, asset, refresh_s)
 
