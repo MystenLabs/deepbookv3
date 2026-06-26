@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import CADENCE_PERIOD_MS
@@ -52,6 +52,8 @@ class DeploymentConfig:
     shared_objects: dict[str, dict[str, str]]
     assets: dict[str, AssetConfig]
     cadences: dict[int | str, CadenceConfig]
+    # Public indexer/server base URLs keyed by service ("predict", "propbook").
+    servers: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DeploymentConfig":
@@ -97,6 +99,7 @@ class DeploymentConfig:
             },
             assets=assets,
             cadences=cadences,
+            servers=dict(data.get("servers", {})),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,6 +120,7 @@ class DeploymentConfig:
                     if isinstance(key, int)
                 ],
             },
+            "servers": dict(self.servers),
         }
 
     def package_id(self, name: str) -> str:
@@ -133,6 +137,9 @@ class DeploymentConfig:
 
     def cadence(self, key: int | str) -> CadenceConfig:
         return self.cadences[key]
+
+    def server_url(self, name: str) -> str | None:
+        return self.servers.get(name)
 
 
 def load_testnet_config() -> DeploymentConfig:

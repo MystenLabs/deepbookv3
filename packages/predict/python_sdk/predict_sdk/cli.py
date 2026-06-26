@@ -8,8 +8,9 @@ from dataclasses import asdict
 from typing import Sequence
 
 from .config import DeploymentConfig, load_testnet_config
+from .indexer import PredictIndexerClient
 from .observability import ObservabilityClient
-from .render import render_dashboard
+from .render import render_dashboard, render_markets_table
 from .rpc import SuiRpcObjectReader
 
 DEFAULT_TESTNET_RPC_URL = "https://fullnode.testnet.sui.io:443"
@@ -20,6 +21,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "status":
         return _status(args)
+    if args.command == "markets":
+        return _markets(args)
     parser.print_help()
     return 2
 
@@ -34,8 +37,16 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument("--fixture-live", action="store_true", help="use a local live fixture")
     status.add_argument("--json", action="store_true", help="print machine-readable JSON")
     status.add_argument("--no-color", action="store_true", help="disable ANSI color output")
+    status.add_argument("--no-indexer", action="store_true", help="skip the indexer health check")
     status.add_argument("--now-ms", type=int, default=None)
     status.add_argument("--timeout", type=float, default=10)
+
+    markets = subcommands.add_parser("markets", help="list created markets from the indexer")
+    markets.add_argument("--limit", type=int, default=20)
+    markets.add_argument("--indexer-url", default=None, help="override the predict indexer base URL")
+    markets.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    markets.add_argument("--no-color", action="store_true", help="disable ANSI color output")
+    markets.add_argument("--timeout", type=float, default=10)
 
     return parser
 
@@ -49,11 +60,31 @@ def _status(args: argparse.Namespace) -> int:
         else SuiRpcObjectReader(args.rpc_url, timeout=args.timeout)
     )
     report = ObservabilityClient(config, reader).status(args.asset, now_ms=now_ms)
+    # Indexer health is best-effort and offline-skipped (fixture mode / opt-out).
+    indexer = None
+    indexer_url = config.server_url("predict")
+    if not args.fixture_live and not args.no_indexer and indexer_url:
+        indexer = PredictIndexerClient(indexer_url, timeout=args.timeout).health()
     if args.json:
         print(json.dumps(asdict(report), indent=2, sort_keys=True))
     else:
         color = sys.stdout.isatty() and not args.no_color
-        print(render_dashboard(report, now_ms, color=color))
+        print(render_dashboard(report, now_ms, color=color, indexer=indexer))
+    return 0
+
+
+def _markets(args: argparse.Namespace) -> int:
+    config = load_testnet_config()
+    base_url = args.indexer_url or config.server_url("predict")
+    if not base_url:
+        print("no predict indexer URL configured", file=sys.stderr)
+        return 2
+    markets = PredictIndexerClient(base_url, timeout=args.timeout).markets(limit=args.limit)
+    if args.json:
+        print(json.dumps(markets, indent=2, sort_keys=True))
+    else:
+        color = sys.stdout.isatty() and not args.no_color
+        print(render_markets_table(markets, _now_ms(), color=color))
     return 0
 
 

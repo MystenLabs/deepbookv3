@@ -45,12 +45,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(ACCUMULATOR_ROOT_ID, "0xacc")
         self.assertEqual(POS_INF_TICK, (1 << 30) - 1)
 
+    def test_exposes_server_urls(self) -> None:
+        config = load_testnet_config()
+        self.assertEqual(
+            config.server_url("predict"),
+            "https://predict-server-beta.testnet.mystenlabs.com",
+        )
+        self.assertIsNone(config.server_url("missing"))
+
     def test_can_build_config_from_copied_dictionary(self) -> None:
         config = load_testnet_config()
         copied = DeploymentConfig.from_dict(config.to_dict())
 
         self.assertEqual(copied.asset("BTC_USD").feed_ids.bs_forward, config.asset("BTC_USD").feed_ids.bs_forward)
         self.assertEqual(copied.cadence(2).name, "1h")
+        self.assertEqual(copied.server_url("propbook"), config.server_url("propbook"))
 
 
 if __name__ == "__main__":

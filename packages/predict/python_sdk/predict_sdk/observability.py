@@ -4,7 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .config import DeploymentConfig
+from .config import CadenceConfig, DeploymentConfig
+from .constants import CADENCE_NAMES
 
 
 class ObjectReader(Protocol):
@@ -74,6 +75,7 @@ class MarketStatus:
     tick_size: int | None
     blockers: list[str]
     reference_tick: int | None = None
+    settlement_price: int | None = None
 
     @property
     def mintable(self) -> bool:
@@ -104,7 +106,8 @@ class CadenceTimeline:
 
     @property
     def has_live_market(self) -> bool:
-        return any(slot.state == "live" for slot in self.slots)
+        # live by expiry, whether or not it has been funded yet
+        return any(slot.state in ("live", "unfunded") for slot in self.slots)
 
 
 @dataclass(frozen=True)
@@ -219,7 +222,7 @@ class ObservabilityClient:
             )
             for market_id, fields in market_fields.items()
         ]
-        cadences = _build_cadence_timelines(self.config, markets, now_ms)
+        cadences = _build_cadence_timelines(self._resolve_cadences(), markets, now_ms)
         is_mintable = any(market.mintable for market in markets) and not blockers
         is_live = not blockers
 
@@ -299,6 +302,7 @@ class ObservabilityClient:
         expiry_ms = _optional_int(fields.get("expiry"))
         mint_paused = _optional_bool(fields.get("mint_paused"))
         settled = _option_has_value(fields.get("settlement_price"))
+        settlement_price = _option_int(fields.get("settlement_price"))
         cash_fields = _fields(fields.get("cash"))
         strike_exposure_fields = _fields(fields.get("strike_exposure"))
         cash_balance = _first_int(fields.get("cash_balance"), cash_fields.get("cash_balance"))
@@ -336,20 +340,57 @@ class ObservabilityClient:
             tick_size=_first_int(fields.get("tick_size"), strike_exposure_fields.get("tick_size")),
             blockers=blockers,
             reference_tick=reference_tick,
+            settlement_price=settlement_price,
         )
+
+    def _resolve_cadences(self) -> list[CadenceConfig]:
+        # Prefer the live on-chain cadence set so newly deployed cadences appear
+        # without an SDK edit; fall back to the static deployment config.
+        try:
+            registry_id = self.config.shared_object_id("predict", "registry::Registry")
+        except KeyError:
+            registry_id = None
+        if registry_id:
+            chain = _cadences_from_registry(_object_fields(self.reader.get_object(registry_id)))
+            if chain:
+                return chain
+        by_id = {c.id: c for c in self.config.cadences.values()}
+        return [c for c in by_id.values() if c.window_size > 0]
+
+
+def _cadences_from_registry(registry_fields: dict[str, Any]) -> list[CadenceConfig]:
+    manager = _fields(registry_fields.get("market_manager"))
+    raw = manager.get("cadences")
+    if not isinstance(raw, list):
+        return []
+    cadences: list[CadenceConfig] = []
+    for cadence_id, entry in enumerate(raw):
+        fields = _fields(entry)
+        window = _optional_int(fields.get("window_size"))
+        if not window or cadence_id not in CADENCE_NAMES:
+            continue  # disabled (window 0), unreadable, or unknown id
+        cadences.append(
+            CadenceConfig(
+                id=cadence_id,
+                name=CADENCE_NAMES[cadence_id],
+                tick_size=_optional_int(fields.get("tick_size")) or 0,
+                admission_tick_size=_optional_int(fields.get("admission_tick_size")) or 0,
+                max_expiry_allocation=_optional_int(fields.get("max_expiry_allocation")) or 0,
+                initial_expiry_cash=_optional_int(fields.get("initial_expiry_cash")) or 0,
+                window_size=window,
+            )
+        )
+    return cadences
 
 
 def _build_cadence_timelines(
-    config: DeploymentConfig,
+    cadences: list[CadenceConfig],
     markets: list[MarketStatus],
     now_ms: int,
 ) -> list[CadenceTimeline]:
-    # Enabled cadences, de-duplicated (config indexes by both id and name) and
-    # ordered fine->coarse so the display reads short-period first.
-    cadences = sorted(
-        {c.id: c for c in config.cadences.values() if c.window_size > 0}.values(),
-        key=lambda c: c.period_ms,
-    )
+    # `cadences` is the resolved, enabled set (chain-sourced where available).
+    # Order fine->coarse so the display reads short-period first.
+    cadences = sorted(cadences, key=lambda c: c.period_ms)
     coarse_first = sorted(cadences, key=lambda c: c.period_ms, reverse=True)
     markets_by_expiry = {m.expiry_ms: m for m in markets if m.expiry_ms is not None}
 
@@ -417,7 +458,8 @@ def _slot_state(position: int, expiry: int, market: MarketStatus | None, now_ms:
     if expiry <= now_ms:
         return "awaiting_settle"
     if position == 0:
-        return "live"
+        # created but not yet funded by the rebalance keeper -> not mintable
+        return "unfunded" if not market.cash_balance else "live"
     return "scheduled"
 
 

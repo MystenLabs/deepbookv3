@@ -90,6 +90,42 @@ class RenderTests(unittest.TestCase):
         self.assertIn("not created", out)  # pending future slots
         self.assertIn("5m 00s", out)       # live countdown (ttl == one period)
 
+    def test_unfunded_live_market(self) -> None:
+        live_market = MarketStatus(
+            LIVE_ID, 1, NOW_MS + PERIOD, PERIOD, False, False,
+            0, 0, 0, 1_000_000_000, ["market has no expiry cash"],
+        )
+        slots = (
+            TimelineSlot(NOW_MS - 2 * PERIOD, -2, "expired_gone", None),
+            TimelineSlot(NOW_MS - PERIOD, -1, "expired_gone", None),
+            TimelineSlot(NOW_MS + PERIOD, 0, "unfunded", live_market),
+            TimelineSlot(NOW_MS + 2 * PERIOD, 1, "pending", None),
+            TimelineSlot(NOW_MS + 3 * PERIOD, 2, "pending", None),
+        )
+        cadence = CadenceTimeline(1, "5m", PERIOD, 3, 1_000_000_000, slots, backlog_count=0)
+        out = render_dashboard(_report(cadences=[cadence], is_mintable=False), NOW_MS, color=False)
+
+        self.assertIn("LIVE · UNFUNDED", out)
+        self.assertIn("unfunded", out)
+
+    def test_settled_box_shows_price(self) -> None:
+        settled_market = MarketStatus(
+            PREV_ID, 1, NOW_MS - PERIOD, -PERIOD, False, True,
+            10_000_000_000, 0, 0, 1_000_000_000, ["market is settled"],
+            settlement_price=64_300_000_000_000,  # 64,300 in 1e9 price scaling
+        )
+        slots = (
+            TimelineSlot(NOW_MS - 2 * PERIOD, -2, "expired_gone", None),
+            TimelineSlot(NOW_MS - PERIOD, -1, "settled", settled_market),
+            TimelineSlot(NOW_MS + PERIOD, 0, "live", _market(LIVE_ID, NOW_MS + PERIOD)),
+            TimelineSlot(NOW_MS + 2 * PERIOD, 1, "pending", None),
+            TimelineSlot(NOW_MS + 3 * PERIOD, 2, "pending", None),
+        )
+        cadence = CadenceTimeline(1, "5m", PERIOD, 3, 1_000_000_000, slots, backlog_count=0)
+        out = render_dashboard(_report(cadences=[cadence]), NOW_MS, color=False)
+
+        self.assertIn("@ 64,300", out)
+
     def test_no_live_market_verdict(self) -> None:
         out = render_dashboard(
             _report(cadences=[_five_minute_timeline(live=False)], is_mintable=False),

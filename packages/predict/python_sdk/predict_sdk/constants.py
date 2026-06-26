@@ -18,3 +18,5 @@ CADENCE_PERIOD_MS = {
     4: 604_800_000,      # 1w
     5: 2_592_000_000,    # 1mo (30d)
 }
+# Cadence id -> short name (fixed by market_manager.move's cadence_* macros).
+CADENCE_NAMES = {0: "1m", 1: "5m", 2: "1h", 3: "1d", 4: "1w", 5: "1mo"}

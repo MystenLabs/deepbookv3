@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import time
 
+from .constants import CADENCE_NAMES, CADENCE_PERIOD_MS
+from .indexer import IndexerHealth
 from .observability import CadenceTimeline, PredictStatusReport, TimelineSlot
 
 # Wide boxed-dashboard renderer for a PredictStatusReport. ANSI color is opt-in via
@@ -29,6 +31,7 @@ _N_PAST, _N_NEXT = 2, 2
 # state -> (border color, top-border label)
 _STATE_STYLE = {
     "live": (_GREEN, "● LIVE"),
+    "unfunded": (_YELLOW, "⚠ UNFUNDED"),
     "scheduled": (_CYAN, "next"),
     "pending": (_DIM, "next"),
     "awaiting_settle": (_YELLOW, "expired"),
@@ -48,13 +51,21 @@ class _Paint:
         return "".join(codes) + text + _RESET
 
 
-def render_dashboard(report: PredictStatusReport, now_ms: int, *, color: bool = True) -> str:
+def render_dashboard(
+    report: PredictStatusReport,
+    now_ms: int,
+    *,
+    color: bool = True,
+    indexer: IndexerHealth | None = None,
+) -> str:
     paint = _Paint(color)
     out: list[str] = []
     out.extend(_banner(report, now_ms, paint))
     out.append("")
     out.extend(_blockers(report, paint))
     out.extend(_panels(report, now_ms, paint))
+    if indexer is not None:
+        out.append(_indexer_line(indexer, paint))
     out.append("")
     for cadence in report.cadences:
         out.extend(_cadence_section(cadence, now_ms, paint))
@@ -93,6 +104,8 @@ def _verdict(report: PredictStatusReport) -> tuple[str, str]:
         return "⚠ ORACLE STALE", _YELLOW
     if report.is_mintable:
         return "● LIVE", _GREEN
+    if any(slot.state == "unfunded" for cadence in report.cadences for slot in cadence.slots):
+        return "⚠ LIVE · UNFUNDED", _YELLOW
     return "⚠ DEGRADED", _YELLOW
 
 
@@ -126,15 +139,21 @@ def _oracle_lines(report: PredictStatusReport, now_ms: int, paint: _Paint) -> li
     for feed in report.oracle.feeds:
         ts = feed.latest_source_timestamp_ms
         if ts is None:
+            # no per-expiry data: the freshness limit is irrelevant, so omit it
             if not report.has_live_market:
                 dot, age = paint("○", _DIM), paint("no live expiry", _DIM)
             else:
                 dot, age = paint("●", _RED), paint("no data", _RED)
+            limit = ""
         else:
             dot = paint("●", _GREEN if feed.fresh else _RED)
             text = _format_age(now_ms - ts)
             age = text if feed.fresh else paint(text, _RED)
-        limit = "" if feed.freshness_ms is None else paint(f"/ {_format_duration(feed.freshness_ms)}", _DIM)
+            limit = (
+                paint(f"/ {_format_duration(feed.freshness_ms)}", _DIM)
+                if feed.freshness_ms is not None
+                else ""
+            )
         lines.append(f"  {dot} {_pad(feed.name, 22)}{_pad(age, 12)} {limit}")
     note = _clock_skew_note(report, now_ms)
     if note:
@@ -159,6 +178,57 @@ def _pool_lines(report: PredictStatusReport, paint: _Paint) -> list[str]:
     lines = [paint("POOL", _BOLD)]
     lines.extend(f"{paint(_pad(label, 11), _DIM)} {value}" for label, value in rows)
     return lines
+
+
+def _indexer_line(health: IndexerHealth, paint: _Paint) -> str:
+    if not health.reachable:
+        return f"  {paint('⚠ indexer unreachable', _YELLOW)}"
+    if not health.ok:
+        return f"  {paint('⚠ indexer status not OK', _YELLOW)}"
+    lag = health.max_time_lag_seconds
+    if lag is not None and lag > 30:
+        return f"  {paint(f'⚠ indexer lag {lag}s ({health.max_lag_pipeline})', _YELLOW)}"
+    return f"  {paint('ⓘ indexer ok · lag ' + (f'{lag}s' if lag is not None else '—'), _DIM)}"
+
+
+# === markets table (predict-sdk markets, from the indexer /markets endpoint) ===
+
+def render_markets_table(markets: list[dict], now_ms: int, *, color: bool = True) -> str:
+    paint = _Paint(color)
+    out = [f"  {paint('PREDICT markets', _BOLD)}  {paint(f'· {len(markets)} shown (newest first)', _DIM)}", ""]
+    header = (
+        f"  {_pad('expiry', 17)}{_pad('market', 18)}{_pad('cad', 5)}"
+        f"{_pad('init cash', 14)}{_pad('lev', 7)}created"
+    )
+    out.append(paint(header, _DIM))
+    for market in markets:
+        expiry = _as_int(market.get("expiry"))
+        created = _as_int(market.get("checkpoint_timestamp_ms"))
+        lev = _as_int(market.get("max_admission_leverage"))
+        out.append(
+            f"  {_pad(_clock_full(expiry), 17)}"
+            f"{_pad(_short_id(str(market.get('expiry_market_id', '—'))), 18)}"
+            f"{_pad(_cadence_label(expiry), 5)}"
+            f"{_pad(_money(_as_int(market.get('initial_expiry_cash'))), 14)}"
+            f"{_pad(_leverage(lev), 7)}"
+            f"{_clock_full(created)}"
+        )
+    if not markets:
+        out.append(f"  {paint('— no markets returned', _DIM)}")
+    return "\n".join(out)
+
+
+def _cadence_label(expiry: int | None) -> str:
+    if expiry is None:
+        return "?"
+    for cadence_id in sorted(CADENCE_PERIOD_MS, key=lambda i: CADENCE_PERIOD_MS[i], reverse=True):
+        if expiry % CADENCE_PERIOD_MS[cadence_id] == 0:
+            return CADENCE_NAMES[cadence_id]
+    return "?"
+
+
+def _leverage(raw_1e9: int | None) -> str:
+    return "—" if raw_1e9 is None else f"{raw_1e9 / 1e9:g}x"
 
 
 # === per-cadence timeline ===
@@ -205,12 +275,15 @@ def _box_status(slot: TimelineSlot, period_ms: int, now_ms: int) -> str:
         ttl = slot.expiry_ms - now_ms
         frac = (period_ms - ttl) / period_ms if period_ms else 0.0
         return f"{_progress_bar(frac)} {_format_duration(ttl)}"
+    if slot.state == "unfunded":
+        return "⚠ unfunded"
     if slot.state == "scheduled":
         return f"opens {_format_duration(slot.expiry_ms - now_ms)}"
     if slot.state == "awaiting_settle":
         return "⚠ awaiting settle"
     if slot.state == "settled":
-        return "✓ settled"
+        price = slot.market.settlement_price if slot.market else None
+        return f"✓ @ {_price(price)}" if price is not None else "✓ settled"
     if slot.state in ("missing_live", "pending"):
         return "✗ not created"
     return "—"
@@ -275,8 +348,22 @@ def _money(raw: int | None, decimals: int = 2) -> str:
     return f"-{formatted}" if negative else formatted
 
 
+def _price(raw_1e9: int | None) -> str:
+    # settlement price is FLOAT_SCALING (1e9); show as a whole quote-price figure
+    return "—" if raw_1e9 is None else f"{raw_1e9 / 1e9:,.0f}"
+
+
 def _count(value: int | None) -> str:
     return "—" if value is None else str(value)
+
+
+def _as_int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _short_id(object_id: str) -> str:
@@ -314,6 +401,10 @@ def _clock(ms: int, now_ms: int) -> str:
     if time.strftime("%Y%m%d", moment) != time.strftime("%Y%m%d", time.localtime(now_ms / 1000)):
         return time.strftime("%m/%d %H:%M", moment)
     return time.strftime("%H:%M:%S", moment)
+
+
+def _clock_full(ms: int | None) -> str:
+    return "—" if ms is None else time.strftime("%m/%d %H:%M:%S", time.localtime(ms / 1000))
 
 
 def _clock_skew_note(report: PredictStatusReport, now_ms: int) -> str | None:

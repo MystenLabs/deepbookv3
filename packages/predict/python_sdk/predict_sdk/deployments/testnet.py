@@ -1,6 +1,10 @@
 TESTNET_DEPLOYMENT = {
     "network": "testnet",
     "chainId": "4c78adac",
+    "servers": {
+        "predict": "https://predict-server-beta.testnet.mystenlabs.com",
+        "propbook": "https://propbook.api.testnet.mystenlabs.com",
+    },
     "packages": {
         "fixed_math": "0x6930d8eff504f15e45e7ceec3d504bfc1a6f1e1d4c02babe03c156f77b84523d",
         "block_scholes_oracle": "0x8192932b70d5946217d0f09aad44f84ad5c27ee4c1ca31b09f46200fbd31d3de",
