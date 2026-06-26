@@ -910,6 +910,27 @@ public fun redeem_bundle_with_pyth(
     )
 }
 
+/// Close a live order through a market/account bundle.
+public fun redeem_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
+    )
+}
+
 /// Permissionless settled redeem (no owner auth): clears a settled order using app
 /// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
 /// Block Scholes feed.
@@ -1243,6 +1264,19 @@ public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
 /// Borrow the expiry market inside a bundle for independent assertions.
 public fun market(bundle: &MarketBundle): &ExpiryMarket { &bundle.market }
 
+/// Mutably borrow the expiry market inside a bundle for setup-only cash seeding.
+public fun market_mut(bundle: &mut MarketBundle): &mut ExpiryMarket { &mut bundle.market }
+
+/// Account balance through an account bundle.
+public fun account_balance_bundle<T>(self: &Fixture, account: &AccountBundle): u64 {
+    self.account_balance<T>(&account.wrapper, &account.root)
+}
+
+/// Whether the bundled account holds an open position.
+public fun has_position_bundle(account: &AccountBundle, expiry_id: ID, order_id: u256): bool {
+    has_position(&account.wrapper, expiry_id, order_id)
+}
+
 /// Advance the fixture clock by one millisecond and reseed the default live oracle.
 /// Use before live redeems in tests that mint and close inside one scenario tx.
 public fun advance_live_oracle(
@@ -1255,6 +1289,24 @@ public fun advance_live_oracle(
     let timestamp_ms = self.clock.timestamp_ms() + 1;
     self.clock.set_for_testing(timestamp_ms);
     self.prepare_live_oracle_at(market, pyth, bs, live_price, timestamp_ms);
+}
+
+/// Advance the fixture clock by one millisecond and reseed a market bundle's live
+/// oracle.
+public fun advance_live_oracle_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+) {
+    let timestamp_ms = self.clock.timestamp_ms() + 1;
+    self.clock.set_for_testing(timestamp_ms);
+    self.prepare_live_oracle_at(
+        &market.market,
+        &mut market.pyth,
+        &mut market.bs,
+        live_price,
+        timestamp_ms,
+    );
 }
 
 public fun insert_exact_settlement_spot(
