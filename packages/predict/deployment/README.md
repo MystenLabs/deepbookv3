@@ -303,12 +303,40 @@ leverage units against the cadence grid (§1).
 
 ## 6. Discovery & indexer
 
-- **Indexer base URL:** `https://predict-server-beta.testnet.mystenlabs.com`
-  (override in `deployment.testnet.json` → `servers.predict` if present).
+Two indexers back the deployment. For the trade path you mainly need the predict one;
+the oracle/propbook one is optional (feed discovery + off-chain oracle data).
+
+### Predict indexer — `https://predict-server-beta.testnet.mystenlabs.com`
+
+(Override in `deployment.testnet.json` → `servers.predict` if present.)
+
 - **Find markets:** `GET /markets` → rows carry `expiry_market_id`, `expiry`,
   `tick_size`, `max_admission_leverage`, etc. Filter by `expiry` to map markets onto
   cadence slots. `GET /markets/{expiry_market_id}/state` → settlement info
   (`settlement.settlement_price` once settled).
+- **Orders / LP history:** `/managers`, `/manager-orders`, `/market-orders`, and the
+  vault endpoints `/supply-requests`, `/withdraw-requests`, `/supply-fills`,
+  `/withdraw-fills`, `/flushes`, `/profit`, `/cash-rebalances`. `/status` for health.
+
+### Oracle (propbook) indexer — `https://propbook.api.testnet.mystenlabs.com` *(optional)*
+
+Not required for trading — live pricing reads the feed objects on-chain — but handy for
+**feed discovery/verification** and **off-chain oracle data**:
+
+- `GET /oracle-bindings` and `GET /underlyings/{propbook_underlying_id}/binding`
+  (BTC_USD = `1`) → the canonical Pyth/Block-Scholes feed object ids bound to an
+  underlying (each row's `propbook_oracle_id` is a feed object id, e.g. the SVI feed
+  `0xdc2f8270…21c69`; `oracle_kind`/`value_kind` distinguish pyth vs BS spot/forward/svi).
+  Lets a builder confirm the §1 feed ids instead of trusting the JSON.
+- `GET /oracle-sources` → registered oracle sources.
+- `GET /oracles/{propbook_oracle_id}/pyth/latest` → latest pyth observation (off-chain
+  current spot); `/oracles/{propbook_oracle_id}/pyth` and `/…/block-scholes` (+ a sampled
+  variant) → observation **history** (charts, settlement debugging). `/status` for health.
+
+> The operational dashboard does **not** use the oracle indexer — it reads oracle
+> freshness/spot directly from the on-chain snapshot (`devInspect`). It's listed here
+> only as an integrator convenience.
+
 - **Live on-chain state** (cash, payout liability, reference tick, oracle reads) is
   read from the chain via `devInspect` getters on `ExpiryMarket` / `PoolVault` /
   the feeds — see the operational dashboard (§7) for a working reader.
