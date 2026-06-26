@@ -61,13 +61,35 @@ def _rule(label: str, right: str, width: int = 96) -> str:
     return f"[dim]{left}{fill}{tail}[/]"
 
 
+# Loading screen: a candlestick chart "draws in" left→right as the load progresses,
+# crossing a dim track and then consuming the DEEPBOOK PREDICT wordmark letter by
+# letter until, at 100%, it's a full chart. Heights are a fixed, slightly-bullish
+# sequence so the reveal reads as one coherent chart rather than flicker.
+_EIGHTHS = " ▁▂▃▄▅▆▇█"
+_LOADING_TEXT = "DEEPBOOK PREDICT"
+_LOADING_CHART = (
+    3, 4, 5, 4, 3, 4, 5, 6, 5, 4, 5, 6, 7, 6, 5, 6, 5, 4, 5, 6, 7,
+    6, 7, 8, 7, 6, 7, 8, 7, 6, 7, 8, 7, 8, 7, 8, 6, 7, 8, 7, 8, 8,
+)
+
+
 def loading_markup(progress: int, label: str | None = None) -> str:
-    width = 34
     progress = max(0, min(100, progress))
+    width = len(_LOADING_CHART)
+    tstart = width - len(_LOADING_TEXT)  # column where the wordmark begins
     filled = round(width * progress / 100)
-    bar = "█" * filled + "░" * (width - filled)
-    line = f"[{fmt.BLUE}]▕{bar}▏[/] [b]{progress:>3}%[/]"
-    # `label` is only used to surface a load error on the otherwise bare bar.
+    candles = "".join(_EIGHTHS[_LOADING_CHART[i]] for i in range(filled))
+    if filled < tstart:
+        track = "·" * (tstart - filled)
+        text = _LOADING_TEXT
+    else:  # the chart has started eating into the wordmark
+        track = ""
+        text = _LOADING_TEXT[filled - tstart:]
+    line = (
+        f"[{fmt.BLUE}]{candles}[/][dim]{track}[/][b {fmt.BLUE}]{text}[/]"
+        f"  [b {fmt.BLUE}]{progress:>3}%[/]"
+    )
+    # `label` is only used to surface a load error under the bar.
     return line if label is None else f"{line}\n[red]{escape(label)}[/]"
 
 
