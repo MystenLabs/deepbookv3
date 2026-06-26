@@ -340,6 +340,11 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
     config.set_trading_paused(&self.admin_cap, paused);
 }
 
+/// Pause / unpause global trading through a market bundle.
+public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
+    self.set_trading_paused(&mut market.config, paused);
+}
+
 /// Pause / unpause minting for one expiry market through the real admin path.
 public fun set_expiry_mint_paused(
     self: &Fixture,
@@ -348,6 +353,11 @@ public fun set_expiry_mint_paused(
     paused: bool,
 ) {
     market.set_mint_paused(config, &self.admin_cap, paused);
+}
+
+/// Pause / unpause minting for one expiry market through a market bundle.
+public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
+    self.set_expiry_mint_paused(&mut market.market, &market.config, paused);
 }
 
 public fun set_template_zero_min_fee(self: &mut Fixture) {
@@ -727,6 +737,33 @@ public fun mint_bundle(
     )
 }
 
+/// Mint one order through a market/account bundle while substituting an explicit
+/// Block Scholes feed for binding-guard tests.
+public fun mint_bundle_with_bs(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): u256 {
+    self.mint(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+    )
+}
+
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
@@ -850,6 +887,29 @@ public fun redeem(
     )
 }
 
+/// Close a live order through a market/account bundle while substituting an
+/// explicit Pyth feed for binding-guard tests.
+public fun redeem_bundle_with_pyth(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
+    )
+}
+
 /// Permissionless settled redeem (no owner auth): clears a settled order using app
 /// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
 /// Block Scholes feed.
@@ -879,6 +939,26 @@ public fun redeem_settled(
     );
     return_shared(account_registry);
     (closed_id, replacement_id)
+}
+
+/// Permissionless settled redeem through a market/account bundle.
+public fun redeem_settled_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem_settled(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        order_id,
+        close_quantity,
+    )
 }
 
 /// Run the passive settlement gate against the fixture clock and return whether the
