@@ -241,16 +241,13 @@ sui move build --path packages/account --warnings-are-errors
 
 ## Tests
 
-Account has dedicated unit tests in `tests/account_tests.move`. This PR keeps the
-package on the repo-standard stable/testnet Sui framework, which does not yet
-expose the accumulator root constructor used by the custody tests. The
-root-dependent deposit/withdraw cases are therefore disabled on this branch.
+Account has dedicated unit tests in `tests/account_tests.move`. The current Sui
+framework lock exposes the empty-root accumulator test constructor, so stored
+balance deposit/withdraw custody tests run in-package.
 
 ```bash
 sui move test --path packages/account --gas-limit 100000000000
 ```
 
-See `ACCUMULATOR_TESTING_STATUS.md` for the current dependency choice, the
-nightly verification path that can re-enable empty-root tests, and the remaining
-accumulator-backed flows that still need stable framework or integration coverage
-before mainnet.
+See `ACCUMULATOR_TESTING_STATUS.md` for the remaining accumulator-backed flows
+that still need framework support or integration coverage before mainnet.

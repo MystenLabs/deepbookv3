@@ -154,10 +154,7 @@ public fun migrate(feed: &mut BlockScholesForwardFeed) {
 
 /// Create and share a BS forward feed for `bs_source_id`.
 /// Package-only: `registry` owns source-catalog uniqueness.
-public(package) fun create_and_share(
-    bs_source_id: u32,
-    ctx: &mut TxContext,
-): ID {
+public(package) fun create_and_share(bs_source_id: u32, ctx: &mut TxContext): ID {
     let feed = BlockScholesForwardFeed {
         id: object::new(ctx),
         bs_source_id,
@@ -231,11 +228,4 @@ fun normalized_forward_from_read(read: &OracleRead<RawForward>): Option<OracleRe
             raw.forward,
         ),
     )
-}
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun set_version_for_testing(feed: &mut BlockScholesForwardFeed, version: u64) {
-    feed.version = version;
 }

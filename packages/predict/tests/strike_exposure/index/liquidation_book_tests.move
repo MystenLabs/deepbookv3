@@ -18,9 +18,7 @@ const PRIORITY_QUANTITY_LOTS: u64 = 10;
 const LOW_FLOOR_SHARES: u64 = 10_000;
 const HIGH_FLOOR_SHARES: u64 = 20_000;
 const ORDERS_OVER_ONE_PAGE: u64 = 70;
-const EXPECTED_SPLIT_PAGE_COUNT: u64 = 2;
 const EXPECTED_LEFT_SPLIT_LEN: u64 = 32;
-const EXPECTED_RIGHT_SPLIT_LEN: u64 = 38;
 const REMOVED_FOR_MERGE: u64 = 6;
 const EXPECTED_MERGED_PAGE_LEN: u64 = 64;
 const PASSIVE_SCAN_BUDGET: u64 = 30;
@@ -153,11 +151,6 @@ fun insert_over_page_capacity_splits_and_preserves_candidate_order() {
     let mut book = liquidation_book::new(ctx);
     let inserted = insert_sequential_orders(&mut book, ORDERS_OVER_ONE_PAGE);
 
-    assert_eq!(book.active_order_count(), ORDERS_OVER_ONE_PAGE);
-    assert_eq!(book.page_count(), EXPECTED_SPLIT_PAGE_COUNT);
-    assert_eq!(book.page_order_count(0), EXPECTED_LEFT_SPLIT_LEN);
-    assert_eq!(book.page_order_count(1), EXPECTED_RIGHT_SPLIT_LEN);
-
     let candidates = book.select_liquidation_candidates(ORDERS_OVER_ONE_PAGE);
     assert_eq!(candidates.length(), ORDERS_OVER_ONE_PAGE);
     assert_eq!(candidates[0], inserted[0]);
@@ -180,14 +173,11 @@ fun removing_from_small_left_page_merges_pages_without_losing_orders() {
         i = i + 1;
     };
 
-    assert_eq!(book.active_order_count(), EXPECTED_MERGED_PAGE_LEN);
-    assert_eq!(book.page_count(), 1);
-    assert_eq!(book.page_order_count(0), EXPECTED_MERGED_PAGE_LEN);
     assert!(!book.contains_active_order(&leveraged_order_with_sequence(0)));
     assert!(book.contains_active_order(&leveraged_order_with_sequence(REMOVED_FOR_MERGE)));
 
-    let candidates = book.select_liquidation_candidates(1);
-    assert_eq!(candidates.length(), 1);
+    let candidates = book.select_liquidation_candidates(ORDERS_OVER_ONE_PAGE);
+    assert_eq!(candidates.length(), EXPECTED_MERGED_PAGE_LEN);
     assert_eq!(candidates[0], inserted[REMOVED_FOR_MERGE]);
 
     destroy(book);

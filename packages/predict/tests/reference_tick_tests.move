@@ -12,7 +12,7 @@ module deepbook_predict::reference_tick_tests;
 
 use deepbook_predict::{
     constants,
-    expiry_market::{Self, ExpiryMarket},
+    expiry_market,
     oracle_fixture::{Self, OracleFixture},
     order::Order,
     pricing::Pricer,
@@ -42,10 +42,14 @@ public struct ExposureHarness has key {
 #[test, expected_failure(abort_code = expiry_market::EReferenceTickObservationMissing)]
 fun set_reference_tick_missing_exact_history_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (pyth, _bs_spot, _bs_forward, _bs_svi, oracle_registry, config) = fx.take_oracle();
-    let mut market = take_market(&mut fx);
+    let oracle = fx.take_oracle_bundle();
+    let mut market = fx.take_expiry_market();
 
-    market.set_reference_tick(&config, &oracle_registry, &pyth);
+    market.set_reference_tick(
+        oracle_fixture::config(&oracle),
+        oracle_fixture::oracle_registry(&oracle),
+        oracle_fixture::pyth(&oracle),
+    );
     abort EUnexpectedSuccess
 }
 
@@ -65,7 +69,7 @@ fun set_reference_tick_wrong_pyth_feed_aborts() {
     let rogue_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(rogue_pyth_id);
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let config = fx.scenario_mut().take_shared<deepbook_predict::protocol_config::ProtocolConfig>();
-    let mut market = take_market(&mut fx);
+    let mut market = fx.take_expiry_market();
 
     market.set_reference_tick(&config, &oracle_registry, &rogue_pyth);
     abort EUnexpectedSuccess
@@ -74,36 +78,48 @@ fun set_reference_tick_wrong_pyth_feed_aborts() {
 #[test]
 fun set_reference_tick_floors_spot_and_is_idempotent() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config) = fx.take_oracle();
-    let mut market = take_market(&mut fx);
+    let mut oracle = fx.take_oracle_bundle();
+    let mut market = fx.take_expiry_market();
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
     assert_eq!(
         source_timestamp_ms,
         test_constants::default_expiry_ms() - test_constants::default_cadence_period_ms(),
     );
 
-    fx.insert_exact_pyth(&mut pyth, REFERENCE_SPOT_WITH_DUST, source_timestamp_ms);
-    let first_tick = market.set_reference_tick(&config, &oracle_registry, &pyth);
-    let second_tick = market.set_reference_tick(&config, &oracle_registry, &pyth);
+    fx.insert_exact_pyth_bundle(&mut oracle, REFERENCE_SPOT_WITH_DUST, source_timestamp_ms);
+    let first_tick = market.set_reference_tick(
+        oracle_fixture::config(&oracle),
+        oracle_fixture::oracle_registry(&oracle),
+        oracle_fixture::pyth(&oracle),
+    );
+    let second_tick = market.set_reference_tick(
+        oracle_fixture::config(&oracle),
+        oracle_fixture::oracle_registry(&oracle),
+        oracle_fixture::pyth(&oracle),
+    );
 
     assert_eq!(first_tick, REFERENCE_TICK);
     assert_eq!(second_tick, REFERENCE_TICK);
     assert_eq!(market.reference_tick().destroy_some(), REFERENCE_TICK);
 
-    return_market(market);
-    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    oracle_fixture::return_expiry_market(market);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidReferenceTick)]
 fun set_reference_tick_floor_to_zero_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, _bs_spot, _bs_forward, _bs_svi, oracle_registry, config) = fx.take_oracle();
-    let mut market = take_market(&mut fx);
+    let mut oracle = fx.take_oracle_bundle();
+    let mut market = fx.take_expiry_market();
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
 
-    fx.insert_exact_pyth(&mut pyth, TINY_SPOT, source_timestamp_ms);
-    market.set_reference_tick(&config, &oracle_registry, &pyth);
+    fx.insert_exact_pyth_bundle(&mut oracle, TINY_SPOT, source_timestamp_ms);
+    market.set_reference_tick(
+        oracle_fixture::config(&oracle),
+        oracle_fixture::oracle_registry(&oracle),
+        oracle_fixture::pyth(&oracle),
+    );
     abort EUnexpectedSuccess
 }
 
@@ -173,19 +189,9 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
 
 fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        config,
-    ) = fx.take_oracle();
-    fx.prepare_real_oracle(
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
-        &mut pyth,
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
         ref_data::spot(LARGE_VARIANCE_SCENARIO),
         ref_data::forward(LARGE_VARIANCE_SCENARIO),
         ref_data::svi_a(LARGE_VARIANCE_SCENARIO),
@@ -196,15 +202,8 @@ fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
         ref_data::svi_m_magnitude(LARGE_VARIANCE_SCENARIO),
         ref_data::svi_m_is_negative(LARGE_VARIANCE_SCENARIO),
     );
-    let pricer = fx.load_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-    );
-    oracle_fixture::return_oracle(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, config);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    oracle_fixture::return_oracle_bundle(oracle);
     let harness_id = share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
@@ -226,15 +225,6 @@ fun share_exposure_harness(fx: &mut OracleFixture): ID {
     );
     transfer::share_object(ExposureHarness { id, exposure });
     harness_id
-}
-
-fun take_market(fx: &mut OracleFixture): ExpiryMarket {
-    let expiry_id = fx.expiry_id();
-    fx.scenario_mut().take_shared_by_id<ExpiryMarket>(expiry_id)
-}
-
-fun return_market(market: ExpiryMarket) {
-    return_shared(market);
 }
 
 fun cleanup_priced_harness(fx: OracleFixture, harness: ExposureHarness) {

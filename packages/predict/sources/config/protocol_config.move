@@ -380,15 +380,5 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
     }
 }
 
-// `new_for_testing` removed: tests obtain the ProtocolConfig that
-// `registry::init_for_testing` shares via `create_and_share`, taken with
-// `take_shared<ProtocolConfig>()`.
-
-#[test_only]
-/// Force the version watermark to an arbitrary value. Irreducible test seam: the
-/// production `bump_version_watermark` can only advance the floor to the running
-/// `current_version!()`, never above it, so the `assert_version` disabled-version
-/// path (a running version below the floor) is otherwise unreachable from a test.
-public fun set_version_watermark_for_testing(config: &mut ProtocolConfig, watermark: u64) {
-    config.version_watermark = watermark;
-}
+// Tests obtain the ProtocolConfig that `registry::init_for_testing` shares via
+// `create_and_share`, taken with `take_shared<ProtocolConfig>()`.

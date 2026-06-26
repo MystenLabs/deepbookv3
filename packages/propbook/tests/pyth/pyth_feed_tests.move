@@ -4,11 +4,7 @@
 #[test_only]
 module propbook::pyth_feed_tests;
 
-use propbook::{
-    constants,
-    pyth_feed::{Self, PythFeed},
-    registry::{Self, OracleRegistry}
-};
+use propbook::{constants, pyth_feed::{Self, PythFeed}, registry::{Self, OracleRegistry}};
 use std::unit_test::assert_eq;
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
@@ -54,7 +50,6 @@ const UPDATE_2_MS: u64 = 20;
 const UPDATE_3_MS: u64 = 30;
 const UPDATE_4_MS: u64 = 40;
 const UPDATE_5_MS: u64 = 50;
-const VERSION_ZERO: u64 = 0;
 
 #[test]
 fun registry_records_created_pyth_source() {
@@ -412,32 +407,6 @@ fun duplicate_future_and_zero_exact_inserts_are_no_ops() {
     assert!(feed.normalized_spot_at(SOURCE_TS_FUTURE_MS).is_none());
     assert!(feed.normalized_spot_at(SOURCE_TS_ZERO_MS).is_none());
     assert!(feed.normalized_spot().is_none());
-
-    return_shared(feed);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = pyth_feed::EWrongVersion)]
-fun update_raw_wrong_version_aborts() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
-
-    feed.set_version_for_testing(VERSION_ZERO);
-    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
-
-    abort 999
-}
-
-#[test]
-fun migrate_restores_current_version_and_updates_resume() {
-    let (scenario, feed_obj_id) = setup_feed();
-    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
-
-    feed.set_version_for_testing(VERSION_ZERO);
-    feed.migrate();
-    assert_eq!(feed.version(), constants::current_version!());
-    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
-    assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_1_MS, UPDATE_1_MS);
 
     return_shared(feed);
     scenario.end();

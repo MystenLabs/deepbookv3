@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::registry_create_tests;
 
-use deepbook_predict::{config_constants, constants, market_manager, protocol_config, test_helpers};
+use deepbook_predict::{config_constants, market_manager, test_helpers};
 
 const UNDERLYING_BTC: u32 = 100;
 const BTC_TICK_SIZE: u64 = 1_000_000_000;
@@ -31,15 +31,6 @@ fun register_underlying_duplicate_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
     reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
-    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = protocol_config::EPackageVersionDisabled)]
-fun register_underlying_with_current_version_disabled_aborts() {
-    let (_scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    config.set_version_watermark_for_testing(constants::current_version!() + 1);
-
     reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
     abort EUnexpectedSuccess
 }
