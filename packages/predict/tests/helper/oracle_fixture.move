@@ -501,7 +501,7 @@ public fun expiry_id(self: &OracleFixture): ID { self.expiry_id }
 public fun expiry(self: &OracleFixture): u64 { self.expiry }
 
 /// Tear down the fixture and all owned objects. Shared objects are released via
-/// `return_oracle` in the test and reclaimed by `end`.
+/// `return_oracle_bundle` in the test and reclaimed by `end`.
 public fun finish(self: OracleFixture) {
     let OracleFixture {
         scenario,

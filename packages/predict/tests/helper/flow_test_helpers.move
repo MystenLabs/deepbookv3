@@ -81,9 +81,10 @@ public struct Fixture {
 }
 
 /// A trader handle: the canonical `AccountWrapper` ID plus its owner. The wrapper is
-/// a shared object, so a flow test holds this lightweight handle and `take_account`s
-/// the wrapper for the duration of a trade transaction (it cannot survive a
-/// `next_tx`, like every other shared object). Replaces the owned `PredictManager`.
+/// a shared object, so a flow test holds this lightweight handle and takes the
+/// wrapper through `take_account_bundle` for the duration of a trade transaction
+/// (it cannot survive a `next_tx`, like every other shared object). Replaces the
+/// owned `PredictManager`.
 public struct Trader has copy, drop, store {
     wrapper_id: ID,
     owner: address,
@@ -422,7 +423,7 @@ public fun take_bs(self: &Fixture): BlockScholesFeed {
     )
 }
 
-/// Return a `take_bs` / `take_market` Block Scholes bundle.
+/// Return a `take_bs` Block Scholes bundle.
 public fun return_bs(bs: BlockScholesFeed) {
     bs.return_feed();
 }

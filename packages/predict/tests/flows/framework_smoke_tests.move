@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Smoke tests for the reusable test-framework scaffolding: `setup_everything`,
-/// `check_manager` (ExpectedManagerState), `return_market`, and the minimal
-/// `oracle_fixture`. These validate the plumbing, not protocol economics.
+/// bundle state checks/returns, and the minimal `oracle_fixture`. These validate
+/// the plumbing, not protocol economics.
 #[test_only]
 module deepbook_predict::framework_smoke_tests;
 
@@ -18,7 +18,7 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
 #[test]
-fun setup_everything_check_manager_return_market_smoke() {
+fun setup_everything_check_manager_bundle_return_smoke() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
 
     // Mint one 1x in-range order through the fixture; the account owner (alice) is
