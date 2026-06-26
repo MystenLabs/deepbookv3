@@ -191,23 +191,12 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     fund_empty_market(&mut fx, e2);
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.take_bs();
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let mut market = fx.take_market_bundle(e1);
 
-    let mut val = fx.start_flush(&mut config, &vault);
-    fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
     // Snapshot held two markets; only one was valued.
-    let _ = val.finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
+    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
 
     abort 999
 }
@@ -220,16 +209,11 @@ fun value_expiry_aborts_on_double_value() {
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.take_bs();
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
+    let mut market = fx.take_market_bundle(e);
 
-    let mut val = fx.start_flush(&mut config, &vault);
-    fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
-    fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
 
     abort 999
 }
@@ -244,23 +228,13 @@ fun mint_during_valuation_aborts() {
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::alice());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.take_bs();
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(e);
+    let mut account = fx.take_account_bundle(&trader);
 
-    config.begin_valuation();
-    fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    helpers::begin_valuation(&mut market);
+    fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
@@ -278,14 +252,10 @@ fun rebalance_during_valuation_aborts() {
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
+    let mut market = fx.take_market_bundle(e);
 
-    config.begin_valuation();
-    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
+    helpers::begin_valuation(&mut market);
+    fx.rebalance_expiry_cash_bundle(&mut market);
 
     abort 999
 }
@@ -316,24 +286,12 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::alice());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.take_bs();
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(e);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let mut val = fx.start_flush(&mut config, &vault);
-    fx.value_expiry(&mut val, &mut vault, &mut market, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
+    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
     assert_eq!(
         pool_nav,
         constants::expiry_cash_floor!() + (IDLE_SEED - constants::expiry_cash_floor!()),
@@ -341,29 +299,20 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
 
     // Lock released by finish: the same mint that would have aborted mid-flow now
     // succeeds, adding a position.
-    let count_before = helpers::position_count(&wrapper, market.id());
-    fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let expiry_id = helpers::market(&market).id();
+    let count_before = helpers::position_count_bundle(&account, expiry_id);
+    fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    assert_eq!(helpers::position_count(&wrapper, market.id()), count_before + 1);
+    assert_eq!(helpers::position_count_bundle(&account, expiry_id), count_before + 1);
 
-    helpers::return_account(wrapper, root);
-    return_shared(config);
-    return_shared(pyth);
-    helpers::return_bs(bs);
-    return_shared(oracle_registry);
-    return_shared(vault);
-    return_shared(market);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -454,33 +403,27 @@ fun new_funded_empty_market(fx: &mut helpers::Fixture, expiry_ms: u64): ID {
 /// Prepare an already-created market's oracle live and fund it to the cash floor.
 fun fund_empty_market(fx: &mut helpers::Fixture, e: ID) {
     fx.scenario_mut().next_tx(test_constants::admin());
-    let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
-    fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    let mut market = fx.take_market_bundle(e);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    helpers::return_market_bundle(market);
 }
 
 /// Prepare + fund an already-created market and mint one 1x ATM up order into it.
 fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, e: ID) {
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, oracle_registry, mut vault, mut market, config) = fx.take_market(e);
-    let mut wrapper = fx.take_account(trader);
-    let root = fx.take_root();
-    fx.prepare_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
-    fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let mut market = fx.take_market_bundle(e);
+    let mut account = fx.take_account_bundle(trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    helpers::return_account(wrapper, root);
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
 }

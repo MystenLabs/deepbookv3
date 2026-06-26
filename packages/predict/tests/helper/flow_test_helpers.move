@@ -539,6 +539,11 @@ public fun position_count(wrapper: &AccountWrapper, expiry_id: ID): u64 {
     predict_account::expiry_position_count(wrapper.load_account(), expiry_id)
 }
 
+/// Open position count for a bundled account in `expiry_id`.
+public fun position_count_bundle(account: &AccountBundle, expiry_id: ID): u64 {
+    position_count(&account.wrapper, expiry_id)
+}
+
 /// Cumulative trading fees the trader's account paid into `expiry_id`.
 public fun fees_paid(wrapper: &AccountWrapper, expiry_id: ID): u64 {
     predict_account::trading_fees_paid(wrapper.load_account(), expiry_id)
@@ -993,6 +998,11 @@ public fun ensure_settled(
     market.ensure_settled(oracle_registry, pyth, &self.clock)
 }
 
+/// Run the passive settlement gate through a market bundle.
+public fun ensure_settled_bundle(self: &Fixture, market: &mut MarketBundle): bool {
+    self.ensure_settled(&mut market.market, &market.oracle_registry, &market.pyth)
+}
+
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
 /// Returns the number of orders liquidated.
 public fun liquidate(
@@ -1066,6 +1076,23 @@ public fun value_expiry(
     );
 }
 
+/// Value one expiry through a market bundle.
+public fun value_expiry_bundle(
+    self: &Fixture,
+    valuation: &mut PoolValuation,
+    market: &mut MarketBundle,
+) {
+    self.value_expiry(
+        valuation,
+        &mut market.vault,
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        &market.bs,
+    );
+}
+
 public fun rebalance_expiry_cash(
     self: &Fixture,
     vault: &mut PoolVault,
@@ -1075,6 +1102,33 @@ public fun rebalance_expiry_cash(
     pyth: &PythFeed,
 ) {
     vault.rebalance_expiry_cash(market, config, oracle_registry, pyth, &self.clock);
+}
+
+/// Rebalance expiry cash through a market bundle.
+public fun rebalance_expiry_cash_bundle(self: &Fixture, market: &mut MarketBundle) {
+    self.rebalance_expiry_cash(
+        &mut market.vault,
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+    );
+}
+
+/// Rebalance expiry cash through a market bundle while substituting an explicit
+/// Pyth feed for binding-guard tests.
+public fun rebalance_expiry_cash_bundle_with_pyth(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    pyth: &PythFeed,
+) {
+    self.rebalance_expiry_cash(
+        &mut market.vault,
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        pyth,
+    );
 }
 
 public fun current_nav(
@@ -1169,6 +1223,28 @@ public fun start_flush(
     plp::start_pool_valuation(config, vault, proof)
 }
 
+/// Start a pool-NAV flush through a market bundle.
+public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle): PoolValuation {
+    self.start_flush(&mut market.config, &market.vault)
+}
+
+/// Finish a pool-NAV flush through a market bundle.
+public fun finish_flush_bundle(
+    self: &mut Fixture,
+    valuation: PoolValuation,
+    market: &mut MarketBundle,
+    supply_budget: Option<u64>,
+    withdraw_budget: Option<u64>,
+): u64 {
+    valuation.finish_flush(
+        &mut market.vault,
+        &mut market.config,
+        supply_budget,
+        withdraw_budget,
+        self.scenario.ctx(),
+    )
+}
+
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
@@ -1251,6 +1327,16 @@ public fun check_manager(
     assert_eq!(predict_account::inactive_stake(account), expected.inactive_stake);
 }
 
+/// Assert a bundled account's full state sheet.
+public fun check_manager_bundle(
+    self: &Fixture,
+    account: &AccountBundle,
+    expiry_id: ID,
+    expected: ExpectedManagerState,
+) {
+    self.check_manager(&account.wrapper, &account.root, expiry_id, expected);
+}
+
 // === Accessors ===
 
 public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario }
@@ -1266,6 +1352,14 @@ public fun market(bundle: &MarketBundle): &ExpiryMarket { &bundle.market }
 
 /// Mutably borrow the expiry market inside a bundle for setup-only cash seeding.
 public fun market_mut(bundle: &mut MarketBundle): &mut ExpiryMarket { &mut bundle.market }
+
+/// Borrow the pool vault inside a bundle for independent assertions.
+public fun vault(bundle: &MarketBundle): &PoolVault { &bundle.vault }
+
+/// Engage the valuation lock on a bundled protocol config.
+public fun begin_valuation(bundle: &mut MarketBundle) {
+    bundle.config.begin_valuation();
+}
 
 /// Account balance through an account bundle.
 public fun account_balance_bundle<T>(self: &Fixture, account: &AccountBundle): u64 {
@@ -1325,6 +1419,15 @@ public fun insert_exact_settlement_spot(
         self.clock.timestamp_ms(),
         true,
     );
+}
+
+/// Insert an exact settlement spot for the bundled market expiry.
+public fun insert_exact_settlement_spot_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    spot: u64,
+) {
+    self.insert_exact_settlement_spot(&mut market.pyth, market.market.expiry(), spot);
 }
 
 public fun vault_id(self: &Fixture): ID { self.vault_id }
