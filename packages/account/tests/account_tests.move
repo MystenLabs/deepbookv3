@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-// INITIAL_DEPOSIT/WITHDRAW_AMOUNT/POST_WITHDRAW_BALANCE, the `coin`/`Clock` imports, and
-// one `let mut` are used only by the AccumulatorRoot-dependent deposit/withdraw tests
-// disabled on this branch (see accumulator_support.move).
-#[allow(unused_const, unused_let_mut)]
 module account::account_tests;
 
 use account::{
@@ -99,7 +95,6 @@ fun creating_second_account_for_same_owner_aborts() {
     abort 999
 }
 
-/* DISABLED(testnet-fw): needs AccumulatorRoot — nightly create_for_testing is absent on testnet; see accumulator_support.move. Restore the file/test when stable Sui ships it.
 #[test]
 fun owner_auth_opens_account_and_coin_paths() {
     let mut scenario = setup_with_account(ALICE);
@@ -110,14 +105,10 @@ fun owner_auth_opens_account_and_coin_paths() {
     clock.increment_for_testing(1);
     let auth = account::generate_auth(scenario.ctx());
     let account = wrapper.load_account_mut(auth);
-    account.deposit<TEST_COIN>(
-        coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()),
-        &root,
-        &clock,
-    );
+    account.deposit<TEST_COIN>(coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()));
     assert_eq!(account.balance<TEST_COIN>(&root, &clock), INITIAL_DEPOSIT);
 
-    let withdrawn = account.withdraw<TEST_COIN>(WITHDRAW_AMOUNT, &root, &clock, scenario.ctx());
+    let withdrawn = account.withdraw<TEST_COIN>(WITHDRAW_AMOUNT, scenario.ctx());
     assert_eq!(withdrawn.value(), WITHDRAW_AMOUNT);
     destroy(withdrawn);
     assert_eq!(account.balance<TEST_COIN>(&root, &clock), POST_WITHDRAW_BALANCE);
@@ -128,7 +119,6 @@ fun owner_auth_opens_account_and_coin_paths() {
     scenario.end();
 }
 
-*/
 #[test, expected_failure(abort_code = account::EInvalidOwner)]
 fun owner_auth_from_wrong_sender_aborts() {
     let mut scenario = setup_with_account(ALICE);
@@ -141,29 +131,21 @@ fun owner_auth_from_wrong_sender_aborts() {
     abort 999
 }
 
-/* DISABLED(testnet-fw): needs AccumulatorRoot — nightly create_for_testing is absent on testnet; see accumulator_support.move. Restore the file/test when stable Sui ships it.
 #[test, expected_failure(abort_code = account::EBalanceTooLow)]
 fun withdrawing_more_than_available_aborts() {
     let mut scenario = setup_with_account(ALICE);
     scenario.next_tx(ALICE);
     let mut wrapper = take_account_wrapper(&scenario, ALICE);
-    let root = accumulator_support::take_root(&scenario);
-    let clock = scenario.take_shared<Clock>();
     let auth = account::generate_auth(scenario.ctx());
     let account = wrapper.load_account_mut(auth);
 
-    account.deposit<TEST_COIN>(
-        coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()),
-        &root,
-        &clock,
-    );
-    let coin = account.withdraw<TEST_COIN>(INITIAL_DEPOSIT + 1, &root, &clock, scenario.ctx());
+    account.deposit<TEST_COIN>(coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()));
+    let coin = account.withdraw<TEST_COIN>(INITIAL_DEPOSIT + 1, scenario.ctx());
     destroy(coin);
 
     abort 999
 }
 
-*/
 #[test]
 fun object_auth_opens_self_owned_account() {
     let mut scenario = setup();

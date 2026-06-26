@@ -3,24 +3,21 @@
 
 /// The single home of `sui::accumulator` test plumbing for the account suite.
 ///
-/// DISABLED on the stable/testnet framework: `sui::accumulator::create_for_testing`
-/// (the only `AccumulatorRoot` constructor) ships ONLY in the nightly framework, so
-/// this branch constructs NO root and the root-dependent custody tests in
-/// `account_tests.move` are commented out (see `ACCUMULATOR_TESTING_STATUS.md`). To
-/// re-enable when a stable Sui ships the constructor: restore the nightly body of
-/// `create_shared_root` (`accumulator::create_for_testing(scenario.ctx())`) and
-/// uncomment the custody tests.
+/// The current testnet framework exposes `sui::accumulator::create_for_testing`,
+/// so package-local tests can construct an empty root. Move unit tests still cannot
+/// populate it with nonzero settlement-barrier funds; see
+/// `ACCUMULATOR_TESTING_STATUS.md`.
 #[test_only]
 module account::accumulator_support;
 
-use sui::accumulator::AccumulatorRoot;
-use sui::test_scenario::Scenario;
+use sui::{accumulator::{Self, AccumulatorRoot}, test_scenario::Scenario};
 
-/// No-op on the testnet framework (the nightly `create_for_testing` is unavailable).
-public fun create_shared_root(_scenario: &mut Scenario) {}
+/// Create the single shared empty accumulator root used by root-dependent tests.
+public fun create_shared_root(scenario: &mut Scenario) {
+    accumulator::create_for_testing(scenario.ctx());
+}
 
-/// Reachable only from root-dependent tests, which are disabled on this branch; with
-/// no root constructed it aborts (no shared `AccumulatorRoot`).
+/// Take the shared empty accumulator root.
 public fun take_root(scenario: &Scenario): AccumulatorRoot {
     scenario.take_shared<AccumulatorRoot>()
 }
