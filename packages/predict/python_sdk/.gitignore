@@ -1,9 +1,0 @@
-__pycache__/
-*.pyc
-*.egg-info/
-.venv/
-venv/
-build/
-dist/
-.predict_state.json
-*.log
