@@ -27,18 +27,12 @@ fun redeem_in_mint_timestamp_aborts() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let order = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
@@ -46,14 +40,9 @@ fun redeem_in_mint_timestamp_aborts() {
     );
 
     // Same fixture clock as the mint: the guard must reject this redeem.
-    fx.redeem(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    fx.redeem_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         order,
         QUANTITY,
     );
@@ -68,53 +57,40 @@ fun redeem_after_clock_advances_succeeds() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let order = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
         LEVERAGE_ONE_X,
     );
-    assert!(helpers::has_position(&wrapper, expiry_id, order));
+    assert!(helpers::has_position_bundle(&account, expiry_id, order));
 
     // Advance to a later timestamp and re-seed a fresh live oracle, then a full
     // close goes through and clears the position.
     fx.set_clock_for_testing(REDEEM_MS);
-    fx.prepare_live_oracle_at(
-        &market,
-        &mut pyth,
-        &mut bs,
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
         test_constants::default_live_price(),
         REDEEM_SOURCE_TS,
     );
 
-    let (closed, replacement) = fx.redeem(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let (closed, replacement) = fx.redeem_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         order,
         QUANTITY,
     );
 
     assert_eq!(closed, order);
     assert!(replacement.is_none());
-    assert!(!helpers::has_position(&wrapper, expiry_id, order));
+    assert!(!helpers::has_position_bundle(&account, expiry_id, order));
 
-    helpers::return_account(wrapper, root);
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     fx.finish();
 }

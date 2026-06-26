@@ -50,37 +50,30 @@ fun finite_range_partial_close_preserves_live_solvency() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent; nothing owed, nothing spent.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
-    helpers::check_market_cash(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
-    fx.check_manager(
-        &wrapper,
-        &root,
+    helpers::check_market_cash_bundle(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
+    fx.check_manager_bundle(
+        &account,
         expiry_id,
         helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
     );
     // --- Mint one 1x order on the first admitted finite range above min_strike,
     // exactly at the money. Principal + fee land in expiry cash; live backing
     // for a zero-floor 1x order is its full quantity.
-    let order_id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order_id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    helpers::check_market_cash(
+    helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(
             seeded_cash + MINT_PRINCIPAL + MINT_MIN_FEE,
@@ -88,26 +81,20 @@ fun finite_range_partial_close_preserves_live_solvency() {
             REBATE_AFTER_MINT,
         ),
     );
-    fx.check_manager(
-        &wrapper,
-        &root,
+    fx.check_manager_bundle(
+        &account,
         expiry_id,
         helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
     );
-    assert!(helpers::has_position(&wrapper, expiry_id, order_id));
+    assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
     // --- Partial live close of exactly half at the unchanged ATM mark. The
     // close removes the order's entire live terms and reinserts the exact
     // residual (cancel-and-replace), so liability drops to the surviving half.
-    fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-    let (_closed, replacement) = fx.redeem(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    let (_closed, replacement) = fx.redeem_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         order_id,
         HALF_CLOSE,
     );
@@ -116,21 +103,19 @@ fun finite_range_partial_close_preserves_live_solvency() {
     assert_eq!(survivor.quantity(), HALF_CLOSE);
     assert_eq!(survivor.floor_shares(), 0);
     let cash_after_close = seeded_cash + MINT_PRINCIPAL + MINT_MIN_FEE - CLOSE_NET_PAYOUT;
-    helpers::check_market_cash(
+    helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(cash_after_close, HALF_CLOSE, REBATE_AFTER_CLOSE),
     );
-    fx.check_manager(
-        &wrapper,
-        &root,
+    fx.check_manager_bundle(
+        &account,
         expiry_id,
         helpers::expected_manager_state(POST_CLOSE_BALANCE, MINT_MIN_FEE + CLOSE_FEE, 1, 0, 0),
     );
-    assert!(!helpers::has_position(&wrapper, expiry_id, order_id));
-    assert!(helpers::has_position(&wrapper, expiry_id, survivor_id));
+    assert!(!helpers::has_position_bundle(&account, expiry_id, order_id));
+    assert!(helpers::has_position_bundle(&account, expiry_id, survivor_id));
 
-    helpers::return_account(wrapper, root);
-
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     fx.finish();
 }

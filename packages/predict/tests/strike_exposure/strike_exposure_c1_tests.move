@@ -21,18 +21,7 @@
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
-use account::account::AccountWrapper;
-use deepbook_predict::{
-    block_scholes_feed::BlockScholesFeed,
-    constants,
-    expiry_market::ExpiryMarket,
-    flow_test_helpers as helpers,
-    plp::PoolVault,
-    protocol_config::ProtocolConfig,
-    test_constants
-};
-use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
-use sui::accumulator::AccumulatorRoot;
+use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
@@ -65,18 +54,12 @@ fun run_live_close_schedule(closes: vector<u64>) {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let order_id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order_id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
@@ -89,39 +72,20 @@ fun run_live_close_schedule(closes: vector<u64>) {
     let mut survivor_id = order_id;
     let mut i = 0;
     while (i < closes.length()) {
-        fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-        let (_closed, replacement) = fx.redeem(
-            &config,
-            &oracle_registry,
-            &mut wrapper,
-            &root,
+        fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+        let (_closed, replacement) = fx.redeem_bundle(
             &mut market,
-            &pyth,
-            &bs,
+            &mut account,
             survivor_id,
             closes[i],
         );
         survivor_id = replacement.destroy_some();
-        assert!(helpers::has_position(&wrapper, expiry_id, survivor_id));
-        helpers::assert_market_backed(&market);
+        assert!(helpers::has_position_bundle(&account, expiry_id, survivor_id));
+        helpers::assert_market_backed_bundle(&market);
         i = i + 1;
     };
 
-    cleanup(fx, pyth, bs, oracle_registry, vault, market, config, wrapper, root);
-}
-
-fun cleanup(
-    fx: helpers::Fixture,
-    pyth: PythFeed,
-    bs: BlockScholesFeed,
-    oracle_registry: OracleRegistry,
-    vault: PoolVault,
-    market: ExpiryMarket,
-    config: ProtocolConfig,
-    wrapper: AccountWrapper,
-    root: AccumulatorRoot,
-) {
-    helpers::return_account(wrapper, root);
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     fx.finish();
 }

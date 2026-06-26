@@ -13,32 +13,21 @@ use deepbook_predict::{constants, flow_test_helpers as helpers, strike_exposure,
 fun redeem_above_order_quantity_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, oracle_registry, _vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let order_id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order_id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    fx.advance_live_oracle(&market, &mut pyth, &mut bs, test_constants::default_live_price());
-    fx.redeem(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.redeem_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         order_id,
         test_constants::mint_quantity() + constants::position_lot_size!(),
     );

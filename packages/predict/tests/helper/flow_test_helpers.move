@@ -384,6 +384,16 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Sponsor fee incentives for a market bundle with freshly-minted DUSDC.
+public fun sponsor_fee_incentives_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    amount: u64,
+) {
+    let payment = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
+    market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
+}
+
 /// Take the four shared market objects + the protocol config a flow test mutates.
 /// The config is threaded into the flow-phase methods as a parameter (it cannot be
 /// a `Fixture` field — see module doc) and returned by the test.
@@ -549,6 +559,11 @@ public fun fees_paid(wrapper: &AccountWrapper, expiry_id: ID): u64 {
     predict_account::trading_fees_paid(wrapper.load_account(), expiry_id)
 }
 
+/// Cumulative trading fees paid by a bundled account into `expiry_id`.
+public fun fees_paid_bundle(account: &AccountBundle, expiry_id: ID): u64 {
+    fees_paid(&account.wrapper, expiry_id)
+}
+
 /// Active (this-epoch-effective) DEEP stake on the trader's account.
 public fun active_stake(wrapper: &AccountWrapper): u64 {
     predict_account::active_stake(wrapper.load_account())
@@ -598,6 +613,22 @@ public fun prepare_live_oracle_bundle(
     );
 }
 
+/// Seed a fresh live oracle for a market bundle at an explicit source timestamp.
+public fun prepare_live_oracle_bundle_at(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    self.prepare_live_oracle_at(
+        &market.market,
+        &mut market.pyth,
+        &mut market.bs,
+        live_price,
+        source_timestamp_ms,
+    );
+}
+
 /// `prepare_live_oracle` at an explicit source timestamp (for staleness tests).
 public fun prepare_live_oracle_at(
     self: &mut Fixture,
@@ -631,6 +662,16 @@ public fun set_pyth_price_for_testing(
     source_timestamp_ms: u64,
 ) {
     store_pyth_spot(pyth, live_price, source_timestamp_ms, self.clock.timestamp_ms());
+}
+
+/// Overwrite a market bundle's Pyth spot directly.
+public fun set_pyth_price_for_testing_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    self.set_pyth_price_for_testing(&mut market.pyth, live_price, source_timestamp_ms);
 }
 
 /// Write split Block Scholes spot, forward, and SVI rows for `market`'s expiry
@@ -1026,6 +1067,18 @@ public fun liquidate(
     market.liquidate(config, &pricer, budget)
 }
 
+/// Run a budgeted liquidation pass through a market bundle.
+public fun liquidate_bundle(self: &Fixture, market: &mut MarketBundle, budget: u64): u64 {
+    self.liquidate(
+        &market.config,
+        &market.oracle_registry,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        budget,
+    )
+}
+
 /// Try to liquidate one active leveraged order by ID. Returns whether it was
 /// liquidated.
 public fun liquidate_order(
@@ -1049,6 +1102,18 @@ public fun liquidate_order(
     market.liquidate_order(
         config,
         &pricer,
+        order_id,
+    )
+}
+
+/// Try to liquidate one bundled active leveraged order by ID.
+public fun liquidate_order_bundle(self: &Fixture, market: &mut MarketBundle, order_id: u256): bool {
+    self.liquidate_order(
+        &market.config,
+        &market.oracle_registry,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
         order_id,
     )
 }
@@ -1254,6 +1319,11 @@ public fun assert_market_backed(market: &ExpiryMarket) {
     assert!(market.cash_balance() >= market.payout_liability() + market.rebate_reserve());
 }
 
+/// S1 backing assertion for a market bundle.
+public fun assert_market_backed_bundle(market: &MarketBundle) {
+    assert_market_backed(&market.market);
+}
+
 /// Expected snapshot of one expiry market's cash-side accounting, asserted in one
 /// call by `check_market_cash`.
 public struct ExpectedMarketCash has copy, drop {
@@ -1280,6 +1350,11 @@ public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash
     assert_eq!(market.payout_liability(), expected.payout_liability);
     assert_eq!(market.rebate_reserve(), expected.rebate_reserve);
     assert_market_backed(market);
+}
+
+/// Assert a bundled expiry market's full cash sheet.
+public fun check_market_cash_bundle(market: &MarketBundle, expected: ExpectedMarketCash) {
+    check_market_cash(&market.market, expected);
 }
 
 // === Account state-sheet assertions ===
@@ -1355,6 +1430,9 @@ public fun market_mut(bundle: &mut MarketBundle): &mut ExpiryMarket { &mut bundl
 
 /// Borrow the pool vault inside a bundle for independent assertions.
 public fun vault(bundle: &MarketBundle): &PoolVault { &bundle.vault }
+
+/// Borrow the protocol config inside a bundle for independent snapshot assertions.
+public fun config(bundle: &MarketBundle): &ProtocolConfig { &bundle.config }
 
 /// Engage the valuation lock on a bundled protocol config.
 public fun begin_valuation(bundle: &mut MarketBundle) {

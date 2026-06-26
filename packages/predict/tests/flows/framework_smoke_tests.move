@@ -25,41 +25,33 @@ fun setup_everything_check_manager_return_market_smoke() {
     // the current sender after `create_funded_manager`, but `setup_everything`
     // left the sender at admin — re-establish alice for the owner auth.
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
     // Fully-known pre-trade state sheet: only the deposit has moved.
-    fx.check_manager(
-        &wrapper,
-        &root,
+    fx.check_manager_bundle(
+        &account,
         expiry_id,
         helpers::expected_manager_state(test_constants::default_manager_deposit(), 0, 0, 0, 0),
     );
-    let order_id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order_id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
 
-    assert!(helpers::has_position(&wrapper, expiry_id, order_id));
-    assert_eq!(helpers::position_count(&wrapper, expiry_id), 1);
+    assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
+    assert_eq!(helpers::position_count_bundle(&account, expiry_id), 1);
     // A mint charges a non-zero fee and a non-zero net_premium, so the free balance
     // strictly decreases.
-    assert!(helpers::fees_paid(&wrapper, expiry_id) > 0);
-    assert!(fx.account_balance<DUSDC>(&wrapper, &root) < test_constants::default_manager_deposit());
+    assert!(helpers::fees_paid_bundle(&account, expiry_id) > 0);
+    assert!(fx.account_balance_bundle<DUSDC>(&account) < test_constants::default_manager_deposit());
 
-    helpers::return_account(wrapper, root);
-
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
