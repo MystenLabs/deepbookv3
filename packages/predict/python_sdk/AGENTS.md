@@ -21,7 +21,7 @@ apply; this file only adds SDK-specific routing.
   premium by dry-running a real mint and reading the returned `OrderMinted` event.
 - Keep tests offline by default. Do not require live testnet, private keys, or funded
   wallets in normal unit tests.
-- Do not commit `.env` or `.predict_state.json`; both are local operator state.
+- Do not commit `.env`; it is local operator state.
 
 ## Context Routing
 

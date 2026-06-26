@@ -61,8 +61,8 @@ implemented directly in Python.
 - Sui RPC object reads are the live source of truth.
 - The Predict indexer adds history and health. It should not be required for the
   live status path to work.
-- `.predict_state.json` only stores the local mapping from signer address to
-  `AccountWrapper` object ID.
+- The signer's `AccountWrapper` id is resolved from the indexer (`/managers?owner=`)
+  and cached in memory for the session; the SDK keeps no local state file.
 - Amounts inside SDK internals are raw integers: DUSDC uses 6 decimals, SUI uses
   9 decimals, and probabilities use a 1e9 scale.
 

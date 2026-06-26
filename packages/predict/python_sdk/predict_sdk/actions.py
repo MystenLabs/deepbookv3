@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass
 
 from .bcs import Ptb, arg_nested_result, arg_result
 from .config import DeploymentConfig, load_testnet_config
 from .constants import ACCUMULATOR_ROOT_ID, CLOCK_ID
+from .indexer import PredictIndexerClient
 from .signer import Signer, load_signer
 from .tx import TransactionClient, TxResult
 
@@ -57,7 +56,6 @@ class PredictActions:
         *,
         rpc_url: str | None = None,
         asset: str = "BTC_USD",
-        state_path: str | None = None,
     ):
         self.config = config or load_testnet_config()
         self.signer = signer
@@ -65,9 +63,9 @@ class PredictActions:
             TransactionClient(signer, rpc_url) if rpc_url else TransactionClient(signer)
         )
         self.m = Markets.from_config(self.config, asset)
-        self._state_path = state_path or os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), ".predict_state.json"
-        )
+        # In-memory only: the signer's AccountWrapper id, resolved from the indexer
+        # (managers?owner=) and cached after creation to bridge indexer lag.
+        self._wrapper: str | None = None
 
     @classmethod
     def from_env(cls, **kwargs) -> "PredictActions":
@@ -76,7 +74,15 @@ class PredictActions:
     # === account lifecycle ===
 
     def account_wrapper_id(self) -> str | None:
-        return self._state().get(self.signer.address)
+        """The signer's AccountWrapper id, resolved from the indexer (newest first)."""
+        if self._wrapper:
+            return self._wrapper
+        server = self.config.server_url("predict")
+        if not server:
+            return None
+        managers = PredictIndexerClient(server).managers(owner=self.signer.address)
+        self._wrapper = managers[0]["predict_manager_id"] if managers else None
+        return self._wrapper
 
     def ensure_account(self, *, execute: bool = True) -> str:
         """Return the signer's AccountWrapper id, creating + sharing it if needed."""
@@ -91,7 +97,7 @@ class PredictActions:
         if execute and result.success:
             wrapper_id = _created_object(result, "::account::AccountWrapper")
             if wrapper_id:
-                self._save_account(wrapper_id)
+                self._wrapper = wrapper_id  # cache for this session (indexer may lag)
                 return wrapper_id
         if not result.success:
             raise RuntimeError(f"account creation failed: {result.error}")
@@ -263,18 +269,6 @@ class PredictActions:
         if not wrapper:
             raise RuntimeError("no account; call ensure_account() first")
         return wrapper
-
-    def _state(self) -> dict:
-        if os.path.exists(self._state_path):
-            with open(self._state_path) as handle:
-                return json.load(handle)
-        return {}
-
-    def _save_account(self, wrapper_id: str) -> None:
-        state = self._state()
-        state[self.signer.address] = wrapper_id
-        with open(self._state_path, "w") as handle:
-            json.dump(state, handle, indent=2)
 
 
 def _created_object(result: TxResult, type_suffix: str) -> str | None:

@@ -22,9 +22,10 @@ protocol plumbing from callers.
 
 Predict uses a shared account wrapper for custody:
 
-1. `ensure_account()` checks `.predict_state.json` for the signer's wrapper ID.
+1. `ensure_account()` resolves the signer's wrapper from the indexer (`/managers?owner=`).
 2. If missing, it calls `account_registry::new`, then `account::share`.
-3. After successful execution, it records the created `AccountWrapper` ID locally.
+3. After successful execution, it caches the created `AccountWrapper` ID in memory
+   (the indexer may lag right after creation).
 
 `custody_balance()` reads the wrapper's `balances` bag and returns the raw DUSDC
 balance held in account custody. This is separate from wallet-held DUSDC returned by
