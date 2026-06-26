@@ -21,7 +21,7 @@ from sui import OnchainSnapshotReader, SuiReadClient
 try:
     from rich.markup import escape
     from textual.app import App, ComposeResult
-    from textual.containers import Container, Horizontal, VerticalScroll
+    from textual.containers import Container, VerticalScroll
     from textual.widgets import Footer, Header, Static
 
     _TEXTUAL_AVAILABLE = True
@@ -54,10 +54,6 @@ def _verdict(data: OperationalStatus) -> tuple[str, str]:
     return "⚠ DEGRADED", fmt.AMBER
 
 
-def _chip(label: str, color: str) -> str:
-    return f"[black on {color}] {escape(label)} [/]"
-
-
 def _rule(label: str, right: str, width: int = 96) -> str:
     left = f"── {label} "
     tail = f" {right} ──"
@@ -76,90 +72,6 @@ def loading_markup(progress: int, label: str = "loading operational status") -> 
             f"[dim]{escape(label)}[/]",
             "",
             f"[{fmt.BLUE}]▕{bar}▏[/] [b]{progress:>3}%[/]",
-        ]
-    )
-
-
-def banner_markup(data: OperationalStatus, now_ms: int) -> str:
-    report = data.report
-    verdict, color = _verdict(data)
-    as_of = time.strftime("%H:%M:%S", time.localtime(now_ms / 1000))
-    chain = (
-        "-"
-        if data.chain.latest_checkpoint is None
-        else str(data.chain.latest_checkpoint)
-    )
-    indexer = "OK" if data.indexer.reachable and data.indexer.ok else "DEGRADED"
-    return (
-        f"[b]PREDICT OPERATIONAL STATUS[/]  {_chip(verdict, color)}\n"
-        f"[dim]{escape(report.network)} / {escape(report.asset)}  |  "
-        f"chain {escape(report.chain_id)}  |  checkpoint {chain}  |  "
-        f"indexer {indexer}  |  pool {fmt.short_id(report.pool_vault_id)}  |  "
-        f"as of {as_of}[/]"
-    )
-
-
-def attention_markup(data: OperationalStatus) -> str:
-    if not data.attention:
-        return "[green]all systems nominal[/]"
-    parts = []
-    for item in data.attention:
-        block = item.severity == "block"
-        color = fmt.RED if block else fmt.AMBER
-        glyph = "✗" if block else "⚠"
-        parts.append(f"[{color}]{glyph} {escape(item.text)}[/]")
-    return "   ".join(parts)
-
-
-def pool_markup(data: OperationalStatus) -> str:
-    pool = data.report.pool
-    snapshot = data.snapshot.pool
-    supply_pending = "-" if snapshot is None else str(snapshot.supply_requests_pending)
-    withdraw_pending = "-" if snapshot is None else str(snapshot.withdraw_requests_pending)
-    return "\n".join(
-        [
-            f"[dim]idle[/]       [b]{fmt.money(pool.idle_balance)}[/]",
-            f"[dim]PLP[/]        [b]{fmt.money(pool.plp_total_supply)}[/]",
-            "",
-            f"[dim]markets[/]    [b]{pool.active_market_count}[/]",
-            f"[dim]queues[/]     supply {supply_pending} / withdraw {withdraw_pending}",
-        ]
-    )
-
-
-def oracle_markup(data: OperationalStatus, now_ms: int) -> str:
-    lines = []
-    for feed in data.report.oracle.feeds:
-        color = fmt.GREEN if feed.fresh else fmt.RED
-        age = fmt.age(feed.latest_source_timestamp_ms, now_ms)
-        blocker = "" if feed.blocker is None else f"  [red]{escape(feed.blocker)}[/]"
-        label = "FRESH" if feed.fresh else "STALE"
-        lines.append(f"{_chip(label, color)}  {feed.name:<15} [b]{age}[/]{blocker}")
-    return "\n".join(lines) or "[dim]no oracle feeds[/]"
-
-
-def health_markup(data: OperationalStatus) -> str:
-    chain = data.chain
-    indexer = data.indexer
-    if chain.reachable:
-        chain_line = f"{_chip('CHAIN', fmt.GREEN)}  checkpoint [b]{chain.latest_checkpoint}[/]"
-    else:
-        chain_line = f"{_chip('CHAIN', fmt.AMBER)}  unavailable {escape(chain.error or '')}"
-
-    if not indexer.reachable:
-        indexer_line = f"{_chip('INDEXER', fmt.AMBER)} unreachable"
-    elif not indexer.ok:
-        indexer_line = f"{_chip('INDEXER', fmt.AMBER)} status not OK"
-    else:
-        lag = "-" if indexer.max_time_lag_seconds is None else f"{indexer.max_time_lag_seconds}s"
-        indexer_line = f"{_chip('INDEXER', fmt.GREEN)} lag [b]{lag}[/]"
-
-    return "\n".join(
-        [
-            chain_line,
-            indexer_line,
-            f"markets shown     [b]{len(data.report.markets)}[/]",
-            f"cadences          [b]{len(data.report.cadences)}[/]",
         ]
     )
 
@@ -428,30 +340,14 @@ if _TEXTUAL_AVAILABLE:
             layout: vertical;
             background: #101418;
         }
-        #banner {
+        #status-surface {
             height: auto;
-            border: heavy #6ba6ff;
-            border-title-color: #6ba6ff;
+            border-left: thick #6b7a89;
             padding: 1 2;
             margin: 1 1 0 1;
             background: #141a20;
         }
-        #attention {
-            height: auto;
-            padding: 0 2;
-            margin: 1 1 0 1;
-            color: #cbd5df;
-        }
-        #top { height: auto; margin: 1 1 0 1; }
-        #pool, #oracle, #health {
-            width: 1fr;
-            height: auto;
-            border: tall #3d4b59;
-            border-title-color: #8fb7ff;
-            background: #141a20;
-            padding: 0 1;
-        }
-        #pool, #oracle { margin: 0 1 0 0; }
+        #footer { height: auto; padding: 0 2; margin: 0 1; color: #6b7a89; }
         #cadences { height: 1fr; padding: 0 1; margin: 1; background: #101418; }
         .cadence {
             height: auto;
@@ -469,6 +365,7 @@ if _TEXTUAL_AVAILABLE:
             self._initial_loaded = False
             self._loading_progress = 0
             self._latest_data: OperationalStatus | None = None
+            self._last_fetch_ms: int | None = None
             self.theme = "nord"
 
         def compose(self) -> ComposeResult:
@@ -476,20 +373,12 @@ if _TEXTUAL_AVAILABLE:
             with Container(id="loading"):
                 yield Static(id="loading-card")
             with Container(id="dashboard"):
-                yield Static(id="banner")
-                yield Static(id="attention")
-                with Horizontal(id="top"):
-                    yield Static(id="pool")
-                    yield Static(id="oracle")
-                    yield Static(id="health")
+                yield Static(id="status-surface")
                 yield VerticalScroll(id="cadences")
+                yield Static(id="footer")
             yield Footer()
 
         def on_mount(self) -> None:
-            self.query_one("#banner", Static).border_title = "STATUS"
-            self.query_one("#pool", Static).border_title = "POOL"
-            self.query_one("#oracle", Static).border_title = "ORACLE"
-            self.query_one("#health", Static).border_title = "CHAIN / INDEXER"
             self._show_loading()
             self.set_interval(0.08, self._tick_loading)
             self.set_interval(1.0, self._tick_clock)
@@ -512,7 +401,7 @@ if _TEXTUAL_AVAILABLE:
             except Exception as exc:
                 self.sub_title = "error"
                 if self._initial_loaded:
-                    self.query_one("#attention", Static).update(f"[red]load error:[/] {escape(str(exc))}")
+                    self.query_one("#status-surface", Static).update(f"[{fmt.RED}]load error:[/] {escape(str(exc))}")
                 else:
                     self.query_one("#loading-card", Static).update(
                         loading_markup(self._loading_progress, f"load error: {exc}")
@@ -526,6 +415,7 @@ if _TEXTUAL_AVAILABLE:
                 await asyncio.sleep(0.2)
                 self._hide_loading()
                 self._initial_loaded = True
+            self._last_fetch_ms = int(time.time() * 1000)
             self._apply(data)
             self.sub_title = f"updated {time.strftime('%H:%M:%S')}"
 
@@ -561,16 +451,17 @@ if _TEXTUAL_AVAILABLE:
 
         def _apply(self, data: OperationalStatus) -> None:
             self._latest_data = data
-            now_ms = int(time.time() * 1000)
-            self.query_one("#banner", Static).update(banner_markup(data, now_ms))
-            self.query_one("#attention", Static).update(attention_markup(data))
-            self.query_one("#pool", Static).update(pool_markup(data))
-            self.query_one("#health", Static).update(health_markup(data))
             self._render_time_sensitive(data)
 
         def _render_time_sensitive(self, data: OperationalStatus) -> None:
             now_ms = int(time.time() * 1000)
-            self.query_one("#oracle", Static).update(oracle_markup(data, now_ms))
+            surface = self.query_one("#status-surface", Static)
+            _, color = _verdict(data)
+            surface.styles.border_left = ("thick", color)
+            surface.update(surface_markup(data, now_ms))
+            self.query_one("#footer", Static).update(
+                footer_markup(self._last_fetch_ms, now_ms, self._refresh_s, data.indexer)
+            )
             cadences = self.query_one("#cadences", VerticalScroll)
             cadences.remove_children()
             for cadence in data.report.cadences:
