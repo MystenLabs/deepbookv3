@@ -60,3 +60,33 @@ class PredictIndexerClient:
         except Exception:
             return []
         return payload if isinstance(payload, list) else []
+
+    def managers(self, *, owner: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Created managers (AccountWrappers), optionally filtered by owner address."""
+        query = f"?limit={int(limit)}"
+        if owner is not None:
+            query += f"&owner={owner}"
+        try:
+            payload = self.transport(f"{self.base_url}/managers{query}", self.timeout)
+        except Exception:
+            return []
+        return payload if isinstance(payload, list) else []
+
+    def manager_orders(
+        self, manager_id: str, *, limit: int = 500, end_time_s: int | None = None
+    ) -> list[dict[str, Any]]:
+        """One page of a manager's interleaved order feed (newest first).
+
+        `end_time_s` is an upper-bound unix timestamp in SECONDS (the server multiplies
+        by 1000); pass it to walk older pages. Fails open to [] like the other calls.
+        """
+        query = f"?limit={int(limit)}"
+        if end_time_s is not None:
+            query += f"&end_time={int(end_time_s)}"
+        try:
+            payload = self.transport(
+                f"{self.base_url}/managers/{manager_id}/orders{query}", self.timeout
+            )
+        except Exception:
+            return []
+        return payload if isinstance(payload, list) else []

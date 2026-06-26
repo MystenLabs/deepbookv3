@@ -41,7 +41,7 @@ def _position(*, quantity, open_quantity, net_premium, lower=64_000, higher=64_5
 def _portfolio(positions, *, realized_pnl=12_340_000, premium_paid=200_000_000,
                proceeds=150_000_000, closed_count=2):
     return Portfolio(
-        address=ADDR,
+        manager_id=ADDR,
         positions=list(positions),
         realized_pnl=realized_pnl,
         premium_paid=premium_paid,

@@ -14,6 +14,7 @@ from .constants import (
     POS_INF_TICK,
     SUI_DECIMALS,
 )
+from .indexer import PredictIndexerClient
 from .observability import ObservabilityClient, PredictStatusReport
 from .portfolio import Portfolio, PortfolioReader
 from .rpc import SuiRpcObjectReader
@@ -252,9 +253,15 @@ def load_dashboard_data(
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     reader = SuiRpcObjectReader(rpc_url, timeout=timeout)
     report = ObservabilityClient(config, reader).status(asset, now_ms=now_ms)
-    predict_pkg = config.package_id("predict")
     dusdc_type = config.linked_package_id("dusdc") + "::dusdc::DUSDC"
-    portfolio = PortfolioReader(address, predict_pkg, rpc_url, timeout=timeout).load(page_limit=page_limit)
+    server = config.server_url("predict")
+    managers = PredictIndexerClient(server, timeout=timeout).managers(owner=address) if server else []
+    wrapper = managers[0]["predict_manager_id"] if managers else None
+    portfolio = (
+        PortfolioReader(wrapper, server, timeout=timeout).load(page_limit=page_limit)
+        if wrapper and server
+        else Portfolio(manager_id="")
+    )
     dusdc_raw = _fetch_balance(rpc_url, address, dusdc_type, timeout)
     sui_raw = _fetch_balance(rpc_url, address, "0x2::sui::SUI", timeout)
     return build_dashboard_data(

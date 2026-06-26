@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from decimal import Decimal
 
-from ._http import post_json
-from .constants import DEFAULT_TESTNET_RPC_URL
+from .indexer import PredictIndexerClient, Transport
 
-# Account portfolio + PnL reconstruction from on-chain order events. Positions are
-# keyed by `position_root_id` (stable across partial-close replacements). This reads
-# events directly over JSON-RPC; a dedicated indexer endpoint would scale better but
-# isn't exposed yet. Amounts are raw 6-dp DUSDC base units.
+# Account portfolio + PnL reconstruction from the Predict indexer's per-manager order
+# feed (`GET /managers/{manager}/orders`). The feed is already scoped to one
+# AccountWrapper (manager) and interleaves the four order events, discriminated by
+# `kind`, so no owner filtering is needed. Positions are keyed by `position_root_id`
+# (stable across partial-close replacements). Amounts are raw 6-dp DUSDC base units.
 
-_EVENT_TYPES = ["OrderMinted", "LiveOrderRedeemed", "SettledOrderRedeemed", "LiquidatedOrderRedeemed"]
+_MINT = "order_minted"
+_LIVE = "live_order_redeemed"
+_SETTLED = "settled_order_redeemed"
+_LIQUIDATED = "liquidated_order_redeemed"
+
+
+def _to_int(value) -> int:
+    # Indexer monetary fields are NUMERIC/BigDecimal and serialize as JSON strings or
+    # numbers; the values are integer base units, so parse via Decimal then truncate.
+    return int(Decimal(str(value)))
 
 
 @dataclass
@@ -32,7 +41,7 @@ class Position:
 
 @dataclass
 class Portfolio:
-    address: str
+    manager_id: str
     positions: list[Position] = field(default_factory=list)
     realized_pnl: int = 0
     premium_paid: int = 0
@@ -50,54 +59,66 @@ class Portfolio:
 
 
 class PortfolioReader:
-    def __init__(self, address: str, predict_pkg: str, rpc_url: str = DEFAULT_TESTNET_RPC_URL, *, timeout: float = 30):
-        self.address = address
-        self.predict_pkg = predict_pkg
-        self.rpc_url = rpc_url
-        self.timeout = timeout
+    def __init__(
+        self,
+        manager_id: str,
+        server_url: str,
+        *,
+        transport: Transport | None = None,
+        timeout: float = 30,
+    ):
+        self.manager_id = manager_id
+        self.client = PredictIndexerClient(server_url, transport=transport, timeout=timeout)
 
-    def load(self, *, page_limit: int = 400) -> Portfolio:
-        events = {t: self._events(t, page_limit) for t in _EVENT_TYPES}
+    def load(self, *, page_limit: int = 500) -> Portfolio:
+        minted: list[dict] = []
+        live: list[dict] = []
+        settled: list[dict] = []
+        liquidated: list[dict] = []
+        for ev in self._orders(page_limit):
+            kind = ev.get("kind")
+            if kind == _MINT:
+                minted.append(ev)
+            elif kind == _LIVE:
+                live.append(ev)
+            elif kind == _SETTLED:
+                settled.append(ev)
+            elif kind == _LIQUIDATED:
+                liquidated.append(ev)
+
         roots: dict[str, dict] = {}
-
-        for ev in reversed(events["OrderMinted"]):  # oldest first
-            j = ev["parsedJson"]
-            if j.get("owner") != self.address:
-                continue
-            root = j["position_root_id"]
+        for ev in reversed(minted):  # oldest first, to seed roots before closes
+            root = ev["position_root_id"]
             roots.setdefault(root, {"closed_qty": 0, "proceeds": 0, "close_fees": 0})
             roots[root].update(
-                mint=j,
-                market=j["expiry_market_id"],
-                quantity=int(j["quantity"]),
-                net_premium=int(j["net_premium"]),
-                mint_fees=int(j["trading_fee"]) + int(j["builder_fee"]) + int(j["penalty_fee"]),
-                opened_ms=int(ev["timestampMs"]),
+                mint=ev,
+                market=ev["expiry_market_id"],
+                quantity=_to_int(ev["quantity"]),
+                net_premium=_to_int(ev["net_premium"]),
+                mint_fees=_to_int(ev["trading_fee"]) + _to_int(ev["builder_fee"]) + _to_int(ev["penalty_fee"]),
+                opened_ms=int(ev["checkpoint_timestamp_ms"]),
             )
 
-        for ev in events["LiveOrderRedeemed"]:
-            j = ev["parsedJson"]
-            r = roots.get(j["position_root_id"])
-            if j.get("owner") != self.address or r is None:
+        for ev in live:
+            r = roots.get(ev["position_root_id"])
+            if r is None:
                 continue
-            r["closed_qty"] += int(j["quantity_closed"])
-            r["proceeds"] += int(j["redeem_amount"])
-            r["close_fees"] += int(j["trading_fee"]) + int(j["builder_fee"]) + int(j["penalty_fee"])
-        for ev in events["SettledOrderRedeemed"]:
-            j = ev["parsedJson"]
-            r = roots.get(j["position_root_id"])
-            if j.get("owner") != self.address or r is None:
+            r["closed_qty"] += _to_int(ev["quantity_closed"])
+            r["proceeds"] += _to_int(ev["redeem_amount"])
+            r["close_fees"] += _to_int(ev["trading_fee"]) + _to_int(ev["builder_fee"]) + _to_int(ev["penalty_fee"])
+        for ev in settled:
+            r = roots.get(ev["position_root_id"])
+            if r is None:
                 continue
-            r["closed_qty"] += int(j["quantity_closed"])
-            r["proceeds"] += int(j["payout_amount"])
-        for ev in events["LiquidatedOrderRedeemed"]:
-            j = ev["parsedJson"]
-            r = roots.get(j["position_root_id"])
-            if j.get("owner") != self.address or r is None:
+            r["closed_qty"] += _to_int(ev["quantity_closed"])
+            r["proceeds"] += _to_int(ev["payout_amount"])
+        for ev in liquidated:
+            r = roots.get(ev["position_root_id"])
+            if r is None:
                 continue
-            r["closed_qty"] += int(j["quantity_closed"])
+            r["closed_qty"] += _to_int(ev["quantity_closed"])
 
-        portfolio = Portfolio(address=self.address)
+        portfolio = Portfolio(manager_id=self.manager_id)
         for root, r in roots.items():
             if "mint" not in r:
                 continue
@@ -122,26 +143,22 @@ class PortfolioReader:
         portfolio.positions.sort(key=lambda p: p.opened_ms, reverse=True)
         return portfolio
 
-    def _events(self, name: str, limit: int) -> list[dict]:
-        event_type = f"{self.predict_pkg}::order_events::{name}"
-        out: list[dict] = []
-        cursor = None
-        while len(out) < limit:
-            result = self._rpc("suix_queryEvents", [
-                {"MoveEventType": event_type}, cursor, min(50, limit - len(out)), True,
-            ])
-            out.extend(result.get("data", []))
-            if not result.get("hasNextPage") or not result.get("nextCursor"):
-                break
-            cursor = result["nextCursor"]
-        return out
+    def _orders(self, page_limit: int) -> list[dict]:
+        """Walk the manager order feed newest→oldest, deduping by event_digest.
 
-    def _rpc(self, method: str, params: list) -> Any:
-        body = post_json(
-            self.rpc_url,
-            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            self.timeout,
-        )
-        if body.get("error") is not None:
-            raise RuntimeError(f"RPC {method} error: {body['error']}")
-        return body["result"]
+        The feed pages by an `end_time` upper bound (seconds), so the boundary second
+        is re-fetched; the digest set drops those repeats. Stops when a page is short
+        or yields nothing new (the latter guards the >page_limit-events-in-one-second
+        edge from looping)."""
+        out: list[dict] = []
+        seen: set[str] = set()
+        end_time_s: int | None = None
+        while True:
+            page = self.client.manager_orders(self.manager_id, limit=page_limit, end_time_s=end_time_s)
+            fresh = [e for e in page if e.get("event_digest") not in seen]
+            seen.update(e["event_digest"] for e in fresh)
+            out.extend(fresh)
+            if len(page) < page_limit or not fresh:
+                break
+            end_time_s = min(int(e["checkpoint_timestamp_ms"]) for e in page) // 1000
+        return out

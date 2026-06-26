@@ -234,8 +234,12 @@ class PredictActions:
         return self.client.run(ptb, execute=execute, gas_coin=gas_coin)
 
     def portfolio(self):
-        from .portfolio import PortfolioReader
-        return PortfolioReader(self.signer.address, self.m.predict_pkg, self.client.rpc_url).load()
+        from .portfolio import Portfolio, PortfolioReader
+        wrapper = self.account_wrapper_id()
+        server = self.config.server_url("predict")
+        if not wrapper or not server:
+            return Portfolio(manager_id=wrapper or "")
+        return PortfolioReader(wrapper, server).load()
 
     # === helpers ===
 
