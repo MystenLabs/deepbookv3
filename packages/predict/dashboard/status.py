@@ -124,12 +124,36 @@ class AttentionItem:
 
 
 @dataclass(frozen=True)
+class Backing:
+    cash: int
+    liability: int
+    under_backed_count: int
+
+    @property
+    def healthy(self) -> bool:
+        return self.under_backed_count == 0
+
+    @property
+    def ratio(self) -> float | None:
+        return None if self.liability == 0 else self.cash / self.liability
+
+
+def derive_backing(snapshot: OnchainSnapshot) -> Backing:
+    markets = snapshot.markets.values()
+    cash = sum(market.cash_balance for market in markets)
+    liability = sum(market.payout_liability for market in markets)
+    under = sum(1 for market in markets if market.payout_liability > market.cash_balance)
+    return Backing(cash=cash, liability=liability, under_backed_count=under)
+
+
+@dataclass(frozen=True)
 class OperationalStatus:
     report: PredictStatusReport
     snapshot: OnchainSnapshot
     chain: ChainHealth
     indexer: IndexerHealth
     attention: list[AttentionItem] = field(default_factory=list)
+    backing: Backing | None = None
 
 
 class StatusLoader:
@@ -153,7 +177,8 @@ class StatusLoader:
         chain = self.snapshot_reader.client.latest_checkpoint()
         indexer = self.indexer.health()
         attention = derive_attention(report, snapshot, indexer, now_ms)
-        return OperationalStatus(report, snapshot, chain, indexer, attention)
+        backing = derive_backing(snapshot)
+        return OperationalStatus(report, snapshot, chain, indexer, attention, backing)
 
     def status_with_snapshot(self, now_ms: int) -> tuple[PredictStatusReport, OnchainSnapshot]:
         asset_config = self.config.asset(self.asset)
