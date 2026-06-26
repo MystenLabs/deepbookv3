@@ -61,19 +61,14 @@ def _rule(label: str, right: str, width: int = 96) -> str:
     return f"[dim]{left}{fill}{tail}[/]"
 
 
-def loading_markup(progress: int, label: str = "loading operational status") -> str:
+def loading_markup(progress: int, label: str | None = None) -> str:
     width = 34
     progress = max(0, min(100, progress))
     filled = round(width * progress / 100)
     bar = "█" * filled + "░" * (width - filled)
-    return "\n".join(
-        [
-            "[b]PREDICT[/]",
-            f"[dim]{escape(label)}[/]",
-            "",
-            f"[{fmt.BLUE}]▕{bar}▏[/] [b]{progress:>3}%[/]",
-        ]
-    )
+    line = f"[{fmt.BLUE}]▕{bar}▏[/] [b]{progress:>3}%[/]"
+    # `label` is only used to surface a load error on the otherwise bare bar.
+    return line if label is None else f"{line}\n[red]{escape(label)}[/]"
 
 
 def _progress_bar(frac: float, width: int = 8) -> str:
@@ -359,15 +354,7 @@ if _TEXTUAL_AVAILABLE:
             align: center middle;
             background: #101418;
         }
-        #loading-card {
-            width: 72;
-            height: auto;
-            content-align: center middle;
-            border: heavy #6ba6ff;
-            border-title-color: #6ba6ff;
-            padding: 2 4;
-            background: #141a20;
-        }
+        #loading-card { width: auto; height: auto; }
         #dashboard {
             height: 1fr;
             layout: vertical;
@@ -444,7 +431,7 @@ if _TEXTUAL_AVAILABLE:
                 self._loading = False
             if not self._initial_loaded:
                 self._loading_progress = 100
-                self.query_one("#loading-card", Static).update(loading_markup(100, "status loaded"))
+                self.query_one("#loading-card", Static).update(loading_markup(100))
                 await asyncio.sleep(0.2)
                 self._hide_loading()
                 self._initial_loaded = True
