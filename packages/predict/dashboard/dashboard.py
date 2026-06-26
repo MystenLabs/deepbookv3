@@ -76,10 +76,19 @@ def loading_markup(progress: int, label: str = "loading operational status") -> 
     )
 
 
-def _slot_body(slot, now_ms: int) -> str:
+def _progress_bar(frac: float, width: int = 8) -> str:
+    """Plain-text elapsed bar (must stay markup-free: the tile cell escapes it)."""
+    frac = 0.0 if frac < 0 else 1.0 if frac > 1 else frac
+    filled = round(frac * width)
+    return "▕" + "█" * filled + "░" * (width - filled) + "▏"
+
+
+def _slot_body(slot, period_ms: int, now_ms: int) -> str:
     state = _synthetic_slot_state(slot, now_ms)
     if state == "live":
-        return fmt.duration(slot.expiry_ms - now_ms)
+        ttl = slot.expiry_ms - now_ms
+        frac = (period_ms - ttl) / period_ms if period_ms else 0.0
+        return f"{_progress_bar(frac)} {fmt.duration(ttl)}"
     if state == "scheduled":
         return fmt.duration(slot.expiry_ms - now_ms)
     if state == "awaiting_settle":
@@ -111,16 +120,28 @@ def _clock(ms: int, now_ms: int) -> str:
     return time.strftime("%H:%M:%S", moment)
 
 
-def _market_tile(slot, now_ms: int, width: int = 20) -> list[str]:
+def _reference_tick(slot, markets_snapshot) -> int | None:
+    """The market's on-chain reference tick (its centered strike), if known."""
+    if slot.market is None or not markets_snapshot:
+        return None
+    snap = markets_snapshot.get(slot.market.market_id)
+    return snap.reference_tick if snap is not None else None
+
+
+def _market_tile(slot, period_ms: int, now_ms: int, markets_snapshot=None, width: int = 20) -> list[str]:
     state = _synthetic_slot_state(slot, now_ms)
     color, _ = fmt.STATE_STYLE[state]
     source_label = getattr(slot, "source_label", None)
     title = _slot_title_for_state(state)
     if source_label:
         title = f"{source_label} {title}"
-    body = _slot_body(slot, now_ms)
+    body = _slot_body(slot, period_ms, now_ms)
     clock = _clock(slot.expiry_ms, now_ms)
-    market = "-" if slot.market is None else fmt.short_id(slot.market.market_id)
+    # 3rd line: prefer the market's reference strike; fall back to its id
+    ref = _reference_tick(slot, markets_snapshot)
+    tail = f"ref {ref:,}" if ref is not None else (
+        "-" if slot.market is None else fmt.short_id(slot.market.market_id)
+    )
 
     def cell(text: str) -> str:
         clean = text if len(text) <= width else text[:width - 1] + "…"
@@ -134,7 +155,7 @@ def _market_tile(slot, now_ms: int, width: int = 20) -> list[str]:
         top,
         cell(clock),
         cell(body),
-        cell(market),
+        cell(tail),
         bottom,
     ]
 
@@ -211,7 +232,7 @@ def _visible_slots(cadence, now_ms: int, cadences) -> tuple[RenderSlot, ...]:
     return tuple(visible)
 
 
-def cadence_markup(cadence, now_ms: int, cadences=()) -> str:
+def cadence_markup(cadence, now_ms: int, cadences=(), markets_snapshot=None) -> str:
     cadences = tuple(cadences) or (cadence,)
     slots = _visible_slots(cadence, now_ms, cadences)
     live = sum(1 for slot in slots if _synthetic_slot_state(slot, now_ms) == "live")
@@ -224,7 +245,9 @@ def cadence_markup(cadence, now_ms: int, cadences=()) -> str:
         f"tick {cadence.tick_size / 1_000_000_000:g}"
     )
     lines = [_rule(cadence.name, f"{detail} | {summary}")]
-    lines.extend(_join_tiles([_market_tile(slot, now_ms) for slot in slots]))
+    lines.extend(_join_tiles([
+        _market_tile(slot, cadence.period_ms, now_ms, markets_snapshot) for slot in slots
+    ]))
     return "\n".join(lines)
 
 
@@ -247,24 +270,34 @@ def _oracle_vital(data: OperationalStatus, now_ms: int) -> str:
     return f"[{fmt.RED}]⚠ STALE {worst}[/]"
 
 
-def _backing_vital(data: OperationalStatus) -> str:
-    if data.snapshot.pool is None or data.backing is None:
-        return "[dim]—[/]"
-    backing = data.backing
-    if backing.ratio is None:
-        return f"[{fmt.GREEN}]✓ idle[/]"
-    color = fmt.GREEN if backing.healthy else fmt.AMBER
-    glyph = "✓" if backing.healthy else "⚠"
-    return f"[{color}]{glyph} {backing.ratio:.2f}×[/]"
+def _spot(data: OperationalStatus) -> int | None:
+    """Current 1e9-scaled spot from any present pyth oracle read in the snapshot."""
+    for oracle in data.snapshot.oracles.values():
+        if oracle.pyth.present and oracle.pyth.value is not None:
+            return oracle.pyth.value
+    return None
+
+
+def _next_settle_ttl(data: OperationalStatus, now_ms: int) -> int | None:
+    """Time until the soonest-expiring live market settles, across all cadences."""
+    ttls = [
+        slot.expiry_ms - now_ms
+        for cadence in data.report.cadences
+        for slot in cadence.slots
+        if slot.state == "live"
+    ]
+    return min(ttls) if ttls else None
 
 
 def _vitals_line(data: OperationalStatus, now_ms: int) -> str:
-    pool = data.report.pool
-    liq = f"{fmt.money(pool.idle_balance)}/{fmt.money(pool.plp_total_supply)}"
+    spot = _spot(data)
+    spot_str = "—" if spot is None else fmt.price(spot)
+    nxt = _next_settle_ttl(data, now_ms)
+    nxt_str = "" if nxt is None else f"    next settle [b]{fmt.duration(nxt)}[/]"
     ckpt = _compact_int(data.chain.latest_checkpoint)
     return (
-        f"oracle {_oracle_vital(data, now_ms)}    backing {_backing_vital(data)}    "
-        f"liq [b]{liq}[/]    [b]{pool.active_market_count}[/] mkts    chain {ckpt}"
+        f"oracle {_oracle_vital(data, now_ms)}    spot [b]{spot_str}[/]    "
+        f"[b]{data.report.pool.active_market_count}[/] mkts{nxt_str}    chain {ckpt}"
     )
 
 
@@ -467,7 +500,7 @@ if _TEXTUAL_AVAILABLE:
             for cadence in data.report.cadences:
                 cadences.mount(
                     Static(
-                        cadence_markup(cadence, now_ms, data.report.cadences),
+                        cadence_markup(cadence, now_ms, data.report.cadences, data.snapshot.markets),
                         classes="cadence",
                     )
                 )
