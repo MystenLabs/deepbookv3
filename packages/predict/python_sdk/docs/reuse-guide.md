@@ -143,27 +143,6 @@ for position in portfolio.positions:
 
 Portfolio reconstruction reads order events from Sui RPC.
 
-## Run A Strategy Once
-
-```python
-from predict_sdk.actions import PredictActions
-from predict_sdk.rpc import SuiRpcObjectReader
-from predict_sdk.strategy import Engine, RangeAroundSpotStrategy, RiskLimits
-
-actions = PredictActions.from_env()
-reader = SuiRpcObjectReader(actions.client.rpc_url)
-strategy = RangeAroundSpotStrategy(half_width_ticks=60, notional=50 * 1_000_000)
-engine = Engine.from_actions(
-    actions,
-    reader,
-    strategy,
-    limits=RiskLimits(max_open_positions=5),
-)
-
-run = engine.run_once(execute=False)
-print(len(run.proposed), len(run.planned), len(run.skipped))
-```
-
 ## Parallel Writes
 
 ```python

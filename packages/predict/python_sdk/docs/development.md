@@ -26,7 +26,6 @@ Useful focused checks:
 ```bash
 PYTHONPATH=. python3 -m unittest discover -s tests -p test_cli.py
 PYTHONPATH=. python3 -m unittest discover -s tests -p test_observability.py
-PYTHONPATH=. python3 -m unittest discover -s tests -p test_strategy.py
 PYTHONPATH=. python3 -m unittest discover -s tests -p test_packaging.py
 predict-sdk status --fixture-live
 ```
@@ -49,7 +48,6 @@ predict-sdk status --fixture-live
   stubs.
 - For read-path behavior, test object parsing with fixture objects that reflect Sui's
   nested field shapes.
-- For strategy behavior, keep price discovery stubbed through fake dry-run mint events.
 
 ## Adding A CLI Command
 

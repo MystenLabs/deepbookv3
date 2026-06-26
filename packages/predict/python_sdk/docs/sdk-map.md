@@ -29,12 +29,10 @@ implemented directly in Python.
 5. `tx.py` resolves object/gas refs, dry-runs, estimates gas, and executes only when
    requested.
 
-### Monitor And Automate
+### Monitor And Parallel Execution
 
 - `portfolio.py` reconstructs open positions and realized PnL from on-chain order
   events.
-- `strategy.py` provides a strategy protocol and a range-around-spot example. It
-  prices candidate trades by dry-running mints.
 - `dashboard.py` provides an optional Textual read-only account monitor.
 - `gas.py` manages distinct SUI gas coins for parallel write transactions.
 
@@ -54,7 +52,6 @@ implemented directly in Python.
 | `tx.py` | RPC transaction runner, dry-run-first gas estimate, execution |
 | `actions.py` | High-level account, custody, mint, and redeem operations |
 | `portfolio.py` | Event-based portfolio and PnL reconstruction |
-| `strategy.py` | Strategy protocol, pricing via dry-run mint, risk-capped engine |
 | `dashboard.py` | Optional Textual read-only account dashboard |
 | `gas.py` | Gas lane/pool helper for concurrent writes |
 
@@ -80,7 +77,6 @@ implemented directly in Python.
   - `ObservabilityClient`
   - `PredictActions`
   - `PortfolioReader`
-  - `Engine`, `RangeAroundSpotStrategy`, `RiskLimits`
   - `GasPool`
 
 ## Update Checklist

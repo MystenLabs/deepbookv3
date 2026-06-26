@@ -33,7 +33,7 @@ Before editing these files, read the matching context doc:
   read `docs/read-path.md`.
 - `predict_sdk/cli.py`: read `docs/sdk-map.md`, then `docs/read-path.md` or
   `docs/write-path.md` depending on the command surface.
-- `predict_sdk/portfolio.py`, `strategy.py`, `dashboard.py`: read
+- `predict_sdk/portfolio.py`, `dashboard.py`: read
   `docs/sdk-map.md` and `docs/reuse-guide.md`.
 - `predict_sdk/config.py`, `constants.py`, `deployments/**`: read `docs/sdk-map.md`
   and `docs/decisions.md`.

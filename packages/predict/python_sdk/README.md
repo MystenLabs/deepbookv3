@@ -48,18 +48,6 @@ snaps a ±`width`-tick range to the admission grid around the market's reference
 sizes the position to `--notional`, sets slippage caps, and prints the dry-run entry
 probability + premium before you commit.
 
-## Run a strategy
-
-```bash
-predict-sdk bot --notional 50 --half-width 60          # dry-run: propose trades
-predict-sdk bot --notional 50 --loop 30 --execute      # run every 30s, live
-```
-
-`RangeAroundSpotStrategy` prices each candidate range via a dry-run mint and only
-trades when the entry probability lands inside a band (default 0.15–0.85), skipping
-near-certain and near-impossible bets. The engine applies risk caps (max open
-positions, max total premium) before submitting.
-
 ## Live dashboard
 
 ```bash
@@ -100,7 +88,6 @@ pool.parallel([lambda c: actions.mint(..., gas_coin=c) for _ in range(4)])
 | `actions` | trader actions: account / deposit / withdraw / mint / redeem |
 | `portfolio` | open positions + realized PnL from on-chain order events |
 | `gas` | parallel-execution gas pool (distinct gas coin per in-flight tx) |
-| `strategy` | pluggable strategy + engine (prices candidates via dry-run mint) |
 | `dashboard` | Textual read-only account monitor |
 
 **Design notes.** RPC is the source of truth for live state; the indexer only layers

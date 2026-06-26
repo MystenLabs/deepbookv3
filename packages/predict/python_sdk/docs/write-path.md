@@ -6,7 +6,7 @@ protocol plumbing from callers.
 
 ## Entry Points
 
-- CLI: `predict-sdk account`, `deposit`, `withdraw`, `trade`, `redeem`, `bot`.
+- CLI: `predict-sdk account`, `deposit`, `withdraw`, `trade`, `redeem`.
 - Python: `PredictActions.from_env()` or `PredictActions(load_signer(), ...)`.
 - Submission flag: all CLI write commands dry-run unless `--execute` is passed.
 
