@@ -274,10 +274,16 @@ leverage units against the cadence grid (§1).
 - **Async LP.** Supply/withdraw don't execute inline; they queue and fill at a keeper
   flush at one NAV mark. Don't assume immediate fills; watch `SupplyFilled` /
   `WithdrawFilled` (§6). Cancel before the flush with the returned index.
-- **Accumulator delivery.** Payouts, fills, and refunds are delivered via the
-  `AccumulatorRoot` and only land in your stored balance after a `settle<T>` — which
-  every account-touching predict flow runs for you. A bare balance read can lag until
-  the next settle.
+- **Accumulator delivery (async fills only).** Only the cross-transaction flows pay
+  through the framework `AccumulatorRoot`: **PLP supply fills** (PLP shares), **PLP
+  withdraw fills** (DUSDC), and **builder-fee payouts**. These are paid by a keeper
+  flush / a different context that can't touch your account's stored balance directly,
+  so they land in your account's accumulator and are swept into stored balance by the
+  next `settle<T>` — which every account-touching predict flow runs at entry. So right
+  after a flush, a bare balance read can lag until your next account-touching call
+  settles it. **Everything else is synchronous, same-transaction:** mint debits and
+  both live and settled **redeem payouts** and **cancel refunds** credit/debit your
+  stored balance directly (`account.deposit`/`withdraw`), not via the accumulator.
 - **Leverage = a time-varying floor, priced in.** `leverage` (1e9-scaled, 1e9 = 1x)
   sets a deterministic floor schedule; the contract value is range-probability minus
   the floor, floored at 0. Mint enforces `max_terminal_floor ≤ max_terminal_payout`.
