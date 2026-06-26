@@ -35,7 +35,7 @@ jobs:
         run: |
           for dir in packages/*; do
             echo "Running sui move test in $dir"
-            sui move test --gas-limit 100000000000 --path "$dir"
+            sui move test --build-env testnet --gas-limit 100000000000 --path "$dir"
           done
 
   test-macos:
@@ -57,5 +57,5 @@ jobs:
         run: |
           for dir in packages/*; do
             echo "Running sui move test in $dir"
-            sui move test --gas-limit 100000000000 --path "$dir"
+            sui move test --build-env testnet --gas-limit 100000000000 --path "$dir"
           done
