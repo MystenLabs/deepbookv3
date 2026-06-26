@@ -33,21 +33,24 @@ class PredictIndexerClient:
         self.timeout = timeout
 
     def health(self) -> IndexerHealth:
+        # Fail open: a transport error OR a reachable-but-malformed response
+        # (non-object body, junk pipelines) degrades to "unreachable" instead of
+        # raising, so a misbehaving indexer never crashes the CLI.
         try:
             payload = self.transport(f"{self.base_url}/status", self.timeout)
+            pipelines = payload.get("pipelines") or []
+            checkpoint_lags = [p["checkpoint_lag"] for p in pipelines if "checkpoint_lag" in p]
+            time_lags = [p["time_lag_seconds"] for p in pipelines if "time_lag_seconds" in p]
+            return IndexerHealth(
+                reachable=True,
+                ok=payload.get("status") == "OK",
+                max_checkpoint_lag=max(checkpoint_lags) if checkpoint_lags else None,
+                max_time_lag_seconds=max(time_lags) if time_lags else None,
+                max_lag_pipeline=payload.get("max_lag_pipeline"),
+                latest_onchain_checkpoint=payload.get("latest_onchain_checkpoint"),
+            )
         except Exception:
             return IndexerHealth(False, False, None, None, None, None)
-        pipelines = payload.get("pipelines") or []
-        checkpoint_lags = [p["checkpoint_lag"] for p in pipelines if "checkpoint_lag" in p]
-        time_lags = [p["time_lag_seconds"] for p in pipelines if "time_lag_seconds" in p]
-        return IndexerHealth(
-            reachable=True,
-            ok=payload.get("status") == "OK",
-            max_checkpoint_lag=max(checkpoint_lags) if checkpoint_lags else None,
-            max_time_lag_seconds=max(time_lags) if time_lags else None,
-            max_lag_pipeline=payload.get("max_lag_pipeline"),
-            latest_onchain_checkpoint=payload.get("latest_onchain_checkpoint"),
-        )
 
     def markets(self, *, limit: int = 50, expiry_market_id: str | None = None) -> list[dict[str, Any]]:
         query = f"?limit={int(limit)}"

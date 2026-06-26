@@ -1,5 +1,6 @@
 CLOCK_ID = "0x6"
-ACCUMULATOR_ROOT_ID = "0xacc"
+# Sui's reserved AccumulatorRoot singleton (address/object balance settlement).
+ACCUMULATOR_ROOT_ID = "0x0000000000000000000000000000000000000000000000000000000000000acc"
 TICK_BITS = 30
 POS_INF_TICK = (1 << TICK_BITS) - 1
 U64_MAX = (1 << 64) - 1

@@ -42,6 +42,15 @@ class IndexerClientTests(unittest.TestCase):
         self.assertFalse(health.reachable)
         self.assertFalse(health.ok)
 
+    def test_health_malformed_payload_is_graceful(self) -> None:
+        # A reachable indexer that returns a non-object body (e.g. a proxied error
+        # page parsed as a JSON array) must degrade like an outage, not crash the
+        # caller — health() has no .get() to call on a list.
+        health = PredictIndexerClient("https://x", transport=lambda url, t: []).health()
+        self.assertFalse(health.reachable)
+        self.assertFalse(health.ok)
+        self.assertIsNone(health.max_checkpoint_lag)
+
     def test_markets_returns_rows(self) -> None:
         calls = []
 

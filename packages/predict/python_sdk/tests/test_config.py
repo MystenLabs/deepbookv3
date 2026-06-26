@@ -42,7 +42,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_constants_match_predict_runtime_singletons(self) -> None:
         self.assertEqual(CLOCK_ID, "0x6")
-        self.assertEqual(ACCUMULATOR_ROOT_ID, "0xacc")
+        self.assertEqual(
+            ACCUMULATOR_ROOT_ID,
+            "0x0000000000000000000000000000000000000000000000000000000000000acc",
+        )
         self.assertEqual(POS_INF_TICK, (1 << 30) - 1)
 
     def test_exposes_server_urls(self) -> None:

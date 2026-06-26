@@ -5,3 +5,4 @@ __pycache__/
 venv/
 build/
 dist/
+.predict_state.json

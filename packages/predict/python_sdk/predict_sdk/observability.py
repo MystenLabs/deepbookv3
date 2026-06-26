@@ -158,11 +158,11 @@ class ObservabilityClient:
             blockers.append("pool valuation is in progress")
 
         pool_fields = _object_fields(self.reader.get_object(pool_vault_id))
+        expiry_accounting_fields = _fields(pool_fields.get("expiry_accounting"))
         if not pool_fields:
             blockers.append("pool vault object missing")
             active_market_ids: tuple[str, ...] = tuple()
         else:
-            expiry_accounting_fields = _fields(pool_fields.get("expiry_accounting"))
             active_market_ids = tuple(
                 _as_id_list(pool_fields.get("active_expiry_markets"))
                 or _as_id_list(expiry_accounting_fields.get("active_expiry_markets"))
@@ -187,7 +187,6 @@ class ObservabilityClient:
         oracle = self._oracle_status(asset, now_ms, freshness, live_expiries)
         blockers.extend(oracle.blockers)
 
-        expiry_accounting_fields = _fields(pool_fields.get("expiry_accounting"))
         lp_fields = _fields(pool_fields.get("lp"))
         treasury_cap_fields = _fields(lp_fields.get("treasury_cap"))
         total_supply_fields = _fields(treasury_cap_fields.get("total_supply"))
