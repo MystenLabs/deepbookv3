@@ -73,5 +73,28 @@ class CustodyBalanceTests(unittest.TestCase):
         self.assertEqual(actions.custody_balance(), 9_897_999_049)
 
 
+class _RefTickClient:
+    def __init__(self, reference_tick):
+        self._ref = reference_tick
+
+    def _rpc(self, method, params):
+        assert method == "sui_getObject"
+        return {"data": {"content": {"fields": {
+            "strike_exposure": {"fields": {"reference_tick": {"fields": {"vec": self._ref}}}}
+        }}}}
+
+
+class MarketReferenceTickTests(unittest.TestCase):
+    def test_parses_option_wrapped_reference_tick(self) -> None:
+        actions = _actions()
+        actions.client = _RefTickClient(["64250"])  # Move Option<u64> with a value
+        self.assertEqual(actions.market_reference_tick("0xmkt"), 64_250)
+
+    def test_empty_option_reference_tick_is_none(self) -> None:
+        actions = _actions()
+        actions.client = _RefTickClient([])  # empty Option == none
+        self.assertIsNone(actions.market_reference_tick("0xmkt"))
+
+
 if __name__ == "__main__":
     unittest.main()

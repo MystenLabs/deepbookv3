@@ -12,7 +12,6 @@ from .constants import DEFAULT_TESTNET_RPC_URL, DUSDC_DECIMALS, FLOAT_SCALING
 from .indexer import PredictIndexerClient
 from .observability import ObservabilityClient
 from .render import render_dashboard, render_markets_table
-from .rpc import SuiRpcObjectReader
 
 # Admission grid: valid finite ticks are multiples of admission_tick_size/tick_size.
 # Every current cadence shares a grid of 10 (see CadenceConfig.admission_grid_ticks);
@@ -241,19 +240,23 @@ def _dashboard(args) -> int:
 
 
 def _resolve_market(acts, market: str) -> tuple[str, int]:
-    """Resolve a market id + its reference tick; 'auto' picks the longest-dated live one."""
-    reader = SuiRpcObjectReader(acts.client.rpc_url, timeout=20)
+    """Resolve a market id + its reference tick; 'auto' picks the longest-dated live one.
+
+    The market list comes from the indexer (status); the reference tick is the one
+    live value read from chain (via the execution client)."""
     if market != "auto":
-        fields = reader.get_object(market)["data"]["content"]["fields"]
-        return market, int(fields["strike_exposure"]["fields"]["reference_tick"])
+        ref = acts.market_reference_tick(market)
+        if ref is None:
+            raise RuntimeError(f"market {market} has no reference tick")
+        return market, ref
     report = ObservabilityClient(acts.config).status(now_ms=_now_ms())
     best = None
     for m in report.markets:
         if not (m.mintable and m.time_to_expiry_ms and m.time_to_expiry_ms > 120_000):
             continue
-        ref = reader.get_object(m.market_id)["data"]["content"]["fields"]["strike_exposure"]["fields"].get("reference_tick")
+        ref = acts.market_reference_tick(m.market_id)
         if ref is not None and (best is None or m.time_to_expiry_ms > best[2]):
-            best = (m.market_id, int(ref), m.time_to_expiry_ms)
+            best = (m.market_id, ref, m.time_to_expiry_ms)
     if best is None:
         raise RuntimeError("no live mintable market with a reference tick found")
     return best[0], best[1]

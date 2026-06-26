@@ -133,6 +133,16 @@ class PredictActions:
                 return 0
             cursor = page["nextCursor"]
 
+    def market_reference_tick(self, market_id: str) -> int | None:
+        """A market's current reference tick — a live value the indexer doesn't carry,
+        so it's read from chain (execution-adjacent: it centers a trade's range)."""
+        obj = self.client._rpc("sui_getObject", [market_id, {"showContent": True}])
+        fields = _object_fields(obj)
+        raw = fields.get("reference_tick")
+        if raw is None:
+            raw = _fields(fields.get("strike_exposure")).get("reference_tick")
+        return _option_int(raw)
+
     # === custody ===
 
     def deposit(self, amount: int, *, execute: bool = False, gas_coin: dict | None = None) -> TxResult:
@@ -315,6 +325,15 @@ def _optional_int(value) -> int | None:
         if "value" in fields:
             return _optional_int(fields["value"])
     return None
+
+
+def _option_int(value) -> int | None:
+    # Move Option<u64> renders as {"fields": {"vec": [v]}} (empty vec == none).
+    fields = _fields(value)
+    vec = fields.get("vec")
+    if isinstance(vec, list):
+        return _optional_int(vec[0]) if vec else None
+    return _optional_int(value)
 
 
 def _is_balance_field(item: dict, coin_type: str) -> bool:
