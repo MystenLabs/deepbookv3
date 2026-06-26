@@ -13,6 +13,9 @@ is used only for execution. Observe commands degrade gracefully when a service i
   - `OracleClient` (underlying binding + latest pyth / block-scholes)
   - `render_dashboard()`
 
+The exact endpoints and the fields the SDK reads from each are in `docs/api.md`
+(hand-maintained; the services own the real contract).
+
 ## Source Of Truth
 
 - The indexer is the data plane: market/vault/config state, positions, and oracle
