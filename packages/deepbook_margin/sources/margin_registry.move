@@ -102,6 +102,11 @@ public struct CurrentPriceData has store {
 /// Stored value is `u64`; absent means use `margin_constants::default_max_order_ttl_ms()`.
 public struct MaxOrderTtlKey(ID) has copy, drop, store;
 
+/// Dynamic field key for the per-pool `min_open_risk_ratio` override (9
+/// decimals). Stored value is `u64`; absent means use the midpoint of
+/// `liquidation_risk_ratio` and `min_borrow_risk_ratio`.
+public struct MinOpenRiskRatioKey(ID) has copy, drop, store;
+
 // === Caps ===
 public struct MarginAdminCap has key, store {
     id: UID,
@@ -172,6 +177,12 @@ public struct MaxPriceAgeUpdated has copy, drop {
 public struct MaxOrderTtlUpdated has copy, drop {
     pool_id: ID,
     max_order_ttl_ms: u64,
+    timestamp: u64,
+}
+
+public struct MinOpenRiskRatioUpdated has copy, drop {
+    pool_id: ID,
+    min_open_risk_ratio: u64,
     timestamp: u64,
 }
 
@@ -543,6 +554,43 @@ public fun set_max_order_ttl<BaseAsset, QuoteAsset>(
     });
 }
 
+/// Set the per-pool `min_open_risk_ratio` override — the post-trade solvency
+/// floor enforced on opening (risk-increasing) orders. Must sit in
+/// `(liquidation_risk_ratio, min_borrow_risk_ratio]`: above liquidation so an
+/// open can't land in the liquidatable zone, at or below the borrow floor.
+/// Absent an override the floor defaults to the midpoint of liquidation and
+/// min_borrow. Only Admin can set it.
+public fun set_min_open_risk_ratio<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    min_open_risk_ratio: u64,
+    clock: &Clock,
+) {
+    self.load_inner();
+    let pool_id = pool.id();
+    let liquidation = self.liquidation_risk_ratio(pool_id);
+    let min_borrow = self.min_borrow_risk_ratio(pool_id);
+    assert!(
+        min_open_risk_ratio > liquidation && min_open_risk_ratio <= min_borrow,
+        EInvalidRiskParam,
+    );
+
+    let key = MinOpenRiskRatioKey(pool_id);
+    if (self.id.exists_with_type<MinOpenRiskRatioKey, u64>(key)) {
+        let stored: &mut u64 = self.id.borrow_mut(key);
+        *stored = min_open_risk_ratio;
+    } else {
+        self.id.add(key, min_open_risk_ratio);
+    };
+
+    event::emit(MinOpenRiskRatioUpdated {
+        pool_id,
+        min_open_risk_ratio,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
 // === Public Helper Functions ===
 /// Create a PoolConfig with margin pool IDs and risk parameters
 /// Enable is false by default, must be enabled after registration
@@ -688,6 +736,28 @@ public fun liquidation_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): 
 public fun target_liquidation_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
     let config = self.get_pool_config(deepbook_pool_id);
     config.risk_ratios.target_liquidation_risk_ratio
+}
+
+/// Post-trade solvency floor for *opening* (risk-increasing) orders, sitting in
+/// `(liquidation_risk_ratio, min_borrow_risk_ratio]`. Lets a max-leverage open
+/// absorb the opening trade's spread — which lands the post-trade ratio just
+/// under the borrow floor — without aborting, while staying above the
+/// liquidatable zone. Defaults to the midpoint of liquidation and min_borrow; an
+/// admin override (`set_min_open_risk_ratio`) is honored only while it stays in
+/// the valid band, so a later risk-param change can't strand it below
+/// liquidation.
+public fun min_open_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let liquidation = self.liquidation_risk_ratio(deepbook_pool_id);
+    let min_borrow = self.min_borrow_risk_ratio(deepbook_pool_id);
+    let default = (liquidation + min_borrow) / 2;
+
+    let key = MinOpenRiskRatioKey(deepbook_pool_id);
+    if (self.id.exists_with_type<MinOpenRiskRatioKey, u64>(key)) {
+        let stored = *self.id.borrow<MinOpenRiskRatioKey, u64>(key);
+        if (stored > liquidation && stored <= min_borrow) stored else default
+    } else {
+        default
+    }
 }
 
 public fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
