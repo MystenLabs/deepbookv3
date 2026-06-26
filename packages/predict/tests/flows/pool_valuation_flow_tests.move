@@ -24,7 +24,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
-use fixed_math::math::{Self, float_scaling as float};
+use fixed_math::math::float_scaling as float;
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
@@ -33,6 +33,16 @@ use sui::test_scenario::return_shared;
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
 /// Idle seed large enough to fund several markets to the cash floor.
 const IDLE_SEED: u64 = 1_200_000_000_000;
+/// `value_expiry` sweeps each minted market back to the 10e9 cash target. With a
+/// 5m rebate reserve and 1e9 ATM liability, each active market contributes this NAV.
+const POST_VALUATION_MARKET_NAV: u64 = 8_995_000_000;
+/// Two markets each sweep 1.01e9 of mint premium + fees back to idle.
+const POST_VALUATION_IDLE: u64 = 1_182_020_000_000;
+const POST_VALUATION_PROFIT_CREDITS: u64 = 2_020_000_000;
+const POST_VALUATION_PROFIT_DEBITS: u64 = 20_000_000_000;
+/// Gross pool value is idle + active NAV = 1_200.01e9. Profit basis is 10m, so
+/// the protocol's 40% cut excludes 4m from LP NAV.
+const TWO_MARKET_POOL_NAV: u64 = 1_200_006_000_000;
 
 // === Happy path: aggregation ===
 
@@ -66,25 +76,16 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
         fx.scenario_mut().ctx(),
     );
 
-    // Independent reference for this aggregation flow: each market's NAV is read
-    // DIRECTLY (not via the potato), then combined with public vault/config facts.
-    // If the potato skipped a market or threaded the wrong idle/basis, this mismatches.
+    // Hand-derived fixture values. This pins the hot-potato aggregation without
+    // copying the private `lp_pool_value` formula into the test.
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    let active_nav = nav1 + nav2;
-    let gross_pool_value = vault.idle_balance() + active_nav;
-    let profit = (
-        vault.profit_basis_credits() + active_nav,
-    ).saturating_sub(vault.profit_basis_debits());
-    let protocol_exclusion = math::mul(profit, config.protocol_reserve_profit_share());
-    assert_eq!(
-        pool_nav,
-        gross_pool_value.saturating_sub(protocol_exclusion + vault.pending_protocol_profit()),
-    );
-    // The orders took effect: each market's NAV is liability-reduced below its
-    // funded cash floor.
-    assert!(nav1 < constants::expiry_cash_floor!());
-    assert!(nav2 < constants::expiry_cash_floor!());
+    assert_eq!(nav1, POST_VALUATION_MARKET_NAV);
+    assert_eq!(nav2, POST_VALUATION_MARKET_NAV);
+    assert_eq!(vault.idle_balance(), POST_VALUATION_IDLE);
+    assert_eq!(vault.profit_basis_credits(), POST_VALUATION_PROFIT_CREDITS);
+    assert_eq!(vault.profit_basis_debits(), POST_VALUATION_PROFIT_DEBITS);
+    assert_eq!(pool_nav, TWO_MARKET_POOL_NAV);
 
     return_shared(config);
     return_shared(pyth);
@@ -372,11 +373,7 @@ fun finish_with_wrong_vault_aborts() {
     fx.bootstrap_lock(constants::min_bootstrap_liquidity!()); // flush start requires a bootstrapped pool
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    plp::init_for_testing(fx.scenario_mut().ctx());
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let wrong_vault = fx.scenario_mut().take_shared<PoolVault>();
-    let wrong_vault_id = wrong_vault.id();
-    return_shared(wrong_vault);
+    let wrong_vault_id = plp::init_for_testing(fx.scenario_mut().ctx());
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();

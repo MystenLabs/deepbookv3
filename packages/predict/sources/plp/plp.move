@@ -42,7 +42,7 @@ use sui::{
     balance::{Self, Balance},
     clock::Clock,
     coin::{Coin, TreasuryCap},
-    coin_registry
+    coin_registry::{Self, MetadataCap}
 };
 use token::deep::DEEP;
 
@@ -100,6 +100,11 @@ public struct PoolValuation {
 
 /// Register PLP metadata and create the pool vault on package publish.
 fun init(witness: PLP, ctx: &mut TxContext) {
+    let (_, metadata_cap) = init_plp(witness, ctx);
+    transfer_metadata_cap(metadata_cap, ctx);
+}
+
+fun init_plp(witness: PLP, ctx: &mut TxContext): (ID, MetadataCap<PLP>) {
     let (initializer, treasury_cap) = coin_registry::new_currency_with_otw(
         witness,
         6,
@@ -110,6 +115,16 @@ fun init(witness: PLP, ctx: &mut TxContext) {
         ctx,
     );
     let metadata_cap = initializer.finalize(ctx);
+    let vault_id = create_and_share_vault(treasury_cap, ctx);
+    (vault_id, metadata_cap)
+}
+
+#[allow(lint(self_transfer))]
+fun transfer_metadata_cap(metadata_cap: MetadataCap<PLP>, ctx: &TxContext) {
+    transfer::public_transfer(metadata_cap, ctx.sender());
+}
+
+fun create_and_share_vault(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
     let vault = PoolVault {
         id: object::new(ctx),
         protocol_reserve_balance: balance::zero(),
@@ -118,8 +133,9 @@ fun init(witness: PLP, ctx: &mut TxContext) {
         lp: lp_book::new(treasury_cap, ctx),
         expiry_accounting: pool_accounting::new(ctx),
     };
+    let vault_id = vault.id();
     transfer::share_object(vault);
-    transfer::public_transfer(metadata_cap, ctx.sender());
+    vault_id
 }
 
 // === Public Functions ===
@@ -907,6 +923,8 @@ fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
 
 #[test_only]
 /// Register PLP in tests.
-public fun init_for_testing(ctx: &mut TxContext) {
-    init(PLP {}, ctx);
+public fun init_for_testing(ctx: &mut TxContext): ID {
+    let (vault_id, metadata_cap) = init_plp(PLP {}, ctx);
+    transfer_metadata_cap(metadata_cap, ctx);
+    vault_id
 }
