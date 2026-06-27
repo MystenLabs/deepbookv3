@@ -69,6 +69,7 @@ public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 /// shared empty root, and root-dependent tests take/return it per transaction.
 public struct Fixture {
     scenario: Scenario,
+    account_admin_cap: AccountAdminCap,
     admin_cap: AdminCap,
     propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
@@ -133,7 +134,6 @@ public fun setup_market(tick: u64): Fixture {
     let mut account_registry = scenario.take_shared<AccountRegistry>();
     account_registry.authorize_app<PredictApp>(&account_admin_cap);
     return_shared(account_registry);
-    destroy(account_admin_cap);
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
@@ -227,6 +227,7 @@ public fun setup_market(tick: u64): Fixture {
 
     Fixture {
         scenario,
+        account_admin_cap,
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
@@ -377,6 +378,15 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_max_admission_leverage(&self.admin_cap, value);
     return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Remove Predict's app-auth access from the shared account registry.
+public fun deauthorize_predict_app(self: &mut Fixture) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
+    account_registry.deauthorize_app<PredictApp>(&self.account_admin_cap);
+    return_shared(account_registry);
     self.scenario.next_tx(test_constants::admin());
 }
 
@@ -956,7 +966,7 @@ public fun redeem_settled(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    let (closed_id, replacement_id) = market.redeem_settled(
+    let (closed_id, replacement_id) = market.redeem_settled_permissionless(
         &account_registry,
         wrapper,
         config,
@@ -972,6 +982,34 @@ public fun redeem_settled(
     (closed_id, replacement_id)
 }
 
+/// Owner-authorized settled redeem: clears a settled order using the current
+/// scenario sender's account auth. Does not price, so takes no Block Scholes feed.
+public fun redeem_settled_with_owner_auth(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market.redeem_settled(
+        wrapper,
+        auth,
+        config,
+        oracle_registry,
+        pyth,
+        order_id,
+        close_quantity,
+        root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
 /// Permissionless settled redeem through a market/account bundle.
 public fun redeem_settled_bundle(
     self: &mut Fixture,
@@ -981,6 +1019,26 @@ public fun redeem_settled_bundle(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     self.redeem_settled(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        order_id,
+        close_quantity,
+    )
+}
+
+/// Owner-authorized settled redeem through a market/account bundle.
+public fun redeem_settled_with_owner_auth_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem_settled_with_owner_auth(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1483,6 +1541,7 @@ public fun bs_spot_id(self: &Fixture): ID { self.bs_spot_id }
 public fun finish(self: Fixture) {
     let Fixture {
         scenario,
+        account_admin_cap,
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
@@ -1496,6 +1555,7 @@ public fun finish(self: Fixture) {
     lifecycle_cap.destroy();
     destroy(propbook_admin_cap);
     destroy(admin_cap);
+    destroy(account_admin_cap);
     clock.destroy_for_testing();
     scenario.end();
 }
