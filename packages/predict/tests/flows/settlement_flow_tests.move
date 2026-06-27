@@ -9,6 +9,7 @@ module deepbook_predict::settlement_flow_tests;
 use account::account_registry;
 use deepbook_predict::{
     config_constants,
+    constants,
     expiry_market,
     flow_test_helpers as helpers,
     test_constants
@@ -147,6 +148,38 @@ fun passive_settled_redeem_pays_terminal_payout() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+#[test, expected_failure(abort_code = expiry_market::EFullCloseRequired)]
+fun settled_redeem_partial_close_aborts() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+
+    fx.redeem_settled_bundle(
+        &mut market,
+        &mut account,
+        order_id,
+        test_constants::mint_quantity() - constants::position_lot_size!(),
+    );
+
+    abort 999
 }
 
 #[test, expected_failure(abort_code = account_registry::EAppNotAuthorized)]
