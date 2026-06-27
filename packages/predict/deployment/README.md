@@ -61,12 +61,14 @@ Prices/probabilities are 1e9 fixed-point (`FLOAT_SCALING = 1_000_000_000`).
 ### Cadences (each produces a rolling series of per-expiry `ExpiryMarket`s)
 | id | name | tick size | admission tick | window |
 |---|---|---|---|---|
-| 0 | `1m` | 1e9 | 1e10 | 3 |
-| 1 | `5m` | 1e9 | 1e10 | 3 |
-| 2 | `1h` | 1e9 | 1e10 | 3 |
+| 0 | `1m` | 1e7 ($0.01) | 1e9 ($1) | 3 |
+| 1 | `5m` | 1e7 ($0.01) | 1e9 ($1) | 3 |
+| 2 | `1h` | 1e7 ($0.01) | 1e9 ($1) | 3 |
 
-Individual `ExpiryMarket` objects are **created on a schedule**, not fixed — discover
-them from the indexer (see [§6](#6-discovery--indexer)).
+Strikes are on a $0.01 grid (`tick_size`); mint admission snaps to a $1 grid
+(`admission_tick_size`). Each `ExpiryMarket` snapshots these at creation, so a cadence
+re-config only affects markets created afterward. Individual `ExpiryMarket` objects are
+**created on a schedule**, not fixed — discover them from the indexer (see [§6](#6-discovery--indexer)).
 
 ---
 

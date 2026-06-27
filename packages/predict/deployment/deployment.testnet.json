@@ -89,32 +89,32 @@
       {
         "id": 0,
         "name": "1m",
-        "tickSize": "1000000000",
-        "admissionTickSize": "10000000000",
+        "tickSize": "10000000",
+        "admissionTickSize": "1000000000",
         "maxExpiryAllocation": "50000000000",
         "initialExpiryCash": "10000000000",
         "windowSize": "3",
-        "setTx": "EPVvwEbaNreURAjqMvDjECxPaNpnEehLbFcyoAczBvia"
+        "setTx": "EfWxpHgv83ZA1kAoKHBhNMkfs5bQPgNUvFM2Apfdw9pz"
       },
       {
         "id": 1,
         "name": "5m",
-        "tickSize": "1000000000",
-        "admissionTickSize": "10000000000",
+        "tickSize": "10000000",
+        "admissionTickSize": "1000000000",
         "maxExpiryAllocation": "50000000000",
         "initialExpiryCash": "10000000000",
         "windowSize": "3",
-        "setTx": "BFDjCqBax5PqiMRmyE2gVUcQbnwoFsdKmTYzwMnZ3F6Y"
+        "setTx": "DqE33jbNjRu5hRzwpG6yCmBsshzDmHwTHgwnZks3hM8F"
       },
       {
         "id": 2,
         "name": "1h",
-        "tickSize": "1000000000",
-        "admissionTickSize": "10000000000",
+        "tickSize": "10000000",
+        "admissionTickSize": "1000000000",
         "maxExpiryAllocation": "250000000000",
         "initialExpiryCash": "50000000000",
         "windowSize": "3",
-        "setTx": "BFDjCqBax5PqiMRmyE2gVUcQbnwoFsdKmTYzwMnZ3F6Y"
+        "setTx": "EpEnhBreUcaxXJw4RFi44qesFcycvUafDybzJr23ZmEr"
       }
     ],
     "bootstrap": {
