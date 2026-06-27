@@ -382,6 +382,31 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Resize the default cadence's pool allocation terms through the production
+/// registry admin path. Call before creating the expiry that should snapshot them.
+public fun set_default_cadence_allocation(
+    self: &mut Fixture,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut registry = self.scenario.take_shared<Registry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    registry.set_cadence_config(
+        &config,
+        &self.admin_cap,
+        test_constants::default_cadence_id(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        max_expiry_allocation,
+        initial_expiry_cash,
+        test_constants::default_cadence_window_size(),
+    );
+    return_shared(config);
+    return_shared(registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Remove Predict's app-auth access from the shared account registry.
 public fun deauthorize_predict_app(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
