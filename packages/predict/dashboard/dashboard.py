@@ -137,12 +137,16 @@ def _clock(ms: int, now_ms: int) -> str:
     return time.strftime("%H:%M:%S", moment)
 
 
-def _reference_tick(slot, markets_snapshot) -> int | None:
-    """The market's on-chain reference tick (its centered strike), if known."""
+def _reference_price(slot, markets_snapshot) -> int | None:
+    """The market's reference strike as a 1e9-scaled price. `reference_tick` is a tick
+    COUNT (floor(spot / tick_size)), so multiply by tick_size to get a price — this is
+    correct regardless of the cadence's tick size (e.g. $1 vs $0.01)."""
     if slot.market is None or not markets_snapshot:
         return None
     snap = markets_snapshot.get(slot.market.market_id)
-    return snap.reference_tick if snap is not None else None
+    if snap is None or snap.reference_tick is None:
+        return None
+    return snap.reference_tick * snap.tick_size
 
 
 def _market_tile(slot, period_ms: int, now_ms: int, markets_snapshot=None, width: int = 20) -> list[str]:
@@ -155,10 +159,8 @@ def _market_tile(slot, period_ms: int, now_ms: int, markets_snapshot=None, width
     body = _slot_body(slot, period_ms, now_ms)
     clock = _clock(slot.expiry_ms, now_ms)
     addr = "-" if slot.market is None else fmt.short_id(slot.market.market_id)
-    ref = _reference_tick(slot, markets_snapshot)
-    # `ref` is a whole-dollar reference TICK (floor(spot / tick_size), tick_size = $1),
-    # so it has no cents — shown as an integer, unlike the full-precision spot/@ prices.
-    ref_line = f"ref {ref:,}" if ref is not None else "ref -"
+    ref = _reference_price(slot, markets_snapshot)
+    ref_line = f"ref {fmt.price(ref)}" if ref is not None else "ref -"
 
     def cell(text: str) -> str:
         clean = text if len(text) <= width else text[:width - 1] + "…"
