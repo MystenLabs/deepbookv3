@@ -46,9 +46,16 @@ use deepbook_predict::{
     test_constants
 };
 use fixed_math::math::float_scaling as float;
+use propbook::{
+    block_scholes_forward_feed::BlockScholesForwardFeed,
+    block_scholes_svi_feed::BlockScholesSVIFeed,
+    registry::{Self as propbook_registry, OracleRegistry}
+};
 use std::unit_test::assert_eq;
+use sui::test_scenario::return_shared;
 
 const EUnexpectedSuccess: u64 = 999;
+const SECOND_SOURCE_ID: u32 = 2;
 
 /// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
 /// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
@@ -142,6 +149,50 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
         test_constants::default_live_price(),
         constants::pos_inf!(),
     );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesForwardFeed)]
+fun live_pricer_with_wrong_forward_feed_aborts() {
+    let (mut fx, oracle) = setup_live();
+    oracle_fixture::return_oracle_bundle(oracle);
+    let wrong_forward_id = create_wrong_forward_feed(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let oracle = fx.take_oracle_bundle();
+    let wrong_forward = fx.scenario_mut().take_shared_by_id<BlockScholesForwardFeed>(
+        wrong_forward_id,
+    );
+    load_pricer_with_forward(&fx, &oracle, &wrong_forward);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSVIFeed)]
+fun live_pricer_with_wrong_svi_feed_aborts() {
+    let (mut fx, oracle) = setup_live();
+    oracle_fixture::return_oracle_bundle(oracle);
+    let wrong_svi_id = create_wrong_svi_feed(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let oracle = fx.take_oracle_bundle();
+    let wrong_svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIFeed>(wrong_svi_id);
+    load_pricer_with_svi(&fx, &oracle, &wrong_svi);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EPythSpotInvalid)]
+fun fresh_pyth_spot_above_pricing_ceiling_aborts() {
+    let (fx, mut oracle) = setup_live();
+    fx.set_pyth_bundle(
+        &mut oracle,
+        MAX_PRICING_SPOT + 1,
+        test_constants::live_source_timestamp_ms() + 1,
+    );
+
+    let _pricer = fx.load_pricer_bundle(&oracle);
+
     abort EUnexpectedSuccess
 }
 
@@ -412,6 +463,64 @@ fun load_pricer_with_full_svi_and_spot(
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+fun create_wrong_forward_feed(fx: &mut OracleFixture): ID {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let wrong_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
+        &mut oracle_registry,
+        SECOND_SOURCE_ID,
+        fx.scenario_mut().ctx(),
+    );
+    return_shared(oracle_registry);
+    wrong_forward_id
+}
+
+fun create_wrong_svi_feed(fx: &mut OracleFixture): ID {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let wrong_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
+        &mut oracle_registry,
+        SECOND_SOURCE_ID,
+        fx.scenario_mut().ctx(),
+    );
+    return_shared(oracle_registry);
+    wrong_svi_id
+}
+
+fun load_pricer_with_forward(
+    fx: &OracleFixture,
+    oracle: &OracleBundle,
+    forward: &BlockScholesForwardFeed,
+) {
+    let _pricer = pricing::load_live_pricer(
+        oracle_fixture::config(oracle).pricing_config(),
+        oracle_fixture::oracle_registry(oracle),
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
+        oracle_fixture::pyth(oracle),
+        oracle_fixture::bs(oracle).spot(),
+        forward,
+        oracle_fixture::bs(oracle).svi(),
+        fx.expiry(),
+        fx.clock(),
+    );
+}
+
+fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockScholesSVIFeed) {
+    let _pricer = pricing::load_live_pricer(
+        oracle_fixture::config(oracle).pricing_config(),
+        oracle_fixture::oracle_registry(oracle),
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
+        oracle_fixture::pyth(oracle),
+        oracle_fixture::bs(oracle).spot(),
+        oracle_fixture::bs(oracle).forward(),
+        svi,
+        fx.expiry(),
+        fx.clock(),
+    );
 }
 
 /// Bring up the default live oracle: fresh Pyth spot + split Block Scholes feeds,
