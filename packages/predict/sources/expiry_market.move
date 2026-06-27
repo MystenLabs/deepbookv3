@@ -396,10 +396,45 @@ public fun redeem_live(
     (redeemed_order.id(), replacement_order_id)
 }
 
-/// Permissionlessly redeem a settled order without account-owner authority. The
-/// market must be settled already; this flow does not run live pricing or new
+/// Redeem a settled order you hold account authority over.
+///
+/// The market must be settled already; this flow does not run live pricing or new
 /// liquidation. Liquidated tombstones clear with zero payout. Requires a full close.
+/// This owner-auth path remains available even when Predict app-auth automation is
+/// deauthorized in the account registry.
 public fun redeem_settled(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    market.redeem_settled_internal(
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        order_id,
+        close_quantity,
+        clock,
+        ctx,
+    )
+}
+
+/// Permissionlessly redeem a settled order without account-owner authority.
+///
+/// This keeper path uses Predict app-auth from the account registry, so
+/// `deauthorize_app<PredictApp>` disables this automation. Owners can still use
+/// `redeem_settled` with owner auth to redeem their own settled positions.
+public fun redeem_settled_permissionless(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
@@ -412,21 +447,19 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    let redeemed_order = order::from_order_id(order_id);
-    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
     wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
     let account = wrapper.load_account_mut(auth);
-    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
-
     market.redeem_settled_internal(
         account,
-        &redeemed_order,
+        config,
+        propbook_registry,
+        pyth,
+        order_id,
+        close_quantity,
+        clock,
         ctx,
-    );
-    (redeemed_order.id(), option::none())
+    )
 }
 
 /// Run one bounded liquidation pass over active leveraged orders.
@@ -962,35 +995,47 @@ fun redeem_live_internal(
 fun redeem_settled_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    order: &Order,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
-) {
-    if (market.strike_exposure.is_liquidated_order(order)) {
-        market.redeem_liquidated_order(account, order, order.quantity(), ctx);
-        return
+): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let redeemed_order = order::from_order_id(order_id);
+    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        market.redeem_liquidated_order(account, &redeemed_order, redeemed_order.quantity(), ctx);
+        return (redeemed_order.id(), option::none())
     };
 
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
-        order.id(),
+        redeemed_order.id(),
         ctx,
     );
     market.materialize_settled_liability();
 
     let settlement = market.settlement_price();
-    let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
+    let payout_amount = market.strike_exposure.close_settled_order(&redeemed_order, settlement);
     market.settle_settled_redeem_payment(account, payout_amount, ctx);
 
     order_events::emit_settled_order_redeemed(
         market.id(),
         account.account_id(),
         account.owner(),
-        order,
+        &redeemed_order,
         position_root_id,
         settlement,
         payout_amount,
     );
+    (redeemed_order.id(), option::none())
 }
 
 /// Settle a mint payment and return the builder fee and fee incentive subsidy.

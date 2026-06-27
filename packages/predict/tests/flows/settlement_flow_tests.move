@@ -6,6 +6,7 @@
 #[test_only]
 module deepbook_predict::settlement_flow_tests;
 
+use account::account_registry;
 use deepbook_predict::{expiry_market, flow_test_helpers as helpers, test_constants};
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
 use std::unit_test::assert_eq;
@@ -111,6 +112,101 @@ fun passive_settled_redeem_pays_terminal_payout() {
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
 
     fx.redeem_settled_bundle(
+        &mut market,
+        &mut account,
+        order_id,
+        test_constants::mint_quantity(),
+    );
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(
+            POST_SETTLED_REDEEM_BALANCE,
+            MINT_MIN_FEE,
+            0,
+            0,
+            0,
+        ),
+    );
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(CASH_AFTER_WINNING_REDEEM, 0, REBATE_AFTER_MINT),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = account_registry::EAppNotAuthorized)]
+fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    fx.deauthorize_predict_app();
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+
+    fx.redeem_settled_bundle(
+        &mut market,
+        &mut account,
+        order_id,
+        test_constants::mint_quantity(),
+    );
+
+    abort 999
+}
+
+#[test]
+fun owner_auth_settled_redeem_survives_predict_app_deauth() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    fx.deauthorize_predict_app();
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+
+    fx.redeem_settled_with_owner_auth_bundle(
         &mut market,
         &mut account,
         order_id,
