@@ -56,6 +56,7 @@ use sui::{
     coin,
     test_scenario::{Self as test, Scenario, return_shared}
 };
+use token::deep::DEEP;
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 
@@ -538,6 +539,14 @@ public fun active_stake(wrapper: &AccountWrapper): u64 {
 /// Inactive (next-epoch) DEEP stake on the trader's account.
 public fun inactive_stake(wrapper: &AccountWrapper): u64 {
     predict_account::inactive_stake(wrapper.load_account())
+}
+
+/// Deposit test DEEP into a bundled account's stored balance.
+public fun fund_deep_bundle(self: &mut Fixture, account_bundle: &mut AccountBundle, amount: u64) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    let deep = coin::mint_for_testing<DEEP>(amount, self.scenario.ctx());
+    let account = account_bundle.wrapper.load_account_mut(auth);
+    account.deposit<DEEP>(deep);
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
@@ -1216,6 +1225,72 @@ public fun rebalance_expiry_cash_bundle_with_pyth(
         &market.oracle_registry,
         pyth,
     );
+}
+
+/// Stake DEEP through the production PLP vault path using account owner auth.
+public fun stake_deep_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+    amount: u64,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .stake_deep(
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
+            amount,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Claim a settled trading-loss rebate through owner auth.
+public fun claim_trading_loss_rebate_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .claim_trading_loss_rebate(
+            &mut market.market,
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Claim a settled trading-loss rebate through Predict app-auth automation.
+public fun claim_trading_loss_rebate_permissionless_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let account_registry = self.scenario.take_shared<AccountRegistry>();
+    market
+        .vault
+        .claim_trading_loss_rebate_permissionless(
+            &mut market.market,
+            &mut account_bundle.wrapper,
+            &account_registry,
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    return_shared(account_registry);
 }
 
 public fun current_nav(

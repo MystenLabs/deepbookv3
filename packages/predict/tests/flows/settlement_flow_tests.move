@@ -7,7 +7,12 @@
 module deepbook_predict::settlement_flow_tests;
 
 use account::account_registry;
-use deepbook_predict::{expiry_market, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{
+    config_constants,
+    expiry_market,
+    flow_test_helpers as helpers,
+    test_constants
+};
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
@@ -25,6 +30,12 @@ const POST_SETTLED_REDEEM_BALANCE: u64 = 1_495_000_000;
 const REBATE_AFTER_MINT: u64 = 2_500_000;
 /// seeded + mint principal + fee - full settled payout.
 const CASH_AFTER_WINNING_REDEEM: u64 = 299_505_000_000;
+/// seeded + mint principal + fee; losing settled redeem pays zero.
+const CASH_AFTER_LOSING_REDEEM: u64 = 300_505_000_000;
+/// Losing account recovers the full 2.5m rebate reserve at full benefit power.
+const POST_REBATE_CLAIM_BALANCE: u64 = 497_500_000;
+/// CASH_AFTER_LOSING_REDEEM minus the paid 2.5m rebate.
+const CASH_AFTER_REBATE_CLAIM: u64 = 300_502_500_000;
 
 /// At expiry with no exact Propbook spot recorded, the market cannot settle, so the
 /// permissionless `redeem_settled` aborts on its settled-state precondition rather
@@ -233,6 +244,51 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     fx.finish();
 }
 
+#[test, expected_failure(abort_code = account_registry::EAppNotAuthorized)]
+fun deauthorized_predict_app_blocks_permissionless_rebate_claim() {
+    let (mut fx, expiry_id, trader) = prepare_settled_loss_with_inactive_rebate_stake();
+
+    fx.deauthorize_predict_app();
+    fx.scenario_mut().next_epoch(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.claim_trading_loss_rebate_permissionless_bundle(&mut market, &mut account);
+
+    abort 999
+}
+
+#[test]
+fun owner_auth_rebate_claim_survives_predict_app_deauth() {
+    let (mut fx, expiry_id, trader) = prepare_settled_loss_with_inactive_rebate_stake();
+
+    fx.deauthorize_predict_app();
+    fx.scenario_mut().next_epoch(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(
+            POST_REBATE_CLAIM_BALANCE,
+            0,
+            0,
+            config_constants::default_upper_benefit_power!(),
+            0,
+        ),
+    );
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(CASH_AFTER_REBATE_CLAIM, 0, 0),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 #[test]
 fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
     let settlement_price = settlement_inside_default_finite_range();
@@ -337,6 +393,71 @@ fun passive_settled_standalone_rebalance_sweeps_market() {
 
 fun settlement_inside_default_finite_range(): u64 {
     (helpers::strike_tick() + 1) * test_constants::default_tick_size()
+}
+
+fun settlement_below_default_finite_range(): u64 {
+    (helpers::strike_tick() - 1) * test_constants::default_tick_size()
+}
+
+fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, helpers::Trader) {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_below_default_finite_range(),
+    );
+    fx.redeem_settled_with_owner_auth_bundle(
+        &mut market,
+        &mut account,
+        order_id,
+        test_constants::mint_quantity(),
+    );
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 0, 0, 0),
+    );
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(CASH_AFTER_LOSING_REDEEM, 0, REBATE_AFTER_MINT),
+    );
+
+    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
+    fx.stake_deep_bundle(
+        &mut market,
+        &mut account,
+        config_constants::default_upper_benefit_power!(),
+    );
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(
+            POST_MINT_BALANCE,
+            MINT_MIN_FEE,
+            0,
+            0,
+            config_constants::default_upper_benefit_power!(),
+        ),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    (fx, expiry_id, trader)
 }
 
 /// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP

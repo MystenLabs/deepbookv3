@@ -16,7 +16,7 @@
 /// feature.
 module deepbook_predict::plp;
 
-use account::{account::{AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
     constants,
@@ -429,8 +429,38 @@ public fun rebalance_expiry_cash(
     };
 }
 
-/// Permissionlessly resolve one account's settled trading-loss rebate.
+/// Resolve the caller-owned account's settled trading-loss rebate.
 public fun claim_trading_loss_rebate(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    vault.claim_trading_loss_rebate_internal(
+        market,
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        clock,
+        ctx,
+    );
+}
+
+/// Permissionlessly resolve one account's settled trading-loss rebate using Predict
+/// app auth. `deauthorize_app<PredictApp>` disables this automation; owners can
+/// still use `claim_trading_loss_rebate` with owner auth.
+public fun claim_trading_loss_rebate_permissionless(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -444,36 +474,17 @@ public fun claim_trading_loss_rebate(
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    let vault_id = vault.id();
-    let expiry_market_id = market.id();
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
-    let settlement_price = market.settlement_price();
-
     wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
     let account = wrapper.load_account_mut(auth);
-    let account_id = account.account_id();
-    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(account, config, ctx);
-    let residual_returned = residual_cash.value();
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .receive_expiry_cash(expiry_market_id, residual_cash);
-    if (returned_cash_amount > 0) {
-        vault_events::emit_expiry_cash_received(
-            vault_id,
-            expiry_market_id,
-            settlement_price,
-            returned_cash_amount,
-        );
-        vault.materialize_expiry_profit(config, expiry_market_id);
-    };
-    vault_events::emit_trading_loss_rebate_claimed(
-        vault_id,
-        expiry_market_id,
-        account_id,
-        rebate_amount,
-        residual_returned,
+    vault.claim_trading_loss_rebate_internal(
+        market,
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        clock,
+        ctx,
     );
 }
 
@@ -643,6 +654,45 @@ public(package) fun register_expiry(
 }
 
 // === Private Functions ===
+
+fun claim_trading_loss_rebate_internal(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let vault_id = vault.id();
+    let expiry_market_id = market.id();
+    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+    let settlement_price = market.settlement_price();
+    let account_id = account.account_id();
+    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(account, config, ctx);
+    let residual_returned = residual_cash.value();
+    let returned_cash_amount = vault
+        .expiry_accounting
+        .receive_expiry_cash(expiry_market_id, residual_cash);
+    if (returned_cash_amount > 0) {
+        vault_events::emit_expiry_cash_received(
+            vault_id,
+            expiry_market_id,
+            settlement_price,
+            returned_cash_amount,
+        );
+        vault.materialize_expiry_profit(config, expiry_market_id);
+    };
+    vault_events::emit_trading_loss_rebate_claimed(
+        vault_id,
+        expiry_market_id,
+        account_id,
+        rebate_amount,
+        residual_returned,
+    );
+}
 
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
 ///
