@@ -26,16 +26,10 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     order,
     pricing::Pricer,
-    protocol_config::ProtocolConfig,
     range_codec,
     test_constants
 };
 use fixed_math::math::{Self, float_scaling as float};
-use propbook::{
-    block_scholes_feed::BlockScholesFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
 use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
@@ -53,14 +47,14 @@ const UNDERWATER_FORWARD: u64 = 10_000_000_000;
 fun empty_live_market_values_at_free_cash() {
     let (mut fx, expiry_id, _trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
+    let market = fx.take_market_bundle(expiry_id);
 
     // No orders: NAV is exactly the seeded free cash (no fees yet -> rebate 0).
-    let nav = fx.current_nav(&market, &config, &oracle_registry, &pyth, &bs);
+    let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, test_constants::default_seeded_expiry_cash());
-    check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[], float!());
+    check_nav(&fx, &market, vector[], float!());
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -68,29 +62,23 @@ fun empty_live_market_values_at_free_cash() {
 fun single_one_x_up_order() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
 
-    check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
+    check_nav(&fx, &market, vector[id], float!());
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_bundle(account);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -98,18 +86,12 @@ fun single_one_x_up_order() {
 fun single_one_x_down_order_anchored_at_neg_inf() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         constants::neg_inf!(),
         helpers::strike_tick(),
         ONE_X_QUANTITY,
@@ -117,11 +99,11 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
     );
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
-    check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
+    check_nav(&fx, &market, vector[id], float!());
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_bundle(account);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -129,31 +111,20 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
 fun two_one_x_orders_same_strike_collapse_to_one_node() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let id1 = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let id1 = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    let id2 = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let id2 = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         SECOND_SAME_STRIKE_QUANTITY,
@@ -162,11 +133,11 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
 
     // Both up orders share the strike start boundary -> one tree node priced
     // once at P(strike); the aggregate quantity equals the per-order sum.
-    check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id1, id2], float!());
+    check_nav(&fx, &market, vector[id1, id2], float!());
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_bundle(account);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -174,18 +145,12 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
 fun single_leveraged_order_above_floor() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         LEVERAGED_QUANTITY,
@@ -194,11 +159,11 @@ fun single_leveraged_order_above_floor() {
 
     // value = mul(0.5, 2e9) = 1e9 > floor = mul(floor_shares 5e8, 1.0) = 5e8, so the
     // correction min() picks the floor and the order's net liability is 5e8.
-    check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
+    check_nav(&fx, &market, vector[id], float!());
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_bundle(account);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -206,18 +171,12 @@ fun single_leveraged_order_above_floor() {
 fun single_leveraged_order_underwater_nets_to_zero() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (mut pyth, mut bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         LEVERAGED_QUANTITY,
@@ -227,15 +186,16 @@ fun single_leveraged_order_underwater_nets_to_zero() {
     // Drop the forward far below the grid so the up range prices to ~0: value <=
     // floor, the order's limited-recourse floor zeroes its net liability with NO
     // liquidation pass, and NAV returns to free cash.
-    fx.prepare_live_oracle(&market, &mut pyth, &mut bs, UNDERWATER_FORWARD);
+    fx.prepare_live_oracle_bundle(&mut market, UNDERWATER_FORWARD);
 
-    let nav = fx.current_nav(&market, &config, &oracle_registry, &pyth, &bs);
-    assert_eq!(nav, market.cash_balance().saturating_sub(market.rebate_reserve()));
-    check_nav(&fx, &market, &config, &oracle_registry, &pyth, &bs, vector[id], float!());
+    let expiry_market = helpers::market(&market);
+    let nav = fx.current_nav_bundle(&market);
+    assert_eq!(nav, expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve()));
+    check_nav(&fx, &market, vector[id], float!());
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_bundle(account);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -243,44 +203,28 @@ fun single_leveraged_order_underwater_nets_to_zero() {
 fun mixed_one_x_and_leveraged_book() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
-    let up = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let up = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    let down = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let down = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         constants::neg_inf!(),
         helpers::strike_tick(),
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
-    let leveraged = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let leveraged = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         LEVERAGED_QUANTITY,
@@ -292,17 +236,13 @@ fun mixed_one_x_and_leveraged_book() {
     check_nav(
         &fx,
         &market,
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs,
         vector[up, down, leveraged],
         float!(),
     );
 
-    helpers::return_account(wrapper, root);
+    helpers::return_account_bundle(account);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 
@@ -313,18 +253,15 @@ fun mixed_one_x_and_leveraged_book() {
 /// build an identical one (the oracle is frozen within the tx) for the reference.
 fun check_nav(
     fx: &helpers::Fixture,
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
+    market: &helpers::MarketBundle,
     order_ids: vector<u256>,
     index_now: u64,
 ) {
-    let pricer = fx.load_pricer(market, config, oracle_registry, pyth, bs);
-    let nav = fx.current_nav(market, config, oracle_registry, pyth, bs);
-    assert_eq!(nav, reference_nav(market, &pricer, &order_ids, index_now));
-    helpers::assert_market_backed(market);
+    let pricer = fx.load_pricer_bundle(market);
+    let nav = fx.current_nav_bundle(market);
+    let expiry_market = helpers::market(market);
+    assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids, index_now));
+    helpers::assert_market_backed(expiry_market);
 }
 
 /// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ max(0, qty·P - floor)`

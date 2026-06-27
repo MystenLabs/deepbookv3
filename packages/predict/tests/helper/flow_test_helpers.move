@@ -29,6 +29,7 @@ use block_scholes_oracle::update;
 use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
+    block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
     constants,
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
@@ -64,8 +65,8 @@ public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
 /// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`/
 /// `OracleRegistry`/`AccountRegistry` are real shared objects taken per-transaction,
-/// not held here. `AccumulatorRoot` follows the same pattern only on root-enabled
-/// test paths; this stable-framework branch leaves the root seam as a no-op.
+/// not held here. `AccumulatorRoot` follows the same pattern: setup creates one
+/// shared empty root, and root-dependent tests take/return it per transaction.
 public struct Fixture {
     scenario: Scenario,
     admin_cap: AdminCap,
@@ -80,12 +81,32 @@ public struct Fixture {
 }
 
 /// A trader handle: the canonical `AccountWrapper` ID plus its owner. The wrapper is
-/// a shared object, so a flow test holds this lightweight handle and `take_account`s
-/// the wrapper for the duration of a trade transaction (it cannot survive a
-/// `next_tx`, like every other shared object). Replaces the owned `PredictManager`.
+/// a shared object, so a flow test holds this lightweight handle and takes the
+/// wrapper through `take_account_bundle` for the duration of a trade transaction
+/// (it cannot survive a `next_tx`, like every other shared object). Replaces the
+/// owned `PredictManager`.
 public struct Trader has copy, drop, store {
     wrapper_id: ID,
     owner: address,
+}
+
+/// Transaction-local borrow of an expiry market and the shared objects normally
+/// needed to exercise it. Pair with `return_market_bundle` before advancing the
+/// scenario transaction.
+public struct MarketBundle {
+    pyth: PythFeed,
+    bs: BlockScholesFeed,
+    oracle_registry: OracleRegistry,
+    vault: PoolVault,
+    market: ExpiryMarket,
+    config: ProtocolConfig,
+}
+
+/// Transaction-local borrow of a trader account plus the accumulator root used
+/// for balance reads and trade settlement.
+public struct AccountBundle {
+    wrapper: AccountWrapper,
+    root: AccumulatorRoot,
 }
 
 /// Stand up a registry + protocol config + an empty PLP vault + the permanent
@@ -95,11 +116,10 @@ public struct Trader has copy, drop, store {
 /// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
-    // Ask the accumulator seam to construct the shared root up front. On this
-    // stable-framework branch the seam is a no-op and the root-dependent flow files
-    // are disabled; on the nightly/stable-constructor path it creates an empty root
-    // and flows fund accounts through stored balance.
+    // The framework root constructor is a system-only test seam.
+    scenario.next_tx(@0x0);
     accumulator_support::create_shared_root(&mut scenario);
+    scenario.next_tx(test_constants::admin());
     account_registry::init_for_testing(scenario.ctx());
     plp::init_for_testing(scenario.ctx());
     registry::init_for_testing(scenario.ctx());
@@ -157,7 +177,7 @@ public fun setup_market(tick: u64): Fixture {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
-    // tx2: bind both feeds to the canonical underlying, mint the lifecycle cap,
+    // tx2: bind all pricing feeds to the canonical underlying, mint the lifecycle cap,
     // and capture the vault id.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
@@ -228,7 +248,7 @@ public fun setup_market_default(): Fixture {
 /// already past `create_expiry` + `prepare_live_oracle` + test-only cash seeding,
 /// plus a funded alice trader, so a flow test starts at the first interesting
 /// line. The market objects are returned to the shared pool; the caller
-/// `take_market`s them. Returns `(fixture, expiry_id, trader)`.
+/// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
 }
@@ -247,26 +267,10 @@ fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fi
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
-    let (
-        mut pyth,
-        mut bs_spot,
-        mut bs_forward,
-        mut bs_svi,
-        oracle_registry,
-        vault,
-        mut market,
-        config,
-    ) = fx.take_market(expiry_id);
-    fx.prepare_live_oracle(
-        &market,
-        &mut pyth,
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
-        live_price,
-    );
-    fx.seed_market_cash(&mut market, test_constants::default_seeded_expiry_cash());
-    return_market(pyth, bs_spot, bs_forward, bs_svi, oracle_registry, vault, market, config);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, live_price);
+    fx.seed_market_cash(&mut market.market, test_constants::default_seeded_expiry_cash());
+    return_market_bundle(market);
     fx.scenario.next_tx(test_constants::admin());
     (fx, expiry_id, trader)
 }
@@ -332,6 +336,11 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
     config.set_trading_paused(&self.admin_cap, paused);
 }
 
+/// Pause / unpause global trading through a market bundle.
+public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
+    self.set_trading_paused(&mut market.config, paused);
+}
+
 /// Pause / unpause minting for one expiry market through the real admin path.
 public fun set_expiry_mint_paused(
     self: &Fixture,
@@ -340,6 +349,11 @@ public fun set_expiry_mint_paused(
     paused: bool,
 ) {
     market.set_mint_paused(config, &self.admin_cap, paused);
+}
+
+/// Pause / unpause minting for one expiry market through a market bundle.
+public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
+    self.set_expiry_mint_paused(&mut market.market, &market.config, paused);
 }
 
 public fun set_template_zero_min_fee(self: &mut Fixture) {
@@ -366,55 +380,61 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
-/// Take the four shared market objects + the protocol config a flow test mutates.
-/// The config is threaded into the flow-phase methods as a parameter (it cannot be
-/// a `Fixture` field — see module doc) and returned by the test.
-public fun take_market(
+/// Sponsor fee incentives for a market bundle with freshly-minted DUSDC.
+public fun sponsor_fee_incentives_bundle(
     self: &mut Fixture,
-    expiry_id: ID,
-): (
-    PythFeed,
-    BlockScholesSpotFeed,
-    BlockScholesForwardFeed,
-    BlockScholesSVIFeed,
-    OracleRegistry,
-    PoolVault,
-    ExpiryMarket,
-    ProtocolConfig,
+    market: &mut MarketBundle,
+    amount: u64,
 ) {
-    let market = self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
-    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    (
-        self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
-        self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
-        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
-        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
-        oracle_registry,
-        self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
-        market,
-        self.scenario.take_shared<ProtocolConfig>(),
-    )
+    let payment = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
+    market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
 }
 
-/// Return the five shared objects taken by `take_market` (pairs 1:1 with it).
-public fun return_market(
-    pyth: PythFeed,
-    bs_spot: BlockScholesSpotFeed,
-    bs_forward: BlockScholesForwardFeed,
-    bs_svi: BlockScholesSVIFeed,
-    oracle_registry: OracleRegistry,
-    vault: PoolVault,
-    market: ExpiryMarket,
-    config: ProtocolConfig,
-) {
+/// Take the market transaction objects as a named bundle to avoid wide positional
+/// tuple plumbing in flow tests.
+public fun take_market_bundle(self: &mut Fixture, expiry_id: ID): MarketBundle {
+    MarketBundle {
+        pyth: self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        bs: self.take_bs(),
+        oracle_registry: self.scenario.take_shared<OracleRegistry>(),
+        vault: self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
+        market: self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id),
+        config: self.scenario.take_shared<ProtocolConfig>(),
+    }
+}
+
+/// Return the shared objects taken by `take_market_bundle`.
+public fun return_market_bundle(bundle: MarketBundle) {
+    let MarketBundle { pyth, bs, oracle_registry, vault, market, config } = bundle;
     return_shared(market);
     return_shared(vault);
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
+    return_bs(bs);
     return_shared(pyth);
     return_shared(oracle_registry);
     return_shared(config);
+}
+
+/// Take the split Block Scholes feeds as one transaction-local bundle.
+public fun take_bs(self: &Fixture): BlockScholesFeed {
+    bs_feed::new(
+        self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
+        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
+        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
+    )
+}
+
+/// Return a `take_bs` Block Scholes bundle.
+public fun return_bs(bs: BlockScholesFeed) {
+    bs.return_feed();
+}
+
+/// Bundle explicitly-created split Block Scholes feeds for wrong-feed tests.
+public fun block_scholes_feed_for_testing(
+    spot: BlockScholesSpotFeed,
+    forward: BlockScholesForwardFeed,
+    svi: BlockScholesSVIFeed,
+): BlockScholesFeed {
+    bs_feed::new(spot, forward, svi)
 }
 
 /// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
@@ -440,24 +460,24 @@ public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit:
     acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
-    // caller's `take_market`/`take_account`. Sender stays `owner`, so a subsequent
+    // caller's bundle takes. Sender stays `owner`, so a subsequent
     // owner auth is still valid.
     self.scenario.next_tx(owner);
     Trader { wrapper_id, owner }
 }
 
-/// Take the trader's shared `AccountWrapper` for the duration of a trade transaction.
-public fun take_account(self: &Fixture, trader: &Trader): AccountWrapper {
-    self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id)
+/// Take a trader's wrapper and the accumulator root as one transaction-local
+/// account bundle.
+public fun take_account_bundle(self: &Fixture, trader: &Trader): AccountBundle {
+    AccountBundle {
+        wrapper: self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id),
+        root: accumulator_support::take_root(&self.scenario),
+    }
 }
 
-/// Take the single shared `AccumulatorRoot` on root-enabled test paths.
-public fun take_root(self: &Fixture): AccumulatorRoot {
-    accumulator_support::take_root(&self.scenario)
-}
-
-/// Return the wrapper + root taken by `take_account` / `take_root`.
-public fun return_account(wrapper: AccountWrapper, root: AccumulatorRoot) {
+/// Return the shared objects taken by `take_account_bundle`.
+public fun return_account_bundle(bundle: AccountBundle) {
+    let AccountBundle { wrapper, root } = bundle;
     return_shared(wrapper);
     return_shared(root);
 }
@@ -485,9 +505,19 @@ public fun position_count(wrapper: &AccountWrapper, expiry_id: ID): u64 {
     predict_account::expiry_position_count(wrapper.load_account(), expiry_id)
 }
 
+/// Open position count for a bundled account in `expiry_id`.
+public fun position_count_bundle(account: &AccountBundle, expiry_id: ID): u64 {
+    position_count(&account.wrapper, expiry_id)
+}
+
 /// Cumulative trading fees the trader's account paid into `expiry_id`.
 public fun fees_paid(wrapper: &AccountWrapper, expiry_id: ID): u64 {
     predict_account::trading_fees_paid(wrapper.load_account(), expiry_id)
+}
+
+/// Cumulative trading fees paid by a bundled account into `expiry_id`.
+public fun fees_paid_bundle(account: &AccountBundle, expiry_id: ID): u64 {
+    fees_paid(&account.wrapper, expiry_id)
 }
 
 /// Active (this-epoch-effective) DEEP stake on the trader's account.
@@ -501,7 +531,10 @@ public fun inactive_stake(wrapper: &AccountWrapper): u64 {
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
-    market.receive_cash_for_testing(coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx()));
+    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+        amount,
+        self.scenario.ctx(),
+    ).into_balance());
 }
 
 /// Seed a fresh live Pyth spot + Block Scholes surface for `market`'s expiry so
@@ -510,19 +543,45 @@ public fun prepare_live_oracle(
     self: &mut Fixture,
     market: &ExpiryMarket,
     pyth: &mut PythFeed,
-    bs_spot: &mut BlockScholesSpotFeed,
-    bs_forward: &mut BlockScholesForwardFeed,
-    bs_svi: &mut BlockScholesSVIFeed,
+    bs: &mut BlockScholesFeed,
     live_price: u64,
 ) {
     self.prepare_live_oracle_at(
         market,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs,
         live_price,
         test_constants::live_source_timestamp_ms(),
+    );
+}
+
+/// Seed a fresh live oracle for a market bundle.
+public fun prepare_live_oracle_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+) {
+    self.prepare_live_oracle(
+        &market.market,
+        &mut market.pyth,
+        &mut market.bs,
+        live_price,
+    );
+}
+
+/// Seed a fresh live oracle for a market bundle at an explicit source timestamp.
+public fun prepare_live_oracle_bundle_at(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    self.prepare_live_oracle_at(
+        &market.market,
+        &mut market.pyth,
+        &mut market.bs,
+        live_price,
+        source_timestamp_ms,
     );
 }
 
@@ -531,9 +590,7 @@ public fun prepare_live_oracle_at(
     self: &mut Fixture,
     market: &ExpiryMarket,
     pyth: &mut PythFeed,
-    bs_spot: &mut BlockScholesSpotFeed,
-    bs_forward: &mut BlockScholesForwardFeed,
-    bs_svi: &mut BlockScholesSVIFeed,
+    bs: &mut BlockScholesFeed,
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
@@ -549,7 +606,7 @@ public fun prepare_live_oracle_at(
         source_timestamp_ms
     };
     store_pyth_spot(pyth, live_price, ts, ts);
-    self.seed_bs_surface(market, bs_spot, bs_forward, bs_svi, live_price, live_price, ts);
+    self.seed_bs_surface(market, bs, live_price, live_price, ts);
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
@@ -563,49 +620,63 @@ public fun set_pyth_price_for_testing(
     store_pyth_spot(pyth, live_price, source_timestamp_ms, self.clock.timestamp_ms());
 }
 
+/// Overwrite a market bundle's Pyth spot directly.
+public fun set_pyth_price_for_testing_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    self.set_pyth_price_for_testing(&mut market.pyth, live_price, source_timestamp_ms);
+}
+
 /// Write split Block Scholes spot, forward, and SVI rows for `market`'s expiry
 /// through the real ingest path (`spot`/`forward` give the basis; default SVI),
 /// at `source_timestamp_ms`.
 public fun seed_bs_surface(
     self: &mut Fixture,
     market: &ExpiryMarket,
-    bs_spot: &mut BlockScholesSpotFeed,
-    bs_forward: &mut BlockScholesForwardFeed,
-    bs_svi: &mut BlockScholesSVIFeed,
+    bs: &mut BlockScholesFeed,
     spot: u64,
     forward: u64,
     source_timestamp_ms: u64,
 ) {
-    bs_spot.update(
-        update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
-        &self.clock,
-    );
-    bs_forward.update(
-        update::new_forward_update(
-            test_constants::pyth_feed_id(),
-            market.expiry(),
-            source_timestamp_ms,
-            forward,
-        ),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    bs_svi.update(
-        update::new_svi_update(
-            test_constants::pyth_feed_id(),
-            market.expiry(),
-            source_timestamp_ms,
-            test_constants::default_svi_a(),
-            test_constants::default_svi_b(),
-            test_constants::default_svi_sigma(),
-            test_constants::default_svi_rho_magnitude(),
-            false,
-            test_constants::default_svi_m(),
-            false,
-        ),
-        &self.clock,
-        self.scenario.ctx(),
-    );
+    bs
+        .spot_mut()
+        .update(
+            update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
+            &self.clock,
+        );
+    bs
+        .forward_mut()
+        .update(
+            update::new_forward_update(
+                test_constants::pyth_feed_id(),
+                market.expiry(),
+                source_timestamp_ms,
+                forward,
+            ),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    bs
+        .svi_mut()
+        .update(
+            update::new_svi_update(
+                test_constants::pyth_feed_id(),
+                market.expiry(),
+                source_timestamp_ms,
+                test_constants::default_svi_a(),
+                test_constants::default_svi_b(),
+                test_constants::default_svi_sigma(),
+                test_constants::default_svi_rho_magnitude(),
+                false,
+                test_constants::default_svi_m(),
+                false,
+            ),
+            &self.clock,
+            self.scenario.ctx(),
+        );
 }
 
 /// Mint one order for `wrapper`'s account over the tick range `(lower_tick,
@@ -619,9 +690,7 @@ public fun mint(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -634,15 +703,66 @@ public fun mint(
         root,
         market,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs,
         lower_tick,
         higher_tick,
         quantity,
         leverage,
         std::u64::max_value!(),
         std::u64::max_value!(),
+    )
+}
+
+/// Mint one order through a market/account bundle while still using the production
+/// mint path.
+public fun mint_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): u256 {
+    self.mint(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+    )
+}
+
+/// Mint one order through a market/account bundle while substituting an explicit
+/// Block Scholes feed for binding-guard tests.
+public fun mint_bundle_with_bs(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): u256 {
+    self.mint(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
     )
 }
 
@@ -655,9 +775,7 @@ public fun mint_exact_quantity(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -670,9 +788,9 @@ public fun mint_exact_quantity(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
     );
     market.mint_exact_quantity(
@@ -701,9 +819,7 @@ public fun mint_exact_amount(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     lower_tick: u64,
     higher_tick: u64,
     amount: u64,
@@ -715,9 +831,9 @@ public fun mint_exact_amount(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
     );
     market.mint_exact_amount(
@@ -746,20 +862,20 @@ public fun redeem(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
     close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
 ): (u256, Option<u256>) {
     let auth = account::generate_auth(self.scenario.ctx());
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
     );
     market.redeem_live(
@@ -769,9 +885,55 @@ public fun redeem(
         &pricer,
         order_id,
         close_quantity,
+        min_probability,
+        min_proceeds,
         root,
         &self.clock,
         self.scenario.ctx(),
+    )
+}
+
+/// Close a live order through a market/account bundle while substituting an
+/// explicit Pyth feed for binding-guard tests.
+public fun redeem_bundle_with_pyth(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
+    )
+}
+
+/// Close a live order through a market/account bundle.
+public fun redeem_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
     )
 }
 
@@ -806,6 +968,26 @@ public fun redeem_settled(
     (closed_id, replacement_id)
 }
 
+/// Permissionless settled redeem through a market/account bundle.
+public fun redeem_settled_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem_settled(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        order_id,
+        close_quantity,
+    )
+}
+
 /// Run the passive settlement gate against the fixture clock and return whether the
 /// market is settled after the attempt.
 public fun ensure_settled(
@@ -817,6 +999,11 @@ public fun ensure_settled(
     market.ensure_settled(oracle_registry, pyth, &self.clock)
 }
 
+/// Run the passive settlement gate through a market bundle.
+public fun ensure_settled_bundle(self: &Fixture, market: &mut MarketBundle): bool {
+    self.ensure_settled(&mut market.market, &market.oracle_registry, &market.pyth)
+}
+
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
 /// Returns the number of orders liquidated.
 public fun liquidate(
@@ -825,21 +1012,31 @@ public fun liquidate(
     oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     budget: u64,
 ): u64 {
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
     );
     market.liquidate(config, &pricer, budget)
+}
+
+/// Run a budgeted liquidation pass through a market bundle.
+public fun liquidate_bundle(self: &Fixture, market: &mut MarketBundle, budget: u64): u64 {
+    self.liquidate(
+        &market.config,
+        &market.oracle_registry,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        budget,
+    )
 }
 
 /// Try to liquidate one active leveraged order by ID. Returns whether it was
@@ -850,23 +1047,33 @@ public fun liquidate_order(
     oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
     order_id: u256,
 ): bool {
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
     );
     market.liquidate_order(
         config,
         &pricer,
+        order_id,
+    )
+}
+
+/// Try to liquidate one bundled active leveraged order by ID.
+public fun liquidate_order_bundle(self: &Fixture, market: &mut MarketBundle, order_id: u256): bool {
+    self.liquidate_order(
+        &market.config,
+        &market.oracle_registry,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
         order_id,
     )
 }
@@ -879,9 +1086,7 @@ public fun value_expiry(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
 ) {
     valuation.value_expiry(
         vault,
@@ -889,10 +1094,27 @@ public fun value_expiry(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
+    );
+}
+
+/// Value one expiry through a market bundle.
+public fun value_expiry_bundle(
+    self: &Fixture,
+    valuation: &mut PoolValuation,
+    market: &mut MarketBundle,
+) {
+    self.value_expiry(
+        valuation,
+        &mut market.vault,
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        &market.bs,
     );
 }
 
@@ -907,26 +1129,62 @@ public fun rebalance_expiry_cash(
     vault.rebalance_expiry_cash(market, config, oracle_registry, pyth, &self.clock);
 }
 
+/// Rebalance expiry cash through a market bundle.
+public fun rebalance_expiry_cash_bundle(self: &Fixture, market: &mut MarketBundle) {
+    self.rebalance_expiry_cash(
+        &mut market.vault,
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+    );
+}
+
+/// Rebalance expiry cash through a market bundle while substituting an explicit
+/// Pyth feed for binding-guard tests.
+public fun rebalance_expiry_cash_bundle_with_pyth(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    pyth: &PythFeed,
+) {
+    self.rebalance_expiry_cash(
+        &mut market.vault,
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        pyth,
+    );
+}
+
 public fun current_nav(
     self: &Fixture,
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
 ): u64 {
     let pricer = market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
     );
     market.current_nav(&pricer)
+}
+
+/// Read live NAV through a market bundle.
+public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
+    self.current_nav(
+        &market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        &market.bs,
+    )
 }
 
 public fun load_pricer(
@@ -935,18 +1193,27 @@ public fun load_pricer(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs: &BlockScholesFeed,
 ): pricing::Pricer {
     market.load_live_pricer(
         config,
         oracle_registry,
         pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
+        bs.spot(),
+        bs.forward(),
+        bs.svi(),
         &self.clock,
+    )
+}
+
+/// Load the live pricer through a market bundle.
+public fun load_pricer_bundle(self: &Fixture, market: &MarketBundle): pricing::Pricer {
+    self.load_pricer(
+        &market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        &market.bs,
     )
 }
 
@@ -981,6 +1248,28 @@ public fun start_flush(
     plp::start_pool_valuation(config, vault, proof)
 }
 
+/// Start a pool-NAV flush through a market bundle.
+public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle): PoolValuation {
+    self.start_flush(&mut market.config, &market.vault)
+}
+
+/// Finish a pool-NAV flush through a market bundle.
+public fun finish_flush_bundle(
+    self: &mut Fixture,
+    valuation: PoolValuation,
+    market: &mut MarketBundle,
+    supply_budget: Option<u64>,
+    withdraw_budget: Option<u64>,
+): u64 {
+    valuation.finish_flush(
+        &mut market.vault,
+        &mut market.config,
+        supply_budget,
+        withdraw_budget,
+        self.scenario.ctx(),
+    )
+}
+
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
@@ -988,6 +1277,11 @@ public fun start_flush(
 /// flow (mint / redeem / liquidate / sync / rebate).
 public fun assert_market_backed(market: &ExpiryMarket) {
     assert!(market.cash_balance() >= market.payout_liability() + market.rebate_reserve());
+}
+
+/// S1 backing assertion for a market bundle.
+public fun assert_market_backed_bundle(market: &MarketBundle) {
+    assert_market_backed(&market.market);
 }
 
 /// Expected snapshot of one expiry market's cash-side accounting, asserted in one
@@ -1016,6 +1310,11 @@ public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash
     assert_eq!(market.payout_liability(), expected.payout_liability);
     assert_eq!(market.rebate_reserve(), expected.rebate_reserve);
     assert_market_backed(market);
+}
+
+/// Assert a bundled expiry market's full cash sheet.
+public fun check_market_cash_bundle(market: &MarketBundle, expected: ExpectedMarketCash) {
+    check_market_cash(&market.market, expected);
 }
 
 // === Account state-sheet assertions ===
@@ -1063,6 +1362,16 @@ public fun check_manager(
     assert_eq!(predict_account::inactive_stake(account), expected.inactive_stake);
 }
 
+/// Assert a bundled account's full state sheet.
+public fun check_manager_bundle(
+    self: &Fixture,
+    account: &AccountBundle,
+    expiry_id: ID,
+    expected: ExpectedManagerState,
+) {
+    self.check_manager(&account.wrapper, &account.root, expiry_id, expected);
+}
+
 // === Accessors ===
 
 public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario }
@@ -1071,6 +1380,65 @@ public fun clock(self: &Fixture): &Clock { &self.clock }
 
 public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
     self.clock.set_for_testing(timestamp_ms);
+}
+
+/// Borrow the expiry market inside a bundle for independent assertions.
+public fun market(bundle: &MarketBundle): &ExpiryMarket { &bundle.market }
+
+/// Mutably borrow the expiry market inside a bundle for setup-only cash seeding.
+public fun market_mut(bundle: &mut MarketBundle): &mut ExpiryMarket { &mut bundle.market }
+
+/// Borrow the pool vault inside a bundle for independent assertions.
+public fun vault(bundle: &MarketBundle): &PoolVault { &bundle.vault }
+
+/// Borrow the protocol config inside a bundle for independent snapshot assertions.
+public fun config(bundle: &MarketBundle): &ProtocolConfig { &bundle.config }
+
+/// Engage the valuation lock on a bundled protocol config.
+public fun begin_valuation(bundle: &mut MarketBundle) {
+    bundle.config.begin_valuation();
+}
+
+/// Account balance through an account bundle.
+public fun account_balance_bundle<T>(self: &Fixture, account: &AccountBundle): u64 {
+    self.account_balance<T>(&account.wrapper, &account.root)
+}
+
+/// Whether the bundled account holds an open position.
+public fun has_position_bundle(account: &AccountBundle, expiry_id: ID, order_id: u256): bool {
+    has_position(&account.wrapper, expiry_id, order_id)
+}
+
+/// Advance the fixture clock by one millisecond and reseed the default live oracle.
+/// Use before live redeems in tests that mint and close inside one scenario tx.
+public fun advance_live_oracle(
+    self: &mut Fixture,
+    market: &ExpiryMarket,
+    pyth: &mut PythFeed,
+    bs: &mut BlockScholesFeed,
+    live_price: u64,
+) {
+    let timestamp_ms = self.clock.timestamp_ms() + 1;
+    self.clock.set_for_testing(timestamp_ms);
+    self.prepare_live_oracle_at(market, pyth, bs, live_price, timestamp_ms);
+}
+
+/// Advance the fixture clock by one millisecond and reseed a market bundle's live
+/// oracle.
+public fun advance_live_oracle_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+) {
+    let timestamp_ms = self.clock.timestamp_ms() + 1;
+    self.clock.set_for_testing(timestamp_ms);
+    self.prepare_live_oracle_at(
+        &market.market,
+        &mut market.pyth,
+        &mut market.bs,
+        live_price,
+        timestamp_ms,
+    );
 }
 
 public fun insert_exact_settlement_spot(
@@ -1089,6 +1457,15 @@ public fun insert_exact_settlement_spot(
         self.clock.timestamp_ms(),
         true,
     );
+}
+
+/// Insert an exact settlement spot for the bundled market expiry.
+public fun insert_exact_settlement_spot_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    spot: u64,
+) {
+    self.insert_exact_settlement_spot(&mut market.pyth, market.market.expiry(), spot);
 }
 
 public fun vault_id(self: &Fixture): ID { self.vault_id }

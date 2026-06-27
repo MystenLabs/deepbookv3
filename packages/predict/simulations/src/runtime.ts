@@ -530,6 +530,11 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             pricer,
             tx.pure.u256(BigInt(params.orderId)),
             tx.pure.u64(params.closeQuantity),
+            // `min_probability` then `min_proceeds` close-side slippage floors; the
+            // benchmark never sets a floor, so pass 0 to disable both (mirrors mint's
+            // U64_MAX caps).
+            tx.pure.u64(0),
+            tx.pure.u64(0),
             // `redeem_live` loads the account and ambient-settles it (`settle<DUSDC>`)
             // before crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
             tx.object(ACCUMULATOR_ROOT_ID),

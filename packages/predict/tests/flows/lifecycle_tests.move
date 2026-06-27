@@ -29,37 +29,33 @@ fun one_x_lifecycle_fund_mint() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
-    let (pyth, bs, oracle_registry, vault, mut market, config) = fx.take_market(expiry_id);
-    let mut wrapper = fx.take_account(&trader);
-    let root = fx.take_root();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
 
     // --- The fixture seeded expiry cash while pool funding is absent.
-    assert_eq!(market.cash_balance(), test_constants::default_seeded_expiry_cash());
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        test_constants::default_seeded_expiry_cash(),
+    );
 
     // Pre-trade state sheet: only the deposit has moved.
     let mut expected = helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0);
-    fx.check_manager(&wrapper, &root, expiry_id, expected);
+    fx.check_manager_bundle(&account, expiry_id, expected);
 
     // --- Mint one 1x in-range order.
-    let order_id = fx.mint(
-        &config,
-        &oracle_registry,
-        &mut wrapper,
-        &root,
+    let order_id = fx.mint_bundle(
         &mut market,
-        &pyth,
-        &bs,
+        &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    assert!(helpers::has_position(&wrapper, expiry_id, order_id));
+    assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     expected = helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0);
-    fx.check_manager(&wrapper, &root, expiry_id, expected);
+    fx.check_manager_bundle(&account, expiry_id, expected);
 
-    helpers::return_account(wrapper, root);
-
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     fx.finish();
 }

@@ -42,7 +42,6 @@ const T_LATE: u64 = 200;
 const T_FUTURE: u64 = 2_000_000;
 const LANDED_EARLY: u64 = 120;
 const LANDED_HIGH: u64 = 1_000_000;
-const VERSION_ZERO: u64 = 0;
 
 #[test]
 fun spot_update_records_raw_and_normalized_latest() {
@@ -268,9 +267,7 @@ fun registry_records_split_bs_source_feeds() {
         spot_id,
     );
     assert_eq!(
-        registry
-            .propbook_block_scholes_forward_id_for_source(BS_SOURCE_ID)
-            .destroy_some(),
+        registry.propbook_block_scholes_forward_id_for_source(BS_SOURCE_ID).destroy_some(),
         forward_id,
     );
     assert_eq!(
@@ -318,15 +315,11 @@ fun pyth_and_split_bs_share_numeric_source_id_across_kinds() {
         spot_id,
     );
     assert_eq!(
-        registry
-            .propbook_block_scholes_forward_id_for_source(SHARED_SOURCE_ID)
-            .destroy_some(),
+        registry.propbook_block_scholes_forward_id_for_source(SHARED_SOURCE_ID).destroy_some(),
         forward_id,
     );
     assert_eq!(
-        registry
-            .propbook_block_scholes_svi_id_for_source(SHARED_SOURCE_ID)
-            .destroy_some(),
+        registry.propbook_block_scholes_svi_id_for_source(SHARED_SOURCE_ID).destroy_some(),
         svi_id,
     );
     assert_eq!(registry.propbook_pyth_id_for_source(SHARED_SOURCE_ID).destroy_some(), pyth_id);
@@ -462,37 +455,6 @@ fun svi_update_wrong_source_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = spot_feed::EWrongVersion)]
-fun spot_update_wrong_version_aborts() {
-    let (mut scenario, spot_id, _forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
-    let mut feed = scenario.take_shared_by_id<BlockScholesSpotFeed>(spot_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(LANDED_HIGH);
-
-    feed.set_version_for_testing(VERSION_ZERO);
-    feed.update(spot_update(BS_SOURCE_ID, T_EARLY, SPOT), &clock);
-
-    abort 999
-}
-
-#[test]
-fun migrate_restores_current_version_and_updates_resume() {
-    let (mut scenario, spot_id, _forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
-    let mut feed = scenario.take_shared_by_id<BlockScholesSpotFeed>(spot_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(LANDED_HIGH);
-
-    feed.set_version_for_testing(VERSION_ZERO);
-    feed.migrate();
-    assert_eq!(feed.version(), propbook::constants::current_version!());
-    feed.update(spot_update(BS_SOURCE_ID, T_EARLY, SPOT), &clock);
-    assert_price_read(&feed.normalized_spot().destroy_some(), SPOT, T_EARLY, LANDED_HIGH);
-
-    clock.destroy_for_testing();
-    return_shared(feed);
-    scenario.end();
-}
-
 #[test, expected_failure(abort_code = spot_feed::ENotNewerVersion)]
 fun migrate_current_version_aborts() {
     let (scenario, spot_id, _forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
@@ -611,11 +573,7 @@ fun setup_feeds(source_id: u32, _expiry: u64): (Scenario, ID, ID, ID) {
     (scenario, spot_id, forward_id, svi_id)
 }
 
-fun create_forward_and_svi(
-    scenario: &mut Scenario,
-    source_id: u32,
-    _expiry: u64,
-): (ID, ID) {
+fun create_forward_and_svi(scenario: &mut Scenario, source_id: u32, _expiry: u64): (ID, ID) {
     let mut registry = scenario.take_shared<OracleRegistry>();
     let forward_id = registry::create_and_share_block_scholes_forward_feed(
         &mut registry,

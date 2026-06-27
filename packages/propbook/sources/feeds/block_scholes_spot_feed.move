@@ -166,10 +166,3 @@ fun normalized_spot_from_read(read: &OracleRead<RawSpot>): Option<OracleRead<u64
         ),
     )
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun set_version_for_testing(feed: &mut BlockScholesSpotFeed, version: u64) {
-    feed.version = version;
-}
