@@ -5,7 +5,7 @@
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
 /// gate, and the transaction-local full-pool valuation lock. Flow modules decide
-/// which gates apply before they mutate expiry, oracle, pool, or manager state.
+/// which gates apply before they mutate expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{

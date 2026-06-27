@@ -10,8 +10,8 @@
 /// leveraged set to value the NAV floor-correction term — the only place this
 /// module touches pricing/tick/floor math, and it does so through a caller-supplied
 /// `Pricer`, never owning the pricing model itself. It does not own payout backing,
-/// cash, or manager positions. Liquidated tombstones persist until the holder
-/// redeems the worthless order and clears their manager position.
+/// cash, or account positions. Liquidated tombstones persist until the holder
+/// redeems the worthless order and clears their account position.
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, range_codec};
