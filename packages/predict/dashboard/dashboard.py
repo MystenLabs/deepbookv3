@@ -156,7 +156,9 @@ def _market_tile(slot, period_ms: int, now_ms: int, markets_snapshot=None, width
     clock = _clock(slot.expiry_ms, now_ms)
     addr = "-" if slot.market is None else fmt.short_id(slot.market.market_id)
     ref = _reference_tick(slot, markets_snapshot)
-    ref_line = f"ref {ref:,.2f}" if ref is not None else "ref -"
+    # `ref` is a whole-dollar reference TICK (floor(spot / tick_size), tick_size = $1),
+    # so it has no cents — shown as an integer, unlike the full-precision spot/@ prices.
+    ref_line = f"ref {ref:,}" if ref is not None else "ref -"
 
     def cell(text: str) -> str:
         clean = text if len(text) <= width else text[:width - 1] + "…"
