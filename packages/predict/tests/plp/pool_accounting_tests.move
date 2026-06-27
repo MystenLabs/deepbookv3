@@ -24,6 +24,8 @@ const POST_TERMINAL_FUNDING_AMOUNT: u64 = 100;
 const FEE_INCENTIVE_CAP: u64 = 100;
 const FIRST_FEE_INCENTIVE_ALLOCATION: u64 = 40;
 const OVER_CAP_FEE_INCENTIVE_REQUEST: u64 = 80;
+const FIRST_EXPIRY_FUNDING: u64 = 700;
+const OVER_CAP_EXPIRY_FUNDING: u64 = 301;
 
 #[test]
 fun send_and_receive_track_profit_basis() {
@@ -153,6 +155,46 @@ fun deactivate_removes_from_active_set_and_reports_presence() {
     assert_eq!(ledger.active_expiry_markets().length(), 1);
 
     destroy(ledger);
+}
+
+#[test, expected_failure(abort_code = pool_accounting::ERegisteredExpiryAlreadyExists)]
+fun registering_same_expiry_twice_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+
+    ledger.register_expiry(id, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(id, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::EUnknownRegisteredExpiry)]
+fun reading_unregistered_expiry_funding_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+
+    let _ = ledger.available_expiry_funding(id);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::EMaxExpiryFundingExceeded)]
+fun funding_past_expiry_allocation_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.receive_idle(balance::create_for_testing<DUSDC>(
+        FIRST_EXPIRY_FUNDING + OVER_CAP_EXPIRY_FUNDING,
+    ));
+
+    destroy(ledger.send_expiry_cash(id, FIRST_EXPIRY_FUNDING));
+    // 700 already funded, so a further 301 would make net funding 1001 > cap 1000.
+    destroy(ledger.send_expiry_cash(id, OVER_CAP_EXPIRY_FUNDING));
+
+    abort 999
 }
 
 #[test, expected_failure(abort_code = pool_accounting::ETerminalAccountingStarted)]
