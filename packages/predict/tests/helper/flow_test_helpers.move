@@ -785,6 +785,36 @@ public fun mint_bundle_with_bs(
     )
 }
 
+/// Mint an exact-quantity order through bundles with explicit total-cost and
+/// probability caps.
+public fun mint_exact_quantity_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u256 {
+    self.mint_exact_quantity(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        max_cost,
+        max_probability,
+    )
+}
+
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
@@ -826,6 +856,34 @@ public fun mint_exact_quantity(
         root,
         &self.clock,
         self.scenario.ctx(),
+    )
+}
+
+/// Mint the largest lot-rounded order through bundles for an explicit net-premium
+/// amount and minimum quantity.
+public fun mint_exact_amount_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    amount: u64,
+    min_quantity: u64,
+    leverage: u64,
+): u256 {
+    self.mint_exact_amount(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        amount,
+        min_quantity,
+        leverage,
     )
 }
 
@@ -957,6 +1015,32 @@ public fun redeem_bundle(
         close_quantity,
         0,
         0,
+    )
+}
+
+/// Close a live order through a market/account bundle with explicit close-side
+/// probability and proceeds floors.
+public fun redeem_bundle_with_limits(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+): (u256, Option<u256>) {
+    self.redeem(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
     )
 }
 
