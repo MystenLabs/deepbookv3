@@ -9,7 +9,7 @@
 /// The order floor is a static dollar amount (`floor_shares`), so order accounting
 /// needs no clock. It stores the parent market identity so market-scoped
 /// liquidation events can be emitted atomically with exposure removal. Expiry-market
-/// cash custody, rebate accounting, manager positions, and payout movement stay
+/// cash custody, rebate accounting, account positions, and payout movement stay
 /// outside this module.
 module deepbook_predict::strike_exposure;
 
@@ -338,7 +338,7 @@ public(package) fun close_and_quote_live_order(
     (replacement_order, redeem_amount, range_probability)
 }
 
-/// Clear one liquidated-order tombstone after its manager position is closed.
+/// Clear one liquidated-order tombstone after its account position is closed.
 public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order: &Order) {
     exposure.liquidation.clear_liquidated(order);
 }

@@ -195,7 +195,7 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 - **Supply / withdraw queue** — the two FIFO request queues on `PoolVault`
   (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP
   enqueues with `request_supply` / `request_withdraw` (routed through its
-  manager, returning a cancellable index) and the flush drains them. Code
+  account, returning a cancellable index) and the flush drains them. Code
   `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
 - **The flush** — the transaction-local valuation-and-drain cycle that marks the
   whole pool once and settles the queues at that mark. It is a **hot potato**:
@@ -204,8 +204,8 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   `finish_flush` computes `pool_nav`, then `drain_lp_requests` mints/burns PLP
   and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
   up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`, per-request
-  dust refunds). Fills are delivered to each manager through the balance accumulator
-  (`send_funds`); the manager absorbs them lazily on its next capital op. The flush is
+  dust refunds). Fills are delivered to each account through the balance accumulator
+  (`send_funds`); the account absorbs them lazily on its next capital op. The flush is
   **privileged** — started only by a market deployer's `MarketLifecycleCap`
   (`start_pool_valuation`). Code `PoolValuation` (the hot-potato struct), event
   `FlushExecuted`.

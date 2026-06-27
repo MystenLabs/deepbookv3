@@ -37,11 +37,11 @@ and contributors. For *how* each mechanism works, follow the links into
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
   on every funding move as a ceiling, and the pool sync tops every market up toward
   its reserve target before an LP withdrawal pays out.
-- **Custody.** DUSDC lives in exactly three places: a trader's `PredictManager`
-  (inner `BalanceManager`), each expiry's `ExpiryCash`, and the pool ledger's idle
-  balance. `ExpiryMarket` is the sole authorizer of expiry cash movement. The
-  protocol reserve accumulates the protocol's profit share and is excluded from
-  PLP redemption.
+- **Custody.** DUSDC lives in exactly three places: account-package `Account`
+  custody, each expiry's `ExpiryCash`, and the pool ledger's idle balance.
+  `ExpiryMarket` is the sole authorizer of expiry cash movement. The protocol
+  reserve accumulates the protocol's profit share and is excluded from PLP
+  redemption.
 
 ## Floor and leverage
 
