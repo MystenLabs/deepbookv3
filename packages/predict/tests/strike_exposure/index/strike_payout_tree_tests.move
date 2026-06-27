@@ -102,6 +102,7 @@ fun new_returns_empty_tree() {
     // Empty tree has zero conservative backing and zero settled liability at any
     // settlement price.
     assert_reserve_terms(&tree, 0, 0);
+    assert_eq!(tree.debug_node_count(), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
     destroy(tree);
@@ -250,6 +251,7 @@ fun insert_with_both_terms_zero_is_no_op() {
     insert_range(&mut tree, 2, 6, 0, 0);
 
     assert_reserve_terms(&tree, 0, 0);
+    assert_eq!(tree.debug_node_count(), 0);
     destroy(tree);
 }
 
@@ -262,8 +264,15 @@ fun insert_then_remove_restores_empty_state() {
 
     insert_range(&mut tree, 2, 6, 50, 0);
     assert_reserve_terms(&tree, 50, 50);
+    assert!(tree.debug_contains_node(2));
+    assert!(tree.debug_contains_node(6));
+    assert_eq!(tree.debug_node_count(), 2);
+
     remove_range(&mut tree, 2, 6, 50, 0);
     assert_reserve_terms(&tree, 0, 0);
+    assert!(!tree.debug_contains_node(2));
+    assert!(!tree.debug_contains_node(6));
+    assert_eq!(tree.debug_node_count(), 0);
     destroy(tree);
 }
 
@@ -275,9 +284,33 @@ fun insert_two_then_remove_one_leaves_other() {
     insert_range(&mut tree, 1, 6, 40, 0);
     insert_range(&mut tree, 3, 7, 30, 0);
     assert_reserve_terms(&tree, 70, 70);
+    assert_eq!(tree.debug_node_count(), 4);
 
     remove_range(&mut tree, 3, 7, 30, 0);
     assert_reserve_terms(&tree, 40, 40);
+    assert!(tree.debug_contains_node(1));
+    assert!(tree.debug_contains_node(6));
+    assert!(!tree.debug_contains_node(3));
+    assert!(!tree.debug_contains_node(7));
+    assert_eq!(tree.debug_node_count(), 2);
+    destroy(tree);
+}
+
+#[test]
+fun remove_adjacent_range_preserves_shared_live_boundary() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+
+    insert_range(&mut tree, 1, 3, 40, 0);
+    insert_range(&mut tree, 3, 7, 30, 0);
+    assert_eq!(tree.debug_node_count(), 3);
+
+    remove_range(&mut tree, 1, 3, 40, 0);
+    assert_reserve_terms(&tree, 30, 30);
+    assert!(!tree.debug_contains_node(1));
+    assert!(tree.debug_contains_node(3));
+    assert!(tree.debug_contains_node(7));
+    assert_eq!(tree.debug_node_count(), 2);
     destroy(tree);
 }
 
