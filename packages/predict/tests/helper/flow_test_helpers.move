@@ -913,6 +913,8 @@ public fun redeem_bundle_with_pyth(
         &market.bs,
         order_id,
         close_quantity,
+        0,
+        0,
     )
 }
 
@@ -934,6 +936,8 @@ public fun redeem_bundle(
         &market.bs,
         order_id,
         close_quantity,
+        0,
+        0,
     )
 }
 
