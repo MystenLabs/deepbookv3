@@ -43,6 +43,18 @@ const POST_VALUATION_PROFIT_DEBITS: u64 = 20_000_000_000;
 /// Gross pool value is idle + active NAV = 1_200.01e9. Profit basis is 10m, so
 /// the protocol's 40% cut excludes 4m from LP NAV.
 const TWO_MARKET_POOL_NAV: u64 = 1_200_006_000_000;
+/// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
+/// that mark passes the fixed NAV-dust floor but fails the 0.01 PLP price floor.
+const BELOW_MIN_PRICE_IDLE: u64 = 1_000_000_000;
+/// Large 1x order used to drive a fully-funded market underwater after a price jump.
+const UNDERWATER_QUANTITY: u64 = 500_000_000_000;
+const UNDERWATER_TRADER_DEPOSIT: u64 = 400_000_000_000;
+const DEEP_ITM_LIVE_PRICE: u64 = 1_000_000_000_000;
+const REPRICE_MS: u64 = 121_000;
+const REPRICE_SOURCE_TS: u64 = 119_500;
+/// Empty-market cash above the 10e9 target. Valuation sweeps the 1e9 surplus to
+/// idle and leaves 10e9 active NAV, far above the max price for 10m PLP supply.
+const ABOVE_MAX_PRICE_MARKET_CASH: u64 = 11_000_000_000;
 
 // === Happy path: aggregation ===
 
@@ -343,6 +355,75 @@ fun finish_with_wrong_vault_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = plp::EExpiryMarketNotActive)]
+fun value_expiry_for_inactive_market_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        test_constants::default_live_price(),
+    );
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    helpers::return_market_bundle(market);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = plp::EPoolNavDust)]
+fun finish_flush_with_dust_pool_nav_aborts() {
+    let (mut fx, e) = setup_underwater_market(0);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
+    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = plp::EPlpPriceBelowCircuitBreaker)]
+fun finish_flush_with_plp_price_below_floor_aborts() {
+    let (mut fx, e) = setup_underwater_market(BELOW_MIN_PRICE_IDLE);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
+    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = plp::EPlpPriceAboveCircuitBreaker)]
+fun finish_flush_with_plp_price_above_ceiling_aborts() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, constants::min_bootstrap_liquidity!());
+    let e = fx.create_expiry(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(helpers::market_mut(&mut market), ABOVE_MAX_PRICE_MARKET_CASH);
+
+    let mut val = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut val, &mut market);
+    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+
+    abort 999
+}
+
 // === Lock primitives ===
 
 #[test, expected_failure(abort_code = protocol_config::EValuationNotInProgress)]
@@ -426,4 +507,38 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
     );
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
+}
+
+/// Build a production-created market whose full pool allocation is deployed into
+/// expiry cash, then mint an ATM UP order and reprice it deep in the money. The
+/// repriced live liability exceeds free cash, so the market contributes zero NAV;
+/// `idle_remainder` is the only pool NAV left for `finish_flush`.
+fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
+    let mut fx = helpers::setup_market_default();
+    let market_allocation = test_constants::default_max_expiry_allocation();
+    fx.set_template_zero_min_fee();
+    fx.set_default_cadence_allocation(market_allocation, market_allocation);
+    bootstrap_pool(&mut fx, market_allocation + idle_remainder);
+    let e = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(UNDERWATER_TRADER_DEPOSIT);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(e);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        UNDERWATER_QUANTITY,
+        test_constants::leverage_one_x(),
+    );
+    fx.set_clock_for_testing(REPRICE_MS);
+    fx.prepare_live_oracle_bundle_at(&mut market, DEEP_ITM_LIVE_PRICE, REPRICE_SOURCE_TS);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    (fx, e)
 }
