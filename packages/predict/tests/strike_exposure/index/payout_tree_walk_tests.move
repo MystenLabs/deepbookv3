@@ -5,9 +5,9 @@
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
 /// `current_nav` cannot reach directly: the bounded-interpolation gate (the
 /// production `nav_interpolation_price_tolerance` is 0, so `current_nav` always
-/// walks exactly), the skip-zero-delta path over a dead (fully-removed) boundary
-/// that the treap never garbage-collects, and the boundary-aggregation dust clamp
-/// — the flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
+/// walks exactly), the skip-zero-delta path over an equal live start/end
+/// boundary, and the boundary-aggregation dust clamp — the flat-price-tail integer
+/// underflow the ATM `current_nav` fixtures miss.
 ///
 /// The tree keys boundaries by absolute tick; the walk recovers each raw strike as
 /// `tick * tick_size`. These tests use the default `tick_size` (1e9) so tick `100`
@@ -42,8 +42,7 @@ const HIGH_VARIANCE_A: u64 = 100_000_000;
 const Q0: u64 = 10_000_000_000;
 const Q1: u64 = 2_000_000_000;
 const Q2: u64 = 2_000_000_000;
-const DEAD_QUANTITY: u64 = 3_000_000_000;
-const LIVE_QUANTITY: u64 = 5_000_000_000;
+const ADJACENT_QUANTITY: u64 = 5_000_000_000;
 /// Forward far above the grid so low strikes sit in the deep-ITM flat price tail
 /// where adjacent ticks price within a floor bucket — the dust-underflow regime.
 const FLAT_REGION_FORWARD: u64 = 435_000_000_000;
@@ -105,20 +104,27 @@ fun interpolation_collapses_subtree_within_bound() {
 }
 
 #[test]
-fun skip_zero_delta_ignores_dead_boundaries() {
+fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
-    // Insert then fully remove a finite range: its boundary nodes persist (the
-    // treap never GCs) with zeroed local quantity -> skip-zero-delta must skip them.
-    tree.insert_range(t1, t2, DEAD_QUANTITY, 0);
-    tree.remove_range(t1, t2, DEAD_QUANTITY, 0);
-    insert_up(&mut tree, t0, LIVE_QUANTITY);
+    // Adjacent live ranges with the same quantity leave an equal nonzero start/end
+    // at the shared boundary. The exact walk may skip pricing that boundary because
+    // the two sides cancel.
+    tree.insert_range(t0, t1, ADJACENT_QUANTITY, 0);
+    tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
-    // Only the live order is valued; the dead t1/t2 nodes contribute nothing.
     let walk = tree.walk_linear(&pricer, tick_size(), 0);
-    assert_eq!(walk, up_reference(&pricer, vector[t0], vector[LIVE_QUANTITY]));
+    assert_eq!(
+        walk,
+        range_reference(
+            &pricer,
+            vector[t0, t1],
+            vector[t1, t2],
+            vector[ADJACENT_QUANTITY, ADJACENT_QUANTITY],
+        ),
+    );
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -181,6 +187,22 @@ fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): 
     ticks.length().do!(|i| {
         total =
             total + math::mul(pricer.range_price(raw(ticks[i]), constants::pos_inf!()), quantities[i]);
+    });
+    total
+}
+
+/// Independent finite-range reference: `Σ mul(range_price(lower·ts, higher·ts), quantity)`.
+/// Uses `range_price` (a different pricer path than the walk's `up_price`).
+fun range_reference(
+    pricer: &Pricer,
+    lower_ticks: vector<u64>,
+    higher_ticks: vector<u64>,
+    quantities: vector<u64>,
+): u64 {
+    let mut total = 0;
+    lower_ticks.length().do!(|i| {
+        let range_price = pricer.range_price(raw(lower_ticks[i]), raw(higher_ticks[i]));
+        total = total + math::mul(range_price, quantities[i]);
     });
     total
 }

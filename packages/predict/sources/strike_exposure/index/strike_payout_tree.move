@@ -174,6 +174,16 @@ public(package) fun remove_range(
     );
 }
 
+#[test_only]
+public(package) fun debug_contains_node(tree: &StrikePayoutTree, tick: u64): bool {
+    tree.nodes.contains(tick)
+}
+
+#[test_only]
+public(package) fun debug_node_count(tree: &StrikePayoutTree): u64 {
+    debug_node_count_subtree(&tree.nodes, tree.root)
+}
+
 fun apply_range(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
@@ -210,7 +220,7 @@ fun apply_boundary_delta(
         is_start,
         add,
     );
-    tree.root = option::some(new_root);
+    tree.root = new_root;
 }
 
 fun apply_at(
@@ -220,12 +230,12 @@ fun apply_at(
     terms: PayoutTerms,
     is_start: bool,
     add: bool,
-): u64 {
+): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutTerms);
         let leaf = new_leaf(tick, terms, is_start);
         nodes.add(tick, leaf);
-        return tick
+        return option::some(tick)
     };
 
     let root_tick = *root.borrow();
@@ -237,8 +247,12 @@ fun apply_at(
         } else {
             apply_terms_delta(&mut node.local_end, terms, add);
         };
+        if (is_empty_node(node)) {
+            let _removed = nodes.remove(root_tick);
+            return merge_subtrees(nodes, node.left, node.right)
+        };
         resummarize(nodes, root_tick, node);
-        return root_tick
+        return option::some(root_tick)
     };
 
     if (tick < root_tick) {
@@ -250,11 +264,15 @@ fun apply_at(
             is_start,
             add,
         );
-        let left_node = nodes[new_left];
-        if (left_node.priority > node.priority) {
-            return rotate_right(nodes, root_tick, node, new_left, left_node)
+        if (add && new_left.is_some()) {
+            let left_tick = *new_left.borrow();
+            let left_node = nodes[left_tick];
+            if (left_node.priority > node.priority) {
+                let rotated = rotate_right(nodes, root_tick, node, left_tick, left_node);
+                return option::some(rotated)
+            };
         };
-        node.left = option::some(new_left);
+        node.left = new_left;
     } else {
         let new_right = apply_at(
             nodes,
@@ -264,15 +282,19 @@ fun apply_at(
             is_start,
             add,
         );
-        let right_node = nodes[new_right];
-        if (right_node.priority > node.priority) {
-            return rotate_left(nodes, root_tick, node, new_right, right_node)
+        if (add && new_right.is_some()) {
+            let right_tick = *new_right.borrow();
+            let right_node = nodes[right_tick];
+            if (right_node.priority > node.priority) {
+                let rotated = rotate_left(nodes, root_tick, node, right_tick, right_node);
+                return option::some(rotated)
+            };
         };
-        node.right = option::some(new_right);
+        node.right = new_right;
     };
 
     resummarize(nodes, root_tick, node);
-    root_tick
+    option::some(root_tick)
 }
 
 fun new_leaf(tick: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
@@ -327,6 +349,29 @@ fun rotate_left(
     right_tick
 }
 
+fun merge_subtrees(
+    nodes: &mut Table<u64, PayoutNode>,
+    left: Option<u64>,
+    right: Option<u64>,
+): Option<u64> {
+    if (left.is_none()) return right;
+    if (right.is_none()) return left;
+
+    let left_tick = *left.borrow();
+    let right_tick = *right.borrow();
+    let mut left_node = nodes[left_tick];
+    let mut right_node = nodes[right_tick];
+    if (left_node.priority > right_node.priority) {
+        left_node.right = merge_subtrees(nodes, left_node.right, right);
+        resummarize(nodes, left_tick, left_node);
+        option::some(left_tick)
+    } else {
+        right_node.left = merge_subtrees(nodes, left, right_node.left);
+        resummarize(nodes, right_tick, right_node);
+        option::some(right_tick)
+    }
+}
+
 fun settlement_prefix_terms(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
@@ -362,8 +407,7 @@ fun settlement_prefix_terms(
 /// Two collapses keep the eval count down:
 /// - skip-zero-delta: when `local_start.quantity == local_end.quantity` the two
 ///   sides contribute the same `P·q` and cancel in `walk_linear`'s top-level
-///   subtraction, so the `up_price` eval is skipped (exact; also drops the
-///   fully-redeemed boundaries the treap never GCs).
+///   subtraction, so the `up_price` eval is skipped (exact).
 /// - bounded interpolation, only when `tolerance > 0`: if the subtree's exact
 ///   price span (`up_price(min_tick·ts) - up_price(max_tick·ts)`, monotone so
 ///   non-negative) is within `tolerance`, the whole subtree is priced at the
@@ -494,6 +538,24 @@ fun net_payout(terms: PayoutTerms): u64 {
 
 fun payout_terms(quantity: u64, floor_shares: u64): PayoutTerms {
     PayoutTerms { quantity, floor_shares }
+}
+
+fun is_zero_terms(terms: PayoutTerms): bool {
+    terms.quantity == 0 && terms.floor_shares == 0
+}
+
+fun is_empty_node(node: PayoutNode): bool {
+    is_zero_terms(node.local_start) && is_zero_terms(node.local_end)
+}
+
+#[test_only]
+fun debug_node_count_subtree(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
+    if (root.is_none()) return 0;
+    let tick = *root.borrow();
+    let node = nodes[tick];
+    1
+        + debug_node_count_subtree(nodes, node.left)
+        + debug_node_count_subtree(nodes, node.right)
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
