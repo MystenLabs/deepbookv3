@@ -181,7 +181,7 @@ The per-expiry NAV primitive is `expiry_market::current_nav`: the **exact** live
 
 The flush is a transaction-local **hot potato** (`PoolValuation`), assembled in three phases over one PTB:
 
-1. `start_pool_valuation` (started with a market-deployer `MarketLifecycleCap` proof) engages the valuation lock and snapshots the active-expiry set.
+1. `start_pool_valuation` (started with a market-deployer `MarketLifecycleCap` proof) engages the valuation lock and snapshots the active-expiry set. PLP caps the active pre-expiry market count at market registration; expired or settled markets can also be swept independently before a flush.
 2. `value_expiry` runs once per snapshotted market: it rebalances that market's cash, then folds the market's NAV (`current_nav`, or 0 for a swept settled market) into the running total, proving the market is in the snapshot and valued exactly once.
 3. `finish_flush` proves every snapshotted market was valued, computes `pool_nav = idle + Σ current_nav` (net of the pending-protocol-profit exclusion priced from the aggregate profit basis), then `drain_lp_requests` mints/burns PLP and delivers fills at that one frozen mark — supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue budgets (`supply_budget`/`withdraw_budget`, `None` = drain fully; independent so a supply backlog can't starve withdrawals), with per-request failure isolation (a degenerate request is refunded rather than aborting the flush). Fills are delivered to the account receive address through `balance::send_funds` and passively settled into account custody by later Account balance operations.
 

@@ -83,6 +83,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     registry.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         tick,
         test_constants::default_admission_tick_size(),

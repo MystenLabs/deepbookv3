@@ -157,12 +157,14 @@ public fun register_underlying(
     registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
-/// Set all deployment terms for one cadence. Passing zero for all five values
-/// disables the cadence; otherwise all values must be nonzero and valid.
+/// Set all deployment terms for one underlying's cadence. Passing zero for all
+/// five values disables the cadence; otherwise all values must be nonzero and
+/// valid.
 public fun set_cadence_config(
     registry: &mut Registry,
     config: &ProtocolConfig,
     _admin_cap: &AdminCap,
+    propbook_underlying_id: u32,
     cadence_id: u8,
     tick_size: u64,
     admission_tick_size: u64,
@@ -174,6 +176,7 @@ public fun set_cadence_config(
     registry
         .market_manager
         .set_cadence_config(
+            propbook_underlying_id,
             cadence_id,
             tick_size,
             admission_tick_size,
@@ -231,7 +234,13 @@ public fun create_expiry_market(
         reference_tick_source_timestamp_ms,
         ctx,
     );
-    pool_vault.register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
+    pool_vault.register_expiry(
+        expiry_market_id,
+        expiry,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        clock,
+    );
     registry
         .market_manager
         .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
