@@ -255,6 +255,64 @@ fun insert_with_both_terms_zero_is_no_op() {
     destroy(tree);
 }
 
+#[test, expected_failure(abort_code = strike_payout_tree::EMaxPayoutTreeNodes)]
+fun insert_new_boundary_above_node_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_at_node_cap(&mut tree);
+
+    insert_range(
+        &mut tree,
+        2,
+        constants::pos_inf_tick!(),
+        1,
+        0,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_payout_tree::EMaxPayoutTreeNodes)]
+fun insert_finite_range_requiring_two_new_boundaries_above_node_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_one_slot_below_node_cap(&mut tree);
+
+    insert_range(&mut tree, 2, 3, 1, 0);
+    abort 999
+}
+
+#[test]
+fun insert_existing_boundary_at_node_cap_succeeds() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_at_node_cap(&mut tree);
+
+    insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+
+    assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!());
+    destroy(tree);
+}
+
+#[test]
+fun removing_boundary_below_node_cap_allows_new_boundary() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_at_node_cap(&mut tree);
+
+    remove_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+    assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!() - 1);
+
+    insert_range(
+        &mut tree,
+        2,
+        constants::pos_inf_tick!(),
+        1,
+        0,
+    );
+    assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!());
+    destroy(tree);
+}
+
 // === remove_range ===
 
 #[test]
@@ -422,4 +480,14 @@ fun settled_liability_nets_floor_shares() {
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 30);
     assert_reserve_terms(&tree, 30, 30);
     destroy(tree);
+}
+
+fun seed_single_boundary_at_node_cap(tree: &mut StrikePayoutTree) {
+    insert_range(tree, 1, constants::pos_inf_tick!(), 1, 0);
+    tree.debug_set_node_count(constants::max_payout_tree_nodes!());
+}
+
+fun seed_single_boundary_one_slot_below_node_cap(tree: &mut StrikePayoutTree) {
+    insert_range(tree, 1, constants::pos_inf_tick!(), 1, 0);
+    tree.debug_set_node_count(constants::max_payout_tree_nodes!() - 1);
 }

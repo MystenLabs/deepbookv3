@@ -20,11 +20,13 @@ use fixed_math::math;
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
+const EMaxPayoutTreeNodes: u64 = 1;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
     root: Option<u64>,
     nodes: Table<u64, PayoutNode>,
+    node_count: u64,
     base: PayoutTerms,
 }
 
@@ -138,6 +140,7 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
         root: option::none(),
         nodes: table::new(ctx),
+        node_count: 0,
         base: payout_terms(0, 0),
     }
 }
@@ -150,12 +153,27 @@ public(package) fun insert_range(
     quantity: u64,
     floor_shares: u64,
 ) {
-    tree.apply_range(
-        lower_tick,
-        higher_tick,
-        payout_terms(quantity, floor_shares),
-        true,
+    let terms = payout_terms(quantity, floor_shares);
+    if (terms.quantity == 0 && terms.floor_shares == 0) return;
+
+    let mut new_nodes = 0;
+    if (lower_tick != 0 && !tree.nodes.contains(lower_tick)) {
+        new_nodes = new_nodes + 1;
+    };
+    if (
+        higher_tick != constants::pos_inf_tick!()
+            && higher_tick != lower_tick
+            && !tree.nodes.contains(higher_tick)
+    ) {
+        new_nodes = new_nodes + 1;
+    };
+
+    assert!(
+        tree.node_count + new_nodes <= constants::max_payout_tree_nodes!(),
+        EMaxPayoutTreeNodes,
     );
+
+    tree.apply_range(lower_tick, higher_tick, terms, true);
 }
 
 /// Remove interval payout terms for the order tick range `(lower_tick, higher_tick]`.
@@ -181,7 +199,12 @@ public(package) fun debug_contains_node(tree: &StrikePayoutTree, tick: u64): boo
 
 #[test_only]
 public(package) fun debug_node_count(tree: &StrikePayoutTree): u64 {
-    debug_node_count_subtree(&tree.nodes, tree.root)
+    tree.node_count
+}
+
+#[test_only]
+public(package) fun debug_set_node_count(tree: &mut StrikePayoutTree, node_count: u64) {
+    tree.node_count = node_count;
 }
 
 fun apply_range(
@@ -212,6 +235,7 @@ fun apply_boundary_delta(
     is_start: bool,
     add: bool,
 ) {
+    let had_node = tree.nodes.contains(tick);
     let new_root = apply_at(
         &mut tree.nodes,
         tree.root,
@@ -221,6 +245,13 @@ fun apply_boundary_delta(
         add,
     );
     tree.root = new_root;
+
+    let has_node = tree.nodes.contains(tick);
+    if (!had_node && has_node) {
+        tree.node_count = tree.node_count + 1;
+    } else if (had_node && !has_node) {
+        tree.node_count = tree.node_count - 1;
+    };
 }
 
 fun apply_at(
@@ -546,16 +577,6 @@ fun is_zero_terms(terms: PayoutTerms): bool {
 
 fun is_empty_node(node: PayoutNode): bool {
     is_zero_terms(node.local_start) && is_zero_terms(node.local_end)
-}
-
-#[test_only]
-fun debug_node_count_subtree(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
-    if (root.is_none()) return 0;
-    let tick = *root.borrow();
-    let node = nodes[tick];
-    1
-        + debug_node_count_subtree(nodes, node.left)
-        + debug_node_count_subtree(nodes, node.right)
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
