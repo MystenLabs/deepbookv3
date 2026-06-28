@@ -121,6 +121,11 @@ interface AliasState {
     availableSettledPlp: bigint;
 }
 
+interface StressMintConfig {
+    enabled: boolean;
+    duplicateCount: number;
+}
+
 function parseArgs() {
     let maxRows: number | undefined;
     let skipPython = false;
@@ -146,6 +151,50 @@ function parseArgs() {
 function scenarioPath(): string {
     const configured = process.env.SCENARIO_PATH?.trim();
     return configured && configured.length > 0 ? configured : DEFAULT_SCENARIO_PATH;
+}
+
+function stressMintConfig(): StressMintConfig {
+    const raw = process.env.SIM_STRESS_MINT_DUPLICATES?.trim();
+    if (!raw) return { enabled: false, duplicateCount: 1 };
+    if (!/^[1-9][0-9]*$/.test(raw)) {
+        throw new Error(
+            `SIM_STRESS_MINT_DUPLICATES must be a positive integer, got "${raw}"`,
+        );
+    }
+
+    const duplicateCount = Number(raw);
+    if (!Number.isSafeInteger(duplicateCount)) {
+        throw new Error(`SIM_STRESS_MINT_DUPLICATES is too large: ${raw}`);
+    }
+
+    return { enabled: true, duplicateCount };
+}
+
+function stressOrderRef(row: MintRow, duplicateIndex: number): string {
+    return `${row.orderRef}_stress_${duplicateIndex + 1}`;
+}
+
+function expandStressMintRows(rows: ScenarioRow[], duplicateCount: number): ScenarioRow[] {
+    const expanded: ScenarioRow[] = [];
+    let step = 1;
+
+    for (const row of rows) {
+        if (row.action !== "oracle_mint_ptb") continue;
+        for (let duplicateIndex = 0; duplicateIndex < duplicateCount; duplicateIndex++) {
+            expanded.push({
+                ...row,
+                step,
+                orderRef: stressOrderRef(row, duplicateIndex),
+            });
+            step++;
+        }
+    }
+
+    if (expanded.length === 0) {
+        throw new Error("SIM_STRESS_MINT_DUPLICATES requires at least one mint row");
+    }
+
+    return expanded;
 }
 
 function initialEconomicState(
@@ -922,7 +971,7 @@ function errorMessage(error: unknown): string {
 // Row counts after which the runner synthesizes a privileged LP flush. Defaults to
 // rows 300 and 999 (the chosen batched cadence); SIM_FLUSH_AFTER="a,b,..." overrides
 // it for fast smoke runs.
-function flushCheckpoints(): Set<number> {
+function flushCheckpoints(rowCount: number, defaultToFinalRow = false): Set<number> {
     const raw = process.env.SIM_FLUSH_AFTER;
     if (raw) {
         return new Set(
@@ -932,6 +981,7 @@ function flushCheckpoints(): Set<number> {
                 .filter((n) => Number.isInteger(n) && n > 0),
         );
     }
+    if (defaultToFinalRow) return new Set([rowCount]);
     return new Set([300, 999]);
 }
 
@@ -1388,6 +1438,7 @@ async function executeScenario(
     scenarioPath: string,
     maxRows?: number,
     runPython = true,
+    stressMintOnly = false,
 ): Promise<void> {
     clearOutputArtifacts();
     if (runPython) {
@@ -1410,7 +1461,7 @@ async function executeScenario(
     // bootstrap supply minted PLP 1:1 at setup, so seed the account's withdrawable PLP
     // with it (a conservative lower bound — see AliasState.availableSettledPlp).
     aliases.availableSettledPlp = capital.vaultSeed;
-    const flushAfter = flushCheckpoints();
+    const flushAfter = flushCheckpoints(rows.length, stressMintOnly);
     const rebalanceAfter = cashRebalanceCheckpoints(rows.length, flushAfter);
     let skippedWithdraws = 0;
 
@@ -1595,6 +1646,7 @@ function runPythonReplay(scenarioPath: string, maxRows?: number) {
 async function main() {
     const args = parseArgs();
     const scenario = scenarioPath();
+    const stress = stressMintConfig();
     const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
     const capital = simulationCapital(scenarioConfig, "normal");
     let rows = loadScenario(scenario);
@@ -1602,10 +1654,30 @@ async function main() {
         console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
         rows = rows.slice(0, args.maxRows);
     }
+    if (stress.enabled) {
+        if (!args.skipPython) {
+            throw new Error(
+                "SIM_STRESS_MINT_DUPLICATES rewrites the in-memory workload and requires --skip-analysis via run.sh (or --skip-python when calling src/sim.ts directly)",
+            );
+        }
+        const sourceRows = rows.length;
+        rows = expandStressMintRows(rows, stress.duplicateCount);
+        console.log(
+            `[${ts()}] Stress mint mode: ${sourceRows} source rows -> ${rows.length} mint-only rows (${stress.duplicateCount}x each mint)`,
+        );
+    }
     if (rows.length === 0) throw new Error("Scenario has no executable rows");
 
     const state = await setupSimulation(scenarioConfig, capital, firstOracleData(rows[0]));
-    await executeScenario(rows, state, capital, scenario, args.maxRows, !args.skipPython);
+    await executeScenario(
+        rows,
+        state,
+        capital,
+        scenario,
+        args.maxRows,
+        !args.skipPython,
+        stress.enabled,
+    );
 }
 
 main().catch((error) => {
