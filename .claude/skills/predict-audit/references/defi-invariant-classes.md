@@ -6,7 +6,7 @@ Recon-style invariant testing), mapped to Predict surfaces. Lens 01 builds the l
 ## 1. Solvency / conservation
 The protocol must always be able to pay what it owes; value is conserved across parties.
 - `expiry_cash`: `cash_balance >= payout_liability + rebate_reserve` after EVERY cash mutation.
-- Live backing (max-live payout) must bound the exact settled liability for every order.
+- Live backing for a winning order is the exact `quantity - floor_shares` (= its settled payout under the static floor) plus the aggregate disjoint-backing λ buffer (D030) — not a time-varying max-live term.
 - DUSDC is conserved across trader / LP / protocol / builder — no path mints value from nothing or strands it.
 - LP NAV: the exact `current_nav` mark prices PLP supply AND withdraw identically (`supply_NAV == withdraw_NAV
   == TRUE`) at the valuation boundary — no over/under-count, so no dilution and no liveness clamp under-pays.
@@ -20,7 +20,7 @@ Only the intended actor can move value or change critical state (see the Move ch
 Under-collateralized / under-floor positions are removed correctly and cannot be blocked.
 - Passive liquidation of an under-floor leveraged order cannot be starved, skipped, double-applied, or griefed;
   paging cursors/watermarks cover all candidates under budgeted passes.
-- The aggregate-floor NAV precondition holds: every active leveraged order is individually above its floor
+- The aggregate-floor NAV precondition holds: every order whose gross value has crossed its knock-out level (`floor_amount / liquidation_ltv`) has been liquidated
   before valuation, else aggregate-floor subtraction overstates recoverable value.
 
 ## 4. Oracle integrity

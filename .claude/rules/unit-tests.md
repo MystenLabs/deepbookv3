@@ -82,7 +82,7 @@ fun deposit_adds_funds() {
 
 ### 4. Cover every abort code with an `expected_failure` test
 
-For every `const E*` error constant in a source module, there must be at least one test that triggers it. Untested abort codes are untested error paths.
+For every *reachable* `const E*` error constant in a source module, there must be at least one test that triggers it; untested abort codes are untested error paths. Coverage applies regardless of visibility: if a guard behind a `public(package)` helper can't be triggered as-is, that is a signal to make it independently testable — extract the pure precondition into a `public(package)` checker taking only its scalar inputs (e.g. `assert_plp_price_in_bounds(pool_nav, total_supply)`) and test that directly. "The guard is package-internal" is never a reason to ship an untested abort code; add the root-free unit test or ledger it as a tracked deploy-gate. For a code that is genuinely structurally-unreachable in production, document why instead of contriving a bypass test (Rule 12 forbids bypassing production validation just to reach a code).
 
 ```move
 #[test, expected_failure(abort_code = predict::EOracleSettled)]
@@ -277,8 +277,8 @@ contract (and the expected value was derived independently per Rule 1):
 - **Never** re-express the bug as an `expected_failure` of the buggy behavior.
 - **Never** "fix" the contract to make the test pass (that is a separate effort).
 
-Instead: add an entry to the bug ledger (e.g. `.redesign/BUGS_FOUND.md`), tag the
-test `// KNOWN-FAILING: BUG-NNN`, and leave it RED. The ledger is the authoritative
+Instead: add an entry to the live audit tracker (`.claude/predict-review/OPEN-ITEMS.md`), tag the
+test `// KNOWN-FAILING: <id>`, and leave it RED. The tracker is the authoritative
 manifest of expected-failing tests, so a *new* red (a regression) is distinguishable
 from a *known* red. A green-on-first-write suite is suspect; tests are supposed to
 be able to break.

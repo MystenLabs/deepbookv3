@@ -53,3 +53,9 @@ below.
 - On-chain landing time vs source-data time must be distinguishable in the field name (`*_timestamp_ms` vs
   `*_published_at_us`).
 - Cross-module returns are owned facts, not pre-applied consumer policy (no `*_optimistic`/clamp-at-two-altitudes).
+
+## Refactor & API-surface safety
+- Guard-preservation across extraction: a moved write path keeps every pre-split auth + value guard (cap, non-zero, in-range, freshness, whole-ms key), or the removal is a journaled decision with the new trust model. (Origin: the oracle split dropped the BS writer-cap + `EZeroForward`/`EZeroSpot` + whole-ms guards.)
+- Trust-boundary input validation is owned by the public entrypoint (fail-fast), independent of any leaf guard — a MISSING boundary check is a finding; a boundary check that duplicates a leaf is NOT.
+- Open–Closed / irreversibility: a shipped `public` signature, event field, packed-id layout, or error meaning is a permanent commitment — minimize the surface; design extension around a predicted axis of variation.
+- Two-sided safety bounds: a circuit breaker / pricing envelope / band bounds BOTH sides, has an admin recovery path (not a hard upgrade-only constant), and is `expected_failure`-tested at each boundary.
