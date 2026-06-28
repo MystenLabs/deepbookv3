@@ -69,4 +69,5 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - [ ] Are all constants imported from the `constants` module, not hardcoded?
 - [ ] Do all `expected_failure` tests specify a named abort code (no bare `expected_failure`)?
 - [ ] Do timestamp updates match the field's documented semantics?
+- [ ] Do function inputs match ownership: objects for owned/current state, narrow values for pure formulas, no wide same-typed primitive lists?
 - [ ] Do cross-module returns carry owned facts, with every lossy clamp applied once at the policy owner?
