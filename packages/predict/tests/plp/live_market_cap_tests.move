@@ -47,6 +47,22 @@ fun expired_active_markets_do_not_consume_live_market_cap() {
     finish_vault_test(scenario, vault, clock);
 }
 
+#[test]
+fun expired_market_can_register_when_live_market_cap_is_full() {
+    let (scenario, mut vault, clock) = begin_vault_test();
+
+    let mut i = 0;
+    while (i < constants::max_live_expiry_markets!()) {
+        register_expiry(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
+        i = i + 1;
+    };
+    register_expiry(&mut vault, synthetic_expiry_id(i), EXPIRED_EXPIRY_MS, &clock);
+
+    assert_eq!(vault.active_live_expiry_count(&clock), constants::max_live_expiry_markets!());
+    assert_eq!(vault.active_expiry_markets().length(), constants::max_live_expiry_markets!() + 1);
+    finish_vault_test(scenario, vault, clock);
+}
+
 fun begin_vault_test(): (Scenario, PoolVault, Clock) {
     let mut scenario = test::begin(test_constants::admin());
     let vault_id = plp::init_for_testing(scenario.ctx());
