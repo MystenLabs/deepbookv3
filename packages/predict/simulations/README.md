@@ -58,6 +58,17 @@ same shape as `data/scenario_dataset.csv`; the runner still generates a
 temporary executable scenario before replay. This is not a manual simulation
 interface.
 
+For ad hoc localnet-only NAV stress runs, reuse the benchmark path:
+
+```bash
+SIM_STRESS_MINT_DUPLICATES=10 SIM_GAS_BUDGET=5000000000 bash run.sh --skip-analysis
+```
+
+`SIM_STRESS_MINT_DUPLICATES=N` rewrites the in-memory workload to replay only
+generated mint rows, duplicating each mint `N` times. The generated CSV is left
+unchanged, so stress mode requires `--skip-analysis` and defaults its synthetic
+flush to the final expanded mint row unless `SIM_FLUSH_AFTER` is set.
+
 ## File Map
 
 -   `run.sh`: orchestrates fresh full runs and Python-only runs.
@@ -375,7 +386,8 @@ Important fields:
     PLP pool-sync rebalancing.
 -   Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
     liquidation backlog. The runner default transaction gas budget is currently
-    `1_000_000_000` MIST.
+    `1_000_000_000` MIST; set `SIM_GAS_BUDGET` to override it for local stress
+    runs.
 -   Live leveraged NAV still depends on bounded liquidation plus aggregate floor
     accounting in the Move implementation. That is the core protocol risk being
     explored by this harness, not something the simulator hides.

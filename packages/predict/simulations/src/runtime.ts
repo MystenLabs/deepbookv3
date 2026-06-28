@@ -98,7 +98,16 @@ export const signer = getSigner();
 export const address = signer.getPublicKey().toSuiAddress();
 export { POOL_VAULT_ID, PROTOCOL_CONFIG_ID };
 
-const DEFAULT_GAS_BUDGET = 1_000_000_000n;
+const DEFAULT_GAS_BUDGET = gasBudgetFromEnv();
+
+function gasBudgetFromEnv(): bigint {
+    const raw = process.env.SIM_GAS_BUDGET?.trim();
+    if (!raw) return 1_000_000_000n;
+    if (!/^[1-9][0-9]*$/.test(raw)) {
+        throw new Error(`SIM_GAS_BUDGET must be a positive integer MIST value, got "${raw}"`);
+    }
+    return BigInt(raw);
+}
 
 function isSuccessStatus(status: any): boolean {
     return status?.status === "success" || status?.success === true;
