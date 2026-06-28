@@ -868,12 +868,12 @@ fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
 
 /// Current cash, the target cash to hold, and the upper sweep band for one expiry.
 ///
-/// `required_cash` is payout liability plus rebate reserve; `target_cash` adds one
-/// buffer above it and `sweep_threshold_cash` adds two, both floored at the
-/// per-expiry initial cash target. Below target the pool tops up to target; above
-/// the sweep band it returns the excess over target.
+/// `target_cash` adds one buffer above the expiry-cash required backing and
+/// `sweep_threshold_cash` adds two, both floored at the per-expiry initial cash
+/// target. Below target the pool tops up to target; above the sweep band it
+/// returns the excess over target.
 fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64, u64) {
-    let required_cash = market.payout_liability() + market.rebate_reserve();
+    let required_cash = market.required_cash();
     let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
     let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
     let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(

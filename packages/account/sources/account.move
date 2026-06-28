@@ -144,8 +144,8 @@ public fun receive_address(self: &Account): address {
 /// Permissionless: it only consolidates the account's own funds and moves nothing out,
 /// so it needs no `Auth`; pulling funds out still requires `load_account_mut(auth)`.
 public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock: &Clock) {
+    if (wrapper.account.settled_this_timestamp<T>(clock)) return;
     let now = clock.timestamp_ms();
-    if (now == wrapper.account.last_settlement_ms<T>()) return;
     wrapper.account.set_last_settlement_ms<T>(now);
 
     let amount = balance::settled_funds_value<T>(root, wrapper.id.to_address());
@@ -295,11 +295,19 @@ fun stored_balance<T>(self: &Account): u64 {
 }
 
 fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock): u64 {
-    if (clock.timestamp_ms() == self.last_settlement_ms<T>()) {
+    if (self.settled_this_timestamp<T>(clock)) {
         0
     } else {
         balance::settled_funds_value<T>(root, self.receive_address)
     }
+}
+
+/// The settlement timestamp is both the duplicate-withdraw latch and the read-side
+/// accumulator suppression. `settled_funds_value` observes beginning-of-commit
+/// funds, so same-timestamp balance reads after `settle` must not add that
+/// accumulator view on top of the newly stored balance.
+fun settled_this_timestamp<T>(self: &Account, clock: &Clock): bool {
+    clock.timestamp_ms() == self.last_settlement_ms<T>()
 }
 
 fun last_settlement_ms<T>(self: &Account): u64 {

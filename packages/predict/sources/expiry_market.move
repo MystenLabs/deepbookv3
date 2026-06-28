@@ -162,6 +162,11 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
 }
 
+/// Return cash required to cover payout liability plus unresolved rebate reserve.
+public fun required_cash(market: &ExpiryMarket): u64 {
+    market.cash.required_cash(market.payout_liability())
+}
+
 /// Load a PTB-local live pricing snapshot for this market.
 ///
 /// The returned `Pricer` is bound to `market.id()` and can be passed into live
@@ -663,7 +668,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
     let settlement_price = market.settlement_price();
     let settled_liability = market.materialize_settled_liability();
-    let reserved_cash = settled_liability + market.cash.rebate_reserve();
+    let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
