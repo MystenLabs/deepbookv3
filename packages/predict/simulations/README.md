@@ -67,7 +67,10 @@ SIM_STRESS_MINT_DUPLICATES=10 SIM_GAS_BUDGET=5000000000 bash run.sh --skip-analy
 `SIM_STRESS_MINT_DUPLICATES=N` rewrites the in-memory workload to replay only
 generated mint rows, duplicating each mint `N` times. The generated CSV is left
 unchanged, so stress mode requires `--skip-analysis` and defaults its synthetic
-flush to the final expanded mint row unless `SIM_FLUSH_AFTER` is set.
+flush to the final expanded mint row unless `SIM_FLUSH_AFTER` is set. To keep
+the run focused on mint growth plus the final NAV walk, stress mode scales
+normal capital by `10 * N`, front-loads the scaled expiry allocation as initial
+expiry cash, and suppresses the normal every-100-row expiry-cash rebalances.
 
 ## File Map
 
