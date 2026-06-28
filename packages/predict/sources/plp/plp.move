@@ -653,10 +653,15 @@ public(package) fun register_expiry(
     initial_expiry_cash: u64,
     clock: &Clock,
 ) {
-    assert!(
-        vault.active_live_expiry_count(clock) < constants::max_live_expiry_markets!(),
-        EMaxLiveExpiryMarketsExceeded,
-    );
+    let now_ms = clock.timestamp_ms();
+    if (expiry_ms > now_ms) {
+        assert!(
+            vault
+                .expiry_accounting
+                .active_live_expiry_count(now_ms) < constants::max_live_expiry_markets!(),
+            EMaxLiveExpiryMarketsExceeded,
+        );
+    };
     vault
         .expiry_accounting
         .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
