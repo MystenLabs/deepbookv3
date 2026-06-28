@@ -5,7 +5,7 @@
 /// `value_expiry` / `finish_flush`) and its unified per-market cash
 /// flush. Tests build production-valid markets through the real creation + funding
 /// path, then assert: the aggregated pool NAV equals an independently assembled
-/// reference from public vault/config getters and per-market `current_nav`,
+/// reference from the vault's ledger fields and per-market `current_nav`,
 /// the exactly-once completeness proof fires on a missed / double-valued market,
 /// and the valuation lock blocks NAV-changing ops between start and finish.
 /// Passive settled-market sweep and pending-profit exclusion coverage live in
@@ -88,8 +88,8 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
         fx.scenario_mut().ctx(),
     );
 
-    // Hand-derived fixture values. This pins the hot-potato aggregation without
-    // copying the private `lp_pool_value` formula into the test.
+    // Hand-derived fixture values. This pins `finish_flush` reading the
+    // vault-owned ledger fields without copying the private `lp_pool_value` formula.
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
     assert_eq!(nav1, POST_VALUATION_MARKET_NAV);
@@ -97,6 +97,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     assert_eq!(vault.idle_balance(), POST_VALUATION_IDLE);
     assert_eq!(vault.profit_basis_credits(), POST_VALUATION_PROFIT_CREDITS);
     assert_eq!(vault.profit_basis_debits(), POST_VALUATION_PROFIT_DEBITS);
+    assert_eq!(vault.pending_protocol_profit(), 0);
     assert_eq!(pool_nav, TWO_MARKET_POOL_NAV);
 
     return_shared(config);

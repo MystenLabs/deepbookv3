@@ -303,14 +303,11 @@ public fun finish_flush(
     );
     let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
 
-    let idle = vault.expiry_accounting.idle_balance();
+    let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
-        idle,
-        vault.expiry_accounting.profit_basis_credits(),
-        vault.expiry_accounting.profit_basis_debits(),
+        vault,
         config.protocol_reserve_profit_share(),
         total_nav,
-        vault.expiry_accounting.pending_protocol_profit(),
     );
     let total_supply = vault.lp.total_supply();
     assert_plp_price_in_bounds(pool_nav, total_supply);
@@ -340,7 +337,7 @@ public fun finish_flush(
         total_supply,
         total_nav,
         market_count,
-        idle,
+        idle_balance_before,
         supplies_filled,
         withdrawals_filled,
         supplies_filled + withdrawals_filled,
@@ -705,13 +702,14 @@ fun claim_trading_loss_rebate_internal(
 /// `pending_protocol_profit` is subtracted separately to keep it out of LP value
 /// until it is drained into the reserve.
 fun lp_pool_value(
-    idle_balance: u64,
-    profit_basis_credits: u64,
-    profit_basis_debits: u64,
+    vault: &PoolVault,
     protocol_reserve_profit_share: u64,
     active_expiry_value: u64,
-    pending_protocol_profit: u64,
 ): u64 {
+    let idle_balance = vault.expiry_accounting.idle_balance();
+    let profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
+    let profit_basis_debits = vault.expiry_accounting.profit_basis_debits();
+    let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
     let gross_pool_value = idle_balance + active_expiry_value;
     let aggregate_credits = profit_basis_credits + active_expiry_value;
     let exclusion = math::mul(

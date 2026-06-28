@@ -139,8 +139,8 @@ public struct WithdrawFilled has copy, drop, store {
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
-    /// LP-attributable pool NAV every fill was priced at: `lp_pool_value(idle,
-    /// credits, debits, reserve_share, active_market_nav)`.
+    /// LP-attributable pool NAV every fill was priced at: idle plus
+    /// `active_market_nav`, excluding unrealized and pending protocol profit.
     pool_value: u64,
     total_supply: u64,
     /// Σ of each active market's exact NAV at valuation (settled markets contribute 0).

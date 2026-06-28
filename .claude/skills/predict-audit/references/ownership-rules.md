@@ -56,6 +56,11 @@ never re-implemented per site.
 - **Signatures:** a helper chain that only shuttles a derived value; a formula duplicated across mint-insert
   and settlement-recompute; a lossy repack of `quantity`/`floor_shares`/`opened_at_ms` through the packed
   order id.
+- **Input shape corollary:** signature shape is part of ownership. Pass a domain object when the callee needs
+  that object's identity, authority, current state, invariants, or several facts owned by that object. Pass a
+  narrow value when the callee is a pure formula and should not know the broader object/config concept. A run
+  of same-typed primitive fields from one owner is a transposition risk; prefer the owner or a named summary
+  unless the primitive signature is deliberately preserving a pure math/test-oracle boundary.
 - **Intentional exceptions:** `strike_payout_tree::payout_terms` IS the one canonical evaluator — every
   site calling it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
   above a loop) is not "should compute at use"; values returned because the caller genuinely cannot derive
