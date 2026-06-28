@@ -1,11 +1,14 @@
-import { existsSync, unlinkSync } from "fs";
+import { existsSync, rmSync, unlinkSync } from "fs";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 
 import {
     ECONOMIC_SCHEMA_VERSION,
+    FAILED_TRANSACTIONS_DIR,
     LOCAL_DATA_PATH,
+    LOCAL_DATA_PARTIAL_PATH,
     LOCAL_TRACE_PATH,
+    LOCAL_TRACE_PARTIAL_PATH,
     LOCAL_TRACE_SCHEMA_VERSION,
     PYTHON_DATA_PATH,
     SCENARIO_PATH as DEFAULT_SCENARIO_PATH,
@@ -44,6 +47,7 @@ import {
     nextOneMonthExpiryMs,
     rebalanceExpiryCashTx,
     refreshOracleAndFlushTx,
+    refreshOracleAndMintBatchTx,
     refreshOracleAndMintTx,
     refreshOracleAndRedeemTx,
     registerUnderlyingAndCreateFeedsTx,
@@ -71,6 +75,8 @@ const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
 const STRESS_CAPITAL_HEADROOM = 10n;
+const STRESS_MINT_BATCH_SIZE = 100;
+const STRESS_MINT_BATCH_GAS_BUDGET = 150_000_000_000n;
 // Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
 // tick * tick_size`, no centered grid. The harness tick size is $1 (1e9-scaled).
 // Admission uses the same $1 grid so existing generated scenarios keep the old
@@ -124,8 +130,7 @@ interface AliasState {
 
 interface StressMintConfig {
     enabled: boolean;
-    duplicateCount: number;
-    capitalMultiplier: bigint;
+    targetMintCount: number;
 }
 
 function parseArgs() {
@@ -157,50 +162,53 @@ function scenarioPath(): string {
 
 function stressMintConfig(): StressMintConfig {
     const raw = process.env.SIM_STRESS_MINT_DUPLICATES?.trim();
-    if (!raw) return { enabled: false, duplicateCount: 1, capitalMultiplier: 1n };
+    if (!raw) return { enabled: false, targetMintCount: 0 };
     if (!/^[1-9][0-9]*$/.test(raw)) {
         throw new Error(
-            `SIM_STRESS_MINT_DUPLICATES must be a positive integer, got "${raw}"`,
+            `SIM_STRESS_MINT_DUPLICATES must be a positive integer target mint count, got "${raw}"`,
         );
     }
 
-    const duplicateCount = Number(raw);
-    if (!Number.isSafeInteger(duplicateCount)) {
+    const targetMintCount = Number(raw);
+    if (!Number.isSafeInteger(targetMintCount)) {
         throw new Error(`SIM_STRESS_MINT_DUPLICATES is too large: ${raw}`);
     }
 
     return {
         enabled: true,
-        duplicateCount,
-        capitalMultiplier: BigInt(duplicateCount) * STRESS_CAPITAL_HEADROOM,
+        targetMintCount,
     };
 }
 
 function stressOrderRef(row: MintRow, duplicateIndex: number): string {
-    return `${row.orderRef}_stress_${duplicateIndex + 1}`;
+    return `${row.orderRef}_stress_${row.step}_${duplicateIndex + 1}`;
 }
 
-function expandStressMintRows(rows: ScenarioRow[], duplicateCount: number): ScenarioRow[] {
-    const expanded: ScenarioRow[] = [];
-    let step = 1;
-
-    for (const row of rows) {
-        if (row.action !== "oracle_mint_ptb") continue;
-        for (let duplicateIndex = 0; duplicateIndex < duplicateCount; duplicateIndex++) {
-            expanded.push({
-                ...row,
-                step,
-                orderRef: stressOrderRef(row, duplicateIndex),
-            });
-            step++;
-        }
-    }
-
-    if (expanded.length === 0) {
+function stressMintRows(rows: ScenarioRow[], targetMintCount: number): MintRow[] {
+    const mintRows = rows.filter((row): row is MintRow => row.action === "oracle_mint_ptb");
+    if (mintRows.length === 0) {
         throw new Error("SIM_STRESS_MINT_DUPLICATES requires at least one mint row");
     }
 
-    return expanded;
+    const batchCount = Math.ceil(targetMintCount / STRESS_MINT_BATCH_SIZE);
+    return Array.from({ length: batchCount }, (_, index) => ({
+        ...mintRows[index % mintRows.length],
+        step: index + 1,
+    }));
+}
+
+function stressCapitalMultiplier(actualMintCount: number, sourceMintRowCount: number): bigint {
+    const mintMultiple =
+        (BigInt(actualMintCount) + BigInt(sourceMintRowCount) - 1n) /
+        BigInt(sourceMintRowCount);
+    return mintMultiple * STRESS_CAPITAL_HEADROOM;
+}
+
+function stressMintDuplicateRows(row: MintRow): MintRow[] {
+    return Array.from({ length: STRESS_MINT_BATCH_SIZE }, (_, duplicateIndex) => ({
+        ...row,
+        orderRef: stressOrderRef(row, duplicateIndex),
+    }));
 }
 
 function initialEconomicState(
@@ -325,6 +333,12 @@ function eventName(event: any): string {
 
 function findEvent(events: any[], name: string): any | undefined {
     return events.find(
+        (event) => eventName(event) === name || String(event.type ?? "").includes(name),
+    );
+}
+
+function findEvents(events: any[], name: string): any[] {
+    return events.filter(
         (event) => eventName(event) === name || String(event.type ?? "").includes(name),
     );
 }
@@ -500,9 +514,8 @@ function recordBlockScholesSVI(
     return completeBlockScholesObservation(pending);
 }
 
-function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unknown> {
+function normalizeOrderMinted(event: any, orderRef: string | null): Record<string, unknown> {
     const json = event.parsedJson ?? {};
-    const orderRef = row.action === "oracle_mint_ptb" ? row.orderRef : null;
     return {
         type: "order_minted",
         order_ref: orderRef,
@@ -682,9 +695,11 @@ function normalizeUpdates(
     row: ScenarioRow,
     receipt: ExecutionReceipt,
     aliases: AliasState,
+    mintOrderRefs = row.action === "oracle_mint_ptb" ? [row.orderRef] : [],
 ): Record<string, unknown>[] {
     const updates: Record<string, unknown>[] = [];
     let pendingBs: PendingBlockScholesObservation = {};
+    let mintIndex = 0;
     for (const event of receipt.events) {
         const fullType = String(event.type ?? "");
         const name = eventName(event);
@@ -722,7 +737,10 @@ function normalizeUpdates(
             }
         } else if (name === "OrderLiquidated")
             updates.push(normalizeOrderLiquidated(event, aliases));
-        else if (name === "OrderMinted") updates.push(normalizeOrderMinted(event, row));
+        else if (name === "OrderMinted") {
+            updates.push(normalizeOrderMinted(event, mintOrderRefs[mintIndex] ?? null));
+            mintIndex++;
+        }
         else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
         else if (name === "LiquidatedOrderRedeemed")
             updates.push(normalizeLiquidatedOrderRedeemed(event, row));
@@ -745,6 +763,9 @@ function normalizeUpdates(
         pendingBs.svi !== undefined
     ) {
         throw new Error("incomplete split Block Scholes observation set in transaction events");
+    }
+    if (mintIndex !== mintOrderRefs.length) {
+        throw new Error(`expected ${mintOrderRefs.length} OrderMinted events, saw ${mintIndex}`);
     }
     return updates;
 }
@@ -864,8 +885,9 @@ function economicRecord(
     receipt: ExecutionReceipt,
     state: EconomicState,
     aliases: AliasState,
+    mintOrderRefs?: string[],
 ): EconomicRecord {
-    const updates = normalizeUpdates(row, receipt, aliases);
+    const updates = normalizeUpdates(row, receipt, aliases, mintOrderRefs);
     for (const update of updates) {
         applyUpdate(state, update);
     }
@@ -916,12 +938,25 @@ function eventDecimalField(receipt: ExecutionReceipt, name: string, field: strin
     return decimal(json[field]);
 }
 
-function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: AliasState) {
+function recordAliases(
+    row: ScenarioRow,
+    receipt: ExecutionReceipt,
+    aliases: AliasState,
+    mintOrderRefs = row.action === "oracle_mint_ptb" ? [row.orderRef] : [],
+) {
     if (row.action === "oracle_mint_ptb") {
-        const orderId = eventOrderId(receipt, "OrderMinted");
-        if (!orderId) throw new Error(`Missing OrderMinted event for ${row.orderRef}`);
-        aliases.orderIdsByRef.set(row.orderRef, orderId);
-        aliases.orderRefsById.set(orderId, row.orderRef);
+        const orderEvents = findEvents(receipt.events, "OrderMinted");
+        if (orderEvents.length !== mintOrderRefs.length) {
+            throw new Error(
+                `Expected ${mintOrderRefs.length} OrderMinted event(s), saw ${orderEvents.length}`,
+            );
+        }
+        orderEvents.forEach((event, index) => {
+            const orderId = decimal(event.parsedJson?.order_id);
+            const orderRef = mintOrderRefs[index];
+            aliases.orderIdsByRef.set(orderRef, orderId);
+            aliases.orderRefsById.set(orderId, orderRef);
+        });
         return;
     }
 
@@ -1011,8 +1046,17 @@ function cashRebalanceCheckpoints(
 }
 
 function clearOutputArtifacts() {
-    for (const path of [LOCAL_TRACE_PATH, LOCAL_DATA_PATH, PYTHON_DATA_PATH]) {
+    for (const path of [
+        LOCAL_TRACE_PATH,
+        LOCAL_DATA_PATH,
+        LOCAL_TRACE_PARTIAL_PATH,
+        LOCAL_DATA_PARTIAL_PATH,
+        PYTHON_DATA_PATH,
+    ]) {
         if (existsSync(path)) unlinkSync(path);
+    }
+    if (existsSync(FAILED_TRANSACTIONS_DIR)) {
+        rmSync(FAILED_TRANSACTIONS_DIR, { recursive: true, force: true });
     }
 }
 
@@ -1366,6 +1410,55 @@ async function setupSimulation(
     return state;
 }
 
+function mintParamsFromRow(row: MintRow, state: SimState, alignedStrike: bigint) {
+    return {
+        expiryMarketId: state.expiryMarketId,
+        protocolConfigId: state.protocolConfigId,
+        wrapperId: state.accountWrapperId,
+        pythFeedId: state.pythFeedId,
+        bsSpotFeedId: state.bsSpotFeedId,
+        bsForwardFeedId: state.bsForwardFeedId,
+        bsSviFeedId: state.bsSviFeedId,
+        strike: alignedStrike,
+        isUp: row.isUp,
+        quantity: row.quantity,
+        leverage: row.leverage,
+    };
+}
+
+async function executeStressMintBatch(
+    row: MintRow,
+    state: SimState,
+): Promise<{ receipt: ExecutionReceipt; mintRows: MintRow[] }> {
+    const alignedStrike = alignStrikeToTick(row.strike);
+    const mintRows = stressMintDuplicateRows(row);
+    const receipt = await execute(
+        () =>
+            refreshOracleAndMintBatchTx({
+                pythFeedId: state.pythFeedId,
+                bsSpotFeedId: state.bsSpotFeedId,
+                bsForwardFeedId: state.bsForwardFeedId,
+                bsSviFeedId: state.bsSviFeedId,
+                expiry: BigInt(state.expiryMs),
+                spot: row.spot,
+                forward: row.forward,
+                svi: {
+                    a: row.a,
+                    b: row.b,
+                    rho: row.rho,
+                    rhoNegative: row.rhoNegative,
+                    m: row.m,
+                    mNegative: row.mNegative,
+                    sigma: row.sigma,
+                },
+                mints: mintRows.map((mintRow) => mintParamsFromRow(mintRow, state, alignedStrike)),
+            }),
+        "stress_oracle_mint_batch",
+        STRESS_MINT_BATCH_GAS_BUDGET,
+    );
+    return { receipt, mintRows };
+}
+
 async function executeRow(
     row: ScenarioRow,
     state: SimState,
@@ -1376,18 +1469,8 @@ async function executeRow(
         return execute(
             () =>
                 refreshOracleAndMintTx({
-                    expiryMarketId: state.expiryMarketId,
-                    protocolConfigId: state.protocolConfigId,
-                    wrapperId: state.accountWrapperId,
-                    pythFeedId: state.pythFeedId,
-                    bsSpotFeedId: state.bsSpotFeedId,
-                    bsForwardFeedId: state.bsForwardFeedId,
-                    bsSviFeedId: state.bsSviFeedId,
+                    ...mintParamsFromRow(row, state, alignedStrike),
                     expiry: BigInt(state.expiryMs),
-                    strike: alignedStrike,
-                    isUp: row.isUp,
-                    quantity: row.quantity,
-                    leverage: row.leverage,
                     spot: row.spot,
                     forward: row.forward,
                     svi: {
@@ -1475,6 +1558,7 @@ async function executeScenario(
     maxRows?: number,
     runPython = true,
     stressMintOnly = false,
+    stressMintBatchSize = 1,
 ): Promise<void> {
     clearOutputArtifacts();
     if (runPython) {
@@ -1485,7 +1569,8 @@ async function executeScenario(
     const records: EconomicRecord[] = [];
     const economicState = initialEconomicState(capital, BigInt(state.initialExpiryCash));
     const aliases = initialAliases();
-    const targetMints = rows.filter((row) => row.action === "oracle_mint_ptb").length;
+    const mintRows = rows.filter((row) => row.action === "oracle_mint_ptb").length;
+    const targetMints = stressMintOnly ? mintRows * stressMintBatchSize : mintRows;
     let successfulMints = 0;
 
     console.log(`\n[${ts()}] Loaded ${rows.length} executable tx rows (${targetMints} mints)`);
@@ -1583,53 +1668,93 @@ async function executeScenario(
         }
     };
 
-    let processed = 0;
-    for (const row of rows) {
-        processed++;
-        // Withdraw affordability under the batched cadence: a supply's PLP is not
-        // minted until its flush, so a withdraw can reference PLP that does not exist
-        // yet. Skip-and-log instead of aborting, so the run completes and reports how
-        // many withdraws the cadence could actually service.
-        if (row.action === "withdraw") {
-            const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
-            if (shares === 0n || shares > aliases.availableSettledPlp) {
-                skippedWithdraws++;
-                process.stdout.write(
-                    `[${ts()}]   [${row.step}] withdraw SKIPPED (${row.lpRef}: want ${shares} PLP, ${aliases.availableSettledPlp} materialized)\n`,
-                );
-                await runSyntheticMaintenance(processed, row);
-                continue;
-            }
-        }
-        try {
-            const startedAt = performance.now();
-            const receipt = await executeRow(row, state, aliases);
-            const wallMs = performance.now() - startedAt;
-            const record = economicRecord(row, receipt, economicState, aliases);
-            recordAliases(row, receipt, aliases);
-            traceSteps.push(traceStep(row, receipt, wallMs));
-            records.push(record);
+    const buildTraceFile = (): LocalTraceFile => ({
+        schema_version: LOCAL_TRACE_SCHEMA_VERSION,
+        steps: traceSteps,
+    });
+    const buildDataFile = (): EconomicDataFile => ({
+        schema_version: ECONOMIC_SCHEMA_VERSION,
+        scenario: {
+            quantity_scale: scenarioQuantityScale(),
+        },
+        records,
+    });
+    const writeReplayArtifacts = (tracePath: string, dataPath: string) => {
+        writeJson(tracePath, buildTraceFile());
+        writeJson(dataPath, buildDataFile());
+    };
+    const writePartialReplayArtifacts = () => {
+        writeReplayArtifacts(LOCAL_TRACE_PARTIAL_PATH, LOCAL_DATA_PARTIAL_PATH);
+        process.stderr.write(`[${ts()}]   Partial local trace: ${LOCAL_TRACE_PARTIAL_PATH}\n`);
+        process.stderr.write(`[${ts()}]   Partial local data:  ${LOCAL_DATA_PARTIAL_PATH}\n`);
+    };
 
-            if (row.action === "oracle_mint_ptb") {
-                successfulMints++;
-                const alignedStrike = alignStrikeToTick(row.strike);
-                process.stdout.write(
-                    `[${ts()}]   [${row.step}] ${direction(row)} $${scaledUsd(alignedStrike)} qty=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}\n`,
-                );
-            } else {
-                process.stdout.write(`[${ts()}]   [${row.step}] ${row.action}\n`);
+    let processed = 0;
+    try {
+        for (const row of rows) {
+            processed++;
+            // Withdraw affordability under the batched cadence: a supply's PLP is not
+            // minted until its flush, so a withdraw can reference PLP that does not exist
+            // yet. Skip-and-log instead of aborting, so the run completes and reports how
+            // many withdraws the cadence could actually service.
+            if (row.action === "withdraw") {
+                const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
+                if (shares === 0n || shares > aliases.availableSettledPlp) {
+                    skippedWithdraws++;
+                    process.stdout.write(
+                        `[${ts()}]   [${row.step}] withdraw SKIPPED (${row.lpRef}: want ${shares} PLP, ${aliases.availableSettledPlp} materialized)\n`,
+                    );
+                    await runSyntheticMaintenance(processed, row);
+                    continue;
+                }
             }
-        } catch (error) {
-            if (row.action === "oracle_mint_ptb") {
+            try {
+                const startedAt = performance.now();
+                const stressBatch =
+                    stressMintOnly && row.action === "oracle_mint_ptb"
+                        ? await executeStressMintBatch(row, state)
+                        : null;
+                const receipt = stressBatch?.receipt ?? (await executeRow(row, state, aliases));
+                const wallMs = performance.now() - startedAt;
+                const mintOrderRefs = stressBatch?.mintRows.map((mintRow) => mintRow.orderRef);
+                const record = economicRecord(row, receipt, economicState, aliases, mintOrderRefs);
+                recordAliases(row, receipt, aliases, mintOrderRefs);
+                traceSteps.push(traceStep(row, receipt, wallMs));
+                records.push(record);
+
+                if (row.action === "oracle_mint_ptb") {
+                    successfulMints += stressBatch?.mintRows.length ?? 1;
+                    const alignedStrike = alignStrikeToTick(row.strike);
+                    if (stressBatch) {
+                        const firstRef = stressBatch.mintRows[0].orderRef;
+                        const lastRef =
+                            stressBatch.mintRows[stressBatch.mintRows.length - 1].orderRef;
+                        process.stdout.write(
+                            `[${ts()}]   [${row.step}] ${stressBatch.mintRows.length}x ${direction(row)} $${scaledUsd(alignedStrike)} qty=${row.quantity} leverage=${formatLeverage(row.leverage)} refs=${firstRef}..${lastRef}\n`,
+                        );
+                    } else {
+                        process.stdout.write(
+                            `[${ts()}]   [${row.step}] ${direction(row)} $${scaledUsd(alignedStrike)} qty=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}\n`,
+                        );
+                    }
+                } else {
+                    process.stdout.write(`[${ts()}]   [${row.step}] ${row.action}\n`);
+                }
+            } catch (error) {
+                if (row.action === "oracle_mint_ptb") {
+                    throw new Error(
+                        `${mintContext(row, alignStrikeToTick(row.strike))} failed: ${errorMessage(error)}`,
+                    );
+                }
                 throw new Error(
-                    `${mintContext(row, alignStrikeToTick(row.strike))} failed: ${errorMessage(error)}`,
+                    `${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`,
                 );
             }
-            throw new Error(
-                `${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`,
-            );
+            await runSyntheticMaintenance(processed, row);
         }
-        await runSyntheticMaintenance(processed, row);
+    } catch (error) {
+        writePartialReplayArtifacts();
+        throw error;
     }
     if (skippedWithdraws > 0) {
         console.log(
@@ -1637,20 +1762,7 @@ async function executeScenario(
         );
     }
 
-    const trace: LocalTraceFile = {
-        schema_version: LOCAL_TRACE_SCHEMA_VERSION,
-        steps: traceSteps,
-    };
-    const data: EconomicDataFile = {
-        schema_version: ECONOMIC_SCHEMA_VERSION,
-        scenario: {
-            quantity_scale: scenarioQuantityScale(),
-        },
-        records,
-    };
-
-    writeJson(LOCAL_TRACE_PATH, trace);
-    writeJson(LOCAL_DATA_PATH, data);
+    writeReplayArtifacts(LOCAL_TRACE_PATH, LOCAL_DATA_PATH);
 
     console.log(`\n[${ts()}] --- Done ---`);
     console.log(
@@ -1697,14 +1809,17 @@ async function main() {
             );
         }
         const sourceRows = rows.length;
-        rows = expandStressMintRows(rows, stress.duplicateCount);
-        scenarioConfig = stressScenarioConfig(scenarioConfig, stress.capitalMultiplier);
-        capital = scaleSimulationCapital(capital, stress.capitalMultiplier);
+        const sourceMintRows = rows.filter((row) => row.action === "oracle_mint_ptb").length;
+        rows = stressMintRows(rows, stress.targetMintCount);
+        const actualMintCount = rows.length * STRESS_MINT_BATCH_SIZE;
+        const capitalMultiplier = stressCapitalMultiplier(actualMintCount, sourceMintRows);
+        scenarioConfig = stressScenarioConfig(scenarioConfig, capitalMultiplier);
+        capital = scaleSimulationCapital(capital, capitalMultiplier);
         console.log(
-            `[${ts()}] Stress mint mode: ${sourceRows} source rows -> ${rows.length} mint-only rows (${stress.duplicateCount}x each mint)`,
+            `[${ts()}] Stress mint mode: ${sourceRows} source rows -> ${rows.length} mint PTBs (${STRESS_MINT_BATCH_SIZE} mints per PTB, target ${stress.targetMintCount}, actual ${actualMintCount} total mints)`,
         );
         console.log(
-            `[${ts()}] Stress capital: ${stress.capitalMultiplier}x capital, max allocation front-loaded as initial expiry cash`,
+            `[${ts()}] Stress capital: ${capitalMultiplier}x capital, max allocation front-loaded as initial expiry cash`,
         );
     }
     if (rows.length === 0) throw new Error("Scenario has no executable rows");
@@ -1718,6 +1833,7 @@ async function main() {
         args.maxRows,
         !args.skipPython,
         stress.enabled,
+        STRESS_MINT_BATCH_SIZE,
     );
 }
 

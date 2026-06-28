@@ -362,7 +362,18 @@ export const SCENARIO_PATH = fileURLToPath(
 export const STATE_PATH = path.join(instanceDir, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(instanceDir, "artifacts", "local_trace.json");
 export const LOCAL_DATA_PATH = path.join(instanceDir, "artifacts", "local_data.json");
+export const LOCAL_TRACE_PARTIAL_PATH = path.join(
+    instanceDir,
+    "artifacts",
+    "local_trace.partial.json",
+);
+export const LOCAL_DATA_PARTIAL_PATH = path.join(
+    instanceDir,
+    "artifacts",
+    "local_data.partial.json",
+);
 export const PYTHON_DATA_PATH = path.join(instanceDir, "artifacts", "python_data.json");
+export const FAILED_TRANSACTIONS_DIR = path.join(instanceDir, "artifacts", "failed_transactions");
 
 export function scenarioQuantityScale(): string {
     return "1";
