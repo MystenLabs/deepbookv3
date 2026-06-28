@@ -61,16 +61,20 @@ interface.
 For ad hoc localnet-only NAV stress runs, reuse the benchmark path:
 
 ```bash
-SIM_STRESS_MINT_DUPLICATES=10 SIM_GAS_BUDGET=5000000000 bash run.sh --skip-analysis
+SIM_STRESS_MINT_DUPLICATES=24000 SIM_GAS_BUDGET=5000000000 bash run.sh --skip-analysis
 ```
 
 `SIM_STRESS_MINT_DUPLICATES=N` rewrites the in-memory workload to replay only
-generated mint rows, duplicating each mint `N` times. The generated CSV is left
-unchanged, so stress mode requires `--skip-analysis` and defaults its synthetic
-flush to the final expanded mint row unless `SIM_FLUSH_AFTER` is set. To keep
-the run focused on mint growth plus the final NAV walk, stress mode scales
-normal capital by `10 * N`, front-loads the scaled expiry allocation as initial
-expiry cash, and suppresses the normal every-100-row expiry-cash rebalances.
+generated mint rows, appending 100 duplicate mint calls to each stress mint PTB.
+The flag value is the target total mint count; the runner rounds it up to a full
+100-mint PTB. The generated CSV is left unchanged, so stress mode requires
+`--skip-analysis` and defaults its synthetic flush to the final mint PTB unless
+`SIM_FLUSH_AFTER` is set. To keep the run focused on mint growth plus the final
+NAV walk, stress mode scales normal capital from the rounded stress mint count,
+front-loads the scaled expiry allocation as initial expiry cash, and suppresses
+the normal every-100-row expiry-cash rebalances. Stress mint PTBs use a fixed
+high gas budget because this mode does not benchmark individual mint gas;
+`SIM_GAS_BUDGET` still controls the final NAV flush transaction.
 
 ## File Map
 
@@ -144,6 +148,20 @@ expiry cash, and suppresses the normal every-100-row expiry-cash rebalances.
 The exit trap restores temporary Move manifest edits, removes generated
 `Pub.*.toml` files, removes generated scenarios, and stops localnet. If a
 transaction or chart step fails, the script exits and cleanup still runs.
+
+## Failure Debugging
+
+Every transaction helper writes a full failure artifact before surfacing the
+error. Artifacts live under `artifacts/failed_transactions/` and include the
+runner label, attempt number, gas budget, sender, raw RPC response or exception,
+effects status and gas when available, transaction bytes, a dry-run result or
+dry-run error, and the fetched transaction block when the failed response
+contains a digest.
+
+If localnet replay aborts after some rows have succeeded, the runner also writes
+`artifacts/local_trace.partial.json` and `artifacts/local_data.partial.json`.
+These contain the successful transaction prefix in the same schema as the final
+trace/data files.
 
 ## Scenario CSV
 
@@ -243,6 +261,12 @@ Full localnet runs can produce:
     gas, and normalized Move event payloads, including runner-synthesized
     maintenance transactions such as LP flushes and expiry-cash rebalances.
 -   `artifacts/local_data.json`: cleaned localnet economic projection.
+-   `artifacts/local_trace.partial.json`: successful localnet trace prefix
+    written when replay aborts.
+-   `artifacts/local_data.partial.json`: successful localnet economic projection
+    prefix written when replay aborts.
+-   `artifacts/failed_transactions/*.json`: full debug payloads for failed setup,
+    replay, flush, and rebalance transactions.
 -   `artifacts/python_data.json`: cleaned Python economic projection for parity.
 -   `artifacts/python_long_data.json`: long-run Python canonical data. Deleted by
     default after charts unless `--python-only --keep-derived` is used.
