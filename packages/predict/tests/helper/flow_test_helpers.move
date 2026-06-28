@@ -144,6 +144,7 @@ public fun setup_market(tick: u64): Fixture {
     registry.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         tick,
         test_constants::default_admission_tick_size(),
@@ -395,6 +396,7 @@ public fun set_default_cadence_allocation(
     registry.set_cadence_config(
         &config,
         &self.admin_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),

@@ -58,6 +58,7 @@ const EPoolNavDust: u64 = 8;
 const EBelowMinBootstrapLiquidity: u64 = 9;
 const EBelowMinFeeIncentiveSponsorship: u64 = 10;
 const EMarketNotSettled: u64 = 11;
+const EMaxLiveExpiryMarketsExceeded: u64 = 12;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -181,8 +182,13 @@ public fun withdraw_requests_pending(vault: &PoolVault): u64 {
 }
 
 /// Return the expiry markets still contributing active pool valuation/risk.
-public fun active_expiry_markets(vault: &PoolVault): &vector<ID> {
+public fun active_expiry_markets(vault: &PoolVault): vector<ID> {
     vault.expiry_accounting.active_expiry_markets()
+}
+
+/// Return the count of active pre-expiry markets that require live NAV valuation.
+public fun active_live_expiry_count(vault: &PoolVault, clock: &Clock): u64 {
+    vault.expiry_accounting.active_live_expiry_count(clock.timestamp_ms())
 }
 
 /// Return the pricing debit side of the aggregate expiry profit basis.
@@ -642,12 +648,18 @@ public fun cancel_withdraw_request(
 public(package) fun register_expiry(
     vault: &mut PoolVault,
     expiry_market_id: ID,
+    expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
+    clock: &Clock,
 ) {
+    assert!(
+        vault.active_live_expiry_count(clock) < constants::max_live_expiry_markets!(),
+        EMaxLiveExpiryMarketsExceeded,
+    );
     vault
         .expiry_accounting
-        .register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
+        .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
 }
 
 // === Private Functions ===
@@ -939,7 +951,7 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
     config.begin_valuation();
     PoolValuation {
         pool_vault_id: vault.id(),
-        expected_expiry_markets: *vault.expiry_accounting.active_expiry_markets(),
+        expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
         total_nav: 0,
     }

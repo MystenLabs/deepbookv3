@@ -25,7 +25,7 @@ public struct Ledger has store {
     /// Idle LP-owned DUSDC available for withdrawals and expiry funding.
     idle_balance: Balance<DUSDC>,
     /// Expiry markets that still contribute active pool valuation/risk.
-    active_expiry_markets: vector<ID>,
+    active_expiry_markets: vector<ActiveExpiry>,
     /// Permanent per-expiry accounting rows. Presence means the expiry belongs to this pool.
     registered_expiries: Table<ID, RegisteredExpiry>,
     /// Pricing debit basis: DUSDC sent to expiries plus materialized terminal profit.
@@ -38,6 +38,12 @@ public struct Ledger has store {
     /// physically moved to the reserve because idle was deployed in other active
     /// markets at materialization. Excluded from LP value until drained.
     pending_protocol_profit: u64,
+}
+
+/// Active valuation entry with the expiry timestamp needed to classify live NAV cost.
+public struct ActiveExpiry has copy, drop, store {
+    expiry_market_id: ID,
+    expiry_ms: u64,
 }
 
 /// Durable accounting row for one registered expiry market.
@@ -74,9 +80,29 @@ public(package) fun idle_balance(ledger: &Ledger): u64 {
     ledger.idle_balance.value()
 }
 
-/// Return the expiry markets still contributing active pool valuation/risk.
-public(package) fun active_expiry_markets(ledger: &Ledger): &vector<ID> {
-    &ledger.active_expiry_markets
+/// Return the expiry market IDs still contributing active pool valuation/risk.
+public(package) fun active_expiry_markets(ledger: &Ledger): vector<ID> {
+    let mut ids = vector[];
+    let mut i = 0;
+    while (i < ledger.active_expiry_markets.length()) {
+        ids.push_back(ledger.active_expiry_markets[i].expiry_market_id);
+        i = i + 1;
+    };
+    ids
+}
+
+/// Count active markets whose expiry is still in the future and therefore need
+/// live NAV valuation rather than terminal settlement/sweep handling.
+public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 {
+    let mut count = 0;
+    let mut i = 0;
+    while (i < ledger.active_expiry_markets.length()) {
+        if (ledger.active_expiry_markets[i].expiry_ms > now_ms) {
+            count = count + 1;
+        };
+        i = i + 1;
+    };
+    count
 }
 
 public(package) fun profit_basis_debits(ledger: &Ledger): u64 {
@@ -121,11 +147,12 @@ public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: 
 public(package) fun register_expiry(
     ledger: &mut Ledger,
     expiry_market_id: ID,
+    expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
 ) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
-    ledger.active_expiry_markets.push_back(expiry_market_id);
+    ledger.active_expiry_markets.push_back(ActiveExpiry { expiry_market_id, expiry_ms });
     ledger
         .registered_expiries
         .add(
@@ -147,7 +174,7 @@ public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_mar
     ledger.assert_registered_expiry(expiry_market_id);
     let mut i = 0;
     let len = ledger.active_expiry_markets.length();
-    while (i < len && ledger.active_expiry_markets[i] != expiry_market_id) {
+    while (i < len && ledger.active_expiry_markets[i].expiry_market_id != expiry_market_id) {
         i = i + 1;
     };
     if (i == len) {

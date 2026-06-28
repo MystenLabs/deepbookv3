@@ -790,6 +790,7 @@ export function setCadenceConfigTx(params: {
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
             tx.object(ADMIN_CAP_ID),
+            tx.pure.u32(BS_UNDERLYING_ID),
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
             tx.pure.u64(params.admissionTickSize),

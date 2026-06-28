@@ -65,6 +65,10 @@ public(package) macro fun min_plp_price(): u64 { 10_000_000 }
 /// Maximum executable PLP price: 100 DUSDC per PLP, in FLOAT_SCALING.
 public(package) macro fun max_plp_price(): u64 { 100_000_000_000 }
 
+/// Maximum active pre-expiry markets that can require live NAV valuation in one
+/// full-pool flush.
+public(package) macro fun max_live_expiry_markets(): u64 { 24 }
+
 // === Time Constants ===
 
 /// Milliseconds in one minute.

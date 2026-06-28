@@ -39,8 +39,6 @@ public struct MarketManager has store {
     underlying_configs: Table<u32, UnderlyingMarketConfig>,
     /// Created markets keyed by `(propbook_underlying_id, expiry)`.
     market_ids: Table<MarketKey, ID>,
-    /// Deployment config indexed by cadence ID.
-    cadences: vector<CadenceConfig>,
 }
 
 /// Stored deployment policy for one cadence.
@@ -64,8 +62,10 @@ public struct DeployableMarket has copy, drop {
     cadence: CadenceConfig,
 }
 
-/// Stored deployment watermarks for one Propbook underlying.
+/// Stored deployment policy and watermarks for one Propbook underlying.
 public struct UnderlyingMarketConfig has copy, drop, store {
+    /// Deployment config indexed by cadence ID.
+    cadences: vector<CadenceConfig>,
     /// Highest deployed expiry timestamp indexed by cadence ID.
     last_deployed_expiries: vector<u64>,
 }
@@ -96,7 +96,6 @@ public(package) fun new(ctx: &mut TxContext): MarketManager {
     MarketManager {
         underlying_configs: table::new(ctx),
         market_ids: table::new(ctx),
-        cadences: disabled_cadences(),
     }
 }
 
@@ -127,10 +126,10 @@ public(package) fun next_deployable_market(
     clock: &Clock,
 ): DeployableMarket {
     let cadence_index = cadence_index(cadence_id);
-    let cadence = &manager.cadences[cadence_index];
+    let underlying = manager.underlying_config(propbook_underlying_id);
+    let cadence = &underlying.cadences[cadence_index];
     assert!(cadence.window_size > 0, ECadenceDisabled);
 
-    let underlying = manager.underlying_config(propbook_underlying_id);
     let now_ms = clock.timestamp_ms();
     let period_ms = cadence_period_ms(cadence_id);
     let watermark_candidate = underlying.last_deployed_expiries[cadence_index] + period_ms;
@@ -141,7 +140,7 @@ public(package) fun next_deployable_market(
     while (expiry <= window_end) {
         let key = MarketKey { propbook_underlying_id, expiry };
         if (
-            manager.has_higher_rank_overlap(cadence_id, expiry)
+            has_higher_rank_overlap(underlying, cadence_id, expiry)
                 || manager.market_ids.contains(key)
         ) {
             expiry = expiry + period_ms;
@@ -225,12 +224,16 @@ public(package) fun register_underlying(manager: &mut MarketManager, propbook_un
         .underlying_configs
         .add(
             propbook_underlying_id,
-            UnderlyingMarketConfig { last_deployed_expiries: vector[0, 0, 0, 0, 0, 0] },
+            UnderlyingMarketConfig {
+                cadences: disabled_cadences(),
+                last_deployed_expiries: vector[0, 0, 0, 0, 0, 0],
+            },
         );
 }
 
 public(package) fun set_cadence_config(
     manager: &mut MarketManager,
+    propbook_underlying_id: u32,
     cadence_id: u8,
     tick_size: u64,
     admission_tick_size: u64,
@@ -245,7 +248,9 @@ public(package) fun set_cadence_config(
         initial_expiry_cash,
         window_size,
     );
-    let cadence = &mut manager.cadences[cadence_index(cadence_id)];
+    let cadence_index = cadence_index(cadence_id);
+    let cadence =
+        &mut manager.underlying_config_mut(propbook_underlying_id).cadences[cadence_index];
     cadence.tick_size = tick_size;
     cadence.admission_tick_size = admission_tick_size;
     cadence.max_expiry_allocation = max_expiry_allocation;
@@ -356,10 +361,14 @@ fun assert_cadence_config(
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 
-fun has_higher_rank_overlap(manager: &MarketManager, cadence_id: u8, expiry: u64): bool {
+fun has_higher_rank_overlap(
+    underlying: &UnderlyingMarketConfig,
+    cadence_id: u8,
+    expiry: u64,
+): bool {
     let mut higher_cadence_id = cadence_id + 1;
-    while ((higher_cadence_id as u64) < manager.cadences.length()) {
-        let higher_cadence = &manager.cadences[cadence_index(higher_cadence_id)];
+    while ((higher_cadence_id as u64) < underlying.cadences.length()) {
+        let higher_cadence = &underlying.cadences[cadence_index(higher_cadence_id)];
         if (
             higher_cadence.window_size > 0
                 && expiry % cadence_period_ms(higher_cadence_id) == 0

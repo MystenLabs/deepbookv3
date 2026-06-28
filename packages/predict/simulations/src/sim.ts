@@ -870,7 +870,7 @@ function stateSnapshot(state: EconomicState): Record<string, string> {
         expiry_unresolved_trading_fees: state.expiryUnresolvedTradingFees.toString(),
         vault_idle_balance: state.vaultIdleBalance.toString(),
         vault_protocol_reserve_balance: state.vaultProtocolReserveBalance.toString(),
-        vault_pending_protocol_profit: state.vaultPendingProtocolProfit.toString(),
+        pending_protocol_profit: state.vaultPendingProtocolProfit.toString(),
         profit_basis_debits: state.profitBasisDebits.toString(),
         profit_basis_credits: state.profitBasisCredits.toString(),
         vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),

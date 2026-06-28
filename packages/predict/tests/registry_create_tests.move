@@ -44,7 +44,26 @@ fun set_cadence_config_invalid_cadence_id_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         INVALID_CADENCE_ID,
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_THREE,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_manager::EUnderlyingNotRegistered)]
+fun set_cadence_config_unregistered_underlying_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.set_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BTC_ADMISSION_TICK_SIZE,
         BTC_MAX_EXPIRY_ALLOCATION,
@@ -61,6 +80,7 @@ fun set_cadence_config_unaligned_tick_size_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         INVALID_TICK_SIZE,
         BTC_ADMISSION_TICK_SIZE,
@@ -78,6 +98,7 @@ fun set_cadence_config_unaligned_admission_tick_size_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         INVALID_ADMISSION_TICK_SIZE,
@@ -95,6 +116,7 @@ fun set_cadence_config_admission_tick_size_below_tick_size_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BELOW_TICK_SIZE_ADMISSION_TICK_SIZE,
@@ -112,6 +134,7 @@ fun set_cadence_config_admission_tick_size_not_multiple_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         NON_MULTIPLE_ADMISSION_TICK_SIZE,
@@ -129,6 +152,7 @@ fun set_cadence_config_above_max_window_size_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BTC_ADMISSION_TICK_SIZE,
@@ -146,6 +170,7 @@ fun set_cadence_config_initial_cash_below_floor_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BTC_ADMISSION_TICK_SIZE,
@@ -163,6 +188,7 @@ fun set_cadence_config_initial_cash_above_allocation_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         BTC_ADMISSION_TICK_SIZE,
@@ -180,6 +206,7 @@ fun set_cadence_config_partial_disable_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         DISABLED_VALUE,
         BTC_ADMISSION_TICK_SIZE,
@@ -197,6 +224,7 @@ fun set_cadence_config_partial_disable_admission_tick_size_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        UNDERLYING_BTC,
         market_manager::cadence_one_minute!(),
         BTC_TICK_SIZE,
         DISABLED_VALUE,

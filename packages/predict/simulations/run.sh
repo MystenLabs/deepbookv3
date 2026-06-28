@@ -198,7 +198,7 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
+  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$DUSDC_DIR/Move.lock" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
   for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$FIXED_MATH_DIR/Published.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
@@ -400,6 +400,7 @@ done
   # Publish dusdc
   echo "==> Phase 2: Publishing dusdc..."
   inject_env "$DUSDC_DIR/Move.toml" "$CHAIN_ID"
+  cp "$DUSDC_DIR/Move.lock" "$DUSDC_DIR/Move.lock.bak"
 
   DUSDC_OUTPUT=$(publish_package "$DUSDC_DIR" "DUSDC")
   check_publish "$DUSDC_OUTPUT" "DUSDC"
