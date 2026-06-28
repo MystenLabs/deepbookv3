@@ -70,6 +70,7 @@ const DEFAULT_MAX_EXPIRY_ALLOCATION = 250_000n * DUSDC_DECIMALS;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
+const STRESS_CAPITAL_HEADROOM = 10n;
 // Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
 // tick * tick_size`, no centered grid. The harness tick size is $1 (1e9-scaled).
 // Admission uses the same $1 grid so existing generated scenarios keep the old
@@ -124,6 +125,7 @@ interface AliasState {
 interface StressMintConfig {
     enabled: boolean;
     duplicateCount: number;
+    capitalMultiplier: bigint;
 }
 
 function parseArgs() {
@@ -155,7 +157,7 @@ function scenarioPath(): string {
 
 function stressMintConfig(): StressMintConfig {
     const raw = process.env.SIM_STRESS_MINT_DUPLICATES?.trim();
-    if (!raw) return { enabled: false, duplicateCount: 1 };
+    if (!raw) return { enabled: false, duplicateCount: 1, capitalMultiplier: 1n };
     if (!/^[1-9][0-9]*$/.test(raw)) {
         throw new Error(
             `SIM_STRESS_MINT_DUPLICATES must be a positive integer, got "${raw}"`,
@@ -167,7 +169,11 @@ function stressMintConfig(): StressMintConfig {
         throw new Error(`SIM_STRESS_MINT_DUPLICATES is too large: ${raw}`);
     }
 
-    return { enabled: true, duplicateCount };
+    return {
+        enabled: true,
+        duplicateCount,
+        capitalMultiplier: BigInt(duplicateCount) * STRESS_CAPITAL_HEADROOM,
+    };
 }
 
 function stressOrderRef(row: MintRow, duplicateIndex: number): string {
@@ -990,7 +996,12 @@ function flushCheckpoints(rowCount: number, defaultToFinalRow = false): Set<numb
 // bootstrap cash floor to 10k means backing headroom can be consumed well before
 // the next LP queue drain. The rebalance is a real tx and is recorded in the gas
 // trace, but it is not a CSV row action.
-function cashRebalanceCheckpoints(rowCount: number, flushAfter: Set<number>): Set<number> {
+function cashRebalanceCheckpoints(
+    rowCount: number,
+    flushAfter: Set<number>,
+    disabled = false,
+): Set<number> {
+    if (disabled) return new Set();
     const interval = 100;
     const checkpoints = new Set<number>();
     for (let row = interval; row <= rowCount; row += interval) {
@@ -1021,6 +1032,31 @@ function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapi
         vaultSeed,
         managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
         initialTotalPlpSupply: vaultSeed,
+    };
+}
+
+function scaleSimulationCapital(
+    capital: SimulationCapital,
+    multiplier: bigint,
+): SimulationCapital {
+    return {
+        vaultSeed: capital.vaultSeed * multiplier,
+        managerSeed: capital.managerSeed * multiplier,
+        initialTotalPlpSupply: capital.initialTotalPlpSupply * multiplier,
+    };
+}
+
+function stressScenarioConfig(config: any, multiplier: bigint): any {
+    const maxExpiryAllocation =
+        protocolConfigValue(config, "max_expiry_allocation", DEFAULT_MAX_EXPIRY_ALLOCATION) *
+        multiplier;
+    return {
+        ...config,
+        protocol: {
+            ...(config?.protocol ?? {}),
+            max_expiry_allocation: maxExpiryAllocation.toString(),
+            initial_expiry_cash: maxExpiryAllocation.toString(),
+        },
     };
 }
 
@@ -1462,7 +1498,7 @@ async function executeScenario(
     // with it (a conservative lower bound — see AliasState.availableSettledPlp).
     aliases.availableSettledPlp = capital.vaultSeed;
     const flushAfter = flushCheckpoints(rows.length, stressMintOnly);
-    const rebalanceAfter = cashRebalanceCheckpoints(rows.length, flushAfter);
+    const rebalanceAfter = cashRebalanceCheckpoints(rows.length, flushAfter, stressMintOnly);
     let skippedWithdraws = 0;
 
     const runFlush = async (afterRow: number, row: ScenarioRow) => {
@@ -1647,8 +1683,8 @@ async function main() {
     const args = parseArgs();
     const scenario = scenarioPath();
     const stress = stressMintConfig();
-    const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
-    const capital = simulationCapital(scenarioConfig, "normal");
+    let scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
+    let capital = simulationCapital(scenarioConfig, "normal");
     let rows = loadScenario(scenario);
     if (args.maxRows !== undefined) {
         console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
@@ -1662,8 +1698,13 @@ async function main() {
         }
         const sourceRows = rows.length;
         rows = expandStressMintRows(rows, stress.duplicateCount);
+        scenarioConfig = stressScenarioConfig(scenarioConfig, stress.capitalMultiplier);
+        capital = scaleSimulationCapital(capital, stress.capitalMultiplier);
         console.log(
             `[${ts()}] Stress mint mode: ${sourceRows} source rows -> ${rows.length} mint-only rows (${stress.duplicateCount}x each mint)`,
+        );
+        console.log(
+            `[${ts()}] Stress capital: ${stress.capitalMultiplier}x capital, max allocation front-loaded as initial expiry cash`,
         );
     }
     if (rows.length === 0) throw new Error("Scenario has no executable rows");
