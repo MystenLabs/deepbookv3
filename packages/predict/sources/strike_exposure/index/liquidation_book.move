@@ -22,6 +22,7 @@ const EActiveOrderAlreadyExists: u64 = 0;
 const EActiveOrderNotFound: u64 = 1;
 const ELiquidatedOrderAlreadyExists: u64 = 2;
 const ELiquidatedOrderNotFound: u64 = 3;
+const EMaxActiveLeveragedOrders: u64 = 4;
 
 const PAGE_CAPACITY: u64 = 64;
 
@@ -135,6 +136,10 @@ public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
 
     let order_id = order.id();
     assert!(!book.liquidated_orders.contains(order_id), ELiquidatedOrderAlreadyExists);
+    assert!(
+        book.active_order_count < constants::max_active_leveraged_orders!(),
+        EMaxActiveLeveragedOrders,
+    );
     book.insert_active_order_id(order_id);
 }
 
