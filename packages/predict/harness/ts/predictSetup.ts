@@ -5,7 +5,7 @@
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import { type Svi } from "./pricer.js";
 import { BOOTSTRAP_SUPPLY, CADENCES, FRESHNESS } from "./predictConfig.js";
@@ -196,6 +196,11 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   await executeAndWait(bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }), "bind-surface");
   const feeds = { pythFeedId, bsSpotFeedId, bsForwardFeedId, bsSviFeedId };
 
+  // Publish the feed ids so the updater (a separate process) can stream onto them
+  // without re-running setup. The keeper is the single setup owner; the updater reads.
+  const instanceDir = process.env.INSTANCE_DIR;
+  if (instanceDir) writeFileSync(`${instanceDir}/feeds.json`, JSON.stringify(feeds));
+
   const cap = await executeAndWait(mintLifecycleCapTx(address), "lifecycle-cap");
   const lifecycleCapId = found(cap, "MarketLifecycleCap");
   for (const cadenceId of cadenceIds) {
@@ -208,18 +213,26 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   return { feeds, lifecycleCapId };
 }
 
-// Create one cadence market, fetch its live snapshot, and seed the per-expiry feeds.
+// Create one cadence market. Reads NO oracle (absolute ticks need no grid centering),
+// so a keeper with a live updater needs no per-market seed — the updater warms the feed.
+export async function createMarket(
+  lifecycleCapId: string,
+  cadenceId: number,
+): Promise<{ marketId: string; expiryMs: bigint }> {
+  const mkR = await executeAndWait(
+    createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId }),
+    "create-market",
+  );
+  return { marketId: found(mkR, "ExpiryMarket"), expiryMs: BigInt(eventField(mkR, "MarketCreated", "expiry")) };
+}
+
+// Create + seed a market's feeds, for the standalone mint spike (no updater running).
 export async function createAndSeedMarket(
   feeds: Feeds,
   lifecycleCapId: string,
   cadenceId: number,
 ): Promise<{ marketId: string; expiryMs: bigint; snap: Snap }> {
-  const mkR = await executeAndWait(
-    createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId }),
-    "create-market",
-  );
-  const marketId = found(mkR, "ExpiryMarket");
-  const expiryMs = BigInt(eventField(mkR, "MarketCreated", "expiry"));
+  const { marketId, expiryMs } = await createMarket(lifecycleCapId, cadenceId);
   const snap = await fetchSnapshot(Number(expiryMs));
   await executeAndWait(await seedOracleTx(refreshParams(feeds, expiryMs, snap)), "seed");
   return { marketId, expiryMs, snap };

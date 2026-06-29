@@ -1229,9 +1229,6 @@ interface KeeperFeeds {
 // rebalanced + valued. Relies on the running updater to keep live-market feeds fresh.
 export function keeperFlushTx(params: {
     feeds: KeeperFeeds;
-    spot: bigint;
-    grid: GridExpiry[];
-    sourceTimestampMs: bigint;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
@@ -1239,10 +1236,9 @@ export function keeperFlushTx(params: {
     settlements: { expiryMs: bigint; price: bigint }[];
 }): Transaction {
     const tx = new Transaction();
-    // Refresh live expiries in this PTB so value_expiry prices live markets within the
-    // freshness window, then insert each expired market's terminal observation so
-    // ensure_settled settles + sweeps it. One atomic flush values EVERY active market.
-    addOracleRefreshGrid(tx, params.feeds, params.spot, params.grid, params.sourceTimestampMs);
+    // Insert each expired market's terminal observation so value_expiry's ensure_settled
+    // settles + sweeps it; live-market valuation reads the updater-maintained fresh feed.
+    // One atomic flush values EVERY active market.
     for (const s of params.settlements) {
         addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
     }
@@ -1284,19 +1280,15 @@ export function keeperFlushTx(params: {
     return tx;
 }
 
-// One bounded liquidation pass over each live market, with the oracle refreshed in the
-// same PTB so each load_live_pricer reads fresh inputs (no cross-tx staleness).
+// One bounded liquidation pass over each live market. Reads the updater-maintained
+// fresh feed via load_live_pricer (no self-refresh).
 export function keeperLiquidateTx(params: {
     feeds: KeeperFeeds;
-    spot: bigint;
-    grid: GridExpiry[];
-    sourceTimestampMs: bigint;
     markets: string[];
     protocolConfigId: string;
     budget: bigint;
 }): Transaction {
     const tx = new Transaction();
-    addOracleRefreshGrid(tx, params.feeds, params.spot, params.grid, params.sourceTimestampMs);
     for (const marketId of params.markets) {
         const pricer = loadLivePricer(tx, { expiryMarketId: marketId, protocolConfigId: params.protocolConfigId, ...params.feeds });
         tx.moveCall({

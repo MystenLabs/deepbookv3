@@ -81,46 +81,47 @@ def spike_mint() -> int:
         return cp.returncode
 
 
-def keeper(seconds: int = 0, cadence: int | None = None) -> int:
-    """Predict lifecycle keeper: roll cadence + flush/settle/compact + rebalance + liquidate."""
-    with oracle_ready_localnet(name="keeper", keep=True) as ctx:
-        env = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": str(seconds * 1000)}
-        if cadence is not None:
-            env["KEEPER_CADENCE"] = str(cadence)
-        print(f"[{ctx['run_id']}] running Predict lifecycle keeper...")
-        cp = subprocess.run(["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR), env=env)
-        return cp.returncode
+# Cadence id -> period ms (for the updater grid spec).
+_CADENCE_PERIOD_MS = {0: 60_000, 1: 300_000, 2: 3_600_000, 3: 86_400_000, 4: 604_800_000, 5: 2_592_000_000}
 
 
-def hold(name: str | None = None, seconds: int = 0) -> int:
-    """Bring up the oracle substrate (localnet + continuous updater) and hold it.
+def hold(name: str | None = None, seconds: int = 0, cadence: int = 0) -> int:
+    """Bring up the full running sim: localnet + the Predict keeper + the oracle updater.
 
-    Holds until Ctrl-C/SIGTERM, or for `seconds` if > 0 (for tests). Tears down the
-    updater service and the localnet on exit.
+    The keeper is the single setup owner (publishes feeds.json) and runs the market
+    lifecycle; the updater is the sole WS consumer (warms the keeper's cadence, writes
+    snapshot.json). Holds until Ctrl-C/SIGTERM, or for `seconds` if > 0. Tears down both
+    subprocesses and the localnet on exit.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
     with oracle_ready_localnet(name, keep=True) as ctx:
-        env = {
-            **os.environ,
-            "INSTANCE_DIR": str(ctx["instance_dir"]),
-            "UPDATER_ADDRESS": ctx["updater_address"],
-            "DURATION_MS": "0",
-        }
-        proc = subprocess.Popen(["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=env)
-        print(f"\noracle updater streaming (pid {proc.pid}); localnet held. Ctrl-C to tear down.")
+        base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
+        keeper = subprocess.Popen(
+            ["npx", "tsx", "keeperService.ts"],
+            cwd=str(config.TS_DIR), env={**base, "KEEPER_CADENCE": str(cadence)},
+        )
+        updater = subprocess.Popen(
+            ["npx", "tsx", "oracleService.ts"],
+            cwd=str(config.TS_DIR),
+            env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"},
+        )
+        procs = [keeper, updater]
+        print(f"\nharness up: keeper (pid {keeper.pid}) + updater (pid {updater.pid}); localnet held. Ctrl-C to tear down.")
         try:
             deadline = (time.time() + seconds) if seconds > 0 else None
-            while proc.poll() is None:
+            while all(p.poll() is None for p in procs):
                 if deadline and time.time() >= deadline:
                     break
                 time.sleep(2)
         except KeyboardInterrupt:
             print("tearing down...")
         finally:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            for p in procs:
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
     return 0

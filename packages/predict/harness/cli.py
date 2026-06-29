@@ -85,18 +85,14 @@ def main(argv: list[str] | None = None) -> int:
     p_many.add_argument("--keep", action="store_true")
     p_many.set_defaults(func=_cmd_run_many)
 
-    p_up = sub.add_parser("up", help="bring up the oracle substrate (localnet + live updater) and hold it")
+    p_up = sub.add_parser("up", help="bring up the full running sim (localnet + keeper + updater) and hold it")
     p_up.add_argument("--name", default=None)
     p_up.add_argument("--seconds", type=int, default=0, help="hold for N seconds then tear down (0 = until Ctrl-C)")
-    p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds))
+    p_up.add_argument("--cadence", type=int, default=0, help="market cadence id (default 0 = 1m)")
+    p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds, a.cadence))
 
     p_spike_mint = sub.add_parser("spike-mint", help="B1: resolve + execute a semantic mint against live data")
     p_spike_mint.set_defaults(func=lambda a: live.spike_mint())
-
-    p_keeper = sub.add_parser("keeper", help="Predict lifecycle keeper (roll/flush/settle/rebalance/liquidate)")
-    p_keeper.add_argument("--seconds", type=int, default=0, help="run for N seconds then stop (0 = until Ctrl-C)")
-    p_keeper.add_argument("--cadence", type=int, default=None, help="cadence id (default 0 = 1m)")
-    p_keeper.set_defaults(func=lambda a: live.keeper(a.seconds, a.cadence))
 
     p_status = sub.add_parser("status", help="show the slot registry")
     p_status.set_defaults(func=_cmd_status)

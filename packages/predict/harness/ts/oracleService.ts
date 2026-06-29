@@ -9,23 +9,14 @@
 // source is a direct provider-WS client (this file). When we turn on parallel runs,
 // the same interface is fed by a shared hub (one WS pair for all localnets) and,
 // later, by a recorded snapshot stream for deterministic replay.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
 import { getSigner, getSignerForAddress } from "./env.js";
-import {
-  bindBlockScholesSurfaceToUnderlyingTx,
-  bindFeedsToUnderlyingTx,
-  buildOracleRefreshGridTx,
-  clampedSourceTimestampMs,
-  client,
-  createBlockScholesSurfaceFeedsTx,
-  executeAndWait,
-  registerUnderlyingAndCreateFeedsTx,
-  updatePythTrustedSignerTx,
-} from "./runtime.js";
+import { type Feeds } from "./predictSetup.js";
+import { buildOracleRefreshGridTx, clampedSourceTimestampMs, client } from "./runtime.js";
 
 const HARNESS_ENV = "/Users/aslantashtanov/Desktop/Projects/deepbookv3/packages/predict/harness/.env";
 function harnessKey(name: string): string {
@@ -46,11 +37,18 @@ const SCALE_1E9 = 1_000_000_000;
 const to1e9 = (x: number) => BigInt(Math.round(x * SCALE_1E9));
 const isoSec = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const findCreated = (block: any, t: string): string => {
-  const c = block.objectChanges?.find((ch: any) => ch.type === "created" && ch.objectType?.includes(t));
-  if (!c) throw new Error(`no created object of type ${t}`);
-  return c.objectId;
-};
+
+const INSTANCE_DIR = process.env.INSTANCE_DIR ?? ".";
+
+// The keeper (single setup owner) publishes the feed ids; wait for them, then stream.
+async function waitForFeeds(): Promise<Feeds> {
+  const path = `${INSTANCE_DIR}/feeds.json`;
+  for (let i = 0; i < 120; i++) {
+    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+    await sleep(1000);
+  }
+  throw new Error("feeds.json not published by the keeper within 120s");
+}
 
 interface Svi { alpha: number; beta: number; rho: number; m: number; sigma: number }
 interface MarketSnapshot {
@@ -148,20 +146,6 @@ class DirectWsSource implements MarketSource {
   }
 }
 
-async function setupFeeds() {
-  console.log("[setup] registering trusted signer + creating/binding feeds...");
-  await executeAndWait(updatePythTrustedSignerTx(), "trusted-signer");
-  const feeds = await executeAndWait(registerUnderlyingAndCreateFeedsTx(1), "create-feeds");
-  const pythFeedId = findCreated(feeds, "pyth_feed::PythFeed");
-  const bsSpotFeedId = findCreated(feeds, "block_scholes_spot_feed::BlockScholesSpotFeed");
-  await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId, bsSpotFeedId }), "bind-spot");
-  const surface = await executeAndWait(createBlockScholesSurfaceFeedsTx(), "create-surface");
-  const bsForwardFeedId = findCreated(surface, "block_scholes_forward_feed::BlockScholesForwardFeed");
-  const bsSviFeedId = findCreated(surface, "block_scholes_svi_feed::BlockScholesSVIFeed");
-  await executeAndWait(bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }), "bind-surface");
-  return { pythFeedId, bsSpotFeedId, bsForwardFeedId, bsSviFeedId };
-}
-
 async function submit(tx: any, signer: any): Promise<string> {
   tx.setSender(signer.getPublicKey().toSuiAddress());
   tx.setGasBudget(GAS_BUDGET);
@@ -172,15 +156,16 @@ async function submit(tx: any, signer: any): Promise<string> {
 }
 
 async function main() {
-  const feeds = await setupFeeds();
-  console.log(`[setup] feeds ready: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviFeedId.slice(0, 10)}`);
+  const feeds = await waitForFeeds();
+  console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviFeedId.slice(0, 10)}`);
 
-  // Pre-warm grid of boundary expiries (testnet-style: a few of each cadence).
-  const gridFor = (interval: number, offsets: number[]) => {
-    const base = Math.floor(Date.now() / interval) * interval;
-    return offsets.map((o) => base + o * interval);
-  };
-  const GRID = [...gridFor(300_000, [2, 3]), ...gridFor(3_600_000, [1])]; // 5m×2, 1h×1
+  // Warm a grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the launcher
+  // sets it from the keeper's cadence so the keeper's markets are always warm).
+  const GRID = (process.env.GRID_SPEC ?? "60000:6").split(",").flatMap((part) => {
+    const [period, count] = part.split(":").map(Number);
+    const base = Math.floor(Date.now() / period) * period;
+    return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
+  });
   const source = new DirectWsSource();
   await source.start(GRID);
   console.log(`[updater] streaming onto ${GRID.length} expiries: ${GRID.map(isoSec).join(", ")} (warming up)...`);
@@ -210,6 +195,12 @@ async function main() {
         rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
         m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
       },
+    }));
+    // Publish the latest snapshot for the keeper (settlement price) + the trade generator.
+    writeFileSync(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
+      spot1e9: snap.spot1e9.toString(),
+      publishedAtMs: ts.toString(),
+      expiries: Object.fromEntries([...snap.expiries.entries()]),
     }));
     try {
       const digest = await submit(
