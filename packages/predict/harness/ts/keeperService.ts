@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 import { CADENCES } from "./predictConfig.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
+import { appendTrace, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -65,21 +66,28 @@ async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
       console.warn("[keeper] no updater snapshot yet; deferring settlement one tick");
     } else {
       const settlements = expired.map((m) => ({ expiryMs: BigInt(m.expiryMs), price: spot }));
-      await executeAndWait(
+      const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: active.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush+settle",
       );
       expired.forEach((m) => (m.settled = true));
+      const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
+      appendTrace("keeper", {
+        type: "flush", settled: expired.length, marketCount: fe ? Number(fe.market_count) : 0,
+        poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
+        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr),
+      });
       console.log(`[keeper] settled+compacted ${expired.length} market(s): ${expired.map((m) => isoSec(m.expiryMs)).join(", ")}`);
     }
   }
 
   // 2. Liquidate live markets (bounded; a no-op without under-floor leveraged orders).
   if (live.length) {
-    await executeAndWait(
+    const lr = await executeAndWait(
       keeperLiquidateTx({ feeds, markets: live.map((m) => m.id), protocolConfigId: PROTOCOL_CONFIG_ID, budget: LIQ_BUDGET }),
       "liquidate",
     );
+    appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr) });
   }
 
   // 3. Roll: keep WINDOW markets ahead of now, funding each as a separate tx right after
@@ -114,6 +122,7 @@ async function main() {
     try {
       await tick(feeds, lifecycleCapId, markets);
     } catch (e) {
+      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
       console.error("[keeper] tick error:", e instanceof Error ? e.message : e);
     }
     if (deadline && Date.now() >= deadline) break;

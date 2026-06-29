@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { getSignerForAddress } from "./env.js";
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, resolveMint } from "./resolver.js";
+import { appendTrace, errorTag, gasOf } from "./trace.js";
 import {
   DUSDC_TYPE,
   PROTOCOL_CONFIG_ID,
@@ -95,8 +96,9 @@ async function trade(feeds: any, held: Held[]): Promise<"mint" | "redeem" | null
       held.splice(idx, 1); // market settled; drop (the settled payout stays in escrow)
       return null;
     }
-    await submit(redeemTx({ expiryMarketId: h.marketId, wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...feeds, orderId: h.orderId, closeQuantity: h.quantity }), "redeem");
+    const rr = await submit(redeemTx({ expiryMarketId: h.marketId, wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...feeds, orderId: h.orderId, closeQuantity: h.quantity }), "redeem");
     held.splice(idx, 1);
+    appendTrace(LABEL, { type: "redeem", market: h.marketId.slice(0, 10), gas: gasOf(rr) });
     return "redeem";
   }
 
@@ -121,6 +123,11 @@ async function trade(feeds: any, held: Held[]): Promise<"mint" | "redeem" | null
   );
   const ev = res.events?.find((e: any) => e.type?.includes("OrderMinted"));
   if (ev) held.push({ orderId: ev.parsedJson.order_id, marketId: market.id, quantity: r.quantity });
+  appendTrace(LABEL, {
+    type: "mint", market: market.id.slice(0, 10), direction, moneyness: r.strikeUsd / spot,
+    prob: r.predictedProbability, leverage: inst.leverage,
+    netPremium: ev ? Number(ev.parsedJson.net_premium) / 1e6 : 0, gas: gasOf(res),
+  });
   return "mint";
 }
 
@@ -145,6 +152,7 @@ async function main() {
         console.log(`[trader ${LABEL}] ${mints} mints, ${redeems} redeems, ${held.length} open`);
     } catch (e) {
       skips++; // expired markets / transient races are expected
+      appendTrace(LABEL, { type: "fail", tag: errorTag(e) });
       if (skips % 25 === 0) console.warn(`[trader ${LABEL}] skip: ${e instanceof Error ? e.message.slice(0, 90) : e}`);
     }
     if (deadline && Date.now() >= deadline) break;
