@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
     p_spike_mint = sub.add_parser("spike-mint", help="B1: resolve + execute a semantic mint against live data")
     p_spike_mint.set_defaults(func=lambda a: live.spike_mint())
 
+    p_keeper = sub.add_parser("keeper", help="Predict lifecycle keeper (roll/flush/settle/rebalance/liquidate)")
+    p_keeper.add_argument("--seconds", type=int, default=0, help="run for N seconds then stop (0 = until Ctrl-C)")
+    p_keeper.add_argument("--cadence", type=int, default=None, help="cadence id (default 0 = 1m)")
+    p_keeper.set_defaults(func=lambda a: live.keeper(a.seconds, a.cadence))
+
     p_status = sub.add_parser("status", help="show the slot registry")
     p_status.set_defaults(func=_cmd_status)
 

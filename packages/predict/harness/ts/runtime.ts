@@ -369,7 +369,7 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function clockTimestampMs(): Promise<bigint> {
+export async function clockTimestampMs(): Promise<bigint> {
     const object = await client.getObject({
         id: CLOCK_ID,
         options: { showContent: true },
@@ -540,12 +540,25 @@ export function buildOracleRefreshGridTx(
     sourceTimestampMs: bigint,
 ): Transaction {
     const tx = new Transaction();
+    addOracleRefreshGrid(tx, feeds, spot, grid, sourceTimestampMs);
+    return tx;
+}
+
+// Add a grid refresh (Pyth + BS spot once, then forward/SVI per expiry) to an existing
+// PTB, so a priced op (flush valuation, liquidation) reads fresh inputs within the same
+// atomic transaction rather than depending on a separate earlier refresh.
+function addOracleRefreshGrid(
+    tx: Transaction,
+    feeds: { pythFeedId: string; bsSpotFeedId: string; bsForwardFeedId: string; bsSviFeedId: string },
+    spot: bigint,
+    grid: GridExpiry[],
+    sourceTimestampMs: bigint,
+): void {
     addPythFeedUpdate(tx, feeds.pythFeedId, spot, sourceTimestampMs);
     addBsSpotUpdate(tx, feeds.bsSpotFeedId, spot, sourceTimestampMs);
     for (const g of grid) {
         addBsExpiryUpdate(tx, feeds.bsForwardFeedId, feeds.bsSviFeedId, g.expiry, g.forward, g.svi, sourceTimestampMs);
     }
-    return tx;
 }
 
 // Permissionless Pyth Lazer spot update: parse+verify the signed Lazer payload,
@@ -572,6 +585,21 @@ function addPythFeedUpdate(
     });
     tx.moveCall({
         target: propbookTarget("pyth_feed", "update"),
+        arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
+    });
+}
+
+// Settlement observation: same re-signed Lazer spot update as addPythFeedUpdate, but
+// stored via `insert_at` at the exact whole-second expiry timestamp so the flush's
+// `value_expiry` -> `ensure_settled` can read the terminal price and settle the market.
+function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, expiryMs: bigint): void {
+    const updateBytes = lazerUpdateFromConfig(localPythConfig(), PYTH_FEED_ID, spot, expiryMs);
+    const update = tx.moveCall({
+        target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),
+        arguments: [tx.object(PYTH_LAZER_STATE_ID), tx.object(CLOCK_ID), tx.pure.vector("u8", Array.from(updateBytes))],
+    });
+    tx.moveCall({
+        target: propbookTarget("pyth_feed", "insert_at"),
         arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
     });
 }
@@ -1154,6 +1182,128 @@ export async function refreshOracleAndFlushTx(
     const tx = new Transaction();
     await addOracleRefresh(tx, params);
     addFlush(tx, params);
+    return tx;
+}
+
+// Genesis flush with NO active markets: proof -> start (snapshots an empty expected
+// set) -> finish, which bootstrap-mints PLP 1:1 against the queued supply. Run once
+// before any market exists, so the bootstrap never races a fast cadence's first expiry.
+export function bareFlushTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    lifecycleCapId: string;
+}): Transaction {
+    const tx = new Transaction();
+    const proof = tx.moveCall({
+        target: target("registry", "generate_lifecycle_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+    });
+    const valuation = tx.moveCall({
+        target: target("plp", "start_pool_valuation"),
+        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId), proof],
+    });
+    tx.moveCall({
+        target: target("plp", "finish_flush"),
+        arguments: [
+            valuation,
+            tx.object(params.poolVaultId),
+            tx.object(params.protocolConfigId),
+            tx.pure(bcs.option(bcs.u64()).serialize(null)),
+            tx.pure(bcs.option(bcs.u64()).serialize(null)),
+        ],
+    });
+    return tx;
+}
+
+interface KeeperFeeds {
+    pythFeedId: string;
+    bsSpotFeedId: string;
+    bsForwardFeedId: string;
+    bsSviFeedId: string;
+}
+
+// The keeper's flush+settle PTB. First inserts the exact-expiry Pyth observation for
+// each expired market (so `value_expiry`'s `ensure_settled` settles + sweeps it), then
+// runs ONE full-pool flush valuing EVERY active market between start and finish. A
+// settled market contributes 0 and is swept (cash back to pool); a live market is
+// rebalanced + valued. Relies on the running updater to keep live-market feeds fresh.
+export function keeperFlushTx(params: {
+    feeds: KeeperFeeds;
+    spot: bigint;
+    grid: GridExpiry[];
+    sourceTimestampMs: bigint;
+    marketIds: string[];
+    poolVaultId: string;
+    protocolConfigId: string;
+    lifecycleCapId: string;
+    settlements: { expiryMs: bigint; price: bigint }[];
+}): Transaction {
+    const tx = new Transaction();
+    // Refresh live expiries in this PTB so value_expiry prices live markets within the
+    // freshness window, then insert each expired market's terminal observation so
+    // ensure_settled settles + sweeps it. One atomic flush values EVERY active market.
+    addOracleRefreshGrid(tx, params.feeds, params.spot, params.grid, params.sourceTimestampMs);
+    for (const s of params.settlements) {
+        addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
+    }
+    const proof = tx.moveCall({
+        target: target("registry", "generate_lifecycle_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+    });
+    const valuation = tx.moveCall({
+        target: target("plp", "start_pool_valuation"),
+        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId), proof],
+    });
+    for (const marketId of params.marketIds) {
+        tx.moveCall({
+            target: target("plp", "value_expiry"),
+            arguments: [
+                valuation,
+                tx.object(params.poolVaultId),
+                tx.object(marketId),
+                tx.object(params.protocolConfigId),
+                tx.object(ORACLE_REGISTRY_ID),
+                tx.object(params.feeds.pythFeedId),
+                tx.object(params.feeds.bsSpotFeedId),
+                tx.object(params.feeds.bsForwardFeedId),
+                tx.object(params.feeds.bsSviFeedId),
+                tx.object(CLOCK_ID),
+            ],
+        });
+    }
+    tx.moveCall({
+        target: target("plp", "finish_flush"),
+        arguments: [
+            valuation,
+            tx.object(params.poolVaultId),
+            tx.object(params.protocolConfigId),
+            tx.pure(bcs.option(bcs.u64()).serialize(null)),
+            tx.pure(bcs.option(bcs.u64()).serialize(null)),
+        ],
+    });
+    return tx;
+}
+
+// One bounded liquidation pass over each live market, with the oracle refreshed in the
+// same PTB so each load_live_pricer reads fresh inputs (no cross-tx staleness).
+export function keeperLiquidateTx(params: {
+    feeds: KeeperFeeds;
+    spot: bigint;
+    grid: GridExpiry[];
+    sourceTimestampMs: bigint;
+    markets: string[];
+    protocolConfigId: string;
+    budget: bigint;
+}): Transaction {
+    const tx = new Transaction();
+    addOracleRefreshGrid(tx, params.feeds, params.spot, params.grid, params.sourceTimestampMs);
+    for (const marketId of params.markets) {
+        const pricer = loadLivePricer(tx, { expiryMarketId: marketId, protocolConfigId: params.protocolConfigId, ...params.feeds });
+        tx.moveCall({
+            target: target("expiry_market", "liquidate"),
+            arguments: [tx.object(marketId), tx.object(params.protocolConfigId), pricer, tx.pure.u64(params.budget)],
+        });
+    }
     return tx;
 }
 

@@ -8,12 +8,11 @@
 
 import { type Svi, directionProbability, forwardPrice } from "./pricer.js";
 
-const SCALE = 1_000_000_000; // 1e9 fixed-point (float_scaling) — leverage + probability
+const SCALE = 1_000_000_000; // 1e9 fixed-point (float_scaling) — leverage
 const DUSDC_DECIMALS = 1_000_000; // DUSDC raw — quantity/payout/cash are DUSDC-scaled, not 1e9
 const POS_INF_TICK = 2 ** 30 - 1; // range_codec pos-inf sentinel
 const NEG_INF_TICK = 0;
 const ADMISSION_K = 0.2; // admission_leverage_curve_k (200_000_000 / 1e9)
-const U64_MAX = (1n << 64n) - 1n;
 
 export interface MarketParams {
   tickSize: number; // USD per tick (raw_strike = tick * tick_size)
@@ -23,7 +22,6 @@ export interface MarketParams {
   maxEntryProbability: number; // e.g. 0.99
   liquidationLtv: number; // e.g. 0.9
   lotSize: number; // raw quantity lot (constants::position_lot_size = 10_000)
-  positionLotSize?: number;
 }
 
 export interface Snapshot {
@@ -47,10 +45,8 @@ export interface Resolved {
   higherTick: number;
   strikeUsd: number;
   predictedProbability: number;
-  quantity: bigint; // 1e9-scaled, lot-rounded
+  quantity: bigint; // DUSDC-scaled (1e6), lot-rounded
   leverage1e9: bigint;
-  maxProbability1e9: bigint;
-  maxCost1e9: bigint;
 }
 
 /** admitted_leverage_cap: 1 + (Lmax-1) * p*(1+k)/(p+k). */
@@ -80,7 +76,7 @@ function searchStrike(snap: Snapshot, forward: number, isUp: boolean, target: nu
 }
 
 export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams): Resolved {
-  const lot = mkt.lotSize ?? mkt.positionLotSize ?? 10_000;
+  const lot = mkt.lotSize;
   const forward = forwardPrice(snap.pythSpot, snap.bsSpot, snap.bsForward);
   const isUp = inst.direction === "UP";
 
@@ -113,7 +109,5 @@ export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams
     predictedProbability: p,
     quantity: BigInt(Math.max(qtyRaw, 0)),
     leverage1e9: BigInt(Math.round(inst.leverage * SCALE)),
-    maxProbability1e9: BigInt(Math.min(SCALE, Math.round(p * 1.05 * SCALE))),
-    maxCost1e9: U64_MAX, // v1: spend sizes the quantity; the on-chain cost is authoritative
   };
 }

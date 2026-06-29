@@ -53,11 +53,6 @@ export function upPrice(svi: Svi, forward: number, strike: number): number {
   return normalCdf(d2);
 }
 
-/** P(settle in (lower, higher]). */
-export function rangePrice(svi: Svi, forward: number, lower: number, higher: number): number {
-  return Math.max(0, upPrice(svi, forward, lower) - upPrice(svi, forward, higher));
-}
-
 /** Probability of a binary order in a direction at `strike`: UP = P(>strike), DOWN = P(<strike). */
 export function directionProbability(svi: Svi, forward: number, strike: number, isUp: boolean): number {
   const up = upPrice(svi, forward, strike);

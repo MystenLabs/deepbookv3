@@ -81,6 +81,17 @@ def spike_mint() -> int:
         return cp.returncode
 
 
+def keeper(seconds: int = 0, cadence: int | None = None) -> int:
+    """Predict lifecycle keeper: roll cadence + flush/settle/compact + rebalance + liquidate."""
+    with oracle_ready_localnet(name="keeper", keep=True) as ctx:
+        env = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": str(seconds * 1000)}
+        if cadence is not None:
+            env["KEEPER_CADENCE"] = str(cadence)
+        print(f"[{ctx['run_id']}] running Predict lifecycle keeper...")
+        cp = subprocess.run(["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR), env=env)
+        return cp.returncode
+
+
 def hold(name: str | None = None, seconds: int = 0) -> int:
     """Bring up the oracle substrate (localnet + continuous updater) and hold it.
 

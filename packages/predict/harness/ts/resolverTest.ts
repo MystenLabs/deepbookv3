@@ -12,7 +12,7 @@ const snap: Snapshot = {
 };
 
 // Contract defaults: Lmax 3x, ltv 0.85, entry-prob [0.01, 0.99], lot 10_000.
-// tick = $1; admission grid = $50.
+// tick = $0.01; admission grid = $1.
 const mkt: MarketParams = {
   tickSize: 0.01,
   admissionTickSize: 1,
