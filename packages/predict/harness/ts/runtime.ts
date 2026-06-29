@@ -74,7 +74,9 @@ const BS_UNDERLYING_ID = PYTH_FEED_ID;
 // tick size for this Propbook underlying.
 const TICK_BITS = 30n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
-const ORACLE_TICK_SIZE = 1_000_000_000n;
+// $0.01 in 1e9 fixed-point — matches the testnet cadence tick_size (verified
+// on-chain). raw_strike = tick * tick_size, so the tick index = raw_strike / this.
+const ORACLE_TICK_SIZE = 10_000_000n;
 const U64_MAX = (1n << 64n) - 1n;
 const ONE_DAY_MS = 24n * 60n * 60n * 1000n;
 const ONE_MONTH_MS = 30n * ONE_DAY_MS;

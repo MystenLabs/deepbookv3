@@ -72,6 +72,15 @@ def oracle_ready_localnet(name: str | None = None, keep: bool = True):
             shutil.rmtree(inst, ignore_errors=True)
 
 
+def spike_mint() -> int:
+    """B1: oracle-ready localnet -> market + trader -> resolve + execute a semantic mint."""
+    with oracle_ready_localnet(name="mint", keep=True) as ctx:
+        env = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"])}
+        print(f"[{ctx['run_id']}] running B1 mint spike (resolve + execute against live data)...")
+        cp = subprocess.run(["npx", "tsx", "mintSpike.ts"], cwd=str(config.TS_DIR), env=env)
+        return cp.returncode
+
+
 def hold(name: str | None = None, seconds: int = 0) -> int:
     """Bring up the oracle substrate (localnet + continuous updater) and hold it.
 

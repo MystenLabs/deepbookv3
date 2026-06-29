@@ -90,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     p_up.add_argument("--seconds", type=int, default=0, help="hold for N seconds then tear down (0 = until Ctrl-C)")
     p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds))
 
+    p_spike_mint = sub.add_parser("spike-mint", help="B1: resolve + execute a semantic mint against live data")
+    p_spike_mint.set_defaults(func=lambda a: live.spike_mint())
+
     p_status = sub.add_parser("status", help="show the slot registry")
     p_status.set_defaults(func=_cmd_status)
 
