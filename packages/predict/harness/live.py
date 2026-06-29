@@ -101,7 +101,7 @@ def _terminate_group(p: subprocess.Popen) -> None:
         pass
 
 
-def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: int = 0) -> int:
+def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: int = 0, replay: str | None = None) -> int:
     """Bring up the full running sim: localnet + Predict keeper + oracle updater + N fuzz
     traders.
 
@@ -121,10 +121,11 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
             env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
             start_new_session=True,
         )
+        updater_env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"}
+        if replay:  # re-play a recorded hub stream instead of opening a live provider WS
+            updater_env["REPLAY_FILE"] = replay
         updater = subprocess.Popen(
-            ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
-            env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"},
-            start_new_session=True,
+            ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=updater_env, start_new_session=True,
         )
         procs = [keeper, updater]
         for addr in trader_addrs:
@@ -155,4 +156,68 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
         finally:
             for p in procs:
                 _terminate_group(p)
+    return 0
+
+
+def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) -> int:
+    """Parallel: ONE shared market-data hub (a single WS pair) feeding N localnets, each
+    with a keeper + a HubSource updater + `traders` fuzz traders. The hub writes a global
+    snapshot the updaters read, so N localnets run off one stream instead of N. An
+    ExitStack tears down every subprocess (LIFO) then every localnet on exit.
+    """
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
+    grid_spec = f"{period_ms}:6"
+    hub_snapshot = config.LOCALNETS_DIR / "hub-snapshot.json"
+    hub_record = config.LOCALNETS_DIR / "hub-record.jsonl"
+    with contextlib.ExitStack() as stack:
+        hub = subprocess.Popen(
+            ["npx", "tsx", "hub.ts"], cwd=str(config.TS_DIR),
+            env={**os.environ, "HUB_SNAPSHOT": str(hub_snapshot), "HUB_RECORD": str(hub_record), "GRID_SPEC": grid_spec, "DURATION_MS": "0"},
+            start_new_session=True,
+        )
+        stack.callback(_terminate_group, hub)
+        core = [hub]
+        gas: list[tuple[int, int, str]] = []  # (rpc_port, faucet_port, address)
+        print(f"hub started (pid {hub.pid}); bringing up {n} localnets...")
+        for i in range(n):
+            ctx = stack.enter_context(oracle_ready_localnet(name=f"par{i}", keep=True))
+            trader_addrs = [_create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
+            base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
+            keeper = subprocess.Popen(
+                ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
+                start_new_session=True,
+            )
+            updater = subprocess.Popen(
+                ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec, "HUB_SNAPSHOT": str(hub_snapshot)},
+                start_new_session=True,
+            )
+            stack.callback(_terminate_group, keeper)
+            stack.callback(_terminate_group, updater)
+            core += [keeper, updater]
+            for addr in trader_addrs:
+                stack.callback(_terminate_group, subprocess.Popen(
+                    ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
+                    env={**base, "TRADER_ADDRESS": addr}, start_new_session=True,
+                ))
+            for a in (ctx["active"], ctx["updater_address"], *trader_addrs):
+                gas.append((ctx["rpc_port"], ctx["faucet_port"], a))
+        print(f"up-many: hub + {n} localnets (keeper + HubSource updater + {traders} trader each); held. Ctrl-C to tear down.")
+        deadline = (time.time() + seconds) if seconds > 0 else None
+        last_gas = 0.0
+        try:
+            while all(p.poll() is None for p in core):  # hub + keepers + updaters are the core
+                if deadline and time.time() >= deadline:
+                    break
+                now = time.time()
+                if now - last_gas >= 30:
+                    last_gas = now
+                    for rpc_port, faucet_port, addr in gas:
+                        if 0 <= localnet.balance(rpc_port, addr) < 2_000_000_000:
+                            localnet.fund(faucet_port, addr, times=1)
+                time.sleep(2)
+        except KeyboardInterrupt:
+            print("tearing down...")
     return 0
