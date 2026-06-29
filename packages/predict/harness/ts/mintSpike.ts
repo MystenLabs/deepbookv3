@@ -13,7 +13,8 @@ import WebSocket from "ws";
 import { readFileSync } from "node:fs";
 
 import { type Svi } from "./pricer.js";
-import { type Instruction, type MarketParams, resolveMint } from "./resolver.js";
+import { type Instruction, resolveMint } from "./resolver.js";
+import { BOOTSTRAP_SUPPLY, CADENCES, FRESHNESS, RESOLVER_MARKET } from "./predictConfig.js";
 import {
   PROTOCOL_CONFIG_ID,
   POOL_VAULT_ID,
@@ -34,7 +35,7 @@ import {
   registerUnderlyingAndCreateFeedsTx,
   requestSupplyTx,
   seedOracleTx,
-  setTemplateMaxAdmissionLeverageTx,
+  setOracleFreshnessTx,
   setCadenceConfigTx,
   updatePythTrustedSignerTx,
 } from "./runtime.js";
@@ -149,20 +150,15 @@ async function main() {
   await executeAndWait(bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }), "bind-surface");
   const feeds = { pythFeedId, bsSpotFeedId, bsForwardFeedId, bsSviFeedId };
 
-  // 2. Protocol + cadence config (1h cadence, $1 ticks, generous allocation).
-  await executeAndWait(setTemplateMaxAdmissionLeverageTx(PROTOCOL_CONFIG_ID, 3n * SCALE), "max-adm-lev");
+  // 2. Predict-layer config from the testnet-aligned map. Cadence has no default (must
+  // set); freshness is the one knob testnet loosened from default; everything else (fees,
+  // ltv, max leverage) matches the contract default the market snapshots on creation.
   const cap = await executeAndWait(mintLifecycleCapTx(address), "lifecycle-cap");
   const lifecycleCapId = found(cap, "MarketLifecycleCap");
+  await executeAndWait(setCadenceConfigTx({ cadenceId: CADENCE_1H, ...CADENCES[CADENCE_1H] }), "cadence");
   await executeAndWait(
-    setCadenceConfigTx({
-      cadenceId: CADENCE_1H,
-      tickSize: 10_000_000n, // $0.01 (testnet)
-      admissionTickSize: 1_000_000_000n, // $1 (testnet)
-      maxExpiryAllocation: 50_000n * DUSDC, // $50k (testnet short-cadence)
-      initialExpiryCash: 10_000n * DUSDC, // $10k (testnet short-cadence)
-      windowSize: 5n,
-    }),
-    "cadence",
+    setOracleFreshnessTx(PROTOCOL_CONFIG_ID, FRESHNESS.pythSpotMs, FRESHNESS.blockScholesPriceMs, FRESHNESS.blockScholesSviMs),
+    "freshness",
   );
 
   // 3. Create the 1h market (its expiry lands on the updater's warm grid).
@@ -182,13 +178,13 @@ async function main() {
   await executeAndWait(createAccountTx(), "create-account");
   await executeAndWait(depositToAccountTx(wrapperId, 1_000_000n * DUSDC), "deposit");
   await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "lock-capital");
-  await executeAndWait(requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId, amount: 10_000_000n * DUSDC }), "supply");
+  await executeAndWait(requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId, amount: BOOTSTRAP_SUPPLY }), "supply");
   await executeAndWait(await refreshOracleAndFlushTx({ ...refreshParams(feeds, expiryMs, snap), poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId, lifecycleCapId }), "flush");
   await executeAndWait(rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId, pythFeedId }), "rebalance");
   console.log("[spike] market funded + mintable");
 
   // 6. Resolve a semantic instruction (on-chain forward == bsForward, so resolver uses bsSpot=pythSpot).
-  const mkt: MarketParams = { tickSize: 0.01, admissionTickSize: 1, maxAdmissionLeverage: 3, minEntryProbability: 0.01, maxEntryProbability: 0.99, liquidationLtv: 0.85, lotSize: 10_000 };
+  const mkt = RESOLVER_MARKET;
   const inst: Instruction = { direction: "UP", leverage: 2, targetProbability: 0.3, spendUsd: 100 };
   const resolved = resolveMint(inst, { pythSpot: snap.pythSpot, bsSpot: snap.pythSpot, bsForward: snap.bsForward, svi: snap.svi }, mkt);
   console.log(`[spike] resolved 2x UP @ ~30c $100 -> strike=$${resolved.strikeUsd.toFixed(0)} p=${(resolved.predictedProbability * 100).toFixed(2)}c maxPayout=$${(Number(resolved.quantity) / 1e6).toFixed(2)} feasible=${resolved.feasible}${resolved.reason ? " (" + resolved.reason + ")" : ""}`);

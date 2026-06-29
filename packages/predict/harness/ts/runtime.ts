@@ -962,6 +962,27 @@ export function setTemplateMaxAdmissionLeverageTx(
     return tx;
 }
 
+// Pin oracle read freshness to the testnet values. Testnet loosened pyth/bs price
+// freshness from the contract defaults (2s/3s) to 10s so realistic push cadence does
+// not stale-reject reads; the localnet must match or live pricing aborts under load.
+export function setOracleFreshnessTx(
+    protocolConfigId: string,
+    pythSpotMs: bigint,
+    blockScholesPriceMs: bigint,
+    blockScholesSviMs: bigint,
+): Transaction {
+    const tx = new Transaction();
+    const set = (fn: string, value: bigint) =>
+        tx.moveCall({
+            target: target("protocol_config", fn),
+            arguments: [tx.object(protocolConfigId), tx.object(ADMIN_CAP_ID), tx.pure.u64(value)],
+        });
+    set("set_pyth_spot_freshness_ms", pythSpotMs);
+    set("set_block_scholes_price_freshness_ms", blockScholesPriceMs);
+    set("set_block_scholes_svi_freshness_ms", blockScholesSviMs);
+    return tx;
+}
+
 export function updatePythTrustedSignerTx(): Transaction {
     const tx = new Transaction();
     const vaaBytes = updateTrustedSignerVaaFromConfig(localPythConfig());
