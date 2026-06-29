@@ -24,7 +24,8 @@ KNOWN_MODULES = {
     "block_scholes_forward_feed", "block_scholes_svi_feed", "account", "account_registry",
     "math", "i64",
 }
-_TRANSIENT = ("rpc", "timeout", "network", "fetch", "econn", "socket")
+# Submission-level failures (consensus/equivocation/network) — NOT contract bugs.
+_TRANSIENT = ("rpc", "timeout", "network", "fetch", "econn", "socket", "validators", "non-retriable", "equivocat", "rejected as invalid")
 
 
 def _latest_instance() -> Path | None:

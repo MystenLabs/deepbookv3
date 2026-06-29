@@ -8,7 +8,9 @@
 
 import { type Svi, directionProbability, forwardPrice } from "./pricer.js";
 
-const SCALE = 1_000_000_000; // 1e9 fixed-point (float_scaling) — leverage
+const SCALE = 1_000_000_000; // 1e9 fixed-point (float_scaling) — leverage + probability
+const PROB_SLACK = 1.1; // max_probability = quoted p + 10% (per-contract slippage cap)
+const COST_SLACK = 1.2; // max_cost = spend + 20% (covers net_premium + fees + slippage)
 const DUSDC_DECIMALS = 1_000_000; // DUSDC raw — quantity/payout/cash are DUSDC-scaled, not 1e9
 const POS_INF_TICK = 2 ** 30 - 1; // range_codec pos-inf sentinel
 const NEG_INF_TICK = 0;
@@ -47,6 +49,8 @@ export interface Resolved {
   predictedProbability: number;
   quantity: bigint; // DUSDC-scaled (1e6), lot-rounded
   leverage1e9: bigint;
+  maxProbability1e9: bigint; // per-contract probability cap (quoted p + slack), 1e9-scaled
+  maxCost: bigint; // all-in DUSDC withdrawal cap (spend + headroom), 1e6-scaled
 }
 
 /** admitted_leverage_cap: 1 + (Lmax-1) * p*(1+k)/(p+k). */
@@ -109,5 +113,7 @@ export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams
     predictedProbability: p,
     quantity: BigInt(Math.max(qtyRaw, 0)),
     leverage1e9: BigInt(Math.round(inst.leverage * SCALE)),
+    maxProbability1e9: BigInt(Math.min(SCALE, Math.round(p * PROB_SLACK * SCALE))),
+    maxCost: BigInt(Math.round(inst.spendUsd * COST_SLACK * DUSDC_DECIMALS)),
   };
 }

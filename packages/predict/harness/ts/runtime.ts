@@ -439,6 +439,8 @@ interface MintParams {
     isUp: boolean;
     quantity: bigint;
     leverage: bigint;
+    maxCost?: bigint; // all-in DUSDC withdrawal cap; U64_MAX (uncapped) if omitted
+    maxProbability?: bigint; // per-contract probability cap (1e9); U64_MAX if omitted
 }
 
 interface RedeemParams {
@@ -768,8 +770,8 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.pure.u64(higherTick),
             tx.pure.u64(params.quantity),
             tx.pure.u64(params.leverage),
-            tx.pure.u64(U64_MAX),
-            tx.pure.u64(U64_MAX),
+            tx.pure.u64(params.maxCost ?? U64_MAX),
+            tx.pure.u64(params.maxProbability ?? U64_MAX),
             // `mint_exact_quantity` loads the account and ambient-settles it
             // (`settle<DUSDC>`) before charging the premium, so it reads the
             // singleton AccumulatorRoot at 0xacc. `root` follows the slippage

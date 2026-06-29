@@ -118,6 +118,7 @@ async function trade(feeds: any, held: Held[]): Promise<"mint" | "redeem" | null
     mintTx({
       expiryMarketId: market.id, wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...feeds,
       strike: BigInt(Math.round(r.strikeUsd)) * SCALE, isUp: direction === "UP", quantity: r.quantity, leverage: r.leverage1e9,
+      maxCost: r.maxCost, maxProbability: r.maxProbability1e9,
     }),
     "mint",
   );
