@@ -54,7 +54,7 @@ export interface ExecutionReceipt {
     effects: any;
 }
 
-const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
+export const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
 // Sui's singleton balance-accumulator root lives at the reserved address 0xacc
@@ -1398,6 +1398,44 @@ export async function refreshOracleAndRedeemTx(
 ): Promise<Transaction> {
     const tx = new Transaction();
     await addOracleRefresh(tx, params);
+    addRedeem(tx, params);
+    return tx;
+}
+
+// Mint test DUSDC and transfer it to `toAddress`. The TreasuryCap is owned by the
+// publisher, so this is how the keeper (publisher) funds trader addresses, which cannot
+// self-mint.
+export function fundAddressDusdcTx(toAddress: string, amount: bigint): Transaction {
+    const tx = new Transaction();
+    const coin = mintDusdc(tx, amount);
+    tx.transferObjects([coin], tx.pure.address(toAddress));
+    return tx;
+}
+
+// Deposit a coin the account owner already holds (e.g. one the keeper transferred) into
+// the account's stored balance, rather than minting fresh DUSDC.
+export function depositOwnedCoinTx(wrapperId: string, coinId: string): Transaction {
+    const tx = new Transaction();
+    const auth = generateAuth(tx);
+    tx.moveCall({
+        target: accountTarget("account", "deposit_funds"),
+        typeArguments: [DUSDC_TYPE],
+        arguments: [tx.object(wrapperId), auth, tx.object(coinId), tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
+    });
+    return tx;
+}
+
+// Mint-only PTB (no oracle refresh): the trader prices against the updater-maintained
+// fresh feed via load_live_pricer.
+export function mintTx(params: MintParams): Transaction {
+    const tx = new Transaction();
+    addMint(tx, params);
+    return tx;
+}
+
+// Live redeem-only PTB (no oracle refresh).
+export function redeemTx(params: RedeemParams): Transaction {
+    const tx = new Transaction();
     addRedeem(tx, params);
     return tx;
 }

@@ -89,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     p_up.add_argument("--name", default=None)
     p_up.add_argument("--seconds", type=int, default=0, help="hold for N seconds then tear down (0 = until Ctrl-C)")
     p_up.add_argument("--cadence", type=int, default=0, help="market cadence id (default 0 = 1m)")
-    p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds, a.cadence))
+    p_up.add_argument("--traders", type=int, default=0, help="number of fuzz trader actors (default 0)")
+    p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds, a.cadence, a.traders))
 
     p_spike_mint = sub.add_parser("spike-mint", help="B1: resolve + execute a semantic mint against live data")
     p_spike_mint.set_defaults(func=lambda a: live.spike_mint())

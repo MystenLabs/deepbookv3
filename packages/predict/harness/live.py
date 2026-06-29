@@ -101,39 +101,48 @@ def _terminate_group(p: subprocess.Popen) -> None:
         pass
 
 
-def hold(name: str | None = None, seconds: int = 0, cadence: int = 0) -> int:
-    """Bring up the full running sim: localnet + the Predict keeper + the oracle updater.
+def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: int = 0) -> int:
+    """Bring up the full running sim: localnet + Predict keeper + oracle updater + N fuzz
+    traders.
 
-    The keeper is the single setup owner (publishes feeds.json) and runs the market
-    lifecycle; the updater is the sole WS consumer (warms the keeper's cadence, writes
-    snapshot.json). Both run in their own process groups (clean teardown) and both gas
-    addresses are auto-refilled from the faucet. Holds until Ctrl-C/SIGTERM, or `seconds`.
+    The keeper is the single setup owner (publishes feeds.json, funds the traders with
+    DUSDC) and runs the market lifecycle; the updater is the sole WS consumer (warms the
+    keeper's cadence, writes snapshot.json); the traders read those shared files and fuzz
+    mints/redeems. Every subprocess runs in its own process group (clean teardown) and
+    every gas address is auto-refilled. Holds until Ctrl-C/SIGTERM, or `seconds`.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
     with oracle_ready_localnet(name, keep=True) as ctx:
+        trader_addrs = [_create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
         base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
         keeper = subprocess.Popen(
-            ["npx", "tsx", "keeperService.ts"],
-            cwd=str(config.TS_DIR), env={**base, "KEEPER_CADENCE": str(cadence)}, start_new_session=True,
+            ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
+            env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
+            start_new_session=True,
         )
         updater = subprocess.Popen(
-            ["npx", "tsx", "oracleService.ts"],
-            cwd=str(config.TS_DIR),
+            ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
             env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"},
             start_new_session=True,
         )
         procs = [keeper, updater]
-        gas_addrs = [ctx["active"], ctx["updater_address"]]
-        print(f"\nharness up: keeper (pid {keeper.pid}) + updater (pid {updater.pid}); localnet held. Ctrl-C to tear down.")
+        for addr in trader_addrs:
+            procs.append(subprocess.Popen(
+                ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "TRADER_ADDRESS": addr}, start_new_session=True,
+            ))
+        gas_addrs = [ctx["active"], ctx["updater_address"], *trader_addrs]
+        print(f"\nharness up: keeper + updater + {traders} trader(s); localnet held. Ctrl-C to tear down.")
         try:
             deadline = (time.time() + seconds) if seconds > 0 else None
             last_gas = 0.0
-            while all(p.poll() is None for p in procs):
+            # A trader crashing should not kill the run; only the core (keeper/updater) does.
+            while keeper.poll() is None and updater.poll() is None:
                 if deadline and time.time() >= deadline:
                     break
                 now = time.time()
-                if now - last_gas >= 30:  # keep both actors funded over long holds
+                if now - last_gas >= 30:  # keep all actors funded over long holds
                     last_gas = now
                     for addr in gas_addrs:
                         bal = localnet.balance(ctx["rpc_port"], addr)

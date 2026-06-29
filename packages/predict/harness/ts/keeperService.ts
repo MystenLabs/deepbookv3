@@ -7,7 +7,7 @@
 // owner (setupFeedsAndConfig publishes feeds.json). It does NO provider/WS work: live
 // valuation reads the updater-maintained fresh on-chain feed, and the settlement price
 // comes from the updater's shared snapshot.json. One stream, the updater's.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import { CADENCES } from "./predictConfig.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
@@ -16,6 +16,7 @@ import {
   PROTOCOL_CONFIG_ID,
   clockTimestampMs,
   executeAndWait,
+  fundAddressDusdcTx,
   keeperFlushTx,
   keeperLiquidateTx,
   rebalanceExpiryCashTx,
@@ -26,6 +27,9 @@ const WINDOW = Number(CADENCES[CADENCE].windowSize); // markets to keep ahead of
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
 const SNAPSHOT_PATH = `${process.env.INSTANCE_DIR}/snapshot.json`;
+const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
+const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
+const TRADER_DUSDC = 1_000_000_000_000n; // $1M DUSDC per trader (publisher owns the cap)
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -90,13 +94,19 @@ async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
     );
     console.log(`[keeper] rolled: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))} (live ${liveCount + 1}/${WINDOW})`);
   }
+
+  // Publish the current live markets for the trade generator.
+  writeFileSync(MARKETS_PATH, JSON.stringify(markets.filter((m) => !m.settled && m.expiryMs > clock).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
 }
 
 async function main() {
   console.log(`[keeper] cadence=${CADENCE} window=${WINDOW} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
   const { feeds, lifecycleCapId } = await setupFeedsAndConfig([CADENCE]);
   await bootstrapPool(lifecycleCapId);
-  console.log("[keeper] bootstrapped (PLP minted, feeds.json published); rolling markets...");
+  for (const addr of TRADER_ADDRESSES) {
+    await executeAndWait(fundAddressDusdcTx(addr, TRADER_DUSDC), `fund-trader-${addr.slice(0, 8)}`);
+  }
+  console.log(`[keeper] bootstrapped (PLP minted, feeds.json published); funded ${TRADER_ADDRESSES.length} trader(s); rolling markets...`);
 
   const markets: Market[] = [];
   const deadline = DURATION_MS > 0 ? Date.now() + DURATION_MS : 0;
