@@ -103,6 +103,14 @@ def fund(faucet_port: int, address: str, times: int = 2) -> None:
     time.sleep(1)
 
 
+def balance(rpc_port: int, address: str) -> int:
+    """Total SUI balance (MIST) for an address, or -1 if the query fails."""
+    try:
+        return int(_rpc(rpc_port, "suix_getBalance", [address])["result"]["totalBalance"])
+    except (urllib.error.URLError, ConnectionError, OSError, KeyError, ValueError, json.JSONDecodeError):
+        return -1
+
+
 def active_address(client_config: Path) -> str:
     return suicli.client_text(client_config, ["active-address"])
 

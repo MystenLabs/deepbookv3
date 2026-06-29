@@ -62,8 +62,8 @@ def oracle_ready_localnet(name: str | None = None, keep: bool = True):
         )
         yield {
             "run_id": run_id, "instance_dir": inst, "client_config": client_config,
-            "deployment": deployment, "rpc_port": slot["rpc_port"], "active": active,
-            "updater_address": updater_address,
+            "deployment": deployment, "rpc_port": slot["rpc_port"], "faucet_port": slot["faucet_port"],
+            "active": active, "updater_address": updater_address,
         }
     finally:
         localnet.stop(proc)
@@ -85,13 +85,29 @@ def spike_mint() -> int:
 _CADENCE_PERIOD_MS = {0: 60_000, 1: 300_000, 2: 3_600_000, 3: 86_400_000, 4: 604_800_000, 5: 2_592_000_000}
 
 
+def _terminate_group(p: subprocess.Popen) -> None:
+    """SIGTERM (then SIGKILL) the process's whole group so npx -> tsx -> node all die."""
+    if p.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    except ProcessLookupError:
+        pass
+
+
 def hold(name: str | None = None, seconds: int = 0, cadence: int = 0) -> int:
     """Bring up the full running sim: localnet + the Predict keeper + the oracle updater.
 
     The keeper is the single setup owner (publishes feeds.json) and runs the market
     lifecycle; the updater is the sole WS consumer (warms the keeper's cadence, writes
-    snapshot.json). Holds until Ctrl-C/SIGTERM, or for `seconds` if > 0. Tears down both
-    subprocesses and the localnet on exit.
+    snapshot.json). Both run in their own process groups (clean teardown) and both gas
+    addresses are auto-refilled from the faucet. Holds until Ctrl-C/SIGTERM, or `seconds`.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
@@ -99,29 +115,35 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0) -> int:
         base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
         keeper = subprocess.Popen(
             ["npx", "tsx", "keeperService.ts"],
-            cwd=str(config.TS_DIR), env={**base, "KEEPER_CADENCE": str(cadence)},
+            cwd=str(config.TS_DIR), env={**base, "KEEPER_CADENCE": str(cadence)}, start_new_session=True,
         )
         updater = subprocess.Popen(
             ["npx", "tsx", "oracleService.ts"],
             cwd=str(config.TS_DIR),
             env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"},
+            start_new_session=True,
         )
         procs = [keeper, updater]
+        gas_addrs = [ctx["active"], ctx["updater_address"]]
         print(f"\nharness up: keeper (pid {keeper.pid}) + updater (pid {updater.pid}); localnet held. Ctrl-C to tear down.")
         try:
             deadline = (time.time() + seconds) if seconds > 0 else None
+            last_gas = 0.0
             while all(p.poll() is None for p in procs):
                 if deadline and time.time() >= deadline:
                     break
+                now = time.time()
+                if now - last_gas >= 30:  # keep both actors funded over long holds
+                    last_gas = now
+                    for addr in gas_addrs:
+                        bal = localnet.balance(ctx["rpc_port"], addr)
+                        if 0 <= bal < 2_000_000_000:  # < 2 SUI
+                            print(f"[gas] refilling {addr[:10]} (bal {bal / 1e9:.2f} SUI)")
+                            localnet.fund(ctx["faucet_port"], addr, times=1)
                 time.sleep(2)
         except KeyboardInterrupt:
             print("tearing down...")
         finally:
             for p in procs:
-                if p.poll() is None:
-                    p.terminate()
-                    try:
-                        p.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        p.kill()
+                _terminate_group(p)
     return 0

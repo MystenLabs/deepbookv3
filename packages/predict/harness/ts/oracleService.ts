@@ -71,6 +71,7 @@ class DirectWsSource implements MarketSource {
   #fwd = new Map<number, number>();
   #svi = new Map<number, Svi>();
   #expiries: number[] = [];
+  #bsOpen = false;
 
   async start(expiries: number[]): Promise<void> {
     this.#expiries = expiries;
@@ -97,25 +98,13 @@ class DirectWsSource implements MarketSource {
   async #startBs(): Promise<void> {
     const ws = new WebSocket("wss://prod-websocket-api.blockscholes.com/");
     this.#bs = ws;
-    const fmt = { timestamp: "ms", hexify: false, decimals: 9 };
     ws.on("open", () =>
       ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "authenticate", params: { api_key: BS_KEY } })));
     ws.on("message", (raw) => {
       let f: any; try { f = JSON.parse(String(raw)); } catch { return; }
       if (f.result === "ok") {
-        for (const ms of this.#expiries) {
-          const expiry = isoSec(ms);
-          ws.send(JSON.stringify({ jsonrpc: "2.0", id: ms, method: "subscribe", params: [{
-            frequency: "1000ms", client_id: `fwd_${ms}`,
-            batch: [{ sid: `fwd_${ms}`, feed: "mark.px", asset: "future", base_asset: "BTC", expiry }],
-            options: { format: fmt },
-          }] }));
-          ws.send(JSON.stringify({ jsonrpc: "2.0", id: ms + 1, method: "subscribe", params: [{
-            frequency: "1000ms", retransmit_frequency: "1000ms", client_id: `svi_${ms}`,
-            batch: [{ sid: `svi_${ms}`, feed: "model.params", exchange: "composite", asset: "option", base_asset: "BTC", model: "SVI", expiry }],
-            options: { format: fmt },
-          }] }));
-        }
+        this.#bsOpen = true;
+        for (const ms of this.#expiries) this.#subscribeBsExpiry(ms);
         return;
       }
       if (f.method !== "subscription") return;
@@ -127,6 +116,32 @@ class DirectWsSource implements MarketSource {
       }
     });
     ws.on("error", (e) => console.warn("[bs] socket error:", String(e).slice(0, 120)));
+  }
+
+  #subscribeBsExpiry(ms: number): void {
+    const ws = this.#bs;
+    if (!ws) return;
+    const fmt = { timestamp: "ms", hexify: false, decimals: 9 };
+    const expiry = isoSec(ms);
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: ms, method: "subscribe", params: [{
+      frequency: "1000ms", client_id: `fwd_${ms}`,
+      batch: [{ sid: `fwd_${ms}`, feed: "mark.px", asset: "future", base_asset: "BTC", expiry }],
+      options: { format: fmt },
+    }] }));
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: ms + 1, method: "subscribe", params: [{
+      frequency: "1000ms", retransmit_frequency: "1000ms", client_id: `svi_${ms}`,
+      batch: [{ sid: `svi_${ms}`, feed: "model.params", exchange: "composite", asset: "option", base_asset: "BTC", model: "SVI", expiry }],
+      options: { format: fmt },
+    }] }));
+  }
+
+  // Roll the warmed grid forward: subscribe newly-wanted expiries. Passed boundaries drop
+  // out of `want` (no longer pushed); BS stops serving them after expiry, so they age out.
+  ensureExpiries(want: number[]): void {
+    const prev = new Set(this.#expiries);
+    this.#expiries = [...want];
+    if (!this.#bsOpen) return;
+    for (const ms of want) if (!prev.has(ms)) this.#subscribeBsExpiry(ms);
   }
 
   latest(): MarketSnapshot | null {
@@ -159,16 +174,19 @@ async function main() {
   const feeds = await waitForFeeds();
   console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviFeedId.slice(0, 10)}`);
 
-  // Warm a grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the launcher
-  // sets it from the keeper's cadence so the keeper's markets are always warm).
-  const GRID = (process.env.GRID_SPEC ?? "60000:6").split(",").flatMap((part) => {
-    const [period, count] = part.split(":").map(Number);
-    const base = Math.floor(Date.now() / period) * period;
-    return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
-  });
+  // Warm a ROLLING grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the
+  // launcher sets it from the keeper's cadence). gridNow() = the next `count` boundaries
+  // of each period from now; re-evaluated each loop so the grid rolls forward as
+  // boundaries pass and the keeper's new markets stay warm over long runs.
+  const gridNow = () =>
+    (process.env.GRID_SPEC ?? "60000:6").split(",").flatMap((part) => {
+      const [period, count] = part.split(":").map(Number);
+      const base = Math.floor(Date.now() / period) * period;
+      return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
+    });
   const source = new DirectWsSource();
-  await source.start(GRID);
-  console.log(`[updater] streaming onto ${GRID.length} expiries: ${GRID.map(isoSec).join(", ")} (warming up)...`);
+  await source.start(gridNow());
+  console.log(`[updater] streaming a rolling grid (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:6"}); warming up...`);
 
   const updaterAddress = process.env.UPDATER_ADDRESS;
   const signer = updaterAddress ? getSignerForAddress(updaterAddress) : getSigner();
@@ -183,6 +201,7 @@ async function main() {
   let skips = 0;
   while (!shutdown && (DURATION_MS === 0 || Date.now() - start < DURATION_MS)) {
     await sleep(LOOP_MS);
+    source.ensureExpiries(gridNow()); // roll the warmed grid forward as boundaries pass
     const snap = source.latest();
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
     const ts = await clampedSourceTimestampMs(snap.publishedAtMs);
