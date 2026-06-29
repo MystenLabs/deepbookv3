@@ -12,6 +12,16 @@ Before editing `packages/predict/simulations/**`, read:
 ## Gas / Performance Analysis
 
 - Gas verdicts must respect the simulation determinism caveat: different `run.sh` invocations use different generated scenarios, so treat per-action deltas below the run-to-run noise floor (watch an untouched action like `supply`/`withdraw`) as neutral. Only a pinned-scenario A/B gives a trustworthy signal.
+- **The wall is computation, not gas budget.** A tx over `max_gas_computation_bucket` (~5,000,000 computation units on localnet protocol v127; `computationCost_MIST = units × RGP(1000)`) fails with `InsufficientGas` regardless of `--gas-budget`. Capacity OOGs are this wall, not the budget.
+- **Per-op gas can be data-dependent.** `range_price`→`normal_cdf` (fixed_math) has cheap (`|d2|>8` constant, `|d2|<SMALL` ~6 Horner) vs expensive (`SMALL..MEDIUM` d2 → `exp_series`) branches, so the SAME op costs ~3-4× more at some strike/forward/SVI than others (e.g. the single-market flush OOGs anywhere from ~1,400 to ~4,900 leveraged orders depending on the oracle state). A single pinned A/B can mislead — sweep multiple random scenarios (`stress/`) before trusting a per-op gas number.
+- **Multi-command PTBs amplify liquidation-book scans.** Each batched mint/redeem re-walks the paged liquidation book via `Table` (dynamic-field) reads; prior commands' `insert_order`s dirty those pages, so per-candidate scan cost inflates ~45× vs a standalone op (~30→~1,360 units), making a batched leveraged op ≈ 13× a standalone one. Measure batched ops separately; never extrapolate from a single-op number.
+
+## Parallel localnet + stress sweeps
+
+- `stress/` holds the parallel-localnet stress/fuzz infra (built during the 2026-06 capacity audit). Read `stress/README.md` before using or editing it.
+- `run.sh` honours `SIM_PORT_OFFSET` (→ `--fullnode-rpc-port`/`--with-faucet` + a `client.yaml`-only rewrite) so multiple localnets coexist. **One localnet per git worktree** — `run.sh` mutates `Move.toml` in its packages dir during publish, so concurrent runs must not share a checkout. **Never rewrite the genesis `.blob` / swarm ports** (genesis-disjoint already; rewriting desyncs config from the baked committee). `stress/setup_pool.sh <N>` provisions the worktree pool.
+- `src/sim.ts` stress knobs (env-gated, default = current parity behaviour): `SIM_STRESS_MINT_DUPLICATES` (enable + target N mints), `SIM_STRESS_MINT_BATCH_SIZE` (1..100), `SIM_STRESS_LEVERAGE` (force leverage), `SIM_STRESS_SINGLE_STRIKE=1` (isolate `correction_value` from `walk_linear`). Stress runs need `--skip-analysis`.
+- `SIM_STRESS_LEVERAGE>1` on a random strike aborts often via `assert_mint_probability_and_leverage_policy` (leverage is moneyness-capped) — correct behaviour, not a harness bug; classify it, don't treat it as failure.
 
 ## Common Commands
 
