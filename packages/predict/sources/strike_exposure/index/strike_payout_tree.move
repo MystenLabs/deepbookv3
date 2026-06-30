@@ -154,7 +154,7 @@ public(package) fun insert_range(
     floor_shares: u64,
 ) {
     let terms = payout_terms(quantity, floor_shares);
-    if (terms.quantity == 0 && terms.floor_shares == 0) return;
+    if (terms.is_zero_terms()) return;
 
     let mut new_nodes = 0;
     if (lower_tick != 0 && !tree.nodes.contains(lower_tick)) {
@@ -215,7 +215,7 @@ fun apply_range(
     add: bool,
 ) {
     // Skip a fully-zero delta; index any order with nonzero quantity.
-    if (terms.quantity == 0 && terms.floor_shares == 0) return;
+    if (terms.is_zero_terms()) return;
 
     if (lower_tick == 0) {
         apply_terms_delta(&mut tree.base, terms, add);
