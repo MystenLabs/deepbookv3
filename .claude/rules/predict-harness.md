@@ -15,8 +15,14 @@ user-facing overview; this file is the editing-critical knowledge.
 - Python: `python3 -m py_compile harness/*.py` from `packages/predict/`.
 - Validate behavior with a real localnet run (`python3 -m harness up --traders N --seconds S`)
   then `python3 -m harness analyze`. Run these in the **main loop or background, never a
-  blocking subagent** (long runs trip watchdogs). Clean instances between runs
-  (`rm -rf harness/.localnets/instances/*`).
+  blocking subagent** (long runs trip watchdogs). `up`/`campaign` auto-trim the heavy scratch
+  (validator DB `localnet/` + staged closure `workspace/`) on teardown and keep only the trace +
+  last-state JSONs, so instances don't accumulate; `python3 -m harness cleanup --instances`
+  clears the leftover traces.
+- **Never blind-`rm` `.localnets/instances/` while a run may be live.** A bare `rm -rf` deletes a
+  *running* campaign's dir out from under it — its keeper/updater then `ENOENT` on every write and
+  the trace is lost. Check `python3 -m harness status` first (non-empty slots = a live run), then
+  use the **slot-aware** `cleanup --instances`, which skips any dir whose run-id is an active slot.
 
 ## Architecture invariants (don't break these)
 - **One stream.** Only the updater (`oracleService.ts`) consumes provider WS data; the keeper
@@ -83,9 +89,12 @@ user-facing overview; this file is the editing-critical knowledge.
   re-attach). Keep setup idempotent.
 
 ## Secrets
-- `harness/.env` (PYTH_PRO_API_KEY, BLOCK_SCHOLES_API_KEY) and per-instance `.env.localnet`
-  (the local signer private key) are **gitignored and must never be committed or logged**. A
-  pre-commit gate aborts on a staged `.env`. Never print a key or the `Bearer` header.
+- `harness/.env` (PYTH_PRO_API_KEY, BLOCK_SCHOLES_API_KEY) is gitignored via `.env`/`*.env`. The
+  per-instance `.env.localnet` (local signer private key) + `local_pyth.json` are written at the
+  instance-dir root and gitignored via `.localnets/` — note `*.env` does NOT match `.env.localnet`,
+  so the `.localnets/` rule is what covers it, and the teardown trim keeps them inside `.localnets/`
+  (never exposed). **Never commit or log any of them** — a pre-commit gate aborts on a staged
+  `.env`; never print a key or the `Bearer` header.
 
 ## Don't
 - Don't modify the Predict Move contracts or `dusdc.move` (deployed to testnet) to suit the

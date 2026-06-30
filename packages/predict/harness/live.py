@@ -74,7 +74,13 @@ def oracle_ready_localnet(name: str | None = None, keep: bool = True):
     finally:
         localnet.stop(proc)
         state.release(run_id)
-        if not keep:
+        if keep:
+            # Keep the trace (the analyzable result) + deployment/last-state JSONs, but drop the
+            # heavy run-time scratch: the stopped validator DB (localnet/) and the staged closure
+            # (workspace/) are useless after teardown and would otherwise accumulate ~150M+/run.
+            for scratch in ("localnet", "workspace"):
+                shutil.rmtree(inst / scratch, ignore_errors=True)
+        else:
             shutil.rmtree(inst, ignore_errors=True)
 
 

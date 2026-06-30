@@ -28,7 +28,9 @@ python3 -m harness cleanup [--instances]     # reclaim stale slots + orphan dirs
 ```
 
 Ports are auto-allocated (no port flags); instance state lives under `.localnets/`
-(gitignored); retention is keep-on-failure / delete-on-success.
+(gitignored). Retention: `run` keeps-on-failure / deletes-on-success; `up`/`campaign` keep the
+trace + last-state JSONs but trim the heavy scratch (validator DB + staged closure) on teardown,
+so runs don't accumulate — `cleanup --instances` clears the leftover traces.
 
 ## How it works
 
