@@ -6,7 +6,8 @@
 /// Scaling conventions (aligned with DeepBook):
 /// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
 /// - Quantities are in 6-decimal quote units: 1_000_000 = 1 contract = one quote unit
-/// - At settlement, winners receive `quantity` directly
+/// - At settlement, a winning order redeems `quantity - floor_shares` (the full
+///   `quantity` only when unleveraged, i.e. `floor_shares == 0`)
 /// - Use `math` for all fixed-point scaling and mul/div operations
 module deepbook_predict::constants;
 

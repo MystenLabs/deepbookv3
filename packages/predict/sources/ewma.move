@@ -57,6 +57,7 @@ public(package) fun penalty_fee(
     let z_score = math::div(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 
+    // penalty_rate * quantity, round down
     math::mul(config.penalty_rate(), quantity)
 }
 

@@ -365,6 +365,8 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// supply==0 bootstrap branch.
 fun supply_shares(amount: u64, mark: &FlushMark): u64 {
     assert!(mark.pool_value > 0, EInvalidDrainMark);
+    // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
+    // fewer shares; the pool keeps the dust).
     math::mul_div_down(amount, mark.total_supply, mark.pool_value)
 }
 
@@ -372,5 +374,7 @@ fun supply_shares(amount: u64, mark: &FlushMark): u64 {
 fun withdraw_dusdc(shares: u64, mark: &FlushMark): u64 {
     assert!(mark.total_supply > 0, EInvalidDrainMark);
     assert!(mark.pool_value > 0, EInvalidDrainMark);
+    // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
+    // less; the pool keeps the dust).
     math::mul_div_down(shares, mark.pool_value, mark.total_supply)
 }

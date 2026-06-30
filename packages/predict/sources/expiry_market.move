@@ -602,7 +602,8 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
-/// Resolve one account's settled trading-loss rebate and return unearned reserve.
+/// Resolve one account's settled trading-loss rebate. Returns the unearned residual
+/// rebate-reserve cash and the rebate amount paid to the account.
 public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
