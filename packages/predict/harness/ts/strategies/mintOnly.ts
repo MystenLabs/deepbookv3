@@ -8,7 +8,6 @@ const mintOnly: Strategy = {
   tickMs: 1000,
   maxOps: 10000,
   fund: 5_000_000_000_000n, // $5M (10k held mints worth of premium)
-  cadence: 0,
   async tick(ctx) {
     const market = ctx.nearestExpiry();
     if (!market || !ctx.snapshot()) return null;

@@ -36,7 +36,6 @@ const fuzz: Strategy = {
   tickMs: 4000,
   maxOps: 0, // duration-only (the up/up-many default)
   fund: 1_000_000_000_000n, // $1M
-  cadence: 0,
   async tick(ctx) {
     ctx.pruneSettled();
     if (!ctx.markets().length || !ctx.snapshot()) return null;

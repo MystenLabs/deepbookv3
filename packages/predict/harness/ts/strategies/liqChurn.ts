@@ -10,7 +10,6 @@ const liqChurn: Strategy = {
   tickMs: 1500,
   maxOps: 2000,
   fund: 10_000_000_000_000n,
-  cadence: 0,
   async tick(ctx) {
     ctx.pruneSettled();
     const market = ctx.randomExpiry();

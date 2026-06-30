@@ -74,14 +74,15 @@ export interface StrategyCtx {
   trace(record: Record<string, unknown>): void;
 }
 
-// A strategy module. tickMs/maxOps drive the runner; fund/cadence are read by the campaign
-// (via meta.ts) to configure the keeper for this strategy's localnet.
+// A strategy module. tickMs/maxOps drive the runner; fund is read by the campaign (via meta.ts)
+// to fund this strategy's trader. Every keeper runs the full prod cadence set (1m/5m/1h), so a
+// strategy spans all cadences via the markets it picks (nearestExpiry/randomExpiry) — no per-
+// strategy cadence.
 export interface Strategy {
   name: string;
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
-  cadence: number; // keeper cadence id for this strategy's localnet
   tick(ctx: StrategyCtx): Promise<OpKind | null>;
 }
 

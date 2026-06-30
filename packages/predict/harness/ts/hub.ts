@@ -15,15 +15,20 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   if (!HUB_SNAPSHOT) throw new Error("HUB_SNAPSHOT path required");
-  const gridNow = () =>
-    (process.env.GRID_SPEC ?? "60000:6").split(",").flatMap((part) => {
-      const [period, count] = part.split(":").map(Number);
-      const base = Math.floor(Date.now() / period) * period;
-      return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
-    });
+  // Deduped grid: with multiple cadences periods share boundaries (e.g. the top of the hour is in
+  // all three) — a duplicate expiry would mean duplicate sids in the BS batch.
+  const gridNow = () => [
+    ...new Set(
+      (process.env.GRID_SPEC ?? "60000:3,300000:3,3600000:3").split(",").flatMap((part) => {
+        const [period, count] = part.split(":").map(Number);
+        const base = Math.floor(Date.now() / period) * period;
+        return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
+      }),
+    ),
+  ];
   const source = new DirectWsSource();
   await source.start(gridNow());
-  console.log(`[hub] one WS pair -> ${HUB_SNAPSHOT} (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:6"}); warming up...`);
+  console.log(`[hub] one WS pair -> ${HUB_SNAPSHOT} (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:3,300000:3,3600000:3"}); warming up...`);
 
   let shutdown = false;
   process.on("SIGTERM", () => { shutdown = true; });

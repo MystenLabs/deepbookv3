@@ -12,7 +12,6 @@ const mixedChurn: Strategy = {
   tickMs: 2000,
   maxOps: 3000,
   fund: 10_000_000_000_000n, // $10M (churn + LP supply)
-  cadence: 0,
   async tick(ctx) {
     ctx.pruneSettled();
     if (!ctx.markets().length || !ctx.snapshot()) return null;

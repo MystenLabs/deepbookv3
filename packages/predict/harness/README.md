@@ -16,7 +16,7 @@ Run as a module from `packages/predict/`:
 ```bash
 cd packages/predict
 
-python3 -m harness up [--traders N] [--cadence ID] [--replay FILE]  # the full running sim
+python3 -m harness up [--traders N] [--replay FILE]  # the full running sim
 python3 -m harness up-many N [--traders N]   # parallel: one shared hub -> N localnets
 python3 -m harness campaign S1 S2 ... [--timeout S]  # run named strategies in parallel, then analyze
 python3 -m harness spike-mint                # one-shot: resolve + execute a semantic mint
@@ -70,7 +70,7 @@ coming from our own packages (arithmetic/framework errors are the contract-bug s
 ## Strategies & campaigns
 
 A **strategy** is a code module under `ts/strategies/<name>.ts` exporting a `Strategy`
-(`name`, `tickMs`, `maxOps`, `fund`, `cadence`, and an async `tick(ctx)`). The runner
+(`name`, `tickMs`, `maxOps`, `fund`, and an async `tick(ctx)`). The runner
 (`traderService.ts`) loads the one named by the `STRATEGY` env (default `fuzz`) and ticks it on
 its pace until `maxOps` (run-to-completion) or the run's duration. `tick(ctx)` orchestrates via
 the `StrategyCtx`: state readers (`markets()`, `snapshot()`, `held`, `plpShares`) and actions
@@ -87,7 +87,8 @@ are exercised).
 `campaign S1 S2 …` runs each named strategy on its **own** localnet (all off one shared hub) to
 completion, tears everything down, then prints a **per-strategy** `analyze` report + an aggregate
 verdict (non-zero exit if the bug oracle flags anything). `--timeout S` caps the run. Per-strategy
-keeper config (cadence, funding) comes from `strategies/meta.ts` — the single source of truth.
+trader funding (plus the prod cadence set — 1m/5m/1h, window 3 — every keeper runs) comes from
+`strategies/meta.ts`, the single source of truth.
 
 ## Requirements
 

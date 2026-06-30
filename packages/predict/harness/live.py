@@ -97,6 +97,24 @@ def spike_mint() -> int:
 _CADENCE_PERIOD_MS = {0: 60_000, 1: 300_000, 2: 3_600_000, 3: 86_400_000, 4: 604_800_000, 5: 2_592_000_000}
 
 
+def _read_meta() -> dict:
+    """Read the TS registry — { strategies: {...}, cadences: [{id, windowSize}] } — by running
+    strategies/meta.ts, the single source of truth for runner config + the enabled cadence set."""
+    run = subprocess.run(
+        ["npx", "tsx", "strategies/meta.ts"], cwd=str(config.TS_DIR), capture_output=True, text=True
+    )
+    line = next((ln for ln in reversed(run.stdout.splitlines()) if ln.strip().startswith("{")), None)
+    if run.returncode != 0 or not line:
+        raise RuntimeError(f"could not read TS meta:\n{run.stderr.strip()}")
+    return json.loads(line)
+
+
+def _grid_spec(meta: dict) -> str:
+    """Oracle GRID_SPEC ('periodMs:count,...') from the enabled cadence set — each cadence's
+    windowSize boundaries, matching the markets the keeper keeps live per cadence (prod 1m/5m/1h)."""
+    return ",".join(f"{_CADENCE_PERIOD_MS[c['id']]}:{c['windowSize']}" for c in meta["cadences"])
+
+
 def _terminate_group(p: subprocess.Popen) -> None:
     """SIGTERM (then SIGKILL) the process's whole group so npx -> tsx -> node all die."""
     if p.poll() is not None:
@@ -113,13 +131,13 @@ def _terminate_group(p: subprocess.Popen) -> None:
         pass
 
 
-def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: int = 0, replay: str | None = None) -> int:
+def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: str | None = None) -> int:
     """Bring up the full running sim: localnet + Predict keeper + oracle updater + N fuzz
     traders.
 
     The keeper is the single setup owner (publishes feeds.json, funds the traders with
     DUSDC) and runs the market lifecycle; the updater is the sole WS consumer (warms the
-    keeper's cadence, writes snapshot.json); the traders read those shared files and fuzz
+    keeper's cadence set, writes snapshot.json); the traders read those shared files and fuzz
     mints/redeems. The core (keeper + updater) is SUPERVISED: a dead one is restarted (it
     re-attaches via the idempotent setup + reconciles markets from chain), up to
     max_restarts, after which the run tears down. A crashing trader never kills the run.
@@ -127,7 +145,7 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
     Holds until Ctrl-C/SIGTERM, or `seconds`.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
-    period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
+    grid_spec = _grid_spec(_read_meta())
     max_restarts = 5
     with oracle_ready_localnet(name, keep=True) as ctx:
         trader_addrs = [_create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
@@ -136,12 +154,12 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
         def launch_keeper() -> subprocess.Popen:
             return subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
+                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs)},
                 start_new_session=True,
             )
 
         def launch_updater() -> subprocess.Popen:
-            env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"}
+            env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec}
             if replay:  # re-play a recorded hub stream instead of opening a live provider WS
                 env["REPLAY_FILE"] = replay
             return subprocess.Popen(["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=env, start_new_session=True)
@@ -202,15 +220,14 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
     return 1 if give_up else 0  # non-zero so a supervised give-up is a programmatic failure
 
 
-def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) -> int:
+def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
     """Parallel: ONE shared market-data hub (a single WS pair) feeding N localnets, each
     with a keeper + a HubSource updater + `traders` fuzz traders. The hub writes a global
     snapshot the updaters read, so N localnets run off one stream instead of N. An
     ExitStack tears down every subprocess (LIFO) then every localnet on exit.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
-    period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
-    grid_spec = f"{period_ms}:6"
+    grid_spec = _grid_spec(_read_meta())
     hub_snapshot = config.LOCALNETS_DIR / "hub-snapshot.json"
     hub_record = config.LOCALNETS_DIR / "hub-record.jsonl"
     with contextlib.ExitStack() as stack:
@@ -229,7 +246,7 @@ def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) ->
             base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
             keeper = subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
+                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs)},
                 start_new_session=True,
             )
             updater = subprocess.Popen(
@@ -279,24 +296,20 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
     from . import analyze  # local import to avoid any import cycle
 
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
-    # Per-strategy config (cadence/fund/maxOps) from the TS registry — the single source of truth.
-    meta_run = subprocess.run(
-        ["npx", "tsx", "strategies/meta.ts"], cwd=str(config.TS_DIR), capture_output=True, text=True
-    )
-    meta_line = next((ln for ln in reversed(meta_run.stdout.splitlines()) if ln.strip().startswith("{")), None)
-    if meta_run.returncode != 0 or not meta_line:
-        print(f"campaign: could not read strategy meta:\n{meta_run.stderr.strip()}")
+    # Per-strategy runner config + the enabled cadence set from the TS registry (single source).
+    try:
+        meta = _read_meta()
+    except RuntimeError as e:
+        print(f"campaign: {e}")
         return 1
-    meta = json.loads(meta_line)
-    unknown = [s for s in strategies if s not in meta]
+    strat_meta = meta["strategies"]
+    unknown = [s for s in strategies if s not in strat_meta]
     if unknown:
-        print(f"campaign: unknown {unknown}; have: {', '.join(meta)}")
+        print(f"campaign: unknown {unknown}; have: {', '.join(strat_meta)}")
         return 1
 
-    # One hub grid for all localnets — keyed off the first strategy's cadence.
-    cadence = meta[strategies[0]]["cadence"]
-    period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
-    grid_spec = f"{period_ms}:6"
+    # One hub grid for all localnets — the full prod cadence set (every keeper runs all of it).
+    grid_spec = _grid_spec(meta)
     hub_snapshot = config.LOCALNETS_DIR / "hub-snapshot.json"
     hub_record = config.LOCALNETS_DIR / "hub-record.jsonl"
     with contextlib.ExitStack() as stack:
@@ -318,7 +331,7 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
             base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
             keeper = subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "KEEPER_CADENCE": str(meta[s]["cadence"]), "TRADER_DUSDC": meta[s]["fund"], "TRADER_ADDRESSES": addr},
+                env={**base, "TRADER_DUSDC": strat_meta[s]["fund"], "TRADER_ADDRESSES": addr},
                 start_new_session=True,
             )
             updater = subprocess.Popen(

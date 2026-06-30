@@ -27,8 +27,9 @@ import {
   rebalanceExpiryCashTx,
 } from "./runtime.js";
 
-const CADENCE = Number(process.env.KEEPER_CADENCE ?? 0); // default 1m (fast roll)
-const WINDOW = Number(CADENCES[CADENCE].windowSize); // markets to keep ahead of now
+// Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
+// keeper enables and rolls all three; each keeps its own CADENCES[c].windowSize markets ahead.
+const CADENCE_IDS = [0, 1, 2];
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
 const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
@@ -59,6 +60,15 @@ async function expiryOf(marketId: string): Promise<number> {
 interface Mkt {
   id: string;
   expiryMs: number;
+}
+
+// Recover a market's cadence from its expiry. Cadence isn't stored on-chain, but the contract's
+// rank partition (1h owns :00:00, 5m owns 5-min marks off-the-hour, 1m owns the rest) makes this
+// exact for the enabled {1m,5m,1h} set — so it holds for chain-reconciled + post-restart markets.
+function cadenceOf(expiryMs: number): number {
+  if (expiryMs % 3_600_000 === 0) return 2; // 1h
+  if (expiryMs % 300_000 === 0) return 1; // 5m
+  return 0; // 1m
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string) {
@@ -134,24 +144,29 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     }
   }
 
-  // 4. Roll: keep WINDOW live markets ahead of now. The market is ADVERTISED (pushed to `live`)
-  //    only AFTER its rebalance succeeds — so traders never see an unfunded market. GATED on
-  //    settledOk: during a settlement outage the flush defers, so minting more markets would grow
-  //    the active set past the single-PTB flush gas wall and brick it.
-  if (settledOk && live.length < WINDOW) {
-    try {
-      const { marketId, expiryMs } = await createMarket(lifecycleCapId, CADENCE);
-      await executeAndWait(
-        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
-        "rebalance",
-      );
-      funded.add(marketId);
-      expiryCache.set(marketId, Number(expiryMs));
-      live.push({ id: marketId, expiryMs: Number(expiryMs) });
-      console.log(`[keeper] rolled: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))} (live ${live.length}/${WINDOW})`);
-    } catch (e) {
-      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
-      console.warn(`[keeper] roll skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+  // 4. Roll: keep each cadence's window of live markets ahead of now. The market is ADVERTISED
+  //    (pushed to `live`) only AFTER its rebalance succeeds — so traders never see an unfunded
+  //    market. GATED on settledOk: during a settlement outage the flush defers, so minting more
+  //    markets would grow the active set past the single-PTB flush gas wall and brick it.
+  if (settledOk) {
+    for (const c of CADENCE_IDS) {
+      const windowC = Number(CADENCES[c].windowSize);
+      if (live.filter((m) => cadenceOf(m.expiryMs) === c).length >= windowC) continue;
+      try {
+        const { marketId, expiryMs } = await createMarket(lifecycleCapId, c);
+        await executeAndWait(
+          rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
+          "rebalance",
+        );
+        funded.add(marketId);
+        expiryCache.set(marketId, Number(expiryMs));
+        live.push({ id: marketId, expiryMs: Number(expiryMs) });
+        console.log(`[keeper] rolled c${c}: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))}`);
+      } catch (e) {
+        // ECadenceWindowExceeded (market_manager:5) = window full (skip-edge / post-restart): expected.
+        appendTrace("keeper", { type: "fail", tag: errorTag(e) });
+        console.warn(`[keeper] roll c${c} skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      }
     }
   }
 
@@ -160,8 +175,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
 }
 
 async function main() {
-  console.log(`[keeper] cadence=${CADENCE} window=${WINDOW} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
-  const { feeds, lifecycleCapId } = await setupFeedsAndConfig([CADENCE]);
+  console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
+  const { feeds, lifecycleCapId } = await setupFeedsAndConfig(CADENCE_IDS);
   await bootstrapPool(lifecycleCapId);
   for (const addr of TRADER_ADDRESSES) {
     await executeAndWait(fundAddressDusdcTx(addr, TRADER_DUSDC), `fund-trader-${addr.slice(0, 8)}`);

@@ -109,6 +109,7 @@ export class DirectWsSource implements MarketSource {
   #svi = new Map<number, Svi>();
   #expiries: number[] = [];
   #bsOpen = false;
+  #bsSubId = 0;
 
   async start(expiries: number[]): Promise<void> {
     this.#expiries = expiries;
@@ -141,7 +142,7 @@ export class DirectWsSource implements MarketSource {
       let f: any; try { f = JSON.parse(String(raw)); } catch { return; }
       if (f.result === "ok") {
         this.#bsOpen = true;
-        for (const ms of this.#expiries) this.#subscribeBsExpiry(ms);
+        this.#subscribeBsGrid();
         return;
       }
       if (f.method !== "subscription") return;
@@ -155,30 +156,40 @@ export class DirectWsSource implements MarketSource {
     ws.on("error", (e) => console.warn("[bs] socket error:", String(e).slice(0, 120)));
   }
 
-  #subscribeBsExpiry(ms: number): void {
+  // Subscribe the full current BS grid under STABLE client_ids ("forwards"/"svi"), re-sending the
+  // entire future-only batch. Re-sending the same client_id REPLACES that subscription's batch
+  // WHOLESALE on the BS server (not additive), so rolled-off expiries are evicted automatically and
+  // the active subscription set never grows. Mirrors the production updater (deepbook-services
+  // propbook-price-updater/blockScholes.ts), which is immune to the grid-drain for this reason.
+  // Per-expiry `sid`s are kept for routing; the client_id is the stable group. (Our grid sizes stay
+  // well under the BS ~20-per-batch chunk threshold; chunk like production if that's ever exceeded.)
+  #subscribeBsGrid(): void {
     const ws = this.#bs;
     if (!ws) return;
     const fmt = { timestamp: "ms", hexify: false, decimals: 9 };
-    const expiry = isoSec(ms);
-    ws.send(JSON.stringify({ jsonrpc: "2.0", id: ms, method: "subscribe", params: [{
-      frequency: "1000ms", client_id: `fwd_${ms}`,
-      batch: [{ sid: `fwd_${ms}`, feed: "mark.px", asset: "future", base_asset: "BTC", expiry }],
+    const active = this.#expiries.filter((ms) => ms > Date.now()); // future-only; passed boundaries evicted
+    this.#bsSubId += 2;
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId, method: "subscribe", params: [{
+      frequency: "1000ms", client_id: "forwards",
+      batch: active.map((ms) => ({ sid: `fwd_${ms}`, feed: "mark.px", asset: "future", base_asset: "BTC", expiry: isoSec(ms) })),
       options: { format: fmt },
     }] }));
-    ws.send(JSON.stringify({ jsonrpc: "2.0", id: ms + 1, method: "subscribe", params: [{
-      frequency: "1000ms", retransmit_frequency: "1000ms", client_id: `svi_${ms}`,
-      batch: [{ sid: `svi_${ms}`, feed: "model.params", exchange: "composite", asset: "option", base_asset: "BTC", model: "SVI", expiry }],
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId + 1, method: "subscribe", params: [{
+      frequency: "1000ms", retransmit_frequency: "1000ms", client_id: "svi",
+      batch: active.map((ms) => ({ sid: `svi_${ms}`, feed: "model.params", exchange: "composite", asset: "option", base_asset: "BTC", model: "SVI", expiry: isoSec(ms) })),
       options: { format: fmt },
     }] }));
   }
 
-  // Roll the warmed grid forward: subscribe newly-wanted expiries. Passed boundaries drop
-  // out of `want` (no longer pushed); BS stops serving them after expiry, so they age out.
+  // Roll the warmed grid forward by re-sending the full future-only batch under the stable
+  // client_ids (replace-wholesale evicts the boundaries that passed); prune their cached data.
   ensureExpiries(want: number[]): void {
-    const prev = new Set(this.#expiries);
+    const same = want.length === this.#expiries.length && want.every((ms, i) => ms === this.#expiries[i]);
     this.#expiries = [...want];
-    if (!this.#bsOpen) return;
-    for (const ms of want) if (!prev.has(ms)) this.#subscribeBsExpiry(ms);
+    const keep = new Set(want);
+    for (const ms of [...this.#fwd.keys()]) if (!keep.has(ms)) this.#fwd.delete(ms);
+    for (const ms of [...this.#svi.keys()]) if (!keep.has(ms)) this.#svi.delete(ms);
+    if (this.#bsOpen && !same) this.#subscribeBsGrid();
   }
 
   latest(): MarketSnapshot | null {

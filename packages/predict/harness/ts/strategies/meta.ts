@@ -1,9 +1,12 @@
-// Print each strategy's campaign-relevant config as JSON, so the Python campaign sets the
-// keeper (cadence, funding) per localnet from the same source of truth as the runner.
-//   { "<name>": { "tickMs", "maxOps", "fund" (DUSDC string), "cadence" }, ... }
+// Print campaign config as JSON for the Python orchestrator, from the same source of truth as the
+// runtime: per-strategy runner config (tickMs/maxOps/fund) + the enabled cadence set (id + window)
+// that every keeper runs and the oracle grid must cover.
+//   { "strategies": { "<name>": { "tickMs", "maxOps", "fund" } }, "cadences": [ { "id", "windowSize" } ] }
+import { CADENCES } from "../predictConfig.js";
 import { STRATEGIES } from "./index.js";
 
-const meta = Object.fromEntries(
-  Object.values(STRATEGIES).map((s) => [s.name, { tickMs: s.tickMs, maxOps: s.maxOps, fund: s.fund.toString(), cadence: s.cadence }]),
+const strategies = Object.fromEntries(
+  Object.values(STRATEGIES).map((s) => [s.name, { tickMs: s.tickMs, maxOps: s.maxOps, fund: s.fund.toString() }]),
 );
-console.log(JSON.stringify(meta));
+const cadences = Object.entries(CADENCES).map(([id, c]) => ({ id: Number(id), windowSize: Number(c.windowSize) }));
+console.log(JSON.stringify({ strategies, cadences }));

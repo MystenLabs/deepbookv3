@@ -55,16 +55,20 @@ async function main() {
   const feeds = await waitForFeeds();
   console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviFeedId.slice(0, 10)}`);
 
-  // Warm a ROLLING grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the
-  // launcher sets it from the keeper's cadence). gridNow() = the next `count` boundaries
-  // of each period from now, re-evaluated each loop so the grid rolls forward as
-  // boundaries pass and the keeper's new markets stay warm over long runs.
-  const gridNow = () =>
-    (process.env.GRID_SPEC ?? "60000:6").split(",").flatMap((part) => {
-      const [period, count] = part.split(":").map(Number);
-      const base = Math.floor(Date.now() / period) * period;
-      return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
-    });
+  // Warm a ROLLING grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the launcher sets
+  // it from the keeper's cadence set). gridNow() = the next `count` boundaries of each period from
+  // now, re-evaluated each loop so the grid rolls forward as boundaries pass and the keeper's new
+  // markets stay warm. Deduped: with multiple cadences periods share boundaries (e.g. the top of the
+  // hour is in all three) — a duplicate expiry would mean duplicate sids in the BS batch.
+  const gridNow = () => [
+    ...new Set(
+      (process.env.GRID_SPEC ?? "60000:3,300000:3,3600000:3").split(",").flatMap((part) => {
+        const [period, count] = part.split(":").map(Number);
+        const base = Math.floor(Date.now() / period) * period;
+        return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
+      }),
+    ),
+  ];
   const { source, mode } = makeSource();
   await source.start(gridNow());
   console.log(`[updater] source=${mode}; streaming a rolling grid (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:6"})...`);

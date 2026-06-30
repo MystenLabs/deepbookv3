@@ -42,11 +42,18 @@ user-facing overview; this file is the editing-critical knowledge.
   strictly monotonic (`clampedSourceTimestampMs`) or the on-chain freshness gate aborts.
 - **MarketSource seam** — DirectWs / Hub / Replay behind one interface; keep new data sources
   behind it.
+- **Oracle grid mirrors the prod cadence set.** The keeper enables + rolls {1m, 5m, 1h} (cadences
+  0/1/2, `windowSize` 3 — testnet `deployment.testnet.json`); `GRID_SPEC` warms each cadence's
+  `windowSize` boundaries, built from `CADENCES` via `meta.ts`. **Don't widen the grid past BS's
+  surface availability** (e.g. the old `60000:6` = 6 consecutive 1m expiries): BS rejects `mark.px`
+  for an unmodeled/expired entry and a single bad entry **poisons the whole replace-wholesale BS
+  batch**, so the grid silently drains. The cadence partition (1h owns `:00:00`, 5m owns 5-min marks
+  off the hour, 1m the rest) makes `keeperService.cadenceOf(expiry)` exact.
 
 ## Strategies & campaign
 - **A strategy is a code module** `ts/strategies/<name>.ts` exporting a `Strategy` (`name`,
-  `tickMs`, `maxOps` (0 = duration-only), `fund` (DUSDC the keeper grants its trader),
-  `cadence`, `async tick(ctx)`). `traderService.ts` is a thin **runner**: reads the `STRATEGY`
+  `tickMs`, `maxOps` (0 = duration-only), `fund` (DUSDC the keeper grants its trader), and an
+  `async tick(ctx)`). `traderService.ts` is a thin **runner**: reads the `STRATEGY`
   env (default `fuzz`), loads the module from `strategies/index.ts`, builds the `StrategyCtx`,
   and ticks until `maxOps` (run-to-completion) or `DURATION_MS`. Add a strategy = drop a module
   + register it in `index.ts`; `meta.ts` exposes it to the campaign automatically.
@@ -67,8 +74,8 @@ user-facing overview; this file is the editing-critical knowledge.
 - **`campaign S1 S2 …`** (`live.campaign`) runs each strategy on its OWN localnet (named by the
   strategy → `analyze` labels each block) off ONE shared hub, run-to-completion (waits for the
   trader procs to self-exit at `maxOps`, or `--timeout`), then tears down + auto-runs `analyze`.
-  Per-strategy keeper config (cadence/fund) is read from `strategies/meta.ts` — keep that the
-  single source (don't duplicate the numbers in Python).
+  Per-strategy trader funding is read from `strategies/meta.ts`, which also emits the prod cadence
+  set (1m/5m/1h, window 3) every keeper runs — keep that the single source (don't duplicate in Python).
 
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**
