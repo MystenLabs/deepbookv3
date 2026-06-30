@@ -24,7 +24,7 @@ const mixedChurn: Strategy = {
     if (roll < 0.25) {
       await ctx.refreshPlp();
       const w = ctx.plpShares / 4n;
-      return w >= 1_000_000n ? ctx.withdraw(w) : null;
+      return w >= 1_000_000n ? ctx.withdraw(w) : null; // 1_000_000n = constants::min_withdraw_request (1e6)
     }
     // 35% redeem a held order — half partial (lot-aligned), half full.
     if (ctx.held.length && roll < 0.6) {

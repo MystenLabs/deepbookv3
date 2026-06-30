@@ -96,12 +96,6 @@ async function main() {
         m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
       },
     }));
-    // Publish the latest snapshot for the trade generator (prices its fuzzed mints).
-    atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
-      spot1e9: snap.spot1e9.toString(),
-      publishedAtMs: ts.toString(),
-      expiries: Object.fromEntries([...snap.expiries.entries()]),
-    }));
     try {
       const digest = await submit(
         buildOracleRefreshGridTx(
@@ -113,6 +107,14 @@ async function main() {
         ),
         signer,
       );
+      // Publish the snapshot for the trade generator ONLY after the on-chain refresh landed —
+      // otherwise traders price/guard off oracle data that never made it on-chain, producing
+      // spurious guard aborts that look like harness failures.
+      atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
+        spot1e9: snap.spot1e9.toString(),
+        publishedAtMs: ts.toString(),
+        expiries: Object.fromEntries([...snap.expiries.entries()]),
+      }));
       pushes++;
       if (pushes <= 3 || pushes % 5 === 0)
         console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} ts=${ts} digest=${digest.slice(0, 8)}`);

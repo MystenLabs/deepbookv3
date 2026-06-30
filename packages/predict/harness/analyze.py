@@ -38,13 +38,24 @@ INVARIANT_MODULES = {
     "math", "i64", "plp", "pool_accounting", "strike_payout_tree", "lp_book",
     "expiry_cash", "liquidation_book", "range_codec", "account", "account_registry",
 }
+# Mixed modules hold genuine invariants AND expected business preconditions, so these specific
+# codes are whitelisted as expected (checked BEFORE the module-level INVARIANT rule):
+#   liquidation_book:4 = EMaxActiveLeveragedOrders (per-market 5000 leveraged-order cap)
+#   lp_book:0..3 = ERequestNotFound / EBelowMinSupplyRequest / EBelowMinWithdrawRequest / ENotRequestOwner
+# (lp_book:4 EInvalidDrainMark + liquidation_book:0..3 index invariants stay FLAGGED.)
+EXPECTED_CODES = {
+    "liquidation_book:4",
+    "lp_book:0", "lp_book:1", "lp_book:2", "lp_book:3",
+}
 # Submission-level / external-data failures — NOT contract bugs (consensus, network, and the
-# Pyth-history endpoint rate-limiting or not-yet-having the exact-ts observation).
+# Pyth-history endpoint rate-limiting or not-yet-having the exact-ts observation). Matched on
+# STRUCTURED source markers (http / rpc / pyth history / fetch / …), NOT bare numeric codes: an
+# execution or gas failure whose message merely contains "500" must stay flagged, and the real
+# HTTP transients carry "pyth history HTTP <code>" / "fetch" anyway.
 _TRANSIENT = (
     "rpc", "timeout", "network", "fetch", "econn", "socket", "validators",
     "non-retriable", "equivocat", "rejected as invalid",
-    "http", "429", "rate limit", "503", "502", "500", "pyth history",
-    "no price for feed", "expected ts",
+    "http", "rate limit", "pyth history", "no price for feed", "expected ts",
 )
 # A Move abort tag is `module:code` (lowercase module, numeric code). Matched so a numeric abort
 # code (e.g. dynamic_field:500) is never mistaken for an HTTP status by the _TRANSIENT substrings.
@@ -78,7 +89,9 @@ def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]
     for r in fails:
         tag = str(r.get("tag", ""))
         mod = tag.split(":")[0] if ":" in tag else ""
-        if mod in INVARIANT_MODULES:
+        if tag in EXPECTED_CODES:
+            expected[tag] += 1  # a business precondition inside an otherwise-invariant module
+        elif mod in INVARIANT_MODULES:
             flagged.append(tag)  # arithmetic/accounting/index/custody invariant -> bug
         elif mod in GUARD_MODULES:
             expected[tag] += 1
@@ -175,11 +188,13 @@ def _analyze_one(inst: Path) -> list[str]:
     return signals
 
 
-def analyze(instance: str | None = None, expect: list[str] | None = None) -> int:
-    # Aggregate across ALL instance dirs of the run (up-many is multi-instance); an explicit dir
-    # analyzes only that one. `expect` (a campaign's strategy names) flags any that produced NO
-    # trace — (3) a fully-dead localnet is otherwise silently absent from the verdict.
-    insts = [Path(instance)] if instance else _instances()
+def analyze(instances: list[str] | None = None, expect: list[str] | None = None) -> int:
+    # `instances`: the exact dirs to analyze — a campaign/run scopes to ITS OWN dirs so an OLD
+    # retained trace can't fail (or falsely satisfy `expect` for) the current verdict. None =
+    # every retained instance dir (the explicit "aggregate everything" mode of a bare `analyze`).
+    # `expect` (a campaign's strategy names) flags any that produced NO trace among `instances`
+    # — a fully-dead localnet is otherwise silently absent from the verdict.
+    insts = [Path(p) for p in instances] if instances else _instances()
     insts = [i for i in insts if (i / "trace").exists()]
     signals: list[str] = []
     if expect:

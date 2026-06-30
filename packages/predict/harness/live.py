@@ -303,9 +303,11 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
         support = [hub]  # hub + keepers + updaters: the substrate that must stay up
         traders_procs: list[tuple[str, subprocess.Popen]] = []
         gas: list[tuple[int, int, str]] = []
+        instance_dirs: list[str] = []  # scope the final analyze to THIS run's dirs only
         print(f"hub started (pid {hub.pid}); launching {len(strategies)} strategy localnet(s)...")
         for s in strategies:
             ctx = stack.enter_context(oracle_ready_localnet(name=s, keep=True))
+            instance_dirs.append(str(ctx["instance_dir"]))
             addr = _create_funded_address(ctx["client_config"], ctx["faucet_port"])
             base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
             keeper = subprocess.Popen(
@@ -351,7 +353,8 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
             print(f"campaign: {len(done)}/{len(traders_procs)} strategies completed ({', '.join(done) or 'none'}).")
         except KeyboardInterrupt:
             print("tearing down...")
-    # ExitStack has torn everything down; aggregate the per-strategy report. `expect` flags any
-    # strategy whose localnet/keeper never produced a trace (otherwise silently absent).
+    # ExitStack has torn everything down; aggregate the per-strategy report scoped to THIS run's
+    # instance dirs (never every retained instance) so an old trace can't fail — or falsely
+    # satisfy `expect` for — the current verdict. `expect` flags a strategy that produced no trace.
     print("\n=== campaign report ===")
-    return analyze.analyze(expect=list(strategies))
+    return analyze.analyze(instances=instance_dirs, expect=list(strategies))

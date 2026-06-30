@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_analyze = sub.add_parser("analyze", help="analyze a run's trace (gas/moneyness, NAV, bug oracle)")
     p_analyze.add_argument("instance", nargs="?", default=None, help="instance dir (default: latest)")
-    p_analyze.set_defaults(func=lambda a: analyze.analyze(a.instance))
+    p_analyze.set_defaults(func=lambda a: analyze.analyze([a.instance] if a.instance else None))
 
     p_clean = sub.add_parser("cleanup", help="reclaim stale slots / orphan instances")
     p_clean.add_argument("--instances", action="store_true", help="also delete orphan instance dirs")
