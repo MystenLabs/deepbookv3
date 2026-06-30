@@ -612,10 +612,9 @@ public(package) fun claim_trading_loss_rebate(
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
-    let (trading_fees_paid, gross_profit) = predict_account::resolve_expiry_summary(
-        account,
-        market.id(),
-    );
+    let summary = predict_account::resolve_expiry_summary(account, market.id());
+    let trading_fees_paid = summary.fees_paid();
+    let gross_profit = summary.gross_profit();
     if (trading_fees_paid == 0) {
         return (balance::zero(), 0)
     };
@@ -829,7 +828,7 @@ fun mint_prepared_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let (minted_order, entry_probability, net_premium) = market
+    let mint_quote = market
         .strike_exposure
         .allocate_mint_order(
             pricer,
@@ -838,6 +837,9 @@ fun mint_prepared_exact_quantity(
             quantity,
             leverage,
         );
+    let minted_order = mint_quote.allocated_order();
+    let entry_probability = mint_quote.entry_probability();
+    let net_premium = mint_quote.net_premium();
     assert!(entry_probability <= max_probability, EMintProbabilityAboveMax);
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
@@ -929,9 +931,12 @@ fun redeem_live_internal(
         ctx,
     );
 
-    let (resulting_order, redeem_amount, range_probability) = market
+    let close_quote = market
         .strike_exposure
         .close_and_quote_live_order(pricer, order, close_quantity);
+    let resulting_order = close_quote.resulting_order();
+    let redeem_amount = close_quote.redeem_amount();
+    let range_probability = close_quote.range_probability();
     // Close-side slippage floor: reject if the quoted per-contract probability has
     // slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);

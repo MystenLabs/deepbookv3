@@ -50,6 +50,13 @@ public struct StrikeExposureConfig has store {
     expiry_fee_max_multiplier: u64,
 }
 
+/// Mint admission outcome: the per-contract net premium charged and the static
+/// floor `F` (`floor_shares`), returned together so callers read them by name.
+public struct MintAdmission has drop {
+    net_premium: u64,
+    floor_shares: u64,
+}
+
 // === Public-Package Functions ===
 
 public(package) fun liquidation_ltv(config: &StrikeExposureConfig): u64 {
@@ -120,8 +127,8 @@ public(package) fun assert_mint_probability_and_leverage_policy(
     );
 }
 
-/// Assert entry probability, leverage, net-premium, and barrier policy; return
-/// `(net_premium, floor_shares)`.
+/// Assert entry probability, leverage, net-premium, and barrier policy; return a
+/// `MintAdmission` carrying the net premium and the static floor `F`.
 ///
 /// `floor_shares` is the static dollar floor `F = financed_amount = entry_value -
 /// net_premium`. Leverage must be at least 1x and no greater than the
@@ -133,7 +140,7 @@ public(package) fun assert_mint_admission(
     entry_probability: u64,
     quantity: u64,
     leverage: u64,
-): (u64, u64) {
+): MintAdmission {
     config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
 
     let entry_value = math::mul(entry_probability, quantity);
@@ -146,7 +153,15 @@ public(package) fun assert_mint_admission(
         assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
     };
 
-    (net_premium, floor_shares)
+    MintAdmission { net_premium, floor_shares }
+}
+
+public(package) fun net_premium(admission: &MintAdmission): u64 {
+    admission.net_premium
+}
+
+public(package) fun floor_shares(admission: &MintAdmission): u64 {
+    admission.floor_shares
 }
 
 /// Return the largest raw quantity whose derived net premium is at most `net_premium`.

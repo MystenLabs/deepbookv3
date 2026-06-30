@@ -54,6 +54,14 @@ public struct ExpiryTradingSummary has store {
     gross_received_from_expiry: u64,
 }
 
+/// Resolved trading-loss-rebate inputs for one fully-closed expiry: the fees the
+/// account paid into the expiry and its realized gross profit, returned together
+/// so the rebate flow reads them by name.
+public struct ResolvedExpirySummary has drop {
+    fees_paid: u64,
+    gross_profit: u64,
+}
+
 /// Predict's per-account state, attached to an `Account` under `PredictApp`.
 public struct PredictData has store {
     /// Open positions scoped by expiry market.
@@ -241,14 +249,18 @@ public(package) fun record_gross_received_from_expiry(
     summary.gross_received_from_expiry = summary.gross_received_from_expiry + amount;
 }
 
-/// Remove and return aggregate fees paid and gross profit once all positions close.
+/// Remove and return the resolved trading-loss-rebate inputs once all positions close.
 public(package) fun resolve_expiry_summary(
     account: &mut Account,
     expiry_market_id: ID,
-): (u64, u64) {
-    if (!account.has_data<PredictApp>()) return (0, 0);
+): ResolvedExpirySummary {
+    if (!account.has_data<PredictApp>()) {
+        return ResolvedExpirySummary { fees_paid: 0, gross_profit: 0 }
+    };
     let d = account.borrow_data_mut<PredictApp, PredictData>(permit<PredictApp>());
-    if (!d.expiry_summaries.contains(expiry_market_id)) return (0, 0);
+    if (!d.expiry_summaries.contains(expiry_market_id)) {
+        return ResolvedExpirySummary { fees_paid: 0, gross_profit: 0 }
+    };
     assert!(
         d.expiry_summaries[expiry_market_id].open_position_count == 0,
         EExpirySummaryHasOpenPositions,
@@ -260,7 +272,15 @@ public(package) fun resolve_expiry_summary(
         gross_received_from_expiry,
     } = d.expiry_summaries.remove(expiry_market_id);
     let gross_profit = gross_received_from_expiry.saturating_sub(gross_paid_to_expiry);
-    (trading_fees_paid, gross_profit)
+    ResolvedExpirySummary { fees_paid: trading_fees_paid, gross_profit }
+}
+
+public(package) fun fees_paid(summary: &ResolvedExpirySummary): u64 {
+    summary.fees_paid
+}
+
+public(package) fun gross_profit(summary: &ResolvedExpirySummary): u64 {
+    summary.gross_profit
 }
 
 /// Roll inactive stake into active if needed, then return the active amount for
