@@ -595,10 +595,6 @@ fun tick_priority(tick: u64): u64 {
     let bytes = bcs::to_bytes(&tick);
     let hash = blake2b256(&bytes);
     let mut out = 0;
-    let mut i = 0;
-    while (i < 8) {
-        out = (out << 8) | (hash[i] as u64);
-        i = i + 1;
-    };
+    8u64.do!(|i| out = (out << 8) | (hash[i] as u64));
     out
 }

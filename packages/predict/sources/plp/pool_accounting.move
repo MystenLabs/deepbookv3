@@ -82,27 +82,13 @@ public(package) fun idle_balance(ledger: &Ledger): u64 {
 
 /// Return the expiry market IDs still contributing active pool valuation/risk.
 public(package) fun active_expiry_markets(ledger: &Ledger): vector<ID> {
-    let mut ids = vector[];
-    let mut i = 0;
-    while (i < ledger.active_expiry_markets.length()) {
-        ids.push_back(ledger.active_expiry_markets[i].expiry_market_id);
-        i = i + 1;
-    };
-    ids
+    ledger.active_expiry_markets.map_ref!(|m| m.expiry_market_id)
 }
 
 /// Count active markets whose expiry is still in the future and therefore need
 /// live NAV valuation rather than terminal settlement/sweep handling.
 public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 {
-    let mut count = 0;
-    let mut i = 0;
-    while (i < ledger.active_expiry_markets.length()) {
-        if (ledger.active_expiry_markets[i].expiry_ms > now_ms) {
-            count = count + 1;
-        };
-        i = i + 1;
-    };
-    count
+    ledger.active_expiry_markets.count!(|m| m.expiry_ms > now_ms)
 }
 
 public(package) fun profit_basis_debits(ledger: &Ledger): u64 {
@@ -172,15 +158,9 @@ public(package) fun register_expiry(
 /// Remove an expiry from active valuation if present, returning whether it was active.
 public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_market_id: ID): bool {
     ledger.assert_registered_expiry(expiry_market_id);
-    let mut i = 0;
-    let len = ledger.active_expiry_markets.length();
-    while (i < len && ledger.active_expiry_markets[i].expiry_market_id != expiry_market_id) {
-        i = i + 1;
-    };
-    if (i == len) {
-        return false
-    };
-    ledger.active_expiry_markets.swap_remove(i);
+    let idx = ledger.active_expiry_markets.find_index!(|m| m.expiry_market_id == expiry_market_id);
+    if (idx.is_none()) return false;
+    ledger.active_expiry_markets.swap_remove(idx.destroy_some());
     true
 }
 

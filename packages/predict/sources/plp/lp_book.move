@@ -348,14 +348,9 @@ fun page_id_for_index(index: u64): u64 {
 }
 
 fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
-    let mut offset = 0;
-    while (offset < entries.length()) {
-        if (entries[offset].index == index) {
-            return offset
-        };
-        offset = offset + 1;
-    };
-    abort ERequestNotFound
+    let offset = entries.find_index!(|e| e.index == index);
+    assert!(offset.is_some(), ERequestNotFound);
+    offset.destroy_some()
 }
 
 // === Pricing Helpers ===
