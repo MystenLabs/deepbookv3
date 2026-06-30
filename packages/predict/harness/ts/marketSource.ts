@@ -12,14 +12,7 @@ import { readFileSync } from "node:fs";
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
-const HARNESS_ENV = "/Users/aslantashtanov/Desktop/Projects/deepbookv3/packages/predict/harness/.env";
-function harnessKey(name: string): string {
-  for (const line of readFileSync(HARNESS_ENV, "utf8").split("\n")) {
-    const m = line.match(new RegExp(`^${name}=(.*)$`));
-    if (m) return m[1].trim().replace(/^["']|["']$/g, "");
-  }
-  throw new Error(`missing ${name} in harness .env`);
-}
+import { harnessKey } from "./io.js";
 
 export const isoSec = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z";
 

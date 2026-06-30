@@ -5,8 +5,7 @@
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
-import { readFileSync, writeFileSync } from "node:fs";
-
+import { atomicWriteFile, harnessKey } from "./io.js";
 import { type Svi } from "./pricer.js";
 import { BOOTSTRAP_SUPPLY, CADENCES, FRESHNESS } from "./predictConfig.js";
 import {
@@ -31,16 +30,8 @@ import {
   updatePythTrustedSignerTx,
 } from "./runtime.js";
 
-const HARNESS_ENV = "/Users/aslantashtanov/Desktop/Projects/deepbookv3/packages/predict/harness/.env";
-const readKey = (name: string): string => {
-  for (const line of readFileSync(HARNESS_ENV, "utf8").split("\n")) {
-    const m = line.match(new RegExp(`^${name}=(.*)$`));
-    if (m) return m[1].trim().replace(/^["']|["']$/g, "");
-  }
-  throw new Error(`missing ${name}`);
-};
-const PYTH_TOKEN = readKey("PYTH_PRO_API_KEY");
-const BS_KEY = readKey("BLOCK_SCHOLES_API_KEY");
+const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
+const BS_KEY = harnessKey("BLOCK_SCHOLES_API_KEY");
 
 export const to1e9 = (x: number) => BigInt(Math.round(x * 1e9));
 export const isoSec = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z";
@@ -140,35 +131,6 @@ export function refreshParams(feeds: Feeds, expiryMs: bigint, snap: Snap) {
   };
 }
 
-// Fast current Pyth spot only (resolves on first message) — for the settlement
-// observation, where BS won't serve a past expiry's surface.
-export function fetchPythSpot(timeoutMs = 15_000): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("pyth spot timeout")), timeoutMs);
-    const pyth = PythLazerClient.create({
-      token: PYTH_TOKEN,
-      webSocketPoolConfig: { urls: ["wss://pyth-lazer.dourolabs.app/v1/stream"], numConnections: 1 },
-    });
-    pyth
-      .then((c) => {
-        c.addMessageListener((ev: any) => {
-          if (ev.type !== "binary" || !ev.value.parsed) return;
-          const f = ev.value.parsed.priceFeeds?.[0];
-          if (f?.price == null) return;
-          clearTimeout(timer);
-          c.shutdown();
-          resolve(Number(f.price) * 10 ** Number(f.exponent ?? -8));
-        });
-        c.subscribe({
-          type: "subscribe", subscriptionId: 1, priceFeedIds: [1],
-          properties: ["price", "exponent"], formats: ["leEcdsa"], deliveryFormat: "binary",
-          parsed: true, channel: "fixed_rate@200ms",
-        });
-      })
-      .catch(reject);
-  });
-}
-
 // One grid entry (forward + signed-magnitude SVI in 1e9) for buildOracleRefreshGridTx.
 export function gridExpiry(expiryMs: number, snap: Snap) {
   return {
@@ -199,7 +161,7 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   // Publish the feed ids so the updater (a separate process) can stream onto them
   // without re-running setup. The keeper is the single setup owner; the updater reads.
   const instanceDir = process.env.INSTANCE_DIR;
-  if (instanceDir) writeFileSync(`${instanceDir}/feeds.json`, JSON.stringify(feeds));
+  if (instanceDir) atomicWriteFile(`${instanceDir}/feeds.json`, JSON.stringify(feeds));
 
   const cap = await executeAndWait(mintLifecycleCapTx(address), "lifecycle-cap");
   const lifecycleCapId = found(cap, "MarketLifecycleCap");

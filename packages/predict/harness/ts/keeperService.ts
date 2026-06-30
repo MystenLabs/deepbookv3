@@ -7,9 +7,8 @@
 // owner (setupFeedsAndConfig publishes feeds.json). Live valuation reads the updater-
 // maintained fresh on-chain feed (one stream, the updater's); settlement is independent —
 // the keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint.
-import { writeFileSync } from "node:fs";
-
 import { CADENCES } from "./predictConfig.js";
+import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
 import { appendTrace, errorTag, gasOf } from "./trace.js";
@@ -99,7 +98,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
   }
 
   // Publish the current live markets for the trade generator.
-  writeFileSync(MARKETS_PATH, JSON.stringify(markets.filter((m) => !m.settled && m.expiryMs > clock).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
+  atomicWriteFile(MARKETS_PATH, JSON.stringify(markets.filter((m) => !m.settled && m.expiryMs > clock).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
 }
 
 async function main() {

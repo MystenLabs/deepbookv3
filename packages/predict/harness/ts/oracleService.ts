@@ -6,9 +6,10 @@
 // `MarketSource` chosen by env: a shared hub snapshot (parallel runs), a recorded replay,
 // or this localnet's own provider WS pair. Each push also writes snapshot.json for the
 // trade generator (the keeper settles independently via the Pyth Lazer history endpoint).
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { getSigner, getSignerForAddress } from "./env.js";
+import { atomicWriteFile } from "./io.js";
 import { type MarketSource, DirectWsSource, HubSource, ReplaySource } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
 import { buildOracleRefreshGridTx, clampedSourceTimestampMs, client } from "./runtime.js";
@@ -26,7 +27,9 @@ const INSTANCE_DIR = process.env.INSTANCE_DIR ?? ".";
 async function waitForFeeds(): Promise<Feeds> {
   const path = `${INSTANCE_DIR}/feeds.json`;
   for (let i = 0; i < 120; i++) {
-    if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+    if (existsSync(path)) {
+      try { return JSON.parse(readFileSync(path, "utf8")); } catch { /* torn read mid-write; retry */ }
+    }
     await sleep(1000);
   }
   throw new Error("feeds.json not published by the keeper within 120s");
@@ -94,7 +97,7 @@ async function main() {
       },
     }));
     // Publish the latest snapshot for the trade generator (prices its fuzzed mints).
-    writeFileSync(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
+    atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
       spot1e9: snap.spot1e9.toString(),
       publishedAtMs: ts.toString(),
       expiries: Object.fromEntries([...snap.expiries.entries()]),

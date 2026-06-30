@@ -2,8 +2,9 @@
 // Streams a rolling grid and writes a global snapshot (HUB_SNAPSHOT) each tick; each
 // localnet's updater reads it via HubSource instead of opening its own WS. Optionally
 // appends every snapshot to HUB_RECORD (JSONL) for deterministic replay.
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 
+import { atomicWriteFile } from "./io.js";
 import { DirectWsSource } from "./marketSource.js";
 
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0);
@@ -40,7 +41,7 @@ async function main() {
       publishedAtMs: snap.publishedAtMs.toString(),
       expiries: Object.fromEntries([...snap.expiries.entries()]),
     });
-    writeFileSync(HUB_SNAPSHOT, json);
+    atomicWriteFile(HUB_SNAPSHOT, json);
     if (HUB_RECORD) appendFileSync(HUB_RECORD, `${json}\n`);
     writes++;
     if (writes <= 3 || writes % 10 === 0)
