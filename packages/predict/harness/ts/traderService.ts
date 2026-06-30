@@ -95,7 +95,9 @@ async function adversarialProbe(feeds: any, market: { id: string }, env: any, di
   let leverage = r.leverage1e9;
   let maxCost = r.maxCost;
   let maxProbability = r.maxProbability1e9;
-  if (mode === "over-cap-leverage") leverage = BigInt(Math.round(Number(r.leverage1e9) * rand(1.5, 2.5)));
+  // Exceed the MAX possible admission cap (the cap tops out at maxAdmissionLeverage as
+  // p->1), so the probe is always genuinely over-cap regardless of the resolved strike's p.
+  if (mode === "over-cap-leverage") leverage = BigInt(Math.round(RESOLVER_MARKET.maxAdmissionLeverage * rand(1.5, 3) * 1e9));
   else if (mode === "tight-max-cost") maxCost = r.maxCost / 3n; // below net_premium
   else maxProbability = r.maxProbability1e9 / 3n; // below the quoted probability
   try {
