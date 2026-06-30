@@ -67,23 +67,36 @@ const BS_KEY = harnessKey("BLOCK_SCHOLES_API_KEY");
 const PYTH_HISTORY_URL = "https://pyth-lazer.dourolabs.app/v1/price";
 const PYTH_HISTORY_CHANNEL = "fixed_rate@200ms";
 
-export async function fetchExactSpot1e9(expiryMs: number): Promise<bigint> {
+export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<bigint> {
   const timestampUs = expiryMs * 1000;
-  const res = await fetch(PYTH_HISTORY_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${PYTH_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent"],
-      formats: ["leEcdsa"], jsonBinaryEncoding: "base64", parsed: true, channel: PYTH_HISTORY_CHANNEL,
-    }),
-  });
-  if (!res.ok) throw new Error(`pyth history HTTP ${res.status}: ${(await res.text()).slice(0, 120)}`);
-  const root: any = await res.json();
-  if (String(root?.parsed?.timestampUs ?? "") !== String(timestampUs))
-    throw new Error(`pyth history: expected ts ${timestampUs}us, got ${root?.parsed?.timestampUs}us`);
-  const feed = (root.parsed.priceFeeds ?? []).find((f: any) => Number(f.priceFeedId) === 1);
-  if (feed?.price == null) throw new Error("pyth history: no price for feed 1");
-  return BigInt(Math.round(Number(feed.price) * 10 ** (Number(feed.exponent ?? -8) + 9)));
+  // Bounded retry/backoff: the exact-ts price is deterministic, so a rate-limit (429), a 5xx,
+  // a transient network error, or the endpoint not-yet-having the print is safe to retry. This
+  // keeps a transient blip from deferring the flush — which, repeated, grows the active set
+  // past the single-PTB flush gas wall.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1))); // 0.5s, 1s, 2s
+    try {
+      const res = await fetch(PYTH_HISTORY_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${PYTH_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent"],
+          formats: ["leEcdsa"], jsonBinaryEncoding: "base64", parsed: true, channel: PYTH_HISTORY_CHANNEL,
+        }),
+      });
+      if (!res.ok) throw new Error(`pyth history HTTP ${res.status}: ${(await res.text()).slice(0, 120)}`);
+      const root: any = await res.json();
+      if (String(root?.parsed?.timestampUs ?? "") !== String(timestampUs))
+        throw new Error(`pyth history: expected ts ${timestampUs}us, got ${root?.parsed?.timestampUs}us`);
+      const feed = (root.parsed.priceFeeds ?? []).find((f: any) => Number(f.priceFeedId) === 1);
+      if (feed?.price == null) throw new Error("pyth history: no price for feed 1");
+      return BigInt(Math.round(Number(feed.price) * 10 ** (Number(feed.exponent ?? -8) + 9)));
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
 }
 
 // Direct provider-WS source: Pyth Lazer (spot) + Block Scholes (per-expiry fwd/svi).

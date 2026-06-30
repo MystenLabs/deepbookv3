@@ -42,6 +42,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // only avoids re-reading each market's immutable expiry every tick. Misses (orphans from a
 // lost create response, or a restart) are filled from chain via readMarketExpiry.
 const expiryCache = new Map<string, number>();
+let consecutiveDefers = 0; // flush deferrals in a row — settlement-outage detector
 
 async function expiryOf(marketId: string): Promise<number> {
   const cached = expiryCache.get(marketId);
@@ -67,6 +68,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //    boundary race (a market expiring mid-tick, no obs yet) or a price-not-yet-available
   //    defers the flush one tick rather than killing the tick.
   const expired = active.filter((m) => m.expiryMs <= clock);
+  let settledOk = expired.length === 0; // caught up when nothing has expired to settle
   if (expired.length) {
     try {
       const settlements: { expiryMs: bigint; price: bigint }[] = [];
@@ -76,6 +78,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
         "flush+settle",
       );
       expired.forEach((m) => expiryCache.delete(m.id)); // compacted off-chain; forget
+      settledOk = true;
+      consecutiveDefers = 0;
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
         type: "flush", settled: expired.length, marketCount: fe ? Number(fe.market_count) : 0,
@@ -84,8 +88,12 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       });
       console.log(`[keeper] settled+compacted ${expired.length} market(s): ${expired.map((m) => isoSec(m.expiryMs)).join(", ")}`);
     } catch (e) {
+      consecutiveDefers++;
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
-      console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      console.warn(`[keeper] flush deferred (${consecutiveDefers}x): ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      // Sustained outage / beyond-retention miss: settlement can't proceed; surface it loudly.
+      if (consecutiveDefers >= 8)
+        console.error(`[keeper] *** settlement STALLED ${consecutiveDefers} ticks (Pyth-history outage or beyond-retention miss) — flush blocked; roll paused ***`);
     }
   }
 
@@ -108,7 +116,9 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
 
   // 3. Roll: keep WINDOW live markets ahead of now. Isolated. The new market appears in the
   //    next tick's reconcile; add it locally now so markets.json includes it this tick.
-  if (live.length < WINDOW) {
+  //    GATED on settledOk: during a settlement outage the flush defers, so minting more
+  //    markets would grow the active set past the single-PTB flush gas wall and brick it.
+  if (settledOk && live.length < WINDOW) {
     try {
       const { marketId, expiryMs } = await createMarket(lifecycleCapId, CADENCE);
       expiryCache.set(marketId, Number(expiryMs));
