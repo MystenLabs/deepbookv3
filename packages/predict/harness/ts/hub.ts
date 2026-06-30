@@ -39,7 +39,6 @@ async function main() {
       spot1e9: snap.spot1e9.toString(),
       publishedAtMs: snap.publishedAtMs.toString(),
       expiries: Object.fromEntries([...snap.expiries.entries()]),
-      recent: Object.fromEntries([...snap.recent].map(([t, s]) => [t, s.toString()])),
     });
     writeFileSync(HUB_SNAPSHOT, json);
     if (HUB_RECORD) appendFileSync(HUB_RECORD, `${json}\n`);

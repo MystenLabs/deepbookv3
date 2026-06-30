@@ -4,12 +4,13 @@
 // (an in-memory market list + the on-chain clock) and assembles the due PTBs.
 //
 // The keeper is the sole market creator (tracks its own markets) and the single setup
-// owner (setupFeedsAndConfig publishes feeds.json). It does NO provider/WS work: live
-// valuation reads the updater-maintained fresh on-chain feed, and the settlement price
-// comes from the updater's shared snapshot.json. One stream, the updater's.
-import { readFileSync, writeFileSync } from "node:fs";
+// owner (setupFeedsAndConfig publishes feeds.json). Live valuation reads the updater-
+// maintained fresh on-chain feed (one stream, the updater's); settlement is independent —
+// the keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint.
+import { writeFileSync } from "node:fs";
 
 import { CADENCES } from "./predictConfig.js";
+import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
 import { appendTrace, errorTag, gasOf } from "./trace.js";
 import {
@@ -27,7 +28,6 @@ const CADENCE = Number(process.env.KEEPER_CADENCE ?? 0); // default 1m (fast rol
 const WINDOW = Number(CADENCES[CADENCE].windowSize); // markets to keep ahead of now
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
-const SNAPSHOT_PATH = `${process.env.INSTANCE_DIR}/snapshot.json`;
 const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
 const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
 const TRADER_DUSDC = 1_000_000_000_000n; // $1M DUSDC per trader (publisher owns the cap)
@@ -39,21 +39,6 @@ interface Market {
   id: string;
   expiryMs: number;
   settled: boolean;
-}
-
-// The settlement price for a market: its EXACT at-expiry Pyth print (snapshot.recent at
-// the expiry boundary), or the latest spot as a flagged fallback if that print is missing
-// (updater gap). Exact is the norm — the fixed-rate stream lands a print at every boundary.
-function settlementPrice(expiryMs: number): { price: bigint; exact: boolean } | null {
-  try {
-    const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"));
-    const exact = snap.recent?.[String(expiryMs)];
-    if (exact != null) return { price: BigInt(exact), exact: true };
-    if (snap.spot1e9 != null) return { price: BigInt(snap.spot1e9), exact: false };
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
@@ -68,10 +53,12 @@ async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
   if (expired.length) {
     const settlements: { expiryMs: bigint; price: bigint }[] = [];
     for (const m of expired) {
-      const sp = settlementPrice(m.expiryMs);
-      if (!sp) break; // no snapshot yet (early startup) — defer the whole flush one tick
-      if (!sp.exact) console.warn(`[keeper] WARN settling ${isoSec(m.expiryMs)} with FALLBACK latest spot (no exact-expiry print)`);
-      settlements.push({ expiryMs: BigInt(m.expiryMs), price: sp.price });
+      try {
+        settlements.push({ expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
+      } catch (e) {
+        console.warn(`[keeper] settlement price unavailable for ${isoSec(m.expiryMs)} (${String(e).slice(0, 80)}); deferring`);
+        break; // defer the whole flush a tick — never settle with a non-exact price
+      }
     }
     if (settlements.length === expired.length) {
       const fr = await executeAndWait(

@@ -34,9 +34,6 @@ export interface MarketSnapshot {
   spot1e9: bigint;
   publishedAtMs: bigint;
   expiries: Map<number, { forward: number; svi: Svi }>;
-  // Recent whole-second Pyth prints (sourceTs -> spot1e9). Settlement reads the exact
-  // print at a market's expiry boundary from here, never the rolling latest spot.
-  recent: Map<number, bigint>;
 }
 export interface MarketSource {
   start(expiries: number[]): Promise<void>;
@@ -63,13 +60,38 @@ function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketS
       if (e) expiries.set(ms, { forward: e.forward, svi: e.svi });
     }
   }
-  const recent = new Map<number, bigint>();
-  for (const [ts, s] of Object.entries(h.recent ?? {})) recent.set(Number(ts), BigInt(s as string));
-  return { spot1e9: BigInt(h.spot1e9), publishedAtMs: BigInt(h.publishedAtMs), expiries, recent };
+  return { spot1e9: BigInt(h.spot1e9), publishedAtMs: BigInt(h.publishedAtMs), expiries };
 }
 
 const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
 const BS_KEY = harnessKey("BLOCK_SCHOLES_API_KEY");
+
+// Pyth Lazer history endpoint (settlement, independent of the live stream): the EXACT spot
+// at a past timestamp. Mirrors deepbook-services' fetchExactLazerPayload (POST /v1/price,
+// exact-timestamp assertion, fixed_rate channel so a print lands on the ms boundary), but
+// returns the value (1e9) — the harness re-signs it with its own key (the pyth_feed trusts
+// the local signer, not Pyth's signature) before inserting it at the expiry key.
+const PYTH_HISTORY_URL = "https://pyth-lazer.dourolabs.app/v1/price";
+const PYTH_HISTORY_CHANNEL = "fixed_rate@200ms";
+
+export async function fetchExactSpot1e9(expiryMs: number): Promise<bigint> {
+  const timestampUs = expiryMs * 1000;
+  const res = await fetch(PYTH_HISTORY_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${PYTH_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent"],
+      formats: ["leEcdsa"], jsonBinaryEncoding: "base64", parsed: true, channel: PYTH_HISTORY_CHANNEL,
+    }),
+  });
+  if (!res.ok) throw new Error(`pyth history HTTP ${res.status}: ${(await res.text()).slice(0, 120)}`);
+  const root: any = await res.json();
+  if (String(root?.parsed?.timestampUs ?? "") !== String(timestampUs))
+    throw new Error(`pyth history: expected ts ${timestampUs}us, got ${root?.parsed?.timestampUs}us`);
+  const feed = (root.parsed.priceFeeds ?? []).find((f: any) => Number(f.priceFeedId) === 1);
+  if (feed?.price == null) throw new Error("pyth history: no price for feed 1");
+  return BigInt(Math.round(Number(feed.price) * 10 ** (Number(feed.exponent ?? -8) + 9)));
+}
 
 // Direct provider-WS source: Pyth Lazer (spot) + Block Scholes (per-expiry fwd/svi).
 export class DirectWsSource implements MarketSource {
@@ -81,7 +103,6 @@ export class DirectWsSource implements MarketSource {
   #svi = new Map<number, Svi>();
   #expiries: number[] = [];
   #bsOpen = false;
-  #recent = new Map<number, bigint>(); // whole-second sourceTs -> spot1e9 (exact-expiry settlement)
 
   async start(expiries: number[]): Promise<void> {
     this.#expiries = expiries;
@@ -96,19 +117,11 @@ export class DirectWsSource implements MarketSource {
       const exp = Number(f.exponent ?? -8);
       this.#spot1e9 = BigInt(Math.round(Number(f.price) * 10 ** (exp + 9)));
       this.#spotMs = BigInt(Math.floor(Number(ev.value.parsed.timestampUs) / 1000));
-      // Keep recent whole-second prints; settlement reads the exact-expiry boundary price.
-      if (this.#spotMs % 1000n === 0n) {
-        this.#recent.set(Number(this.#spotMs), this.#spot1e9);
-        if (this.#recent.size > 240) {
-          const oldest = this.#recent.keys().next().value;
-          if (oldest !== undefined) this.#recent.delete(oldest);
-        }
-      }
     });
     this.#pyth.subscribe({
       type: "subscribe", subscriptionId: 1, priceFeedIds: [1],
       properties: ["price", "exponent"], formats: ["leEcdsa"],
-      deliveryFormat: "binary", parsed: true, channel: "fixed_rate@200ms",
+      deliveryFormat: "binary", parsed: true, channel: "real_time",
     });
     await this.#startBs();
   }
@@ -170,7 +183,7 @@ export class DirectWsSource implements MarketSource {
       const svi = this.#svi.get(ms);
       if (forward != null && svi) expiries.set(ms, { forward, svi });
     }
-    return { spot1e9: this.#spot1e9, publishedAtMs: this.#spotMs, expiries, recent: new Map(this.#recent) };
+    return { spot1e9: this.#spot1e9, publishedAtMs: this.#spotMs, expiries };
   }
 
   stop(): void {

@@ -5,7 +5,7 @@
 // monotonic). The feed ids come from the keeper (feeds.json); the data comes from a
 // `MarketSource` chosen by env: a shared hub snapshot (parallel runs), a recorded replay,
 // or this localnet's own provider WS pair. Each push also writes snapshot.json for the
-// keeper (settlement price) + the trade generator.
+// trade generator (the keeper settles independently via the Pyth Lazer history endpoint).
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import { getSigner, getSignerForAddress } from "./env.js";
@@ -93,12 +93,11 @@ async function main() {
         m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
       },
     }));
-    // Publish the latest snapshot for the keeper (settlement price) + the trade generator.
+    // Publish the latest snapshot for the trade generator (prices its fuzzed mints).
     writeFileSync(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
       spot1e9: snap.spot1e9.toString(),
       publishedAtMs: ts.toString(),
       expiries: Object.fromEntries([...snap.expiries.entries()]),
-      recent: Object.fromEntries([...snap.recent].map(([t, s]) => [t, s.toString()])),
     }));
     try {
       const digest = await submit(
