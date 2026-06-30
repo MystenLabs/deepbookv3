@@ -9,6 +9,7 @@ up until the session exits.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 import shutil
@@ -19,6 +20,11 @@ from pathlib import Path
 
 from . import config, localnet, oracle_setup, state, suicli
 from .run import _make_run_id, _publish_localnet
+
+# Flush every print so captured logs (autonomous/background runs) stay in chronological
+# order with subprocess output, instead of being reordered by Python's block buffering on
+# a pipe. Harmless on a terminal (already line-buffered).
+print = functools.partial(print, flush=True)
 
 
 def _raise_keyboard_interrupt(*_) -> None:
