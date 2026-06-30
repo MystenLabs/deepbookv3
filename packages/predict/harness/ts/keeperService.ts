@@ -1,12 +1,14 @@
-// Predict lifecycle keeper. On an oracle-ready localnet WITH the updater streaming, run
-// a tick loop that rolls the cadence, flushes + settles + compacts expired markets,
-// rebalances, and liquidates. The "conditional cron" is off-chain: each tick reads state
-// (an in-memory market list + the on-chain clock) and assembles the due PTBs.
+// Predict lifecycle keeper. On an oracle-ready localnet WITH the updater streaming, run a
+// tick loop that flushes + settles + compacts expired markets, liquidates, and rolls the
+// cadence. The "conditional cron" is off-chain: each tick reconciles the active market set
+// from CHAIN (plp::active_expiry_markets) and assembles the due PTBs.
 //
-// The keeper is the sole market creator (tracks its own markets) and the single setup
-// owner (setupFeedsAndConfig publishes feeds.json). Live valuation reads the updater-
-// maintained fresh on-chain feed (one stream, the updater's); settlement is independent —
-// the keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint.
+// Reconciling from chain (not an in-memory list) is what makes the keeper crash/restart
+// safe: a lost create response or a restart can never desync the flush set from
+// finish_flush's all-active-valued assertion. Live valuation reads the updater-maintained
+// fresh on-chain feed (one stream); settlement is independent — the keeper fetches each
+// expiry's EXACT spot from the Pyth Lazer history endpoint. Each tick step is isolated so
+// one transient sub-step abort can't skip the rest of the tick.
 import { CADENCES } from "./predictConfig.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
@@ -20,6 +22,8 @@ import {
   fundAddressDusdcTx,
   keeperFlushTx,
   keeperLiquidateTx,
+  readActiveMarketIds,
+  readMarketExpiry,
   rebalanceExpiryCashTx,
 } from "./runtime.js";
 
@@ -34,37 +38,44 @@ const LIQ_BUDGET = 24n; // trade_liquidation_budget
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-interface Market {
-  id: string;
-  expiryMs: number;
-  settled: boolean;
+// id -> expiry(ms) cache. The active SET is always chain truth (readActiveMarketIds); this
+// only avoids re-reading each market's immutable expiry every tick. Misses (orphans from a
+// lost create response, or a restart) are filled from chain via readMarketExpiry.
+const expiryCache = new Map<string, number>();
+
+async function expiryOf(marketId: string): Promise<number> {
+  const cached = expiryCache.get(marketId);
+  if (cached !== undefined) return cached;
+  const e = Number(await readMarketExpiry(marketId));
+  expiryCache.set(marketId, e);
+  return e;
 }
 
-async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
-  const clock = Number(await clockTimestampMs());
-  const active = markets.filter((m) => !m.settled);
-  const expired = active.filter((m) => m.expiryMs <= clock);
-  const live = active.filter((m) => m.expiryMs > clock);
+interface Mkt {
+  id: string;
+  expiryMs: number;
+}
 
-  // 1. Flush + settle (when a market has expired): insert each terminal obs so the flush
-  //    settles + sweeps it (cash back to pool); live markets are valued on the updater
-  //    feed. One flush values EVERY active market.
+async function tick(feeds: Feeds, lifecycleCapId: string) {
+  const clock = Number(await clockTimestampMs());
+  // Reconcile the active set from CHAIN — never an in-memory list.
+  const active: Mkt[] = [];
+  for (const id of await readActiveMarketIds()) active.push({ id, expiryMs: await expiryOf(id) });
+
+  // 1. Flush + settle expired markets: fetch each expiry's exact spot (history endpoint),
+  //    re-sign + insert it, and value EVERY active market in one flush. Isolated: a
+  //    boundary race (a market expiring mid-tick, no obs yet) or a price-not-yet-available
+  //    defers the flush one tick rather than killing the tick.
+  const expired = active.filter((m) => m.expiryMs <= clock);
   if (expired.length) {
-    const settlements: { expiryMs: bigint; price: bigint }[] = [];
-    for (const m of expired) {
-      try {
-        settlements.push({ expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
-      } catch (e) {
-        console.warn(`[keeper] settlement price unavailable for ${isoSec(m.expiryMs)} (${String(e).slice(0, 80)}); deferring`);
-        break; // defer the whole flush a tick — never settle with a non-exact price
-      }
-    }
-    if (settlements.length === expired.length) {
+    try {
+      const settlements: { expiryMs: bigint; price: bigint }[] = [];
+      for (const m of expired) settlements.push({ expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
       const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: active.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush+settle",
       );
-      expired.forEach((m) => (m.settled = true));
+      expired.forEach((m) => expiryCache.delete(m.id)); // compacted off-chain; forget
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
         type: "flush", settled: expired.length, marketCount: fe ? Number(fe.market_count) : 0,
@@ -72,33 +83,49 @@ async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
         activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr),
       });
       console.log(`[keeper] settled+compacted ${expired.length} market(s): ${expired.map((m) => isoSec(m.expiryMs)).join(", ")}`);
+    } catch (e) {
+      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
+      console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
     }
   }
 
-  // 2. Liquidate live markets (bounded; a no-op without under-floor leveraged orders).
+  // 2. Liquidate LIVE markets, re-filtered against a FRESH clock so a market that expired
+  //    during step 1 isn't passed to load_live_pricer (pricing:9). Isolated.
+  const liveClock = Number(await clockTimestampMs());
+  const live = active.filter((m) => m.expiryMs > liveClock);
   if (live.length) {
-    const lr = await executeAndWait(
-      keeperLiquidateTx({ feeds, markets: live.map((m) => m.id), protocolConfigId: PROTOCOL_CONFIG_ID, budget: LIQ_BUDGET }),
-      "liquidate",
-    );
-    appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr) });
+    try {
+      const lr = await executeAndWait(
+        keeperLiquidateTx({ feeds, markets: live.map((m) => m.id), protocolConfigId: PROTOCOL_CONFIG_ID, budget: LIQ_BUDGET }),
+        "liquidate",
+      );
+      appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr) });
+    } catch (e) {
+      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
+      console.warn(`[keeper] liquidate skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+    }
   }
 
-  // 3. Roll: keep WINDOW markets ahead of now, funding each as a separate tx right after
-  //    creation (a just-created shared object can't be a later input in the SAME PTB).
-  const liveCount = markets.filter((m) => !m.settled && m.expiryMs > clock).length;
-  if (liveCount < WINDOW) {
-    const { marketId, expiryMs } = await createMarket(lifecycleCapId, CADENCE);
-    markets.push({ id: marketId, expiryMs: Number(expiryMs), settled: false });
-    await executeAndWait(
-      rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
-      "rebalance",
-    );
-    console.log(`[keeper] rolled: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))} (live ${liveCount + 1}/${WINDOW})`);
+  // 3. Roll: keep WINDOW live markets ahead of now. Isolated. The new market appears in the
+  //    next tick's reconcile; add it locally now so markets.json includes it this tick.
+  if (live.length < WINDOW) {
+    try {
+      const { marketId, expiryMs } = await createMarket(lifecycleCapId, CADENCE);
+      expiryCache.set(marketId, Number(expiryMs));
+      live.push({ id: marketId, expiryMs: Number(expiryMs) });
+      await executeAndWait(
+        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
+        "rebalance",
+      );
+      console.log(`[keeper] rolled: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))} (live ${live.length}/${WINDOW})`);
+    } catch (e) {
+      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
+      console.warn(`[keeper] roll skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+    }
   }
 
-  // Publish the current live markets for the trade generator.
-  atomicWriteFile(MARKETS_PATH, JSON.stringify(markets.filter((m) => !m.settled && m.expiryMs > clock).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
+  // Publish the live markets for the trade generator.
+  atomicWriteFile(MARKETS_PATH, JSON.stringify(live.map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
 }
 
 async function main() {
@@ -110,11 +137,10 @@ async function main() {
   }
   console.log(`[keeper] bootstrapped (PLP minted, feeds.json published); funded ${TRADER_ADDRESSES.length} trader(s); rolling markets...`);
 
-  const markets: Market[] = [];
   const deadline = DURATION_MS > 0 ? Date.now() + DURATION_MS : 0;
   for (;;) {
     try {
-      await tick(feeds, lifecycleCapId, markets);
+      await tick(feeds, lifecycleCapId);
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
       console.error("[keeper] tick error:", e instanceof Error ? e.message : e);
@@ -122,8 +148,7 @@ async function main() {
     if (deadline && Date.now() >= deadline) break;
     await sleep(TICK_MS);
   }
-  const settled = markets.filter((m) => m.settled).length;
-  console.log(`[keeper] done — ${markets.length} markets created, ${settled} settled+compacted`);
+  console.log("[keeper] done");
 }
 
 main().then(() => process.exit(0)).catch((e) => { console.error("[keeper] FAIL:", e); process.exit(1); });

@@ -381,6 +381,61 @@ export async function clockTimestampMs(): Promise<bigint> {
     return BigInt(timestamp);
 }
 
+// devInspect a read-only getter and return the first command's first raw return bytes.
+// Read-only chain queries (no signing, no gas) used to reconcile keeper state from chain.
+async function devInspectFirstReturn(tx: Transaction): Promise<number[]> {
+    const r = await client.devInspectTransactionBlock({ transactionBlock: tx, sender: address });
+    if (r.error) throw new Error(`devInspect failed: ${r.error}`);
+    const rv = r.results?.[0]?.returnValues?.[0]?.[0];
+    if (!rv) throw new Error("devInspect: no return value");
+    return rv as number[];
+}
+
+function parseU64LE(bytes: number[]): bigint {
+    let v = 0n;
+    for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i] ?? 0);
+    return v;
+}
+
+// BCS vector<ID>: ULEB128 length, then N x 32-byte object ids.
+function parseVectorId(bytes: number[]): string[] {
+    let i = 0, len = 0, shift = 0;
+    for (;;) {
+        const b = bytes[i++];
+        len |= (b & 0x7f) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+    }
+    const ids: string[] = [];
+    for (let k = 0; k < len; k++) {
+        ids.push(`0x${bytes.slice(i, i + 32).map((x) => x.toString(16).padStart(2, "0")).join("")}`);
+        i += 32;
+    }
+    return ids;
+}
+
+// On-chain active expiry-market object ids (chain truth for the keeper's flush set).
+export async function readActiveMarketIds(): Promise<string[]> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("plp", "active_expiry_markets"), arguments: [tx.object(POOL_VAULT_ID)] });
+    return parseVectorId(await devInspectFirstReturn(tx));
+}
+
+// On-chain PLP total supply (>0 means the pool is already bootstrapped).
+export async function readPlpTotalSupply(): Promise<bigint> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("plp", "plp_total_supply"), arguments: [tx.object(POOL_VAULT_ID)] });
+    return parseU64LE(await devInspectFirstReturn(tx));
+}
+
+// A market's expiry (ms) read from chain — recovers expiries for markets the keeper did
+// not create itself (orphan from a lost create response, or a keeper restart).
+export async function readMarketExpiry(marketId: string): Promise<bigint> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("expiry_market", "expiry"), arguments: [tx.object(marketId)] });
+    return parseU64LE(await devInspectFirstReturn(tx));
+}
+
 async function nextSourceTimestampMs(): Promise<bigint> {
     for (let attempt = 0; attempt < 50; attempt++) {
         const latestAllowed = (await clockTimestampMs()) - 1n;

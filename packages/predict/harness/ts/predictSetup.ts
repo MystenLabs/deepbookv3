@@ -5,6 +5,8 @@
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
+import { existsSync, readFileSync } from "node:fs";
+
 import { atomicWriteFile, harnessKey } from "./io.js";
 import { type Svi } from "./pricer.js";
 import { BOOTSTRAP_SUPPLY, CADENCES, FRESHNESS } from "./predictConfig.js";
@@ -22,6 +24,7 @@ import {
   executeAndWait,
   lockCapitalTx,
   mintLifecycleCapTx,
+  readPlpTotalSupply,
   registerUnderlyingAndCreateFeedsTx,
   requestSupplyTx,
   seedOracleTx,
@@ -147,22 +150,30 @@ export function gridExpiry(expiryMs: number, snap: Snap) {
 // Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + freshness
 // + a lifecycle cap. Returns the feed ids and the cap needed to create/flush markets.
 export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds: Feeds; lifecycleCapId: string }> {
-  await executeAndWait(updatePythTrustedSignerTx(), "trusted-signer");
-  const feedsR = await executeAndWait(registerUnderlyingAndCreateFeedsTx(1), "feeds");
-  const pythFeedId = found(feedsR, "pyth_feed::PythFeed");
-  const bsSpotFeedId = found(feedsR, "block_scholes_spot_feed::BlockScholesSpotFeed");
-  await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId, bsSpotFeedId }), "bind-spot");
-  const surfR = await executeAndWait(createBlockScholesSurfaceFeedsTx(), "surface");
-  const bsForwardFeedId = found(surfR, "block_scholes_forward_feed::BlockScholesForwardFeed");
-  const bsSviFeedId = found(surfR, "block_scholes_svi_feed::BlockScholesSVIFeed");
-  await executeAndWait(bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }), "bind-surface");
-  const feeds = { pythFeedId, bsSpotFeedId, bsForwardFeedId, bsSviFeedId };
-
-  // Publish the feed ids so the updater (a separate process) can stream onto them
-  // without re-running setup. The keeper is the single setup owner; the updater reads.
   const instanceDir = process.env.INSTANCE_DIR;
-  if (instanceDir) atomicWriteFile(`${instanceDir}/feeds.json`, JSON.stringify(feeds));
+  const feedsPath = instanceDir ? `${instanceDir}/feeds.json` : undefined;
+  let feeds: Feeds;
+  if (feedsPath && existsSync(feedsPath)) {
+    // Restart re-attach: reuse the already-created feeds instead of minting new feed
+    // objects (which would overwrite feeds.json while the updater streams the old ids).
+    feeds = JSON.parse(readFileSync(feedsPath, "utf8"));
+    console.log("[setup] re-attaching to existing feeds.json");
+  } else {
+    await executeAndWait(updatePythTrustedSignerTx(), "trusted-signer");
+    const feedsR = await executeAndWait(registerUnderlyingAndCreateFeedsTx(1), "feeds");
+    const pythFeedId = found(feedsR, "pyth_feed::PythFeed");
+    const bsSpotFeedId = found(feedsR, "block_scholes_spot_feed::BlockScholesSpotFeed");
+    await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId, bsSpotFeedId }), "bind-spot");
+    const surfR = await executeAndWait(createBlockScholesSurfaceFeedsTx(), "surface");
+    const bsForwardFeedId = found(surfR, "block_scholes_forward_feed::BlockScholesForwardFeed");
+    const bsSviFeedId = found(surfR, "block_scholes_svi_feed::BlockScholesSVIFeed");
+    await executeAndWait(bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }), "bind-surface");
+    feeds = { pythFeedId, bsSpotFeedId, bsForwardFeedId, bsSviFeedId };
+    // Publish the feed ids so the updater (a separate process) can stream onto them.
+    if (feedsPath) atomicWriteFile(feedsPath, JSON.stringify(feeds));
+  }
 
+  // Config setters are idempotent — (re-)run either way so a re-attach re-asserts policy.
   const cap = await executeAndWait(mintLifecycleCapTx(address), "lifecycle-cap");
   const lifecycleCapId = found(cap, "MarketLifecycleCap");
   for (const cadenceId of cadenceIds) {
@@ -205,6 +216,10 @@ export async function createAndSeedMarket(
 // afterward, so a fast cadence's first expiry can't race the bootstrap.
 export async function bootstrapPool(lifecycleCapId: string): Promise<{ wrapperId: string }> {
   const wrapperId = deriveAccountWrapperId(address);
+  if ((await readPlpTotalSupply()) > 0n) {
+    console.log("[setup] pool already bootstrapped (PLP supply > 0); skipping");
+    return { wrapperId };
+  }
   await executeAndWait(createAccountTx(), "create-account");
   await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "lock-capital");
   await executeAndWait(

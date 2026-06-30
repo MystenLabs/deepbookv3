@@ -108,39 +108,61 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
     The keeper is the single setup owner (publishes feeds.json, funds the traders with
     DUSDC) and runs the market lifecycle; the updater is the sole WS consumer (warms the
     keeper's cadence, writes snapshot.json); the traders read those shared files and fuzz
-    mints/redeems. Every subprocess runs in its own process group (clean teardown) and
-    every gas address is auto-refilled. Holds until Ctrl-C/SIGTERM, or `seconds`.
+    mints/redeems. The core (keeper + updater) is SUPERVISED: a dead one is restarted (it
+    re-attaches via the idempotent setup + reconciles markets from chain), up to
+    max_restarts, after which the run tears down. A crashing trader never kills the run.
+    Every subprocess runs in its own process group; every gas address is auto-refilled.
+    Holds until Ctrl-C/SIGTERM, or `seconds`.
     """
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
+    max_restarts = 5
     with oracle_ready_localnet(name, keep=True) as ctx:
         trader_addrs = [_create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
         base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
-        keeper = subprocess.Popen(
-            ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-            env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
-            start_new_session=True,
-        )
-        updater_env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"}
-        if replay:  # re-play a recorded hub stream instead of opening a live provider WS
-            updater_env["REPLAY_FILE"] = replay
-        updater = subprocess.Popen(
-            ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=updater_env, start_new_session=True,
-        )
-        procs = [keeper, updater]
-        for addr in trader_addrs:
-            procs.append(subprocess.Popen(
-                ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESS": addr}, start_new_session=True,
-            ))
+
+        def launch_keeper() -> subprocess.Popen:
+            return subprocess.Popen(
+                ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "KEEPER_CADENCE": str(cadence), "TRADER_ADDRESSES": ",".join(trader_addrs)},
+                start_new_session=True,
+            )
+
+        def launch_updater() -> subprocess.Popen:
+            env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": f"{period_ms}:6"}
+            if replay:  # re-play a recorded hub stream instead of opening a live provider WS
+                env["REPLAY_FILE"] = replay
+            return subprocess.Popen(["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=env, start_new_session=True)
+
+        core = {"keeper": launch_keeper(), "updater": launch_updater()}
+        launchers = {"keeper": launch_keeper, "updater": launch_updater}
+        restarts = {"keeper": 0, "updater": 0}
+        traders_procs = [
+            subprocess.Popen(["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR), env={**base, "TRADER_ADDRESS": a}, start_new_session=True)
+            for a in trader_addrs
+        ]
         gas_addrs = [ctx["active"], ctx["updater_address"], *trader_addrs]
-        print(f"\nharness up: keeper + updater + {traders} trader(s); localnet held. Ctrl-C to tear down.")
+        print(f"\nharness up: keeper + updater + {traders} trader(s); core supervised; localnet held. Ctrl-C to tear down.")
+        deadline = (time.time() + seconds) if seconds > 0 else None
+        last_gas = 0.0
+        give_up = False
         try:
-            deadline = (time.time() + seconds) if seconds > 0 else None
-            last_gas = 0.0
-            # A trader crashing should not kill the run; only the core (keeper/updater) does.
-            while keeper.poll() is None and updater.poll() is None:
+            while not give_up:
                 if deadline and time.time() >= deadline:
+                    break
+                # Supervise the core: restart a dead keeper/updater (it re-attaches on start).
+                for cname, proc in core.items():
+                    if proc.poll() is None:
+                        continue
+                    restarts[cname] += 1
+                    if restarts[cname] > max_restarts:
+                        print(f"[supervise] {cname} exceeded {max_restarts} restarts; tearing down")
+                        give_up = True
+                        break
+                    print(f"[supervise] {cname} died (exit {proc.returncode}); restart #{restarts[cname]}...")
+                    time.sleep(3)
+                    core[cname] = launchers[cname]()
+                if give_up:
                     break
                 now = time.time()
                 if now - last_gas >= 30:  # keep all actors funded over long holds
@@ -154,7 +176,7 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
         except KeyboardInterrupt:
             print("tearing down...")
         finally:
-            for p in procs:
+            for p in (*core.values(), *traders_procs):
                 _terminate_group(p)
     return 0
 
