@@ -5,12 +5,14 @@ import fuzz from "./fuzz.js";
 import liqChurn from "./liqChurn.js";
 import mintOnly from "./mintOnly.js";
 import mixedChurn from "./mixedChurn.js";
+import navStress from "./navStress.js";
 
 export const STRATEGIES: Record<string, Strategy> = {
   [fuzz.name]: fuzz,
   [mintOnly.name]: mintOnly,
   [mixedChurn.name]: mixedChurn,
   [liqChurn.name]: liqChurn,
+  [navStress.name]: navStress,
 };
 
 export function getStrategy(name: string): Strategy {

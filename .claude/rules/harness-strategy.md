@@ -44,8 +44,9 @@ against it before promising anything:
 
 1. Copy the closest example (`strategies/<closest>.ts`) to `strategies/<name>.ts`.
 2. Implement `tick(ctx)` for the behavior; set `name`, `tickMs` (≥ ~1s), `maxOps` (0 =
-   duration-only), `fund` (DUSDC the keeper grants the trader — size it for the op count),
-   `cadence`.
+   duration-only), and `fund` (DUSDC the keeper grants the trader — size it for the op count). No
+   `cadence` field — every keeper runs the full prod cadence set; a strategy spans cadences via the
+   expiries it picks (`nearestExpiry`/`randomExpiry`, or filtering `ctx.markets()` by expiry).
 3. Register it in `strategies/index.ts` (the registry; `meta.ts` then exposes it to `campaign`
    automatically).
 4. Validate — run these in the **main loop or background, never a blocking subagent**:

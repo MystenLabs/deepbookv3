@@ -36,6 +36,10 @@ const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
 const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M default; campaign overrides per strategy
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
+// Sui max tx gas budget. The pool-valuation flush walks every active market's leverage book, so its
+// gas scales with the book — give it the full budget instead of the 1e9 default (which would brick a
+// large pool prematurely). nav-stress measures the book size at which even this max isn't enough.
+const FLUSH_GAS_BUDGET = 50_000_000_000n;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -90,6 +94,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: active.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush+settle",
+        FLUSH_GAS_BUDGET,
       );
       expired.forEach((m) => { expiryCache.delete(m.id); funded.delete(m.id); }); // compacted off-chain; forget
       settledOk = true;

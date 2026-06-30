@@ -80,9 +80,12 @@ plus low-level `submitMint` for probes). Add one by dropping a module and regist
 
 Built-in: `fuzz` (default — random feasible trades + adversarial probes), `mint-only`
 (high-frequency unleveraged mints into the nearest expiry, 10k run-to-completion), `mixed-churn`
-(leveraged mints + partial/full redeems + LP supply/withdraw), and `liq-churn` (high-leverage
+(leveraged mints + partial/full redeems + LP supply/withdraw), `liq-churn` (high-leverage
 near-the-money orders that knock out, so the liquidation pass + NAV-under-liquidation accounting
-are exercised).
+are exercised), and `nav-stress` (piles a low-leverage book into ONE 1h market to measure the max
+leverage-book size the keeper flush can value in one PTB; `analyze` plots flush gas vs book size and
+finds the breakpoint — run with `SIM_GAS_BUDGET=50000000000` so the trader has headroom and the
+flush is measured against the protocol gas ceiling).
 
 `campaign S1 S2 …` runs each named strategy on its **own** localnet (all off one shared hub) to
 completion, tears everything down, then prints a **per-strategy** `analyze` report + an aggregate
