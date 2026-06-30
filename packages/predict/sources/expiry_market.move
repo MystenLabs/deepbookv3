@@ -265,7 +265,7 @@ public fun mint_exact_quantity(
     market.assert_live_mint_allowed(config, pricer);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     market
         .strike_exposure
         .liquidate_live_orders(
@@ -316,7 +316,7 @@ public fun mint_exact_amount(
     wrapper.settle<DUSDC>(root, clock);
     let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     market
         .strike_exposure
         .liquidate_live_orders(
@@ -624,7 +624,7 @@ public(package) fun claim_trading_loss_rebate(
         .cash
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     let rebate_amount = config.stake_config().rebate_amount(eligible_rebate, active_stake);
 
     if (rebate_amount > 0) {
@@ -924,7 +924,7 @@ fun redeem_live_internal(
     let opened_at_ms = predict_account::position_opened_at_ms(account, market.id(), order.id());
     assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
 
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),

@@ -207,19 +207,19 @@ fun add_inactive_stake_goes_to_inactive() {
 }
 
 #[test]
-fun active_stake_mut_is_noop_within_epoch() {
+fun roll_active_stake_is_noop_within_epoch() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
     predict_account::add_inactive_stake(account, STAKE_1, scenario.ctx());
     // Same epoch as the slot's creation: no roll.
-    assert_eq!(predict_account::active_stake_mut(account, scenario.ctx()), 0);
+    assert_eq!(predict_account::roll_active_stake(account, scenario.ctx()), 0);
     assert_eq!(predict_account::inactive_stake(account), STAKE_1);
     assert_eq!(predict_account::active_stake(account), 0);
     finish(scenario, wrapper);
 }
 
 #[test]
-fun active_stake_mut_activates_inactive_next_epoch() {
+fun roll_active_stake_activates_inactive_next_epoch() {
     let (mut scenario, mut wrapper) = new_account();
     {
         let account = wrapper.load_account_mut(auth(&mut scenario));
@@ -227,7 +227,7 @@ fun active_stake_mut_activates_inactive_next_epoch() {
     };
     scenario.next_epoch(ALICE);
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    assert_eq!(predict_account::active_stake_mut(account, scenario.ctx()), STAKE_1);
+    assert_eq!(predict_account::roll_active_stake(account, scenario.ctx()), STAKE_1);
     assert_eq!(predict_account::active_stake(account), STAKE_1);
     assert_eq!(predict_account::inactive_stake(account), 0);
 
@@ -247,7 +247,7 @@ fun remove_all_stake_sums_active_plus_inactive_and_zeroes() {
     };
     scenario.next_epoch(ALICE);
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    predict_account::active_stake_mut(account, scenario.ctx()); // STAKE_1 now active
+    predict_account::roll_active_stake(account, scenario.ctx()); // STAKE_1 now active
     predict_account::add_inactive_stake(account, STAKE_2, scenario.ctx()); // plus inactive
 
     assert_eq!(predict_account::remove_all_stake(account, scenario.ctx()), STAKE_1 + STAKE_2);
