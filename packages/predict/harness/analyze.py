@@ -103,4 +103,14 @@ def analyze(instance: str | None = None) -> int:
             print(f"     {n}x  {tag}")
     else:
         print("  bug oracle clean (no non-package aborts)")
+
+    # adversarial probes: rejection-path coverage (guards firing is the healthy outcome).
+    adv_rejected = sum(1 for r in recs if r.get("type") == "fail" and r.get("adversarial"))
+    adv_accepted = [r for r in recs if r.get("type") == "adversarial-accepted"]
+    if adv_rejected or adv_accepted:
+        print(f"\nadversarial probes: {adv_rejected} rejected (guards fired), {len(adv_accepted)} wrongly accepted")
+        if adv_accepted:
+            print(f"  *** {len(adv_accepted)} adversarial order(s) WRONGLY ACCEPTED — guard gap ***")
+            for mode, n in Counter(r.get("mode") for r in adv_accepted).most_common():
+                print(f"     {n}x  {mode}")
     return 0

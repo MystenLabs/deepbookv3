@@ -28,6 +28,7 @@ const LABEL = TRADER_ADDRESS.slice(0, 8);
 const SCALE = 1_000_000_000n;
 const GAS_BUDGET = 2_000_000_000;
 const ADMISSION_K = 0.2;
+const ADVERSARIAL_FRACTION = 0.2; // fraction of mints that probe the rejection paths
 
 const signer = getSignerForAddress(TRADER_ADDRESS);
 const wrapperId = deriveAccountWrapperId(TRADER_ADDRESS);
@@ -83,6 +84,36 @@ async function fundAndSetup(): Promise<void> {
   throw new Error("trader not funded with DUSDC by the keeper within 120s");
 }
 
+// Send a deliberately-rejectable mint to exercise a guard. Trace the abort (a guard firing
+// = expected) or, if it wrongly succeeds, an "adversarial-accepted" finding (a guard gap).
+async function adversarialProbe(feeds: any, market: { id: string }, env: any, direction: "UP" | "DN"): Promise<null> {
+  const mode = pick(["over-cap-leverage", "tight-max-cost", "tight-max-probability"]);
+  const p = rand(0.25, 0.7);
+  const base: Instruction = { direction, leverage: rand(1, leverageCap(p)), targetProbability: p, spendUsd: rand(10, 200) };
+  const r = resolveMint(base, env, RESOLVER_MARKET);
+  if (!r.feasible) return null; // couldn't build a base order this tick
+  let leverage = r.leverage1e9;
+  let maxCost = r.maxCost;
+  let maxProbability = r.maxProbability1e9;
+  if (mode === "over-cap-leverage") leverage = BigInt(Math.round(Number(r.leverage1e9) * rand(1.5, 2.5)));
+  else if (mode === "tight-max-cost") maxCost = r.maxCost / 3n; // below net_premium
+  else maxProbability = r.maxProbability1e9 / 3n; // below the quoted probability
+  try {
+    await submit(
+      mintTx({
+        expiryMarketId: market.id, wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...feeds,
+        strike: BigInt(Math.round(r.strikeUsd)) * SCALE, isUp: direction === "UP",
+        quantity: r.quantity, leverage, maxCost, maxProbability,
+      }),
+      "adv-mint",
+    );
+    appendTrace(LABEL, { type: "adversarial-accepted", mode, market: market.id.slice(0, 10) });
+  } catch (e) {
+    appendTrace(LABEL, { type: "fail", adversarial: mode, tag: errorTag(e) });
+  }
+  return null;
+}
+
 async function trade(feeds: any, held: Held[]): Promise<"mint" | "redeem" | null> {
   const markets = readJson(`${INSTANCE_DIR}/markets.json`);
   const snap = readJson(`${INSTANCE_DIR}/snapshot.json`);
@@ -102,17 +133,23 @@ async function trade(feeds: any, held: Held[]): Promise<"mint" | "redeem" | null
     return "redeem";
   }
 
-  // Otherwise mint a fuzzed FEASIBLE position into a random live market.
+  // Otherwise mint a fuzzed position into a random live market.
   const market = pick(markets) as { id: string; expiryMs: number };
   const exp = snap.expiries?.[String(market.expiryMs)];
   if (!exp) return null; // updater has not warmed this expiry yet
   const spot = Number(snap.spot1e9) / 1e9;
   const svi = { a: exp.svi.alpha, b: exp.svi.beta, rho: exp.svi.rho, m: exp.svi.m, sigma: exp.svi.sigma };
+  const env = { pythSpot: spot, bsSpot: spot, bsForward: Number(exp.forward), svi };
   const direction = pick(["UP", "DN"]) as "UP" | "DN";
+
+  // A fraction of trades probe the REJECTION paths (admission + P6 slippage guards) with a
+  // deliberately-invalid order. The guard firing (abort) is the expected healthy outcome.
+  if (Math.random() < ADVERSARIAL_FRACTION) return adversarialProbe(feeds, market, env, direction);
+
   const targetProbability = rand(0.1, 0.9);
   const leverage = rand(1, leverageCap(targetProbability));
   const inst: Instruction = { direction, leverage, targetProbability, spendUsd: rand(10, 300) };
-  const r = resolveMint(inst, { pythSpot: spot, bsSpot: spot, bsForward: Number(exp.forward), svi }, RESOLVER_MARKET);
+  const r = resolveMint(inst, env, RESOLVER_MARKET);
   if (!r.feasible) return null;
   const res = await submit(
     mintTx({
