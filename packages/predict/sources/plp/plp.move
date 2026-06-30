@@ -324,13 +324,13 @@ public fun finish_flush(
     // valuation, so the single FlushExecuted event carries the priced mark and its
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
+    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
     let (supplies_filled, withdrawals_filled) = vault
         .lp
         .drain(
             vault_id,
             &mut vault.expiry_accounting,
-            pool_nav,
-            total_supply,
+            mark,
             supply_budget,
             withdraw_budget,
             ctx,
