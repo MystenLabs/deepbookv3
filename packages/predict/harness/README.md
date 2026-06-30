@@ -1,33 +1,77 @@
 # Predict localnet harness
 
-Worktree-free, parallel Sui localnet harness for stress-testing / fuzzing /
-bug-finding the Predict contracts. See `DESIGN.md` for the full design.
+A worktree-free, **real-data** Sui-localnet staging simulation of the Predict protocol. It
+spins up a fresh localnet, publishes the full Predict stack, streams **live Pyth Pro + Block
+Scholes** data onto the on-chain oracles, and runs the entire market lifecycle (creation,
+trading, settlement, liquidation, PLP supply/withdraw) **in real time** — a self-sustaining
+bug-finder and economics sim. Re-running against live data sweeps a broad set of real market
+states; that breadth is the point, not deterministic replay.
 
-**Phase 0 (current): the parallel localnet substrate.** Stages the Predict
-package closure into a disposable scratch workspace, spins up a fresh localnet on
-isolated ports, publishes the full stack, and tears down — all without mutating
-the checkout, so many runs go in parallel from a single clone (no git worktrees).
+Self-contained: Python orchestration (`harness/`) + a TypeScript actor package (`harness/ts`).
 
-## Usage
+## Commands
 
 Run as a module from `packages/predict/`:
 
 ```bash
 cd packages/predict
 
-python3 -m harness run                 # one full lifecycle
-python3 -m harness run-many 3          # 3 concurrent runs (parallel validation)
-python3 -m harness status              # show the slot registry
-python3 -m harness cleanup --instances # reclaim stale slots + orphan dirs
+python3 -m harness up [--traders N] [--cadence ID] [--replay FILE]  # the full running sim
+python3 -m harness up-many N [--traders N]   # parallel: one shared hub -> N localnets
+python3 -m harness spike-mint                # one-shot: resolve + execute a semantic mint
+python3 -m harness analyze                   # report the latest run's trace
+python3 -m harness run                       # one localnet publish lifecycle (no sim)
+python3 -m harness run-many N                # N publishes through a rolling pool
+python3 -m harness status                    # the slot registry
+python3 -m harness cleanup [--instances]     # reclaim stale slots + orphan dirs
 ```
 
-Ports are auto-allocated (no port flags): each run reserves a free slot from a
-locked registry. Retention is automatic — a clean success self-deletes its
-instance dir; a **failed** run is kept so you can inspect it. Use `run --keep`
-only to retain a successful run too.
+Ports are auto-allocated (no port flags); instance state lives under `.localnets/`
+(gitignored); retention is keep-on-failure / delete-on-success.
 
-Requires the `sui` CLI (resolved via `$SUI_BINARY`, `~/.local/bin/sui`, or
-`PATH`) and the `~/.move` cache populated with the Pyth Lazer / Wormhole
-`sui-testnet` branches (a normal `sui move build` of predict primes it).
+## How it works
 
-Instance state lives under `.localnets/` (gitignored).
+**Two layers.** Python orchestrates (bring-up, slot/port registry, publish, oracle init,
+process supervision, teardown); TypeScript actors drive the protocol. They coordinate via
+on-chain state plus **atomically-written** shared JSON in the instance dir (`feeds.json`,
+`snapshot.json`, `markets.json`).
+
+**Bring-up** stages the Predict closure into a scratch workspace and publishes it into a
+fresh localnet (no checkout mutation → N in parallel from one clone), initializes Wormhole +
+Pyth + account, and registers a **local trusted signer** — the harness re-signs the real
+Pyth data with its own key (real signatures don't verify on localnet; the data is real, the
+signature is local).
+
+**Three actors, one stream:**
+- **Updater** — the sole market-data consumer: streams the full `real_time` Pyth spot + Block
+  Scholes per-expiry forward/SVI, clamps each timestamp to `≤ Clock−1` (monotonic), and pushes
+  them onto the on-chain feeds ~1×/s. Writes `snapshot.json`.
+- **Keeper** — the lifecycle driver: each ~15s tick it **reconciles the active markets from
+  chain**, settles + flushes expired markets, liquidates live ones, and rolls new markets.
+  Crash/restart-safe (chain-reconciled, supervised).
+- **Traders** — read the shared files and fuzz mints/redeems; a fraction send deliberately
+  invalid orders to exercise the admission + slippage guards.
+
+**Settlement** is production-faithful and independent of the live stream: at a market's expiry
+the keeper fetches the **exact spot at that timestamp from the Pyth Lazer history endpoint**,
+re-signs it locally, and inserts it at the expiry key so the flush settles the market.
+
+**Scaling & reproducibility** — `up-many` runs N localnets off a single shared market-data hub
+(one WS pair); the hub can record its stream and `up --replay <file>` re-plays it (no live WS).
+
+**Analysis** — every actor appends a JSONL trace; `analyze` reports gas-vs-moneyness, the
+pool-NAV trend (drain heuristic), and a **bug oracle** that flags any transaction abort not
+coming from our own packages (arithmetic/framework errors are the contract-bug signal).
+
+## Requirements
+
+- The `sui` CLI (resolved via `$SUI_BINARY`, `~/.local/bin/sui`, or `PATH`).
+- The `~/.move` cache primed with the Pyth Lazer / Wormhole `sui-testnet` branches (a normal
+  `sui move build` of predict does this).
+- `harness/.env` with `PYTH_PRO_API_KEY` + `BLOCK_SCHOLES_API_KEY` (gitignored; never commit).
+
+## Note
+
+The localnet `Clock` is the validator's real wall-clock and can't be warped, so the sim runs
+in **real time** (a 1-minute market takes a real minute); throughput scales by running
+localnets in parallel, not by compressing time.
