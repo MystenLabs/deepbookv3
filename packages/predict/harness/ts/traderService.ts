@@ -17,6 +17,7 @@ import {
   depositOwnedCoinTx,
   deriveAccountWrapperId,
   readPlpBalance,
+  signExecThreaded,
 } from "./runtime.js";
 
 const TRADER_ADDRESS = process.env.TRADER_ADDRESS ?? "";
@@ -40,7 +41,7 @@ const readJson = (p: string): any => {
 async function submit(tx: any, label: string): Promise<any> {
   tx.setSender(TRADER_ADDRESS);
   tx.setGasBudget(GAS_BUDGET);
-  const r = await client.signAndExecuteTransaction({ transaction: tx, signer, options: { showEffects: true, showEvents: true } });
+  const r = await signExecThreaded(tx, signer, { showEffects: true, showEvents: true });
   if (r.effects?.status?.status !== "success") throw new Error(`${label}: ${JSON.stringify(r.effects?.status)}`);
   return r;
 }

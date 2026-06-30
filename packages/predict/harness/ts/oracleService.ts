@@ -12,7 +12,7 @@ import { getSigner, getSignerForAddress } from "./env.js";
 import { atomicWriteFile } from "./io.js";
 import { type MarketSource, DirectWsSource, HubSource, ReplaySource } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
-import { buildOracleRefreshGridTx, clampedSourceTimestampMs, client } from "./runtime.js";
+import { buildOracleRefreshGridTx, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
 
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = run until SIGTERM
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
@@ -38,7 +38,7 @@ async function waitForFeeds(): Promise<Feeds> {
 async function submit(tx: any, signer: any): Promise<string> {
   tx.setSender(signer.getPublicKey().toSuiAddress());
   tx.setGasBudget(GAS_BUDGET);
-  const r = await client.signAndExecuteTransaction({ transaction: tx, signer, options: { showEffects: true } });
+  const r = await signExecThreaded(tx, signer, { showEffects: true });
   const status = (r as any).effects?.status?.status;
   if (status !== "success") throw new Error(`status=${JSON.stringify((r as any).effects?.status)}`);
   return r.digest;

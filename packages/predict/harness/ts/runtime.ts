@@ -1554,6 +1554,31 @@ export function redeemTx(params: RedeemParams): Transaction {
     return tx;
 }
 
+// Per-sender gas-coin threading. The gas coin's version bumps on EVERY tx, so re-resolving it via
+// a fresh RPC read each build races the validator under load — the "needs to be rebuilt because
+// object version unavailable" reject. Instead we pin the gas payment to the exact ref the prior
+// tx's effects returned (the chain is the source of truth for the version, not the RPC view). A
+// MoveAbort still executes + advances the coin, so we update the pin from its effects; a submission
+// reject (no effects, e.g. gas depletion) drops the pin so the next tx re-resolves a fresh coin.
+// Every actor awaits its txs (sequential per sender), so there is no equivocation on the pin.
+const gasRefBySender = new Map<string, { objectId: string; version: string; digest: string }>();
+
+export async function signExecThreaded(tx: Transaction, txSigner: any, options: any = {}): Promise<any> {
+    const sender = txSigner.getPublicKey().toSuiAddress();
+    const pinned = gasRefBySender.get(sender);
+    if (pinned) tx.setGasPayment([pinned]);
+    let r: any;
+    try {
+        r = await client.signAndExecuteTransaction({ transaction: tx, signer: txSigner, options: { ...options, showEffects: true } });
+    } catch (error) {
+        gasRefBySender.delete(sender); // submission rejected (no execution) -> re-resolve a fresh gas coin next time
+        throw error;
+    }
+    const ref = (r as any).effects?.gasObject?.reference;
+    if (ref) gasRefBySender.set(sender, { objectId: ref.objectId, version: String(ref.version), digest: ref.digest });
+    return r;
+}
+
 export async function executeAndWait(
     tx: Transaction,
     label = "transaction",
@@ -1564,11 +1589,7 @@ export async function executeAndWait(
 
     let execution: any;
     try {
-        execution = await client.signAndExecuteTransaction({
-            transaction: tx,
-            signer,
-            options: SETUP_RESPONSE_OPTIONS,
-        });
+        execution = await signExecThreaded(tx, signer, SETUP_RESPONSE_OPTIONS);
     } catch (error) {
         const artifactPath = await tryCollectTransactionDebug({
             tx,
