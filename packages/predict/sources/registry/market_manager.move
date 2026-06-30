@@ -241,21 +241,18 @@ public(package) fun set_cadence_config(
     initial_expiry_cash: u64,
     window_size: u64,
 ) {
-    assert_cadence_config(
+    let config = CadenceConfig {
         tick_size,
         admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
         window_size,
-    );
+    };
+    assert_cadence_config(&config);
     let cadence_index = cadence_index(cadence_id);
     let cadence =
         &mut manager.underlying_config_mut(propbook_underlying_id).cadences[cadence_index];
-    cadence.tick_size = tick_size;
-    cadence.admission_tick_size = admission_tick_size;
-    cadence.max_expiry_allocation = max_expiry_allocation;
-    cadence.initial_expiry_cash = initial_expiry_cash;
-    cadence.window_size = window_size;
+    *cadence = config;
 }
 
 public(package) fun record_expiry_creation(
@@ -329,13 +326,14 @@ fun cadence_index(cadence_id: u8): u64 {
     (cadence_id as u64)
 }
 
-fun assert_cadence_config(
-    tick_size: u64,
-    admission_tick_size: u64,
-    max_expiry_allocation: u64,
-    initial_expiry_cash: u64,
-    window_size: u64,
-) {
+fun assert_cadence_config(config: &CadenceConfig) {
+    let CadenceConfig {
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        window_size,
+    } = *config;
     let disabled =
         tick_size == 0
             && admission_tick_size == 0
