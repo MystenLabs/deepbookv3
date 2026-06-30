@@ -120,6 +120,13 @@ public fun generate_auth_as_app<App>(registry: &AccountRegistry, _permit: Permit
 }
 
 // === Private Functions ===
+fun assert_account_does_not_exist(registry: &AccountRegistry, owner: address) {
+    assert!(
+        !registry.derived_exists(owner) && !registry.derived_wrapper_exists(owner),
+        EAccountAlreadyExists,
+    );
+}
+
 fun new_for_owner(
     registry: &mut AccountRegistry,
     owner: address,
@@ -141,11 +148,4 @@ fun new_for_owner(
         self_owned,
     );
     wrapper
-}
-
-fun assert_account_does_not_exist(registry: &AccountRegistry, owner: address) {
-    assert!(
-        !registry.derived_exists(owner) && !registry.derived_wrapper_exists(owner),
-        EAccountAlreadyExists,
-    );
 }

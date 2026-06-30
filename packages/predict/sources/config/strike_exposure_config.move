@@ -50,7 +50,7 @@ public struct StrikeExposureConfig has store {
     expiry_fee_max_multiplier: u64,
 }
 
-/// Mint admission outcome: the per-contract net premium charged and the static
+/// Mint admission outcome: the net premium charged for the order and the static
 /// floor `F` (`floor_shares`), returned together so callers read them by name.
 public struct MintAdmission has drop {
     net_premium: u64,

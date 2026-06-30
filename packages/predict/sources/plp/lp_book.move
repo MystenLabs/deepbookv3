@@ -66,7 +66,7 @@ public struct RequestQueue<phantom T> has store {
 /// Frozen flush share-price mark: `pool_value` over `total_supply`. Carried as one
 /// value so the supply/withdraw pricing helpers read each term by name and cannot
 /// transpose the numerator and denominator.
-public struct FlushMark has copy, drop {
+public struct FlushMark has drop {
     pool_value: u64,
     total_supply: u64,
 }
