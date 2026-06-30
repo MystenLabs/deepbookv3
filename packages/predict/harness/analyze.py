@@ -1,9 +1,15 @@
-"""Analyze a harness run's JSONL trace.
+"""Analyze a harness run's JSONL trace(s).
 
-Reads INSTANCE_DIR/trace/*.jsonl (one file per actor) and reports: op counts, gas vs
-moneyness for mints, the pool-NAV trend (drain heuristic), and the bug oracle — any
-transaction failure whose abort is NOT an expected guard from one of our packages
-(arithmetic/framework errors are the headline bug signal).
+Reports op counts, gas-vs-moneyness, the pool-NAV trend (drain heuristic), keeper liveness,
+and the BUG ORACLE. Classification is code-aware: a Move abort from an INVARIANT module
+(arithmetic / accounting / index / custody) or a non-package module is FLAGGED as a likely
+contract bug; aborts from GUARD modules are expected business preconditions; submission /
+external-data (HTTP, rate-limit) failures are transient.
+
+Exit status is non-zero when the oracle flags an abort, an adversarial probe was wrongly
+accepted, or an instance has no keeper trace — so background/autonomous runs have a
+programmatic signal, not just the banner. Aggregates across ALL instance dirs of a run, so
+parallel up-many is not single-instance blind.
 """
 
 from __future__ import annotations
@@ -14,46 +20,75 @@ from pathlib import Path
 
 from . import config
 
-# Modules in the Predict package closure whose aborts are EXPECTED business guards (a
-# trader/keeper hitting a documented precondition), not bugs.
-KNOWN_MODULES = {
-    "pricing", "expiry_market", "strike_exposure", "strike_payout_tree", "liquidation_book",
-    "range_codec", "plp", "pool_accounting", "lp_book", "expiry_cash", "predict_account",
-    "pricing_config", "strike_exposure_config", "config_constants", "protocol_config",
+# GUARD modules: a Move abort here is an EXPECTED business precondition (admission, expiry,
+# freshness, slippage, balance, oracle binding) that a trader/keeper legitimately trips.
+GUARD_MODULES = {
+    "pricing", "expiry_market", "strike_exposure", "strike_exposure_config",
+    "predict_account", "pricing_config", "config_constants", "protocol_config",
     "registry", "market_manager", "pyth_feed", "block_scholes_spot_feed",
-    "block_scholes_forward_feed", "block_scholes_svi_feed", "account", "account_registry",
-    "math", "i64",
+    "block_scholes_forward_feed", "block_scholes_svi_feed",
 }
-# Submission-level failures (consensus/equivocation/network) — NOT contract bugs.
-_TRANSIENT = ("rpc", "timeout", "network", "fetch", "econn", "socket", "validators", "non-retriable", "equivocat", "rejected as invalid")
+# INVARIANT modules: arithmetic / accounting / index / custody. A healthy run NEVER aborts
+# here, so a hit is a likely contract bug and is flagged regardless of code. (These were
+# previously swallowed because classification keyed on the module name only; e.g. math:3
+# EExpOverflow, i64:0 EZeroDivisor, lp_book EInvalidDrainMark, strike_payout_tree
+# EInsufficientPayoutTerms.)
+INVARIANT_MODULES = {
+    "math", "i64", "plp", "pool_accounting", "strike_payout_tree", "lp_book",
+    "expiry_cash", "liquidation_book", "range_codec", "account", "account_registry",
+}
+# Submission-level / external-data failures — NOT contract bugs (consensus, network, and the
+# Pyth-history endpoint rate-limiting or not-yet-having the exact-ts observation).
+_TRANSIENT = (
+    "rpc", "timeout", "network", "fetch", "econn", "socket", "validators",
+    "non-retriable", "equivocat", "rejected as invalid",
+    "http", "429", "rate limit", "503", "502", "500", "pyth history",
+    "no price for feed", "expected ts",
+)
 
 
-def _latest_instance() -> Path | None:
+def _instances() -> list[Path]:
     if not config.INSTANCES_DIR.exists():
-        return None
-    dirs = [d for d in config.INSTANCES_DIR.iterdir() if (d / "trace").exists()]
-    return max(dirs, key=lambda d: d.stat().st_mtime) if dirs else None
+        return []
+    return [d for d in config.INSTANCES_DIR.iterdir() if (d / "trace").exists()]
 
 
 def _load(trace_dir: Path) -> list[dict]:
     records: list[dict] = []
     for f in sorted(trace_dir.glob("*.jsonl")):
+        actor = f.stem  # actor-aware: keeper operational fails vs trader probes
         for line in f.read_text().splitlines():
             try:
-                records.append(json.loads(line))
+                r = json.loads(line)
+                r["_actor"] = actor
+                records.append(r)
             except json.JSONDecodeError:
                 pass
     return records
 
 
-def analyze(instance: str | None = None) -> int:
-    inst = Path(instance) if instance else _latest_instance()
-    if not inst or not (inst / "trace").exists():
-        print("no trace found (run `harness up --traders N` first)")
-        return 1
+def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]:
+    expected: Counter[str] = Counter()
+    transient: Counter[str] = Counter()
+    flagged: list[str] = []
+    for r in fails:
+        tag = str(r.get("tag", ""))
+        mod = tag.split(":")[0] if ":" in tag else ""
+        if mod in INVARIANT_MODULES:
+            flagged.append(tag)  # arithmetic/accounting/index/custody invariant -> bug
+        elif mod in GUARD_MODULES:
+            expected[tag] += 1
+        elif any(t in tag.lower() for t in _TRANSIENT):
+            transient[tag[:40]] += 1
+        else:
+            flagged.append(tag)  # non-package / framework / unknown abort -> bug
+    return expected, transient, flagged
+
+
+def _analyze_one(inst: Path) -> list[str]:
+    """Print one instance's report; return the list of bug-signal tags (empty = clean)."""
     recs = _load(inst / "trace")
     print(f"=== trace: {inst.name} ({len(recs)} ops) ===\n")
-
     print("op counts:", dict(Counter(r.get("type") for r in recs)))
 
     # gas vs moneyness (mints), bucketed by distance from ATM (|strike/spot - 1|).
@@ -80,29 +115,28 @@ def analyze(instance: str | None = None) -> int:
         else:
             print("  NAV stable (no >1% drawdown)")
 
-    # bug oracle.
+    # keeper liveness: a healthy keeper settles + flushes; failing with no progress = stuck.
+    keeper_flushes = sum(1 for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper")
+    keeper_fails = [r for r in recs if r.get("type") == "fail" and r.get("_actor") == "keeper"]
+    print(f"\nkeeper: {keeper_flushes} flush(es), {len(keeper_fails)} operational fail(s)")
+    stuck = bool(keeper_fails) and keeper_flushes == 0
+    if stuck:
+        print("  *** WARN: keeper failing with no successful flush — settlement/LP lifecycle stuck ***")
+
+    # bug oracle (code-aware; tags are module:code).
     fails = [r for r in recs if r.get("type") == "fail"]
-    expected: Counter[str] = Counter()
-    transient: Counter[str] = Counter()
-    flagged: list[str] = []
-    for r in fails:
-        tag = str(r.get("tag", ""))
-        mod = tag.split(":")[0]
-        if ":" in tag and mod in KNOWN_MODULES:
-            expected[tag] += 1
-        elif any(t in tag.lower() for t in _TRANSIENT):
-            transient[tag[:40]] += 1
-        else:
-            flagged.append(tag)
+    expected, transient, flagged = _classify(fails)
     print(f"\nfailures: {len(fails)} ({sum(expected.values())} expected guards, {sum(transient.values())} transient)")
     if expected:
         print("  expected guards:", dict(expected.most_common(6)))
+    if transient:
+        print("  transient:", dict(transient.most_common(6)))
     if flagged:
-        print(f"  *** BUG ORACLE: {len(flagged)} non-package abort(s) ***")
+        print(f"  *** BUG ORACLE: {len(flagged)} invariant/non-package abort(s) ***")
         for tag, n in Counter(flagged).most_common(10):
             print(f"     {n}x  {tag}")
     else:
-        print("  bug oracle clean (no non-package aborts)")
+        print("  bug oracle clean (no invariant/non-package aborts)")
 
     # adversarial probes: rejection-path coverage (guards firing is the healthy outcome).
     adv_rejected = sum(1 for r in recs if r.get("type") == "fail" and r.get("adversarial"))
@@ -113,4 +147,30 @@ def analyze(instance: str | None = None) -> int:
             print(f"  *** {len(adv_accepted)} adversarial order(s) WRONGLY ACCEPTED — guard gap ***")
             for mode, n in Counter(r.get("mode") for r in adv_accepted).most_common():
                 print(f"     {n}x  {mode}")
-    return 0
+
+    signals = list(flagged)
+    signals += [f"adversarial-accepted:{r.get('mode')}" for r in adv_accepted]
+    if not any(r.get("_actor") == "keeper" for r in recs):
+        signals.append("no-keeper-trace")  # keeper never started / crashed in setup
+        print("  *** WARN: no keeper trace — keeper never started or crashed in setup ***")
+    return signals
+
+
+def analyze(instance: str | None = None) -> int:
+    # Aggregate across ALL instance dirs of the run (up-many is multi-instance); an explicit
+    # dir analyzes only that one.
+    insts = [Path(instance)] if instance else _instances()
+    insts = [i for i in insts if (i / "trace").exists()]
+    if not insts:
+        print("no trace found (run `harness up --traders N` first)")
+        return 1
+    if len(insts) > 1:
+        print(f"aggregating {len(insts)} instance(s)\n")
+    signals: list[str] = []
+    for inst in sorted(insts, key=lambda d: d.name):
+        signals += _analyze_one(inst)
+        print()
+    if len(insts) > 1:
+        print(f"=== aggregate verdict over {len(insts)} instance(s): {'FAIL' if signals else 'clean'} ===")
+    # Non-zero exit so background/autonomous runs have a programmatic failure signal.
+    return 1 if signals else 0
