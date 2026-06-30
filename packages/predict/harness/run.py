@@ -72,7 +72,10 @@ def _publish_localnet(run_id: str, slot: dict[str, Any], inst: Path) -> dict[str
     client_config = localnet.genesis(config_dir, slot["rpc_port"])
     proc = localnet.start(config_dir, slot["rpc_port"], slot["faucet_port"], inst / "logs" / "localnet.log")
     try:
-        state.update(run_id, pid=proc.pid, status="running")
+        # Keep slot.pid = the OWNER harness pid (set in reserve). Record the localnet's own
+        # pid/pgid separately so liveness keys on the owner: a dead harness reclaims the slot
+        # AND kills the orphaned localnet (by pgid), instead of the slot being held forever.
+        state.update(run_id, localnet_pid=proc.pid, localnet_pgid=os.getpgid(proc.pid), status="running")
         localnet.wait_for_rpc(slot["rpc_port"])
         localnet.wait_for_faucet(slot["faucet_port"])
         active = localnet.active_address(client_config)

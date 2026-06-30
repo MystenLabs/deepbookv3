@@ -2,8 +2,10 @@
 
 Each run reserves a slot -> port offset -> (rpc_port, faucet_port). The whole
 read-modify-write is serialized with an exclusive flock so concurrent harness
-processes never pick the same ports. Slots whose owning process is gone are
-reclaimed on the next reservation or via `cleanup --stale`.
+processes never pick the same ports. Liveness is keyed on the OWNING HARNESS pid
+(`slot.pid`), not the localnet child — so if the harness dies, the slot is reclaimed on the
+next reservation or via `cleanup --stale`, AND the orphaned localnet is SIGKILLed by its
+process-group id (`slot.localnet_pgid`) so its ports free up.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import signal
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -61,11 +64,29 @@ def _alive(pid: int | None) -> bool:
     return True
 
 
+def _kill_localnet(slot: dict[str, Any]) -> None:
+    """SIGKILL an orphaned localnet (whose owning harness is gone) so its ports free up.
+    Keyed on the localnet's own process-group id (it is started with start_new_session)."""
+    pgid = slot.get("localnet_pgid")
+    if not pgid:
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def reserve(run_id: str) -> dict[str, Any]:
-    """Reserve the lowest free slot; reclaim dead slots while we hold the lock."""
+    """Reserve the lowest free slot; reclaim dead-owner slots (killing their orphaned
+    localnets) while we hold the lock."""
     with _locked():
         state = _read()
-        slots = {k: v for k, v in state.get("slots", {}).items() if _alive(v.get("pid"))}
+        slots: dict[str, Any] = {}
+        for k, v in state.get("slots", {}).items():
+            if _alive(v.get("pid")):
+                slots[k] = v
+            else:
+                _kill_localnet(v)  # owner harness gone -> reclaim slot + kill orphaned localnet
         used = {v["offset"] for v in slots.values()}
         for i in range(1, config.SLOT_COUNT + 1):
             offset = i * 100
@@ -107,6 +128,7 @@ def reap_stale() -> list[str]:
         state = _read()
         dead = [k for k, v in state.get("slots", {}).items() if not _alive(v.get("pid"))]
         for k in dead:
+            _kill_localnet(state["slots"][k])
             del state["slots"][k]
         if dead:
             _write(state)
