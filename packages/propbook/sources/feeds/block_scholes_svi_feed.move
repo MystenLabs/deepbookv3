@@ -11,7 +11,6 @@ module propbook::block_scholes_svi_feed;
 use block_scholes_oracle::update::SVIUpdate;
 use fixed_math::i64::{Self, I64};
 use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
-use std::option::{Self, Option};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;

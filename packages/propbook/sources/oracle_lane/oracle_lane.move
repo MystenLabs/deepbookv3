@@ -12,7 +12,6 @@
 /// lane writes that are future, zero, stale, or duplicate are no-ops.
 module propbook::oracle_lane;
 
-use std::option::{Self, Option};
 use sui::{event, table::{Self, Table}};
 
 /// Timestamped oracle read. Raw and normalized reads use the same timestamp

@@ -208,11 +208,7 @@ public fun sqrt(x: u64, precision: u64): u64 {
 public fun pow10(n: u64): u64 {
     assert!(n <= 18, EPow10ExponentTooLarge);
     let mut result: u64 = 1;
-    let mut i = 0;
-    while (i < n) {
-        result = result * 10;
-        i = i + 1;
-    };
+    n.do!(|_| result = result * 10);
     result
 }
 

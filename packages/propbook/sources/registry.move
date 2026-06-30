@@ -17,12 +17,11 @@
 module propbook::registry;
 
 use propbook::{
-    block_scholes_forward_feed::{Self as block_scholes_forward_feed, BlockScholesForwardFeed},
-    block_scholes_spot_feed::{Self as block_scholes_spot_feed, BlockScholesSpotFeed},
-    block_scholes_svi_feed::{Self as block_scholes_svi_feed, BlockScholesSVIFeed},
-    pyth_feed::{Self as pyth_feed, PythFeed}
+    block_scholes_forward_feed::{Self, BlockScholesForwardFeed},
+    block_scholes_spot_feed::{Self, BlockScholesSpotFeed},
+    block_scholes_svi_feed::{Self, BlockScholesSVIFeed},
+    pyth_feed::{Self, PythFeed}
 };
-use std::option::{Self, Option};
 use sui::{event, table::{Self, Table}};
 
 const ESourceAlreadyExists: u64 = 0;
