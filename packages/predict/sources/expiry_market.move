@@ -265,7 +265,7 @@ public fun mint_exact_quantity(
     market.assert_live_mint_allowed(config, pricer);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     market
         .strike_exposure
         .liquidate_live_orders(
@@ -316,7 +316,7 @@ public fun mint_exact_amount(
     wrapper.settle<DUSDC>(root, clock);
     let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     market
         .strike_exposure
         .liquidate_live_orders(
@@ -602,7 +602,8 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
-/// Resolve one account's settled trading-loss rebate and return unearned reserve.
+/// Resolve one account's settled trading-loss rebate. Returns the unearned residual
+/// rebate-reserve cash and the rebate amount paid to the account.
 public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -612,10 +613,9 @@ public(package) fun claim_trading_loss_rebate(
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
-    let (trading_fees_paid, gross_profit) = predict_account::resolve_expiry_summary(
-        account,
-        market.id(),
-    );
+    let summary = predict_account::resolve_expiry_summary(account, market.id());
+    let trading_fees_paid = summary.fees_paid();
+    let gross_profit = summary.gross_profit();
     if (trading_fees_paid == 0) {
         return (balance::zero(), 0)
     };
@@ -624,7 +624,7 @@ public(package) fun claim_trading_loss_rebate(
         .cash
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     let rebate_amount = config.stake_config().rebate_amount(eligible_rebate, active_stake);
 
     if (rebate_amount > 0) {
@@ -829,7 +829,7 @@ fun mint_prepared_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let (minted_order, entry_probability, net_premium) = market
+    let mint_quote = market
         .strike_exposure
         .allocate_mint_order(
             pricer,
@@ -838,6 +838,9 @@ fun mint_prepared_exact_quantity(
             quantity,
             leverage,
         );
+    let minted_order = mint_quote.allocated_order();
+    let entry_probability = mint_quote.entry_probability();
+    let net_premium = mint_quote.net_premium();
     assert!(entry_probability <= max_probability, EMintProbabilityAboveMax);
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
@@ -921,7 +924,7 @@ fun redeem_live_internal(
     let opened_at_ms = predict_account::position_opened_at_ms(account, market.id(), order.id());
     assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
 
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
@@ -929,9 +932,12 @@ fun redeem_live_internal(
         ctx,
     );
 
-    let (resulting_order, redeem_amount, range_probability) = market
+    let close_quote = market
         .strike_exposure
         .close_and_quote_live_order(pricer, order, close_quantity);
+    let resulting_order = close_quote.resulting_order();
+    let redeem_amount = close_quote.redeem_amount();
+    let range_probability = close_quote.range_probability();
     // Close-side slippage floor: reject if the quoted per-contract probability has
     // slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);

@@ -68,7 +68,7 @@ public struct Account has store {
 public struct DataKey<phantom App>() has copy, drop, store;
 
 /// Per-coin bag key.
-public struct CoinKey<phantom T> has copy, drop, store {}
+public struct CoinKey<phantom T>() has copy, drop, store;
 
 /// Hot-potato authority to mutably open an `AccountWrapper`.
 public struct Auth {
@@ -285,7 +285,7 @@ fun assert_owner(self: &AccountWrapper, owner: address) {
 }
 
 fun stored_balance<T>(self: &Account): u64 {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.balances.contains(key)) {
         let bal: &Balance<T> = &self.balances[key];
         bal.value()
@@ -311,7 +311,7 @@ fun settled_this_timestamp<T>(self: &Account, clock: &Clock): bool {
 }
 
 fun last_settlement_ms<T>(self: &Account): u64 {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.settlements.contains(key)) {
         let timestamp: &u64 = &self.settlements[key];
         *timestamp
@@ -321,7 +321,7 @@ fun last_settlement_ms<T>(self: &Account): u64 {
 }
 
 fun set_last_settlement_ms<T>(self: &mut Account, timestamp: u64) {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.settlements.contains(key)) {
         let last_settlement_ms: &mut u64 = &mut self.settlements[key];
         *last_settlement_ms = timestamp;
@@ -331,7 +331,7 @@ fun set_last_settlement_ms<T>(self: &mut Account, timestamp: u64) {
 }
 
 fun deposit_balance<T>(self: &mut Account, balance: Balance<T>) {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.balances.contains(key)) {
         let bal: &mut Balance<T> = &mut self.balances[key];
         bal.join(balance);
@@ -341,7 +341,7 @@ fun deposit_balance<T>(self: &mut Account, balance: Balance<T>) {
 }
 
 fun withdraw_balance<T>(self: &mut Account, amount: u64): Balance<T> {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     assert!(self.balances.contains(key), EBalanceTooLow);
     let bal: &mut Balance<T> = &mut self.balances[key];
     assert!(bal.value() >= amount, EBalanceTooLow);

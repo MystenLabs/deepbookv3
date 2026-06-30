@@ -10,7 +10,6 @@ module propbook::block_scholes_forward_feed;
 
 use block_scholes_oracle::update::ForwardUpdate;
 use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
-use std::option::{Self, Option};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
@@ -110,7 +109,7 @@ public fun raw_forward_value(raw: &RawForward): u64 {
 
 // === Write Functions ===
 
-/// Ingest a verified BS forward update into this feed's generic oracle lane.
+/// Ingest a verified BS forward update into the oracle lane for the update's expiry.
 public fun update(
     feed: &mut BlockScholesForwardFeed,
     update: ForwardUpdate,

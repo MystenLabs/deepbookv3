@@ -14,14 +14,13 @@ module propbook::pyth_feed;
 use fixed_math::math;
 use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
-use std::option::{Self, Option};
 use sui::clock::Clock;
 
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
 const ERawSpotNotFound: u64 = 2;
 const ELazerFeedNotFound: u64 = 3;
-const ELazerPriceUnavailable: u64 = 4;
+const ELazerValueUnavailable: u64 = 4;
 const EInsertTimestampNotExactMillisecond: u64 = 5;
 
 /// Source-native Pyth Lazer spot fields for this feed. The generic oracle lane
@@ -77,16 +76,16 @@ public fun normalized_spot(feed: &PythFeed): Option<OracleRead<u64>> {
     normalized_spot_from_read(&read.destroy_some())
 }
 
-/// Exact raw Pyth spot read for `timestamp_ms`.
-public fun raw_spot_at(feed: &PythFeed, timestamp_ms: u64): OracleRead<RawSpot> {
-    let read = feed.lane.read_at(timestamp_ms);
+/// Exact raw Pyth spot read for `source_timestamp_ms`.
+public fun raw_spot_at(feed: &PythFeed, source_timestamp_ms: u64): OracleRead<RawSpot> {
+    let read = feed.lane.read_at(source_timestamp_ms);
     assert!(read.is_some(), ERawSpotNotFound);
     read.destroy_some()
 }
 
-/// Exact Propbook-normalized spot in 1e9 price scaling for `timestamp_ms`.
-public fun normalized_spot_at(feed: &PythFeed, timestamp_ms: u64): Option<OracleRead<u64>> {
-    let read = feed.lane.read_at(timestamp_ms);
+/// Exact Propbook-normalized spot in 1e9 price scaling for `source_timestamp_ms`.
+public fun normalized_spot_at(feed: &PythFeed, source_timestamp_ms: u64): Option<OracleRead<u64>> {
+    let read = feed.lane.read_at(source_timestamp_ms);
     if (read.is_none()) return option::none();
     normalized_spot_from_read(&read.destroy_some())
 }
@@ -180,7 +179,7 @@ fun raw_spot_from_update(update: &LazerUpdate, pyth_source_id: u32): RawSpot {
     let source_timestamp_us = update.timestamp();
     let feeds = update.feeds_ref();
     let idx_opt = feeds.find_index!(|f| f.feed_id() == pyth_source_id);
-    assert_lazer_feed_found(idx_opt.is_some());
+    assert!(idx_opt.is_some(), ELazerFeedNotFound);
     let feed = &feeds[idx_opt.destroy_some()];
 
     let price = extract_lazer_price(feed.price());
@@ -228,7 +227,7 @@ fun new_raw_spot(
 
 fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
     let source_timestamp_us = raw.source_timestamp_us;
-    oracle_lane::new_read(us_to_ms_ceil(source_timestamp_us), update_timestamp_ms, raw)
+    oracle_lane::new_read(source_timestamp_us.div_ceil(1000), update_timestamp_ms, raw)
 }
 
 fun new_raw_insert_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
@@ -237,27 +236,18 @@ fun new_raw_insert_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawS
     oracle_lane::new_read(source_timestamp_us / 1000, update_timestamp_ms, raw)
 }
 
-fun assert_lazer_feed_found(feed_found: bool) {
-    assert!(feed_found, ELazerFeedNotFound);
-}
-
 fun extract_lazer_price(price_outer: Option<Option<LazerI64>>): LazerI64 {
     // Both Option layers must be Some: the field must exist in the update, and
     // the value must be present (Lazer returns None without enough publishers).
-    assert!(price_outer.is_some(), ELazerPriceUnavailable);
+    assert!(price_outer.is_some(), ELazerValueUnavailable);
     let price_inner = price_outer.destroy_some();
-    assert!(price_inner.is_some(), ELazerPriceUnavailable);
+    assert!(price_inner.is_some(), ELazerValueUnavailable);
     price_inner.destroy_some()
 }
 
 fun extract_lazer_exponent(exp_outer: Option<LazerI16>): LazerI16 {
-    assert!(exp_outer.is_some(), ELazerPriceUnavailable);
+    assert!(exp_outer.is_some(), ELazerValueUnavailable);
     exp_outer.destroy_some()
-}
-
-fun us_to_ms_ceil(timestamp_us: u64): u64 {
-    let ms = timestamp_us / 1000;
-    if (timestamp_us % 1000 == 0) ms else ms + 1
 }
 
 fun normalized_spot_from_read(read: &OracleRead<RawSpot>): Option<OracleRead<u64>> {

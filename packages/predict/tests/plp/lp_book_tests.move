@@ -57,8 +57,7 @@ fun supply_drain_mints_at_mark_and_joins_idle() {
     let (supplies_filled, withdrawals_filled) = book.drain(
         vault_id(),
         &mut ledger,
-        min_supply!(),
-        min_supply!(),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -85,8 +84,7 @@ fun priced_supply_mints_proportional_shares() {
     book.drain(
         vault_id(),
         &mut ledger,
-        60_000_000,
-        30_000_000,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -111,8 +109,7 @@ fun priced_withdraw_burns_and_pays_from_idle() {
     book.drain(
         vault_id(),
         &mut ledger,
-        60_000_000,
-        30_000_000,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -139,8 +136,7 @@ fun two_withdrawals_share_one_frozen_mark() {
     book.drain(
         vault_id(),
         &mut ledger,
-        50_000_000,
-        30_000_000,
+        lp_book::new_flush_mark(50_000_000, 30_000_000),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -169,8 +165,7 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
     let (_s, withdrawals_filled) = book.drain(
         vault_id(),
         &mut ledger,
-        30_000_000,
-        30_000_000,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -202,8 +197,7 @@ fun unbounded_flush_drains_every_queued_supply() {
     let (supplies_filled, _w) = book.drain(
         vault_id(),
         &mut ledger,
-        min_supply!(),
-        min_supply!(),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -232,8 +226,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     let (filled, _w) = book.drain(
         vault_id(),
         &mut ledger,
-        min_supply!(),
-        min_supply!(),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         option::some(2),
         option::none(),
         scenario.ctx(),
@@ -247,8 +240,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     book.drain(
         vault_id(),
         &mut ledger,
-        2 * min_supply!(),
-        3 * min_supply!(),
+        lp_book::new_flush_mark(2 * min_supply!(), 3 * min_supply!()),
         option::none(),
         option::none(),
         scenario.ctx(),
@@ -277,8 +269,7 @@ fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
     let (supplies_filled, withdrawals_filled) = book.drain(
         vault_id(),
         &mut ledger,
-        30_000_000,
-        30_000_000,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
         option::some(1),
         option::some(1),
         scenario.ctx(),
@@ -357,8 +348,7 @@ fun cancelled_supply_requests_do_not_spend_drain_budget() {
     let (filled, _w) = book.drain(
         vault_id(),
         &mut ledger,
-        min_supply!(),
-        min_supply!(),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         option::some(1),
         option::none(),
         scenario.ctx(),
@@ -406,8 +396,7 @@ fun priced_supply_with_zero_pool_value_aborts() {
     book.drain(
         vault_id(),
         &mut ledger,
-        0,
-        min_supply!(),
+        lp_book::new_flush_mark(0, min_supply!()),
         option::none(),
         option::none(),
         scenario.ctx(),

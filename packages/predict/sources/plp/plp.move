@@ -324,13 +324,13 @@ public fun finish_flush(
     // valuation, so the single FlushExecuted event carries the priced mark and its
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
+    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
     let (supplies_filled, withdrawals_filled) = vault
         .lp
         .drain(
             vault_id,
             &mut vault.expiry_accounting,
-            pool_nav,
-            total_supply,
+            mark,
             supply_budget,
             withdraw_budget,
             ctx,
@@ -354,7 +354,7 @@ public fun finish_flush(
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
 /// amount is recorded as inactive on the account and activates next epoch
-/// (`predict_account::active_stake_mut`, run by trade/claim flows). Callable
+/// (`predict_account::roll_active_stake`, run by trade/claim flows). Callable
 /// anytime, any number of times.
 public fun stake_deep(
     vault: &mut PoolVault,
@@ -370,7 +370,7 @@ public fun stake_deep(
     wrapper.settle<DEEP>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let deep = account.withdraw<DEEP>(amount, ctx);
-    predict_account::active_stake_mut(account, ctx);
+    predict_account::roll_active_stake(account, ctx);
     predict_account::add_inactive_stake(account, amount, ctx);
     vault.staked_deep.join(deep.into_balance());
     vault_events::emit_deep_staked(

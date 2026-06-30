@@ -69,7 +69,7 @@ const LN2_U128: u128 = 693_147_180;
 // Largest exp input guaranteed to keep the u64 result in range even at the 1e-7
 // precision ceiling: e^x * 1e9 * (1 + 1e-7) <= u64::MAX. Set ~100 units below the
 // exact math bound (64*ln2 - 9*ln10 ≈ 23.638) so the named EExpOverflow guard
-// always fires before the `as u64` cast (line ~148) could overflow on a hot impl.
+// always fires before the result's `as u64` cast could overflow on a hot impl.
 const EXP_MAX_INPUT: u64 = 23_638_153_618;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
@@ -208,11 +208,7 @@ public fun sqrt(x: u64, precision: u64): u64 {
 public fun pow10(n: u64): u64 {
     assert!(n <= 18, EPow10ExponentTooLarge);
     let mut result: u64 = 1;
-    let mut i = 0;
-    while (i < n) {
-        result = result * 10;
-        i = i + 1;
-    };
+    n.do!(|_| result = result * 10);
     result
 }
 

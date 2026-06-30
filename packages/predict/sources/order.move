@@ -4,7 +4,7 @@
 /// Immutable contract terms encoded in a Predict order ID.
 ///
 /// An `Order` represents the durable contract terms needed after mint: the lower
-/// and higher strike ticks, quantity, the static floor amount (`floor_shares = F`),
+/// and higher strike ticks, quantity, the static floor `F` (`floor_shares`),
 /// and the expiry-local sequence. Mint-only inputs such as entry probability,
 /// leverage, net premium, and fee policy intentionally live outside this module.
 /// The packed ID is the single source of truth at protocol boundaries; raw strike
@@ -29,10 +29,15 @@ const LOWER_TICK_OFFSET: u8 = 70;
 const HIGHER_TICK_OFFSET: u8 = 40;
 const ORDER_ID_BITS: u8 = 196;
 
-const TICK_MASK: u256 = (1u256 << 30) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;
 const U40_MASK: u256 = (1u256 << 40) - 1;
 const U64_MASK: u256 = (1u256 << 64) - 1;
+
+/// u256 mask for the `tick_bits!()`-wide tick fields in the packed order id.
+/// Derived from `constants::tick_bits!()` so it can't drift from the tick width.
+macro fun tick_mask(): u256 {
+    (1u256 << constants::tick_bits!()) - 1
+}
 
 /// Validated typed view over one packed Predict order ID.
 public struct Order has copy, drop {
@@ -140,8 +145,8 @@ fun new(
     quantity_lots: u64,
     sequence: u64,
 ): Order {
-    assert!(lower_tick <= TICK_MASK as u64, EInvalidTick);
-    assert!(higher_tick <= TICK_MASK as u64, EInvalidTick);
+    assert!(lower_tick <= tick_mask!() as u64, EInvalidTick);
+    assert!(higher_tick <= tick_mask!() as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     let quantity = quantity_lots * constants::position_lot_size!();
@@ -163,7 +168,7 @@ fun new(
 // === Private Functions ===
 
 fun decode_tick(id: u256, offset: u8): u64 {
-    ((id >> offset) & TICK_MASK) as u64
+    ((id >> offset) & tick_mask!()) as u64
 }
 
 fun decode_u32(id: u256, offset: u8): u64 {

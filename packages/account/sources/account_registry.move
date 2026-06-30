@@ -75,21 +75,7 @@ public fun derived_wrapper_exists(registry: &AccountRegistry, owner: address): b
 /// Create the sender's canonical derived account wrapper.
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
-    registry.assert_account_does_not_exist(owner);
-    let wrapper = account::new_derived(
-        &mut registry.id,
-        AccountWrapperKey(owner),
-        AccountKey(owner),
-        owner,
-        ctx,
-    );
-    account_events::emit_account_created(
-        wrapper.load_account().account_id(),
-        wrapper.id(),
-        owner,
-        false,
-    );
-    wrapper
+    registry.new_for_owner(owner, false, ctx)
 }
 
 /// Create the canonical derived account wrapper owned by `owner_uid`'s object address.
@@ -99,21 +85,7 @@ public fun new_self_owned(
     ctx: &mut TxContext,
 ): AccountWrapper {
     let owner = owner_uid.to_inner().to_address();
-    registry.assert_account_does_not_exist(owner);
-    let wrapper = account::new_derived(
-        &mut registry.id,
-        AccountWrapperKey(owner),
-        AccountKey(owner),
-        owner,
-        ctx,
-    );
-    account_events::emit_account_created(
-        wrapper.load_account().account_id(),
-        wrapper.id(),
-        owner,
-        true,
-    );
-    wrapper
+    registry.new_for_owner(owner, true, ctx)
 }
 
 /// Return whether `App` is authorized for app-driven account access.
@@ -153,4 +125,27 @@ fun assert_account_does_not_exist(registry: &AccountRegistry, owner: address) {
         !registry.derived_exists(owner) && !registry.derived_wrapper_exists(owner),
         EAccountAlreadyExists,
     );
+}
+
+fun new_for_owner(
+    registry: &mut AccountRegistry,
+    owner: address,
+    self_owned: bool,
+    ctx: &mut TxContext,
+): AccountWrapper {
+    registry.assert_account_does_not_exist(owner);
+    let wrapper = account::new_derived(
+        &mut registry.id,
+        AccountWrapperKey(owner),
+        AccountKey(owner),
+        owner,
+        ctx,
+    );
+    account_events::emit_account_created(
+        wrapper.load_account().account_id(),
+        wrapper.id(),
+        owner,
+        self_owned,
+    );
+    wrapper
 }

@@ -145,7 +145,7 @@ fun reference_tick_admits_up_and_down_ranges() {
 
     assert_reference_tick_is_off_admission_grid(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
     harness.exposure.set_reference_tick(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
-    let (up_order, _, _) = harness
+    let up_order = harness
         .exposure
         .allocate_mint_order(
             &pricer,
@@ -153,8 +153,9 @@ fun reference_tick_admits_up_and_down_ranges() {
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
-        );
-    let (down_order, _, _) = harness
+        )
+        .allocated_order();
+    let down_order = harness
         .exposure
         .allocate_mint_order(
             &pricer,
@@ -162,7 +163,8 @@ fun reference_tick_admits_up_and_down_ranges() {
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
-        );
+        )
+        .allocated_order();
 
     assert_range(&up_order, ADMISSIBLE_OFF_GRID_REFERENCE_TICK, constants::pos_inf_tick!());
     assert_range(&down_order, 0, ADMISSIBLE_OFF_GRID_REFERENCE_TICK);

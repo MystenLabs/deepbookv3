@@ -46,12 +46,12 @@ public struct SVIUpdate has copy, drop {
     svi_m_is_negative: bool,
 }
 
-// STUB: the production verifier validates BS signatures; this does not.
+/// STUB: the production verifier validates BS signatures; this does not.
 public fun new_spot_update(source_id: u32, published_at_ms: u64, spot: u64): SpotUpdate {
     SpotUpdate { source_id, published_at_ms, spot }
 }
 
-// STUB: the production verifier validates BS signatures; this does not.
+/// STUB: the production verifier validates BS signatures; this does not.
 public fun new_forward_update(
     source_id: u32,
     expiry_ms: u64,
@@ -61,7 +61,7 @@ public fun new_forward_update(
     ForwardUpdate { source_id, expiry_ms, published_at_ms, forward }
 }
 
-// STUB: the production verifier validates BS signatures; this does not.
+/// STUB: the production verifier validates BS signatures; this does not.
 public fun new_svi_update(
     source_id: u32,
     expiry_ms: u64,

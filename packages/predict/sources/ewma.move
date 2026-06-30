@@ -57,6 +57,7 @@ public(package) fun penalty_fee(
     let z_score = math::div(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 
+    // penalty_rate * quantity, round down
     math::mul(config.penalty_rate(), quantity)
 }
 
@@ -85,7 +86,7 @@ public(package) fun update(
 
     let mean_new = math::mul(alpha, gas_price) + math::mul(one_minus_alpha, self.mean);
 
-    let diff = if (gas_price > self.mean) gas_price - self.mean else self.mean - gas_price;
+    let diff = gas_price.diff(self.mean);
     let diff_squared = math::mul(diff, diff);
     let variance_new = if (self.variance == 0) {
         diff_squared

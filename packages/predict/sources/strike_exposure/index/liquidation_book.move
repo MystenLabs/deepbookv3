@@ -280,8 +280,7 @@ fun collect_passive_candidates(
         added = added + 1;
         last_order_id = option::some(order_id);
         visited = visited + 1;
-        let next = book.next_cursor(candidate);
-        candidate = if (next.is_some()) next.destroy_some() else tail_start_cursor;
+        candidate = book.next_cursor(candidate).destroy_or!(tail_start_cursor);
     };
 
     if (last_order_id.is_some()) {
