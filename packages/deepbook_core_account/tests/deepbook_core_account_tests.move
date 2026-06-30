@@ -32,7 +32,10 @@ const BOB: address = @0xB0B;
 const BASE_AMOUNT: u64 = 5_000_000_000;
 const RESTING_ASK_CLIENT_ORDER_ID: u64 = 11;
 const FILLING_BID_CLIENT_ORDER_ID: u64 = 12;
-const SWAP_LIQUIDITY_CLIENT_ORDER_ID: u64 = 13;
+const ZERO_BALANCE: u64 = 0;
+const NO_OPEN_ORDER_COUNT: u64 = 0;
+const SINGLE_OPEN_ORDER_COUNT: u64 = 1;
+const FIRST_OPEN_ORDER_INDEX: u64 = 0;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
@@ -48,22 +51,24 @@ fun first_touch_lazily_creates_stable_manager() {
     let clock = scenario.take_shared<Clock>();
     assert!(!dca::is_initialized(wrapper.load_account()));
 
-    dca::cancel_all_orders<BASE, QUOTE>(
+    dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
         &registry,
         &mut wrapper,
         account::generate_auth(scenario.ctx()),
+        vector[],
         &clock,
         scenario.ctx(),
     );
     assert!(dca::is_initialized(wrapper.load_account()));
     let first = dca::balance_manager_id(wrapper.load_account()).destroy_some();
 
-    dca::cancel_all_orders<BASE, QUOTE>(
+    dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
         &registry,
         &mut wrapper,
         account::generate_auth(scenario.ctx()),
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -71,6 +76,88 @@ fun first_touch_lazily_creates_stable_manager() {
     assert_eq!(first, second);
 
     return_shared(clock);
+    return_shared(pool);
+    return_shared(registry);
+    destroy(wrapper);
+    scenario.end();
+}
+
+#[test]
+fun uninitialized_account_getters_return_empty_values() {
+    let (mut scenario, _registry_id, pool_id, wrapper) = setup_account();
+
+    scenario.next_tx(ALICE);
+    let pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let account = wrapper.load_account();
+    let (base_locked, quote_locked, deep_locked) = dca::locked_balance<BASE, QUOTE>(&pool, account);
+
+    assert!(!dca::account_exists<BASE, QUOTE>(&pool, account));
+    assert!(dca::account<BASE, QUOTE>(&pool, account).is_none());
+    assert!(dca::account_open_orders<BASE, QUOTE>(&pool, account).is_empty());
+    assert_eq!(
+        dca::get_account_order_details<BASE, QUOTE>(&pool, account).length(),
+        NO_OPEN_ORDER_COUNT,
+    );
+    assert_eq!(base_locked, ZERO_BALANCE);
+    assert_eq!(quote_locked, ZERO_BALANCE);
+    assert_eq!(deep_locked, ZERO_BALANCE);
+
+    return_shared(pool);
+    destroy(wrapper);
+    scenario.end();
+}
+
+#[test]
+fun account_getters_return_core_account_and_order_state() {
+    let (mut scenario, registry_id, pool_id, mut wrapper) = setup_whitelisted_account();
+    authorize_core_app(&mut scenario, registry_id);
+    let trade_amount = constants::min_size();
+
+    scenario.next_tx(ALICE);
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let root = scenario.take_shared<AccumulatorRoot>();
+    let clock = scenario.take_shared<Clock>();
+    let ask = dca::place_limit_order<BASE, QUOTE>(
+        &mut pool,
+        &registry,
+        &mut wrapper,
+        account::generate_auth(scenario.ctx()),
+        RESTING_ASK_CLIENT_ORDER_ID,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(),
+        trade_amount,
+        false,
+        true,
+        constants::max_u64(),
+        trade_amount,
+        0,
+        0,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    let account = wrapper.load_account();
+    let order_id = ask.order_id();
+    let open_orders = dca::account_open_orders<BASE, QUOTE>(&pool, account);
+    let order_details = dca::get_account_order_details<BASE, QUOTE>(&pool, account);
+    let core_account = dca::account<BASE, QUOTE>(&pool, account).destroy_some();
+    let (base_locked, quote_locked, deep_locked) = dca::locked_balance<BASE, QUOTE>(&pool, account);
+
+    assert!(dca::account_exists<BASE, QUOTE>(&pool, account));
+    assert!(open_orders.contains(&order_id));
+    assert_eq!(open_orders.length(), SINGLE_OPEN_ORDER_COUNT);
+    assert_eq!(core_account.open_orders().length(), SINGLE_OPEN_ORDER_COUNT);
+    assert!(core_account.open_orders().contains(&order_id));
+    assert_eq!(order_details.length(), SINGLE_OPEN_ORDER_COUNT);
+    assert_eq!(order_details.borrow(FIRST_OPEN_ORDER_INDEX).order_id(), order_id);
+    assert_eq!(base_locked, trade_amount);
+    assert_eq!(quote_locked, ZERO_BALANCE);
+    assert_eq!(deep_locked, ZERO_BALANCE);
+
+    return_shared(clock);
+    return_shared(root);
     return_shared(pool);
     return_shared(registry);
     destroy(wrapper);
@@ -218,6 +305,37 @@ fun withdraw_settled_amounts_sweeps_maker_fill_to_account() {
 }
 
 #[test]
+fun permissionless_withdraw_settled_amounts_noops_for_uninitialized_account() {
+    let (mut scenario, _registry_id, pool_id, mut wrapper) = setup_whitelisted_account();
+    authorize_account_app(&mut scenario);
+
+    scenario.next_tx(BOB);
+    let account_registry = scenario.take_shared<AccountRegistry>();
+    let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let root = scenario.take_shared<AccumulatorRoot>();
+    let clock = scenario.take_shared<Clock>();
+    assert!(!dca::is_initialized(wrapper.load_account()));
+    dca::withdraw_settled_amounts_permissionless<BASE, QUOTE>(
+        &mut pool,
+        &account_registry,
+        &mut wrapper,
+        scenario.ctx(),
+    );
+    let account = wrapper.load_account();
+    assert!(!dca::is_initialized(account));
+    assert_eq!(account.balance<BASE>(&root, &clock), BASE_AMOUNT);
+    assert_eq!(account.balance<QUOTE>(&root, &clock), BASE_AMOUNT);
+    assert_eq!(account.balance<DEEP>(&root, &clock), BASE_AMOUNT);
+
+    return_shared(clock);
+    return_shared(root);
+    return_shared(pool);
+    return_shared(account_registry);
+    destroy(wrapper);
+    scenario.end();
+}
+
+#[test]
 fun permissionless_withdraw_settled_amounts_uses_account_registry_app_auth() {
     let (mut scenario, registry_id, pool_id, mut wrapper) = setup_whitelisted_account();
     authorize_core_app(&mut scenario, registry_id);
@@ -299,65 +417,6 @@ fun permissionless_withdraw_settled_amounts_uses_account_registry_app_auth() {
     scenario.end();
 }
 
-#[test]
-fun swap_exact_quote_for_base_returns_output_to_account() {
-    let (mut scenario, registry_id, pool_id, mut wrapper) = setup_whitelisted_account();
-    authorize_core_app(&mut scenario, registry_id);
-    let bob_manager_id = create_balance_manager_with_funds<BASE, QUOTE>(
-        &mut scenario,
-        BOB,
-        BASE_AMOUNT,
-    );
-    let trade_amount = constants::min_size();
-    let resting_ask = place_manager_limit_order<BASE, QUOTE>(
-        &mut scenario,
-        BOB,
-        pool_id,
-        bob_manager_id,
-        SWAP_LIQUIDITY_CLIENT_ORDER_ID,
-        constants::float_scaling(),
-        trade_amount,
-        false,
-    );
-    assert_eq!(resting_ask.status(), constants::live());
-    assert!(resting_ask.order_inserted());
-
-    scenario.next_tx(ALICE);
-    let registry = scenario.take_shared_by_id<Registry>(registry_id);
-    let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
-    let root = scenario.take_shared<AccumulatorRoot>();
-    let clock = scenario.take_shared<Clock>();
-    let (base_out, quote_out, deep_out) = dca::swap_exact_quote_for_base<BASE, QUOTE>(
-        &mut pool,
-        &registry,
-        &mut wrapper,
-        account::generate_auth(scenario.ctx()),
-        trade_amount,
-        0,
-        trade_amount,
-        &root,
-        &clock,
-        scenario.ctx(),
-    );
-    let account = wrapper.load_account();
-    assert_eq!(base_out, trade_amount);
-    assert_eq!(quote_out, 0);
-    assert_eq!(deep_out, 0);
-    assert_eq!(account.balance<BASE>(&root, &clock), BASE_AMOUNT + trade_amount);
-    assert_eq!(account.balance<QUOTE>(&root, &clock), BASE_AMOUNT - trade_amount);
-    assert_eq!(account.balance<DEEP>(&root, &clock), BASE_AMOUNT);
-    assert_eq!(dca::balance_manager_balance<BASE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<QUOTE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<DEEP>(account), 0);
-
-    return_shared(clock);
-    return_shared(root);
-    return_shared(pool);
-    return_shared(registry);
-    destroy(wrapper);
-    scenario.end();
-}
-
 fun setup_account(): (Scenario, ID, ID, AccountWrapper) {
     setup_account_with_pool(false)
 }
@@ -409,41 +468,6 @@ fun create_balance_manager_with_funds<BaseAsset, QuoteAsset>(
     let id = manager.id();
     transfer::public_share_object(manager);
     id
-}
-
-fun place_manager_limit_order<BaseAsset, QuoteAsset>(
-    scenario: &mut Scenario,
-    trader: address,
-    pool_id: ID,
-    balance_manager_id: ID,
-    client_order_id: u64,
-    price: u64,
-    quantity: u64,
-    is_bid: bool,
-): OrderInfo {
-    scenario.next_tx(trader);
-    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-    let clock = scenario.take_shared<Clock>();
-    let mut manager = scenario.take_shared_by_id<BalanceManager>(balance_manager_id);
-    let proof = manager.generate_proof_as_owner(scenario.ctx());
-    let info = pool.place_limit_order<BaseAsset, QuoteAsset>(
-        &mut manager,
-        &proof,
-        client_order_id,
-        constants::no_restriction(),
-        constants::self_matching_allowed(),
-        price,
-        quantity,
-        is_bid,
-        true,
-        constants::max_u64(),
-        &clock,
-        scenario.ctx(),
-    );
-    return_shared(clock);
-    return_shared(pool);
-    return_shared(manager);
-    info
 }
 
 fun place_manager_market_order<BaseAsset, QuoteAsset>(

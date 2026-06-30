@@ -11,13 +11,20 @@ use account::{
     account_registry::{Self as account_registry, AccountRegistry}
 };
 use deepbook::{
+    account::Account as CoreAccount,
     balance_manager::{Self, BalanceManager, DepositCap, TradeCap, WithdrawCap},
+    order::Order,
     order_info::OrderInfo,
     pool::Pool,
     registry::Registry
 };
 use std::internal::permit;
-use sui::{accumulator::AccumulatorRoot, clock::Clock, coin::{Self, Coin}};
+use sui::{
+    accumulator::AccumulatorRoot,
+    clock::Clock,
+    coin::{Self, Coin},
+    vec_set::{Self as vec_set, VecSet}
+};
 use token::deep::DEEP;
 
 /// App witness that namespaces DeepBook core account data on an `Account`.
@@ -52,6 +59,71 @@ public fun balance_manager_balance<T>(account: &Account): u64 {
         0
     } else {
         data(account).balance_manager.balance<T>()
+    }
+}
+
+/// Return whether this account's embedded balance manager has pool account data.
+public fun account_exists<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    account: &Account,
+): bool {
+    if (!account.has_data<DeepbookCoreAccountApp>()) {
+        false
+    } else {
+        pool.account_exists(&data(account).balance_manager)
+    }
+}
+
+/// Return a copy of the DeepBook core account for this account's balance manager.
+public fun account<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    account: &Account,
+): Option<CoreAccount> {
+    if (!account.has_data<DeepbookCoreAccountApp>()) {
+        option::none()
+    } else {
+        let d = data(account);
+        if (!pool.account_exists(&d.balance_manager)) {
+            option::none()
+        } else {
+            option::some(pool.account(&d.balance_manager))
+        }
+    }
+}
+
+/// Return the open order IDs for this account's embedded balance manager.
+public fun account_open_orders<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    account: &Account,
+): VecSet<u128> {
+    if (!account.has_data<DeepbookCoreAccountApp>()) {
+        vec_set::empty()
+    } else {
+        pool.account_open_orders(&data(account).balance_manager)
+    }
+}
+
+/// Return full order details for this account's embedded balance manager.
+public fun get_account_order_details<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    account: &Account,
+): vector<Order> {
+    if (!account.has_data<DeepbookCoreAccountApp>()) {
+        vector[]
+    } else {
+        pool.get_account_order_details(&data(account).balance_manager)
+    }
+}
+
+/// Return locked base, quote, and DEEP balances for this account in the pool.
+public fun locked_balance<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    account: &Account,
+): (u64, u64, u64) {
+    if (!account.has_data<DeepbookCoreAccountApp>()) {
+        (0, 0, 0)
+    } else {
+        pool.locked_balance(&data(account).balance_manager)
     }
 }
 
@@ -157,166 +229,6 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     info
 }
 
-/// Swap exact base for quote using account custody.
-public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    base_in: u64,
-    max_deep_in: u64,
-    min_quote_out: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): (u64, u64, u64) {
-    swap_exact_quantity(
-        pool,
-        deepbook_registry,
-        wrapper,
-        auth,
-        base_in,
-        0,
-        max_deep_in,
-        min_quote_out,
-        root,
-        clock,
-        ctx,
-    )
-}
-
-/// Swap exact quote for base using account custody.
-public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    quote_in: u64,
-    max_deep_in: u64,
-    min_base_out: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): (u64, u64, u64) {
-    swap_exact_quantity(
-        pool,
-        deepbook_registry,
-        wrapper,
-        auth,
-        0,
-        quote_in,
-        max_deep_in,
-        min_base_out,
-        root,
-        clock,
-        ctx,
-    )
-}
-
-/// Swap an exact base or quote amount using account custody.
-public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    base_in: u64,
-    quote_in: u64,
-    max_deep_in: u64,
-    min_out: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): (u64, u64, u64) {
-    wrapper.settle<BaseAsset>(root, clock);
-    wrapper.settle<QuoteAsset>(root, clock);
-    wrapper.settle<DEEP>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    let base_funding = withdraw_or_zero<BaseAsset>(account, base_in, ctx);
-    let quote_funding = withdraw_or_zero<QuoteAsset>(account, quote_in, ctx);
-    let deep_funding = withdraw_or_zero<DEEP>(account, max_deep_in, ctx);
-    ensure_data(account, deepbook_registry, ctx);
-    let d = data_mut(account);
-    deposit_to_manager_if_nonzero<DEEP>(d, deep_funding, ctx);
-    let (base_returned, quote_returned) = pool.swap_exact_quantity_with_manager(
-        &mut d.balance_manager,
-        &d.trade_cap,
-        &d.deposit_cap,
-        &d.withdraw_cap,
-        base_funding,
-        quote_funding,
-        min_out,
-        clock,
-        ctx,
-    );
-    let (base_swept, quote_swept, deep_swept) = sweep_all<BaseAsset, QuoteAsset>(d, ctx);
-    let base_amount = base_returned.value() + base_swept.value();
-    let quote_amount = quote_returned.value() + quote_swept.value();
-    let deep_amount = deep_swept.value();
-    deposit_to_account_if_nonzero<BaseAsset>(account, base_returned);
-    deposit_to_account_if_nonzero<QuoteAsset>(account, quote_returned);
-    deposit_all<BaseAsset, QuoteAsset>(account, base_swept, quote_swept, deep_swept);
-    (base_amount, quote_amount, deep_amount)
-}
-
-/// Modify an order owned by the account's embedded balance manager.
-public fun modify_order<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    order_id: u128,
-    new_quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let account = wrapper.load_account_mut(auth);
-    ensure_data(account, deepbook_registry, ctx);
-    let d = data_mut(account);
-    let proof = d.balance_manager.generate_proof_as_trader(&d.trade_cap, ctx);
-    pool.modify_order(&mut d.balance_manager, &proof, order_id, new_quantity, clock, ctx);
-    let (base_swept, quote_swept, deep_swept) = sweep_all<BaseAsset, QuoteAsset>(d, ctx);
-    deposit_all<BaseAsset, QuoteAsset>(account, base_swept, quote_swept, deep_swept);
-}
-
-/// Cancel a DeepBook order owned by the account's embedded balance manager and
-/// sweep any freed balances back into the account.
-public fun cancel_order<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    order_id: u128,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let account = wrapper.load_account_mut(auth);
-    ensure_data(account, deepbook_registry, ctx);
-    let d = data_mut(account);
-    let proof = d.balance_manager.generate_proof_as_trader(&d.trade_cap, ctx);
-    pool.cancel_order(&mut d.balance_manager, &proof, order_id, clock, ctx);
-    let (base_swept, quote_swept, deep_swept) = sweep_all<BaseAsset, QuoteAsset>(d, ctx);
-    deposit_all<BaseAsset, QuoteAsset>(account, base_swept, quote_swept, deep_swept);
-}
-
-/// Cancel multiple DeepBook orders owned by the account's embedded manager.
-public fun cancel_orders<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    order_ids: vector<u128>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let account = wrapper.load_account_mut(auth);
-    ensure_data(account, deepbook_registry, ctx);
-    let d = data_mut(account);
-    let proof = d.balance_manager.generate_proof_as_trader(&d.trade_cap, ctx);
-    pool.cancel_orders(&mut d.balance_manager, &proof, order_ids, clock, ctx);
-    let (base_swept, quote_swept, deep_swept) = sweep_all<BaseAsset, QuoteAsset>(d, ctx);
-    deposit_all<BaseAsset, QuoteAsset>(account, base_swept, quote_swept, deep_swept);
-}
-
 /// Cancel a live order if it is still open for the embedded manager.
 public fun cancel_live_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -355,24 +267,6 @@ public fun cancel_live_orders<BaseAsset, QuoteAsset>(
     deposit_all<BaseAsset, QuoteAsset>(account, base_swept, quote_swept, deep_swept);
 }
 
-/// Cancel every open order for the embedded manager in this pool.
-public fun cancel_all_orders<BaseAsset, QuoteAsset>(
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let account = wrapper.load_account_mut(auth);
-    ensure_data(account, deepbook_registry, ctx);
-    let d = data_mut(account);
-    let proof = d.balance_manager.generate_proof_as_trader(&d.trade_cap, ctx);
-    pool.cancel_all_orders(&mut d.balance_manager, &proof, clock, ctx);
-    let (base_swept, quote_swept, deep_swept) = sweep_all<BaseAsset, QuoteAsset>(d, ctx);
-    deposit_all<BaseAsset, QuoteAsset>(account, base_swept, quote_swept, deep_swept);
-}
-
 /// Withdraw any settled core amounts into the embedded manager and sweep them back
 /// into the account.
 public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
@@ -404,6 +298,7 @@ public fun withdraw_settled_amounts_permissionless<BaseAsset, QuoteAsset>(
         permit<DeepbookCoreAccountApp>(),
     );
     let account = wrapper.load_account_mut(auth);
+    if (!account.has_data<DeepbookCoreAccountApp>()) return;
     let d = data_mut(account);
     pool.withdraw_settled_amounts_permissionless(&mut d.balance_manager);
     let (base_swept, quote_swept, deep_swept) = sweep_all<BaseAsset, QuoteAsset>(d, ctx);
