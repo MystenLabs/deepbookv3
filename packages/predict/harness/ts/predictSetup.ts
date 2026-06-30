@@ -24,7 +24,9 @@ import {
   executeAndWait,
   lockCapitalTx,
   mintLifecycleCapTx,
+  objectExists,
   readPlpTotalSupply,
+  readSupplyRequestsPending,
   registerUnderlyingAndCreateFeedsTx,
   requestSupplyTx,
   seedOracleTx,
@@ -216,16 +218,25 @@ export async function createAndSeedMarket(
 // afterward, so a fast cadence's first expiry can't race the bootstrap.
 export async function bootstrapPool(lifecycleCapId: string): Promise<{ wrapperId: string }> {
   const wrapperId = deriveAccountWrapperId(address);
-  if ((await readPlpTotalSupply()) > 0n) {
-    console.log("[setup] pool already bootstrapped (PLP supply > 0); skipping");
+  // Fully bootstrapped: the $10M supply has landed. The min-liquidity lock alone is
+  // << BOOTSTRAP_SUPPLY, so this only trips AFTER the final flush — never mid-genesis.
+  if ((await readPlpTotalSupply()) >= BOOTSTRAP_SUPPLY) {
+    console.log("[setup] pool already bootstrapped (supply >= bootstrap); skipping");
     return { wrapperId };
   }
-  await executeAndWait(createAccountTx(), "create-account");
-  await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "lock-capital");
-  await executeAndWait(
-    requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId, amount: BOOTSTRAP_SUPPLY }),
-    "supply",
-  );
+  // Resume-safe genesis (create -> lock -> request -> flush): each step skips if already
+  // done, so a crash mid-bootstrap re-attaches without double-creating the account or
+  // double-queueing the supply. (lock_capital mints the min-liquidity lock, flipping
+  // supply>0 at step 2 — which is why a single supply>0 key would falsely skip steps 3-4
+  // and silently run an under-capitalized pool.)
+  if (!(await objectExists(wrapperId))) await executeAndWait(createAccountTx(), "create-account");
+  if ((await readPlpTotalSupply()) === 0n) await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "lock-capital");
+  if ((await readSupplyRequestsPending()) === 0n && (await readPlpTotalSupply()) < BOOTSTRAP_SUPPLY) {
+    await executeAndWait(
+      requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId, amount: BOOTSTRAP_SUPPLY }),
+      "supply",
+    );
+  }
   await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }), "bootstrap-flush");
   return { wrapperId };
 }

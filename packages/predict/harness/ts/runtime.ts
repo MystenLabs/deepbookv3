@@ -421,11 +421,26 @@ export async function readActiveMarketIds(): Promise<string[]> {
     return parseVectorId(await devInspectFirstReturn(tx));
 }
 
-// On-chain PLP total supply (>0 means the pool is already bootstrapped).
+// On-chain PLP total supply. NOTE: lock_capital mints the min-liquidity lock, so this is
+// >0 after genesis step 2 of 4 — it is NOT a "fully bootstrapped" signal on its own.
 export async function readPlpTotalSupply(): Promise<bigint> {
     const tx = new Transaction();
     tx.moveCall({ target: target("plp", "plp_total_supply"), arguments: [tx.object(POOL_VAULT_ID)] });
     return parseU64LE(await devInspectFirstReturn(tx));
+}
+
+// Queued-but-unflushed PLP supply requests (the genesis supply sits here between
+// request_supply and the bare flush that mints it).
+export async function readSupplyRequestsPending(): Promise<bigint> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("plp", "supply_requests_pending"), arguments: [tx.object(POOL_VAULT_ID)] });
+    return parseU64LE(await devInspectFirstReturn(tx));
+}
+
+// Whether a shared/owned object still exists on chain (used to make genesis steps idempotent).
+export async function objectExists(id: string): Promise<boolean> {
+    const r = await client.getObject({ id });
+    return r.data != null;
 }
 
 // A market's expiry (ms) read from chain — recovers expiries for markets the keeper did
