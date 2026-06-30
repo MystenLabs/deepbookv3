@@ -6,6 +6,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 
 const TRACE_DIR = `${process.env.INSTANCE_DIR ?? "."}/trace`;
 let dirReady = false;
+let warnedTraceFail = false;
 
 export function appendTrace(actor: string, record: Record<string, unknown>): void {
   if (!dirReady) {
@@ -14,7 +15,13 @@ export function appendTrace(actor: string, record: Record<string, unknown>): voi
   }
   try {
     appendFileSync(`${TRACE_DIR}/${actor}.jsonl`, `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
-  } catch { /* tracing is best-effort, never fail the op */ }
+  } catch (e) {
+    // Best-effort (never fail the op), but warn ONCE so dropped fail/crash records aren't silent.
+    if (!warnedTraceFail) {
+      warnedTraceFail = true;
+      console.error(`[trace] WARN appendTrace failed; records may be lost: ${String(e).slice(0, 100)}`);
+    }
+  }
 }
 
 // Net gas (computation + storage - rebate) from a tx result's effects.

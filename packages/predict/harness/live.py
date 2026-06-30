@@ -184,7 +184,7 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
         finally:
             for p in (*core.values(), *traders_procs):
                 _terminate_group(p)
-    return 0
+    return 1 if give_up else 0  # non-zero so a supervised give-up is a programmatic failure
 
 
 def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) -> int:
@@ -235,6 +235,7 @@ def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) ->
         print(f"up-many: hub + {n} localnets (keeper + HubSource updater + {traders} trader each); held. Ctrl-C to tear down.")
         deadline = (time.time() + seconds) if seconds > 0 else None
         last_gas = 0.0
+        failed = False
         try:
             while all(p.poll() is None for p in core):  # hub + keepers + updaters are the core
                 if deadline and time.time() >= deadline:
@@ -246,6 +247,8 @@ def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) ->
                         if 0 <= localnet.balance(rpc_port, addr) < 2_000_000_000:
                             localnet.fund(faucet_port, addr, times=1)
                 time.sleep(2)
+            else:
+                failed = True  # while-condition went false: a core proc (hub/keeper/updater) died
         except KeyboardInterrupt:
             print("tearing down...")
-    return 0
+    return 1 if failed else 0

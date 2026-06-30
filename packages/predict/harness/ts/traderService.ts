@@ -201,4 +201,8 @@ async function main() {
   console.log(`[trader ${LABEL}] done — ${mints} mints, ${redeems} redeems`);
 }
 
-main().then(() => process.exit(0)).catch((e) => { console.error(`[trader ${LABEL}] FAIL:`, e); process.exit(1); });
+main().then(() => process.exit(0)).catch((e) => {
+  appendTrace(LABEL, { type: "fail", tag: errorTag(e), fatal: true });
+  console.error(`[trader ${LABEL}] FAIL:`, e);
+  process.exit(1);
+});

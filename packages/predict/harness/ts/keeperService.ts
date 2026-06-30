@@ -151,4 +151,8 @@ async function main() {
   console.log("[keeper] done");
 }
 
-main().then(() => process.exit(0)).catch((e) => { console.error("[keeper] FAIL:", e); process.exit(1); });
+main().then(() => process.exit(0)).catch((e) => {
+  appendTrace("keeper", { type: "fail", tag: errorTag(e), fatal: true }); // so a setup crash leaves a trace
+  console.error("[keeper] FAIL:", e);
+  process.exit(1);
+});
