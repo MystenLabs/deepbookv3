@@ -34,6 +34,9 @@ export interface MarketSnapshot {
   spot1e9: bigint;
   publishedAtMs: bigint;
   expiries: Map<number, { forward: number; svi: Svi }>;
+  // Recent whole-second Pyth prints (sourceTs -> spot1e9). Settlement reads the exact
+  // print at a market's expiry boundary from here, never the rolling latest spot.
+  recent: Map<number, bigint>;
 }
 export interface MarketSource {
   start(expiries: number[]): Promise<void>;
@@ -60,7 +63,9 @@ function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketS
       if (e) expiries.set(ms, { forward: e.forward, svi: e.svi });
     }
   }
-  return { spot1e9: BigInt(h.spot1e9), publishedAtMs: BigInt(h.publishedAtMs), expiries };
+  const recent = new Map<number, bigint>();
+  for (const [ts, s] of Object.entries(h.recent ?? {})) recent.set(Number(ts), BigInt(s as string));
+  return { spot1e9: BigInt(h.spot1e9), publishedAtMs: BigInt(h.publishedAtMs), expiries, recent };
 }
 
 const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
@@ -76,6 +81,7 @@ export class DirectWsSource implements MarketSource {
   #svi = new Map<number, Svi>();
   #expiries: number[] = [];
   #bsOpen = false;
+  #recent = new Map<number, bigint>(); // whole-second sourceTs -> spot1e9 (exact-expiry settlement)
 
   async start(expiries: number[]): Promise<void> {
     this.#expiries = expiries;
@@ -90,6 +96,14 @@ export class DirectWsSource implements MarketSource {
       const exp = Number(f.exponent ?? -8);
       this.#spot1e9 = BigInt(Math.round(Number(f.price) * 10 ** (exp + 9)));
       this.#spotMs = BigInt(Math.floor(Number(ev.value.parsed.timestampUs) / 1000));
+      // Keep recent whole-second prints; settlement reads the exact-expiry boundary price.
+      if (this.#spotMs % 1000n === 0n) {
+        this.#recent.set(Number(this.#spotMs), this.#spot1e9);
+        if (this.#recent.size > 240) {
+          const oldest = this.#recent.keys().next().value;
+          if (oldest !== undefined) this.#recent.delete(oldest);
+        }
+      }
     });
     this.#pyth.subscribe({
       type: "subscribe", subscriptionId: 1, priceFeedIds: [1],
@@ -156,7 +170,7 @@ export class DirectWsSource implements MarketSource {
       const svi = this.#svi.get(ms);
       if (forward != null && svi) expiries.set(ms, { forward, svi });
     }
-    return { spot1e9: this.#spot1e9, publishedAtMs: this.#spotMs, expiries };
+    return { spot1e9: this.#spot1e9, publishedAtMs: this.#spotMs, expiries, recent: new Map(this.#recent) };
   }
 
   stop(): void {

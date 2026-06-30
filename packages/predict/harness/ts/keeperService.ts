@@ -41,11 +41,16 @@ interface Market {
   settled: boolean;
 }
 
-// Latest spot the updater pushed (1e9), from the shared snapshot. Used as the settlement
-// price for a just-expired market (≈ price at expiry, within one tick).
-function settlementSpot1e9(): bigint | null {
+// The settlement price for a market: its EXACT at-expiry Pyth print (snapshot.recent at
+// the expiry boundary), or the latest spot as a flagged fallback if that print is missing
+// (updater gap). Exact is the norm — the fixed-rate stream lands a print at every boundary.
+function settlementPrice(expiryMs: number): { price: bigint; exact: boolean } | null {
   try {
-    return BigInt(JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8")).spot1e9);
+    const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"));
+    const exact = snap.recent?.[String(expiryMs)];
+    if (exact != null) return { price: BigInt(exact), exact: true };
+    if (snap.spot1e9 != null) return { price: BigInt(snap.spot1e9), exact: false };
+    return null;
   } catch {
     return null;
   }
@@ -61,11 +66,14 @@ async function tick(feeds: Feeds, lifecycleCapId: string, markets: Market[]) {
   //    settles + sweeps it (cash back to pool); live markets are valued on the updater
   //    feed. One flush values EVERY active market.
   if (expired.length) {
-    const spot = settlementSpot1e9();
-    if (spot == null) {
-      console.warn("[keeper] no updater snapshot yet; deferring settlement one tick");
-    } else {
-      const settlements = expired.map((m) => ({ expiryMs: BigInt(m.expiryMs), price: spot }));
+    const settlements: { expiryMs: bigint; price: bigint }[] = [];
+    for (const m of expired) {
+      const sp = settlementPrice(m.expiryMs);
+      if (!sp) break; // no snapshot yet (early startup) — defer the whole flush one tick
+      if (!sp.exact) console.warn(`[keeper] WARN settling ${isoSec(m.expiryMs)} with FALLBACK latest spot (no exact-expiry print)`);
+      settlements.push({ expiryMs: BigInt(m.expiryMs), price: sp.price });
+    }
+    if (settlements.length === expired.length) {
       const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: active.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush+settle",

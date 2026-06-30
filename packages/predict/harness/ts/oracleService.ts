@@ -98,6 +98,7 @@ async function main() {
       spot1e9: snap.spot1e9.toString(),
       publishedAtMs: ts.toString(),
       expiries: Object.fromEntries([...snap.expiries.entries()]),
+      recent: Object.fromEntries([...snap.recent].map(([t, s]) => [t, s.toString()])),
     }));
     try {
       const digest = await submit(
