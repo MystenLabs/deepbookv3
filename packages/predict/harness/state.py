@@ -14,6 +14,7 @@ import fcntl
 import json
 import os
 import signal
+import subprocess
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -60,7 +61,9 @@ def _alive(pid: int | None) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        # The pid exists but we can't signal it -> it is NOT our (same-user) owning harness; it is
+        # a reused/foreign pid. Treat the slot as dead so it is reclaimed, not pinned forever.
+        return False
     return True
 
 
@@ -69,6 +72,17 @@ def _kill_localnet(slot: dict[str, Any]) -> None:
     Keyed on the localnet's own process-group id (it is started with start_new_session)."""
     pgid = slot.get("localnet_pgid")
     if not pgid:
+        return
+    # Guard against pgid reuse (esp. after a reboot — state.json persists but PGIDs are
+    # reassigned): only kill the group if its leader is actually a sui localnet, so we never
+    # SIGKILL an unrelated process group that happens to have inherited this pgid.
+    try:
+        leader = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pgid)], capture_output=True, text=True, timeout=5
+        ).stdout
+    except Exception:
+        leader = ""
+    if "sui" not in leader.lower():
         return
     try:
         os.killpg(pgid, signal.SIGKILL)

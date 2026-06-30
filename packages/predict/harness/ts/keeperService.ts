@@ -33,7 +33,7 @@ const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
 const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
 const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
-const TRADER_DUSDC = 1_000_000_000_000n; // $1M DUSDC per trader (publisher owns the cap)
+const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M default; campaign overrides per strategy
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -43,6 +43,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // lost create response, or a restart) are filled from chain via readMarketExpiry.
 const expiryCache = new Map<string, number>();
 let consecutiveDefers = 0; // flush deferrals in a row — settlement-outage detector
+// Markets whose cash rebalance has SUCCEEDED — only these are advertised to traders. Added on a
+// successful rebalance, removed when the market settles; any active market not in here is retried
+// each tick (a roll whose rebalance failed, or one picked up from chain after a restart).
+const funded = new Set<string>();
 
 async function expiryOf(marketId: string): Promise<number> {
   const cached = expiryCache.get(marketId);
@@ -77,7 +81,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
         keeperFlushTx({ feeds, marketIds: active.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush+settle",
       );
-      expired.forEach((m) => expiryCache.delete(m.id)); // compacted off-chain; forget
+      expired.forEach((m) => { expiryCache.delete(m.id); funded.delete(m.id); }); // compacted off-chain; forget
       settledOk = true;
       consecutiveDefers = 0;
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
@@ -114,19 +118,36 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     }
   }
 
-  // 3. Roll: keep WINDOW live markets ahead of now. Isolated. The new market appears in the
-  //    next tick's reconcile; add it locally now so markets.json includes it this tick.
-  //    GATED on settledOk: during a settlement outage the flush defers, so minting more
-  //    markets would grow the active set past the single-PTB flush gas wall and brick it.
+  // 3. Fund: rebalance every active market not yet confirmed funded (retries a roll whose
+  //    rebalance failed, or a market picked up from chain after a restart). Isolated per market.
+  for (const m of live) {
+    if (funded.has(m.id)) continue;
+    try {
+      await executeAndWait(
+        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id, pythFeedId: feeds.pythFeedId }),
+        "rebalance",
+      );
+      funded.add(m.id);
+    } catch (e) {
+      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
+      console.warn(`[keeper] rebalance retry skipped ${m.id.slice(0, 10)}: ${e instanceof Error ? e.message.slice(0, 80) : e}`);
+    }
+  }
+
+  // 4. Roll: keep WINDOW live markets ahead of now. The market is ADVERTISED (pushed to `live`)
+  //    only AFTER its rebalance succeeds — so traders never see an unfunded market. GATED on
+  //    settledOk: during a settlement outage the flush defers, so minting more markets would grow
+  //    the active set past the single-PTB flush gas wall and brick it.
   if (settledOk && live.length < WINDOW) {
     try {
       const { marketId, expiryMs } = await createMarket(lifecycleCapId, CADENCE);
-      expiryCache.set(marketId, Number(expiryMs));
-      live.push({ id: marketId, expiryMs: Number(expiryMs) });
       await executeAndWait(
         rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
         "rebalance",
       );
+      funded.add(marketId);
+      expiryCache.set(marketId, Number(expiryMs));
+      live.push({ id: marketId, expiryMs: Number(expiryMs) });
       console.log(`[keeper] rolled: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))} (live ${live.length}/${WINDOW})`);
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
@@ -134,8 +155,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     }
   }
 
-  // Publish the live markets for the trade generator.
-  atomicWriteFile(MARKETS_PATH, JSON.stringify(live.map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
+  // Publish only the FUNDED live markets for the trade generator (never advertise unfunded).
+  atomicWriteFile(MARKETS_PATH, JSON.stringify(live.filter((m) => funded.has(m.id)).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
 }
 
 async function main() {

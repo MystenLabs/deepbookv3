@@ -37,6 +37,33 @@ user-facing overview; this file is the editing-critical knowledge.
 - **MarketSource seam** — DirectWs / Hub / Replay behind one interface; keep new data sources
   behind it.
 
+## Strategies & campaign
+- **A strategy is a code module** `ts/strategies/<name>.ts` exporting a `Strategy` (`name`,
+  `tickMs`, `maxOps` (0 = duration-only), `fund` (DUSDC the keeper grants its trader),
+  `cadence`, `async tick(ctx)`). `traderService.ts` is a thin **runner**: reads the `STRATEGY`
+  env (default `fuzz`), loads the module from `strategies/index.ts`, builds the `StrategyCtx`,
+  and ticks until `maxOps` (run-to-completion) or `DURATION_MS`. Add a strategy = drop a module
+  + register it in `index.ts`; `meta.ts` exposes it to the campaign automatically.
+- **Strategies only touch the `StrategyCtx`** (`strategy.ts`) — never call builders/`submit`
+  directly. The ctx wraps them with bookkeeping: `mint` (resolve+submit+track+trace), `redeem`
+  (partial or full — tracks the replacement order id on a partial close), `supply`/`withdraw`,
+  low-level `submitMint` (adversarial probes), `refreshPlp`, `pruneSettled`, `resolve`, utils.
+  Every traced record is auto-tagged with the strategy (analyze labels blocks by it).
+- **Supply is custody-only; withdraw must read first.** `supply()` uses
+  `requestSupplyFromCustodyTx` (pulls from the trader's funded account balance) — NOT
+  `requestSupplyTx`, which mints fresh DUSDC and needs the publisher's TreasuryCap (keeper-only; a
+  trader signing it aborts "not signed by the correct sender"). `withdraw(shares)` needs `shares ≤`
+  the on-chain PLP balance (`refreshPlp()` → `runtime.readPlpBalance`); an over-draw aborts in
+  `lp_book` and the bug oracle would flag it as a false positive. Supply/withdraw are **queued**
+  (realized only by the keeper flush), so a strategy supplies, then withdraws on a LATER tick.
+- **One op per tick, `tickMs ≥ ~1s`** — the open+close same-`Clock`-ms guard
+  (`EMintRedeemSameTimestamp`) aborts a mint+redeem of one order in the same ms; pacing avoids it.
+- **`campaign S1 S2 …`** (`live.campaign`) runs each strategy on its OWN localnet (named by the
+  strategy → `analyze` labels each block) off ONE shared hub, run-to-completion (waits for the
+  trader procs to self-exit at `maxOps`, or `--timeout`), then tears down + auto-runs `analyze`.
+  Per-strategy keeper config (cadence/fund) is read from `strategies/meta.ts` — keep that the
+  single source (don't duplicate the numbers in Python).
+
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**
   (NOT 1e9). Leverage and probability are `1e9`-scaled. Mixing these is the #1 scaling bug.
@@ -65,8 +92,14 @@ user-facing overview; this file is the editing-critical knowledge.
   harness — the harness re-signs oracle updates with a local trusted signer instead.
 
 ## Bug oracle caveat
-- `analyze.py`'s bug oracle is **abort-only**: it flags transaction aborts not from our own
-  packages (arithmetic/framework). It will NOT catch a wrong-but-*successful* tx (a
-  mis-settlement or NAV error that does not abort). `KNOWN_MODULES` aborts = expected guards;
-  consensus/equivocation strings = transient. Adversarial probes wrongly accepted are traced
-  as `adversarial-accepted` (a guard gap).
+- `analyze.py`'s bug oracle is **abort-only**: it flags transaction aborts, NOT a wrong-but-
+  *successful* tx (a mis-settlement / NAV error that does not abort). Classification: an abort in
+  an INVARIANT module, or ANY `module:code` abort from a non-GUARD module, is **flagged** (likely
+  bug); GUARD-module aborts are expected preconditions; HTTP/RPC/consensus strings are transient.
+  A `module:code` tag is matched BEFORE the transient substrings, so a numeric abort code (e.g.
+  `dynamic_field:500`) is never mis-read as an HTTP status. Adversarial probes wrongly accepted are
+  traced as `adversarial-accepted` (a guard gap).
+- **The non-zero exit gates on more than flagged aborts**: also `adversarial-accepted`,
+  `no-keeper-trace` and (campaign) `missing-trace:<name>` (an instance/strategy that never produced
+  a trace), `keeper-stuck` (operational fails with zero successful flush — a bricked settlement/LP
+  lifecycle), and `fatal-crash` (a top-level actor crash, a `{fatal:true}` trace).

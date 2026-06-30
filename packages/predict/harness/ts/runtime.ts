@@ -383,11 +383,11 @@ export async function clockTimestampMs(): Promise<bigint> {
 
 // devInspect a read-only getter and return the first command's first raw return bytes.
 // Read-only chain queries (no signing, no gas) used to reconcile keeper state from chain.
-async function devInspectFirstReturn(tx: Transaction): Promise<number[]> {
+async function devInspectFirstReturn(tx: Transaction, cmdIndex = 0): Promise<number[]> {
     const r = await client.devInspectTransactionBlock({ transactionBlock: tx, sender: address });
     if (r.error) throw new Error(`devInspect failed: ${r.error}`);
-    const rv = r.results?.[0]?.returnValues?.[0]?.[0];
-    if (!rv) throw new Error("devInspect: no return value");
+    const rv = r.results?.[cmdIndex]?.returnValues?.[0]?.[0];
+    if (!rv) throw new Error(`devInspect: no return value at command ${cmdIndex}`);
     return rv as number[];
 }
 
@@ -449,6 +449,21 @@ export async function readMarketExpiry(marketId: string): Promise<bigint> {
     const tx = new Transaction();
     tx.moveCall({ target: target("expiry_market", "expiry"), arguments: [tx.object(marketId)] });
     return parseU64LE(await devInspectFirstReturn(tx));
+}
+
+// An account's PLP share balance (custody, accumulator-accrued). Read so a strategy's
+// withdraw never over-draws — an over-draw aborts in lp_book and the bug oracle would flag
+// it. Chains account::load_account(wrapper) -> account::balance<PLP>(account, root, clock);
+// the u64 is command 1's return.
+export async function readPlpBalance(owner: string): Promise<bigint> {
+    const tx = new Transaction();
+    const account = tx.moveCall({ target: accountTarget("account", "load_account"), arguments: [tx.object(deriveAccountWrapperId(owner))] });
+    tx.moveCall({
+        target: accountTarget("account", "balance"),
+        typeArguments: [`${PACKAGE_ID}::plp::PLP`],
+        arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
+    });
+    return parseU64LE(await devInspectFirstReturn(tx, 1));
 }
 
 async function nextSourceTimestampMs(): Promise<bigint> {
@@ -1201,6 +1216,33 @@ export function requestSupplyTx(params: {
             tx.object(CLOCK_ID),
         ],
     });
+    const supplyAuth = generateAuth(tx);
+    tx.moveCall({
+        target: target("plp", "request_supply"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.wrapperId),
+            supplyAuth,
+            tx.object(params.protocolConfigId),
+            tx.pure.u64(params.amount),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// Queue a supply request pulling `amount` from the account's EXISTING custody DUSDC (no fresh
+// mint). For actors WITHOUT the DUSDC TreasuryCap (traders): the keeper funds the account,
+// then this supplies from that balance — `request_supply` auto-settles + `account.withdraw`
+// pulls the custody DUSDC. (requestSupplyTx mints fresh DUSDC and is keeper-only.)
+export function requestSupplyFromCustodyTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    wrapperId: string;
+    amount: bigint;
+}): Transaction {
+    const tx = new Transaction();
     const supplyAuth = generateAuth(tx);
     tx.moveCall({
         target: target("plp", "request_supply"),

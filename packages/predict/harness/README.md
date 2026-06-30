@@ -18,6 +18,7 @@ cd packages/predict
 
 python3 -m harness up [--traders N] [--cadence ID] [--replay FILE]  # the full running sim
 python3 -m harness up-many N [--traders N]   # parallel: one shared hub -> N localnets
+python3 -m harness campaign S1 S2 ... [--timeout S]  # run named strategies in parallel, then analyze
 python3 -m harness spike-mint                # one-shot: resolve + execute a semantic mint
 python3 -m harness analyze                   # report the latest run's trace
 python3 -m harness run                       # one localnet publish lifecycle (no sim)
@@ -49,8 +50,9 @@ signature is local).
 - **Keeper** — the lifecycle driver: each ~15s tick it **reconciles the active markets from
   chain**, settles + flushes expired markets, liquidates live ones, and rolls new markets.
   Crash/restart-safe (chain-reconciled, supervised).
-- **Traders** — read the shared files and fuzz mints/redeems; a fraction send deliberately
-  invalid orders to exercise the admission + slippage guards.
+- **Traders** — each runs ONE pluggable **strategy** (selected by the `STRATEGY` env; default
+  `fuzz`) against the shared files: mints / redeems / leverage / LP supply+withdraw, plus a
+  fraction of deliberately-invalid orders to exercise the admission + slippage guards.
 
 **Settlement** is production-faithful and independent of the live stream: at a market's expiry
 the keeper fetches the **exact spot at that timestamp from the Pyth Lazer history endpoint**,
@@ -62,6 +64,28 @@ re-signs it locally, and inserts it at the expiry key so the flush settles the m
 **Analysis** — every actor appends a JSONL trace; `analyze` reports gas-vs-moneyness, the
 pool-NAV trend (drain heuristic), and a **bug oracle** that flags any transaction abort not
 coming from our own packages (arithmetic/framework errors are the contract-bug signal).
+
+## Strategies & campaigns
+
+A **strategy** is a code module under `ts/strategies/<name>.ts` exporting a `Strategy`
+(`name`, `tickMs`, `maxOps`, `fund`, `cadence`, and an async `tick(ctx)`). The runner
+(`traderService.ts`) loads the one named by the `STRATEGY` env (default `fuzz`) and ticks it on
+its pace until `maxOps` (run-to-completion) or the run's duration. `tick(ctx)` orchestrates via
+the `StrategyCtx`: state readers (`markets()`, `snapshot()`, `held`, `plpShares`) and actions
+that wrap the PTB builders + bookkeeping (`mint`, `redeem` partial-or-full, `supply`, `withdraw`,
+plus low-level `submitMint` for probes). Add one by dropping a module and registering it in
+`strategies/index.ts`.
+
+Built-in: `fuzz` (default — random feasible trades + adversarial probes), `mint-only`
+(high-frequency unleveraged mints into the nearest expiry, 10k run-to-completion), `mixed-churn`
+(leveraged mints + partial/full redeems + LP supply/withdraw), and `liq-churn` (high-leverage
+near-the-money orders that knock out, so the liquidation pass + NAV-under-liquidation accounting
+are exercised).
+
+`campaign S1 S2 …` runs each named strategy on its **own** localnet (all off one shared hub) to
+completion, tears everything down, then prints a **per-strategy** `analyze` report + an aggregate
+verdict (non-zero exit if the bug oracle flags anything). `--timeout S` caps the run. Per-strategy
+keeper config (cadence, funding) comes from `strategies/meta.ts` — the single source of truth.
 
 ## Requirements
 

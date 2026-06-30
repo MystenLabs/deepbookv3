@@ -15,6 +15,7 @@ parallel up-many is not single-instance blind.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -45,6 +46,9 @@ _TRANSIENT = (
     "http", "429", "rate limit", "503", "502", "500", "pyth history",
     "no price for feed", "expected ts",
 )
+# A Move abort tag is `module:code` (lowercase module, numeric code). Matched so a numeric abort
+# code (e.g. dynamic_field:500) is never mistaken for an HTTP status by the _TRANSIENT substrings.
+_MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
 
 
 def _instances() -> list[Path]:
@@ -78,6 +82,10 @@ def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]
             flagged.append(tag)  # arithmetic/accounting/index/custody invariant -> bug
         elif mod in GUARD_MODULES:
             expected[tag] += 1
+        elif _MOVE_ABORT.match(tag):
+            # a `module:code` abort from an unknown/framework module (e.g. dynamic_field) -> bug.
+            # Checked BEFORE _TRANSIENT so a numeric abort code is never read as an HTTP status.
+            flagged.append(tag)
         elif any(t in tag.lower() for t in _TRANSIENT):
             transient[tag[:40]] += 1
         else:
@@ -88,7 +96,11 @@ def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]
 def _analyze_one(inst: Path) -> list[str]:
     """Print one instance's report; return the list of bug-signal tags (empty = clean)."""
     recs = _load(inst / "trace")
-    print(f"=== trace: {inst.name} ({len(recs)} ops) ===\n")
+    # Label the block by the strategy the trader ran (tagged on every trace record); fall back
+    # to the instance dir name (older traces / keeper-only).
+    strat_tags = Counter(r.get("strategy") for r in recs if r.get("strategy"))
+    label = strat_tags.most_common(1)[0][0] if strat_tags else inst.name
+    print(f"=== strategy: {label} — {len(recs)} ops [{inst.name}] ===\n")
     print("op counts:", dict(Counter(r.get("type") for r in recs)))
 
     # gas vs moneyness (mints), bucketed by distance from ATM (|strike/spot - 1|).
@@ -150,27 +162,41 @@ def _analyze_one(inst: Path) -> list[str]:
 
     signals = list(flagged)
     signals += [f"adversarial-accepted:{r.get('mode')}" for r in adv_accepted]
+    if stuck:
+        signals.append("keeper-stuck")  # (1) a bricked settlement/LP lifecycle must fail the run
+    if any(r.get("fatal") for r in recs):
+        signals.append("fatal-crash")  # (2) a top-level actor crash (fatal trace) must fail the run
+        print("  *** BUG ORACLE: fatal actor crash (setup or main loop) — see the fatal trace ***")
     if not any(r.get("_actor") == "keeper" for r in recs):
         signals.append("no-keeper-trace")  # keeper never started / crashed in setup
         print("  *** WARN: no keeper trace — keeper never started or crashed in setup ***")
+    nav_note = f"NAV ${flushes[-1]['poolValue']:,.0f}" if flushes else "no flush"
+    print(f"\nsummary [{label}]: {len(recs)} ops, {len(fails)} fail(s) ({len(flagged)} flagged), {len(adv_accepted)} adv-accepted, {nav_note}")
     return signals
 
 
-def analyze(instance: str | None = None) -> int:
-    # Aggregate across ALL instance dirs of the run (up-many is multi-instance); an explicit
-    # dir analyzes only that one.
+def analyze(instance: str | None = None, expect: list[str] | None = None) -> int:
+    # Aggregate across ALL instance dirs of the run (up-many is multi-instance); an explicit dir
+    # analyzes only that one. `expect` (a campaign's strategy names) flags any that produced NO
+    # trace — (3) a fully-dead localnet is otherwise silently absent from the verdict.
     insts = [Path(instance)] if instance else _instances()
     insts = [i for i in insts if (i / "trace").exists()]
+    signals: list[str] = []
+    if expect:
+        present = [i.name for i in insts]
+        for name in expect:
+            if not any(n.startswith(f"{name}-") for n in present):
+                signals.append(f"missing-trace:{name}")
+                print(f"*** WARN: strategy '{name}' produced no trace — its localnet/keeper never started ***")
     if not insts:
         print("no trace found (run `harness up --traders N` first)")
         return 1
     if len(insts) > 1:
         print(f"aggregating {len(insts)} instance(s)\n")
-    signals: list[str] = []
     for inst in sorted(insts, key=lambda d: d.name):
         signals += _analyze_one(inst)
         print()
-    if len(insts) > 1:
+    if len(insts) > 1 or expect:
         print(f"=== aggregate verdict over {len(insts)} instance(s): {'FAIL' if signals else 'clean'} ===")
     # Non-zero exit so background/autonomous runs have a programmatic failure signal.
     return 1 if signals else 0

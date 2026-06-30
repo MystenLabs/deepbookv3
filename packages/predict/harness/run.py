@@ -93,7 +93,11 @@ def _publish_localnet(run_id: str, slot: dict[str, Any], inst: Path) -> dict[str
             "proc": proc, "client_config": client_config,
             "deployment": deployment, "active": active, "chain": chain,
         }
-    except Exception:
+    except BaseException:
+        # BaseException (not just Exception) so a KeyboardInterrupt / SIGTERM DURING bring-up
+        # still stops the already-started localnet — the caller only captures `proc` after this
+        # returns, so on an interrupt mid-bring-up its teardown would otherwise no-op and orphan
+        # the localnet (which, started in its own session, doesn't get the terminal signal).
         localnet.stop(proc)
         raise
 

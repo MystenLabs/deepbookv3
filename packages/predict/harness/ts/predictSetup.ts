@@ -136,19 +136,6 @@ export function refreshParams(feeds: Feeds, expiryMs: bigint, snap: Snap) {
   };
 }
 
-// One grid entry (forward + signed-magnitude SVI in 1e9) for buildOracleRefreshGridTx.
-export function gridExpiry(expiryMs: number, snap: Snap) {
-  return {
-    expiry: BigInt(expiryMs),
-    forward: to1e9(snap.bsForward),
-    svi: {
-      a: to1e9(snap.svi.a), b: to1e9(snap.svi.b), sigma: to1e9(snap.svi.sigma),
-      rho: to1e9(Math.abs(snap.svi.rho)), rhoNegative: snap.svi.rho < 0,
-      m: to1e9(Math.abs(snap.svi.m)), mNegative: snap.svi.m < 0,
-    },
-  };
-}
-
 // Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + freshness
 // + a lifecycle cap. Returns the feed ids and the cap needed to create/flush markets.
 export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds: Feeds; lifecycleCapId: string }> {

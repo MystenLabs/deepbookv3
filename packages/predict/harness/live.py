@@ -143,11 +143,17 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
         core = {"keeper": launch_keeper(), "updater": launch_updater()}
         launchers = {"keeper": launch_keeper, "updater": launch_updater}
         restarts = {"keeper": 0, "updater": 0}
+        restart_at = {"keeper": 0.0, "updater": 0.0}
+        healthy_window = 120  # a core proc alive this long since its last restart has recovered
         traders_procs = [
             subprocess.Popen(["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR), env={**base, "TRADER_ADDRESS": a}, start_new_session=True)
             for a in trader_addrs
         ]
         gas_addrs = [ctx["active"], ctx["updater_address"], *trader_addrs]
+        if replay:
+            print("*** REPLAY MODE: markets price off the RECORDED stream but SETTLE on LIVE Pyth prices"
+                  " (settlement uses the history endpoint, independent of the replay) — PnL/solvency"
+                  " results are NOT valid in replay; use it for trade-flow / perf only. ***")
         print(f"\nharness up: keeper + updater + {traders} trader(s); core supervised; localnet held. Ctrl-C to tear down.")
         deadline = (time.time() + seconds) if seconds > 0 else None
         last_gas = 0.0
@@ -160,9 +166,12 @@ def hold(name: str | None = None, seconds: int = 0, cadence: int = 0, traders: i
                 for cname, proc in core.items():
                     if proc.poll() is None:
                         continue
+                    if time.time() - restart_at[cname] > healthy_window:
+                        restarts[cname] = 0  # recovered: only CONSECUTIVE rapid restarts trip the cap
                     restarts[cname] += 1
+                    restart_at[cname] = time.time()
                     if restarts[cname] > max_restarts:
-                        print(f"[supervise] {cname} exceeded {max_restarts} restarts; tearing down")
+                        print(f"[supervise] {cname} exceeded {max_restarts} consecutive restarts; tearing down")
                         give_up = True
                         break
                     print(f"[supervise] {cname} died (exit {proc.returncode}); restart #{restarts[cname]}...")
@@ -252,3 +261,97 @@ def up_many(n: int = 2, seconds: int = 0, cadence: int = 0, traders: int = 1) ->
         except KeyboardInterrupt:
             print("tearing down...")
     return 1 if failed else 0
+
+
+def campaign(strategies: list[str], timeout: int = 0) -> int:
+    """Run each named strategy on its OWN localnet (keeper + HubSource updater + one trader),
+    all off ONE shared market-data hub. Each strategy runs to completion (its maxOps) or until
+    `timeout` seconds; then everything is torn down and `analyze` prints a per-strategy report.
+    Instances are named by strategy so analyze labels each block. Returns analyze's exit code
+    (non-zero if the bug oracle flagged anything).
+    """
+    from . import analyze  # local import to avoid any import cycle
+
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    # Per-strategy config (cadence/fund/maxOps) from the TS registry — the single source of truth.
+    meta_run = subprocess.run(
+        ["npx", "tsx", "strategies/meta.ts"], cwd=str(config.TS_DIR), capture_output=True, text=True
+    )
+    meta_line = next((ln for ln in reversed(meta_run.stdout.splitlines()) if ln.strip().startswith("{")), None)
+    if meta_run.returncode != 0 or not meta_line:
+        print(f"campaign: could not read strategy meta:\n{meta_run.stderr.strip()}")
+        return 1
+    meta = json.loads(meta_line)
+    unknown = [s for s in strategies if s not in meta]
+    if unknown:
+        print(f"campaign: unknown {unknown}; have: {', '.join(meta)}")
+        return 1
+
+    # One hub grid for all localnets — keyed off the first strategy's cadence.
+    cadence = meta[strategies[0]]["cadence"]
+    period_ms = _CADENCE_PERIOD_MS.get(cadence, 60_000)
+    grid_spec = f"{period_ms}:6"
+    hub_snapshot = config.LOCALNETS_DIR / "hub-snapshot.json"
+    hub_record = config.LOCALNETS_DIR / "hub-record.jsonl"
+    with contextlib.ExitStack() as stack:
+        hub = subprocess.Popen(
+            ["npx", "tsx", "hub.ts"], cwd=str(config.TS_DIR),
+            env={**os.environ, "HUB_SNAPSHOT": str(hub_snapshot), "HUB_RECORD": str(hub_record), "GRID_SPEC": grid_spec, "DURATION_MS": "0"},
+            start_new_session=True,
+        )
+        stack.callback(_terminate_group, hub)
+        support = [hub]  # hub + keepers + updaters: the substrate that must stay up
+        traders_procs: list[tuple[str, subprocess.Popen]] = []
+        gas: list[tuple[int, int, str]] = []
+        print(f"hub started (pid {hub.pid}); launching {len(strategies)} strategy localnet(s)...")
+        for s in strategies:
+            ctx = stack.enter_context(oracle_ready_localnet(name=s, keep=True))
+            addr = _create_funded_address(ctx["client_config"], ctx["faucet_port"])
+            base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
+            keeper = subprocess.Popen(
+                ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "KEEPER_CADENCE": str(meta[s]["cadence"]), "TRADER_DUSDC": meta[s]["fund"], "TRADER_ADDRESSES": addr},
+                start_new_session=True,
+            )
+            updater = subprocess.Popen(
+                ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec, "HUB_SNAPSHOT": str(hub_snapshot)},
+                start_new_session=True,
+            )
+            stack.callback(_terminate_group, keeper)
+            stack.callback(_terminate_group, updater)
+            support += [keeper, updater]
+            trader = subprocess.Popen(
+                ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
+                env={**base, "TRADER_ADDRESS": addr, "STRATEGY": s}, start_new_session=True,
+            )
+            stack.callback(_terminate_group, trader)
+            traders_procs.append((s, trader))
+            for a in (ctx["active"], ctx["updater_address"], addr):
+                gas.append((ctx["rpc_port"], ctx["faucet_port"], a))
+        print(f"campaign: running {', '.join(strategies)}; run-to-completion. Ctrl-C to stop early.")
+        deadline = (time.time() + timeout) if timeout > 0 else None
+        last_gas = 0.0
+        try:
+            while any(t.poll() is None for _, t in traders_procs):
+                if deadline and time.time() >= deadline:
+                    print("campaign: timeout reached; stopping.")
+                    break
+                if not all(p.poll() is None for p in support):
+                    print("campaign: a support process (hub/keeper/updater) died; stopping.")
+                    break
+                now = time.time()
+                if now - last_gas >= 30:
+                    last_gas = now
+                    for rpc_port, faucet_port, addr in gas:
+                        if 0 <= localnet.balance(rpc_port, addr) < 2_000_000_000:
+                            localnet.fund(faucet_port, addr, times=1)
+                time.sleep(2)
+            done = [s for s, t in traders_procs if t.poll() is not None]
+            print(f"campaign: {len(done)}/{len(traders_procs)} strategies completed ({', '.join(done) or 'none'}).")
+        except KeyboardInterrupt:
+            print("tearing down...")
+    # ExitStack has torn everything down; aggregate the per-strategy report. `expect` flags any
+    # strategy whose localnet/keeper never produced a trace (otherwise silently absent).
+    print("\n=== campaign report ===")
+    return analyze.analyze(expect=list(strategies))

@@ -100,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
     p_up_many.add_argument("--traders", type=int, default=1, help="fuzz traders per localnet")
     p_up_many.set_defaults(func=lambda a: live.up_many(a.n, a.seconds, a.cadence, a.traders))
 
+    p_campaign = sub.add_parser("campaign", help="run named strategies in parallel (one localnet each) to completion, then analyze")
+    p_campaign.add_argument("strategies", nargs="+", help="strategy names, e.g. mint-only mixed-churn liq-churn")
+    p_campaign.add_argument("--timeout", type=int, default=0, help="safety cap in seconds (0 = until all strategies finish)")
+    p_campaign.set_defaults(func=lambda a: live.campaign(a.strategies, a.timeout))
+
     p_spike_mint = sub.add_parser("spike-mint", help="B1: resolve + execute a semantic mint against live data")
     p_spike_mint.set_defaults(func=lambda a: live.spike_mint())
 
