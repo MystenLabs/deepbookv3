@@ -105,6 +105,25 @@ struct. A transposition compiles and misprices PLP supply/withdraw.
 **Action:** Pass the ledger/accounting struct plus genuinely external values, or
 otherwise narrow the positional surface.
 
+### P-7: Async LP requests have no fill-price protection
+
+**Severity:** Medium.
+
+PLP supply and withdraw requests are queued and filled later at the next flush's
+frozen PLP mark. If the pool has a small amount of PLP capital and at least one
+live market, `current_nav` can be volatile. A large backlog of supply requests
+could all be filled at an unfavorable transient PLP price, and withdraw requests
+have the symmetric risk. Economically, queued supply/withdraw requests behave
+like limit orders to buy or sell PLP, but the request objects currently carry no
+per-request slippage bound.
+
+**Action:** Add request-time limit fields: `min_plp_out` for supply requests and
+`min_dusdc_out` for withdraw requests. `finish_flush` should fill only requests
+whose frozen-mark output satisfies the limit; requests that miss their limit
+should remain queued or be explicitly refundable/cancellable under a documented
+policy. Add tests for both pass and miss cases, including a volatile low-capital
+pool mark.
+
 ## Capacity and Liveness Findings
 
 ### C-1: Full-pool flush has no joint valuation budget
