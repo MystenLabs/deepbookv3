@@ -24,6 +24,7 @@ use sui::{
     accumulator::{Self as accumulator, AccumulatorRoot},
     clock::{Self as clock, Clock},
     coin,
+    event,
     test_scenario::{Self as test, Scenario, return_shared},
     transfer
 };
@@ -53,6 +54,7 @@ fun first_touch_lazily_creates_stable_manager() {
     let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let clock = scenario.take_shared<Clock>();
     assert!(!account_data::is_initialized(wrapper.load_account()));
+    assert!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().is_empty());
 
     dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
@@ -65,6 +67,7 @@ fun first_touch_lazily_creates_stable_manager() {
     );
     assert!(account_data::is_initialized(wrapper.load_account()));
     let first = account_data::balance_manager_id(wrapper.load_account()).destroy_some();
+    assert_eq!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().length(), 1);
 
     dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
@@ -77,6 +80,7 @@ fun first_touch_lazily_creates_stable_manager() {
     );
     let second = account_data::balance_manager_id(wrapper.load_account()).destroy_some();
     assert_eq!(first, second);
+    assert_eq!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().length(), 1);
 
     return_shared(clock);
     return_shared(pool);

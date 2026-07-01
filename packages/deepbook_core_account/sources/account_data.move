@@ -15,7 +15,7 @@ use deepbook::{
     registry::Registry
 };
 use std::internal::permit;
-use sui::coin::{Self, Coin};
+use sui::{coin::{Self, Coin}, event};
 use token::deep::DEEP;
 
 /// App witness that namespaces DeepBook core account data on an `Account`.
@@ -28,6 +28,14 @@ public struct DeepbookCoreAccountData has store {
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
     trade_cap: TradeCap,
+}
+
+/// Emitted once when a canonical account first gets DeepBook core account data.
+public struct DeepbookCoreAccountInitialized has copy, drop {
+    account_id: ID,
+    account_owner: address,
+    wrapper_id: ID,
+    balance_manager_id: ID,
 }
 
 /// Return whether this account already has a DeepBook core account slot.
@@ -81,10 +89,20 @@ public(package) fun ensure(
             account.account_id().to_address(),
             ctx,
         );
+        let account_id = account.account_id();
+        let account_owner = account.owner();
+        let wrapper_id = account.receive_address().to_id();
+        let balance_manager_id = balance_manager.id();
         account.attach(
             permit<DeepbookCoreAccountApp>(),
             DeepbookCoreAccountData { balance_manager, deposit_cap, withdraw_cap, trade_cap },
         );
+        event::emit(DeepbookCoreAccountInitialized {
+            account_id,
+            account_owner,
+            wrapper_id,
+            balance_manager_id,
+        });
     };
 }
 
