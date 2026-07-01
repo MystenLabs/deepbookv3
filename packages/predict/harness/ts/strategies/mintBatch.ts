@@ -41,14 +41,23 @@ const SCRIPT: Spec[] = [
 
 let step = 0;
 let leveragedBook = 0; // running count of leveraged (>1x) orders in the liq book
+let lockedId: string | null = null;
 
 // Lock onto ONE persisting far-out (1h, >2h away) market so the whole script runs against one book.
 function targetMarket(ctx: StrategyCtx): Mkt | null {
-  if (ctx.held.length > 0) return ctx.markets().find((m) => m.id === ctx.held[0].marketId) ?? null;
+  if (lockedId) {
+    const locked = ctx.markets().find((m) => m.id === lockedId);
+    if (locked) return locked;
+    lockedId = null;
+    leveragedBook = 0;
+    step = 0;
+  }
   const live = ctx.markets();
   if (!live.length) return null;
   const farthest = live.reduce((a, b) => (b.expiryMs > a.expiryMs ? b : a));
-  return farthest.expiryMs > Date.now() + TWO_HOURS_MS ? farthest : null;
+  if (farthest.expiryMs <= Date.now() + TWO_HOURS_MS) return null;
+  lockedId = farthest.id;
+  return farthest;
 }
 
 function legFrom(ctx: StrategyCtx, market: Mkt, leverage: number): Leg | null {

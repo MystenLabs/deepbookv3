@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
-import { appendTrace, computationOf, gasOf } from "./trace.js";
+import { abortInfo, appendTrace, computationOf, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -27,6 +27,7 @@ import {
 
 const SCALE = 1_000_000_000n;
 const ADMISSION_K = 0.2;
+const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1", "predict_account:2"]);
 
 export interface Mkt {
   id: string;
@@ -111,6 +112,10 @@ const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 const leverageCap = (p: number) =>
   1 + (RESOLVER_MARKET.maxAdmissionLeverage - 1) * ((p * (1 + ADMISSION_K)) / (p + ADMISSION_K));
+const isTerminalRedeemAbort = (err: unknown): boolean => {
+  const a = abortInfo(err);
+  return a ? TERMINAL_REDEEM_ABORTS.has(`${a.module}:${a.code}`) : false;
+};
 const readJson = (p: string): any => {
   try {
     return JSON.parse(readFileSync(p, "utf8"));
@@ -203,10 +208,12 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
           "redeem",
         );
       } catch (e) {
-        // The order is un-redeemable (liquidated / knocked out / already closed). Drop it so it
-        // isn't re-selected every tick — which would spam identical aborts that look like bugs.
-        const i = held.indexOf(h);
-        if (i >= 0) held.splice(i, 1);
+        // Only stale local position state is terminal. Pricing, valuation-lock,
+        // same-timestamp, and RPC failures should keep the order tracked for retry.
+        if (isTerminalRedeemAbort(e)) {
+          const i = held.indexOf(h);
+          if (i >= 0) held.splice(i, 1);
+        }
         throw e;
       }
       const idx = held.indexOf(h);
