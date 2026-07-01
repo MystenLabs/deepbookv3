@@ -214,6 +214,58 @@ def _analyze_one(inst: Path) -> list[str]:
         else:
             print(f"  no breakpoint (computation peaked at {max_c:,} = {pct} of the {COMP_CAP:,} cap); grow the book further for the empirical limit")
 
+    # mint-batch: the #cap-mintbatch differential. The mint-batch strategy emits controlled batches
+    # ({type:"mintBatch", kind, n, compGas, oog}); a batched leveraged mint amplifies the per-op
+    # liquidation scan ~45x vs standalone, but WHY is unproven. Real total computationCost (per-function
+    # attribution isn't available on localnet) settles it: fit cost(N), and use the lev1-prefix
+    # discriminator (lev1 mints don't write the liq book) to separate dirtied-writes from tx-metering.
+    batches = [r for r in recs if r.get("type") == "mintBatch"]
+    if batches:
+        def _by(kind: str) -> dict[int, int]:  # n -> mean compGas for successful batches of that kind
+            agg: dict[int, list[int]] = defaultdict(list)
+            for r in batches:
+                if r.get("kind") == kind and not r.get("oog") and r.get("compGas"):
+                    agg[int(r["n"])].append(int(r["compGas"]))
+            return {n: sum(v) // len(v) for n, v in agg.items()}
+
+        sweep = _by("sweep")  # identical lev2, N in {1,2,5,10,20,50,100}
+        print("\nmint-batch — batched leveraged mint computation vs batch size N:")
+        if sweep:
+            for n in sorted(sweep):
+                print(f"  N={n:>3}: {sweep[n]:>13,} comp total  ({sweep[n] // n:>11,}/mint)")
+            xs = sorted(sweep)
+            if len(xs) >= 2:
+                ys = [sweep[n] for n in xs]
+                m = len(xs)
+                sx, sy = sum(xs), sum(ys)
+                den = m * sum(x * x for x in xs) - sx * sx
+                if den:
+                    b = (m * sum(x * y for x, y in zip(xs, ys)) - sx * sy) / den
+                    a = (sy - b * sx) / m
+                    print(f"  linear fit: cost ~= {int(a):,} + {int(b):,}*N  (batched marginal {int(b):,} comp/mint)")
+                    if sweep.get(1):
+                        print(f"  standalone (N=1) = {sweep[1]:,} comp/mint; batched marginal / standalone = {b / sweep[1]:.1f}x")
+        oogs = sorted({int(r["n"]) for r in batches if r.get("oog")})
+        if oogs:
+            print(f"  OOG at N in {oogs} (hit the ~{COMP_CAP:,} computation cap) — the atomic-batch ceiling")
+
+        # discriminator: lev2 marginal in a lev1-prefix batch vs standalone lev2 vs lev2-batch marginal.
+        lev1, lev1p2, lev2 = _by("lev1"), _by("lev1_plus_lev2"), _by("lev2")
+        std_lev2 = sweep.get(1)
+        k = 20
+        if lev1.get(k) and lev1p2.get(k + 1) and std_lev2:
+            marginal_in_prefix = lev1p2[k + 1] - lev1[k]
+            print("\n  discriminator (does a lev2's cost need prior liq-book WRITES, or just batch position?):")
+            print(f"    lev2 marginal in a {k}x-lev1 prefix (no prior liq writes) = {marginal_in_prefix:,} comp")
+            print(f"    standalone lev2 (N=1)                                    = {std_lev2:,} comp")
+            if lev2.get(k):
+                print(f"    lev2 marginal inside a {k}x-lev2 batch (prior liq writes) = {lev2[k] // k:,} comp")
+            ratio = marginal_in_prefix / std_lev2 if std_lev2 else 0.0
+            verdict = ("~standalone => amplification needs SAME-PTB liq-book writes (dirtied-field hypothesis)"
+                       if ratio < 2 else
+                       ">> standalone => multi-command PTB alone amplifies (tx-metering hypothesis)")
+            print(f"    => lev2-in-prefix / standalone = {ratio:.1f}x : {verdict}")
+
     # bug oracle (code-aware; tags are module:code). nav-stress breakpoint deferrals excluded (above).
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]
     expected, transient, flagged = _classify(fails)

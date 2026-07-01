@@ -68,7 +68,7 @@ export interface StrategyCtx {
   // low-level: build + submit a BATCH of mints in ONE PTB (N mint_exact_quantity calls). Returns the
   // whole-PTB result (ONE computationCost) and traces {type:"mintBatch", n, gas, compGas} — the
   // #cap-mintbatch scaling probe; the strategy controls each leg (identical, or lev1-prefix + lev2).
-  submitMintBatch(market: Mkt, legs: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }[]): Promise<any>;
+  submitMintBatch(market: Mkt, legs: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }[], meta?: Record<string, unknown>): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
   currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
   idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
@@ -166,14 +166,14 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       );
     },
 
-    async submitMintBatch(market, legs) {
+    async submitMintBatch(market, legs, meta) {
       const mints = legs.map((p) => ({
         expiryMarketId: market.id, wrapperId: deps.wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...deps.feeds,
         strike: p.strike1e9, isUp: p.isUp, quantity: p.quantity, leverage: p.leverage1e9,
         maxCost: p.maxCost, maxProbability: p.maxProbability,
       }));
       const res = await deps.submit(mintBatchTx(mints), "mintBatch");
-      ctx.trace({ type: "mintBatch", n: legs.length, gas: gasOf(res), compGas: computationOf(res) });
+      ctx.trace({ type: "mintBatch", n: legs.length, gas: gasOf(res), compGas: computationOf(res), ...(meta ?? {}) });
       return res;
     },
 
