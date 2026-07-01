@@ -132,10 +132,15 @@ fun one_x_orders_do_not_count_toward_active_leveraged_order_cap() {
     let mut book = liquidation_book::new(ctx);
     insert_sequential_orders(&mut book, constants::max_active_leveraged_orders!());
 
+    // The book is AT the leveraged cap. A 1x order must NOT consume a slot: inserting it
+    // succeeds (no EMaxActiveLeveragedOrders abort — a leveraged insert here would abort, see
+    // insert_above_active_leveraged_order_cap_aborts) and leaves the active leveraged set
+    // unchanged, so the candidate scan still returns exactly the cap. (`contains_active_order`
+    // is not asserted here — it short-circuits false for any 1x order regardless of book state,
+    // so it would be tautological; the unchanged candidate count is the real property.)
     let one_x = one_x_order_with_sequence(constants::max_active_leveraged_orders!());
     book.insert_order(&one_x);
 
-    assert!(!book.contains_active_order(&one_x));
     let candidates = book.select_liquidation_candidates(constants::max_active_leveraged_orders!());
     assert_eq!(candidates.length(), constants::max_active_leveraged_orders!());
     destroy(book);

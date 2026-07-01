@@ -736,8 +736,11 @@ fun lp_pool_value(
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
-    // exceed gross. LP value can never be negative — floor it at 0, which also
-    // prevents the subtraction from underflowing and bricking all PLP supply/withdraw.
+    // exceed gross. LP value can never be negative, so floor it at 0 to keep the
+    // subtraction from underflow-aborting. NOTE this is not a full liveness guarantee:
+    // a 0/dust pool NAV is a real reachable state that still bricks `finish_flush` via
+    // the pool-NAV dust-floor + PLP circuit-breaker guards (see #lp-nav-zero-brick) —
+    // the floor only avoids the arithmetic underflow, not the downstream dust/CB abort.
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 

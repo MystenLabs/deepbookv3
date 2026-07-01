@@ -75,8 +75,50 @@ const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
 const STRESS_CAPITAL_HEADROOM = 10n;
-const STRESS_MINT_BATCH_SIZE = 100;
+// Mints packed into one stress PTB. Default 100 (the original stress shape); override
+// with SIM_STRESS_MINT_BATCH_SIZE for controlled benchmarking — e.g. =1 builds large
+// committed state via single-mint PTBs (each its own trace step) so per-op gas can be
+// measured against state size without the 100-mint-PTB computation-cap failure.
+const STRESS_MINT_BATCH_SIZE = stressMintBatchSizeFromEnv();
 const STRESS_MINT_BATCH_GAS_BUDGET = 150_000_000_000n;
+
+function stressMintBatchSizeFromEnv(): number {
+    const raw = process.env.SIM_STRESS_MINT_BATCH_SIZE?.trim();
+    if (!raw) return 100;
+    if (!/^[1-9][0-9]*$/.test(raw)) {
+        throw new Error(
+            `SIM_STRESS_MINT_BATCH_SIZE must be a positive integer 1..100, got "${raw}"`,
+        );
+    }
+    const value = Number(raw);
+    if (value > 100) {
+        throw new Error(`SIM_STRESS_MINT_BATCH_SIZE must be 1..100, got "${raw}"`);
+    }
+    return value;
+}
+
+// Force every stress mint to this leverage (1e9-scaled), e.g. SIM_STRESS_LEVERAGE=2 makes
+// all stress mints 2x so the ACTIVE LEVERAGED book (the correction_value NAV walk) grows to
+// its cap. Unset = use the scenario row's own leverage.
+const STRESS_MINT_LEVERAGE = stressMintLeverageFromEnv();
+// When SIM_STRESS_SINGLE_STRIKE=1, every stress mint reuses the first scenario mint row's
+// strike/range so the payout tree stays ~2 nodes and only the leveraged book grows —
+// isolating correction_value from walk_linear. Unset = cycle rows (varying strikes).
+const STRESS_SINGLE_STRIKE = process.env.SIM_STRESS_SINGLE_STRIKE?.trim() === "1";
+
+function stressMintLeverageFromEnv(): bigint | null {
+    const raw = process.env.SIM_STRESS_LEVERAGE?.trim();
+    if (!raw) return null;
+    if (!/^[0-9]+(\.[0-9]+)?$/.test(raw)) {
+        throw new Error(`SIM_STRESS_LEVERAGE must be a decimal multiple like "2" or "1.5", got "${raw}"`);
+    }
+    const [whole, frac = ""] = raw.split(".");
+    const scaled = BigInt(whole) * FLOAT_SCALING + BigInt((frac + "000000000").slice(0, 9));
+    if (scaled < FLOAT_SCALING) {
+        throw new Error(`SIM_STRESS_LEVERAGE must be >= 1, got "${raw}"`);
+    }
+    return scaled;
+}
 // Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
 // tick * tick_size`, no centered grid. The harness tick size is $1 (1e9-scaled).
 // Admission uses the same $1 grid so existing generated scenarios keep the old
@@ -192,7 +234,7 @@ function stressMintRows(rows: ScenarioRow[], targetMintCount: number): MintRow[]
 
     const batchCount = Math.ceil(targetMintCount / STRESS_MINT_BATCH_SIZE);
     return Array.from({ length: batchCount }, (_, index) => ({
-        ...mintRows[index % mintRows.length],
+        ...mintRows[STRESS_SINGLE_STRIKE ? 0 : index % mintRows.length],
         step: index + 1,
     }));
 }
@@ -207,6 +249,7 @@ function stressCapitalMultiplier(actualMintCount: number, sourceMintRowCount: nu
 function stressMintDuplicateRows(row: MintRow): MintRow[] {
     return Array.from({ length: STRESS_MINT_BATCH_SIZE }, (_, duplicateIndex) => ({
         ...row,
+        leverage: STRESS_MINT_LEVERAGE ?? row.leverage,
         orderRef: stressOrderRef(row, duplicateIndex),
     }));
 }
