@@ -15,7 +15,10 @@ use deepbook::{
     pool::{Self, Pool},
     registry::{Self, Registry}
 };
-use deepbook_core_account::deepbook_core_account::{Self as dca, DeepbookCoreAccountApp};
+use deepbook_core_account::{
+    account_data::{Self as account_data, DeepbookCoreAccountApp},
+    deepbook_core_account as dca
+};
 use std::unit_test::{assert_eq, destroy};
 use sui::{
     accumulator::{Self as accumulator, AccumulatorRoot},
@@ -49,7 +52,7 @@ fun first_touch_lazily_creates_stable_manager() {
     let registry = scenario.take_shared_by_id<Registry>(registry_id);
     let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let clock = scenario.take_shared<Clock>();
-    assert!(!dca::is_initialized(wrapper.load_account()));
+    assert!(!account_data::is_initialized(wrapper.load_account()));
 
     dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
@@ -60,8 +63,8 @@ fun first_touch_lazily_creates_stable_manager() {
         &clock,
         scenario.ctx(),
     );
-    assert!(dca::is_initialized(wrapper.load_account()));
-    let first = dca::balance_manager_id(wrapper.load_account()).destroy_some();
+    assert!(account_data::is_initialized(wrapper.load_account()));
+    let first = account_data::balance_manager_id(wrapper.load_account()).destroy_some();
 
     dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
@@ -72,7 +75,7 @@ fun first_touch_lazily_creates_stable_manager() {
         &clock,
         scenario.ctx(),
     );
-    let second = dca::balance_manager_id(wrapper.load_account()).destroy_some();
+    let second = account_data::balance_manager_id(wrapper.load_account()).destroy_some();
     assert_eq!(first, second);
 
     return_shared(clock);
@@ -196,7 +199,7 @@ fun funding_round_trip_sweeps_back_to_account() {
         scenario.ctx(),
     );
     assert_eq!(wrapper.load_account().balance<BASE>(&root, &clock), BASE_AMOUNT);
-    assert_eq!(dca::balance_manager_balance<BASE>(wrapper.load_account()), 0);
+    assert_eq!(account_data::balance_manager_balance<BASE>(wrapper.load_account()), 0);
 
     let account = wrapper.load_account_mut(account::generate_auth(scenario.ctx()));
     let withdrawn = account.withdraw<BASE>(BASE_AMOUNT, scenario.ctx());
@@ -248,16 +251,16 @@ fun withdraw_settled_amounts_sweeps_maker_fill_to_account() {
         scenario.ctx(),
     );
     let account = wrapper.load_account();
-    let manager_id = dca::balance_manager_id(account).destroy_some();
+    let manager_id = account_data::balance_manager_id(account).destroy_some();
     assert_eq!(ask.status(), constants::live());
     assert!(ask.order_inserted());
     assert_eq!(ask.balance_manager_id(), manager_id);
     assert_eq!(ask.executed_quantity(), 0);
     assert_eq!(account.balance<BASE>(&root, &clock), BASE_AMOUNT - trade_amount);
     assert_eq!(account.balance<QUOTE>(&root, &clock), BASE_AMOUNT);
-    assert_eq!(dca::balance_manager_balance<BASE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<QUOTE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<DEEP>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<BASE>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<QUOTE>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<DEEP>(account), 0);
     return_shared(clock);
     return_shared(root);
     return_shared(pool);
@@ -292,9 +295,9 @@ fun withdraw_settled_amounts_sweeps_maker_fill_to_account() {
     let account = wrapper.load_account();
     assert_eq!(account.balance<BASE>(&root, &clock), BASE_AMOUNT - trade_amount);
     assert_eq!(account.balance<QUOTE>(&root, &clock), BASE_AMOUNT + trade_amount);
-    assert_eq!(dca::balance_manager_balance<BASE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<QUOTE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<DEEP>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<BASE>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<QUOTE>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<DEEP>(account), 0);
 
     return_shared(clock);
     return_shared(root);
@@ -314,7 +317,7 @@ fun permissionless_withdraw_settled_amounts_noops_for_uninitialized_account() {
     let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let root = scenario.take_shared<AccumulatorRoot>();
     let clock = scenario.take_shared<Clock>();
-    assert!(!dca::is_initialized(wrapper.load_account()));
+    assert!(!account_data::is_initialized(wrapper.load_account()));
     dca::withdraw_settled_amounts_permissionless<BASE, QUOTE>(
         &mut pool,
         &account_registry,
@@ -322,7 +325,7 @@ fun permissionless_withdraw_settled_amounts_noops_for_uninitialized_account() {
         scenario.ctx(),
     );
     let account = wrapper.load_account();
-    assert!(!dca::is_initialized(account));
+    assert!(!account_data::is_initialized(account));
     assert_eq!(account.balance<BASE>(&root, &clock), BASE_AMOUNT);
     assert_eq!(account.balance<QUOTE>(&root, &clock), BASE_AMOUNT);
     assert_eq!(account.balance<DEEP>(&root, &clock), BASE_AMOUNT);
@@ -405,9 +408,9 @@ fun permissionless_withdraw_settled_amounts_uses_account_registry_app_auth() {
     let account = wrapper.load_account();
     assert_eq!(account.balance<BASE>(&root, &clock), BASE_AMOUNT - trade_amount);
     assert_eq!(account.balance<QUOTE>(&root, &clock), BASE_AMOUNT + trade_amount);
-    assert_eq!(dca::balance_manager_balance<BASE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<QUOTE>(account), 0);
-    assert_eq!(dca::balance_manager_balance<DEEP>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<BASE>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<QUOTE>(account), 0);
+    assert_eq!(account_data::balance_manager_balance<DEEP>(account), 0);
 
     return_shared(clock);
     return_shared(root);
