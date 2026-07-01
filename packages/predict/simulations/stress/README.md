@@ -1,8 +1,8 @@
 # Predict parallel localnet stress / fuzz infra
 
 Drive many full-localnet stress runs **concurrently** to map the protocol's gas/capacity
-and OOG/abort boundaries. Built during the 2026-06 localnet capacity audit; the findings it
-produced live in `.claude/predict-review/OPEN-ITEMS.md` + `.claude/predict-design/audit/`.
+and OOG/abort boundaries. Built during the 2026-06 localnet capacity audit; the durable findings live in
+`packages/predict/predeploy/stress/` and `packages/predict/predeploy/open-items.md`.
 
 ## Why this exists / what it is NOT
 `run.sh` is a single-localnet parity harness. A full run does `sui genesis` + publishes all

@@ -35,7 +35,9 @@
 /// a valid surface is pushed, never a mispricing. `ECannotBeNegative` in
 /// `compute_nd2` is the one genuinely unreachable guard: the envelope's `|rho| <= 1`
 /// makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0` always; it is a
-/// defensive fixed-point guard, noted not tested.
+/// defensive fixed-point guard, noted not tested. `ETickNotInPriceMemo` is covered
+/// by the direct memo-miss unit below; the successful memo path is covered in
+/// `payout_tree_walk_tests`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -66,6 +68,7 @@ const DEEP_ITM_STRIKE: u64 = 1;
 /// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
 /// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
+const PRICE_MEMO_MISSING_TICK: u64 = 100;
 
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
@@ -160,9 +163,11 @@ fun live_pricer_with_wrong_forward_feed_aborts() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
-    let wrong_forward = fx.scenario_mut().take_shared_by_id<BlockScholesForwardFeed>(
-        wrong_forward_id,
-    );
+    let wrong_forward = fx
+        .scenario_mut()
+        .take_shared_by_id<BlockScholesForwardFeed>(
+            wrong_forward_id,
+        );
     load_pricer_with_forward(&fx, &oracle, &wrong_forward);
 
     abort EUnexpectedSuccess
@@ -229,6 +234,17 @@ fun deep_otm_up_price_saturates_to_zero() {
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+// === PriceMemo guard ===
+
+#[test, expected_failure(abort_code = pricing::ETickNotInPriceMemo)]
+fun cached_range_price_with_missing_finite_tick_aborts() {
+    let memo = pricing::new_price_memo();
+
+    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+
+    abort EUnexpectedSuccess
 }
 
 // === Surface pricing-safe envelope rejects (EBlockScholesInputsInvalid) ===

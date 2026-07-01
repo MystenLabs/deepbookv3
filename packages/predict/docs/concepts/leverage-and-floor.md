@@ -239,7 +239,9 @@ each interval's aggregate `quantity` and `floor_shares`.
 - **NAV linear term.** `walk_linear` walks the whole tree, prices each distinct
   boundary tick once through the resolved pricer, and returns
   `sum(quantity * P(strike))` -- the exact range-probability value of every open
-  contract.
+  contract. The same walk fills a transaction-local price memo for every boundary
+  it touches, so the leveraged correction scan can read range prices back without
+  pricing each order again.
 - **Reserve and settled liability.** The tree derives net payout as
   `quantity - floor_shares`. Its root summary gives the maximum summed net payout
   at any single settlement price for live backing, and settlement reads the same
@@ -256,11 +258,12 @@ exact_live_liability = walk_linear - correction_value,  floored at 0
 correction_value     = sum(active leveraged min(quantity * range_price, floor_shares))
 ```
 
-The correction is scanned exactly over the active leveraged set: each order's
-floor offsets only its own range value, capped at it. Capping per order is what
-makes the subtraction limited-recourse -- an exhausted order's unconsumed floor
-can never offset another order's value. The expiry's `current_nav` is then
-`free_cash - exact_live_liability`; see
+The correction is scanned exactly over the active leveraged set, using the price
+memo populated by `walk_linear`: each order's floor offsets only its own range
+value, capped at it. Capping per order is what makes the subtraction
+limited-recourse -- an exhausted order's unconsumed floor can never offset another
+order's value. The expiry's `current_nav` is then `free_cash -
+exact_live_liability`; see
 [liquidity and NAV](./liquidity-and-nav.md).
 
 ## Liquidation priority
