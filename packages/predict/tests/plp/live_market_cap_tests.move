@@ -15,7 +15,6 @@ const EXPIRED_EXPIRY_MS: u64 = NOW_MS;
 const FUTURE_EXPIRY_MS: u64 = NOW_MS + 1;
 const MAX_EXPIRY_ALLOCATION: u64 = 1_000;
 const INITIAL_EXPIRY_CASH: u64 = 100;
-const FIRST_ID_INDEX: u64 = 0;
 
 #[test, expected_failure(abort_code = plp::EMaxLiveExpiryMarketsExceeded)]
 fun register_expiry_above_live_market_cap_aborts() {
@@ -89,33 +88,9 @@ fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID, expiry_ms: u64,
     );
 }
 
+/// Deterministic distinct market IDs synthesized programmatically, so these tests do NOT
+/// silently break with a native out-of-bounds abort if `max_live_expiry_markets` is bumped
+/// (the previous fixed 25-entry vector was coupled to the cap with no length guard).
 fun synthetic_expiry_id(index: u64): ID {
-    let addresses = vector[
-        @0x100,
-        @0x101,
-        @0x102,
-        @0x103,
-        @0x104,
-        @0x105,
-        @0x106,
-        @0x107,
-        @0x108,
-        @0x109,
-        @0x10A,
-        @0x10B,
-        @0x10C,
-        @0x10D,
-        @0x10E,
-        @0x10F,
-        @0x110,
-        @0x111,
-        @0x112,
-        @0x113,
-        @0x114,
-        @0x115,
-        @0x116,
-        @0x117,
-        @0x118,
-    ];
-    object::id_from_address(addresses[FIRST_ID_INDEX + index])
+    object::id_from_address(sui::address::from_u256(0x100 + (index as u256)))
 }
