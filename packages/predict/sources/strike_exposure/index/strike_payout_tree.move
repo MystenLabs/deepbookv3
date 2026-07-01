@@ -156,6 +156,11 @@ public(package) fun insert_range(
     let terms = payout_terms(quantity, floor_shares);
     if (terms.quantity == 0 && terms.floor_shares == 0) return;
 
+    // Cap pre-count. `(0, pos_inf]` (the whole line) is rejected upstream at `order` shape validation,
+    // so `lower_tick == 0` here always implies a FINITE `higher_tick`, for which this pre-count and
+    // `apply_range` agree (both create the higher node). The pos_inf-skip below would undercount only
+    // for that unreachable `(0, pos_inf]` case; if the upstream shape guard ever changes, count the
+    // higher boundary in the `lower == 0` branch here too.
     let mut new_nodes = 0;
     if (lower_tick != 0 && !tree.nodes.contains(lower_tick)) {
         new_nodes = new_nodes + 1;
@@ -202,6 +207,11 @@ public(package) fun debug_node_count(tree: &StrikePayoutTree): u64 {
     tree.node_count
 }
 
+// Seed `node_count` for the exact 1000-node cap-BOUNDARY tests. Genuinely irreducible (unit-tests.md
+// Rule 18): ~1000 REAL treap inserts (each hashes a priority + rebalances a growing Table) time out
+// the Move test framework, so the boundary tests fake the count to reach the cap fast, then insert one
+// more to assert `EMaxPayoutTreeNodes`. `node_count_tracks_real_boundary_accumulation` inserts a
+// moderate REAL batch to prove the counter tracks genuine accumulation, not just this setter.
 #[test_only]
 public(package) fun debug_set_node_count(tree: &mut StrikePayoutTree, node_count: u64) {
     tree.node_count = node_count;

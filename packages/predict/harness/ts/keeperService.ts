@@ -110,9 +110,14 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       consecutiveDefers++;
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
       console.warn(`[keeper] flush deferred (${consecutiveDefers}x): ${e instanceof Error ? e.message.slice(0, 100) : e}`);
-      // Sustained outage / beyond-retention miss: settlement can't proceed; surface it loudly.
-      if (consecutiveDefers >= 8)
+      // Sustained outage / beyond-retention miss: settlement can't proceed; surface it loudly AND as a
+      // machine-readable trace so the bug oracle catches a stall that began AFTER the first flush
+      // succeeded (analyze.py's never-flushed `stuck` check only covers keeper_flushes==0). A sustained
+      // stall == a bricked settlement/LP lifecycle — the exact condition this harness exists to catch.
+      if (consecutiveDefers >= 8) {
+        appendTrace("keeper", { type: "keeper-stall", consecutiveDefers, lastError: errorTag(e) });
         console.error(`[keeper] *** settlement STALLED ${consecutiveDefers} ticks (Pyth-history outage or beyond-retention miss) — flush blocked; roll paused ***`);
+      }
     }
   }
 

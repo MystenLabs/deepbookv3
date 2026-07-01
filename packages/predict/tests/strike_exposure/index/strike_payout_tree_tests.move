@@ -25,6 +25,9 @@ const PARTIAL_SURVIVOR_NET_PAYOUT: u64 = 474_991_951;
 const LEVERAGED_QUANTITY: u64 = 1_000_000_000;
 const LEVERAGED_FLOOR_SHARES: u64 = 249_999_999;
 const LEVERAGED_NET_PAYOUT: u64 = 750_000_001;
+/// Node count for the real-accumulation test — enough to prove multi-node accumulation without the
+/// ~1000-insert timeout that forces the exact cap-boundary tests to seed the count.
+const ACCUMULATION_NODES: u64 = 64;
 
 /// Raw oracle price at the lower edge of `tick` (a settlement equal to a higher
 /// boundary still wins under the half-open `(lower, higher]` payoff).
@@ -310,6 +313,31 @@ fun removing_boundary_below_node_cap_allows_new_boundary() {
         0,
     );
     assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!());
+    destroy(tree);
+}
+
+#[test]
+fun node_count_tracks_real_boundary_accumulation() {
+    // The exact 1000-node cap boundary is seeded (debug_set_node_count) because ~1000 REAL treap
+    // inserts time out the Move test framework; this proves that seam isn't lying — node_count tracks a
+    // genuine multi-node accumulation, and the evaluators walk the accumulated tree correctly.
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    let n = ACCUMULATION_NODES;
+    let mut i = 1;
+    while (i <= n) {
+        insert_range(&mut tree, i, constants::pos_inf_tick!(), 1, 0); // one new boundary node at tick i
+        i = i + 1;
+    };
+    assert_eq!(tree.debug_node_count(), n);
+
+    // Each (i, pos_inf] pays 1 for settlement > tick i, so at settle_at_tick(T) the winners are the
+    // boundaries with i < T (capped at n). Hand-computed (independent of the tree implementation):
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0); // no i < 1
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(10), TICK_SIZE), 9); // i in 1..9
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(n + 1), TICK_SIZE), n); // all n win
+    // All ranges share the (n, pos_inf] tail, so the peak prefix gain is the full sum.
+    assert_reserve_terms(&tree, n, n);
     destroy(tree);
 }
 

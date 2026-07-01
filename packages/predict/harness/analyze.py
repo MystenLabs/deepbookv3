@@ -41,10 +41,13 @@ INVARIANT_MODULES = {
 # Mixed modules hold genuine invariants AND expected business preconditions, so these specific
 # codes are whitelisted as expected (checked BEFORE the module-level INVARIANT rule):
 #   liquidation_book:4 = EMaxActiveLeveragedOrders (per-market 5000 leveraged-order cap)
+#   strike_payout_tree:1 = EMaxPayoutTreeNodes (per-market 1000 payout-boundary-node cap) — the same
+#     mint-time admission-cap class as liquidation_book:4 (hitting it is a full market, not a bug).
 #   lp_book:0..3 = ERequestNotFound / EBelowMinSupplyRequest / EBelowMinWithdrawRequest / ENotRequestOwner
 # (lp_book:4 EInvalidDrainMark + liquidation_book:0..3 index invariants stay FLAGGED.)
 EXPECTED_CODES = {
     "liquidation_book:4",
+    "strike_payout_tree:1",
     "lp_book:0", "lp_book:1", "lp_book:2", "lp_book:3",
 }
 # Submission-level / external-data failures — NOT contract bugs (consensus, network, and the
@@ -66,6 +69,13 @@ _MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
 # 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but the binding limit is the 5M UNITS of work, so an OOG book
 # size is network-independent. Both the nav-stress and mint-batch sections compare compGas against this.
 COMP_CAP = 5_000_000_000
+
+# The shortest keeper cadence (1m). A run shorter than this has produced no expected flush, so a
+# "never flushed" keeper is not yet a brick; a keeper that has NOT flushed past ~2x this (bootstrap +
+# one expiry) despite non-transient fails IS bricked. (M1: the old `stuck` heuristic false-FAILed a
+# transient blip before the first expiry and MISSED a stall that began after the first flush.)
+SHORTEST_CADENCE_MS = 60_000
+KEEPER_BRICK_MIN_ELAPSED_MS = 2 * SHORTEST_CADENCE_MS
 
 
 def _instances() -> list[Path]:
@@ -146,13 +156,32 @@ def _analyze_one(inst: Path) -> list[str]:
         else:
             print("  NAV stable (no >1% drawdown)")
 
-    # keeper liveness: a healthy keeper settles + flushes; failing with no progress = stuck.
+    # keeper liveness: a healthy keeper settles + flushes. Two brick shapes (M1): (a) a mid-run STALL —
+    # the keeper flushed, then settlement outaged (a `keeper-stall` trace past the defer threshold); the
+    # never-flushed check MISSES this. (b) never flushed at all despite HARD (non-transient) fails, once
+    # enough time has elapsed for the shortest cadence to have produced an expiry (a transient RPC blip
+    # before the first expiry must NOT false-FAIL).
     keeper_flushes = sum(1 for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper")
     keeper_fails = [r for r in recs if r.get("type") == "fail" and r.get("_actor") == "keeper"]
-    print(f"\nkeeper: {keeper_flushes} flush(es), {len(keeper_fails)} operational fail(s)")
-    stuck = bool(keeper_fails) and keeper_flushes == 0
+    keeper_stalls = [r for r in recs if r.get("type") == "keeper-stall"]
+
+    def _transient_tag(tag: str) -> bool:  # a transient RPC/history blip, not an operational brick
+        return not _MOVE_ABORT.match(tag) and any(t in tag.lower() for t in _TRANSIENT)
+
+    hard_keeper_fails = [r for r in keeper_fails if not _transient_tag(str(r.get("tag", "")))]
+    ts_all = [r["ts"] for r in recs if r.get("ts")]
+    elapsed_ms = (max(ts_all) - min(ts_all)) if len(ts_all) >= 2 else 0
+    print(f"\nkeeper: {keeper_flushes} flush(es), {len(keeper_fails)} fail(s) "
+          f"({len(hard_keeper_fails)} non-transient), {len(keeper_stalls)} stall(s)")
+    stall_brick = len(keeper_stalls) > 0
+    never_flushed_brick = (
+        bool(hard_keeper_fails) and keeper_flushes == 0 and elapsed_ms > KEEPER_BRICK_MIN_ELAPSED_MS
+    )
+    stuck = stall_brick or never_flushed_brick
     if stuck:
-        print("  *** WARN: keeper failing with no successful flush — settlement/LP lifecycle stuck ***")
+        why = ("settlement STALLED after prior progress" if stall_brick
+               else f"no successful flush in {elapsed_ms // 1000}s despite non-transient fails")
+        print(f"  *** WARN: keeper settlement/LP lifecycle stuck — {why} ***")
 
     # NAV stress: flush gas vs leverage-book size. The nav-stress strategy grows a leveraged book in
     # ONE market (tracing {type:"book", size}); join that with the keeper flush gas to find the book

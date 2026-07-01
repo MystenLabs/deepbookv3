@@ -70,6 +70,7 @@ export interface StrategyCtx {
   // #cap-mintbatch scaling probe; the strategy controls each leg (identical, or lev1-prefix + lev2).
   submitMintBatch(market: Mkt, legs: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }[], meta?: Record<string, unknown>): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
+  // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
   currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
   idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
 
