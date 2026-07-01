@@ -43,9 +43,8 @@ def load(path):
 def _fp(location, title, claim=''):
     """Fingerprint = file WITHOUT line numbers + normalized title + a claim digest. The claim is included so
     two DISTINCT findings at the same file+title (different claim) get DIFFERENT ids; consolidate dedups by
-    this id and track.py keys on it, so the two layers agree and a distinct finding is never silently
-    collapsed downstream. (Cost: a heavily re-worded claim across runs yields a new id — a VISIBLE duplicate,
-    the lesser evil vs a silent drop.)"""
+    this id so distinct findings are never silently collapsed. (Cost: a heavily re-worded claim across runs
+    yields a new id — a VISIBLE duplicate, the lesser evil vs a silent drop.)"""
     file = re.sub(r'[^a-z0-9/_.]', '', re.split(r':\d', (location or '').lower())[0])
     t = re.sub(r'[^a-z0-9]+', '', (title or '').lower())[:60]
     c = re.sub(r'[^a-z0-9]+', '', (claim or '').lower())[:60]
@@ -53,7 +52,7 @@ def _fp(location, title, claim=''):
 
 def norm(f, harness, status):
     """Normalize a finding from any harness shape into one record (lossless), with a stable fingerprint +
-    id (= sha1(fingerprint)[:6]) so the SAME issue keeps the SAME id across runs (the tracker keys on it)."""
+    id (= sha1(fingerprint)[:6]) so the SAME issue keeps the SAME id across runs."""
     rec = {
         'harness': harness, 'status': status,
         'severity': str(f.get('severity', '') or '').strip(),
@@ -85,8 +84,8 @@ def collect(res, harness):
     promoted = res.get('promoted', []) or []
     for f in promoted:
         r = norm(f, harness, 'open'); r['verdict'] = 'promoted-unverified'; out.append(r)  # not panel-verified
-    # Info/Low/cleanup findings the orchestrator triaged out of the verify panel: recorded (so they are NOT
-    # silently dropped + the accounting stays honest), but kept OUT of the open tracker — raw, low-priority.
+    # Info/Low/cleanup findings the orchestrator triaged out of the verify panel: recorded so they are NOT
+    # silently dropped and the accounting stays honest, but kept out of the primary open list as raw low-priority.
     for f in res.get('unverified', []) or []:
         out.append(norm(f, harness, 'unverified'))
     return out, len(promoted)
@@ -130,9 +129,8 @@ def main():
     # dedup OPEN findings across harnesses by (location, title) — record merges, never drop
     seen, dedup_open, merges = {}, [], 0
     for f in [x for x in all_findings if x['status'] == 'open']:
-        # Dedup by the SAME id track.py keys on, so the two layers agree: findings.json never contains two
-        # records that share an id (which track would silently collapse). The id already folds in
-        # location+title+claim, so distinct findings have distinct ids and are NOT merged here.
+        # Dedup by id. The id already folds in location+title+claim, so distinct findings have distinct ids
+        # and are NOT merged here.
         k = f['id']
         if k in seen:
             seen[k]['also'].append(f['harness']); merges += 1
@@ -193,9 +191,8 @@ def main():
 
     rpt = os.path.join(out_dir, 'consolidated-report.md')
     open(rpt, 'w', encoding='utf-8').write("\n".join(L) + "\n")
-    # findings.json (open findings with stable ids) feeds track.py, the live OPEN-ITEMS.md tracker. `unverified`
-    # is recorded here too but under its OWN key, so track.py (which keys on `open`) never floods the tracker
-    # with Info/Low/cleanup noise.
+    # findings.json feeds the reasoned curation pass into packages/predict/predeploy/open-items.md. `unverified`
+    # is recorded under its own key so the primary open list stays focused on panel-promoted findings.
     json.dump({'open': dedup_open, 'settled': settled, 'refuted': refuted, 'unverified': unverified},
               open(os.path.join(out_dir, 'findings.json'), 'w', encoding='utf-8'), indent=1)
     print(acct)

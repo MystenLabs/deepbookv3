@@ -43,7 +43,7 @@ fixed_math (math) ─────────────┐              │
 2. **Loop-until-dry find.** Each lens re-samples across rounds (told what's already found, so it hunts new ground); the union grows until K consecutive dry rounds (`dryRounds`) or the token-budget floor — converting LLM sampling into near-enumeration and auto-retrying flaky units.
 3. **Adversarial verify (cross-model).** Every candidate finding is independently refuted/confirmed; High/Critical get an empirical-repro attempt. In the lens fan-out, verify is **cross-model for bias reduction** — refute + repro run on **codex**, the settled-decision check on **Claude** — so each escalated finding clears two different models (needs the codex CLI; degrades to Claude-only if codex is absent).
 4. **Empirical deep pass (required).** The economic-simulation lens runs the localnet + Python sims and writes new adversarial scenarios to actually break invariants.
-5. **Consolidate (no-slip) + synthesize.** Read each harness's FULL output file (the notification preview is truncated), run `consolidate.py` to deterministically merge all three into ONE `consolidated-report.md` covering **open + settled + refuted + coverage** with a `DROPPED 0` accounting guarantee, then write the executive summary on top. The orchestrator's promote pass + the consolidator's coverage section catch buried items; never hand-pick from a truncated return.
+5. **Consolidate (no-slip) + curate.** Read each harness's FULL output file (the notification preview is truncated), run `consolidate.py` to deterministically merge all three into ONE `consolidated-report.md` covering **open + settled + refuted + coverage** with a `DROPPED 0` accounting guarantee, then reason over the committed `packages/predict/predeploy/open-items.md` and curate findings into it. The orchestrator's promote pass + the consolidator's coverage section catch buried items; never hand-pick from a truncated return.
 
 ## Harnesses
 Three complementary review *shapes*, all sharing this `primer.md`, the report format, and the read-only / compiler-in-main-loop discipline. Read `primer.md` first either way.
@@ -83,21 +83,25 @@ python3 .claude/skills/predict-audit/consolidate.py .claude/predict-review/repor
 ```
 It emits ONE `consolidated-report.md` (a per-run snapshot under `reports/<run>/`) covering **open + settled + refuted + coverage**, plus `findings.json`, with an `ACCOUNTING — … DROPPED 0` line proving every input finding is accounted for (it exits non-zero if anything would be lost). Write the executive summary *on top of* that report — do NOT hand-pick from the truncated returns.
 
-**Step 4 — update the ONE live tracker.** Merge this run's open findings into the single persistent worklist:
-```
-python3 .claude/skills/predict-audit/track.py .claude/predict-review/ merge --run <run-id> .claude/predict-review/reports/<run>/findings.json
-```
-`.claude/predict-review/OPEN-ITEMS.md` is the single place to work from — severity-sorted, **deduped by a stable per-issue id across runs** (so re-runs update in place, never duplicate), with a per-run changelog (`+new ~updated ↑re-opened`). Fix code → delete the item's block (or `track.py … resolve <id>` / `wontfix <id>`); a later run **re-opens (⚠) anything you resolved that the audit still finds**. (The tracker lives in the gitignored reports dir — commit `OPEN-ITEMS.md` if you want it shared with the team.)
+**Step 4 — reasoned update to the committed worklist.** Manually curate audit findings into `packages/predict/predeploy/open-items.md`, which is the only open-items document and the team-facing consolidated tracker for deploy gates, audit findings, stress-test follow-ups, and manual items. This must be a reasoning pass, not a script or mechanical overwrite:
+- Read `packages/predict/predeploy/open-items.md` completely before editing it.
+- Compare the new `findings.json` and the per-run `consolidated-report.md` against the committed worklist.
+- Preserve manual/non-audit items and existing grouping unless the content is stale.
+- Merge by substance, not by exact wording: if a finding is already represented, refresh severity/action/evidence/source as needed instead of duplicating it.
+- Add genuinely new findings under the most appropriate existing section, or create a concise new section only when none fits.
+- Keep the committed item actionable: state the risk, current evidence, and required action; include the audit finding id only as supporting provenance when useful.
+- Remove or edit resolved/stale items only after verifying the current tree or run output supports that change.
+- Use normal file edits (`apply_patch` in Codex), not a generated sync, because `open-items.md` is a general curated document and may contain manual items audit output cannot understand.
 
 ### Which harness, in what order
 - **"Audit Predict" / find bugs** → start with the **lens fan-out** (orchestrator). For a pre-merge pass, add the **ownership walk** + **rule sweep**.
 - **Subsystem deep-dive** → ownership walk on that `units` cluster. **Mechanical hygiene** → rule sweep on the relevant `rules`.
-- **Maximal end-to-end:** ground truth → run the three harnesses (each bounded by its default caps) → `consolidate.py` → `track.py`. Run them in **separate turns** (so a slow one doesn't block the others, and to read each full output before the next), but you no longer need a per-turn `+NNNm` budget directive — the caps bound each run regardless. Last-line-of-defense mode, a few hundred agents total. For more depth, raise `maxRounds`/`verifyCap` via args; for a quick pass, scope (`lenses`/`units`/`rules`) + `maxRounds: 1`.
+- **Maximal end-to-end:** ground truth → run the three harnesses (each bounded by its default caps) → `consolidate.py` → reasoned update to `packages/predict/predeploy/open-items.md`. Run them in **separate turns** (so a slow one doesn't block the others, and to read each full output before the next), but you no longer need a per-turn `+NNNm` budget directive — the caps bound each run regardless. Last-line-of-defense mode, a few hundred agents total. For more depth, raise `maxRounds`/`verifyCap` via args; for a quick pass, scope (`lenses`/`units`/`rules`) + `maxRounds: 1`.
 
 ## Hard rules (non-negotiable)
-- **Read-only on source.** Never modify `packages/*/sources/**`. The only writes are reports (to `.claude/predict-review/reports/<date>/`, gitignored) and temp sims/scripts (to the session scratchpad).
+- **Read-only on source.** Never modify `packages/*/sources/**`. Audit-run writes are reports (to `.claude/predict-review/reports/<date>/`, gitignored), temp sims/scripts (to the session scratchpad), and the reasoned curation update to `packages/predict/predeploy/open-items.md`.
 - **Compiler/localnet run in the MAIN LOOP, never in a subagent.** `sui build`, `sui test`, and localnet `bash run.sh` trip the 600s subagent watchdog and the run is lost (repo guardrail D004). The orchestrator runs these itself and passes results in as `args`; subagents reason from source, grep, git, and **Python** sims (fast, watchdog-safe).
-- **After editing `consolidate.py` or `track.py`, run `python3 .claude/skills/predict-audit/evals/test_consolidate_track.py`** (main loop). It locks the no-slip / id↔dedup / tracker invariants found across three reviews — each round's fix kept introducing the next round's silent-slip bug. It exits non-zero on regression and is verified to actually fail when a fix is reverted; treat a red as a blocker.
+- **After editing `consolidate.py`, run `python3 .claude/skills/predict-audit/evals/test_consolidate.py`** (main loop). It locks the no-slip and id/dedup invariants found across skill reviews. It exits non-zero on regression; treat a red as a blocker.
 - **Check the REAL exit code.** Never pipe `sui build`/`test` through `tail` (it masks failures). Grep the captured log for `error`/`Test result`, or read `${PIPESTATUS[0]}`.
 - **Be prior-aware. Do not re-litigate settled decisions.** Before raising anything, check `.claude/predict-design/DECISION_JOURNAL.md` (D000–latest), `HISTORY.md`, the `AGENTS.md` "Settled design decisions" block, and `ROUNDING_POLICY.md`. A finding that matches an accepted/rejected decision is tagged with its D-id and downranked to Info, not raised as new.
 - **Verify each claim against the function body, not its name.** Trace call sites with grep before judging. Prefer a few verified findings over many speculative ones; rank uncertain items low-confidence rather than overstating.
