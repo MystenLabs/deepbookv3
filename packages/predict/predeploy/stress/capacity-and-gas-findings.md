@@ -19,7 +19,7 @@ budget does not bypass this wall.
 
 ## Confirmed Findings
 
-### 1. Full-pool NAV flush can OOG below current caps
+### 1. Full-pool NAV flush can OOG below current aggregate caps
 
 The pool flush is one mandatory PTB:
 
@@ -31,7 +31,7 @@ start_pool_valuation -> value_expiry for every active market -> finish_flush
 active market to be valued. The operator can budget supply/withdraw queue drain,
 but cannot budget valuation itself.
 
-Localnet `nav-stress` confirmed:
+Pre-memo localnet `nav-stress` confirmed the original single-market failure:
 
 - single-market flush OOGs around 4,580 leveraged orders in the cheap branch;
 - last successful observed flush near that point used about 98% of the 5M
@@ -43,6 +43,22 @@ Localnet `nav-stress` confirmed:
   the expensive `exp_series` branch or the moneyness premium is much smaller than
   that fuzz suggested; treat the ~1,372 worst case as UNCONFIRMED in-instrument
   until a run verifies the branch via the gas-by-moneyness buckets.
+
+The landed NAV price memo changes the single-market result. It caches each priced
+boundary during `walk_linear` and has the leveraged correction scan read from that
+memo instead of re-pricing every order. Post-memo stress measured:
+
+- one market at the 5,000 leveraged-order cap values successfully;
+- full-book flush cost around 2.36-2.68B MIST, about 47-54% of the wall;
+- single-market NAV computation no longer binds before
+  `EMaxActiveLeveragedOrders`.
+
+The pool-total case remains open. `batch-max-markets` reached about 8,640 total
+leveraged orders across about 9 markets at roughly 4.60B MIST, then OOGed. That
+run was entangled with `expiry_cash::EInsufficientCash`, so it is not the final
+gas-only cap, but it is enough to show the current independent caps still do not
+compose. At 24 active markets, even a much lower per-market book can exceed the
+single-PTB wall.
 
 Current independent caps do not compose:
 
@@ -100,11 +116,13 @@ sum_over_active_markets(node_count * c_node + leveraged_count * c_order + base_m
 
 Known measured terms:
 
-- payout tree node walk is not the bottleneck;
-- leveraged-order correction dominates;
+- post-memo single-market pricing is no longer the bottleneck;
+- the remaining per-market cost is the exact boundary walk plus liquidation-book
+  iteration;
+- pool-total valuation stacks that cost across every active market in one PTB;
 - a safety target around 60% of the cap was used in prior analysis.
 
-Approximate example envelopes from the capacity audit:
+Approximate pre-memo example envelopes from the capacity audit:
 
 | Max live markets | Max nodes/market | Max leveraged/market | Approx flush units |
 | --- | --- | --- | --- |
@@ -112,8 +130,9 @@ Approximate example envelopes from the capacity audit:
 | 10 | 200 | about 175 | about 2.76M |
 | 24 | 100 | about 75 | about 2.92M |
 
-These are not final parameter choices. They show the shape: if the product keeps
-24 active markets, the per-market leveraged cap must be far below 5,000 unless
+These are not final parameter choices, and the memo improves the single-market
+slope. They still show the shape: if the product keeps 24 active markets, the
+per-market leveraged cap must be set from a measured pool-total envelope unless
 the flush becomes resumable.
 
 ## Fix Options
@@ -131,13 +150,13 @@ the flush becomes resumable.
 - Full `nav-stress-atm` run that verifies (via the gas-by-moneyness buckets) it
   actually reaches the expensive `exp_series` branch — the 2026-07-01 run OOGed at
   ~4,070, which does not confirm the expensive-branch worst case.
-- Pool-total capacity across many markets, e.g. via `batch-max-markets` (fast
+- Clean gas-only pool-total capacity across many markets, e.g. via
+  `batch-max-markets` (fast
   batched fill). Size the pool with LP supply first, so `expiry_cash`'s
   `EInsufficientCash` (pool capital) does not bound the book before the flush gas
   does — otherwise the measured OOG is entangled with a capital limit.
 - Any final cap change should be followed by a stress run that reaches the new
   boundary and proves the flush remains below the safety target.
 
-The NAV price-memo optimization (uncommitted at 2026-07-01) changes Finding #1 for
-the single-market case — see `price-memo-findings-2026-07-01.md`. Fold its results
-into this model when that change lands.
+See `price-memo-findings-2026-07-01.md` for the single-market post-memo evidence
+and the entangled multi-market run.

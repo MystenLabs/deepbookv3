@@ -113,8 +113,11 @@ otherwise narrow the positional surface.
 
 The flush values every active market in one PTB. Current independent caps
 (`24` live markets, `1000` payout nodes, `5000` leveraged orders per market) do
-not compose into the 5M computation-unit wall. Localnet stress confirms a single
-market can OOG the flush below its own leveraged-order cap.
+not compose into the 5M computation-unit wall. The NAV price memo removed the
+single-market pre-cap OOG: one market at 5,000 leveraged orders has been measured
+around 47-54% of the wall. The remaining deploy blocker is the pool-total case:
+multi-market stress reached the wall around the current aggregate envelope, and
+the 24-market cap is still far above the measured safe joint budget.
 
 **Action:** Add a joint budget across all active markets, tighten caps to the
 measured single-PTB envelope, or make valuation resumable across PTBs. See

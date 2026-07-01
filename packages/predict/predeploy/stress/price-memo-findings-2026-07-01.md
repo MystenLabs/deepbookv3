@@ -1,10 +1,9 @@
 # NAV Price-Memo Findings — 2026-07-01
 
-Status: measured finding, tied to an **UNCOMMITTED** contract change (the NAV
-price-memo). Not yet a settled design decision; the numbers here are the validation
-evidence for that change, to be folded into `capacity-and-gas-findings.md` when it
-lands. Supersedes Finding #1 (single-market flush OOG) for the single-market case
-only.
+Status: measured finding for the landed NAV price-memo change. The single-market
+result is folded into `capacity-and-gas-findings.md`; the multi-market result
+remains a pool-total cap input. Supersedes the pre-memo single-market flush OOG
+finding for the single-market case only.
 
 ## The change
 
@@ -70,17 +69,17 @@ live markets on the cheap branch), i.e. `per_market ≈ safe_total / max_live_ma
   the capital limit above — NOT the memo (the same-contract `batch-max-book` was
   clean, and the memo does not touch `expiry_cash`). It is an expected admission
   precondition; `analyze.py` flags it only because `expiry_cash` is not whitelisted.
-- Still owed before landing: a Move property test `NAV_with_memo == NAV_reference`
-  over generated books (leveraged + 1x, shared/distinct/zero-delta ticks, ±inf
-  boundaries).
+- Still useful before final cap-setting: a broader generated-book property test
+  `NAV_with_memo == NAV_reference` over leveraged + 1x books,
+  shared/distinct/zero-delta ticks, and ±inf boundaries.
 
 ## Follow-up before the number is final
 
-1. Property test (above) — turns "correct by argument" into "correct by construction".
+1. Broader property test above.
 2. A clean gas-only multi-market run: add LP supply to `batch-max-markets` so
    `EInsufficientCash` does not bound the book before the flush OOGs.
 3. A worst-case-moneyness multi variant, since the linear walk (the memo's remaining
    per-market pricing) is where moneyness now bites.
 
 Cross-refs: `capacity-and-gas-findings.md`, `nav-stress-findings-2026-06-30.md`,
-`mint-batch-findings-2026-07-01.md`, `../open-items.md` (`#cap-flush24`).
+`mint-batch-findings-2026-07-01.md`, `../open-items.md` (`C-1`).

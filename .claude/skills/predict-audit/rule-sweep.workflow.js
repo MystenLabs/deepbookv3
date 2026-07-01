@@ -85,7 +85,7 @@ if (wantRules && !FAMILIES.length) {
 const PRELUDE = `You are an agent in the Predict RULE SWEEP — a per-rule conformance audit of the MECHANICAL repo rules. FIRST read:
   1. ${SKILL}/primer.md  (current module map, scope, prior-awareness, report format)
   2. the source rules: .claude/rules/move.md, .claude/rules/code-review.md, .claude/rules/unit-tests.md, and AGENTS.md "Settled design decisions".
-Conflict order: most-specific Predict rule in AGENTS.md, then .claude/rules/*.md, then general guidance. Be prior-aware: a candidate matching a DECISION_JOURNAL/AGENTS settled decision is a non-finding (tag it). The .claude/predict-review map is STALE — trust primer.md + the current tree. Read-only on source; do NOT run sui build/test or localnet (the watchdog kills subagents — the main loop runs the compiler in reconciliation). Your job is ONE rule only; do not report other rules' violations or the ownership-walk's R1-R7.`
+Conflict order: most-specific Predict rule in AGENTS.md, then committed predeploy policy/open items, then .claude/rules/*.md, then general guidance. Be prior-aware: a candidate matching an AGENTS settled decision or committed predeploy policy/open item is a non-finding (tag it). Do not use local ignored design scratch as authority for audit triage. The .claude/predict-review map is STALE — trust primer.md + the current tree. Read-only on source; do NOT run sui build/test or localnet (the watchdog kills subagents — the main loop runs the compiler in reconciliation). Your job is ONE rule only; do not report other rules' violations or the ownership-walk's R1-R7.`
 
 const FINDING = {
   type: 'object',
@@ -169,7 +169,7 @@ const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // beyond the cap -> report
 const unverifiedF = candidates.filter(f => !ruleShouldVerify(f)).concat(verifyOverflow)
 if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} finding(s) reported UNVERIFIED — raise verifyCap to verify them all`)
 const all = (await parallel(toVerify.map((f, fi) => () => agent(
-  `${PRELUDE}\n\nADVERSARIALLY VERIFY this single rule-sweep finding (rule family ${f.rule_family}). Read the cited code; decide: confirmed (real violation) / refuted (not a violation, or the claim is wrong) / settled (matches a DECISION_JOURNAL/AGENTS decision — cite it). Then classify: fix-code / update-rule (defensible → narrowest exception) / design-decision / false-positive. Be skeptical; mechanical rules have many intentional exceptions (getters retained by D003, public APIs needed for PTBs, disabled test suites).\n\nFINDING:\n${JSON.stringify(f, null, 2)}`,
+  `${PRELUDE}\n\nADVERSARIALLY VERIFY this single rule-sweep finding (rule family ${f.rule_family}). Read the cited code; decide: confirmed (real violation) / refuted (not a violation, or the claim is wrong) / settled (matches AGENTS or committed predeploy policy/open item — cite it). Then classify: fix-code / update-rule (defensible → narrowest exception) / design-decision / false-positive. Be skeptical; mechanical rules have many intentional exceptions (getters retained by D003, public APIs needed for PTBs, disabled test suites).\n\nFINDING:\n${JSON.stringify(f, null, 2)}`,
   { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.rule_family}:${fi}` })
   .then(verdict => ({ ...f, verdict }))))).filter(Boolean)
 const confirmed = all.filter(x => x.verdict && x.verdict.verdict === 'confirmed')

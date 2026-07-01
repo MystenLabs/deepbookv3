@@ -3,7 +3,9 @@
 This finding measures how large one leveraged book can get before the pool flush
 OOGs while valuing NAV.
 
-Status: measured finding. It confirms the flush joint-budget gap.
+Status: measured pre-memo finding. The NAV price memo supersedes the
+single-market OOG conclusion for current HEAD; this report remains historical
+evidence for why the flush needs a pool-total joint budget.
 
 ## Method
 
