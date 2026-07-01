@@ -28,6 +28,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
 - **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
+- **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
 - **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md`
 - **Predict indexer** (`crates/predict-{server,schema,indexer}/**`) → `.claude/rules/predict-indexer.md` *(also read `indexer.md` for shared operational gotchas)*
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
@@ -36,15 +37,16 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 - **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict smart-contract audit, invoke the `predict-audit` skill — `.claude/skills/predict-audit/` — which fans the lenses out via `orchestrator.workflow.js`, with `ownership-walk.workflow.js` + `rule-sweep.workflow.js` for per-module + per-rule conformance audits)
 - **Wrap-up requests** → `.claude/rules/wrap-up.md`
+- **Add / build a harness strategy** → `.claude/rules/harness-strategy.md` (engage when the user wants to add a Predict harness strategy or test a scenario in the harness)
 
-When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`.
+When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`. When the user wants to add or build a harness strategy (e.g. "I want to add a harness strategy"), follow `.claude/rules/harness-strategy.md`.
 
 ## Predict Design State
 
 Predict (`packages/predict/**`) is the most design-heavy surface, and most decisions here are already settled. **Before proposing or changing any Predict economics** (NAV/backing, rounding, oracle trust, liquidation, order-id/tick encoding, floor/leverage, supply/withdraw):
 
-- **grep `.claude/predict-design/DECISION_JOURNAL.md` and `HISTORY.md`** for prior rulings first. Never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met.
-- The **landed** state + the current settled-decision list live in `AGENTS.md` ("Predict Rework — LANDED" + "Settled design decisions") — read that block, since Claude does not auto-load `AGENTS.md`. The async NAV/LP + tick re-encode + oracle-extraction rework has shipped on this branch, so `DECISION_JOURNAL.md`'s pre-rework LP/NAV/backing entries (e.g. D024/D030 Σ/λ backing) are **superseded** by the landed exact-`current_nav` design — treat them as history. `.redesign/ASYNC_NAV_REDESIGN.md` is the design rationale for that landed system.
+- **Read the CURRENT settled list first** — `AGENTS.md` ("Predict Rework — LANDED" + "Settled design decisions") + `.claude/predict-design/OPEN_ISSUES.md` (current settled outcomes). Read that block, since Claude does not auto-load `AGENTS.md`. Treat `DECISION_JOURNAL.md` and `HISTORY.md` as **historical context, not the first stop**: many entries are superseded and several describe a model HEAD no longer runs. Never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met, and verify any journal claim against current HEAD before relying on it.
+- **The floor model is static-floor knockout** (`floor_shares` = static `F`; no `floor_index`/`terminal_floor_index`; winner = `quantity - floor_shares`; knock-out at `floor_amount / liquidation_ltv`). The exact `current_nav` rework superseded the pre-rework NAV/valuation entries (band/haircut/fee/valuation-pass) — treat those as history. The **backing reserve** (D030 floor + λ-buffer, `backing_buffer_lambda`) is a **separate axis** from NAV valuation and may still be live — verify at HEAD rather than assuming it's gone. Any journal/HISTORY text describing a rising / time-varying floor is stale.
 - Design docs are **leads to verify against current HEAD**, not ground truth. Ground truth = Move source + git + `sui move test`.
 
 @.claude/predict-design/ROUNDING_POLICY.md

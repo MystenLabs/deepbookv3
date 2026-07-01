@@ -17,7 +17,7 @@ Invoking, reading, explaining, or editing this skill never needs the gate — **
 
 A self-driving harness for a deep, adversarial, **smart-contract-only** audit of DeepBook "Predict" — a leveraged binary prediction market on Sui — and its three split-out sibling packages. The goal is to **find real bugs**: solvency/fund-loss, liveness/abort (a bricked flow), griefing/DoS, mispricing, broken invariants, and authorization holes — plus, via a dedicated lens, architecture/cohesion/readability issues (overgrown "god" modules, coupling, decomposition). Findings are reasoned from the code AND, where it matters, **empirically reproduced** on localnet or in Python.
 
-This is a *code-audit* skill (security/correctness + maintainability). It does NOT do testnet-readiness/deploy/ops checks (Move.toml hygiene, post-deploy admin steps, indexer parity, runbooks). If asked for those, say so and scope them separately.
+This is a *code-audit* skill (security/correctness + maintainability). It does NOT do testnet-readiness/deploy/ops checks (Move.toml hygiene, post-deploy admin steps, indexer parity, runbooks). If asked for those, say so and scope them separately. Scope is FIXED to the four Predict-cluster packages (predict + propbook + block_scholes_oracle + account); do NOT broaden it to deepbook core or other repo packages. Upgrade / object-layout migration correctness is also out of scope (matches `move.md` pre-deploy) — revisit only when nearing deploy.
 
 ## When to use
 - "Audit Predict" / "deep audit of the predict contracts" / "find bugs in Predict before testnet."

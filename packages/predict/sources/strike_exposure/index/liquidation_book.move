@@ -10,8 +10,8 @@
 /// leveraged set to value the NAV floor-correction term — the only place this
 /// module touches pricing/tick/floor math, and it does so through a caller-supplied
 /// `Pricer`, never owning the pricing model itself. It does not own payout backing,
-/// cash, or manager positions. Liquidated tombstones persist until the holder
-/// redeems the worthless order and clears their manager position.
+/// cash, or account positions. Liquidated tombstones persist until the holder
+/// redeems the worthless order and clears their account position.
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, range_codec};
@@ -22,6 +22,7 @@ const EActiveOrderAlreadyExists: u64 = 0;
 const EActiveOrderNotFound: u64 = 1;
 const ELiquidatedOrderAlreadyExists: u64 = 2;
 const ELiquidatedOrderNotFound: u64 = 3;
+const EMaxActiveLeveragedOrders: u64 = 4;
 
 const PAGE_CAPACITY: u64 = 64;
 
@@ -135,6 +136,10 @@ public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
 
     let order_id = order.id();
     assert!(!book.liquidated_orders.contains(order_id), ELiquidatedOrderAlreadyExists);
+    assert!(
+        book.active_order_count < constants::max_active_leveraged_orders!(),
+        EMaxActiveLeveragedOrders,
+    );
     book.insert_active_order_id(order_id);
 }
 
@@ -275,8 +280,7 @@ fun collect_passive_candidates(
         added = added + 1;
         last_order_id = option::some(order_id);
         visited = visited + 1;
-        let next = book.next_cursor(candidate);
-        candidate = if (next.is_some()) next.destroy_some() else tail_start_cursor;
+        candidate = book.next_cursor(candidate).destroy_or!(tail_start_cursor);
     };
 
     if (last_order_id.is_some()) {

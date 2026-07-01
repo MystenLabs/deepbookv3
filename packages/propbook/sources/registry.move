@@ -17,12 +17,11 @@
 module propbook::registry;
 
 use propbook::{
-    block_scholes_forward_feed::{Self as block_scholes_forward_feed, BlockScholesForwardFeed},
-    block_scholes_spot_feed::{Self as block_scholes_spot_feed, BlockScholesSpotFeed},
-    block_scholes_svi_feed::{Self as block_scholes_svi_feed, BlockScholesSVIFeed},
-    pyth_feed::{Self as pyth_feed, PythFeed}
+    block_scholes_forward_feed::{Self, BlockScholesForwardFeed},
+    block_scholes_spot_feed::{Self, BlockScholesSpotFeed},
+    block_scholes_svi_feed::{Self, BlockScholesSVIFeed},
+    pyth_feed::{Self, PythFeed}
 };
-use std::option::{Self, Option};
 use sui::{event, table::{Self, Table}};
 
 const ESourceAlreadyExists: u64 = 0;
@@ -338,7 +337,6 @@ public fun bind_pyth_to_underlying(
 ) {
     registry.bind_oracle(
         admin_cap,
-        propbook_underlying_id,
         pyth_source_key(pyth_feed::pyth_source_id(feed)),
         pyth_feed::id(feed),
         pyth_binding_key(propbook_underlying_id),
@@ -354,7 +352,6 @@ public fun bind_block_scholes_spot_to_underlying(
 ) {
     registry.bind_oracle(
         admin_cap,
-        propbook_underlying_id,
         block_scholes_spot_source_key(block_scholes_spot_feed::bs_source_id(feed)),
         block_scholes_spot_feed::id(feed),
         block_scholes_spot_binding_key(propbook_underlying_id),
@@ -393,14 +390,12 @@ public fun bind_block_scholes_surface_to_underlying(
 
     registry.bind_oracle(
         admin_cap,
-        propbook_underlying_id,
         forward_source_key,
         block_scholes_forward_feed::id(forward_feed),
         forward_binding_key,
     );
     registry.bind_oracle(
         admin_cap,
-        propbook_underlying_id,
         svi_source_key,
         block_scholes_svi_feed::id(svi_feed),
         svi_binding_key,
@@ -435,11 +430,11 @@ fun record_source(registry: &mut OracleRegistry, source_key: OracleSourceKey, pr
 fun bind_oracle(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,
-    propbook_underlying_id: u32,
     source_key: OracleSourceKey,
     propbook_oracle_id: ID,
     binding_key: OracleBindingKey,
 ) {
+    let propbook_underlying_id = binding_key.propbook_underlying_id;
     registry.assert_registered_source_object(source_key, propbook_oracle_id);
     registry.assert_binding_available(binding_key);
 

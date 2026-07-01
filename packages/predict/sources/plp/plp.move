@@ -16,7 +16,7 @@
 /// feature.
 module deepbook_predict::plp;
 
-use account::{account::{AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
     constants,
@@ -58,6 +58,7 @@ const EPoolNavDust: u64 = 8;
 const EBelowMinBootstrapLiquidity: u64 = 9;
 const EBelowMinFeeIncentiveSponsorship: u64 = 10;
 const EMarketNotSettled: u64 = 11;
+const EMaxLiveExpiryMarketsExceeded: u64 = 12;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -181,8 +182,13 @@ public fun withdraw_requests_pending(vault: &PoolVault): u64 {
 }
 
 /// Return the expiry markets still contributing active pool valuation/risk.
-public fun active_expiry_markets(vault: &PoolVault): &vector<ID> {
+public fun active_expiry_markets(vault: &PoolVault): vector<ID> {
     vault.expiry_accounting.active_expiry_markets()
+}
+
+/// Return the count of active pre-expiry markets that require live NAV valuation.
+public fun active_live_expiry_count(vault: &PoolVault, clock: &Clock): u64 {
+    vault.expiry_accounting.active_live_expiry_count(clock.timestamp_ms())
 }
 
 /// Return the pricing debit side of the aggregate expiry profit basis.
@@ -303,14 +309,11 @@ public fun finish_flush(
     );
     let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
 
-    let idle = vault.expiry_accounting.idle_balance();
+    let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
-        idle,
-        vault.expiry_accounting.profit_basis_credits(),
-        vault.expiry_accounting.profit_basis_debits(),
+        vault,
         config.protocol_reserve_profit_share(),
         total_nav,
-        vault.expiry_accounting.pending_protocol_profit(),
     );
     let total_supply = vault.lp.total_supply();
     assert_plp_price_in_bounds(pool_nav, total_supply);
@@ -321,13 +324,13 @@ public fun finish_flush(
     // valuation, so the single FlushExecuted event carries the priced mark and its
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
+    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
     let (supplies_filled, withdrawals_filled) = vault
         .lp
         .drain(
             vault_id,
             &mut vault.expiry_accounting,
-            pool_nav,
-            total_supply,
+            mark,
             supply_budget,
             withdraw_budget,
             ctx,
@@ -340,7 +343,7 @@ public fun finish_flush(
         total_supply,
         total_nav,
         market_count,
-        idle,
+        idle_balance_before,
         supplies_filled,
         withdrawals_filled,
         supplies_filled + withdrawals_filled,
@@ -351,7 +354,7 @@ public fun finish_flush(
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
 /// amount is recorded as inactive on the account and activates next epoch
-/// (`predict_account::active_stake_mut`, run by trade/claim flows). Callable
+/// (`predict_account::roll_active_stake`, run by trade/claim flows). Callable
 /// anytime, any number of times.
 public fun stake_deep(
     vault: &mut PoolVault,
@@ -367,7 +370,7 @@ public fun stake_deep(
     wrapper.settle<DEEP>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let deep = account.withdraw<DEEP>(amount, ctx);
-    predict_account::active_stake_mut(account, ctx);
+    predict_account::roll_active_stake(account, ctx);
     predict_account::add_inactive_stake(account, amount, ctx);
     vault.staked_deep.join(deep.into_balance());
     vault_events::emit_deep_staked(
@@ -429,8 +432,38 @@ public fun rebalance_expiry_cash(
     };
 }
 
-/// Permissionlessly resolve one account's settled trading-loss rebate.
+/// Resolve the caller-owned account's settled trading-loss rebate.
 public fun claim_trading_loss_rebate(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    vault.claim_trading_loss_rebate_internal(
+        market,
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        clock,
+        ctx,
+    );
+}
+
+/// Permissionlessly resolve one account's settled trading-loss rebate using Predict
+/// app auth. `deauthorize_app<PredictApp>` disables this automation; owners can
+/// still use `claim_trading_loss_rebate` with owner auth.
+public fun claim_trading_loss_rebate_permissionless(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -444,36 +477,17 @@ public fun claim_trading_loss_rebate(
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    let vault_id = vault.id();
-    let expiry_market_id = market.id();
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
-    let settlement_price = market.settlement_price();
-
     wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
     let account = wrapper.load_account_mut(auth);
-    let account_id = account.account_id();
-    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(account, config, ctx);
-    let residual_returned = residual_cash.value();
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .receive_expiry_cash(expiry_market_id, residual_cash);
-    if (returned_cash_amount > 0) {
-        vault_events::emit_expiry_cash_received(
-            vault_id,
-            expiry_market_id,
-            settlement_price,
-            returned_cash_amount,
-        );
-        vault.materialize_expiry_profit(config, expiry_market_id);
-    };
-    vault_events::emit_trading_loss_rebate_claimed(
-        vault_id,
-        expiry_market_id,
-        account_id,
-        rebate_amount,
-        residual_returned,
+    vault.claim_trading_loss_rebate_internal(
+        market,
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        clock,
+        ctx,
     );
 }
 
@@ -634,15 +648,65 @@ public fun cancel_withdraw_request(
 public(package) fun register_expiry(
     vault: &mut PoolVault,
     expiry_market_id: ID,
+    expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
+    clock: &Clock,
 ) {
+    let now_ms = clock.timestamp_ms();
+    if (expiry_ms > now_ms) {
+        assert!(
+            vault
+                .expiry_accounting
+                .active_live_expiry_count(now_ms) < constants::max_live_expiry_markets!(),
+            EMaxLiveExpiryMarketsExceeded,
+        );
+    };
     vault
         .expiry_accounting
-        .register_expiry(expiry_market_id, max_expiry_allocation, initial_expiry_cash);
+        .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
 }
 
 // === Private Functions ===
+
+fun claim_trading_loss_rebate_internal(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let vault_id = vault.id();
+    let expiry_market_id = market.id();
+    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+    let settlement_price = market.settlement_price();
+    let account_id = account.account_id();
+    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(account, config, ctx);
+    let residual_returned = residual_cash.value();
+    let returned_cash_amount = vault
+        .expiry_accounting
+        .receive_expiry_cash(expiry_market_id, residual_cash);
+    if (returned_cash_amount > 0) {
+        vault_events::emit_expiry_cash_received(
+            vault_id,
+            expiry_market_id,
+            settlement_price,
+            returned_cash_amount,
+        );
+        vault.materialize_expiry_profit(config, expiry_market_id);
+    };
+    vault_events::emit_trading_loss_rebate_claimed(
+        vault_id,
+        expiry_market_id,
+        account_id,
+        rebate_amount,
+        residual_returned,
+    );
+}
 
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
 ///
@@ -655,13 +719,14 @@ public(package) fun register_expiry(
 /// `pending_protocol_profit` is subtracted separately to keep it out of LP value
 /// until it is drained into the reserve.
 fun lp_pool_value(
-    idle_balance: u64,
-    profit_basis_credits: u64,
-    profit_basis_debits: u64,
+    vault: &PoolVault,
     protocol_reserve_profit_share: u64,
     active_expiry_value: u64,
-    pending_protocol_profit: u64,
 ): u64 {
+    let idle_balance = vault.expiry_accounting.idle_balance();
+    let profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
+    let profit_basis_debits = vault.expiry_accounting.profit_basis_debits();
+    let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
     let gross_pool_value = idle_balance + active_expiry_value;
     let aggregate_credits = profit_basis_credits + active_expiry_value;
     let exclusion = math::mul(
@@ -671,8 +736,11 @@ fun lp_pool_value(
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
-    // exceed gross. LP value can never be negative — floor it at 0, which also
-    // prevents the subtraction from underflowing and bricking all PLP supply/withdraw.
+    // exceed gross. LP value can never be negative, so floor it at 0 to keep the
+    // subtraction from underflow-aborting. NOTE this is not a full liveness guarantee:
+    // a 0/dust pool NAV is a real reachable state that still bricks `finish_flush` via
+    // the pool-NAV dust-floor + PLP circuit-breaker guards (see #lp-nav-zero-brick) —
+    // the floor only avoids the arithmetic underflow, not the downstream dust/CB abort.
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 
@@ -803,12 +871,12 @@ fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
 
 /// Current cash, the target cash to hold, and the upper sweep band for one expiry.
 ///
-/// `required_cash` is payout liability plus rebate reserve; `target_cash` adds one
-/// buffer above it and `sweep_threshold_cash` adds two, both floored at the
-/// per-expiry initial cash target. Below target the pool tops up to target; above
-/// the sweep band it returns the excess over target.
+/// `target_cash` adds one buffer above the expiry-cash required backing and
+/// `sweep_threshold_cash` adds two, both floored at the per-expiry initial cash
+/// target. Below target the pool tops up to target; above the sweep band it
+/// returns the excess over target.
 fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64, u64) {
-    let required_cash = market.payout_liability() + market.rebate_reserve();
+    let required_cash = market.required_cash();
     let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
     let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
     let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
@@ -891,7 +959,7 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
     config.begin_valuation();
     PoolValuation {
         pool_vault_id: vault.id(),
-        expected_expiry_markets: *vault.expiry_accounting.active_expiry_markets(),
+        expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
         total_nav: 0,
     }

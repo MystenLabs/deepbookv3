@@ -18,7 +18,9 @@ public struct TradingPausedUpdated has copy, drop, store {
 
 /// Emitted when a new expiry market is created. This is the authoritative
 /// creation event: it carries identity, cadence terms, and the immutable policy
-/// snapshot applied to the market.
+/// snapshot applied to the market. The economic policy fields mirror
+/// `StrikeExposureConfig`: the fraction / leverage / fee / probability / multiplier
+/// fields are 1e9-scaled (FLOAT_SCALING) and `expiry_fee_window_ms` is in milliseconds.
 public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
     pool_vault_id: ID,

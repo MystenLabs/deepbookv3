@@ -56,6 +56,7 @@ use sui::{
     coin,
     test_scenario::{Self as test, Scenario, return_shared}
 };
+use token::deep::DEEP;
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 
@@ -69,6 +70,7 @@ public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 /// shared empty root, and root-dependent tests take/return it per transaction.
 public struct Fixture {
     scenario: Scenario,
+    account_admin_cap: AccountAdminCap,
     admin_cap: AdminCap,
     propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
@@ -133,7 +135,6 @@ public fun setup_market(tick: u64): Fixture {
     let mut account_registry = scenario.take_shared<AccountRegistry>();
     account_registry.authorize_app<PredictApp>(&account_admin_cap);
     return_shared(account_registry);
-    destroy(account_admin_cap);
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
@@ -143,6 +144,7 @@ public fun setup_market(tick: u64): Fixture {
     registry.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         tick,
         test_constants::default_admission_tick_size(),
@@ -227,6 +229,7 @@ public fun setup_market(tick: u64): Fixture {
 
     Fixture {
         scenario,
+        account_admin_cap,
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
@@ -380,6 +383,41 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Resize the default cadence's pool allocation terms through the production
+/// registry admin path. Call before creating the expiry that should snapshot them.
+public fun set_default_cadence_allocation(
+    self: &mut Fixture,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut registry = self.scenario.take_shared<Registry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    registry.set_cadence_config(
+        &config,
+        &self.admin_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        max_expiry_allocation,
+        initial_expiry_cash,
+        test_constants::default_cadence_window_size(),
+    );
+    return_shared(config);
+    return_shared(registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Remove Predict's app-auth access from the shared account registry.
+public fun deauthorize_predict_app(self: &mut Fixture) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
+    account_registry.deauthorize_app<PredictApp>(&self.account_admin_cap);
+    return_shared(account_registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Sponsor fee incentives for a market bundle with freshly-minted DUSDC.
 public fun sponsor_fee_incentives_bundle(
     self: &mut Fixture,
@@ -528,6 +566,14 @@ public fun active_stake(wrapper: &AccountWrapper): u64 {
 /// Inactive (next-epoch) DEEP stake on the trader's account.
 public fun inactive_stake(wrapper: &AccountWrapper): u64 {
     predict_account::inactive_stake(wrapper.load_account())
+}
+
+/// Deposit test DEEP into a bundled account's stored balance.
+public fun fund_deep_bundle(self: &mut Fixture, account_bundle: &mut AccountBundle, amount: u64) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    let deep = coin::mint_for_testing<DEEP>(amount, self.scenario.ctx());
+    let account = account_bundle.wrapper.load_account_mut(auth);
+    account.deposit<DEEP>(deep);
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
@@ -766,6 +812,36 @@ public fun mint_bundle_with_bs(
     )
 }
 
+/// Mint an exact-quantity order through bundles with explicit total-cost and
+/// probability caps.
+public fun mint_exact_quantity_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u256 {
+    self.mint_exact_quantity(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        max_cost,
+        max_probability,
+    )
+}
+
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
@@ -807,6 +883,34 @@ public fun mint_exact_quantity(
         root,
         &self.clock,
         self.scenario.ctx(),
+    )
+}
+
+/// Mint the largest lot-rounded order through bundles for an explicit net-premium
+/// amount and minimum quantity.
+public fun mint_exact_amount_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    amount: u64,
+    min_quantity: u64,
+    leverage: u64,
+): u256 {
+    self.mint_exact_amount(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        amount,
+        min_quantity,
+        leverage,
     )
 }
 
@@ -913,6 +1017,8 @@ public fun redeem_bundle_with_pyth(
         &market.bs,
         order_id,
         close_quantity,
+        0,
+        0,
     )
 }
 
@@ -934,6 +1040,34 @@ public fun redeem_bundle(
         &market.bs,
         order_id,
         close_quantity,
+        0,
+        0,
+    )
+}
+
+/// Close a live order through a market/account bundle with explicit close-side
+/// probability and proceeds floors.
+public fun redeem_bundle_with_limits(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+): (u256, Option<u256>) {
+    self.redeem(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
     )
 }
 
@@ -952,7 +1086,7 @@ public fun redeem_settled(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    let (closed_id, replacement_id) = market.redeem_settled(
+    let (closed_id, replacement_id) = market.redeem_settled_permissionless(
         &account_registry,
         wrapper,
         config,
@@ -968,6 +1102,34 @@ public fun redeem_settled(
     (closed_id, replacement_id)
 }
 
+/// Owner-authorized settled redeem: clears a settled order using the current
+/// scenario sender's account auth. Does not price, so takes no Block Scholes feed.
+public fun redeem_settled_with_owner_auth(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market.redeem_settled(
+        wrapper,
+        auth,
+        config,
+        oracle_registry,
+        pyth,
+        order_id,
+        close_quantity,
+        root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
 /// Permissionless settled redeem through a market/account bundle.
 public fun redeem_settled_bundle(
     self: &mut Fixture,
@@ -977,6 +1139,26 @@ public fun redeem_settled_bundle(
     close_quantity: u64,
 ): (u256, Option<u256>) {
     self.redeem_settled(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        order_id,
+        close_quantity,
+    )
+}
+
+/// Owner-authorized settled redeem through a market/account bundle.
+public fun redeem_settled_with_owner_auth_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    self.redeem_settled_with_owner_auth(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1154,6 +1336,72 @@ public fun rebalance_expiry_cash_bundle_with_pyth(
         &market.oracle_registry,
         pyth,
     );
+}
+
+/// Stake DEEP through the production PLP vault path using account owner auth.
+public fun stake_deep_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+    amount: u64,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .stake_deep(
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
+            amount,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Claim a settled trading-loss rebate through owner auth.
+public fun claim_trading_loss_rebate_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .claim_trading_loss_rebate(
+            &mut market.market,
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Claim a settled trading-loss rebate through Predict app-auth automation.
+public fun claim_trading_loss_rebate_permissionless_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let account_registry = self.scenario.take_shared<AccountRegistry>();
+    market
+        .vault
+        .claim_trading_loss_rebate_permissionless(
+            &mut market.market,
+            &mut account_bundle.wrapper,
+            &account_registry,
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    return_shared(account_registry);
 }
 
 public fun current_nav(
@@ -1479,6 +1727,7 @@ public fun bs_spot_id(self: &Fixture): ID { self.bs_spot_id }
 public fun finish(self: Fixture) {
     let Fixture {
         scenario,
+        account_admin_cap,
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
@@ -1492,6 +1741,7 @@ public fun finish(self: Fixture) {
     lifecycle_cap.destroy();
     destroy(propbook_admin_cap);
     destroy(admin_cap);
+    destroy(account_admin_cap);
     clock.destroy_for_testing();
     scenario.end();
 }

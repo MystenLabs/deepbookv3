@@ -63,6 +63,14 @@ public struct RequestQueue<phantom T> has store {
     escrow: Balance<T>,
 }
 
+/// Frozen flush share-price mark: `pool_value` over `total_supply`. Carried as one
+/// value so the supply/withdraw pricing helpers read each term by name and cannot
+/// transpose the numerator and denominator.
+public struct FlushMark has drop {
+    pool_value: u64,
+    total_supply: u64,
+}
+
 // === Public-Package Functions ===
 
 public(package) fun new<LP>(treasury_cap: TreasuryCap<LP>, ctx: &mut TxContext): LpBook<LP> {
@@ -131,6 +139,10 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
+public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
+    FlushMark { pool_value, total_supply }
+}
+
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
 /// supplies first then withdrawals. `supply_budget` / `withdraw_budget` bound how many
 /// live requests each queue may fill this flush; `None` drains that queue fully. The
@@ -141,8 +153,7 @@ public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
     pool_vault_id: ID,
     ledger: &mut Ledger,
-    pool_value: u64,
-    total_supply: u64,
+    mark: FlushMark,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
@@ -152,7 +163,7 @@ public(package) fun drain<LP>(
 
     while (under_budget(&supply_budget, supplies_filled) && !book.supply_queue.is_empty()) {
         let (request, escrowed) = book.supply_queue.pop_front();
-        let shares = supply_shares(request.amount, total_supply, pool_value);
+        let shares = supply_shares(request.amount, &mark);
         assert!(shares > 0, EInvalidDrainMark);
         ledger.receive_idle(escrowed);
         let shares_minted = book.treasury_cap.mint_balance(shares);
@@ -170,7 +181,7 @@ public(package) fun drain<LP>(
 
     while (under_budget(&withdraw_budget, withdrawals_filled) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
-        let payout = withdraw_dusdc(request.amount, total_supply, pool_value);
+        let payout = withdraw_dusdc(request.amount, &mark);
         assert!(payout > 0, EInvalidDrainMark);
         if (ledger.idle_balance() < payout) {
             // FIFO-until-dry: idle can't cover the head request, so stop and carry
@@ -337,14 +348,9 @@ fun page_id_for_index(index: u64): u64 {
 }
 
 fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
-    let mut offset = 0;
-    while (offset < entries.length()) {
-        if (entries[offset].index == index) {
-            return offset
-        };
-        offset = offset + 1;
-    };
-    abort ERequestNotFound
+    let offset = entries.find_index!(|e| e.index == index);
+    assert!(offset.is_some(), ERequestNotFound);
+    offset.destroy_some()
 }
 
 // === Pricing Helpers ===
@@ -352,14 +358,18 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// LP shares minted for `amount` DUSDC at the frozen flush mark. `total_supply > 0`
 /// is guaranteed by the genesis lock (`plp::lock_capital`), so there is no
 /// supply==0 bootstrap branch.
-fun supply_shares(amount: u64, total_supply: u64, pool_value: u64): u64 {
-    assert!(pool_value > 0, EInvalidDrainMark);
-    math::mul_div_down(amount, total_supply, pool_value)
+fun supply_shares(amount: u64, mark: &FlushMark): u64 {
+    assert!(mark.pool_value > 0, EInvalidDrainMark);
+    // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
+    // fewer shares; the pool keeps the dust).
+    math::mul_div_down(amount, mark.total_supply, mark.pool_value)
 }
 
 /// DUSDC owed for `shares` LP at the frozen flush mark.
-fun withdraw_dusdc(shares: u64, total_supply: u64, pool_value: u64): u64 {
-    assert!(total_supply > 0, EInvalidDrainMark);
-    assert!(pool_value > 0, EInvalidDrainMark);
-    math::mul_div_down(shares, pool_value, total_supply)
+fun withdraw_dusdc(shares: u64, mark: &FlushMark): u64 {
+    assert!(mark.total_supply > 0, EInvalidDrainMark);
+    assert!(mark.pool_value > 0, EInvalidDrainMark);
+    // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
+    // less; the pool keeps the dust).
+    math::mul_div_down(shares, mark.pool_value, mark.total_supply)
 }

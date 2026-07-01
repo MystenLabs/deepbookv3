@@ -224,9 +224,9 @@ fun live_inputs(
     (forward, svi)
 }
 
-fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
+fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
     let now = clock.timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
+    source_timestamp_ms > 0 && source_timestamp_ms <= now && now - source_timestamp_ms <= max_age_ms
 }
 
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {

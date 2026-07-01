@@ -39,10 +39,10 @@ Produce:
 **Focus areas (scope, not conclusions):**
 - The cash-backing invariant (`expiry_cash`) and whether it is re-checked after every cash mutation
   (mint, redeem, liquidation, settlement, compaction, flush rebalance).
-- The relationship between the conservative pre-settlement live backing (max-live payout) and the exact
+- The relationship between the pre-settlement live backing (the exact `quantity - floor_shares` plus the aggregate λ buffer, D030) and the exact
   settled liability — what guarantees the former bounds the latter for every order.
 - The exact `current_nav` mark (payout-tree `walk_linear` − leveraged `correction_value`, floored) and the
-  precondition it rests on (every active leveraged order individually above its floor before valuation — the
+  precondition it rests on (every order whose gross value crossed its knock-out level (`floor_amount / liquidation_ltv`) has been liquidated before valuation — the
   aggregate-floor precondition; see move.md NAV rules + the C3 note in ROUNDING_POLICY).
 - PLP share-pricing symmetry: supply and withdraw priced at the SAME frozen `current_nav` in `finish_flush` /
   `drain_lp_requests`; confirm `supply_NAV = TRUE = withdraw_NAV` at the valuation boundary (no over/under-count).

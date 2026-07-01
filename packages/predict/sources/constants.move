@@ -6,7 +6,8 @@
 /// Scaling conventions (aligned with DeepBook):
 /// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
 /// - Quantities are in 6-decimal quote units: 1_000_000 = 1 contract = one quote unit
-/// - At settlement, winners receive `quantity` directly
+/// - At settlement, a winning order redeems `quantity - floor_shares` (the full
+///   `quantity` only when unleveraged, i.e. `floor_shares == 0`)
 /// - Use `math` for all fixed-point scaling and mul/div operations
 module deepbook_predict::constants;
 
@@ -65,6 +66,16 @@ public(package) macro fun min_plp_price(): u64 { 10_000_000 }
 /// Maximum executable PLP price: 100 DUSDC per PLP, in FLOAT_SCALING.
 public(package) macro fun max_plp_price(): u64 { 100_000_000_000 }
 
+/// Maximum active pre-expiry markets that can require live NAV valuation in one
+/// full-pool flush.
+public(package) macro fun max_live_expiry_markets(): u64 { 24 }
+
+/// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
+public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
+
+/// Maximum active leveraged orders one expiry market may carry into NAV.
+public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
+
 // === Time Constants ===
 
 /// Milliseconds in one minute.
@@ -87,9 +98,6 @@ public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
 
 /// Milliseconds in a 365-day year.
 public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
-
-/// Milliseconds in a 365-day year.
-public(package) macro fun ms_per_year(): u64 { one_year_ms!() }
 
 // === Staking ===
 

@@ -11,7 +11,7 @@ The pool is a single shared object, `PoolVault`. It owns:
 - **idle DUSDC** (custodied in the accounting ledger) — LP-owned cash available for withdrawal fills and for funding expiries;
 - a **protocol reserve** of DUSDC, excluded from PLP redemption (the protocol's share of materialized profit accumulates here);
 - the **PLP treasury cap**, which mints PLP on supply fills and burns it on withdrawal fills during the flush;
-- **staked DEEP** held in custody on behalf of managers (custodial, not LP-owned, not redeemable as PLP);
+- **staked DEEP** held in custody on behalf of accounts (custodial, not LP-owned, not redeemable as PLP);
 - the **expiry accounting ledger** (`Ledger`), which custodies idle DUSDC, records the active-expiry set, the cash flow to and from each expiry, and the aggregate profit basis;
 - the **async LP request queues** — a supply queue escrowing DUSDC and a withdraw queue escrowing PLP — drained by the flush.
 
@@ -25,9 +25,9 @@ PLP is registered as a 6-decimal currency, matching DUSDC's 6 decimals. Fixed-po
 
 LPs do not mint or burn PLP synchronously against a live valuation. Instead they **queue a request** that a later flush prices and fills at one pool-wide mark. This decouples the LP's transaction from the (privileged, oracle-reading) valuation, so an LP can never time their entry or exit against a self-supplied oracle snapshot.
 
-- **`request_supply`** escrows a DUSDC payment and records the requesting `PredictManager` as the fill recipient. It is routed through the manager — not the tx signer — so a composing vault's own manager receives the minted PLP. It returns a queue index.
-- **`request_withdraw`** escrows PLP and likewise records the manager recipient, returning a queue index.
-- **`cancel_supply_request` / `cancel_withdraw_request`** let the manager owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
+- **`request_supply`** escrows a DUSDC payment and records the requesting account's receive address as the fill recipient. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
+- **`request_withdraw`** escrows PLP and likewise records the account recipient, returning a queue index.
+- **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
 
 Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush drains them or the LP cancels.
 
@@ -40,6 +40,8 @@ A daily **flush** values the whole pool once and drains both queues against that
 3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, drains both queues against it, releases the lock, and consumes the potato.
 
 The potato has no abilities, so the sequence cannot be left half-finished: the only way to release the lock is to finish.
+
+PLP bounds live NAV work separately from the flush itself: each active expiry is stored with its expiry timestamp, and market registration rejects a new future market once the active pre-expiry count reaches the upgrade-required live-market cap. Expired or settled markets may still sit in the pool's active-expiry set until a rebalance or valuation pass sweeps them, but they no longer count against the live NAV cap because they do not use a live `current_nav` walk.
 
 ### The flush is privileged, not permissionless
 
@@ -90,7 +92,7 @@ flowchart TD
 
 Because supplies run before withdrawals, the DUSDC supplied this flush is available to pay this flush's withdrawals. Cash funded into expiries is not directly redeemable until it returns through rebalance or settlement, so a large exit can be bounded by idle and deferred — it cannot force-drain a live market.
 
-Fills and refunds are delivered to each recipient manager through the **balance accumulator** (`send_funds`): the minted PLP, paid DUSDC, or refunded escrow accumulates against the manager's address balance, and the manager absorbs it lazily on its next capital operation. The flush never holds a manager reference; it only needs the recipient address recorded at request time.
+Fills and refunds are delivered to each recipient account through the **balance accumulator** (`send_funds`): the minted PLP, paid DUSDC, or refunded escrow accumulates against the account's receive address, and the account absorbs it lazily on its next capital operation. The flush never holds an account reference; it only needs the recipient address recorded at request time.
 
 ## Full-pool NAV is exact, per expiry
 
@@ -164,7 +166,7 @@ The floor is `max_net_payout` — the maximum summed net payout at any *single* 
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
-The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and unresolved rebate claims. A claim first shrinks the unresolved basis for the resolved manager, then pays the rebate and returns any residual reserve; no flow lets cash drop below the post-claim backing line.
+The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and unresolved rebate claims. A claim first shrinks the unresolved basis for the resolved account, then pays the rebate and returns any residual reserve; no flow lets cash drop below the post-claim backing line.
 
 ## Profit materialization at settlement
 
@@ -186,9 +188,9 @@ LP profit stays in idle DUSDC (raising NAV for all holders). The protocol cut is
 
 ## DEEP staking custody
 
-Managers stake DEEP for trading benefits (fee discounts and a higher rebate share — see [fees and rebates](./fees-and-rebates.md)). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
+Accounts stake DEEP for trading benefits (fee discounts and a higher rebate share — see [fees and rebates](./fees-and-rebates.md)). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
 
-- Staking records the amount as inactive on the manager; it activates on the next epoch (lazily rolled by the trade/claim flows).
+- Staking records the amount as inactive on the account; it activates on the next epoch (lazily rolled by the trade/claim flows).
 - Unstaking returns all staked DEEP (active and inactive) at any time with no penalty.
 
 This is the only DEEP the vault holds; there is no LP-owned DEEP incentive balance (incentives moved to a separate staking contract).

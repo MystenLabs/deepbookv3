@@ -25,6 +25,9 @@ const PARTIAL_SURVIVOR_NET_PAYOUT: u64 = 474_991_951;
 const LEVERAGED_QUANTITY: u64 = 1_000_000_000;
 const LEVERAGED_FLOOR_SHARES: u64 = 249_999_999;
 const LEVERAGED_NET_PAYOUT: u64 = 750_000_001;
+/// Node count for the real-accumulation test — enough to prove multi-node accumulation without the
+/// ~1000-insert timeout that forces the exact cap-boundary tests to seed the count.
+const ACCUMULATION_NODES: u64 = 64;
 
 /// Raw oracle price at the lower edge of `tick` (a settlement equal to a higher
 /// boundary still wins under the half-open `(lower, higher]` payoff).
@@ -102,6 +105,7 @@ fun new_returns_empty_tree() {
     // Empty tree has zero conservative backing and zero settled liability at any
     // settlement price.
     assert_reserve_terms(&tree, 0, 0);
+    assert_eq!(tree.debug_node_count(), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
     destroy(tree);
@@ -250,6 +254,90 @@ fun insert_with_both_terms_zero_is_no_op() {
     insert_range(&mut tree, 2, 6, 0, 0);
 
     assert_reserve_terms(&tree, 0, 0);
+    assert_eq!(tree.debug_node_count(), 0);
+    destroy(tree);
+}
+
+#[test, expected_failure(abort_code = strike_payout_tree::EMaxPayoutTreeNodes)]
+fun insert_new_boundary_above_node_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_at_node_cap(&mut tree);
+
+    insert_range(
+        &mut tree,
+        2,
+        constants::pos_inf_tick!(),
+        1,
+        0,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_payout_tree::EMaxPayoutTreeNodes)]
+fun insert_finite_range_requiring_two_new_boundaries_above_node_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_one_slot_below_node_cap(&mut tree);
+
+    insert_range(&mut tree, 2, 3, 1, 0);
+    abort 999
+}
+
+#[test]
+fun insert_existing_boundary_at_node_cap_succeeds() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_at_node_cap(&mut tree);
+
+    insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+
+    assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!());
+    destroy(tree);
+}
+
+#[test]
+fun removing_boundary_below_node_cap_allows_new_boundary() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    seed_single_boundary_at_node_cap(&mut tree);
+
+    remove_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+    assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!() - 1);
+
+    insert_range(
+        &mut tree,
+        2,
+        constants::pos_inf_tick!(),
+        1,
+        0,
+    );
+    assert_eq!(tree.debug_node_count(), constants::max_payout_tree_nodes!());
+    destroy(tree);
+}
+
+#[test]
+fun node_count_tracks_real_boundary_accumulation() {
+    // The exact 1000-node cap boundary is seeded (debug_set_node_count) because ~1000 REAL treap
+    // inserts time out the Move test framework; this proves that seam isn't lying — node_count tracks a
+    // genuine multi-node accumulation, and the evaluators walk the accumulated tree correctly.
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    let n = ACCUMULATION_NODES;
+    let mut i = 1;
+    while (i <= n) {
+        insert_range(&mut tree, i, constants::pos_inf_tick!(), 1, 0); // one new boundary node at tick i
+        i = i + 1;
+    };
+    assert_eq!(tree.debug_node_count(), n);
+
+    // Each (i, pos_inf] pays 1 for settlement > tick i, so at settle_at_tick(T) the winners are the
+    // boundaries with i < T (capped at n). Hand-computed (independent of the tree implementation):
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0); // no i < 1
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(10), TICK_SIZE), 9); // i in 1..9
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(n + 1), TICK_SIZE), n); // all n win
+    // All ranges share the (n, pos_inf] tail, so the peak prefix gain is the full sum.
+    assert_reserve_terms(&tree, n, n);
     destroy(tree);
 }
 
@@ -262,8 +350,15 @@ fun insert_then_remove_restores_empty_state() {
 
     insert_range(&mut tree, 2, 6, 50, 0);
     assert_reserve_terms(&tree, 50, 50);
+    assert!(tree.debug_contains_node(2));
+    assert!(tree.debug_contains_node(6));
+    assert_eq!(tree.debug_node_count(), 2);
+
     remove_range(&mut tree, 2, 6, 50, 0);
     assert_reserve_terms(&tree, 0, 0);
+    assert!(!tree.debug_contains_node(2));
+    assert!(!tree.debug_contains_node(6));
+    assert_eq!(tree.debug_node_count(), 0);
     destroy(tree);
 }
 
@@ -275,9 +370,33 @@ fun insert_two_then_remove_one_leaves_other() {
     insert_range(&mut tree, 1, 6, 40, 0);
     insert_range(&mut tree, 3, 7, 30, 0);
     assert_reserve_terms(&tree, 70, 70);
+    assert_eq!(tree.debug_node_count(), 4);
 
     remove_range(&mut tree, 3, 7, 30, 0);
     assert_reserve_terms(&tree, 40, 40);
+    assert!(tree.debug_contains_node(1));
+    assert!(tree.debug_contains_node(6));
+    assert!(!tree.debug_contains_node(3));
+    assert!(!tree.debug_contains_node(7));
+    assert_eq!(tree.debug_node_count(), 2);
+    destroy(tree);
+}
+
+#[test]
+fun remove_adjacent_range_preserves_shared_live_boundary() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+
+    insert_range(&mut tree, 1, 3, 40, 0);
+    insert_range(&mut tree, 3, 7, 30, 0);
+    assert_eq!(tree.debug_node_count(), 3);
+
+    remove_range(&mut tree, 1, 3, 40, 0);
+    assert_reserve_terms(&tree, 30, 30);
+    assert!(!tree.debug_contains_node(1));
+    assert!(tree.debug_contains_node(3));
+    assert!(tree.debug_contains_node(7));
+    assert_eq!(tree.debug_node_count(), 2);
     destroy(tree);
 }
 
@@ -296,6 +415,58 @@ fun remove_from_empty_tree_aborts() {
     let mut tree = new_tree(ctx);
     remove_range(&mut tree, 2, 6, 1, 0);
     abort 999
+}
+
+#[test]
+fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
+    // Regression for #c24d8d (payout-tree node GC): removing an interior range must leave the tree
+    // walked IDENTICALLY by the canonical evaluators (settled_payout_liability, net_payout_reserve_
+    // terms). Remove a middle range whose two boundaries are interior nodes so they GC out via
+    // merge_subtrees, then verify the post-GC tree against independently hand-computed values AND a
+    // freshly rebuilt survivor-only tree (the prior remove tests only checked node presence/reserve,
+    // never the evaluators over a GC-mutated structure).
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    insert_range(&mut tree, 2, 8, 100, 0); // R1
+    insert_range(&mut tree, 4, 10, 50, 0); // R2 — removed below; ticks 4,10 are unique to it + interior
+    insert_range(&mut tree, 6, 12, 30, 0); // R3
+    assert_eq!(tree.debug_node_count(), 6);
+
+    remove_range(&mut tree, 4, 10, 50, 0);
+    assert_eq!(tree.debug_node_count(), 4);
+    assert!(!tree.debug_contains_node(4));
+    assert!(!tree.debug_contains_node(10));
+
+    // Survivors: R1 (2,8]=100 and R3 (6,12]=30. A range (L,H] wins at settle_at_tick(T) iff L < T <= H.
+    // Hand-computed (independent of the tree implementation):
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0); // below both
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 100); // R1 only
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 130); // R1+R3 overlap
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(8), TICK_SIZE), 130); // R1+R3 (8 = R1 higher)
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(10), TICK_SIZE), 30); // R3 only (10 > 8)
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(12), TICK_SIZE), 30); // R3 (12 = R3 higher)
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(13), TICK_SIZE), 0); // above both
+    assert_reserve_terms(&tree, 130, 130);
+
+    // Metamorphic: a clean tree with only the survivor ranges must be bit-identical under the
+    // evaluators — proves the GC left no stale boundary terms or subtree summaries behind.
+    let mut rebuilt = new_tree(ctx);
+    insert_range(&mut rebuilt, 2, 8, 100, 0);
+    insert_range(&mut rebuilt, 6, 12, 30, 0);
+    assert_eq!(
+        tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE),
+        rebuilt.settled_payout_liability(settle_at_tick(7), TICK_SIZE),
+    );
+    assert_eq!(
+        tree.settled_payout_liability(settle_at_tick(11), TICK_SIZE),
+        rebuilt.settled_payout_liability(settle_at_tick(11), TICK_SIZE),
+    );
+    let (gc_max, gc_total) = tree.net_payout_reserve_terms();
+    let (rebuilt_max, rebuilt_total) = rebuilt.net_payout_reserve_terms();
+    assert_eq!(gc_max, rebuilt_max);
+    assert_eq!(gc_total, rebuilt_total);
+    destroy(tree);
+    destroy(rebuilt);
 }
 
 // === settled_payout_liability ===
@@ -389,4 +560,14 @@ fun settled_liability_nets_floor_shares() {
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 30);
     assert_reserve_terms(&tree, 30, 30);
     destroy(tree);
+}
+
+fun seed_single_boundary_at_node_cap(tree: &mut StrikePayoutTree) {
+    insert_range(tree, 1, constants::pos_inf_tick!(), 1, 0);
+    tree.debug_set_node_count(constants::max_payout_tree_nodes!());
+}
+
+fun seed_single_boundary_one_slot_below_node_cap(tree: &mut StrikePayoutTree) {
+    insert_range(tree, 1, constants::pos_inf_tick!(), 1, 0);
+    tree.debug_set_node_count(constants::max_payout_tree_nodes!() - 1);
 }

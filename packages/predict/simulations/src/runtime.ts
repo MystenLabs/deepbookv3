@@ -37,6 +37,7 @@ import {
     lazerUpdateFromConfig,
     updateTrustedSignerVaaFromConfig,
 } from "./localPyth.js";
+import { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson } from "./shared.js";
 
 export interface GasUsage {
     computationCost: number;
@@ -98,7 +99,16 @@ export const signer = getSigner();
 export const address = signer.getPublicKey().toSuiAddress();
 export { POOL_VAULT_ID, PROTOCOL_CONFIG_ID };
 
-const DEFAULT_GAS_BUDGET = 1_000_000_000n;
+const DEFAULT_GAS_BUDGET = gasBudgetFromEnv();
+
+function gasBudgetFromEnv(): bigint {
+    const raw = process.env.SIM_GAS_BUDGET?.trim();
+    if (!raw) return 1_000_000_000n;
+    if (!/^[1-9][0-9]*$/.test(raw)) {
+        throw new Error(`SIM_GAS_BUDGET must be a positive integer MIST value, got "${raw}"`);
+    }
+    return BigInt(raw);
+}
 
 function isSuccessStatus(status: any): boolean {
     return status?.status === "success" || status?.success === true;
@@ -106,6 +116,161 @@ function isSuccessStatus(status: any): boolean {
 
 function formatStatusError(status: any, fallback: string): string {
     return status?.error ?? fallback;
+}
+
+function failedTransactionAlreadyLogged(error: unknown): boolean {
+    return error instanceof Error && (error as any).__failedTransactionLogged === true;
+}
+
+function markFailedTransactionLogged(error: Error): Error {
+    (error as any).__failedTransactionLogged = true;
+    return error;
+}
+
+let failedTransactionArtifactSequence = 1;
+
+function safeArtifactValue(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
+    if (depth > 40) return "[MaxDepth]";
+    if (value === null) return null;
+    if (value === undefined) return "[Undefined]";
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") {
+        return value;
+    }
+    if (typeof value === "symbol") return String(value);
+    if (typeof value === "function") return `[Function ${(value as Function).name || "anonymous"}]`;
+    if (value instanceof Uint8Array) {
+        return {
+            type: "Uint8Array",
+            length: value.length,
+            base64: Buffer.from(value).toString("base64"),
+        };
+    }
+    if (value instanceof Error) {
+        return {
+            name: value.name,
+            message: value.message,
+            stack: value.stack,
+            cause: safeArtifactValue((value as any).cause, seen, depth + 1),
+        };
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => safeArtifactValue(item, seen, depth + 1));
+    }
+    if (typeof value === "object") {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+        const out: Record<string, unknown> = {};
+        for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+            out[key] = safeArtifactValue(entry, seen, depth + 1);
+        }
+        seen.delete(value);
+        return out;
+    }
+    return String(value);
+}
+
+function failedTransactionArtifactPath(label: string, attempt: number): string {
+    const safeLabel = label.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 96) || "transaction";
+    const suffix = `${Date.now()}-${process.pid}-${failedTransactionArtifactSequence++}`;
+    return `${FAILED_TRANSACTIONS_DIR}/${safeLabel}-attempt-${attempt + 1}-${suffix}.json`;
+}
+
+async function collectTransactionDebug(params: {
+    tx?: Transaction | null;
+    label: string;
+    attempt: number;
+    gasBudget: bigint;
+    phase:
+        | "rpc_error"
+        | "retryable_rpc_error"
+        | "execution_failure"
+        | "post_submit_fetch_error";
+    raw?: unknown;
+    error?: unknown;
+}): Promise<string> {
+    const rawAny = params.raw as any;
+    const digest =
+        rawAny?.digest ??
+        rawAny?.effects?.transactionDigest ??
+        rawAny?.effects?.transaction_digest ??
+        null;
+    const artifact: Record<string, unknown> = {
+        schema_version: "predict_failed_transaction_v1",
+        timestamp: new Date().toISOString(),
+        label: params.label,
+        phase: params.phase,
+        attempt: params.attempt + 1,
+        sender: address,
+        rpc_url: RPC_URL,
+        gas_budget: params.gasBudget.toString(),
+        digest,
+        status: rawAny?.effects?.status ?? null,
+        gas_used: rawAny?.effects?.gasUsed ?? null,
+        error: safeArtifactValue(params.error),
+        raw_response: safeArtifactValue(params.raw),
+    };
+
+    if (params.tx) {
+        try {
+            const bytes = await params.tx.build({ client });
+            artifact.transaction_bytes = {
+                length: bytes.length,
+                base64: Buffer.from(bytes).toString("base64"),
+            };
+            try {
+                artifact.dry_run = safeArtifactValue(
+                    await client.dryRunTransactionBlock({ transactionBlock: bytes }),
+                );
+            } catch (dryRunError) {
+                artifact.dry_run_error = safeArtifactValue(dryRunError);
+            }
+        } catch (buildError) {
+            artifact.transaction_build_error = safeArtifactValue(buildError);
+        }
+    } else {
+        artifact.transaction_unavailable = "transaction builder failed before producing a PTB";
+    }
+
+    if (digest !== null) {
+        try {
+            artifact.transaction_block = safeArtifactValue(
+                await client.getTransactionBlock({
+                    digest,
+                    options: {
+                        showInput: true,
+                        showEffects: true,
+                        showEvents: true,
+                        showObjectChanges: true,
+                        showBalanceChanges: true,
+                    },
+                }),
+            );
+        } catch (fetchError) {
+            artifact.transaction_block_fetch_error = safeArtifactValue(fetchError);
+        }
+    }
+
+    ensureDir(FAILED_TRANSACTIONS_DIR);
+    const path = failedTransactionArtifactPath(params.label, params.attempt);
+    writeJson(path, artifact);
+    process.stderr.write(`[${ts()}]   Failed transaction artifact: ${path}\n`);
+    return path;
+}
+
+async function tryCollectTransactionDebug(params: Parameters<typeof collectTransactionDebug>[0]) {
+    try {
+        return await collectTransactionDebug(params);
+    } catch (error) {
+        process.stderr.write(
+            `[${ts()}]   Failed transaction artifact logging failed: ${String(error)}\n`,
+        );
+        return null;
+    }
+}
+
+function failedTransactionSuffix(artifactPath: string | null): string {
+    return artifactPath === null ? " failed_tx_artifact=<logging_failed>" : ` failed_tx=${artifactPath}`;
 }
 
 function gasSummaryFromEffects(effects: any): GasUsage {
@@ -625,6 +790,7 @@ export function setCadenceConfigTx(params: {
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
             tx.object(ADMIN_CAP_ID),
+            tx.pure.u32(BS_UNDERLYING_ID),
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
             tx.pure.u64(params.admissionTickSize),
@@ -976,6 +1142,21 @@ export async function refreshOracleAndMintTx(
     return tx;
 }
 
+export async function refreshOracleAndMintBatchTx(
+    params: OracleRefreshParams & { mints: MintParams[] },
+): Promise<Transaction> {
+    if (params.mints.length === 0) {
+        throw new Error("refreshOracleAndMintBatchTx requires at least one mint");
+    }
+
+    const tx = new Transaction();
+    await addOracleRefresh(tx, params);
+    for (const mint of params.mints) {
+        addMint(tx, mint);
+    }
+    return tx;
+}
+
 export async function refreshOracleAndRedeemTx(
     params: OracleRefreshParams & RedeemParams,
 ): Promise<Transaction> {
@@ -1001,25 +1182,54 @@ export async function executeAndWait(
             options: SETUP_RESPONSE_OPTIONS,
         });
     } catch (error) {
-        let dryRunSummary = "";
-        try {
-            const bytes = await tx.build({ client });
-            const dryRun = await client.dryRunTransactionBlock({ transactionBlock: bytes });
-            dryRunSummary = ` dryRun=${JSON.stringify(dryRun).slice(0, 1000)}`;
-        } catch (dryRunError) {
-            dryRunSummary = ` dryRun_error=${String(dryRunError)}`;
-        }
-        throw new Error(`${label} rpc failure: ${String(error)}${dryRunSummary}`);
+        const artifactPath = await tryCollectTransactionDebug({
+            tx,
+            label,
+            attempt: 0,
+            gasBudget,
+            phase: "rpc_error",
+            error,
+        });
+        throw markFailedTransactionLogged(
+            new Error(`${label} rpc failure: ${String(error)}${failedTransactionSuffix(artifactPath)}`),
+        );
     }
 
     const status = (execution as any).effects?.status;
     if (!isSuccessStatus(status)) {
-        throw new Error(
-            `${label} failed: ${formatStatusError(status, JSON.stringify(execution).slice(0, 300))}`,
+        const artifactPath = await tryCollectTransactionDebug({
+            tx,
+            label,
+            attempt: 0,
+            gasBudget,
+            phase: "execution_failure",
+            raw: execution,
+        });
+        throw markFailedTransactionLogged(
+            new Error(
+                `${label} failed: ${formatStatusError(status, JSON.stringify(execution).slice(0, 300))}${failedTransactionSuffix(artifactPath)}`,
+            ),
         );
     }
 
-    return getTransactionBlockWithRetry(execution.digest);
+    try {
+        return await getTransactionBlockWithRetry(execution.digest);
+    } catch (error) {
+        const artifactPath = await tryCollectTransactionDebug({
+            tx,
+            label,
+            attempt: 0,
+            gasBudget,
+            phase: "post_submit_fetch_error",
+            raw: execution,
+            error,
+        });
+        throw markFailedTransactionLogged(
+            new Error(
+                `${label} post-submit fetch failure digest=${execution.digest}: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
+            ),
+        );
+    }
 }
 
 const EXECUTE_MAX_ATTEMPTS = 5;
@@ -1028,16 +1238,19 @@ const EXECUTE_RETRY_DELAY_MS = 1000;
 export async function execute(
     buildTx: Transaction | (() => Transaction | Promise<Transaction>),
     label = "transaction",
+    gasBudget = DEFAULT_GAS_BUDGET,
 ): Promise<ExecutionReceipt> {
     let lastError: unknown;
     for (let attempt = 0; attempt < EXECUTE_MAX_ATTEMPTS; attempt++) {
+        let tx: Transaction | null = null;
+        let raw: any = null;
         try {
             // Build a fresh transaction on each attempt so object versions are re-resolved.
-            const tx = typeof buildTx === "function" ? await buildTx() : buildTx;
+            tx = typeof buildTx === "function" ? await buildTx() : buildTx;
             tx.setSender(address);
-            tx.setGasBudget(DEFAULT_GAS_BUDGET);
+            tx.setGasBudget(gasBudget);
 
-            const raw: any = await client.signAndExecuteTransaction({
+            raw = await client.signAndExecuteTransaction({
                 transaction: tx,
                 signer,
                 options: EXECUTION_RESPONSE_OPTIONS,
@@ -1045,12 +1258,40 @@ export async function execute(
 
             const status = raw.effects?.status;
             if (!isSuccessStatus(status)) {
-                throw new Error(
-                    `${label} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}`,
+                const artifactPath = await tryCollectTransactionDebug({
+                    tx,
+                    label,
+                    attempt,
+                    gasBudget,
+                    phase: "execution_failure",
+                    raw,
+                });
+                throw markFailedTransactionLogged(
+                    new Error(
+                        `${label} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}${failedTransactionSuffix(artifactPath)}`,
+                    ),
                 );
             }
 
-            const settled = await getTransactionBlockWithRetry(raw.digest);
+            let settled: any;
+            try {
+                settled = await getTransactionBlockWithRetry(raw.digest);
+            } catch (error) {
+                const artifactPath = await tryCollectTransactionDebug({
+                    tx,
+                    label,
+                    attempt,
+                    gasBudget,
+                    phase: "post_submit_fetch_error",
+                    raw,
+                    error,
+                });
+                throw markFailedTransactionLogged(
+                    new Error(
+                        `${label} post-submit fetch failure digest=${raw.digest}: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
+                    ),
+                );
+            }
             return {
                 digest: raw.digest,
                 gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
@@ -1060,17 +1301,41 @@ export async function execute(
             };
         } catch (error) {
             lastError = error;
+            if (failedTransactionAlreadyLogged(error)) {
+                throw error;
+            }
             const msg = String(error);
             // Retry on transient object version / input errors.
             if (msg.includes("Object ID") || msg.includes("TransactionExecutionClientError")) {
                 if (attempt < EXECUTE_MAX_ATTEMPTS - 1) {
                     const delay = EXECUTE_RETRY_DELAY_MS * (attempt + 1);
+                    const artifactPath = await tryCollectTransactionDebug({
+                        tx,
+                        label,
+                        attempt,
+                        gasBudget,
+                        phase: "retryable_rpc_error",
+                        raw,
+                        error,
+                    });
                     process.stdout.write(
-                        `[retry] ${label} attempt ${attempt + 1} failed, retrying in ${delay}ms...\n`,
+                        `[retry] ${label} attempt ${attempt + 1} failed, retrying in ${delay}ms...${failedTransactionSuffix(artifactPath)}\n`,
                     );
                     await new Promise((r) => setTimeout(r, delay));
                     continue;
                 }
+            }
+            const artifactPath = await tryCollectTransactionDebug({
+                tx,
+                label,
+                attempt,
+                gasBudget,
+                phase: "rpc_error",
+                raw,
+                error,
+            });
+            if (error instanceof Error) {
+                error.message = `${error.message}${failedTransactionSuffix(artifactPath)}`;
             }
             throw error;
         }

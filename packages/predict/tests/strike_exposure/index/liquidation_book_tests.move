@@ -116,6 +116,52 @@ fun mark_liquidated_removes_active_and_records_tombstone() {
     destroy(book);
 }
 
+#[test, expected_failure(abort_code = liquidation_book::EMaxActiveLeveragedOrders)]
+fun insert_above_active_leveraged_order_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    insert_sequential_orders(&mut book, constants::max_active_leveraged_orders!());
+
+    book.insert_order(&leveraged_order_with_sequence(constants::max_active_leveraged_orders!()));
+    abort 999
+}
+
+#[test]
+fun one_x_orders_do_not_count_toward_active_leveraged_order_cap() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    insert_sequential_orders(&mut book, constants::max_active_leveraged_orders!());
+
+    // The book is AT the leveraged cap. A 1x order must NOT consume a slot: inserting it
+    // succeeds (no EMaxActiveLeveragedOrders abort — a leveraged insert here would abort, see
+    // insert_above_active_leveraged_order_cap_aborts) and leaves the active leveraged set
+    // unchanged, so the candidate scan still returns exactly the cap. (`contains_active_order`
+    // is not asserted here — it short-circuits false for any 1x order regardless of book state,
+    // so it would be tautological; the unchanged candidate count is the real property.)
+    let one_x = one_x_order_with_sequence(constants::max_active_leveraged_orders!());
+    book.insert_order(&one_x);
+
+    let candidates = book.select_liquidation_candidates(constants::max_active_leveraged_orders!());
+    assert_eq!(candidates.length(), constants::max_active_leveraged_orders!());
+    destroy(book);
+}
+
+#[test]
+fun removing_active_leveraged_order_frees_cap_slot() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    insert_sequential_orders(&mut book, constants::max_active_leveraged_orders!());
+
+    let removed = leveraged_order_with_sequence(0);
+    book.remove_order(&removed);
+    let replacement = leveraged_order_with_sequence(constants::max_active_leveraged_orders!());
+    book.insert_order(&replacement);
+
+    assert!(!book.contains_active_order(&removed));
+    assert!(book.contains_active_order(&replacement));
+    destroy(book);
+}
+
 #[test]
 fun head_candidate_prefers_higher_floor_for_equal_quantity() {
     let ctx = &mut tx_context::dummy();
@@ -229,6 +275,16 @@ fun leveraged_order_with_sequence(sequence: u64): Order {
         HIGHER_TICK,
         quantity / 2,
         quantity,
+        sequence,
+    )
+}
+
+fun one_x_order_with_sequence(sequence: u64): Order {
+    order::new_from_ticks(
+        LOWER_TICK,
+        HIGHER_TICK,
+        0,
+        constants::position_lot_size!(),
         sequence,
     )
 }

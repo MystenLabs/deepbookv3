@@ -162,6 +162,11 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
 }
 
+/// Return cash required to cover payout liability plus unresolved rebate reserve.
+public fun required_cash(market: &ExpiryMarket): u64 {
+    market.cash.required_cash(market.payout_liability())
+}
+
 /// Load a PTB-local live pricing snapshot for this market.
 ///
 /// The returned `Pricer` is bound to `market.id()` and can be passed into live
@@ -260,7 +265,7 @@ public fun mint_exact_quantity(
     market.assert_live_mint_allowed(config, pricer);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     market
         .strike_exposure
         .liquidate_live_orders(
@@ -311,7 +316,7 @@ public fun mint_exact_amount(
     wrapper.settle<DUSDC>(root, clock);
     let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     market
         .strike_exposure
         .liquidate_live_orders(
@@ -396,10 +401,45 @@ public fun redeem_live(
     (redeemed_order.id(), replacement_order_id)
 }
 
-/// Permissionlessly redeem a settled order without account-owner authority. The
-/// market must be settled already; this flow does not run live pricing or new
+/// Redeem a settled order you hold account authority over.
+///
+/// The market must be settled already; this flow does not run live pricing or new
 /// liquidation. Liquidated tombstones clear with zero payout. Requires a full close.
+/// This owner-auth path remains available even when Predict app-auth automation is
+/// deauthorized in the account registry.
 public fun redeem_settled(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    market.redeem_settled_internal(
+        account,
+        config,
+        propbook_registry,
+        pyth,
+        order_id,
+        close_quantity,
+        clock,
+        ctx,
+    )
+}
+
+/// Permissionlessly redeem a settled order without account-owner authority.
+///
+/// This keeper path uses Predict app-auth from the account registry, so
+/// `deauthorize_app<PredictApp>` disables this automation. Owners can still use
+/// `redeem_settled` with owner auth to redeem their own settled positions.
+public fun redeem_settled_permissionless(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
@@ -412,21 +452,19 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    let redeemed_order = order::from_order_id(order_id);
-    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
     wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
     let account = wrapper.load_account_mut(auth);
-    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
-
     market.redeem_settled_internal(
         account,
-        &redeemed_order,
+        config,
+        propbook_registry,
+        pyth,
+        order_id,
+        close_quantity,
+        clock,
         ctx,
-    );
-    (redeemed_order.id(), option::none())
+    )
 }
 
 /// Run one bounded liquidation pass over active leveraged orders.
@@ -564,7 +602,8 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
-/// Resolve one account's settled trading-loss rebate and return unearned reserve.
+/// Resolve one account's settled trading-loss rebate. Returns the unearned residual
+/// rebate-reserve cash and the rebate amount paid to the account.
 public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -574,10 +613,9 @@ public(package) fun claim_trading_loss_rebate(
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
-    let (trading_fees_paid, gross_profit) = predict_account::resolve_expiry_summary(
-        account,
-        market.id(),
-    );
+    let summary = predict_account::resolve_expiry_summary(account, market.id());
+    let trading_fees_paid = summary.fees_paid();
+    let gross_profit = summary.gross_profit();
     if (trading_fees_paid == 0) {
         return (balance::zero(), 0)
     };
@@ -586,7 +624,7 @@ public(package) fun claim_trading_loss_rebate(
         .cash
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     let rebate_amount = config.stake_config().rebate_amount(eligible_rebate, active_stake);
 
     if (rebate_amount > 0) {
@@ -630,7 +668,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
     let settlement_price = market.settlement_price();
     let settled_liability = market.materialize_settled_liability();
-    let reserved_cash = settled_liability + market.cash.rebate_reserve();
+    let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
@@ -791,7 +829,7 @@ fun mint_prepared_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let (minted_order, entry_probability, net_premium) = market
+    let mint_quote = market
         .strike_exposure
         .allocate_mint_order(
             pricer,
@@ -800,6 +838,9 @@ fun mint_prepared_exact_quantity(
             quantity,
             leverage,
         );
+    let minted_order = mint_quote.allocated_order();
+    let entry_probability = mint_quote.entry_probability();
+    let net_premium = mint_quote.net_premium();
     assert!(entry_probability <= max_probability, EMintProbabilityAboveMax);
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
@@ -883,7 +924,7 @@ fun redeem_live_internal(
     let opened_at_ms = predict_account::position_opened_at_ms(account, market.id(), order.id());
     assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
 
-    let active_stake = predict_account::active_stake_mut(account, ctx);
+    let active_stake = predict_account::roll_active_stake(account, ctx);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
@@ -891,9 +932,12 @@ fun redeem_live_internal(
         ctx,
     );
 
-    let (resulting_order, redeem_amount, range_probability) = market
+    let close_quote = market
         .strike_exposure
         .close_and_quote_live_order(pricer, order, close_quantity);
+    let resulting_order = close_quote.resulting_order();
+    let redeem_amount = close_quote.redeem_amount();
+    let range_probability = close_quote.range_probability();
     // Close-side slippage floor: reject if the quoted per-contract probability has
     // slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
@@ -962,35 +1006,47 @@ fun redeem_live_internal(
 fun redeem_settled_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    order: &Order,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
-) {
-    if (market.strike_exposure.is_liquidated_order(order)) {
-        market.redeem_liquidated_order(account, order, order.quantity(), ctx);
-        return
+): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let redeemed_order = order::from_order_id(order_id);
+    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        market.redeem_liquidated_order(account, &redeemed_order, redeemed_order.quantity(), ctx);
+        return (redeemed_order.id(), option::none())
     };
 
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
-        order.id(),
+        redeemed_order.id(),
         ctx,
     );
     market.materialize_settled_liability();
 
     let settlement = market.settlement_price();
-    let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
+    let payout_amount = market.strike_exposure.close_settled_order(&redeemed_order, settlement);
     market.settle_settled_redeem_payment(account, payout_amount, ctx);
 
     order_events::emit_settled_order_redeemed(
         market.id(),
         account.account_id(),
         account.owner(),
-        order,
+        &redeemed_order,
         position_root_id,
         settlement,
         payout_amount,
     );
+    (redeemed_order.id(), option::none())
 }
 
 /// Settle a mint payment and return the builder fee and fee incentive subsidy.

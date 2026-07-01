@@ -11,7 +11,6 @@ module propbook::block_scholes_spot_feed;
 
 use block_scholes_oracle::update::SpotUpdate;
 use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
-use std::option::{Self, Option};
 use sui::clock::Clock;
 
 const EWrongSource: u64 = 0;

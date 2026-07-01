@@ -314,13 +314,13 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
     // p = 0.5 and quantity = 1e9 gives entry value 500_000_000.
     // At 2.5x, net premium = 500_000_000 / 2.5 = 200_000_000 and
     // floor shares = 500_000_000 - 200_000_000 = 300_000_000.
-    let (net_premium, floor_shares) = config.assert_mint_admission(
+    let admission = config.assert_mint_admission(
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
     );
-    assert_eq!(net_premium, HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
-    assert_eq!(floor_shares, HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
     destroy(config);
 }
 
@@ -343,13 +343,13 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 fun mint_admission_net_premium_at_minimum_succeeds() {
     let config = strike_exposure_config::new();
 
-    let (net_premium, floor_shares) = config.assert_mint_admission(
+    let admission = config.assert_mint_admission(
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
     );
-    assert_eq!(net_premium, constants::min_net_premium!());
-    assert_eq!(floor_shares, UNLEVERAGED_FLOOR_SHARES);
+    assert_eq!(admission.net_premium(), constants::min_net_premium!());
+    assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
     destroy(config);
 }
 

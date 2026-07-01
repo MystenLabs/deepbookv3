@@ -54,8 +54,13 @@ never re-implemented per site.
   can write/assert it? Is a formula re-expressed at a second call site instead of calling the canonical
   evaluator? For aggregate insert/remove/recompute, do all sites call the SAME function?
 - **Signatures:** a helper chain that only shuttles a derived value; a formula duplicated across mint-insert
-  and settlement-recompute; a lossy repack of `quantity`/`floor_shares`/`opened_at_ms` through the packed
+  and settlement-recompute; a lossy repack of `quantity`/`floor_shares` through the packed
   order id.
+- **Input shape corollary:** signature shape is part of ownership. Pass a domain object when the callee needs
+  that object's identity, authority, current state, invariants, or several facts owned by that object. Pass a
+  narrow value when the callee is a pure formula and should not know the broader object/config concept. A run
+  of same-typed primitive fields from one owner is a transposition risk; prefer the owner or a named summary
+  unless the primitive signature is deliberately preserving a pure math/test-oracle boundary.
 - **Intentional exceptions:** `strike_payout_tree::payout_terms` IS the one canonical evaluator — every
   site calling it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
   above a loop) is not "should compute at use"; values returned because the caller genuinely cannot derive
@@ -107,6 +112,10 @@ precondition just to avoid a later abort. *(ex-rule-auditor Agent 9, contextual 
   leaf's exact guard with no added value? Is there a manual overflow/cast assert duplicating a VM abort?
 - **Intentional exceptions:** a caller guard with a semantically richer error for a different business
   precondition, or a strictly tighter bound; named semantic/solvency/auth/lifecycle/gas asserts (keep).
+- **Trust-boundary carve-out:** at the protocol's outer trust boundary (a public entrypoint taking
+  attacker-chosen primitives, external coins, or oracle payloads) input validation is owned by the boundary
+  regardless of any downstream leaf guard (fail-fast). Do NOT flag such a boundary check as a removable
+  defensive duplicate; R5 non-redundancy governs internal package composition only.
 
 ## R6 — Encapsulation (Move's grain)
 **Rule:** A public entrypoint that mutates a `Balance`/field lives in the module that **declares** that field

@@ -5,7 +5,7 @@
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
 /// gate, and the transaction-local full-pool valuation lock. Flow modules decide
-/// which gates apply before they mutate expiry, oracle, pool, or manager state.
+/// which gates apply before they mutate expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -165,6 +165,7 @@ public fun set_pyth_spot_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
 }
 
@@ -175,6 +176,7 @@ public fun set_block_scholes_price_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_price_freshness_ms(value);
 }
 
@@ -185,6 +187,7 @@ public fun set_block_scholes_svi_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
@@ -338,6 +341,7 @@ public fun set_protocol_reserve_profit_share(
     protocol_reserve_profit_share: u64,
 ) {
     config.assert_version();
+    config.assert_not_valuation_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }

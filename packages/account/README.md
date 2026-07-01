@@ -121,6 +121,20 @@ public fun generate_auth_as_app<App>(
 The `Permit<App>` proves the call is executing in the module that defines `App`.
 The registry whitelist decides whether that app is allowed to generate app auth.
 
+App auth is deliberately full-account authority. It is not scoped by account
+owner, coin type, app data slot, protocol, or per-user opt-in. A whitelisted app
+that can generate app auth can mutably load any `AccountWrapper` it is handed and
+can then use the normal `Account` APIs for all balances and account-local data it
+is otherwise permitted to touch. This replaces the old `BalanceManager`-style
+product custody boundary with shared account infrastructure for DeepBook products.
+
+Treat a whitelisted app as trusted account infrastructure, not as a narrow plugin.
+Any user-facing permissioning, solvency checks, market membership, liquidation
+eligibility, or protocol-specific limits must live inside that app's own
+entrypoints before it mutates the loaded account. This is intentional for future
+cross-product systems such as account margining, where one authorized app may need
+to evaluate and liquidate the full account across multiple products.
+
 Once a caller has `&mut Account`, coin movement and app-data mutation need no extra
 account-level proof. The mutable borrow is the authority boundary.
 
@@ -198,7 +212,14 @@ public fun assert_app_is_authorized<App>(registry: &AccountRegistry)
 ```
 
 The whitelist is intentionally registry-scoped and ecosystem-wide. It is not a
-per-account opt-in list.
+per-account opt-in list, per-coin permission map, or per-app user grant. Adding
+that kind of dependency-aware user grant system is a separate design problem: for
+example, a future margin app would need to prevent revoking another app while open
+margin obligations depend on that app remaining liquidatable.
+
+`deauthorize_app` is the admin break-glass path for stopping future app-auth
+account loading by one app type. It does not represent a user-level revoke and it
+does not unwind obligations already created by higher-level protocols.
 
 ## Typical Flow
 

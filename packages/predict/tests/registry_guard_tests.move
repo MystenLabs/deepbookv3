@@ -205,6 +205,7 @@ fun create_expiry_market_skips_higher_rank_overlap() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -294,6 +295,7 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -348,6 +350,7 @@ fun create_expiry_market_with_only_reserved_slot_in_window_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         market_manager::cadence_five_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -402,6 +405,7 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         market_manager::cadence_one_day!(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -424,6 +428,7 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         market_manager::cadence_one_week!(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -488,6 +493,7 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -643,6 +649,7 @@ fun setup_registered_feeds(): (Scenario, ID, AdminCap, RegistryAdminCap, ID, ID,
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
@@ -734,6 +741,7 @@ fun setup_bound_creation_context(
     reg.set_cadence_config(
         &config,
         &admin_cap,
+        test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),

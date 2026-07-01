@@ -12,14 +12,16 @@
 /// lane writes that are future, zero, stale, or duplicate are no-ops.
 module propbook::oracle_lane;
 
-use std::option::{Self, Option};
 use sui::{event, table::{Self, Table}};
 
 /// Timestamped oracle read. Raw and normalized reads use the same timestamp
 /// envelope, so consumers can apply one freshness policy regardless of which
 /// projection they read.
 public struct OracleRead<Value: copy + drop + store> has copy, drop, store {
+    /// Publisher/source observation time carried in the pushed update.
     source_timestamp_ms: u64,
+    /// On-chain landing time (`clock.timestamp_ms()` when recorded); the freshness
+    /// invariant is `0 < source_timestamp_ms <= update_timestamp_ms`.
     update_timestamp_ms: u64,
     value: Value,
 }

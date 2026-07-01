@@ -122,14 +122,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Access and operations (recent)
 
-- **Trading-loss-rebate claims are permissionless.** `claim_trading_loss_rebate`
-  has no owner gate — anyone may resolve any manager's rebate. Intentional: a
-  keeper cron runs after each settlement to close out all user redemptions and
-  economically clean out the expiry, so resolution must not depend on each user
-  acting. *Rejected:* an owner gate, which would let an inactive user's rebate
-  strand and block the post-settlement cleanout. *Accepted residual:* a griefer
-  can resolve a victim's rebate at a less-favorable active-stake snapshot; the
-  prompt post-settlement sweep bounds the window.
+- **Trading-loss-rebate claims have owner and keeper paths.**
+  `claim_trading_loss_rebate` consumes owner auth; `claim_trading_loss_rebate_permissionless`
+  uses Predict app-auth so a keeper cron can resolve accounts after settlement.
+  Intentional: post-settlement cleanout must not depend on each user acting, but
+  deauthorizing `PredictApp` should stop keeper automation without blocking owner
+  claims. *Accepted residual:* a keeper can resolve an account's rebate at a
+  less-favorable active-stake snapshot; the prompt post-settlement sweep bounds
+  the window.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
   protocol profit and exposes no admin withdrawal path. Intentional for now — the
   reserve is left in the protocol backing solvency, and an explicit admin
@@ -299,5 +299,5 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   owns it), and the watermark setter + kill switches + revocations are the documented
   ungated bypasses. *Rationale:* "is this gated?" becomes a one-line grep instead of
   a delegation trace. The admin `ProtocolConfig` setters and the registry creation
-  entrypoints were brought under the gate; per-user `PredictManager`/`builder_code`
-  custody stays ungated so user exits survive a freeze.
+  entrypoints were brought under the gate; per-account custody and builder-code
+  config stay ungated so user exits survive a freeze.

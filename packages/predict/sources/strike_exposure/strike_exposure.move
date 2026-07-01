@@ -9,7 +9,7 @@
 /// The order floor is a static dollar amount (`floor_shares`), so order accounting
 /// needs no clock. It stores the parent market identity so market-scoped
 /// liquidation events can be emitted atomically with exposure removal. Expiry-market
-/// cash custody, rebate accounting, manager positions, and payout movement stay
+/// cash custody, rebate accounting, account positions, and payout movement stay
 /// outside this module.
 module deepbook_predict::strike_exposure;
 
@@ -55,6 +55,47 @@ public struct StrikeExposure has store {
     liquidation: LiquidationBook,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
+}
+
+/// Quote and allocation result for a live mint order, returned by name so callers
+/// cannot transpose the entry probability and the cash net premium.
+public struct MintQuote has drop {
+    allocated_order: Order,
+    entry_probability: u64,
+    net_premium: u64,
+}
+
+/// Redeem terms from closing live indexed quantity. `resulting_order` is the
+/// original order for a full close, or the replacement that remains after a
+/// partial close.
+public struct CloseQuote has drop {
+    resulting_order: Order,
+    redeem_amount: u64,
+    range_probability: u64,
+}
+
+public(package) fun allocated_order(quote: &MintQuote): Order {
+    quote.allocated_order
+}
+
+public(package) fun entry_probability(quote: &MintQuote): u64 {
+    quote.entry_probability
+}
+
+public(package) fun net_premium(quote: &MintQuote): u64 {
+    quote.net_premium
+}
+
+public(package) fun resulting_order(quote: &CloseQuote): Order {
+    quote.resulting_order
+}
+
+public(package) fun redeem_amount(quote: &CloseQuote): u64 {
+    quote.redeem_amount
+}
+
+public(package) fun range_probability(quote: &CloseQuote): u64 {
+    quote.range_probability
 }
 
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
@@ -206,8 +247,7 @@ public(package) fun close_settled_order(
 }
 
 /// Quote and allocate a live mint order for the tick range `(lower_tick, higher_tick]`.
-///
-/// Returns `(allocated_order, entry_probability, net_premium)`.
+/// Returns a `MintQuote` with the allocated order, entry probability, and net premium.
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -215,7 +255,7 @@ public(package) fun allocate_mint_order(
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
-): (Order, u64, u64) {
+): MintQuote {
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
     let (lower, higher) = range_codec::strikes_from_ticks(
         lower_tick,
@@ -223,13 +263,15 @@ public(package) fun allocate_mint_order(
         exposure.tick_size,
     );
     let entry_probability = pricer.range_price(lower, higher);
-    let (net_premium, floor_shares) = exposure
+    let admission = exposure
         .config
         .assert_mint_admission(
             entry_probability,
             quantity,
             leverage,
         );
+    let net_premium = admission.net_premium();
+    let floor_shares = admission.floor_shares();
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_ticks(
@@ -244,7 +286,7 @@ public(package) fun allocate_mint_order(
     exposure.liquidation.insert_order(&allocated_order);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
 
-    (allocated_order, entry_probability, net_premium)
+    MintQuote { allocated_order, entry_probability, net_premium }
 }
 
 /// Set the reference fine-grid tick that can bypass coarser mint admission once wired.
@@ -279,10 +321,9 @@ public(package) fun quote_mint_entry_probability(
     entry_probability
 }
 
-/// Close live indexed quantity and return redeem terms.
+/// Close live indexed quantity and return redeem terms as a `CloseQuote`.
 ///
-/// Returns `(resulting_order, redeem_amount, range_probability)`.
-/// The trade fee is recovered via `trading_fee` from the returned price.
+/// The trade fee is recovered via `trading_fee` from the returned `range_probability`.
 /// `resulting_order` is the original order for a full close, or the replacement
 /// order that remains after a partial close.
 public(package) fun close_and_quote_live_order(
@@ -290,7 +331,7 @@ public(package) fun close_and_quote_live_order(
     pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
-): (Order, u64, u64) {
+): CloseQuote {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
@@ -323,7 +364,7 @@ public(package) fun close_and_quote_live_order(
     let redeem_amount = gross_redeem_amount.saturating_sub(removed_floor_amount);
 
     if (remaining_quantity == 0) {
-        return (*order, redeem_amount, range_probability)
+        return CloseQuote { resulting_order: *order, redeem_amount, range_probability }
     };
 
     let replacement_order = order::replacement(
@@ -335,10 +376,10 @@ public(package) fun close_and_quote_live_order(
     exposure.liquidation.insert_order(&replacement_order);
     exposure.next_order_sequence = exposure.next_order_sequence + 1;
 
-    (replacement_order, redeem_amount, range_probability)
+    CloseQuote { resulting_order: replacement_order, redeem_amount, range_probability }
 }
 
-/// Clear one liquidated-order tombstone after its manager position is closed.
+/// Clear one liquidated-order tombstone after its account position is closed.
 public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order: &Order) {
     exposure.liquidation.clear_liquidated(order);
 }
