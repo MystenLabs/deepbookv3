@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod error;
+pub mod live_ohclv;
 pub mod margin_metrics;
 mod metrics;
 mod reader;
