@@ -12,11 +12,14 @@ import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
-import { appendTrace, gasOf } from "./trace.js";
+import { appendTrace, computationOf, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  mintBatchTx,
   mintTx,
+  readCurrentNav,
+  readIdleBalance,
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
@@ -62,7 +65,13 @@ export interface StrategyCtx {
 
   // low-level: build + submit a mint with explicit params (no bookkeeping/trace) — for probes.
   submitMint(market: Mkt, p: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }): Promise<any>;
+  // low-level: build + submit a BATCH of mints in ONE PTB (N mint_exact_quantity calls). Returns the
+  // whole-PTB result (ONE computationCost) and traces {type:"mintBatch", n, gas, compGas} — the
+  // #cap-mintbatch scaling probe; the strategy controls each leg (identical, or lev1-prefix + lev2).
+  submitMintBatch(market: Mkt, legs: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }[]): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
+  currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
+  idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
 
   // utils
   rand(lo: number, hi: number): number;
@@ -157,6 +166,17 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       );
     },
 
+    async submitMintBatch(market, legs) {
+      const mints = legs.map((p) => ({
+        expiryMarketId: market.id, wrapperId: deps.wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...deps.feeds,
+        strike: p.strike1e9, isUp: p.isUp, quantity: p.quantity, leverage: p.leverage1e9,
+        maxCost: p.maxCost, maxProbability: p.maxProbability,
+      }));
+      const res = await deps.submit(mintBatchTx(mints), "mintBatch");
+      ctx.trace({ type: "mintBatch", n: legs.length, gas: gasOf(res), compGas: computationOf(res) });
+      return res;
+    },
+
     async mint(market, inst) {
       const r = resolve(inst, market);
       if (!r) return null;
@@ -226,6 +246,12 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
 
     async refreshPlp() {
       plpShares = await deps.readPlpBalance(deps.traderAddress);
+    },
+    async currentNav(market) {
+      return readCurrentNav(market.id, deps.feeds);
+    },
+    async idleBalance() {
+      return readIdleBalance();
     },
 
     rand,

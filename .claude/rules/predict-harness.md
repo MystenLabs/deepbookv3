@@ -60,7 +60,9 @@ user-facing overview; this file is the editing-critical knowledge.
 - **Strategies only touch the `StrategyCtx`** (`strategy.ts`) — never call builders/`submit`
   directly. The ctx wraps them with bookkeeping: `mint` (resolve+submit+track+trace), `redeem`
   (partial or full — tracks the replacement order id on a partial close), `supply`/`withdraw`,
-  low-level `submitMint` (adversarial probes), `refreshPlp`, `pruneSettled`, `resolve`, utils.
+  low-level `submitMint` (adversarial probes) + `submitMintBatch` (N mints in ONE PTB — the
+  `#cap-mintbatch` scaling probe), `refreshPlp`, `currentNav`/`idleBalance` (devInspect NAV-mark
+  reads for lp-adversary), `pruneSettled`, `resolve`, utils.
   Every traced record is auto-tagged with the strategy (analyze labels blocks by it).
 - **Supply is custody-only; withdraw must read first.** `supply()` uses
   `requestSupplyFromCustodyTx` (pulls from the trader's funded account balance) — NOT

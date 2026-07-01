@@ -466,6 +466,24 @@ export async function readPlpBalance(owner: string): Promise<bigint> {
     return parseU64LE(await devInspectFirstReturn(tx, 1));
 }
 
+// A market's current NAV mark: `current_nav` is the EXACT per-expiry recoverable value the flush
+// prices PLP supply/withdraw against. devInspect loads the live pricer (updater-fresh feeds) then
+// reads `current_nav`. `Pricer has copy, drop`, so the unconsumed borrow is fine in a read-only
+// inspect. Used by lp-adversary to watch the mark collapse toward the NAV==0 brick (#lp-nav-zero-brick).
+export async function readCurrentNav(marketId: string, feeds: KeeperFeeds): Promise<bigint> {
+    const tx = new Transaction();
+    const pricer = loadLivePricer(tx, { expiryMarketId: marketId, protocolConfigId: PROTOCOL_CONFIG_ID, ...feeds });
+    tx.moveCall({ target: target("expiry_market", "current_nav"), arguments: [tx.object(marketId), pricer] });
+    return parseU64LE(await devInspectFirstReturn(tx, 1));
+}
+
+// Pool idle DUSDC — the free-cash term of the pool NAV mark (NAV = idle + Σ current_nav − exclusion).
+export async function readIdleBalance(): Promise<bigint> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("plp", "idle_balance"), arguments: [tx.object(POOL_VAULT_ID)] });
+    return parseU64LE(await devInspectFirstReturn(tx));
+}
+
 async function nextSourceTimestampMs(): Promise<bigint> {
     for (let attempt = 0; attempt < 50; attempt++) {
         const latestAllowed = (await clockTimestampMs()) - 1n;
@@ -1329,7 +1347,7 @@ export function bareFlushTx(params: {
     return tx;
 }
 
-interface KeeperFeeds {
+export interface KeeperFeeds {
     pythFeedId: string;
     bsSpotFeedId: string;
     bsForwardFeedId: string;
@@ -1544,6 +1562,18 @@ export function depositOwnedCoinTx(wrapperId: string, coinId: string): Transacti
 export function mintTx(params: MintParams): Transaction {
     const tx = new Transaction();
     addMint(tx, params);
+    return tx;
+}
+
+// Batched mint-only PTB: N `mint_exact_quantity` calls in ONE transaction, each pricing against the
+// updater-maintained fresh feed (no oracle refresh, like `mintTx`). The whole PTB reports ONE
+// `computationCost` — the `#cap-mintbatch` measurement vehicle: a batched leveraged mint amplifies
+// the per-op liquidation scan ~45× vs a standalone mint (mechanism under test, NOT yet proven). Vary
+// N and the per-leg leverage mix (e.g. K×lev1 + 1×lev2) to isolate the cause via the total cost.
+export function mintBatchTx(mints: MintParams[]): Transaction {
+    if (mints.length === 0) throw new Error("mintBatchTx requires at least one mint");
+    const tx = new Transaction();
+    for (const mint of mints) addMint(tx, mint);
     return tx;
 }
 
