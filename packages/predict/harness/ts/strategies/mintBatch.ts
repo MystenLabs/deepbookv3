@@ -1,38 +1,45 @@
 // Strategy: mint-batch — the #cap-mintbatch root-cause probe. A 100-mint PTB cost 3-5B computation in
-// the 2026-06-28 stress while 100 standalone mints ~= 650M; the ~45x per-candidate liquidation-scan
-// amplification is REAL but the MECHANISM is unproven (dirtied-dynamic-field metering vs a per-tx
+// the 2026-06-28 stress while 100 standalone mints ~= 650M; the batch amplification of the per-op
+// liquidation scan is REAL but the MECHANISM is unproven (dirtied-dynamic-field metering vs a per-tx
 // metering effect). Per-function gas attribution is NOT available on localnet, so this settles it by
 // DIFFERENTIAL on real total computationCost via a fixed script of controlled batches (one PTB/tick):
-//   - sweep N in {1,2,5,10,20,50,100} identical leveraged (2x) mints -> cost(N): linear vs super-linear.
-//     N=1 IS the standalone lev2 baseline (a 1-command PTB == a standalone tx).
-//   - discriminator at K=20: [K lev1] , [K lev1 + 1 lev2] , [K lev2]. lev1 (1x) mints do NOT write the
-//     liq book (insert_order is a no-op for 1x), so the lev2 marginal in the lev1-prefix batch
-//     (cost[K lev1 + lev2] - cost[K lev1]) vs a standalone lev2 separates "prior liq-book WRITES dirty
-//     the pages" (dirtied-field) from "being command N in a multi-command PTB, period" (tx-metering).
-// A large batch may OOG at the ~5e9 computation cap -> that IS the ~110-op atomic-batch ceiling (caught
-// + traced as {oog:true}, not a crash). REQUIRES SIM_GAS_BUDGET=50000000000 so a batch can reach the
-// cap; on the default 1e9 budget the larger batches OOG on the budget, not the computation wall.
+//   - sweep N in {1,2,5,10,20,50,100} identical leveraged mints -> builds the book PAST the 24-candidate
+//     scan budget (so the discriminator runs saturated) and shows cost(N). NOTE cost(N) is confounded
+//     (the book grows across the sweep); the discriminator is the clean test.
+//   - discriminator at a SATURATED book (scan pinned at 24, so +-1 book is noise), back-to-back:
+//       S  = standalone leveraged mint
+//       A  = [K lev1]                (1x mints do NOT write the liq book -- insert_order is a no-op)
+//       AB = [K lev1 + 1 leveraged]  -> leveraged marginal = AB - A (NO prior liq-book writes)
+//       BB = [K leveraged]           (full prior liq-book writes)
+//     (AB-A) vs S isolates "do prior NON-liq-book commands amplify?"; (BB/K) vs S isolates "do prior
+//     LIQ-BOOK writes amplify?". If (AB-A)~S but (BB/K)>>S -> amplification needs same-PTB liq-book
+//     writes (dirtied-field). If (AB-A)>>S -> a multi-command PTB alone amplifies (tx-metering).
+// A large batch may OOG at the ~5e9 computation cap -> the ~110-op atomic-batch ceiling (caught + traced
+// as {oog:true}, not a crash). REQUIRES SIM_GAS_BUDGET=50000000000 so a batch can reach the cap.
 import { type Instruction } from "../resolver.js";
 import { type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
 
 const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
+// Leveraged but far above floor: it inserts into the liq book (is_leveraged) yet is never liquidated, so
+// the scan cost is isolated with no book churn (matches nav-stress's 1.1x).
+const LVG = 1.1;
 
 type Leg = { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint };
-// One controlled batch per tick, cycled. `n` identical legs at `lev`x; `tailLev2` appends one 2x leg.
-type Spec = { kind: string; n: number; lev: number; tailLev2?: boolean };
+// One controlled batch per tick, cycled. `n` identical legs at `lev`x; `tailLeveraged` appends one LVG leg.
+type Spec = { kind: string; n: number; lev: number; tailLeveraged?: boolean };
 const SCRIPT: Spec[] = [
-  { kind: "sweep", n: 1, lev: 2 }, { kind: "sweep", n: 2, lev: 2 }, { kind: "sweep", n: 5, lev: 2 },
-  { kind: "sweep", n: 10, lev: 2 }, { kind: "sweep", n: 20, lev: 2 }, { kind: "sweep", n: 50, lev: 2 },
-  { kind: "sweep", n: 100, lev: 2 },
-  { kind: "lev1", n: 20, lev: 1 }, // K lev1: no liq-book writes (insert_order no-op for 1x)
-  { kind: "lev1_plus_lev2", n: 20, lev: 1, tailLev2: true }, // lev2 marginal here = cost - cost(lev1)
-  { kind: "lev2", n: 20, lev: 2 }, // K lev2: full liq-book writes
-  { kind: "lev1_single", n: 1, lev: 1 }, // standalone lev1 baseline
+  { kind: "sweep", n: 1, lev: LVG }, { kind: "sweep", n: 2, lev: LVG }, { kind: "sweep", n: 5, lev: LVG },
+  { kind: "sweep", n: 10, lev: LVG }, { kind: "sweep", n: 20, lev: LVG }, { kind: "sweep", n: 50, lev: LVG },
+  { kind: "sweep", n: 100, lev: LVG },
+  { kind: "disc_std", n: 1, lev: LVG }, // S: standalone leveraged
+  { kind: "disc_lev1", n: 20, lev: 1 }, // A: K lev1 (1x -> no liq-book writes)
+  { kind: "disc_prefix", n: 20, lev: 1, tailLeveraged: true }, // AB: K lev1 + 1 leveraged
+  { kind: "disc_lvg", n: 20, lev: LVG }, // BB: K leveraged (full liq-book writes)
 ];
 
 let step = 0;
-let leveragedBook = 0; // running count of leveraged (>1x) orders inserted into the liq book
+let leveragedBook = 0; // running count of leveraged (>1x) orders in the liq book
 
 // Lock onto ONE persisting far-out (1h, >2h away) market so the whole script runs against one book.
 function targetMarket(ctx: StrategyCtx): Mkt | null {
@@ -60,7 +67,7 @@ function legFrom(ctx: StrategyCtx, market: Mkt, leverage: number): Leg | null {
 const mintBatch: Strategy = {
   name: "mint-batch",
   tickMs: 1500, // one PTB/tick; batches can be large, give the node a moment
-  maxOps: SCRIPT.length * 4, // ~4 cycles: enough (N,cost) points without nearing the 5000 leveraged cap
+  maxOps: SCRIPT.length * 4, // ~4 cycles: 4 discriminator samples at growing (saturated) books
   fund: 20_000_000_000_000n,
   async tick(ctx) {
     const market = targetMarket(ctx);
@@ -72,10 +79,10 @@ const mintBatch: Strategy = {
     if (!base) return null;
     const legs: Leg[] = [];
     for (let i = 0; i < spec.n; i++) legs.push(base);
-    if (spec.tailLev2) {
-      const l2 = legFrom(ctx, market, 2);
-      if (!l2) return null;
-      legs.push(l2);
+    if (spec.tailLeveraged) {
+      const l = legFrom(ctx, market, LVG);
+      if (!l) return null;
+      legs.push(l);
     }
     const leveragedLegs = legs.filter((l) => l.leverage1e9 > SCALE).length;
     try {

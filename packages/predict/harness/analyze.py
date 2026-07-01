@@ -61,6 +61,12 @@ _TRANSIENT = (
 # code (e.g. dynamic_field:500) is never mistaken for an HTTP status by the _TRANSIENT substrings.
 _MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
 
+# The Sui per-tx COMPUTATION cap: max_gas_computation_bucket = 5,000,000 units (a protocol constant,
+# verified identical localnet/testnet/mainnet) x the reference gas price. Localnet/testnet RGP 1000 ->
+# 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but the binding limit is the 5M UNITS of work, so an OOG book
+# size is network-independent. Both the nav-stress and mint-batch sections compare compGas against this.
+COMP_CAP = 5_000_000_000
+
 
 def _instances() -> list[Path]:
     if not config.INSTANCES_DIR.exists():
@@ -160,8 +166,7 @@ def _analyze_one(inst: Path) -> list[str]:
         # reference gas price. Localnet/testnet RGP 1000 -> 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but
         # the binding limit is the 5M UNITS of work, so the OOG book size is network-independent.
         # Compare the flush's COMPUTATION cost (compGas), not net gas (gasOf folds in storage/rebate,
-        # which the computation cap ignores).
-        COMP_CAP = 5_000_000_000  # 5M units x localnet RGP 1000 (== testnet; mainnet 5e8, same 5M-unit wall)
+        # which the computation cap ignores). COMP_CAP is the module-level per-tx computation cap.
         succ = sorted(
             [r for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper" and r.get("ts")
              and (r.get("compGas") or r.get("gas"))],
@@ -214,57 +219,63 @@ def _analyze_one(inst: Path) -> list[str]:
         else:
             print(f"  no breakpoint (computation peaked at {max_c:,} = {pct} of the {COMP_CAP:,} cap); grow the book further for the empirical limit")
 
-    # mint-batch: the #cap-mintbatch differential. The mint-batch strategy emits controlled batches
-    # ({type:"mintBatch", kind, n, compGas, oog}); a batched leveraged mint amplifies the per-op
-    # liquidation scan ~45x vs standalone, but WHY is unproven. Real total computationCost (per-function
-    # attribution isn't available on localnet) settles it: fit cost(N), and use the lev1-prefix
-    # discriminator (lev1 mints don't write the liq book) to separate dirtied-writes from tx-metering.
+    # mint-batch: the #cap-mintbatch differential (see mintBatch.ts). A batched leveraged mint amplifies
+    # the per-op liquidation scan vs standalone, but WHY is unproven. cost(N) in the sweep is confounded
+    # (the book grows across it), so the DISCRIMINATOR at a saturated book is the clean mechanism test:
+    # (AB-A) vs S = do prior NON-liq-book commands amplify?  (BB/K) vs S = do prior LIQ-BOOK writes amplify?
     batches = [r for r in recs if r.get("type") == "mintBatch"]
     if batches:
-        def _by(kind: str) -> dict[int, int]:  # n -> mean compGas for successful batches of that kind
-            agg: dict[int, list[int]] = defaultdict(list)
+        def _by(kind: str) -> dict[int, tuple[int, int]]:  # n -> (mean compGas, mean book-before)
+            g: dict[int, list[int]] = defaultdict(list)
+            bk: dict[int, list[int]] = defaultdict(list)
             for r in batches:
                 if r.get("kind") == kind and not r.get("oog") and r.get("compGas"):
-                    agg[int(r["n"])].append(int(r["compGas"]))
-            return {n: sum(v) // len(v) for n, v in agg.items()}
+                    g[int(r["n"])].append(int(r["compGas"]))
+                    bk[int(r["n"])].append(int(r.get("book", 0)))
+            return {n: (sum(v) // len(v), sum(bk[n]) // len(bk[n])) for n, v in g.items()}
 
-        sweep = _by("sweep")  # identical lev2, N in {1,2,5,10,20,50,100}
-        print("\nmint-batch — batched leveraged mint computation vs batch size N:")
+        sweep = _by("sweep")
+        print("\nmint-batch — batched leveraged mint computation vs batch size N (book = liq orders before):")
         if sweep:
-            for n in sorted(sweep):
-                print(f"  N={n:>3}: {sweep[n]:>13,} comp total  ({sweep[n] // n:>11,}/mint)")
             xs = sorted(sweep)
-            if len(xs) >= 2:
-                ys = [sweep[n] for n in xs]
-                m = len(xs)
-                sx, sy = sum(xs), sum(ys)
-                den = m * sum(x * x for x in xs) - sx * sx
-                if den:
-                    b = (m * sum(x * y for x, y in zip(xs, ys)) - sx * sy) / den
-                    a = (sy - b * sx) / m
-                    print(f"  linear fit: cost ~= {int(a):,} + {int(b):,}*N  (batched marginal {int(b):,} comp/mint)")
-                    if sweep.get(1):
-                        print(f"  standalone (N=1) = {sweep[1]:,} comp/mint; batched marginal / standalone = {b / sweep[1]:.1f}x")
+            for n in xs:
+                c, bk = sweep[n]
+                print(f"  N={n:>3} (book~{bk:>4}): {c:>14,} comp  ({c // n:>12,}/mint)")
+            per = [sweep[n][0] // n for n in xs]
+            if len(xs) >= 3 and per[0] > 0:
+                growth = per[-1] / per[0]
+                shape = ("SUPER-LINEAR: per-mint grows with N -> cost accumulates within the PTB"
+                         if growth > 1.5 else "~linear: fixed per-mint cost")
+                print(f"  per-mint {per[0]:,} (N={xs[0]}) -> {per[-1]:,} (N={xs[-1]}) = {growth:.1f}x  [{shape}]")
+                print("  NOTE: the sweep confounds N with book growth; the discriminator below is the clean test.")
         oogs = sorted({int(r["n"]) for r in batches if r.get("oog")})
         if oogs:
             print(f"  OOG at N in {oogs} (hit the ~{COMP_CAP:,} computation cap) — the atomic-batch ceiling")
 
-        # discriminator: lev2 marginal in a lev1-prefix batch vs standalone lev2 vs lev2-batch marginal.
-        lev1, lev1p2, lev2 = _by("lev1"), _by("lev1_plus_lev2"), _by("lev2")
-        std_lev2 = sweep.get(1)
-        k = 20
-        if lev1.get(k) and lev1p2.get(k + 1) and std_lev2:
-            marginal_in_prefix = lev1p2[k + 1] - lev1[k]
-            print("\n  discriminator (does a lev2's cost need prior liq-book WRITES, or just batch position?):")
-            print(f"    lev2 marginal in a {k}x-lev1 prefix (no prior liq writes) = {marginal_in_prefix:,} comp")
-            print(f"    standalone lev2 (N=1)                                    = {std_lev2:,} comp")
-            if lev2.get(k):
-                print(f"    lev2 marginal inside a {k}x-lev2 batch (prior liq writes) = {lev2[k] // k:,} comp")
-            ratio = marginal_in_prefix / std_lev2 if std_lev2 else 0.0
-            verdict = ("~standalone => amplification needs SAME-PTB liq-book writes (dirtied-field hypothesis)"
-                       if ratio < 2 else
-                       ">> standalone => multi-command PTB alone amplifies (tx-metering hypothesis)")
-            print(f"    => lev2-in-prefix / standalone = {ratio:.1f}x : {verdict}")
+        # discriminator at a saturated book (after the sweep, so every scan hits the 24-candidate cap and
+        # +-1 book is noise). lev1 (1x) mints never touch the liq book, so AB-A is a leveraged mint's cost
+        # with NO prior liq-book writes; BB/K is one with full prior liq-book writes; S is standalone.
+        S, A, AB, BB = _by("disc_std").get(1), _by("disc_lev1").get(20), _by("disc_prefix").get(21), _by("disc_lvg").get(20)
+        if S and A and AB:
+            s = S[0]
+            in_prefix = AB[0] - A[0]
+            print(f"\n  discriminator (saturated book~{S[1]}): does a leveraged mint's cost need prior LIQ-BOOK writes?")
+            print(f"    S   standalone leveraged                             = {s:,} comp")
+            print(f"    AB-A  leveraged after 20x lev1 (NO prior liq writes) = {in_prefix:,} comp")
+            r1 = in_prefix / s if s else 0.0
+            if BB:
+                bb = BB[0] // 20
+                r2 = bb / s if s else 0.0
+                print(f"    BB/20 leveraged in a 20x-lvg batch (prior liq writes) = {bb:,} comp")
+                print(f"    => (AB-A)/S = {r1:.1f}x , (BB/20)/S = {r2:.1f}x")
+                if r1 < 1.5 <= r2:
+                    print("    => VERDICT: amplification needs SAME-PTB LIQ-BOOK writes (dirtied dynamic-field hypothesis)")
+                elif r1 >= 1.5:
+                    print("    => VERDICT: a multi-command PTB alone amplifies, w/o prior liq writes (tx-metering hypothesis)")
+                else:
+                    print("    => VERDICT: no clear amplification in either arm — inspect the raw trace")
+            else:
+                print(f"    => (AB-A)/S = {r1:.1f}x  (BB missing — run longer)")
 
     # bug oracle (code-aware; tags are module:code). nav-stress breakpoint deferrals excluded (above).
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]
