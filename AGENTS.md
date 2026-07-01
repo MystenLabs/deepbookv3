@@ -35,7 +35,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 ### Manual-Trigger Rules — read when the request matches
 
 - `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes (for a deep Predict smart-contract audit, invoke the `predict-audit` skill at `.claude/skills/predict-audit/` — `rule-sweep.workflow.js` is the per-rule mechanical sweep, `ownership-walk.workflow.js` the per-module ownership conformance).
-- Before proposing/changing any **Predict economics** (NAV/backing, rounding, oracle trust, liquidation, tick/order-id encoding, floor/leverage, supply/withdraw): grep `.claude/predict-design/DECISION_JOURNAL.md` + `HISTORY.md` for prior rulings; never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met. (The current settled list is also inlined below.)
+- Before proposing/changing any **Predict economics** (NAV/backing, rounding, oracle trust, liquidation, tick/order-id encoding, floor/leverage, supply/withdraw): read `packages/predict/predeploy/open-items.md`, `packages/predict/predeploy/rounding-policy.md`, and the settled list below first. Historical `.claude/predict-design/` notes are local scratch if present; verify any old claim against current HEAD before relying on it.
 - `.claude/rules/wrap-up.md` when the user says "wrap up".
 
 ## Common Commands
@@ -95,7 +95,7 @@ are current. The earlier build-phase directives (source-only / defer-tests / def
 are **retired** — the normal norms (tests + docs land with code) apply again.
 
 **Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit + the finalize audit):**
-- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + `BlockScholesFeed` (per-expiry surface). `expiry_market` stores the Propbook underlying and tick size; `pricing::load_live_pricer` owns the live pricing boundary: current Propbook canonical binding, pre-expiry live-pricing check, feed freshness, and SVI math. Propbook stores raw BS source fields; the pricing-safe envelope (`forward>0`, basis, `|rho|<=1`, sigma band) is enforced by the consumer in `predict::pricing`.
+- **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + split Block Scholes feeds (`BlockScholesSpotFeed`, `BlockScholesForwardFeed`, `BlockScholesSVIFeed`). `expiry_market` stores the Propbook underlying and tick size; `pricing::load_live_pricer` owns the live pricing boundary: current Propbook canonical binding, pre-expiry live-pricing check, feed freshness, and SVI math. Propbook stores raw BS source fields; the pricing-safe envelope (`forward>0`, basis, `|rho|<=1`, sigma band) is enforced by the consumer in `predict::pricing`.
 - **One canonical strike interpretation = absolute integer ticks, protocol-wide** (`raw = tick * tick_size`). `range_codec` owns packing/conversion/the settlement prefix; no centered grid, no boundary indices. No-spot market creation; price-tail saturation.
 - **The flush is PRIVILEGED, cron-driven** — started only by a market-deployer `MarketLifecycleCap` (revocable; the root `AdminCap` flush path was removed, admin keeps break-glass by minting itself a lifecycle cap), NOT permissionless. Closes the NAV-manipulation gate (audit L8). `finish_flush` takes independent `supply_budget` / `withdraw_budget: Option<u64>` (None = drain that queue fully), operator-sized to the gas left after valuing the snapshot; independent budgets mean a supply backlog can't starve withdrawals.
 - **L10 supply mark = the EXACT `current_nav`** (tree walk − leveraged correction), one mark for supply AND withdraw, **no conservative band** (landed; the band belonged to the deleted approximate-NAV world).
@@ -106,7 +106,7 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 
 **Still out of scope (follow-up work):**
 - The Rust `crates/predict-{schema,indexer,server}` need rewiring for the changed events: the new async-LP events (`SupplyRequested`/`WithdrawRequested`/`SupplyFilled`/`WithdrawFilled`/`SupplyRefunded`/`WithdrawRefunded`/`RequestCancelled`/`PoolValued`/`FlushExecuted`), M1 `ExpiryCashRebalanced`, `OrderMinted` carrying `lower_tick`/`higher_tick`, `MarketCreated` dropping `market_oracle_id`/min/max strike/source oracle ids and carrying `propbook_underlying_id` + `tick_size`, the collapsed `PricingConfigUpdated`, and the deleted oracle events — plus indexing the propbook feeds.
-- The simulation harness (`packages/predict/simulations`) is structurally rewired (tsc/py_compile/`bash -n` clean) but its economic parity + the `run.sh` localnet publish flow need a localnet `run.sh` run — see `packages/predict/simulations/SIM_STATUS.md`.
+- The simulation harness (`packages/predict/simulations`) is structurally rewired (tsc/py_compile/`bash -n` clean) but its economic parity + the `run.sh` localnet publish flow still need a full localnet `run.sh` run. Track remaining deploy-readiness work in `packages/predict/predeploy/open-items.md`.
 
 ## Code Review Norms
 

@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
-import { appendTrace, computationOf, gasOf } from "./trace.js";
+import { abortInfo, appendTrace, computationOf, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -27,6 +27,8 @@ import {
 
 const SCALE = 1_000_000_000n;
 const ADMISSION_K = 0.2;
+const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1", "predict_account:2"]);
+const FULL_CLOSE_REQUIRED_ABORT = "expiry_market:1";
 
 export interface Mkt {
   id: string;
@@ -42,6 +44,14 @@ export interface Held {
   marketId: string;
   quantity: bigint;
   leverage1e9: bigint;
+}
+export interface MintLeg {
+  strike1e9: bigint;
+  isUp: boolean;
+  quantity: bigint;
+  leverage1e9: bigint;
+  maxCost: bigint;
+  maxProbability: bigint;
 }
 export type OpKind = "mint" | "redeem" | "supply" | "withdraw";
 
@@ -64,11 +74,11 @@ export interface StrategyCtx {
   withdraw(shares: bigint): Promise<"withdraw" | null>;
 
   // low-level: build + submit a mint with explicit params (no bookkeeping/trace) — for probes.
-  submitMint(market: Mkt, p: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }): Promise<any>;
+  submitMint(market: Mkt, p: MintLeg): Promise<any>;
   // low-level: build + submit a BATCH of mints in ONE PTB (N mint_exact_quantity calls). Returns the
   // whole-PTB result (ONE computationCost) and traces {type:"mintBatch", n, gas, compGas} — the
   // #cap-mintbatch scaling probe; the strategy controls each leg (identical, or lev1-prefix + lev2).
-  submitMintBatch(market: Mkt, legs: { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint }[], meta?: Record<string, unknown>): Promise<any>;
+  submitMintBatch(market: Mkt, legs: MintLeg[], meta?: Record<string, unknown>): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
   currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
@@ -111,6 +121,14 @@ const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 const leverageCap = (p: number) =>
   1 + (RESOLVER_MARKET.maxAdmissionLeverage - 1) * ((p * (1 + ADMISSION_K)) / (p + ADMISSION_K));
+const isTerminalRedeemAbort = (err: unknown): boolean => {
+  const a = abortInfo(err);
+  return a ? TERMINAL_REDEEM_ABORTS.has(`${a.module}:${a.code}`) : false;
+};
+const isFullCloseRequiredAbort = (err: unknown): boolean => {
+  const a = abortInfo(err);
+  return a ? `${a.module}:${a.code}` === FULL_CLOSE_REQUIRED_ABORT : false;
+};
 const readJson = (p: string): any => {
   try {
     return JSON.parse(readFileSync(p, "utf8"));
@@ -196,17 +214,34 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
 
     async redeem(h, closeQuantity) {
-      let res;
-      try {
-        res = await deps.submit(
-          redeemTx({ expiryMarketId: h.marketId, wrapperId: deps.wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...deps.feeds, orderId: h.orderId, closeQuantity }),
+      const submitRedeem = (quantity: bigint) =>
+        deps.submit(
+          redeemTx({ expiryMarketId: h.marketId, wrapperId: deps.wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...deps.feeds, orderId: h.orderId, closeQuantity: quantity }),
           "redeem",
         );
-      } catch (e) {
-        // The order is un-redeemable (liquidated / knocked out / already closed). Drop it so it
-        // isn't re-selected every tick — which would spam identical aborts that look like bugs.
+      const dropHeld = () => {
         const i = held.indexOf(h);
         if (i >= 0) held.splice(i, 1);
+      };
+
+      let res;
+      try {
+        res = await submitRedeem(closeQuantity);
+      } catch (e) {
+        if (closeQuantity < h.quantity && isFullCloseRequiredAbort(e)) {
+          try {
+            res = await submitRedeem(h.quantity);
+          } catch (retryErr) {
+            if (isTerminalRedeemAbort(retryErr)) dropHeld();
+            throw retryErr;
+          }
+          dropHeld();
+          ctx.trace({ type: "redeem", market: h.marketId.slice(0, 10), partial: false, retry: "fullCloseRequired", gas: gasOf(res) });
+          return "redeem";
+        }
+        // Only stale local position state is terminal. Pricing, valuation-lock,
+        // same-timestamp, and RPC failures should keep the order tracked for retry.
+        if (isTerminalRedeemAbort(e)) dropHeld();
         throw e;
       }
       const idx = held.indexOf(h);

@@ -63,8 +63,10 @@ and contributors. For *how* each mechanism works, follow the links into
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
   free_cash − exact_per_order_liability`, floored at zero, where `free_cash =
   cash − rebate_reserve` and the liability is the payout-tree linear walk
-  (`strike_payout_tree::walk_linear`, `Σ qty·P`) minus the leveraged-book floor
-  correction (`liquidation_book::correction_value`). An underwater leveraged order
+  (`strike_payout_tree::walk_linear`, `Σ qty·P`, caching boundary prices for the
+  same valuation) minus the leveraged-book floor correction
+  (`liquidation_book::correction_value`, reading order range prices from that
+  cache). An underwater leveraged order
   nets to zero by the per-order floor cap, so the read needs no liquidation pass.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
   reserve and proven on every trade); the `saturating_sub` cash floor marks a

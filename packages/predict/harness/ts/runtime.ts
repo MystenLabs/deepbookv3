@@ -70,8 +70,8 @@ const BS_UNDERLYING_ID = PYTH_FEED_ID;
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
-// side). The harness tick size is $1 (1e9-scaled), mirroring the registered market
-// tick size for this Propbook underlying.
+// side). The concrete tick size below mirrors the registered market tick size for
+// this Propbook underlying.
 const TICK_BITS = 30n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 // $0.01 in 1e9 fixed-point — matches the testnet cadence tick_size (verified

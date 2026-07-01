@@ -110,8 +110,8 @@ where:
 
 - **`free_cash = cash_balance − rebate_reserve`** — the expiry's DUSDC net of the rebate it still owes.
 - **`exact_live_liability = walk_linear − correction_value`**, floored at zero, is the exact mark-to-model liability of every open order:
-  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer (no piecewise-linear curve, no sampling band; the interpolation tolerance is fixed at 0).
-  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book.
+  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer and caching those boundary prices in a transaction-local memo.
+  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book using the memo populated by `walk_linear`.
 
 Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The leftover after the floor is the order's recoverable equity, and `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 

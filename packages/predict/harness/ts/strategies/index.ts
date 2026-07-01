@@ -1,6 +1,8 @@
 // Strategy registry. A strategy is selected by name via the STRATEGY env (the runner) and by
 // the campaign command (per-localnet). Add a new strategy by dropping a module here.
 import { type Strategy } from "../strategy.js";
+import batchMaxBook from "./batchMaxBook.js";
+import batchMaxMarkets from "./batchMaxMarkets.js";
 import fuzz from "./fuzz.js";
 import liqChurn from "./liqChurn.js";
 import mintBatch from "./mintBatch.js";
@@ -19,6 +21,8 @@ export const STRATEGIES: Record<string, Strategy> = {
   [navStressAtm.name]: navStressAtm,
   [navStressMulti.name]: navStressMulti,
   [mintBatch.name]: mintBatch,
+  [batchMaxBook.name]: batchMaxBook,
+  [batchMaxMarkets.name]: batchMaxMarkets,
 };
 
 export function getStrategy(name: string): Strategy {
