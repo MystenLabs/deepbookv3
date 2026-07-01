@@ -37,7 +37,12 @@ Localnet `nav-stress` confirmed:
 - last successful observed flush near that point used about 98% of the 5M
   computation-unit wall;
 - this is below the current per-market cap of 5,000 leveraged orders;
-- worst-case moneyness can be materially lower and still needs a full run.
+- a `nav-stress-atm` run (moderate-moneyness strikes, 2026-07-01) OOGed around
+  4,070 leveraged orders — only ~10% below the cheap branch, NOT the ~1,372 the
+  earlier 100-config fuzz implied. Either the atm strategy is not reliably reaching
+  the expensive `exp_series` branch or the moneyness premium is much smaller than
+  that fuzz suggested; treat the ~1,372 worst case as UNCONFIRMED in-instrument
+  until a run verifies the branch via the gas-by-moneyness buckets.
 
 Current independent caps do not compose:
 
@@ -123,7 +128,16 @@ the flush becomes resumable.
 
 ## Required Follow-Up Runs
 
-- Full `nav-stress-atm` run targeting the expensive `normal_cdf` branch.
-- Full `nav-stress-multi` run measuring pool-total capacity across many markets.
+- Full `nav-stress-atm` run that verifies (via the gas-by-moneyness buckets) it
+  actually reaches the expensive `exp_series` branch — the 2026-07-01 run OOGed at
+  ~4,070, which does not confirm the expensive-branch worst case.
+- Pool-total capacity across many markets, e.g. via `batch-max-markets` (fast
+  batched fill). Size the pool with LP supply first, so `expiry_cash`'s
+  `EInsufficientCash` (pool capital) does not bound the book before the flush gas
+  does — otherwise the measured OOG is entangled with a capital limit.
 - Any final cap change should be followed by a stress run that reaches the new
   boundary and proves the flush remains below the safety target.
+
+The NAV price-memo optimization (uncommitted at 2026-07-01) changes Finding #1 for
+the single-market case — see `price-memo-findings-2026-07-01.md`. Fold its results
+into this model when that change lands.
