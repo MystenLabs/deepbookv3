@@ -18,6 +18,7 @@
 // as {oog:true}, not a crash). REQUIRES SIM_GAS_BUDGET=50000000000 so a batch can reach the cap.
 import { type Instruction } from "../resolver.js";
 import { type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
+import { errorTag } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
@@ -90,8 +91,15 @@ const mintBatch: Strategy = {
       leveragedBook += leveragedLegs;
       return "mint";
     } catch (e) {
-      // A large batch OOGs at the ~5e9 computation cap -> the atomic-batch ceiling. Record, don't crash.
-      ctx.trace({ type: "mintBatch", kind: spec.kind, n: legs.length, lev: spec.lev, book: leveragedBook, oog: true, err: String(e).slice(0, 80) });
+      const oog = /InsufficientGas|OUT_OF_GAS|computation/i.test(String(e));
+      if (oog) {
+        // OOG at the tx gas budget / 5e9 computation cap -> the atomic-batch ceiling. NOT a bug.
+        ctx.trace({ type: "mintBatch", kind: spec.kind, n: legs.length, lev: spec.lev, book: leveragedBook, oog: true, err: errorTag(e) });
+      } else {
+        // A real (module:code) abort inside a batched PTB is a BUG the oracle MUST see — do not mask it as
+        // OOG. Emit a fail record so analyze.py's bug oracle classifies it.
+        ctx.trace({ type: "fail", tag: errorTag(e), batch: spec.kind, n: legs.length });
+      }
       return null;
     }
   },

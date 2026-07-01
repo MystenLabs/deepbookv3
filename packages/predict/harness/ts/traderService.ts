@@ -25,7 +25,10 @@ const INSTANCE_DIR = process.env.INSTANCE_DIR ?? ".";
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0);
 const STRATEGY = process.env.STRATEGY ?? "fuzz";
 const LABEL = TRADER_ADDRESS.slice(0, 8);
-const GAS_BUDGET = 2_000_000_000;
+// Plumb SIM_GAS_BUDGET to the trader so a batched op can reach the real 5e9 computation cap (the
+// mint-batch experiment); default 2e9 for ordinary strategies. (Was hardcoded 2e9 — the keeper had its
+// own FLUSH_GAS_BUDGET, so SIM_GAS_BUDGET never reached the trader and mint-batch OOG'd at 2e9, not the cap.)
+const GAS_BUDGET = Number(process.env.SIM_GAS_BUDGET ?? 2_000_000_000);
 
 const signer = getSignerForAddress(TRADER_ADDRESS);
 const wrapperId = deriveAccountWrapperId(TRADER_ADDRESS);

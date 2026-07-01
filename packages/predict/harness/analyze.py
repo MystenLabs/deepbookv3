@@ -208,7 +208,14 @@ def _analyze_one(inst: Path) -> list[str]:
         # while computation is far below the cap is an ordinary settlement race (pricing:4 etc., already
         # an expected guard), NOT the breakpoint — so only treat late fails as the break near the cap.
         near_cap = max_c > COMP_CAP * 0.5
-        nav_break = [f for f in keeper_fails if _book_at(f.get("ts", 0)) >= max_ok] if (near_cap and max_ok > 0) else []
+
+        # Only a GAS-EXHAUSTION keeper fail near the cap is the nav-stress breakpoint; a module:code
+        # invariant abort at the wall is a real bug and MUST reach the oracle (don't mask it as _navbreak).
+        def _is_gas_oog(f: dict) -> bool:
+            t = str(f.get("tag", ""))
+            return "InsufficientGas" in t or "OUT_OF_GAS" in t or "computation" in t.lower()
+
+        nav_break = [f for f in keeper_fails if _book_at(f.get("ts", 0)) >= max_ok and _is_gas_oog(f)] if (near_cap and max_ok > 0) else []
         for f in nav_break:
             f["_navbreak"] = True
         pct = f"{max_c / COMP_CAP * 100:.0f}%"
@@ -250,7 +257,7 @@ def _analyze_one(inst: Path) -> list[str]:
                 print("  NOTE: the sweep confounds N with book growth; the discriminator below is the clean test.")
         oogs = sorted({int(r["n"]) for r in batches if r.get("oog")})
         if oogs:
-            print(f"  OOG at N in {oogs} (hit the ~{COMP_CAP:,} computation cap) — the atomic-batch ceiling")
+            print(f"  OOG at N in {oogs} — the atomic-batch ceiling (OOG wall = min(SIM_GAS_BUDGET, {COMP_CAP:,} computation cap); set SIM_GAS_BUDGET > {COMP_CAP:,} so the wall is the cap, not the budget)")
 
         # discriminator at a saturated book (after the sweep, so every scan hits the 24-candidate cap and
         # +-1 book is noise). lev1 (1x) mints never touch the liq book, so AB-A is a leveraged mint's cost
