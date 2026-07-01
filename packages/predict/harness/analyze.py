@@ -155,9 +155,16 @@ def _analyze_one(inst: Path) -> list[str]:
     nav_break: list[dict] = []
     books = sorted([r for r in recs if r.get("type") == "book" and "size" in r], key=lambda r: r.get("ts", 0))
     if books:
-        SUI_MAX_GAS = 50_000_000_000  # Sui max tx gas budget (MIST) — the one-PTB ceiling
+        # The wall is the per-tx COMPUTATION cap, NOT the gas budget: max_gas_computation_bucket =
+        # 5,000,000 units (a protocol constant — verified identical on localnet/testnet/mainnet) x the
+        # reference gas price. Localnet/testnet RGP 1000 -> 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but
+        # the binding limit is the 5M UNITS of work, so the OOG book size is network-independent.
+        # Compare the flush's COMPUTATION cost (compGas), not net gas (gasOf folds in storage/rebate,
+        # which the computation cap ignores).
+        COMP_CAP = 5_000_000_000  # 5M units x localnet RGP 1000 (== testnet; mainnet 5e8, same 5M-unit wall)
         succ = sorted(
-            [r for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper" and "gas" in r and r.get("ts")],
+            [r for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper" and r.get("ts")
+             and (r.get("compGas") or r.get("gas"))],
             key=lambda r: r["ts"],
         )
 
@@ -170,39 +177,42 @@ def _analyze_one(inst: Path) -> list[str]:
                     break
             return sz
 
-        pts = [(s, g) for s, g in ((_book_at(f["ts"]), f["gas"]) for f in succ) if s > 0]
+        def _comp(r: dict) -> int:
+            return int(r.get("compGas") or r.get("gas") or 0)  # computation cost (fallback to net gas)
+
+        pts = [(s, c) for s, c in ((_book_at(f["ts"]), _comp(f)) for f in succ) if s > 0]
         peak = books[-1]["size"]
-        print(f"\nNAV stress — flush gas vs leverage-book size (peak book {peak}):")
+        print(f"\nNAV stress — flush computation vs leverage-book size (peak book {peak}):")
         if len(pts) >= 2:
             lo, hi = min(pts, key=lambda p: p[0]), max(pts, key=lambda p: p[0])
-            print(f"  {lo[0]} orders -> {lo[1]:,} gas  ...  {hi[0]} orders -> {hi[1]:,} gas")
+            print(f"  {lo[0]} orders -> {lo[1]:,} comp  ...  {hi[0]} orders -> {hi[1]:,} comp")
             n = len(pts)
             sx = sum(s for s, _ in pts)
-            sy = sum(g for _, g in pts)
+            sy = sum(c for _, c in pts)
             denom = n * sum(s * s for s, _ in pts) - sx * sx
             if denom:
-                slope = (n * sum(s * g for s, g in pts) - sx * sy) / denom
+                slope = (n * sum(s * c for s, c in pts) - sx * sy) / denom
                 base = (sy - slope * sx) / n
-                cross = int((SUI_MAX_GAS - base) / slope) if slope > 0 else 0
-                print(f"  ~{int(slope):,} gas/order (+{int(base):,} base) -> hits the {SUI_MAX_GAS:,} PTB cap at ~{cross:,} orders")
+                cross = int((COMP_CAP - base) / slope) if slope > 0 else 0
+                print(f"  ~{int(slope):,} comp/order (+{int(base):,} base) -> hits the {COMP_CAP:,} computation cap at ~{cross:,} orders")
         else:
-            print("  (only one flush at a non-empty book — run longer / raise SIM_GAS_BUDGET to grow the curve)")
+            print("  (only one flush at a non-empty book — run longer to grow the curve)")
         max_ok = max((s for s, _ in pts), default=0)
-        max_gas = max((g for _, g in pts), default=0)
-        # A real NAV-gas breakpoint = flush gas approached the cap, THEN the flush failed. A deferral
-        # while gas is far below the cap is an ordinary settlement race (pricing:4 etc., already an
-        # expected guard), NOT the breakpoint — so only treat late fails as the break once gas is near
-        # the cap.
-        gas_stressed = max_gas > SUI_MAX_GAS * 0.5
-        nav_break = [f for f in keeper_fails if _book_at(f.get("ts", 0)) >= max_ok] if (gas_stressed and max_ok > 0) else []
+        max_c = max((c for _, c in pts), default=0)
+        # A real NAV breakpoint = flush computation approached the cap, THEN the flush OOG'd. A deferral
+        # while computation is far below the cap is an ordinary settlement race (pricing:4 etc., already
+        # an expected guard), NOT the breakpoint — so only treat late fails as the break near the cap.
+        near_cap = max_c > COMP_CAP * 0.5
+        nav_break = [f for f in keeper_fails if _book_at(f.get("ts", 0)) >= max_ok] if (near_cap and max_ok > 0) else []
         for f in nav_break:
             f["_navbreak"] = True
+        pct = f"{max_c / COMP_CAP * 100:.0f}%"
         if nav_break:
-            print(f"  EMPIRICAL breakpoint: flush last valued ~{max_ok} orders (~{max_gas:,} gas ≈ the {SUI_MAX_GAS:,} cap), then deferred")
+            print(f"  EMPIRICAL breakpoint: flush last valued ~{max_ok} orders (~{max_c:,} comp = {pct} of the {COMP_CAP:,} cap), then OOG'd — below the 5000 per-market cap")
         elif peak >= 4900:
-            print(f"  flush valued the full book ({peak}) at ~{max_gas:,} gas (< the {SUI_MAX_GAS:,} cap) — the 5000 order cap binds, not NAV gas")
+            print(f"  flush valued the full book ({peak}) at ~{max_c:,} comp ({pct} of the {COMP_CAP:,} cap) — the 5000 order cap binds, not NAV computation")
         else:
-            print(f"  no gas breakpoint (flush gas peaked at {max_gas:,}, far below the {SUI_MAX_GAS:,} cap); grow the book further for the empirical limit")
+            print(f"  no breakpoint (computation peaked at {max_c:,} = {pct} of the {COMP_CAP:,} cap); grow the book further for the empirical limit")
 
     # bug oracle (code-aware; tags are module:code). nav-stress breakpoint deferrals excluded (above).
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]

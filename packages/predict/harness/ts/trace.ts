@@ -31,6 +31,12 @@ export function gasOf(result: any): number {
   return Number(g.computationCost) + Number(g.storageCost) - Number(g.storageRebate);
 }
 
+// Just the computation cost (MIST). The Sui per-tx COMPUTATION cap (max_gas_computation_bucket =
+// 5M units x RGP) is on THIS, not net gas — nav-stress measures the flush against it (analyze.py).
+export function computationOf(result: any): number {
+  return Number(result?.effects?.gasUsed?.computationCost ?? 0);
+}
+
 // Parse the aborting module + code from a Move error; null if it is not a MoveAbort
 // (e.g. an arithmetic/VM error or an RPC failure — which the bug oracle flags hardest).
 export function abortInfo(err: unknown): { module: string; code: number } | null {

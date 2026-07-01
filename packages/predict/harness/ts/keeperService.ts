@@ -13,7 +13,7 @@ import { CADENCES } from "./predictConfig.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
-import { appendTrace, errorTag, gasOf } from "./trace.js";
+import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -103,7 +103,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       appendTrace("keeper", {
         type: "flush", settled: expired.length, marketCount: fe ? Number(fe.market_count) : 0,
         poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
-        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr),
+        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr), compGas: computationOf(fr),
       });
       console.log(`[keeper] settled+compacted ${expired.length} market(s): ${expired.map((m) => isoSec(m.expiryMs)).join(", ")}`);
     } catch (e) {

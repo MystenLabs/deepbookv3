@@ -119,3 +119,11 @@ user-facing overview; this file is the editing-critical knowledge.
   `no-keeper-trace` and (campaign) `missing-trace:<name>` (an instance/strategy that never produced
   a trace), `keeper-stuck` (operational fails with zero successful flush — a bricked settlement/LP
   lifecycle), and `fatal-crash` (a top-level actor crash, a `{fatal:true}` trace).
+- **nav-stress measures the per-tx COMPUTATION cap, not the gas budget.** The keeper flush OOGs when
+  its `computationCost` hits `max_gas_computation_bucket = 5M units × RGP` (localnet/testnet 5e9 MIST,
+  mainnet 5e8 — a protocol constant, so the OOG book size is network-independent), NOT the 50,000-SUI
+  `max_tx_gas` budget. `analyze.py` compares `compGas` (the flush trace's computation cost, not net
+  `gasOf`) against that cap; the flush's `InsufficientGas` deferral at that book size is the
+  nav-stress BREAKPOINT (the measurement) and is excluded from the oracle — don't reintroduce a
+  gas-budget ceiling (it both mis-reports the breakpoint and false-flags the OOGs as bugs). See
+  `.claude/predict-design/NAV_STRESS_FINDINGS_2026-06-30.md`.
