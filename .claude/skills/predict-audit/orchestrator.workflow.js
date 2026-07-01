@@ -1,5 +1,6 @@
-// ⛔ DO NOT launch without EXPLICIT user confirmation (see the SKILL.md gate) — a full run is hundreds of
-//    subagents / up to ~100M tokens. Present the run plan + cost and wait for an explicit "yes" first.
+// ⛔ DO NOT launch without EXPLICIT user confirmation (see the SKILL.md gate) — a run is bounded by
+//    construction (≤ maxRounds×lenses + verifyCap×panel agents; a few million tokens at defaults) but still
+//    expensive. Present the run plan + cost and wait for an explicit "yes" first.
 // Predict smart-contract audit orchestrator — MAXIMAL MODE (budget-aware loop-until-dry).
 //
 // Findings are SAMPLED, not enumerated: re-running a lens surfaces different issues each pass. So this runs
@@ -13,6 +14,17 @@
 // args = {
 //   groundTruth: string, scope: string,
 //   lenses?:     string[],  // subset of lens keys (default: all 10)
+//   profile?:    'security', // named lens preset when `lenses` is absent: drops the cleanup-tier lenses
+//                            // (surface-area, architecture) for budget runs
+//   depth?:      'low'|'standard'|'max', // preset for rounds/verifyCap (see DEPTH below)
+//   files?:      string[],  // DELTA SCOPE: changed files — lenses concentrate on them + direct callers/callees
+//   priorAdjudications?: [  // cross-run memory: adjudicated findings from a PREVIOUS run's findings.json.
+//     { title, location, status: 'refuted'|'settled'|'confirmed', note? }
+//   ],                      // Re-found REFUTED/SETTLED matches are suppressed (not re-verified) and returned
+//                           // under `prior_rediscovered`; CONFIRMED priors are NOT suppressed (a still-open
+//                           // bug keeps flowing into kept[]). Pass ONLY entries whose cited files are
+//                           // UNCHANGED since the adjudicating run (filter with git diff --name-only
+//                           // <sha>..HEAD — see SKILL.md); a stale suppression can hide a bug that became real.
 //   maxFindings?: number,   // cap NEW findings per lens per round (default: 12)
 //   dryRounds?:  number,    // stop after this many consecutive no-new-finding rounds (default: 2)
 //   maxRounds?:  number,    // hard round cap (default: 3)
@@ -57,6 +69,14 @@ const DRY_TARGET = A.dryRounds || D.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || D.maxRounds || 3
 const VERIFY_CAP = A.verifyCap || D.verifyCap || 60
 const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget.total * 0.3)) : 5_000_000 // reserve ~30% of the budget for verify + promote + synthesis
+// One definition of the committed settled-decision sources, interpolated into every prompt that cites them
+// (they were previously restated per-prompt and drifted on tracker moves).
+const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, and packages/predict/predeploy/open-items.md'
+// DELTA SCOPE: when the run targets a change set, lenses concentrate on these files + their blast radius.
+const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
+// Cross-run memory: adjudications from a previous run. Keyed with the same fkey used for in-run dedup, so a
+// re-found match is suppressed BEFORE it burns a verify panel; suppressed items return under prior_rediscovered.
+const PRIOR = Array.isArray(A.priorAdjudications) ? A.priorAdjudications : []
 
 const ALL_LANES = [
   { key: 'invariants', file: '01-invariants.md' },
@@ -71,12 +91,22 @@ const ALL_LANES = [
   { key: 'architecture', file: '10-architecture-maintainability.md' },
 ]
 const want = Array.isArray(A.lenses) ? A.lenses : null
-const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0) : ALL_LANES
+// profile:'security' = full bug-hunt breadth minus the cleanup-tier lenses (their findings are mostly the
+// unverified Info tail). An explicit `lenses` arg always wins over the profile.
+const PROFILE_DROP = { security: ['surface-area', 'architecture'] }
+const profileDrop = !want && PROFILE_DROP[A.profile] ? PROFILE_DROP[A.profile] : null
+const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0)
+  : profileDrop ? ALL_LANES.filter(l => profileDrop.indexOf(l.key) < 0) : ALL_LANES
 const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-log(`audit config — scope: "${scope}" | depth: ${depthName} | lenses: ${want ? want.join(',') : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
+log(`audit config — scope: "${scope}" | depth: ${depthName}${profileDrop ? ` | profile: ${A.profile}` : ''} | lenses: ${want ? want.join(',') : profileDrop ? `${LANES.length} (security profile)` : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
+  + (FILES ? ` | DELTA files: ${FILES.length}` : '')
+  + (PRIOR.length ? ` | prior adjudications: ${PRIOR.length}` : '')
   + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 80)}`)
+if (!A.groundTruth || String(A.groundTruth).length < 40) {
+  log('⚠ groundTruth is missing or suspiciously short — confirm Step 1 (build/test in the MAIN loop) actually ran; a false "all green" poisons every lens')
+}
 if (want && !LANES.length) {
   log('⚠ lens filter matched nothing — aborting (check the lens keys)')
   return { error: 'no_lenses_matched', requested: want, valid_keys: ALL_LANES.map(l => l.key) }
@@ -122,6 +152,13 @@ const VERDICT_SCHEMA = {
   required: ['verdict', 'adjusted_severity', 'reasoning', 'evidence'],
 }
 
+const priorBlock = PRIOR.length
+  ? `\nADJUDICATED IN PREVIOUS RUNS — these were already confirmed/refuted/settled by a prior audit whose cited code is unchanged. Do NOT re-report them:\n${PRIOR.map(p => `- [${p.status}] ${p.title} @ ${p.location}${p.note ? ` — ${p.note}` : ''}`).join('\n')}\n`
+  : ''
+const focusBlock = FILES
+  ? `\nDELTA SCOPE — this audit targets a change set. CONCENTRATE on these files and their direct callers/callees (grep both directions); treat the rest of the packages as context, and report findings wherever the change set's blast radius reaches:\n${FILES.map(f => `- ${f}`).join('\n')}\n`
+  : ''
+
 function finderPrompt(lane, round, known) {
   return `You are the "${lane.key}" lens of a deep, prior-aware smart-contract audit of DeepBook Predict and its split-out sibling packages (propbook, block_scholes_oracle, account). This is a MAXIMAL last-line-of-defense audit — be exhaustive.
 
@@ -131,14 +168,14 @@ FIRST read these two files and follow them exactly:
 You may also cite ${SKILL}/references/*.md.
 
 SCOPE: ${scope}
-GROUND TRUTH (do NOT re-run sui build/test or localnet; the watchdog kills subagents): ${groundTruth}
+${focusBlock}GROUND TRUTH (do NOT re-run sui build/test or localnet; the watchdog kills subagents): ${groundTruth}
 
 THIS IS FIND ROUND ${round} OF A LOOP-UNTIL-DRY AUDIT. The following candidates were ALREADY found by earlier rounds — do NOT re-report them. Hunt DIFFERENT, deeper, rarer issues, and explore functions/branches/edges not yet covered. Return ONLY findings not already in this list:
 ${known || '(none yet — first round)'}
-
+${priorBlock}
 DISCIPLINE (binding):
 - Read-only on packages/*/sources/**. Verify every claim against the actual function body + call sites (grep), not its name.
-- Be prior-aware: a candidate matching a settled decision or committed policy (AGENTS settled list, packages/predict/predeploy/rounding-policy.md, packages/predict/predeploy/open-items.md) gets settled_ref=<D-id-or-policy-ref> and severity Info.
+- Be prior-aware: a candidate matching a settled decision or committed policy (${SETTLED_SOURCES}) gets settled_ref=<D-id-or-policy-ref> and severity Info.
 - You MAY write and run Python sims in the scratchpad. You may NOT run sui build/test or localnet (hand those to the main loop as a recipe in evidence).
 - Quality over noise, but in maximal mode err toward surfacing a code-grounded candidate (verify will refute the wrong ones). Cap at your ${maxFindings} highest-value NEW findings this round. High/Critical MUST have concrete evidence.
 
@@ -162,13 +199,13 @@ function shouldVerify(f) { return f.impact !== 'cleanup-only' && sevOf(f.severit
 const CODEX = 'codex:codex-rescue'
 const LENSES = [
   { tag: 'refute', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REFUTE-BY-CORRECTNESS. Try to prove this finding FALSE from the actual code. Read the cited lines, grep all call sites, check whether the precondition can hold. If you cannot construct a concrete code-grounded triggering path, verdict "refuted". When the claim is an empirical/economic break, attempt a quick Python check. Cite file:line / sim evidence.' },
-  { tag: 'settled', agentType: null, build: () => 'ADVERSARIAL LENS = SETTLED-DECISION CHECK. Check AGENTS.md settled list, packages/predict/predeploy/rounding-policy.md, and packages/predict/predeploy/open-items.md. Is this an accepted/rejected design decision, committed policy, or already-tracked open item? If yes, verdict "settled" with the D-id or committed-doc reference in evidence. Otherwise pass through.' },
+  { tag: 'settled', agentType: null, build: () => `ADVERSARIAL LENS = SETTLED-DECISION CHECK. Check ${SETTLED_SOURCES}. Is this an accepted/rejected design decision, committed policy, or already-tracked open item? If yes, verdict "settled" with the D-id or committed-doc reference in evidence. Otherwise pass through.` },
   { tag: 'repro', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REPRODUCE. Trace the exact PTB-ordered sequence through the real mint/redeem/liquidate/settle/flush code (and write a Python sim if the break is economic). Does it actually reach the cited line with all preconditions co-occurring? If they cannot co-exist, verdict "refuted"; if it genuinely triggers, "confirmed". Cite the call chain / sim seed.' },
 ]
 
 // Single-pass verifier for MEDIUM findings — does refute+settled+repro in one agent (High/Critical still get
 // the full 3-lens LENSES panel above). Keeps Medium verified without paying 3 subagents each.
-const COMBINED_VERIFY = { tag: 'verify', agentType: CODEX, build: () => 'ADVERSARIAL VERIFY (single pass — do ALL THREE): (1) REFUTE — try to prove the finding FALSE from the actual code; read the cited lines + grep call sites; if no concrete triggering path exists, verdict "refuted". (2) SETTLED — check AGENTS.md settled list, packages/predict/predeploy/rounding-policy.md, and packages/predict/predeploy/open-items.md. If it matches an accepted/rejected decision, committed policy, or already-tracked open item, verdict "settled" with the D-id or committed-doc reference in evidence. (3) REPRODUCE — trace the PTB-ordered path through the real mint/redeem/liquidate/settle/flush code (Python sim if economic); if preconditions genuinely co-occur, "confirmed", else "refuted". Cite file:line / D-id / committed-doc ref / sim.' }
+const COMBINED_VERIFY = { tag: 'verify', agentType: CODEX, build: () => `ADVERSARIAL VERIFY (single pass — do ALL THREE): (1) REFUTE — try to prove the finding FALSE from the actual code; read the cited lines + grep call sites; if no concrete triggering path exists, verdict "refuted". (2) SETTLED — check ${SETTLED_SOURCES}. If it matches an accepted/rejected decision, committed policy, or already-tracked open item, verdict "settled" with the D-id or committed-doc reference in evidence. (3) REPRODUCE — trace the PTB-ordered path through the real mint/redeem/liquidate/settle/flush code (Python sim if economic); if preconditions genuinely co-occur, "confirmed", else "refuted". Cite file:line / D-id / committed-doc ref / sim.` }
 
 const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md for the module map + prior-awareness. The .claude/predict-review/ files are STALE — trust the current tree. Do NOT run sui build/test or localnet; reason from source, grep, git, and Python. STAY SCOPED: read the cited files + their direct callers/feeds, not the whole repo; keep it tight (a quick scoped check, not an exploration). Verdicts: confirmed (real, reproducible) / refuted (wrong, preconditions can't co-occur, or already mitigated) / settled (matches a D-id, cite it) / uncertain. Provide file:line / git / sim evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object (no markdown fences, no prose around it).`
 
@@ -181,20 +218,31 @@ function aggregate(f, laneKey, verdicts) {
   const settled = vs.find(v => v.verdict === 'settled')
   const refuted = vs.filter(v => v.verdict === 'refuted').length
   const confirmed = vs.filter(v => v.verdict === 'confirmed').length
+  // A panel with ZERO live verdicts (all agents errored even after the retry) must be visibly distinct from
+  // a genuinely contested finding: 'unverified-panel', never a quiet 'uncertain'.
   let status = 'uncertain'
-  if (settled) status = 'settled'
+  if (!vs.length) status = 'unverified-panel'
+  else if (settled) status = 'settled'
   else if (refuted > confirmed) status = 'refuted'
   else if (confirmed > 0) status = 'confirmed'
   // severity = MAX of the finder's and the CONFIRMING verifiers' adjusted_severity — the panel exists to
   // re-rank, so a fund-loss bug the finder under-rated must not sink. Upgrades only; never downgrade a real one.
   const severity = [f.severity, ...vs.filter(v => v.verdict === 'confirmed').map(v => v.adjusted_severity)]
     .filter(Boolean).sort((a, b) => (SEVRANK[(b || '').toLowerCase()] || 0) - (SEVRANK[(a || '').toLowerCase()] || 0))[0] || f.severity
+  // panel_severity = the panel's own independent ranking (max confirming adjusted_severity). The `severity`
+  // field is upgrades-only by design; this records what the panel actually thought so curation can see a
+  // finder High that was only confirmed as a Medium.
+  const panelSeverity = vs.filter(v => v.verdict === 'confirmed').map(v => v.adjusted_severity)
+    .filter(Boolean).sort((a, b) => (SEVRANK[(b || '').toLowerCase()] || 0) - (SEVRANK[(a || '').toLowerCase()] || 0))[0] || ''
   return {
     lane: laneKey, status,
     severity, title: f.title, location: f.location, claim: f.claim,
     scenario: f.scenario, impact: f.impact, confidence: f.confidence,
     recommendation: f.recommendation, settled_ref: settled ? (settled.evidence || f.settled_ref) : f.settled_ref,
     evidence: f.evidence,
+    panel_severity: panelSeverity,
+    // High/Critical are supposed to clear a multi-verdict panel; flag when attrition left fewer than 2.
+    panel_degraded: isHigh(f.severity) && vs.length < 2,
     verifier_verdicts: vs.map(v => `${v.verdict}/${v.adjusted_severity}: ${v.reasoning} [${v.evidence}]`),
   }
 }
@@ -213,6 +261,16 @@ function fkey(f) { return `${nloc(f.location).slice(0, 80)}|${ntitle(f.title)}` 
 const byKey = new Map()
 const candidates = []
 const coverageByLane = {}
+// Cross-run suppression: a found candidate matching a prior REFUTED/SETTLED adjudication is recorded (once)
+// and NOT verified again (the "don't re-litigate" cases). A prior CONFIRMED finding is deliberately NOT
+// suppressed — a still-open bug must keep flowing into this run's actionable kept[] and get cheaply
+// re-verified (cheap insurance it wasn't silently fixed), not vanish because a past run saw it. The prior
+// list is pre-filtered by the operator to unchanged-code entries (see the args comment).
+const priorByKey = new Map()
+PRIOR.filter(p => p.status === 'refuted' || p.status === 'settled')
+  .forEach(p => { const k = fkey(p); if (!priorByKey.has(k)) priorByKey.set(k, p) })
+const rediscoveredKeys = new Set()
+const priorRediscovered = []
 // PER-LANE retirement (sequence trim): each lens carries its own consecutive-dry counter. A lens that
 // produces no NEW finding for DRY_TARGET rounds retires and is not re-run, so later rounds spend ONLY on
 // lenses still surfacing issues — instead of re-running all of them every round until a single GLOBAL dry
@@ -240,6 +298,11 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
     coverageByLane[laneKey] = { coverage: r.coverage, top3: r.top3 || [] }
     ;(r.findings || []).forEach(f => {
       const k = fkey(f)
+      const prior = priorByKey.get(k)
+      if (prior) {  // already adjudicated by a previous run over unchanged code — suppress, don't re-verify
+        if (!rediscoveredKeys.has(k)) { rediscoveredKeys.add(k); priorRediscovered.push({ title: f.title, location: f.location, lane: laneKey, severity: f.severity, prior_status: prior.status, prior_note: prior.note || '' }) }
+        return
+      }
       const ex = byKey.get(k)
       if (!ex) { const ff = { ...f, lane: laneKey, lanes: [laneKey] }; byKey.set(k, ff); candidates.push(ff); freshByLane[laneKey] = (freshByLane[laneKey] || 0) + 1 }
       else {  // same issue from another lens/round — merge: record the lens, keep the worst severity + real impact
@@ -257,7 +320,8 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   log(`Find round ${round}: ran ${activeLanes.length} lens(es), +${freshTotal} new (total ${candidates.length}) | ${retired}/${LANES.length} retired | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
 }
 const retiredFinal = LANES.filter(l => dryByLane[l.key] >= DRY_TARGET).length
-log(`Find converged after ${round} round(s): ${candidates.length} unique candidates (${retiredFinal}/${LANES.length} lenses retired)`)
+log(`Find converged after ${round} round(s): ${candidates.length} unique candidates (${retiredFinal}/${LANES.length} lenses retired)`
+  + (priorRediscovered.length ? ` | ${priorRediscovered.length} prior-adjudicated rediscoveries suppressed` : ''))
 
 // ---------- VERIFY: SEVERITY-GATED (bounds the agent count) ----------
 // Only Medium+ non-cleanup findings are verified; Info/Low + cleanup-only are reported RAW (unverified).
@@ -269,19 +333,34 @@ const toVerify = verifyAll.slice(0, VERIFY_CAP)
 const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // Medium+ beyond the cap -> reported unverified (logged, never silently dropped)
 const unverified = candidates.filter(f => !shouldVerify(f)).concat(verifyOverflow)
 if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} Medium+ candidate(s) reported UNVERIFIED — raise verifyCap to panel them all`)
+// A null verdict (codex absent, StructuredOutput flake) is retried ONCE on the default Claude agent before
+// being accepted as dead — infrastructure failure must not quietly demote a finding to 'uncertain'.
+async function verdictAgent(prompt, lens, label) {
+  const base = { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify' }
+  let v = await agent(prompt, { ...base, label, ...(lens.agentType ? { agentType: lens.agentType } : {}) })
+  if (!v) v = await agent(prompt, { ...base, label: `${label}:retry` })
+  return v
+}
 const verified = await parallel(toVerify.map((f, fi) => async () => {
   const panel = isHigh(f.severity) ? LENSES : [COMBINED_VERIFY]   // cross-model panel for High/Critical, 1 codex verifier for Medium
   const verdicts = await parallel(panel.map(lens => () =>
-    agent(verifyPrompt(f, f.lane, lens), { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify', label: `verify:${f.lane}:${fi}:${lens.tag}`, ...(lens.agentType ? { agentType: lens.agentType } : {}) })))
+    verdictAgent(verifyPrompt(f, f.lane, lens), lens, `verify:${f.lane}:${fi}:${lens.tag}`)))
   return aggregate(f, f.lane, verdicts)
 }))
 
 const all = verified.filter(Boolean)
-const kept = all.filter(f => f.status === 'confirmed' || f.status === 'uncertain')
+// kept = confirmed first, then uncertain, then panel-dead — three populations of very different reliability;
+// the counts are split in the summary so curation never has to remember that.
+const KEEPRANK = { confirmed: 0, uncertain: 1, 'unverified-panel': 2 }
+const kept = all.filter(f => KEEPRANK[f.status] !== undefined)
+kept.sort((a, b) => (KEEPRANK[a.status] - KEEPRANK[b.status]) || (sevOf(b.severity) - sevOf(a.severity)))
 const settledOut = all.filter(f => f.status === 'settled')
 const refutedOut = all.filter(f => f.status === 'refuted')
+const keptConfirmed = kept.filter(f => f.status === 'confirmed').length
+const keptUncertain = kept.filter(f => f.status === 'uncertain').length
+const panelDead = kept.filter(f => f.status === 'unverified-panel').length
 const lanes = Object.keys(coverageByLane).map(k => ({ lane: k, coverage: coverageByLane[k].coverage, top3: coverageByLane[k].top3 }))
-log(`Verify: verified ${all.length} (kept ${kept.length} | settled ${settledOut.length} | refuted ${refutedOut.length}) | unverified ${unverified.length} (Info/Low/cleanup, raw)`)
+log(`Verify: verified ${all.length} (kept ${kept.length} = ${keptConfirmed} confirmed + ${keptUncertain} uncertain + ${panelDead} panel-dead | settled ${settledOut.length} | refuted ${refutedOut.length}) | unverified ${unverified.length} (Info/Low/cleanup, raw)`)
 
 // ---------- PROMOTE: elevate high-signal observations buried in coverage ----------
 phase('Promote')
@@ -301,8 +380,18 @@ const promoted = (promoteRes && promoteRes.findings) || []
 if (promoted.length) log(`Promoted ${promoted.length} buried observation(s) from coverage into findings`)
 
 return {
-  summary: { lenses: lanes.length, rounds: round, candidates: candidates.length, verified: all.length, kept: kept.length, settled: settledOut.length, refuted: refutedOut.length, unverified: unverified.length, promoted: promoted.length },
+  summary: {
+    lenses: lanes.length, rounds: round, candidates: candidates.length, verified: all.length,
+    kept: kept.length,
+    kept_confirmed: keptConfirmed,
+    kept_uncertain: keptUncertain,
+    kept_panel_dead: panelDead,
+    settled: settledOut.length, refuted: refutedOut.length, unverified: unverified.length, promoted: promoted.length,
+    prior_rediscovered: priorRediscovered.length,
+  },
   kept, settled: settledOut, refuted: refutedOut, promoted,
   unverified: unverified.map(f => ({ ...f, status: 'unverified' })),
+  // Informational: candidates suppressed because a previous run already adjudicated them (unchanged code).
+  prior_rediscovered: priorRediscovered,
   coverage: lanes.map(l => ({ lane: l.lane, coverage: l.coverage, top3: l.top3 })),
 }

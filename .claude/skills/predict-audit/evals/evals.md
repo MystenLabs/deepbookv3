@@ -36,11 +36,25 @@ The prior-awareness step must tag these with their D-id and downrank, never repo
 `python3 .claude/skills/predict-audit/evals/test_consolidate.py` — deterministic, no deps, exits
 non-zero on regression. Locks the silent-slip bugs found across skill reviews: `load()` marker-gating
 (a decoy preamble can't swallow the findings), id/dedup granularity (distinct findings never share an id),
-errored-harness loud exit, walk-`uncertain` tagging, and the no-slip accounting. Run it before committing
-any change to `consolidate.py`.
+errored-harness loud exit, walk-`uncertain` tagging, the panel-health render (`unverified-panel` /
+`panel_degraded` / `panel_severity` never silently folded), and the no-slip accounting. Run it before
+committing any change to `consolidate.py`.
 
-## E. Seeded-bug smoke (optional, manual)
-To prove the harness can catch a planted bug, temporarily (in a scratch worktree, never committed) introduce
-one of: a backing subtraction changed to round the wrong way (R2 violation), a `>=` weakened to `>` on a
-payout-reserve compare (R1 underflow), or a removed version gate on a custody mutator. A full run should flag
-it at High/Critical. Revert before any commit.
+## E. Seeded-bug RECALL harness (`evals/seeds.md`)
+The one property two clean runs can't give you: does a run confirm a REAL bug it wasn't told about?
+`evals/seeds.md` holds content-based (drift-proof) seed recipes — apply ONE in a scratch worktree, run a
+cheap `depth:'low'` audit, confirm the expected finding surfaces at High/Critical, revert. A miss is a recall
+hole and the highest-signal input to the next skill revision. Never commit a seeded tree.
+
+## G. Verify-panel PRECISION bench (`verify-bench.workflow.js` + `evals/verify_corpus.json`)
+Benchmarks the single most load-bearing component — the verify panel — in isolation, with NO find phase, for
+a fraction of a full run. `verify_corpus.json` is a labeled corpus (each entry `expect`s refuted|settled,
+grounded at HEAD); `Workflow({ scriptPath: '.claude/skills/predict-audit/verify-bench.workflow.js' })` runs
+the real panel over it and reports precision + any false-positive `confirmed` LEAK. Run it after any change to
+the verify prompts/panel. Recall is section E (seeds), not this bench.
+
+## H. Pre-run drift lint (`preflight.py`) — MAIN loop, part of Step 1
+`python3 .claude/skills/predict-audit/preflight.py` — fatal on module-map drift (a `primer.md` path missing
+from the tree), warns on D-id drift (a cited `D0NN` absent from every committed ledger — it lives only in the
+local decision journal; promote it). A stale primer misleads hundreds of agents at once, so run this before
+every launch.

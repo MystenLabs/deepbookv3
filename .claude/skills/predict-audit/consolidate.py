@@ -65,6 +65,10 @@ def norm(f, harness, status):
         'settled_ref': f.get('settled_ref', ''),
         'why': f.get('why', ''),
         'classification': f.get('classification', ''),
+        # panel-health metadata from the orchestrator/siblings (empty for pre-port outputs)
+        'panel_severity': f.get('panel_severity', ''),
+        'panel_degraded': bool(f.get('panel_degraded')),
+        'raw_status': f.get('status', ''),
     }
     rec['fingerprint'] = _fp(rec['location'], rec['title'], rec['claim'])
     rec['id'] = hashlib.sha1(rec['fingerprint'].encode()).hexdigest()[:6]
@@ -168,11 +172,17 @@ def main():
     for f in dedup_open:
         also = f" (also: {', '.join(f['also'])})" if f['also'] else ""
         vd = f.get('verdict', '')
-        vtag = ' · ⚠ UNCERTAIN (verifier split)' if vd == 'uncertain' else (' · ⚠ UNVERIFIED (promoted)' if vd == 'promoted-unverified' else '')
+        vtag = (' · ⚠ UNCERTAIN (verifier split)' if vd == 'uncertain'
+                else ' · ⚠ UNVERIFIED (promoted)' if vd == 'promoted-unverified'
+                else ' · ⛔ PANEL DEAD (verifiers errored — treat as unverified)' if vd == 'unverified-panel'
+                else '')
+        if f.get('panel_degraded'):
+            vtag += ' · ⚠ degraded panel (<2 live verdicts)'
+        panel_sev = f"\n- Panel severity (confirming verifiers): {f['panel_severity']}" if f.get('panel_severity') else ''
         L.append(f"### [{f['severity'] or '?'}] {f['title']}{vtag}\n"
                  f"- Source: {f['harness']}/{f['source']}{also}\n- Location: {f['location']}\n"
                  f"- Claim: {f['claim']}\n- Recommendation: {f['recommendation']}\n"
-                 f"- Evidence: {f['evidence']}\n")
+                 f"- Evidence: {f['evidence']}{panel_sev}\n")
     L.append("## Settled (checked & dismissed — verify the D-refs)\n")
     for f in settled:
         L.append(f"- [{f['harness']}/{f['source']}] {f['location']} — {f['title']} → {f['settled_ref']}")
@@ -183,7 +193,8 @@ def main():
     if not unverified: L.append("_(none)_")
     for f in sorted(unverified, key=lambda f: -SEV.get(f['severity'].lower(), 1)):
         sref = f" → {f['settled_ref']}" if f.get('settled_ref') else ""
-        L.append(f"- [{f['severity'] or '?'}] {f['title']} — {f['location']} ({f['harness']}/{f['source']}){sref}")
+        dead = " ⛔ verifier died (retried)" if f.get('raw_status') == 'unverified-panel' else ""
+        L.append(f"- [{f['severity'] or '?'}] {f['title']} — {f['location']} ({f['harness']}/{f['source']}){sref}{dead}")
     L.append("\n## Coverage — what was examined and (esp.) NOT examined\n")
     for h, lane, cov, top3 in coverage_blocks:
         L.append(f"- **{h}/{lane}**: {cov}")

@@ -77,6 +77,26 @@ with tempfile.TemporaryDirectory() as D:
     check('walk uncertain -> UNCERTAIN tag in report',
           'UNCERTAIN' in open(os.path.join(ow, 'consolidated-report.md')).read())
 
+    print("== panel-health statuses are rendered, never silently folded ==")
+    pd = write(D, 'pd.output', kept(
+        {'title': 'DeadPanel', 'location': 'p.move:1', 'claim': 'x', 'status': 'unverified-panel',
+         'panel_degraded': True, 'panel_severity': ''},
+        {'title': 'Downranked', 'location': 'q.move:2', 'claim': 'y', 'status': 'confirmed',
+         'panel_severity': 'Medium'}))
+    opd = os.path.join(D, 'opd')
+    rc, out = run(CONS, opd, pd)
+    rpt = open(os.path.join(opd, 'consolidated-report.md')).read()
+    check('unverified-panel kept finding -> PANEL DEAD tag in open list', 'PANEL DEAD' in rpt, rpt)
+    check('panel_degraded -> degraded-panel tag', 'degraded panel' in rpt, rpt)
+    check('panel_severity -> rendered for curation', 'Panel severity (confirming verifiers): Medium' in rpt, rpt)
+    check('panel-health statuses keep DROPPED 0 accounting', 'DROPPED 0' in out and rc == 0, (rc, out))
+    dead_sib = write(D, 'dsib.output', {'summary': {}, 'unverified': [
+        {'rule_family': 'R1', 'node': 'm::f', 'claim': 'c', 'severity': 'high', 'status': 'unverified-panel', 'recommendation': 'r'}]})
+    osib = os.path.join(D, 'osib')
+    run(CONS, osib, dead_sib)
+    check('sibling verifier-dead unverified entry -> marked in unverified section',
+          'verifier died' in open(os.path.join(osib, 'consolidated-report.md')).read())
+
     print("== no-slip accounting ==")
     rc, out = run(CONS, os.path.join(D, 'o5'), decoy, write(D, 'k2.output', kept({'title': 'B', 'location': 'b.move:2', 'claim': 'd'})))
     check('clean run -> DROPPED 0 + exit 0', 'DROPPED 0' in out and rc == 0, (rc, out))
