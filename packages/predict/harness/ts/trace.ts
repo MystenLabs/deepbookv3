@@ -46,6 +46,12 @@ export function abortInfo(err: unknown): { module: string; code: number } | null
   return m ? { module: m[1], code: Number(m[2]) } : null;
 }
 
+// OOG at the tx gas budget / computation cap is a measured capacity ceiling, not
+// a protocol abort. Keep the classifier shared so strategies do not drift.
+export function isOog(err: unknown): boolean {
+  return /InsufficientGas|OUT_OF_GAS|computation/i.test(String(err));
+}
+
 // Short error tag for a failure trace: the abort "module:code", or a trimmed raw error.
 export function errorTag(err: unknown): string {
   const a = abortInfo(err);

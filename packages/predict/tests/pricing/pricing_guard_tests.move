@@ -35,12 +35,9 @@
 /// a valid surface is pushed, never a mispricing. `ECannotBeNegative` in
 /// `compute_nd2` is the one genuinely unreachable guard: the envelope's `|rho| <= 1`
 /// makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0` always; it is a
-/// defensive fixed-point guard, noted not tested. `ETickNotInPriceMemo` is also
-/// defensive-only for production-valid fixtures: a miss requires an active
-/// leveraged order boundary in `liquidation_book` that is absent from
-/// `strike_payout_tree`, but mint/close/liquidation mutate those indexes together.
-/// Do not contrive an empty `PriceMemo` to hit it; the successful memo path is
-/// covered in `payout_tree_walk_tests`.
+/// defensive fixed-point guard, noted not tested. `ETickNotInPriceMemo` is a
+/// package-level cache contract guard and is covered directly below; the successful
+/// memo path is covered in `payout_tree_walk_tests`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -77,8 +74,16 @@ const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
 const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
 const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
+const PRICE_MEMO_MISSING_TICK: u64 = 100;
 
-// === Abort guards (production-valid fixture bring-up) ===
+// === Abort guards ===
+
+#[test, expected_failure(abort_code = pricing::ETickNotInPriceMemo)]
+fun cached_range_price_with_missing_finite_tick_aborts() {
+    let memo = pricing::new_price_memo();
+    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+    abort EUnexpectedSuccess
+}
 
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]
 fun live_quote_with_equal_range_bounds_aborts() {

@@ -8,16 +8,14 @@
 // repeated. REQUIRES SIM_GAS_BUDGET=50000000000 so a batch tx isn't trader-budget-capped (BATCH=40 keeps
 // each PTB well under the ~110-mint atomic-batch OOG ceiling). Run duration-only: campaign … --timeout N.
 import { type Instruction } from "../resolver.js";
-import { type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
-import { errorTag } from "../trace.js";
+import { type MintLeg, type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
+import { errorTag, isOog } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
 const MAX_BOOK = 5000; // EMaxActiveLeveragedOrders (per-market cap)
 const BATCH = 40; // mints per PTB — safely under the ~110-mint atomic-batch OOG ceiling
 const LVG = 1.1; // low -> far above floor -> never liquidated -> book == cumulative mints
-
-type Leg = { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint };
 
 // Batch mints never enter ctx.held, so lock the market and track the book ourselves.
 let lockedId: string | null = null;
@@ -38,7 +36,7 @@ function targetMarket(ctx: StrategyCtx): Mkt | null {
   return farthest;
 }
 
-function legFrom(ctx: StrategyCtx, market: Mkt): Leg | null {
+function legFrom(ctx: StrategyCtx, market: Mkt): MintLeg | null {
   const inst: Instruction = { direction: "UP", leverage: LVG, targetProbability: ctx.rand(0.45, 0.6), spendUsd: ctx.rand(5, 10) };
   const r = ctx.resolve(inst, market); // null when infeasible (e.g. too near expiry) — skip that leg
   if (!r) return null;
@@ -63,7 +61,7 @@ const batchMaxBook: Strategy = {
     const room = MAX_BOOK - book;
     if (room <= 0) return null; // at the ceiling — hold; the keeper keeps flushing at book 5000
     const want = Math.min(BATCH, room);
-    const legs: Leg[] = [];
+    const legs: MintLeg[] = [];
     for (let i = 0; i < want; i++) {
       const l = legFrom(ctx, market);
       if (l) legs.push(l);
@@ -77,8 +75,7 @@ const batchMaxBook: Strategy = {
     } catch (e) {
       // OOG at the computation cap is the atomic-batch ceiling, not a bug. Real aborts (incl. the
       // whitelisted caps EMaxActiveLeveragedOrders / EMaxPayoutTreeNodes) are tagged for the oracle.
-      const oog = /InsufficientGas|OUT_OF_GAS|computation/i.test(String(e));
-      if (oog) ctx.trace({ type: "mintBatch", n: legs.length, book, oog: true, err: errorTag(e) });
+      if (isOog(e)) ctx.trace({ type: "mintBatch", n: legs.length, book, oog: true, err: errorTag(e) });
       else ctx.trace({ type: "fail", tag: errorTag(e), n: legs.length, book });
       return null;
     }

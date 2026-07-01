@@ -17,8 +17,10 @@ future reviewers must preserve.
   recommendations.
 - `stress/mint-batch-findings-2026-07-01.md` - localnet finding for batched
   mint/redeem PTB amplification.
-- `stress/nav-stress-findings-2026-06-30.md` - localnet finding for NAV flush
-  OOG below the current per-market leveraged-order cap.
+- `stress/price-memo-findings-2026-07-01.md` - localnet finding for the landed
+  NAV price-memo capacity change.
+- `stress/nav-stress-findings-2026-06-30.md` - historical pre-memo localnet
+  finding for NAV flush OOG below the per-market leveraged-order cap.
 
 ## Update Rules
 
