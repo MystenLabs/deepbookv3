@@ -145,23 +145,6 @@ the affected near-expiry market shape until the reliability curve is verified.
 From the 2026-07-02 mini audit sweep (HEAD b34b0cd4). These are free to fix
 pre-deploy and breaking (or permanent) after; none block correctness today.
 
-### H-1: Unclassified public reads and error-code gaps must be resolved before deploy
-
-**Severity:** Low; `public` signatures and error-code values are one-way doors.
-
-- `block_scholes_svi_feed::raw_svi_at` and the
-  `OracleMetadata::oracle_kind`/`value_kind` getters are `public` with zero
-  in-repo callers and no consumer class stated in their doc comments. Per the
-  public-read classification rule (move.md): document the intended consumer
-  class (external composition / PTB construction / devInspect / provenance) or
-  delete before the deploy snapshot — the burden of proof is on keeping.
-  (audit ffcc7d)
-- The forward and SVI feed error constants skip value 1 (0,2,3,4), unlike the
-  contiguous spot feed — renumbering is free pre-deploy only. (audit 4b9be6)
-
-**Action:** Classify-or-delete the getters; renumber the feed error constants
-before the deploy snapshot.
-
 ### H-2: Mint fee breakdown derived twice between the slippage assert and payment
 
 **Severity:** Low (latent correctness risk under future edits).

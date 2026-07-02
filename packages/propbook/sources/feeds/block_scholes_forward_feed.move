@@ -13,9 +13,9 @@ use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
-const ERawForwardNotFound: u64 = 2;
-const EWrongVersion: u64 = 3;
-const ENotNewerVersion: u64 = 4;
+const ERawForwardNotFound: u64 = 1;
+const EWrongVersion: u64 = 2;
+const ENotNewerVersion: u64 = 3;
 
 /// Source-native Block Scholes forward fields. The generic oracle lane stores
 /// Propbook's canonical millisecond timestamps around this payload.

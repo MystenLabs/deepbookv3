@@ -255,22 +255,29 @@ public fun block_scholes_svi_metadata_for_underlying(
     registry.canonical_metadata(block_scholes_svi_binding_key(propbook_underlying_id))
 }
 
+/// Propbook underlying ID named by this metadata record.
 public fun propbook_underlying_id(metadata: &OracleMetadata): u32 {
     metadata.propbook_underlying_id
 }
 
+/// Oracle-family discriminator for provenance/observability consumers that
+/// inspect canonical metadata through external Move, PTBs, SDKs, or devInspect.
 public fun oracle_kind(metadata: &OracleMetadata): u8 {
     metadata.oracle_kind
 }
 
+/// Source-native identifier recorded when the canonical binding was created.
 public fun source_id(metadata: &OracleMetadata): u32 {
     metadata.source_id
 }
 
+/// Shared Propbook oracle object ID named by this metadata record.
 public fun propbook_oracle_id(metadata: &OracleMetadata): ID {
     metadata.propbook_oracle_id
 }
 
+/// Value-family discriminator for provenance/observability consumers that
+/// inspect canonical metadata through external Move, PTBs, SDKs, or devInspect.
 public fun value_kind(metadata: &OracleMetadata): u8 {
     metadata.value_kind
 }

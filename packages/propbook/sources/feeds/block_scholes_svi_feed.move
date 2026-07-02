@@ -14,9 +14,9 @@ use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
-const ERawSVINotFound: u64 = 2;
-const EWrongVersion: u64 = 3;
-const ENotNewerVersion: u64 = 4;
+const ERawSVINotFound: u64 = 1;
+const EWrongVersion: u64 = 2;
+const ENotNewerVersion: u64 = 3;
 
 /// SVI smile parameters; `rho` and `m` are signed (`fixed_math::i64`).
 public struct SVIParams has copy, drop, store {
@@ -81,7 +81,9 @@ public fun normalized_svi(
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
 
-/// Exact raw BS SVI read for `(expiry_ms, timestamp_ms)`.
+/// Exact raw BS SVI read for `(expiry_ms, timestamp_ms)`. This is a
+/// provenance/observability read for external Move, PTB, and devInspect
+/// consumers that need the source-native exact SVI payload.
 public fun raw_svi_at(
     feed: &BlockScholesSVIFeed,
     expiry_ms: u64,

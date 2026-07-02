@@ -476,6 +476,16 @@ fun raw_spot_without_update_aborts() {
 }
 
 #[test, expected_failure(abort_code = forward_feed::ERawForwardNotFound)]
+fun raw_forward_without_update_aborts() {
+    let (scenario, _spot_id, forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
+    let feed = scenario.take_shared_by_id<BlockScholesForwardFeed>(forward_id);
+
+    feed.raw_forward(EXPIRY_A);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = forward_feed::ERawForwardNotFound)]
 fun raw_forward_at_unknown_timestamp_aborts() {
     let (mut scenario, _spot_id, forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
     let mut feed = scenario.take_shared_by_id<BlockScholesForwardFeed>(forward_id);
@@ -488,6 +498,36 @@ fun raw_forward_at_unknown_timestamp_aborts() {
         scenario.ctx(),
     );
     feed.raw_forward_at(EXPIRY_A, UNKNOWN_TIMESTAMP);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = svi_feed::ERawSVINotFound)]
+fun raw_svi_without_update_aborts() {
+    let (scenario, _spot_id, _forward_id, svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
+    let feed = scenario.take_shared_by_id<BlockScholesSVIFeed>(svi_id);
+
+    feed.raw_svi(EXPIRY_A);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = forward_feed::ENotNewerVersion)]
+fun forward_migrate_current_version_aborts() {
+    let (scenario, _spot_id, forward_id, _svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
+    let mut feed = scenario.take_shared_by_id<BlockScholesForwardFeed>(forward_id);
+
+    feed.migrate();
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = svi_feed::ENotNewerVersion)]
+fun svi_migrate_current_version_aborts() {
+    let (scenario, _spot_id, _forward_id, svi_id) = setup_feeds(BS_SOURCE_ID, EXPIRY_A);
+    let mut feed = scenario.take_shared_by_id<BlockScholesSVIFeed>(svi_id);
+
+    feed.migrate();
 
     abort 999
 }
