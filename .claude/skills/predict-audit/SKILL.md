@@ -9,7 +9,7 @@ description: Deep, multi-lens security & correctness audit of the DeepBook Predi
 This skill launches **expensive multi-agent audits** — a maximal end-to-end run (all three harnesses) is **a few hundred subagents and several million tokens**. Each harness now BOUNDS its own agent count by construction (`maxRounds`×units + `verifyCap` verify, severity-gated), so it cannot run away to the old ~100M / 1000-agent-cap territory unless you explicitly raise the caps via args. It must NEVER run automatically or as a side effect of being invoked, read, or mentioned.
 
 **Before launching ANY harness run (`orchestrator` / `ownership-walk` / `rule-sweep`), you MUST:**
-1. Show the user the run plan as **two independent axes** plus cost: (a) **breadth/scope** — which harness(es) and `lenses` / `units` / `rules` (or "full"); (b) **depth tier** — `depth: low|standard|max` (see the table under "Launching a run"); and the budget / rough cost (agent count, token estimate). Splitting breadth from depth lets the user pick e.g. "full breadth, low depth" (all lenses, `depth:'low'` = single round) for a cheap complete pass and reserve `depth:'max'` for runs with ample token budget. When you ask the launch questionnaire, ask **both** axes.
+1. Show the user the run plan as **two independent axes** plus cost: (a) **breadth/scope** — which harness(es) and `lenses` / `units` / `rules` (or "full"); (b) **depth tier** — `depth: mini|low|standard|max` (see the table under "Launching a run"); and the budget / rough cost (agent count, token estimate). Splitting breadth from depth lets the user pick e.g. "full breadth, low depth" (all lenses, `depth:'low'` = single round) for a cheap complete pass and reserve `depth:'max'` for runs with ample token budget. When you ask the launch questionnaire, ask **both** axes.
 2. Ask explicitly — e.g. *"Run this audit? (≈N agents / ≈X tokens)"* — and **WAIT for an explicit "yes."**
 3. Only after the user confirms, call `Workflow(...)`. If anything is ambiguous, ask; never assume.
 
@@ -75,11 +75,22 @@ Workflow({ scriptPath: '.claude/skills/predict-audit/rule-sweep.workflow.js',
 
 | `depth` | rounds / dry | verifyCap | use when |
 |---|---|---|---|
+| `mini` | `maxRounds 1` | **0** (all raw) | **cleanup triage** — surface easy items cheaply, no verify subagents (you are the verifier), finder effort `medium`; see the mini-pass recipe below |
 | `low` | `maxRounds 1` | 30 | **full breadth, low depth** — a cheap complete pass, one sample per lens |
 | `standard` *(default)* | `maxRounds 3` / `dryRounds 2` | 60 | the bounded default |
 | `max` | `maxRounds 5` / `dryRounds 3` | 100 (+ `maxFindings 16`) | reserve for special runs with ample token budget |
 
-**Scope knobs (breadth, orthogonal to depth):** `profile: 'security'` (orchestrator) runs full bug-hunt breadth minus the cleanup-tier lenses (`surface-area`, `architecture`) whose output is mostly the unverified Info tail — a cheaper pre-merge pass than all 10; an explicit `lenses` arg always wins. See **Incremental & delta runs** below for `files` + `priorAdjudications`.
+**Scope knobs (breadth, orthogonal to depth):** `profile: 'security'` (orchestrator) runs full bug-hunt breadth minus the cleanup-tier lenses (`surface-area`, `architecture`) whose output is mostly the unverified Info tail — a cheaper pre-merge pass than all 10; `profile: 'cleanup'` is the inverse (ONLY `surface-area` + `assertions` + `architecture`, for the mini pass); an explicit `lenses` arg always wins. See **Incremental & delta runs** below for `files` + `priorAdjudications`.
+
+### Mini pass (cleanup triage — the cheap pre-audit sweep)
+Purpose: surface the easy cleanups (mechanical rule violations, hygiene, surface-area/assertion/architecture nits) for the operator to fix or disposition BEFORE a deep run, so the expensive lenses spend their `maxFindings` slots on genuinely new ground instead of re-finding known easy stuff. Everything is reported RAW (`verifyCap 0`, no codex panels) — the operator is the verifier for this tier. ~15 finder agents + 1 promote total, a few hundred k tokens. Still gated: present this plan + cost and get an explicit "yes" first.
+```
+Workflow({ scriptPath: '.claude/skills/predict-audit/rule-sweep.workflow.js',
+           args: { groundTruth: '<build/test summary>', depth: 'mini' } })          # all 11 mechanical families
+Workflow({ scriptPath: '.claude/skills/predict-audit/orchestrator.workflow.js',
+           args: { groundTruth: '<build/test summary>', profile: 'cleanup', depth: 'mini' } })  # cleanup-tier lenses only
+```
+Then consolidate + curate as usual (Steps 3–4). The payoff loop: fix or disposition the mini findings, then feed the run's `findings.json` into the deep run's `priorAdjudications` so it doesn't re-report them (drop entries whose cited files changed since — see Incremental & delta runs).
 
 **Step 3 — consolidate in the MAIN LOOP (no-slip guarantee).** Each harness's FULL result is persisted to its task output file — **the notification preview is TRUNCATED; never synthesize from it.** Re-run any failed units first (`Workflow({ scriptPath, resumeFromRunId })`), then run the deterministic consolidator over the full files:
 ```

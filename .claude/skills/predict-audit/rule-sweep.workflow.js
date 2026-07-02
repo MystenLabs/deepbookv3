@@ -9,7 +9,8 @@
 // and live in ownership-walk.workflow.js (R1-R7). Do not duplicate them.
 //
 // args = { rules?: string[] (subset of family keys), maxFindings?: number, groundTruth?: string,
-//          depth?: 'low'|'standard'|'max' (preset for rounds/verifyCap; explicit caps win),
+//          depth?: 'mini'|'low'|'standard'|'max' (preset for rounds/verifyCap/effort; explicit caps win;
+//            mini = cleanup-triage: 1 round, NO verify subagents — findings reported raw, sweep effort medium),
 //          files?: string[] (DELTA SCOPE: concentrate the sweep on these changed files + direct callers),
 //          priorAdjudications?: [{title, location, status, note?}] (cross-run memory: seeded into the sweep
 //            prompts as do-not-re-report; pass only entries whose cited files are unchanged — see SKILL.md.
@@ -38,7 +39,7 @@ if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(none provided)'
 // DEPTH preset — same tiers/precedence as the orchestrator (explicit cap args win over the preset).
-const DEPTH = { low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxFindings: 16 } }
+const DEPTH = { mini: { maxRounds: 1, verifyCap: 0, effort: 'medium' }, low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxFindings: 16 } }
 const depthName = DEPTH[A.depth] ? A.depth : 'standard'
 const DP = DEPTH[depthName]
 const maxFindings = A.maxFindings || DP.maxFindings || 12
@@ -137,7 +138,8 @@ const VERDICT_SCHEMA = {
 // found for that family so it hunts new sites), union new findings, until K dry rounds or the budget floor.
 const DRY_TARGET = A.dryRounds || DP.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || DP.maxRounds || 3
-const VERIFY_CAP = A.verifyCap || DP.verifyCap || 60
+// typeof-check, not ||: mini's verifyCap 0 is falsy and must not fall through to the default.
+const VERIFY_CAP = [A.verifyCap, DP.verifyCap, 60].find(v => typeof v === 'number')
 const RESERVE = (budget && budget.total) ? Math.max(3_000_000, Math.floor(budget.total * 0.3)) : 3_000_000
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 // strip line numbers (so a shifted-line same violation dedups) but KEEP a claim digest, so two DISTINCT
@@ -172,7 +174,7 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   const knownByFamily = {}
   candidates.forEach(f => { (knownByFamily[f.rule_family] = knownByFamily[f.rule_family] || []).push(`- ${f.location}: ${(f.claim || '').slice(0, 120)}`) })
   const roundRes = await parallel(activeFamilies.map(rf => () => agent(sweepPrompt(rf, round, (knownByFamily[rf.key] || []).join('\n')),
-    { schema: SWEEP_SCHEMA, effort: 'high', phase: 'Sweep', label: `sweep:${rf.key}:r${round}` })))
+    { schema: SWEEP_SCHEMA, effort: DP.effort || 'high', phase: 'Sweep', label: `sweep:${rf.key}:r${round}` })))
   const freshByFamily = {}
   // Index by the family we DISPATCHED (activeFamilies[i]), not the agent-returned r.rule_family — parallel()
   // preserves order and the dispatched key is the stable identity (same fix as the orchestrator's lanes).
