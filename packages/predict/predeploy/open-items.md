@@ -47,19 +47,6 @@ and misprice mint/redeem flows.
 freshness with remaining time, or otherwise document and bound the accepted
 near-expiry pricing window.
 
-### P-3: Partial-close floor split can leave survivor `floor_shares > quantity`
-
-**Severity:** Medium.
-
-The partial-close floor split computes removed floor shares with a double-floor
-fraction, then derives the survivor by subtraction. For large leveraged orders
-with a small remainder, the survivor floor can exceed survivor quantity and
-`order::replacement` aborts with `EInvalidFloorShares`.
-
-**Action:** Derive survivor floor shares directly with a single round-down
-`mul_div_down(old_floor_shares, remaining_quantity, old_quantity)`, then set the
-removed floor to the conserved difference. Add a regression test.
-
 ### P-4: Propbook bindings are insert-only and unrecoverable
 
 **Severity:** Medium.

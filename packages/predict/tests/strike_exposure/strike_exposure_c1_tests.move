@@ -21,10 +21,22 @@
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
+use std::unit_test::assert_eq;
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
+/// 6x is admitted at the ATM default range when the template cap is raised to 7x.
+const LEVERAGE_SIX_X: u64 = 6_000_000_000;
+const ADMISSION_CAP_SEVEN_X: u64 = 7_000_000_000;
+/// Largest quantity encodable in an order: `(2^32 - 1) * position_lot_size`.
+const MAX_ORDER_QUANTITY: u64 = 42_949_672_950_000;
+/// 5M DUSDC, enough for the 6x max-quantity mint premium plus fee.
+const LARGE_TRADER_DEPOSIT: u64 = 5_000_000_000_000;
+/// 30M DUSDC, enough to back the large single-order payout liability.
+const LARGE_MARKET_CASH: u64 = 30_000_000_000_000;
+/// `floor((5 * MAX_ORDER_QUANTITY / 12) * 10000 / MAX_ORDER_QUANTITY)`.
+const EXPECTED_LAST_LOT_FLOOR: u64 = 4_166;
 /// Single close row for survivor reinsertion coverage.
 const SINGLE_CLOSE: u64 = 400_000_000;
 
@@ -44,6 +56,55 @@ fun partial_close_survivor_stays_backed() {
 #[test]
 fun double_partial_close_survivor_reinsertion_stays_backed() {
     run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE]);
+}
+
+/// Closing a max-sized 6x ATM order down to one lot must leave a valid replacement.
+///
+/// The old two-step split left `ceil(floor_shares / 1e9) = 17_896` floor shares on
+/// a `10_000`-quantity survivor, so `order::replacement` aborted
+/// `EInvalidFloorShares`. The fixed split derives the survivor floor directly:
+/// `floor((5 * MAX_ORDER_QUANTITY / 12) * 10_000 / MAX_ORDER_QUANTITY) = 4_166`.
+#[test]
+fun partial_close_to_last_lot_keeps_survivor_floor_within_quantity() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_max_admission_leverage(ADMISSION_CAP_SEVEN_X);
+    fx.set_default_cadence_allocation(
+        LARGE_MARKET_CASH,
+        constants::expiry_cash_floor!(),
+    );
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(LARGE_TRADER_DEPOSIT);
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(helpers::market_mut(&mut market), LARGE_MARKET_CASH);
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        MAX_ORDER_QUANTITY,
+        LEVERAGE_SIX_X,
+    );
+
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    let (_closed, replacement) = fx.redeem_bundle(
+        &mut market,
+        &mut account,
+        order_id,
+        MAX_ORDER_QUANTITY - constants::position_lot_size!(),
+    );
+    let survivor_id = replacement.destroy_some();
+    let survivor = order::from_order_id(survivor_id);
+    assert_eq!(survivor.quantity(), constants::position_lot_size!());
+    assert_eq!(survivor.floor_shares(), EXPECTED_LAST_LOT_FLOOR);
+    assert!(helpers::has_position_bundle(&account, expiry_id, survivor_id));
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 /// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /
