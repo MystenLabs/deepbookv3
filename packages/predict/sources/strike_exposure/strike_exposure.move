@@ -129,7 +129,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     // Linear term: the full payout-tree walk, caching each boundary's price.
-    let linear = exposure.payout.walk_linear(pricer, exposure.tick_size, &mut memo);
+    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
     // Correction term: the static-floor-capped scan, reading prices from the cache.
     let correction = exposure.liquidation.correction_value(&memo);
     linear.saturating_sub(correction)

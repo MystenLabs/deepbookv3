@@ -122,7 +122,7 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_read(&update, clock.timestamp_ms());
     let id = feed.id();
-    feed.lane.update(id, read);
+    feed.lane.update(read, id);
 }
 
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
@@ -134,7 +134,7 @@ public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_insert_read(&update, clock.timestamp_ms());
     let id = feed.id();
-    feed.lane.insert_at(id, read);
+    feed.lane.insert_at(read, id);
 }
 
 /// Migrate this feed to the running package version (forward-only).
@@ -337,8 +337,8 @@ public fun record_raw_for_testing(
     };
     let id = feed.id();
     if (insert_at) {
-        feed.lane.insert_at(id, read);
+        feed.lane.insert_at(read, id);
     } else {
-        feed.lane.update(id, read);
+        feed.lane.update(read, id);
     };
 }

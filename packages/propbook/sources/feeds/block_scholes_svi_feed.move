@@ -229,11 +229,11 @@ fun update_expiry(
     ctx: &mut TxContext,
 ) {
     if (feed.expiries.contains(expiry_ms)) {
-        feed.expiries.borrow_mut(expiry_ms).update(propbook_oracle_id, read);
+        feed.expiries.borrow_mut(expiry_ms).update(read, propbook_oracle_id);
     } else {
         if (!oracle_lane::read_has_valid_timestamp(&read)) return;
         let mut lane = oracle_lane::new(ctx);
-        lane.update(propbook_oracle_id, read);
+        lane.update(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
     };
 }
@@ -246,11 +246,11 @@ fun insert_expiry_at(
     ctx: &mut TxContext,
 ) {
     if (feed.expiries.contains(expiry_ms)) {
-        feed.expiries.borrow_mut(expiry_ms).insert_at(propbook_oracle_id, read);
+        feed.expiries.borrow_mut(expiry_ms).insert_at(read, propbook_oracle_id);
     } else {
         if (!oracle_lane::read_has_valid_timestamp(&read)) return;
         let mut lane = oracle_lane::new(ctx);
-        lane.insert_at(propbook_oracle_id, read);
+        lane.insert_at(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
     };
 }

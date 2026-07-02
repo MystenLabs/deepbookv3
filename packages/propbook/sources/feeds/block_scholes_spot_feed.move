@@ -100,7 +100,7 @@ public fun update(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &C
 
     let read = feed.new_read(&update, clock.timestamp_ms());
     let id = feed.id();
-    feed.lane.update(id, read);
+    feed.lane.update(read, id);
 }
 
 /// Insert an exact BS spot observation keyed by the update-derived source
@@ -111,7 +111,7 @@ public fun insert_at(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock:
 
     let read = feed.new_read(&update, clock.timestamp_ms());
     let id = feed.id();
-    feed.lane.insert_at(id, read);
+    feed.lane.insert_at(read, id);
 }
 
 /// Migrate this feed to the running package version. Forward-only:

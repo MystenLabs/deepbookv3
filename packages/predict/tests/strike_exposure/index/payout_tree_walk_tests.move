@@ -90,7 +90,7 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     // Insertion order is intentionally not sorted. The in-order walk must still
     // cache ascending ticks, because `cached_range_price` uses binary search.
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, tick_size(), &mut memo);
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
     assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
     assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(constants::neg_inf!(), raw(t0)));
@@ -116,7 +116,7 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, tick_size(), &mut memo);
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(
         walk,
         range_reference(
@@ -234,7 +234,7 @@ fun raw(tick: u64): u64 { tick * tick_size() }
 /// Run the exact linear walk with the production price memo.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
-    tree.walk_linear(pricer, tick_size(), &mut memo)
+    tree.walk_linear(pricer, &mut memo, tick_size())
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).

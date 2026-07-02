@@ -299,12 +299,12 @@ public fun load_pricer(
     pricing::load_live_pricer(
         config.pricing_config(),
         oracle_registry,
-        self.expiry_id,
-        test_constants::propbook_underlying_id(),
         pyth,
         bs.spot(),
         bs.forward(),
         bs.svi(),
+        self.expiry_id,
+        test_constants::propbook_underlying_id(),
         self.expiry,
         &self.clock,
     )

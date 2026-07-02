@@ -105,9 +105,9 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
 
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
+    payment: Coin<DUSDC>,
     account_id: ID,
     recipient: address,
-    payment: Coin<DUSDC>,
 ): u64 {
     assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
     book.supply_queue.enqueue(account_id, recipient, payment.into_balance())
@@ -115,9 +115,9 @@ public(package) fun request_supply<LP>(
 
 public(package) fun request_withdraw<LP>(
     book: &mut LpBook<LP>,
+    lp: Coin<LP>,
     account_id: ID,
     recipient: address,
-    lp: Coin<LP>,
 ): u64 {
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
     book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance())
@@ -153,9 +153,9 @@ public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMar
 /// Cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
-    pool_vault_id: ID,
     ledger: &mut Ledger,
     mark: FlushMark,
+    pool_vault_id: ID,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,

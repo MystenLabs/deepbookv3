@@ -91,12 +91,12 @@ public fun expiry_market_id(pricer: &Pricer): ID {
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
-    expiry_market_id: ID,
-    propbook_underlying_id: u32,
     pyth: &PythFeed,
     bs_spot: &BlockScholesSpotFeed,
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
     expiry: u64,
     clock: &Clock,
 ): Pricer {

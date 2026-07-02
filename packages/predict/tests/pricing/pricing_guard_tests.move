@@ -508,12 +508,12 @@ fun load_pricer_with_forward(
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
-        fx.expiry_id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(oracle),
         oracle_fixture::bs(oracle).spot(),
         forward,
         oracle_fixture::bs(oracle).svi(),
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );
@@ -523,12 +523,12 @@ fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockS
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
-        fx.expiry_id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(oracle),
         oracle_fixture::bs(oracle).spot(),
         oracle_fixture::bs(oracle).forward(),
         svi,
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );

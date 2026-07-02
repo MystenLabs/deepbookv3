@@ -21,12 +21,12 @@ fun current_nav_rejects_pricer_loaded_for_another_market() {
     let wrong_pricer = pricing::load_live_pricer(
         oracle_fixture::config(&oracle).pricing_config(),
         oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle).id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(&oracle),
         oracle_fixture::bs(&oracle).spot(),
         oracle_fixture::bs(&oracle).forward(),
         oracle_fixture::bs(&oracle).svi(),
+        oracle_fixture::pyth(&oracle).id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );
@@ -45,12 +45,12 @@ fun liquidate_rejects_pricer_loaded_for_another_market() {
     let wrong_pricer = pricing::load_live_pricer(
         oracle_fixture::config(&oracle).pricing_config(),
         oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle).id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(&oracle),
         oracle_fixture::bs(&oracle).spot(),
         oracle_fixture::bs(&oracle).forward(),
         oracle_fixture::bs(&oracle).svi(),
+        oracle_fixture::pyth(&oracle).id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );

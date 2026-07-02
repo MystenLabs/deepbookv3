@@ -189,12 +189,12 @@ public fun load_live_pricer(
     pricing::load_live_pricer(
         config.pricing_config(),
         propbook_registry,
-        market.id(),
-        market.propbook_underlying_id,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        market.id(),
+        market.propbook_underlying_id,
         market.expiry,
         clock,
     )

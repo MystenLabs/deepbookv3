@@ -104,8 +104,8 @@ public(package) fun settled_payout_liability(
 public(package) fun walk_linear(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
-    tick_size: u64,
     memo: &mut PriceMemo,
+    tick_size: u64,
 ): u64 {
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,

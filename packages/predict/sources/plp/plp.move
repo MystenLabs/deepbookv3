@@ -324,9 +324,9 @@ public fun finish_flush(
     let (supplies_filled, withdrawals_filled) = vault
         .lp
         .drain(
-            vault_id,
             &mut vault.expiry_accounting,
             mark,
+            vault_id,
             supply_budget,
             withdraw_budget,
             ctx,
@@ -555,7 +555,7 @@ public fun request_supply(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_supply(account_id, recipient, payment);
+    let index = vault.lp.request_supply(payment, account_id, recipient);
     vault_events::emit_supply_requested(vault_id, account_id, recipient, index, amount);
     index
 }
@@ -583,7 +583,7 @@ public fun request_withdraw(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_withdraw(account_id, recipient, lp);
+    let index = vault.lp.request_withdraw(lp, account_id, recipient);
     vault_events::emit_withdraw_requested(vault_id, account_id, recipient, index, amount);
     index
 }
@@ -681,7 +681,7 @@ fun claim_trading_loss_rebate_internal(
     let residual_returned = residual_cash.value();
     let returned_cash_amount = vault
         .expiry_accounting
-        .receive_expiry_cash(expiry_market_id, residual_cash);
+        .receive_expiry_cash(residual_cash, expiry_market_id);
     if (returned_cash_amount > 0) {
         vault_events::emit_expiry_cash_received(
             vault_id,
@@ -806,7 +806,7 @@ fun sweep_live_expiry_surplus(
     let returned_cash = market.release_pool_cash(cash_balance - target_cash);
     let returned_cash_amount = vault
         .expiry_accounting
-        .receive_expiry_cash(expiry_market_id, returned_cash);
+        .receive_expiry_cash(returned_cash, expiry_market_id);
     // Surplus just returned to idle — realize any protocol cut a prior settled
     // sweep could not cover because idle was deployed in other active markets.
     let realized_profit = vault.expiry_accounting.realize_pending_protocol_profit();
@@ -886,7 +886,7 @@ fun sweep_settled_expiry(
     let (returned_cash, settlement_price) = market.release_settled_pool_cash();
     let returned_cash_amount = vault
         .expiry_accounting
-        .receive_expiry_cash(expiry_market_id, returned_cash);
+        .receive_expiry_cash(returned_cash, expiry_market_id);
     if (deactivated || returned_cash_amount > 0) {
         vault_events::emit_expiry_cash_received(
             vault.id(),
