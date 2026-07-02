@@ -91,6 +91,11 @@ public fun expiry(market: &ExpiryMarket): u64 {
     market.expiry
 }
 
+/// Return the recorded settlement price. Aborts if the market is not settled.
+public fun settlement_price(market: &ExpiryMarket): u64 {
+    market.settlement_price.destroy_some()
+}
+
 /// Return DUSDC currently held by this expiry.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
@@ -549,11 +554,6 @@ public fun set_mint_paused(
 }
 
 // === Public-Package Functions ===
-
-/// Return the recorded settlement price. Aborts if the market is not settled.
-public(package) fun settlement_price(market: &ExpiryMarket): u64 {
-    market.settlement_price.destroy_some()
-}
 
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after

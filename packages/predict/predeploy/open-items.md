@@ -8,20 +8,6 @@ remain in ignored agent scratchpads, but this file is the tracked manifest.
 
 ## Deploy Gates
 
-### S-1: Exact-timestamp settlement liveness
-
-**Severity:** High / deploy-blocking until accepted or fixed.
-
-Terminal settlement is an exact-key read at `market.expiry`. If Propbook does
-not contain a normalized Pyth spot exactly at that timestamp, the market remains
-unsettled. A past-expiry unsettled market cannot be live-valued, so the pool
-flush aborts while that market remains active.
-
-Current tracked docs say expiries are cadence-aligned and the off-chain
-resolution relayer sources exact grid prints. Before deployment, confirm this is
-true end-to-end in the relayer and runbook, or add an on-chain fallback such as
-first-valid-at-or-after expiry or an admin/keeper finalize path.
-
 ### S-4: Block Scholes updates are forgeable while the verifier is a stub
 
 **Severity:** Deploy gate.

@@ -11,6 +11,8 @@ future reviewers must preserve.
 ## Index
 
 - `open-items.md` - current predeploy bug, gate, and follow-up tracker.
+- `settlement-liveness.md` - accepted operational assumption and testnet
+  evidence for exact-timestamp settlement liveness.
 - `rounding-policy.md` - protocol-wide rounding and liveness rules.
 - `oracle-calibration.md` - near-expiry oracle calibration finding and repro.
 - `stress/capacity-and-gas-findings.md` - consolidated capacity model and cap

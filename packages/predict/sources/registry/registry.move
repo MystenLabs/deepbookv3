@@ -16,7 +16,7 @@ use deepbook_predict::{
     config_events,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
-    market_manager::{Self, MarketManager},
+    market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
     protocol_config::{Self, ProtocolConfig}
@@ -57,6 +57,15 @@ public fun expiry_market_id(
     expiry: u64,
 ): Option<ID> {
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
+}
+
+/// Return the stored deployment policy for one underlying/cadence.
+public fun cadence_config(
+    registry: &Registry,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+): CadenceConfig {
+    registry.market_manager.cadence_config(propbook_underlying_id, cadence_id)
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -184,6 +193,16 @@ public fun set_cadence_config(
             initial_expiry_cash,
             window_size,
         );
+    config_events::emit_cadence_config_updated(
+        registry.id(),
+        propbook_underlying_id,
+        cadence_id,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        window_size,
+    );
 }
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
