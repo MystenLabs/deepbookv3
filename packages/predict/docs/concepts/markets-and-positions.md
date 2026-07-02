@@ -25,7 +25,7 @@ The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** u
 
 ```mermaid
 flowchart TD
-  A["Admin: register_underlying(underlying)"] --> B["Admin: set_template_cadence_config(underlying, tick_size, allocation, initial_cash, window)"]
+  A["Admin: register_underlying(underlying)"] --> B["Admin: set_template_cadence_config(underlying, tick_size, admission_tick_size, allocation, initial_cash, window)"]
   B --> C["create_and_share_expiry_market(propbook_registry, underlying, cadence_id, clock, ...)"]
   C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>cadence enabled,<br/>skip higher-rank reserved slots,<br/>selected expiry in window,<br/>underlying registered,<br/>Propbook bindings exist,<br/>market not already created"}
   D -->|pass| E["compute next expiry<br/>snapshot config + cadence terms<br/>(no live spot read)"]
@@ -42,17 +42,17 @@ This single interpretation is what lets the same tick mean the same price everyw
 
 ### Ticks and the ±infinity sentinels
 
-A position's range is the half-open interval `(lower, higher]`, expressed as two strike **ticks**. At public entrypoints and in events the pair travels directly as two 24-bit ticks, `lower_tick` and `higher_tick`; an SDK converts raw strikes to ticks before submitting them. The only place the two ticks are packed into one integer is the durable order ID.
+A position's range is the half-open interval `(lower, higher]`, expressed as two strike **ticks**. At public entrypoints and in events the pair travels directly as two 30-bit ticks, `lower_tick` and `higher_tick`; an SDK converts raw strikes to ticks before submitting them. The only place the two ticks are packed into one integer is the durable order ID.
 
-The sentinels live at the ends of the 24-bit tick domain:
+The sentinels live at the ends of the 30-bit tick domain:
 
 - **Lower tick `0`** is the negative-infinity sentinel (`neg_inf`, raw value `0`): an open-ended lower bound.
-- **Higher tick `pos_inf_tick`** (the maximum 24-bit value, `2²⁴ − 1`) is the positive-infinity sentinel (`pos_inf`, raw value `u64::MAX`): an open-ended higher bound.
+- **Higher tick `pos_inf_tick`** (the maximum 30-bit value, `2³⁰ − 1`) is the positive-infinity sentinel (`pos_inf`, raw value `u64::MAX`): an open-ended higher bound.
 - **Finite ticks** occupy the values in between (`1 … pos_inf_tick − 1`) and map to `tick × tick_size`.
 
 Raw strikes are recovered from ticks only at the pricing and settlement boundary, through `range_codec::strikes_from_ticks`, which applies the sentinel mapping and the `tick × tick_size` multiplication. The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k", i.e. plain digital calls and puts — without inventing artificial outer strikes. Settlement payout is determined by whether the settlement price falls inside `(lower, higher]`: an order pays zero when `settlement ≤ lower || settlement > higher`.
 
-Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 24-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
+Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 30-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
 
 ## Positions (orders)
 
@@ -100,12 +100,12 @@ stateDiagram-v2
 
 ### Live redeem (full, or partial as cancel-and-replace)
 
-While the market is active, `redeem` closes a position the caller has trade authority over, with a `close_quantity`:
+While the market is active, `redeem_live` closes a position the caller has trade authority over, with a `close_quantity`:
 
 - **Full close** (`close_quantity == quantity`): the order's full live-index terms are removed, the redeem amount is quoted at the current range probability net of the floor, fees and penalty are deducted, and the payout is deposited to the account. No replacement is produced.
 - **Partial close** (`close_quantity < quantity`): the protocol removes the closed slice from the live indexes and creates a **replacement** order for the remaining quantity with proportionally reduced static floor shares and a new sequence.
 
-Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_quantity`, and `replacement_order_id` when present). `redeem` first runs a bounded liquidation pass; if the targeted order was itself liquidated in that pass, it is cleared instead (see below). Live redeem requires the proof (`EProofRequiredForLiveRedeem` if absent).
+Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_quantity`, and `replacement_order_id` when present). `redeem_live` first runs a bounded liquidation pass; if the targeted order was itself liquidated in that pass, it is cleared instead (see below). Live redeem requires `account::Auth` (owner auth, or app-auth via the account registry).
 
 ### Settlement recorded
 

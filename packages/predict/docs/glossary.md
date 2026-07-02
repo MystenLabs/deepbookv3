@@ -41,7 +41,7 @@ grid, no boundary indices).
 - **Tick** — an integer strike index. The public API, order IDs, the payout
   tree, the liquidation book, and the exposure index all carry ticks; raw
   strikes are reconstructed only at the pricing/settlement boundary. Code
-  `lower_tick`, `higher_tick` (two `u24`s per order).
+  `lower_tick`, `higher_tick` (two `u30`s per order).
 - **`tick_size`** — the fixed raw-price-per-tick factor snapshotted per expiry,
   so `raw_strike = tick × tick_size`. Carried on `MarketCreated`; an indexer or
   SDK reconstructs raw strikes from it. Code `tick_size`.
@@ -49,7 +49,7 @@ grid, no boundary indices).
   `(lower, higher]`, carried at public entrypoints (`mint`) and in events as the
   two absolute ticks directly. There is no standalone packed range key; the only
   packed form is inside the order ID.
-- **`pos_inf_tick`** — the sentinel higher tick (`2²⁴ − 1`) that denotes the
+- **`pos_inf_tick`** — the sentinel higher tick (`2³⁰ − 1`) that denotes the
   open-ended top (`+∞`); a lower tick of `0` denotes the open-ended bottom
   (`−∞`). These two sentinels are what make a range a digital call or put
   rather than a bounded spread. Code `pos_inf_tick`.
@@ -191,7 +191,7 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 - **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush
   prices PLP at: `idle + Σ active-market current_nav`, net of the
   pending-protocol-profit exclusion. Computed once per flush and used for both
-  supply and withdraw. Code `pool_nav` (event `PoolValued`).
+  supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
 - **Supply / withdraw queue** — the two FIFO request queues on `PoolVault`
   (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP
   enqueues with `request_supply` / `request_withdraw` (routed through its
@@ -201,7 +201,7 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   whole pool once and settles the queues at that mark. It is a **hot potato**:
   `start_pool_valuation` opens it (engaging the valuation lock), `value_expiry`
   is called once per active market to accumulate `Σ current_nav`, and
-  `finish_flush` computes `pool_nav`, then `drain_lp_requests` mints/burns PLP
+  `finish_flush` computes `pool_nav`, then `lp_book::drain` mints/burns PLP
   and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
   up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`, per-request
   dust refunds). Fills are delivered to each account through the balance accumulator
@@ -215,6 +215,6 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | Code verb | Options term | Meaning |
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
-| `redeem` (live) | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
+| `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
 | `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
 | `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |
