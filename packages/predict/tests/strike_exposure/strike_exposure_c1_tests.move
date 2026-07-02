@@ -29,8 +29,6 @@ const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// 6x is admitted at the ATM default range when the template cap is raised to 7x.
 const LEVERAGE_SIX_X: u64 = 6_000_000_000;
 const ADMISSION_CAP_SEVEN_X: u64 = 7_000_000_000;
-const SIX_X_ATM_FLOOR_NUMERATOR: u64 = 5;
-const SIX_X_ATM_FLOOR_DENOMINATOR: u64 = 12;
 /// 5M DUSDC, enough for the 6x max-quantity mint premium plus fee.
 const LARGE_TRADER_DEPOSIT: u64 = 5_000_000_000_000;
 /// 30M DUSDC, enough to back the large single-order payout liability.
@@ -66,7 +64,11 @@ fun double_partial_close_survivor_reinsertion_stays_backed() {
 fun partial_close_to_last_lot_keeps_survivor_floor_within_quantity() {
     let mut fx = helpers::setup_market_default();
     let max_order_quantity = order::max_quantity_lots() * constants::position_lot_size!();
-    let expected_last_lot_floor = expected_last_lot_floor_for_max_order(max_order_quantity);
+    // Independently computed (not via the production split formula): with
+    // max_order_quantity = (2^32 - 1) * 10_000 = 42_949_672_950_000, the 6x ATM
+    // floor is floor(5 * Q / 12) = 17_895_697_062_500, and the one-lot survivor
+    // floor is floor(17_895_697_062_500 * 10_000 / Q) = 4_166.
+    let expected_last_lot_floor = 4_166;
     fx.set_template_max_admission_leverage(ADMISSION_CAP_SEVEN_X);
     fx.set_default_cadence_allocation(
         LARGE_MARKET_CASH,
@@ -105,11 +107,6 @@ fun partial_close_to_last_lot_keeps_survivor_floor_within_quantity() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
-}
-
-fun expected_last_lot_floor_for_max_order(max_order_quantity: u64): u64 {
-    let old_floor = SIX_X_ATM_FLOOR_NUMERATOR * max_order_quantity / SIX_X_ATM_FLOOR_DENOMINATOR;
-    old_floor * constants::position_lot_size!() / max_order_quantity
 }
 
 /// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /

@@ -11,6 +11,9 @@ future reviewers must preserve.
 ## Index
 
 - `open-items.md` - current predeploy bug, gate, and follow-up tracker.
+- `response-policies.md` - register of settled response-policy decisions for
+  degenerate/adversarial states: chosen behavior, reasoning, risk profile, and
+  pinning tests. Closed open-items that embody a decision graduate here.
 - `settlement-liveness.md` - accepted operational assumption and testnet
   evidence for exact-timestamp settlement liveness.
 - `rounding-policy.md` - protocol-wide rounding and liveness rules.
@@ -31,5 +34,8 @@ future reviewers must preserve.
   findings or policy decisions into this directory.
 - When a finding is accepted rather than fixed, say so explicitly and point to
   the public disclosure or design decision that carries it.
+- When a guard is removed or weakened, or a degenerate-state response is
+  decided, record it in `response-policies.md` (with a duty inventory for
+  removals) — reasoning must not live only in a commit message.
 - When a stress result is superseded, update the consolidated stress doc first,
   then adjust the narrow dated finding only if its original conclusion changed.

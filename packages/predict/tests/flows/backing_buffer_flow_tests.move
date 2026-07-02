@@ -269,12 +269,11 @@ fun mint_leveraged_up(
     )
 }
 
-fun default_gap_buffer(gap: u64): u64 {
-    math::mul(config_constants::default_backing_buffer_lambda!(), gap)
-}
-
 fun disjoint_buffered_reserve(): u64 {
-    DISJOINT_MAX_LIVE + default_gap_buffer(DISJOINT_GAP)
+    // Independent of the production reserve formula: λ_default = 0.25, so the gap
+    // buffer is DISJOINT_GAP / 4 (line-72 assert separately pins math::mul(λ, gap)
+    // == QUANTITY / 4). Reserve = max-live + buffer.
+    DISJOINT_MAX_LIVE + DISJOINT_GAP / 4
 }
 
 fun setup_live_market_with_cash(

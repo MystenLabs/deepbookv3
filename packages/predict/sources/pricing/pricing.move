@@ -59,6 +59,8 @@ const EBlockScholesSVIStale: u64 = 10;
 const EWrongBlockScholesForwardFeed: u64 = 11;
 const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
+const EBlockScholesPriceUnavailable: u64 = 14;
+const EBlockScholesSVIUnavailable: u64 = 15;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -223,7 +225,7 @@ fun live_inputs(
     clock: &Clock,
 ): (u64, SVIParams) {
     let bs_spot_read = bs_spot.normalized_spot();
-    assert!(bs_spot_read.is_some(), EBlockScholesPriceStale);
+    assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
     assert!(
         timestamp_is_fresh(
@@ -236,7 +238,7 @@ fun live_inputs(
     let bs_spot = bs_spot_read.read_value();
 
     let bs_forward_read = bs_forward.normalized_forward(expiry);
-    assert!(bs_forward_read.is_some(), EBlockScholesPriceStale);
+    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
     assert!(
         timestamp_is_fresh(
@@ -249,7 +251,7 @@ fun live_inputs(
     let bs_forward = bs_forward_read.read_value();
 
     let svi_read = bs_svi.normalized_svi(expiry);
-    assert!(svi_read.is_some(), EBlockScholesSVIStale);
+    assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
     assert!(
         timestamp_is_fresh(

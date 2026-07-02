@@ -121,11 +121,29 @@ refunding the degenerate request. The only unblock is the request owner
 voluntarily cancelling; a hostile or absent owner stalls the FIFO indefinitely,
 freezing all supply/withdraw behind it.
 
+**2026-07-02 extension — the opposite (overflow) boundary is also uncovered.**
+At a dust-but-nonzero mark (reachable via `lp_pool_value`'s zero-floor path), a
+large-enough queued supply request makes
+`supply_shares = mul_div_down(amount, total_supply, pool_value)` exceed u64 and
+the flush dies on `math::mul_div_down`'s raw u64 cast — an untracked arithmetic
+abort, not `EInvalidDrainMark`. A smaller request that fits mints ~1e18 shares;
+`total_supply` only shrinks via withdrawals, so the inflated supply persists
+after NAV recovers, permanently pinning PLP price at dust and progressively
+widening the overflow band (one dust fill converts a micro-DUSDC fragile window
+into a thousands-of-DUSDC one). The P-1 circuit breaker deleted in `cc67ed9f`
+was incidentally the only u64-headroom bound on this math. See
+`response-policies.md` RP-1/RP-2.
+
 **Action:** Treat zero-value fills as skip/auto-cancel-and-refund instead of
 aborting, and reserve `EInvalidDrainMark` for genuinely invalid marks (or split
-the error codes and add an eviction path for degenerate head requests). Design
-this together with the P-7 limit-field policy, which already needs a
-stay-queued/skip decision for missed limits. (audit 11767b)
+the error codes and add an eviction path for degenerate head requests). The fix
+must compute fills in u128 and classify "does not fit u64" the same as "rounds
+to zero" (skip, never abort), add boundary tests on both sides of each
+classification, and decide whether supply fills execute at all below an
+executable mark price (ratchet prevention — never mint into a degenerate
+ratio). Design this together with the P-7 limit-field policy, which already
+needs a stay-queued/skip decision for missed limits. (audit 11767b; overflow
+extension from the 2026-07-02 sweep)
 
 ## Oracle Calibration
 
