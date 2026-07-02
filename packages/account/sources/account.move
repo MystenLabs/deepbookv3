@@ -77,40 +77,14 @@ public struct Auth {
 }
 
 // === Public Functions ===
-/// Share a newly created account object.
-public fun share(self: AccountWrapper) {
-    transfer::share_object(self);
-}
-
 /// Returns the wrapper object ID.
 public fun id(self: &AccountWrapper): ID {
     self.id.to_inner()
 }
 
-/// Generate owner authority from the transaction sender.
-public fun generate_auth(ctx: &TxContext): Auth {
-    Auth { kind: AUTH_OWNER, owner: ctx.sender() }
-}
-
-/// Generate owner authority from an owning object's UID.
-public fun generate_auth_as_object(uid: &mut UID): Auth {
-    Auth { kind: AUTH_OWNER, owner: uid.to_inner().to_address() }
-}
-
 /// Borrow the wrapped account for read-only use.
 public fun load_account(self: &AccountWrapper): &Account {
     &self.account
-}
-
-/// Borrow the wrapped account mutably by consuming an `Auth` hot potato.
-public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account {
-    let Auth { kind, owner } = auth;
-    if (kind == AUTH_OWNER) {
-        self.assert_owner(owner);
-    } else {
-        assert!(kind == AUTH_APP, EInvalidAuth);
-    };
-    &mut self.account
 }
 
 /// Returns the total balance of `T` available to the account, including funds
@@ -133,6 +107,32 @@ public fun account_id(self: &Account): ID {
 /// Returns the accumulator receive address for this account (the wrapper address).
 public fun receive_address(self: &Account): address {
     self.receive_address
+}
+
+/// Generate owner authority from the transaction sender.
+public fun generate_auth(ctx: &TxContext): Auth {
+    Auth { kind: AUTH_OWNER, owner: ctx.sender() }
+}
+
+/// Generate owner authority from an owning object's UID.
+public fun generate_auth_as_object(uid: &mut UID): Auth {
+    Auth { kind: AUTH_OWNER, owner: uid.to_inner().to_address() }
+}
+
+/// Share a newly created account object.
+public fun share(self: AccountWrapper) {
+    transfer::share_object(self);
+}
+
+/// Borrow the wrapped account mutably by consuming an `Auth` hot potato.
+public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account {
+    let Auth { kind, owner } = auth;
+    if (kind == AUTH_OWNER) {
+        self.assert_owner(owner);
+    } else {
+        assert!(kind == AUTH_APP, EInvalidAuth);
+    };
+    &mut self.account
 }
 
 /// Fold any accumulator-delivered funds for `T` (sent to this account's receive

@@ -66,7 +66,7 @@ fun set_benefit_powers_accepts_boundaries() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidBenefitPowers)]
+#[test, expected_failure(abort_code = stake_config::EInvalidBenefitPowers)]
 fun set_benefit_powers_non_steeper_upper_aborts() {
     // upper == 2*lower is not strictly greater -> rejected.
     let mut config = stake_config::new();

@@ -20,16 +20,15 @@ const EInvalidExpiryFeeWindowMs: u64 = 9;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
 const EInvalidLowerBenefitPower: u64 = 11;
 const EInvalidUpperBenefitPower: u64 = 12;
-const EInvalidBenefitPowers: u64 = 13;
-const EInvalidTradeLiquidationBudget: u64 = 14;
-const EInvalidLiquidationLtv: u64 = 15;
-const EInvalidMarketTickSize: u64 = 16;
-const EInvalidEwmaAlpha: u64 = 17;
-const EInvalidEwmaZScoreThreshold: u64 = 18;
-const EInvalidEwmaPenaltyRate: u64 = 19;
-const EInvalidBackingBufferLambda: u64 = 20;
-const EInvalidMaxAdmissionLeverage: u64 = 21;
-const EInvalidCadenceWindowSize: u64 = 22;
+const EInvalidTradeLiquidationBudget: u64 = 13;
+const EInvalidLiquidationLtv: u64 = 14;
+const EInvalidMarketTickSize: u64 = 15;
+const EInvalidEwmaAlpha: u64 = 16;
+const EInvalidEwmaZScoreThreshold: u64 = 17;
+const EInvalidEwmaPenaltyRate: u64 = 18;
+const EInvalidBackingBufferLambda: u64 = 19;
+const EInvalidMaxAdmissionLeverage: u64 = 20;
+const EInvalidCadenceWindowSize: u64 = 21;
 
 // === Fees ===
 
@@ -358,14 +357,4 @@ public(package) fun assert_upper_benefit_power(value: u64) {
         value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
         EInvalidUpperBenefitPower,
     );
-}
-
-/// Validate both benefit thresholds together. The upper segment must require
-/// strictly more stake than the lower one: `upper - lower > lower`, i.e.
-/// `upper > 2 * lower` (which also guarantees `upper > lower`, so the curve's
-/// `upper - lower` denominator is positive).
-public(package) fun assert_benefit_powers(lower: u64, upper: u64) {
-    assert_lower_benefit_power(lower);
-    assert_upper_benefit_power(upper);
-    assert!(upper > 2 * lower, EInvalidBenefitPowers);
 }

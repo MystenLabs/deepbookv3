@@ -412,14 +412,6 @@ public fun bind_block_scholes_surface_to_underlying(
     let forward_binding_key = block_scholes_forward_binding_key(propbook_underlying_id);
     let svi_binding_key = block_scholes_svi_binding_key(propbook_underlying_id);
 
-    registry.assert_registered_source_object(
-        forward_source_key,
-        block_scholes_forward_feed::id(forward_feed),
-    );
-    registry.assert_registered_source_object(svi_source_key, block_scholes_svi_feed::id(svi_feed));
-    registry.assert_binding_available(forward_binding_key);
-    registry.assert_binding_available(svi_binding_key);
-
     registry.bind_oracle(
         admin_cap,
         forward_source_key,

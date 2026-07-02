@@ -206,14 +206,14 @@ fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
     oracle_fixture::return_oracle_bundle(oracle);
-    let harness_id = share_exposure_harness(&mut fx);
+    let harness_id = create_and_share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
 
     (fx, pricer, harness)
 }
 
-fun share_exposure_harness(fx: &mut OracleFixture): ID {
+fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
     let exposure = strike_exposure::new(

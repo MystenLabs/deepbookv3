@@ -406,15 +406,13 @@ public(package) fun liquidate_live_orders(
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
     let mut liquidated_count = 0;
-    let mut i = 0;
-    while (i < candidates.length()) {
-        let order = order::from_order_id(candidates[i]);
+    candidates.do!(|candidate| {
+        let order = order::from_order_id(candidate);
         let liquidated = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
         if (liquidated) {
             liquidated_count = liquidated_count + 1;
         };
-        i = i + 1;
-    };
+    });
     liquidated_count
 }
 

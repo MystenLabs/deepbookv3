@@ -33,6 +33,8 @@ public struct LpBook<phantom LP> has store {
     locked_lp: Balance<LP>,
 }
 
+/// One queued supply/withdraw request. `amount` is the escrowed value in the
+/// queue's asset — DUSDC for the supply queue, LP shares for the withdraw queue.
 public struct RequestEntry has copy, drop, store {
     index: u64,
     /// Owning account, carried so a fill can attribute to the account directly
@@ -284,20 +286,10 @@ fun remove_for_recipient<T>(
 ): (RequestEntry, Balance<T>) {
     let page_id = page_id_for_index(index);
     assert!(queue.pages.contains(page_id), ERequestNotFound);
-    let (request, page_empty) = {
-        let page = queue.pages.borrow_mut(page_id);
-        let offset = entry_offset(&page.entries, index);
-        let request = page.entries[offset];
-        assert!(request.recipient == recipient, ENotRequestOwner);
-        let request = page.entries.remove(offset);
-        (request, page.entries.length() == 0)
-    };
-    if (page_empty) {
-        queue.unlink_empty_page(page_id);
-    };
-    queue.pending = queue.pending - 1;
-    let escrow = queue.escrow.split(request.amount);
-    (request, escrow)
+    let page = &queue.pages[page_id];
+    let offset = entry_offset(&page.entries, index);
+    assert!(page.entries[offset].recipient == recipient, ENotRequestOwner);
+    queue.remove(index)
 }
 
 fun ensure_tail_page_for_index<T>(queue: &mut RequestQueue<T>, index: u64): u64 {
