@@ -174,6 +174,12 @@ impl LiveOhclvCache {
                 .then_with(|| a.event_digest.cmp(&b.event_digest))
         });
 
+        // A stored candle's last-trade timestamp is an exact materialization
+        // watermark only for 1m candles. Wider intervals use MAX(last_trade)
+        // across many 1m buckets, so using that value as a bucket-wide watermark
+        // would incorrectly hide unmaterialized fills from earlier minutes in the
+        // same 5m/1h/4h candle. Wider intervals rely on the cache's minute
+        // watermarks, then merge live fills into the stored candle below.
         let stored_watermarks: HashMap<i64, i64> = if interval_ms == MINUTE_MS {
             stored
                 .iter()
@@ -194,6 +200,9 @@ impl LiveOhclvCache {
         let mut live_by_bucket: HashMap<i64, LiveAggregate> = HashMap::new();
         for fill in live_fills {
             let bucket_start_ms = bucket_start_ms(fill.checkpoint_timestamp_ms, interval_ms);
+            // The DB function filters by bucket_time >= start_time. Match that
+            // behavior so a mid-bucket request does not synthesize a partial
+            // live candle timestamped before the requested window.
             if bucket_start_ms < start_time_ms {
                 continue;
             }

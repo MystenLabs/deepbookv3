@@ -6,7 +6,11 @@ use diesel_async::RunQueryDsl;
 use http_body_util::BodyExt;
 use prometheus::Registry;
 use serde_json::Value;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use sui_pg_db::temp::TempDb;
 use sui_pg_db::{Db, DbArgs};
 use tower::ServiceExt;
@@ -16,8 +20,9 @@ use deepbook_server::server::{make_router, AppState};
 
 const POOL_NAME: &str = "BASE_USDC";
 const POOL_ID: &str = "pool-1";
-const T0_MS: i64 = 1_700_000_000_000;
+const T0_MS: i64 = 1_699_999_980_000;
 const MINUTE_MS: i64 = 60_000;
+static POSTGRES_BIN_SETUP: OnceLock<()> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug)]
 struct CandleValues {
@@ -47,6 +52,8 @@ struct LiveFillSeed {
 }
 
 async fn setup(candles: &[MaterializedCandle]) -> (TempDb, Db, Arc<AppState>, Router) {
+    prefer_working_postgres_binaries();
+
     let temp_db = TempDb::new().expect("postgres binaries must be on PATH");
     let url: Url = temp_db.database().url().clone();
     let db = Db::for_write(url.clone(), DbArgs::default()).await.unwrap();
@@ -80,6 +87,55 @@ async fn setup(candles: &[MaterializedCandle]) -> (TempDb, Db, Arc<AppState>, Ro
 
     let router = make_router(state.clone());
     (temp_db, db, state, router)
+}
+
+fn prefer_working_postgres_binaries() {
+    POSTGRES_BIN_SETUP.get_or_init(|| {
+        if postgres_commands_work("") {
+            return;
+        }
+
+        for dir in [
+            "/opt/homebrew/opt/postgresql@15/bin",
+            "/opt/homebrew/opt/postgresql@16/bin",
+            "/opt/homebrew/opt/postgresql@14/bin",
+            "/usr/local/opt/postgresql@15/bin",
+            "/usr/local/opt/postgresql@16/bin",
+            "/usr/local/opt/postgresql@14/bin",
+        ] {
+            if postgres_commands_work(dir) {
+                prepend_path(dir);
+                return;
+            }
+        }
+    });
+}
+
+fn postgres_commands_work(dir: &str) -> bool {
+    ["initdb", "postgres", "pg_ctl", "pg_isready"]
+        .iter()
+        .all(|command| command_version_works(dir, command))
+}
+
+fn command_version_works(dir: &str, command: &str) -> bool {
+    let command_path = if dir.is_empty() {
+        PathBuf::from(command)
+    } else {
+        Path::new(dir).join(command)
+    };
+
+    Command::new(command_path)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn prepend_path(dir: &str) {
+    let old_path = env::var_os("PATH").unwrap_or_default();
+    let mut paths = env::split_paths(&old_path).collect::<Vec<_>>();
+    paths.insert(0, PathBuf::from(dir));
+    let new_path = env::join_paths(paths).unwrap();
+    env::set_var("PATH", new_path);
 }
 
 fn candle(
