@@ -282,7 +282,7 @@ fun create_expiry_market_during_valuation_aborts() {
     bootstrap_pool(&mut fx, IDLE_SEED);
 
     // Engage the valuation lock on the shared config, then attempt to create a market:
-    // create_expiry_market is an active-set mutation, so it must abort under the lock.
+    // create_and_share_expiry_market is an active-set mutation, so it must abort under the lock.
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     config.begin_valuation();

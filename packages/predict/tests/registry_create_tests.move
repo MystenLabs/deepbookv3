@@ -35,13 +35,13 @@ fun register_underlying_duplicate_aborts() {
     abort EUnexpectedSuccess
 }
 
-// === set_cadence_config ===
+// === set_template_cadence_config ===
 
 #[test, expected_failure(abort_code = market_manager::EInvalidCadence)]
 fun set_cadence_config_invalid_cadence_id_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -59,7 +59,7 @@ fun set_cadence_config_invalid_cadence_id_aborts() {
 fun set_cadence_config_unregistered_underlying_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -77,7 +77,7 @@ fun set_cadence_config_unregistered_underlying_aborts() {
 fun set_cadence_config_unaligned_tick_size_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -95,7 +95,7 @@ fun set_cadence_config_unaligned_tick_size_aborts() {
 fun set_cadence_config_unaligned_admission_tick_size_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -113,7 +113,7 @@ fun set_cadence_config_unaligned_admission_tick_size_aborts() {
 fun set_cadence_config_admission_tick_size_below_tick_size_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -131,7 +131,7 @@ fun set_cadence_config_admission_tick_size_below_tick_size_aborts() {
 fun set_cadence_config_admission_tick_size_not_multiple_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -149,7 +149,7 @@ fun set_cadence_config_admission_tick_size_not_multiple_aborts() {
 fun set_cadence_config_above_max_window_size_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -167,7 +167,7 @@ fun set_cadence_config_above_max_window_size_aborts() {
 fun set_cadence_config_initial_cash_below_floor_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -185,7 +185,7 @@ fun set_cadence_config_initial_cash_below_floor_aborts() {
 fun set_cadence_config_initial_cash_above_allocation_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -203,7 +203,7 @@ fun set_cadence_config_initial_cash_above_allocation_aborts() {
 fun set_cadence_config_partial_disable_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,
@@ -221,7 +221,7 @@ fun set_cadence_config_partial_disable_aborts() {
 fun set_cadence_config_partial_disable_admission_tick_size_aborts() {
     let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    reg.set_cadence_config(
+    reg.set_template_cadence_config(
         &config,
         &admin_cap,
         UNDERLYING_BTC,

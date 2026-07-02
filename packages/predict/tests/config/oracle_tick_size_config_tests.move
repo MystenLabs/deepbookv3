@@ -36,7 +36,7 @@ fun assert_market_tick_size_bounds_unaligned_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidMarketTickSize)]
+#[test, expected_failure(abort_code = config_constants::EMarketTickSizeTooLarge)]
 fun assert_market_tick_size_bounds_raw_strike_overflow_aborts() {
     // Aligned to `market_tick_size_unit` so the multiple-of-unit check passes and
     // the `tick_size <= u64::max / pos_inf_tick` overflow bound is what fires.

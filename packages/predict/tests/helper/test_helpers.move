@@ -122,7 +122,7 @@ public fun finish_registry_test(
 }
 
 /// Admin-bind already-shared propbook feeds to `propbook_underlying_id()`,
-/// so the production `registry::create_expiry_market` binding check passes.
+/// so the production `registry::create_and_share_expiry_market` binding check passes.
 /// Operates within the CURRENT transaction; all feeds must already be shared.
 /// The caller keeps the propbook `RegistryAdminCap` for later rebind flows.
 public fun bind_feeds_to_underlying(

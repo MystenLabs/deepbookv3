@@ -10,11 +10,11 @@ The `Registry` enforces uniqueness, admin approval, and cadence policy:
 
 - A Propbook underlying must be **admin-approved** before Predict can build markets on it: `register_underlying` records approval for that `propbook_underlying_id`. The `propbook` feed objects themselves are created permissionlessly in `propbook`; Propbook owns source IDs and canonical source-to-underlying bindings.
 - Admin configures each underlying's cadence with `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size`. A zeroed cadence is disabled; an enabled cadence creates the next missing expiry inside its window and snapshots the configured tick/allocation/cash-target terms into that market. When the market is registered with the pool, PLP caps the number of active pre-expiry markets that can require live NAV valuation in one flush.
-- **One `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair.** `create_expiry_market` aborts if the registry already holds a market for that underlying and expiry.
+- **One `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair.** `create_and_share_expiry_market` aborts if the registry already holds a market for that underlying and expiry.
 
 ### How a market is created
 
-`create_expiry_market` performs the full setup atomically:
+`create_and_share_expiry_market` performs the full setup atomically:
 
 1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the registry's allowlist, the running package version must be allowed, global trading must be enabled, the underlying must be registered in Predict, and the requested cadence must be enabled. The market manager then scans forward from the cadence watermark/current-clock candidate, skips slots reserved for enabled higher-rank cadences, and requires the selected expiry to remain inside the cadence window and not already exist.
 2. **Require current Propbook coverage.** The caller also passes Propbook's `OracleRegistry`; the registry asserts that Propbook has current canonical bindings for Pyth spot, BS spot, and the selected expiry's BS forward/SVI feeds for the supplied `propbook_underlying_id`. The market does **not** store those oracle object IDs.
@@ -25,8 +25,8 @@ The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** u
 
 ```mermaid
 flowchart TD
-  A["Admin: register_underlying(underlying)"] --> B["Admin: set_cadence_config(underlying, tick_size, allocation, initial_cash, window)"]
-  B --> C["create_expiry_market(propbook_registry, underlying, cadence_id, clock, ...)"]
+  A["Admin: register_underlying(underlying)"] --> B["Admin: set_template_cadence_config(underlying, tick_size, allocation, initial_cash, window)"]
+  B --> C["create_and_share_expiry_market(propbook_registry, underlying, cadence_id, clock, ...)"]
   C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>cadence enabled,<br/>skip higher-rank reserved slots,<br/>selected expiry in window,<br/>underlying registered,<br/>Propbook bindings exist,<br/>market not already created"}
   D -->|pass| E["compute next expiry<br/>snapshot config + cadence terms<br/>(no live spot read)"]
   E --> F["share ExpiryMarket with propbook_underlying_id"]
@@ -127,7 +127,7 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 | `PythFeed` (propbook) | One Pyth Lazer feed's global spot | `propbook` (permissionless) | shared |
 | `BlockScholesSpotFeed` (propbook) | One source id's BS spot + exact timestamp history | `propbook` (permissionless) | shared |
 | `BlockScholesForwardFeed` / `BlockScholesSVIFeed` (propbook) | One source id's BS forward and SVI surfaces with per-expiry streams + exact timestamp history | `propbook` (permissionless) | shared |
-| `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_expiry_market` (one per underlying and expiry) | shared |
+| `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_and_share_expiry_market` (one per underlying and expiry) | shared |
 | `AccountWrapper` / `Account` | Account-package custody plus Predict positions keyed by `(expiry_market_id, order_id)` | `account_registry::new` / `new_self_owned` | shared wrapper |
 
 For the capability model and trade authority, see [architecture](../design/architecture.md). For tunable parameters (tick size, admission leverage cap, liquidation LTV, fee policy), see [configuration](../design/configuration.md).

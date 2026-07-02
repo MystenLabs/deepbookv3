@@ -142,7 +142,7 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -267,7 +267,7 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let config = self.scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -292,7 +292,7 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -373,7 +373,7 @@ public fun set_default_cadence_allocation(
     self.scenario.next_tx(test_constants::admin());
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &self.admin_cap,
         test_constants::propbook_underlying_id(),

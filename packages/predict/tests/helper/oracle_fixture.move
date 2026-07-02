@@ -6,7 +6,7 @@
 ///
 /// Stands up the standalone propbook feeds — `PythFeed`, BS spot, BS forward, and
 /// BS SVI — and an `ExpiryMarket` for one expiry through the production
-/// `registry::create_expiry_market` path. This reaches the pricing/freshness guards
+/// `registry::create_and_share_expiry_market` path. This reaches the pricing/freshness guards
 /// more cheaply than the full `flow_test_helpers` market: no manager setup or
 /// expiry-cash seeding. The Pyth spot is seeded through
 /// `pyth_feed::record_raw_for_testing` because a real `pyth_lazer::Update` has no
@@ -89,7 +89,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -152,7 +152,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &admin_cap,
         scenario.ctx(),
     );
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,

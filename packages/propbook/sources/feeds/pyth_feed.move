@@ -231,6 +231,9 @@ fun new_raw_spot(
 
 fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
     let source_timestamp_us = raw.source_timestamp_us;
+    // div_ceil rounds the us->ms conversion UP: the stored ms stamp is at most
+    // 1ms later than the true source time, making freshness checks marginally
+    // optimistic — accepted as immaterial against multi-second windows.
     oracle_lane::new_read(source_timestamp_us.div_ceil(1000), update_timestamp_ms, raw)
 }
 

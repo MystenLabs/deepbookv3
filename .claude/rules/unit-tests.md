@@ -226,7 +226,7 @@ let market = new_unconstrained_test_market(ctx); // bypasses cadence/tick admiss
 market.mint_exact_quantity(/* ... */, &clock, ctx);
 
 // GOOD — production-behavior test builds state through production flows (schematic):
-// create the market via registry::create_expiry_market under a valid cadence
+// create the market via registry::create_and_share_expiry_market under a valid cadence
 // config, seed the propbook feeds for that market's ACTUAL expiry, then mint.
 let market = create_market_via_registry(&mut registry, /* ... */, ctx);
 seed_feeds_for_expiry(&mut pyth_feed, &mut bs_feeds, market.expiry(), /* ... */);

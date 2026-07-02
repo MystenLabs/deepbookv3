@@ -407,7 +407,7 @@ public fun unstake_deep(
 /// settled-market sweep (deactivate, return all free cash, materialize profit).
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
 /// mintable. The market must already be registered to this vault
-/// (`registry::create_expiry_market`). Blocked while a full-pool valuation is in
+/// (`registry::create_and_share_expiry_market`). Blocked while a full-pool valuation is in
 /// progress.
 public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
@@ -636,7 +636,7 @@ public fun cancel_withdraw_request(
 
 /// Register a freshly created expiry market with the pool as an accounting row.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
-/// it. Called by `registry::create_expiry_market`.
+/// it. Called by `registry::create_and_share_expiry_market`.
 public(package) fun register_expiry(
     vault: &mut PoolVault,
     expiry_market_id: ID,

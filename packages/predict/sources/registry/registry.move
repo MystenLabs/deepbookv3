@@ -169,7 +169,7 @@ public fun register_underlying(
 /// Set all deployment terms for one underlying's cadence. Passing zero for all
 /// five values disables the cadence; otherwise all values must be nonzero and
 /// valid.
-public fun set_cadence_config(
+public fun set_template_cadence_config(
     registry: &mut Registry,
     config: &ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -184,7 +184,7 @@ public fun set_cadence_config(
     config.assert_version();
     registry
         .market_manager
-        .set_cadence_config(
+        .set_template_cadence_config(
             propbook_underlying_id,
             cadence_id,
             tick_size,
@@ -219,7 +219,7 @@ public fun set_cadence_config(
 /// from Propbook's insert-only bindings. The market is created with zero cash and
 /// registered with the pool vault as an accounting row only; it is not mintable
 /// until `plp::rebalance_expiry_cash` funds it.
-public fun create_expiry_market(
+public fun create_and_share_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -280,7 +280,7 @@ public fun create_expiry_market(
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
-public fun create_builder_code(
+public fun create_and_share_builder_code(
     registry: &mut Registry,
     config: &ProtocolConfig,
     index: u64,

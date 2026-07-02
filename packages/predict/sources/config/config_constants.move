@@ -29,6 +29,7 @@ const EInvalidEwmaPenaltyRate: u64 = 18;
 const EInvalidBackingBufferLambda: u64 = 19;
 const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
+const EMarketTickSizeTooLarge: u64 = 22;
 
 // === Fees ===
 
@@ -180,7 +181,7 @@ public(package) fun assert_market_tick_size_bounds(value: u64) {
     // normal market tick sizes are far below it.
     assert!(
         value <= std::u64::max_value!() / deepbook_predict::constants::pos_inf_tick!(),
-        EInvalidMarketTickSize,
+        EMarketTickSizeTooLarge,
     );
 }
 

@@ -32,7 +32,7 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 | `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Liquidation LTV, max admission leverage, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
 
-When `create_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
+When `create_and_share_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
 
 Both templates are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, liquidation LTV, max admission leverage, backing-buffer lambda, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
 
@@ -42,8 +42,8 @@ flowchart LR
       SEC[StrikeExposureConfig]
       ECC[ExpiryCashConfig]
     end
-    PC -- snapshot at create_expiry_market --> M1[Expiry market #1 objects]
-    PC -- snapshot at create_expiry_market --> M2[Expiry market #2 objects]
+    PC -- snapshot at create_and_share_expiry_market --> M1[Expiry market #1 objects]
+    PC -- snapshot at create_and_share_expiry_market --> M2[Expiry market #2 objects]
     admin[AdminCap set_template_*] -. future markets only .-> PC
     admin -. contract terms frozen .-x M1
 ```
@@ -93,7 +93,7 @@ Several bounds are tightened on purpose so a single bad admin call cannot quietl
 
 ## Registry tuning: underlyings and cadences
 
-The `Registry` records admin-approved Propbook underlyings and owns per-underlying cadence deployment config through its `MarketManager`. `register_underlying` is `AdminCap`-gated and records which Propbook underlyings Predict may create markets for; newly registered underlyings start with every cadence disabled. `set_cadence_config` is also `AdminCap`-gated and sets one underlying's cadence `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size` together. A zeroed cadence is disabled; an enabled cadence's tick size, allocation cap, and initial cash target are snapshotted into each created market. There is no on-chain check that a cadence tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded). The global live-market count bound is enforced by PLP when a created market is registered with the pool.
+The `Registry` records admin-approved Propbook underlyings and owns per-underlying cadence deployment config through its `MarketManager`. `register_underlying` is `AdminCap`-gated and records which Propbook underlyings Predict may create markets for; newly registered underlyings start with every cadence disabled. `set_template_cadence_config` is also `AdminCap`-gated and sets one underlying's cadence `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size` together. A zeroed cadence is disabled; an enabled cadence's tick size, allocation cap, and initial cash target are snapshotted into each created market. There is no on-chain check that a cadence tick size matches the asset's price scale — sizing it is an operational responsibility, and a mismatch fails loud at the first mint (a strike outside the 24-bit tick domain cannot be encoded). The global live-market count bound is enforced by PLP when a created market is registered with the pool.
 The `Registry` also owns the `PauseCap` / `MarketLifecycleCap` allowlists; the protocol version watermark lives on `ProtocolConfig` (below). The oracle/feed objects themselves are external (`propbook`); the registry only records which Propbook underlyings Predict may create markets for and the cadence policies used to create them.
 
 ## Versioning and pause governance

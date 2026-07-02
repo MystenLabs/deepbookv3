@@ -278,7 +278,7 @@ public(package) fun register_underlying(manager: &mut MarketManager, propbook_un
         );
 }
 
-public(package) fun set_cadence_config(
+public(package) fun set_template_cadence_config(
     manager: &mut MarketManager,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -312,7 +312,7 @@ public(package) fun record_expiry_creation(
     let cadence_index = cadence_index(cadence_id);
     let period_ms = cadence_period_ms(cadence_id);
     // Both EInvalidDeploymentExpiry asserts are structurally unreachable via
-    // `registry::create_expiry_market`: the expiry always comes from
+    // `registry::create_and_share_expiry_market`: the expiry always comes from
     // `next_deployable_market`, which yields grid-aligned values strictly above
     // the watermark. Kept as internal-invariant guards for any future caller.
     assert!(expiry % period_ms == 0, EInvalidDeploymentExpiry);

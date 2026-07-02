@@ -1292,7 +1292,7 @@ async function setupSimulation(
             initialExpiryCash,
             windowSize: SIM_CADENCE_WINDOW_SIZE,
         }),
-        "set_cadence_config",
+        "set_template_cadence_config",
     );
     console.log(
         `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} admission_tick=$${scaledUsd(ADMISSION_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC initial_cash=${initialExpiryCash / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
@@ -1335,7 +1335,7 @@ async function setupSimulation(
             lifecycleCapId,
             cadenceId: SIM_CADENCE_ONE_MONTH,
         }),
-        "create_expiry_market",
+        "create_and_share_expiry_market",
     );
     const expiryMarketChange = result.objectChanges.find(
         (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket"),
@@ -1382,7 +1382,7 @@ async function setupSimulation(
     console.log(`[${ts()}]   Account funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
 
     // Vault bootstrap (async): the market is already registered active (with 0 cash)
-    // by create_expiry_market, so the bootstrap flush values it (NAV 0, no orders).
+    // by create_and_share_expiry_market, so the bootstrap flush values it (NAV 0, no orders).
     //   0. lock_capital permanently locks the genesis minimum liquidity so
     //      total_supply > 0; request_supply aborts ENotBootstrapped until it has.
     //   1. request_supply(vaultSeed) deposits fresh DUSDC into the account and pulls
