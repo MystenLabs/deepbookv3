@@ -163,19 +163,6 @@ the affected near-expiry market shape until the reliability curve is verified.
 From the 2026-07-02 mini audit sweep (HEAD b34b0cd4). These are free to fix
 pre-deploy and breaking (or permanent) after; none block correctness today.
 
-### H-2: Mint fee breakdown derived twice between the slippage assert and payment
-
-**Severity:** Low (latent correctness risk under future edits).
-
-`mint_prepared_exact_quantity` (expiry_market.move:849-851) and
-`settle_mint_payment` (:1070-1073) independently derive the identical
-builder-fee/subsidy/trader-fee decomposition; the `max_cost` bound and the
-actual withdrawal stay equal only by hand-maintained sync. An edit to one copy
-silently makes traders pay a total the slippage guard never checked.
-
-**Action:** Compute the decomposition once (small summary struct or pass the
-three amounts through) so both sites share one derivation. (audit 5de114)
-
 ### H-3: Smaller cleanup items
 
 - Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
