@@ -48,46 +48,42 @@ public struct BASE has store {}
 public struct QUOTE has store {}
 
 #[test]
-fun first_touch_lazily_creates_stable_manager() {
-    let (mut scenario, registry_id, pool_id, mut wrapper) = setup_account();
-    authorize_core_app(&mut scenario, registry_id);
+fun non_funding_paths_noop_for_uninitialized_account() {
+    let (mut scenario, _registry_id, pool_id, mut wrapper) = setup_account();
 
     scenario.next_tx(ALICE);
-    let registry = scenario.take_shared_by_id<Registry>(registry_id);
     let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let clock = scenario.take_shared<Clock>();
     assert!(!account_data::is_initialized(wrapper.load_account()));
     assert!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().is_empty());
 
+    dca::cancel_live_order<BASE, QUOTE>(
+        &mut pool,
+        &mut wrapper,
+        account::generate_auth(scenario.ctx()),
+        0,
+        &clock,
+        scenario.ctx(),
+    );
     dca::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
-        &registry,
         &mut wrapper,
         account::generate_auth(scenario.ctx()),
         vector[],
         &clock,
         scenario.ctx(),
     );
-    assert!(account_data::is_initialized(wrapper.load_account()));
-    let first = account_data::balance_manager_id(wrapper.load_account()).destroy_some();
-    assert_eq!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().length(), 1);
-
-    dca::cancel_live_orders<BASE, QUOTE>(
+    dca::withdraw_settled_amounts<BASE, QUOTE>(
         &mut pool,
-        &registry,
         &mut wrapper,
         account::generate_auth(scenario.ctx()),
-        vector[],
-        &clock,
         scenario.ctx(),
     );
-    let second = account_data::balance_manager_id(wrapper.load_account()).destroy_some();
-    assert_eq!(first, second);
-    assert_eq!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().length(), 1);
+    assert!(!account_data::is_initialized(wrapper.load_account()));
+    assert!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().is_empty());
 
     return_shared(clock);
     return_shared(pool);
-    return_shared(registry);
     destroy(wrapper);
     scenario.end();
 }
@@ -132,6 +128,7 @@ fun account_getters_return_core_account_and_order_state() {
         event::events_by_type<account_events::Deposited>().length(),
         NO_ACCOUNT_DEPOSIT_EVENTS_BEFORE_TRADE,
     );
+    assert!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().is_empty());
     let ask = dca::place_limit_order<BASE, QUOTE>(
         &mut pool,
         &registry,
@@ -170,6 +167,7 @@ fun account_getters_return_core_account_and_order_state() {
         event::events_by_type<account_events::Deposited>().length(),
         ACCOUNT_DEPOSIT_EVENT_COUNT_AFTER_FULL_FUNDING_TRADE,
     );
+    assert_eq!(event::events_by_type<account_data::DeepbookCoreAccountInitialized>().length(), 1);
 
     return_shared(clock);
     return_shared(root);
@@ -293,7 +291,6 @@ fun withdraw_settled_amounts_sweeps_maker_fill_to_account() {
     assert_eq!(wrapper.load_account().balance<QUOTE>(&root, &clock), BASE_AMOUNT);
     dca::withdraw_settled_amounts<BASE, QUOTE>(
         &mut pool,
-        &registry,
         &mut wrapper,
         account::generate_auth(scenario.ctx()),
         scenario.ctx(),

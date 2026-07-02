@@ -205,7 +205,6 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 /// Cancel a live order if it is still open for the embedded manager.
 public fun cancel_live_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     order_id: u128,
@@ -213,7 +212,7 @@ public fun cancel_live_order<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     let account = wrapper.load_account_mut(auth);
-    account_data::ensure(account, deepbook_registry, ctx);
+    if (!account_data::is_initialized(account)) return;
     let d = account_data::borrow_mut(account);
     let proof = account_data::generate_trader_proof(d, ctx);
     pool.cancel_live_order(account_data::balance_manager_mut(d), &proof, order_id, clock, ctx);
@@ -232,7 +231,6 @@ public fun cancel_live_order<BaseAsset, QuoteAsset>(
 /// Cancel all listed live orders still open for the embedded manager.
 public fun cancel_live_orders<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     order_ids: vector<u128>,
@@ -240,7 +238,7 @@ public fun cancel_live_orders<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     let account = wrapper.load_account_mut(auth);
-    account_data::ensure(account, deepbook_registry, ctx);
+    if (!account_data::is_initialized(account)) return;
     let d = account_data::borrow_mut(account);
     let proof = account_data::generate_trader_proof(d, ctx);
     pool.cancel_live_orders(account_data::balance_manager_mut(d), &proof, order_ids, clock, ctx);
@@ -260,13 +258,12 @@ public fun cancel_live_orders<BaseAsset, QuoteAsset>(
 /// into the account.
 public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    deepbook_registry: &Registry,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     ctx: &mut TxContext,
 ) {
     let account = wrapper.load_account_mut(auth);
-    account_data::ensure(account, deepbook_registry, ctx);
+    if (!account_data::is_initialized(account)) return;
     let d = account_data::borrow_mut(account);
     let proof = account_data::generate_trader_proof(d, ctx);
     pool.withdraw_settled_amounts(account_data::balance_manager_mut(d), &proof);
