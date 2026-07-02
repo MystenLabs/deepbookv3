@@ -60,9 +60,11 @@ Calls `/ticker` internally, so inherits all its performance issues.
 ### margin_manager_state Table
 - Manager lookups: filter/join by `deepbook_pool_id`
 
-## Recommended Indices
+## Performance Indices (already applied)
 
-These composite indices significantly improve query performance:
+These composite indices exist via migration
+`2026-02-03-000000-0000_add_ticker_performance_indexes` — do not re-add them.
+Kept here as the query-pattern reference for new endpoints:
 
 ```sql
 -- order_fills: volume and ticker queries

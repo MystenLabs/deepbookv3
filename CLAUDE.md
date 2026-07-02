@@ -21,7 +21,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 ## Context Routing
 
-**These rule files are NOT auto-loaded.** The `paths:` frontmatter on each rule file is a machine-readable map for a `UserPromptSubmit` hook — but unless that hook is configured in `.claude/settings.json`, nothing loads these for you. **Before editing a file under one of these globs, open and read the matching rule file yourself.** Manual-trigger rules must likewise be read when the request matches.
+**Do not assume these rule files are in your context.** Recent Claude Code versions natively inject a path-scoped rule file (via its `paths:` frontmatter) when you touch a matching file, but treat that as a best-effort assist — other agents (Codex) and older harnesses get no injection. **Before editing a file under one of these globs, make sure you have the matching rule file's content — read it yourself if it was not injected.** Manual-trigger rules must always be read explicitly when the request matches.
 
 ### Path-Scoped Rules — read before editing files under the glob
 

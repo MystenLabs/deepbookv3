@@ -147,6 +147,7 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - Do not rename an existing public API just to improve receiver syntax or local style. Keep the old public function as a compatibility wrapper, or make the API break an explicit migration decision.
 - Keep module syntax for constructors, stateless service functions such as pricing, math/framework helpers, and complex receiver expressions where method syntax is less readable.
 - Return values should be small and semantic. Across module boundaries, return only what the caller cannot derive, and prefer a named package-only summary struct for any multi-value return whose components are not self-evidently positional (a pair / min-max / base-quote). A bare tuple is fine only when order makes the meaning obvious; two or three domain values that travel together already warrant a struct (Data Clump litmus: delete one value — if the rest stop making sense, they are one object), not just 4+ items. Named return fields prevent the silent positional-swap bug class — `(payout, reserve)`, `(base, quote)` — that compiles clean and misprices. Private, tightly local algorithm helpers can use tuples when destructuring names make the meaning clear.
+- When a struct repeats the exact field group of another local struct and helpers only copy values between them, prefer embedding the named struct directly. This keeps the real data shape visible and removes projection boilerplate such as `to_summary` / `write_summary` helpers. Keep a separate struct only when the two shapes are a deliberate wire/event/serialization boundary expected to diverge.
 - Once a typed domain object exists, use it through the rest of the flow instead of continuing to pass or recompute its raw fields. For Predict orders, use `Order` internally and use packed `order_id` only at entry/exit/storage boundaries.
 - Match function inputs to the callee's abstraction level and contract. Pass a domain object when the function needs that object's identity, authority, current state, invariants, or several facts owned by that object. Pass a narrow primitive/derived value when the callee is a pure formula and should not know the larger domain concept.
 - If a function needs the current on-chain time, pass `&Clock` and derive `clock.timestamp_ms()` at the function that owns the "now" decision. Pass an explicit timestamp value only for non-current facts such as historical/source timestamps, and name it with source and unit (`source_timestamp_ms`, `published_at_us`, etc.).
@@ -242,11 +243,7 @@ Measured localnet capacity findings live in `packages/predict/predeploy/stress/`
 
 - Distinguish on-chain landing time from source-data time in the field name itself. A bare `lazer_timestamp` is ambiguous — does it mean the publisher's timestamp embedded in the verified payload, or `clock.timestamp_ms()` captured when the payload landed on chain? Use a unit suffix that encodes both the unit and the source: `*_timestamp_ms` for `clock.timestamp_ms()` values (on-chain landing time, always milliseconds in Sui), and `*_published_at_us` (or similar explicit phrase) for timestamps that come from the data being pushed. Same convention for event payload fields and getter names. Bulk renames across an entire package are safe with `perl -i -pe 's/\bX\b/Y/g'` since `\b` correctly skips compound identifiers like `lazer_X_ms`.
 
-- Validate before mutate means contract-owned facts, not broad application preflighting. A function must validate the mutation-independent facts it owns before mutating state: flow gates, authorization, object binding, branch/lifecycle policy, static creation inputs, and facts that decide whether the function may start its transition. Do not duplicate another module's leaf guard just to avoid a later abort; preflight another module's fact only when the caller must know it before mutating a different state owner. If accounting or pricing intentionally depends on post-mutation state, make that dependency obvious and validate mutation-independent facts first. Always validate before consuming irreversible resources such as burning coins or destroying objects.
-
-- In multi-object flows, a mid-function assertion is often a phase boundary. Prefer extracting that phase into a helper where the helper starts with its own mutation-independent preconditions, performs one coherent state transition, and ends with the postconditions for the resources it changed. Keep postcondition helpers named by the resource they protect, such as allocation backing versus cash backing, and only combine them when they are always meaningful at the same point.
-
-- Emit events after the state transition and postconditions they report have completed, unless the event intentionally reports an attempted action rather than a completed one.
+- Always validate before consuming irreversible resources such as burning coins or destroying objects. (The full validate-before-mutate, leaf-guard, and phase-boundary rules live in "Validation And Ownership" above and apply to all packages.)
 
 - A permissionless or keeper-callable settlement/claim function should treat empty or zero-amount cases as a no-op, not an abort: early-return when there is nothing to resolve, and guard each payout with `if (amount > 0)` before splitting/dispensing a balance. This keeps a single caller — or a batch sweep over many accounts — from reverting just because one account is owed nothing. Reserve aborts for real preconditions (authorization, lifecycle/settlement state, unclosed positions).
 
@@ -257,8 +254,6 @@ Measured localnet capacity findings live in `packages/predict/predeploy/stress/`
 - A public entrypoint that mutates a `Balance`/field belongs in the module that *declares* that field (struct fields are module-private). When asked to relocate custody (e.g. "hold the staked balance in `PoolVault` instead of `Registry`"), move the entrypoint that touches it into the owning module too, rather than adding leaky `join_x`/`split_x` package accessors just to keep the function where it was — the function can take the other domain objects (`&mut AccountWrapper`, etc.) as parameters. Place the move-version gate on the object being mutated (`vault.assert_version_allowed()`), not on an unrelated object that's only passed for the old location's sake.
 
 - Default convention here is to separate *config storage* from *compute*: `pricing_config`/`risk_config`/etc. only store fields + getters + `assert_*`, while the math lives elsewhere (`pricing.move`). But a single, self-contained compute that only reads one config's own fields is fine to fold into that config module as a `&Config` method (e.g. `stake_config::fee_discount_fraction(&StakeConfig, active_stake)` reading its own `lower`/`upper`/caps) — it removes a whole module and shrinks call sites to `config.stake_config().fee_discount_fraction(active)`. Reserve a dedicated compute module for math that spans multiple inputs/objects or is large; don't stand one up for a lone config-bound formula.
-
-- If a flow branches on another object's lifecycle or state, validate the object binding before using that state for branch selection, unless that branch intentionally does not require the object.
 
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
 
@@ -478,10 +473,7 @@ public struct UserRegistered has copy, drop { user: address }
 
 ### Emit Events From the Owning Module
 
-- Emit an event from the module that owns the lifecycle or action being reported.
-- Name event fields semantically from that event domain. Prefer `expiry_market_id`, `pool_vault_id`, or `pyth_feed_id` over generic names like `owner_id`, `object_id`, or `config_id`.
-- Do not thread IDs through unrelated helper or leaf modules only to provide event context.
-- Embedded accounting/helper modules should not emit parent-scoped events unless the parent identity is part of their own domain model. If a parent-scoped event needs helper-computed values, return a summary and emit the event in the parent/action module.
+See the events rules under API Shape above (owning module, semantic field names, no ID threading, helpers return summaries, emit after the state transition).
 
 ### Use Positional Structs for Dynamic Field Keys + `Key` Suffix
 
@@ -523,11 +515,7 @@ entry fun mint_and_keep(ctx: &mut TxContext) { /* ... */ }
 
 ### Keep Return Tuples Small and Semantic
 
-- Across module boundaries, return only values the caller cannot already derive.
-- Prefer a named package-only summary struct for any non-self-evident multi-value return; a recurring 2-3 value group that travels together is a Data Clump (litmus: delete one value — if the rest stop making sense, they are one object) and should be named, not just 4+ items. Reserve bare tuples for self-evident pairs (min/max, base/quote) where order is universally understood — named return fields prevent the silent positional-swap bug class.
-- If several values need to travel together, either reduce the return shape or use a named package-only summary struct.
-- Private, tightly local algorithm helpers can use tuples when destructuring names make the meaning clear.
-- When a struct repeats the exact field group of another local struct and helpers only copy values between them, prefer embedding the named struct directly. This keeps the real data shape visible and removes projection boilerplate such as `to_summary` / `write_summary` helpers. Keep a separate struct only when the two shapes are a deliberate wire/event/serialization boundary expected to diverge.
+See "Return values should be small and semantic" under API Shape above — named summary structs over bare tuples (Data Clump litmus), and embed a repeated field group instead of copy-through projection structs.
 
 ### Objects Go First (Except for Clock)
 
