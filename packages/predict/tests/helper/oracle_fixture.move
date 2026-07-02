@@ -65,6 +65,14 @@ public struct OracleBundle {
     config: ProtocolConfig,
 }
 
+/// Feed IDs for a transaction-local oracle bundle.
+public struct OracleBundleIds has copy, drop {
+    pyth_id: ID,
+    bs_spot_id: ID,
+    bs_forward_id: ID,
+    bs_svi_id: ID,
+}
+
 /// Stand up a registry + config + the two propbook feeds + an `ExpiryMarket` for
 /// `expiry`, using the default cadence with the supplied `tick` size. No live spot
 /// is read at creation (absolute ticks); seed live data with
@@ -188,22 +196,19 @@ public fun setup_oracle_default(): OracleFixture {
 
 /// Take oracle/config objects as one named bundle to avoid wide tuple plumbing.
 public fun take_oracle_bundle(self: &mut OracleFixture): OracleBundle {
-    let pyth_id = self.pyth_id;
-    let bs_spot_id = self.bs_spot_id;
-    let bs_forward_id = self.bs_forward_id;
-    let bs_svi_id = self.bs_svi_id;
-    self.take_oracle_bundle_by_ids(pyth_id, bs_spot_id, bs_forward_id, bs_svi_id)
+    let ids = OracleBundleIds {
+        pyth_id: self.pyth_id,
+        bs_spot_id: self.bs_spot_id,
+        bs_forward_id: self.bs_forward_id,
+        bs_svi_id: self.bs_svi_id,
+    };
+    self.take_oracle_bundle_by_ids(ids)
 }
 
 /// Take oracle/config objects for explicit feed IDs. Used by binding-replacement
 /// tests where the market stays fixed but Propbook's current feed objects change.
-public fun take_oracle_bundle_by_ids(
-    self: &mut OracleFixture,
-    pyth_id: ID,
-    bs_spot_id: ID,
-    bs_forward_id: ID,
-    bs_svi_id: ID,
-): OracleBundle {
+public fun take_oracle_bundle_by_ids(self: &mut OracleFixture, ids: OracleBundleIds): OracleBundle {
+    let OracleBundleIds { pyth_id, bs_spot_id, bs_forward_id, bs_svi_id } = ids;
     OracleBundle {
         pyth: self.scenario.take_shared_by_id<PythFeed>(pyth_id),
         bs: bs_feed::new(
@@ -220,7 +225,7 @@ public fun take_oracle_bundle_by_ids(
 /// fixture's underlying to them. The existing market stores only the underlying
 /// ID, so later `take_oracle_bundle_by_ids` calls can prove Predict follows the
 /// new current binding without recreating the market.
-public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): (ID, ID, ID, ID) {
+public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): OracleBundleIds {
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let pyth_id = propbook_registry::create_and_share_pyth_feed(
@@ -272,7 +277,7 @@ public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): (
     return_shared(oracle_registry);
 
     self.scenario.next_tx(test_constants::admin());
-    (pyth_id, bs_spot_id, bs_forward_id, bs_svi_id)
+    OracleBundleIds { pyth_id, bs_spot_id, bs_forward_id, bs_svi_id }
 }
 
 /// Return the shared objects taken by `take_oracle_bundle`.

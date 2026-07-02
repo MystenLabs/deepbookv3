@@ -29,14 +29,12 @@ const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// 6x is admitted at the ATM default range when the template cap is raised to 7x.
 const LEVERAGE_SIX_X: u64 = 6_000_000_000;
 const ADMISSION_CAP_SEVEN_X: u64 = 7_000_000_000;
-/// Largest quantity encodable in an order: `(2^32 - 1) * position_lot_size`.
-const MAX_ORDER_QUANTITY: u64 = 42_949_672_950_000;
+const SIX_X_ATM_FLOOR_NUMERATOR: u64 = 5;
+const SIX_X_ATM_FLOOR_DENOMINATOR: u64 = 12;
 /// 5M DUSDC, enough for the 6x max-quantity mint premium plus fee.
 const LARGE_TRADER_DEPOSIT: u64 = 5_000_000_000_000;
 /// 30M DUSDC, enough to back the large single-order payout liability.
 const LARGE_MARKET_CASH: u64 = 30_000_000_000_000;
-/// `floor((5 * MAX_ORDER_QUANTITY / 12) * 10000 / MAX_ORDER_QUANTITY)`.
-const EXPECTED_LAST_LOT_FLOOR: u64 = 4_166;
 /// Single close row for survivor reinsertion coverage.
 const SINGLE_CLOSE: u64 = 400_000_000;
 
@@ -63,10 +61,12 @@ fun double_partial_close_survivor_reinsertion_stays_backed() {
 /// The old two-step split left `ceil(floor_shares / 1e9) = 17_896` floor shares on
 /// a `10_000`-quantity survivor, so `order::replacement` aborted
 /// `EInvalidFloorShares`. The fixed split derives the survivor floor directly:
-/// `floor((5 * MAX_ORDER_QUANTITY / 12) * 10_000 / MAX_ORDER_QUANTITY) = 4_166`.
+/// `floor(floor(5 * max_quantity / 12) * position_lot_size / max_quantity)`.
 #[test]
 fun partial_close_to_last_lot_keeps_survivor_floor_within_quantity() {
     let mut fx = helpers::setup_market_default();
+    let max_order_quantity = order::max_quantity_lots() * constants::position_lot_size!();
+    let expected_last_lot_floor = expected_last_lot_floor_for_max_order(max_order_quantity);
     fx.set_template_max_admission_leverage(ADMISSION_CAP_SEVEN_X);
     fx.set_default_cadence_allocation(
         LARGE_MARKET_CASH,
@@ -84,7 +84,7 @@ fun partial_close_to_last_lot_keeps_survivor_floor_within_quantity() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        MAX_ORDER_QUANTITY,
+        max_order_quantity,
         LEVERAGE_SIX_X,
     );
 
@@ -93,18 +93,23 @@ fun partial_close_to_last_lot_keeps_survivor_floor_within_quantity() {
         &mut market,
         &mut account,
         order_id,
-        MAX_ORDER_QUANTITY - constants::position_lot_size!(),
+        max_order_quantity - constants::position_lot_size!(),
     );
     let survivor_id = replacement.destroy_some();
     let survivor = order::from_order_id(survivor_id);
     assert_eq!(survivor.quantity(), constants::position_lot_size!());
-    assert_eq!(survivor.floor_shares(), EXPECTED_LAST_LOT_FLOOR);
+    assert_eq!(survivor.floor_shares(), expected_last_lot_floor);
     assert!(helpers::has_position_bundle(&account, expiry_id, survivor_id));
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+fun expected_last_lot_floor_for_max_order(max_order_quantity: u64): u64 {
+    let old_floor = SIX_X_ATM_FLOOR_NUMERATOR * max_order_quantity / SIX_X_ATM_FLOOR_DENOMINATOR;
+    old_floor * constants::position_lot_size!() / max_order_quantity
 }
 
 /// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /
