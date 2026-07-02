@@ -51,14 +51,11 @@ const EExpiryMarketAlreadyValued: u64 = 1;
 const EWrongPoolVault: u64 = 2;
 const EMissingExpiryValuation: u64 = 3;
 const ENotBootstrapped: u64 = 4;
-const EPlpPriceBelowCircuitBreaker: u64 = 5;
-const EPlpPriceAboveCircuitBreaker: u64 = 6;
-const EAlreadyBootstrapped: u64 = 7;
-const EPoolNavDust: u64 = 8;
-const EBelowMinBootstrapLiquidity: u64 = 9;
-const EBelowMinFeeIncentiveSponsorship: u64 = 10;
-const EMarketNotSettled: u64 = 11;
-const EMaxLiveExpiryMarketsExceeded: u64 = 12;
+const EAlreadyBootstrapped: u64 = 5;
+const EBelowMinBootstrapLiquidity: u64 = 6;
+const EBelowMinFeeIncentiveSponsorship: u64 = 7;
+const EMarketNotSettled: u64 = 8;
+const EMaxLiveExpiryMarketsExceeded: u64 = 9;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -316,7 +313,6 @@ public fun finish_flush(
         total_nav,
     );
     let total_supply = vault.lp.total_supply();
-    assert_plp_price_in_bounds(pool_nav, total_supply);
     let market_count = valued_expiry_markets.length();
 
     // Snapshot the share price once (frozen pair), drain both queues against it, then
@@ -738,9 +734,9 @@ fun lp_pool_value(
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
     // exceed gross. LP value can never be negative, so floor it at 0 to keep the
     // subtraction from underflow-aborting. NOTE this is not a full liveness guarantee:
-    // a 0/dust pool NAV is a real reachable state that still bricks `finish_flush` via
-    // the pool-NAV dust-floor + PLP circuit-breaker guards (see #lp-nav-zero-brick) —
-    // the floor only avoids the arithmetic underflow, not the downstream dust/CB abort.
+    // a 0/dust pool NAV with a non-empty LP queue still aborts in `lp_book::drain`
+    // when the head request would mint/pay zero. The request owner can cancel that
+    // degenerate head request; empty queues and executable marks still flush.
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 
@@ -843,32 +839,6 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
     );
 }
 
-/// Abort before draining LP requests if the frozen mark implies a PLP price or pool
-/// NAV outside the executable protocol envelope. `total_supply > 0` is guaranteed by
-/// the genesis lock (`lock_capital`) + the `ENotBootstrapped` flush-start gate, so
-/// there is no supply==0 bootstrap branch and `total_supply` can never sit in the
-/// dust band (`min_bootstrap_liquidity >= min_withdraw_request`).
-///
-/// The price-bound checks use floor-rounded math (`math::div`, and `mul_div_down`
-/// when the drain converts shares↔value) intentionally, so each boundary stays
-/// conservative — the floored price is a lower bound on the true price, so passing
-/// the lower-bound check guarantees the real price clears it, and the floored
-/// upper-bound RHS only tightens the cap. The protocol is never short.
-fun assert_plp_price_in_bounds(pool_nav: u64, total_supply: u64) {
-    assert!(
-        pool_nav >= math::mul(constants::min_withdraw_request!(), constants::min_plp_price!()),
-        EPoolNavDust,
-    );
-    assert!(
-        math::div(pool_nav, total_supply) >= constants::min_plp_price!(),
-        EPlpPriceBelowCircuitBreaker,
-    );
-    assert!(
-        pool_nav <= math::mul(total_supply, constants::max_plp_price!()),
-        EPlpPriceAboveCircuitBreaker,
-    );
-}
-
 /// Current cash, the target cash to hold, and the upper sweep band for one expiry.
 ///
 /// `target_cash` adds one buffer above the expiry-cash required backing and
@@ -952,8 +922,8 @@ fun materialize_expiry_profit(
 }
 
 /// Engage the valuation lock and snapshot the active expiry set. Shared by both
-/// cap-gated flush entrypoints. Gated on a bootstrapped pool so `finish_flush` never
-/// reaches `assert_plp_price_in_bounds` with `total_supply == 0`.
+/// cap-gated flush entrypoints. Gated on a bootstrapped pool so the flush mark
+/// always has nonzero PLP supply.
 fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();

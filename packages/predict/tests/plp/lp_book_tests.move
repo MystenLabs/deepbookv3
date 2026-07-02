@@ -27,6 +27,10 @@ public struct LP_BOOK_TESTS has drop {}
 
 const ALICE: address = @0xA;
 const BOB: address = @0xB0B;
+/// `min_supply * min_supply + 1`: a min-sized supply against this mark mints 0 shares.
+const ZERO_SHARE_SUPPLY_POOL_VALUE: u64 = 100_000_000_000_001;
+/// `min_withdraw + 1`: a min-sized withdrawal against pool value 1 pays 0 DUSDC.
+const ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY: u64 = 1_000_001;
 
 // === Permanent minimum-liquidity mint ===
 
@@ -397,6 +401,45 @@ fun priced_supply_with_zero_pool_value_aborts() {
         vault_id(),
         &mut ledger,
         lp_book::new_flush_mark(0, min_supply!()),
+        option::none(),
+        option::none(),
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = lp_book::EInvalidDrainMark)]
+fun priced_supply_that_rounds_to_zero_shares_aborts() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(min_supply!());
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(alice_id(), ALICE, payment);
+
+    // shares = floor(min_supply * min_supply / (min_supply^2 + 1)) = 0.
+    book.drain(
+        vault_id(),
+        &mut ledger,
+        lp_book::new_flush_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
+        option::none(),
+        option::none(),
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = lp_book::EInvalidDrainMark)]
+fun priced_withdraw_that_rounds_to_zero_payout_aborts() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
+
+    // payout = floor(min_withdraw * 1 / (min_withdraw + 1)) = 0.
+    book.drain(
+        vault_id(),
+        &mut ledger,
+        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         option::none(),
         option::none(),
         scenario.ctx(),

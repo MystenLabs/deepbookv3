@@ -34,18 +34,6 @@ replaces the stub or the BS push surface is cap-gated.
 
 ## Contract Findings
 
-### P-1: PLP price circuit breakers have no on-chain recovery path
-
-**Severity:** Medium.
-
-`finish_flush` aborts when the PLP price leaves the hard-coded
-`[min_plp_price, max_plp_price]` band. The bounds are constants, and the flush is
-the only path that fills async supply/withdraw queues. An out-of-band PLP price
-can therefore freeze all LP supply and withdraw fills until package upgrade.
-
-**Action:** Make the band admin-tunable, add an admin/lifecycle recovery flush,
-or deliberately accept and document the liveness tradeoff. Add boundary tests.
-
 ### P-2: Near-expiry SVI freshness can overprice tails
 
 **Severity:** Medium.
