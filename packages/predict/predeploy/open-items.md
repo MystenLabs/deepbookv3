@@ -160,12 +160,6 @@ three amounts through) so both sites share one derivation. (audit 5de114)
 
 ### H-3: Smaller cleanup items
 
-- Delete the test-only `stake_config::lower/upper_benefit_power` getters —
-  `public(package)`, so not frozen by upgrades; no deploy deadline. (part of
-  audit ffcc7d)
-- Document the `timestamp_ms < expiry_ms` precondition on
-  `strike_exposure_config::fee_rate`/`trading_fee` — the only underflow guard is
-  `ELivePricingExpired` two modules away in pricing. (audit 87a82c)
 - Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
   helpers (and shared guard preamble) across the BS forward/SVI/spot feeds into
   a generic `oracle_lane` helper. (audit 7af3ed)

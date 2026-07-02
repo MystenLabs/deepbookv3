@@ -22,14 +22,6 @@ public struct StakeConfig has store {
 
 // === Public-Package Functions ===
 
-public(package) fun lower_benefit_power(config: &StakeConfig): u64 {
-    config.lower_benefit_power
-}
-
-public(package) fun upper_benefit_power(config: &StakeConfig): u64 {
-    config.upper_benefit_power
-}
-
 /// Fee amount remaining after the active stake discount is applied.
 public(package) fun fee_amount_after_discount(
     config: &StakeConfig,
