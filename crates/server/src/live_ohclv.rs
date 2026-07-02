@@ -3,14 +3,17 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{self, MissedTickBehavior};
 
 use crate::error::DeepBookError;
 use crate::reader::Reader;
 
-const DEFAULT_LIMIT: usize = 1000;
 const MINUTE_MS: i64 = 60_000;
+pub const OHCLV_DEFAULT_LIMIT: i32 = 1000;
+pub const OHCLV_DEFAULT_WINDOW_MS: i64 = 7 * 24 * 60 * MINUTE_MS;
+const LIVE_OHCLV_POLL_LOOKBACK_MS: i64 = 10 * MINUTE_MS;
+const LIVE_OHCLV_MAX_MATERIALIZER_LAG_MS: i64 = 3 * LIVE_OHCLV_POLL_LOOKBACK_MS;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Candle {
@@ -20,6 +23,7 @@ pub struct Candle {
     pub low: f64,
     pub close: f64,
     pub base_volume: f64,
+    pub first_trade_timestamp_ms: Option<i64>,
     pub last_trade_timestamp_ms: Option<i64>,
 }
 
@@ -64,6 +68,8 @@ struct LiveAggregate {
     low: f64,
     close: f64,
     base_volume: f64,
+    first_trade_timestamp_ms: i64,
+    last_trade_timestamp_ms: i64,
 }
 
 impl LiveOhclvCache {
@@ -80,15 +86,11 @@ impl LiveOhclvCache {
 
     pub fn replace_watermarks(&self, watermarks: Vec<(MinuteKey, i64)>) {
         let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
-        if let Some(latest_materialized_timestamp_ms) = watermarks
+        let latest_materialized_timestamp_ms = watermarks
             .iter()
             .map(|(_, timestamp_ms)| *timestamp_ms)
-            .max()
-        {
-            state.latest_materialized_timestamp_ms = Some(latest_materialized_timestamp_ms);
-        }
-        state.watermarks = watermarks.into_iter().collect();
-        prune_materialized_fills(&mut state);
+            .max();
+        replace_watermarks_locked(&mut state, latest_materialized_timestamp_ms, watermarks);
     }
 
     pub fn insert_fills(&self, fills: Vec<LiveFill>) {
@@ -115,22 +117,14 @@ impl LiveOhclvCache {
                 .insert(fill.event_digest.clone(), fill);
         }
 
-        prune_to_capacity(&mut state, self.max_fills);
-    }
-
-    pub fn oldest_cached_timestamp_ms(&self) -> Option<i64> {
-        let state = self.state.read().expect("live OHCLV cache lock poisoned");
-        state.fill_order.iter().next().map(|key| key.timestamp_ms)
-    }
-
-    fn next_poll_start_timestamp_ms(&self) -> Option<i64> {
-        let state = self.state.read().expect("live OHCLV cache lock poisoned");
-        state
-            .fill_order
-            .iter()
-            .next()
-            .map(|key| key.timestamp_ms)
-            .or(state.latest_materialized_timestamp_ms)
+        let dropped = prune_to_capacity(&mut state, self.max_fills);
+        if dropped > 0 {
+            tracing::warn!(
+                dropped,
+                max_fills = self.max_fills,
+                "Live OHCLV cache reached capacity; overlay may be incomplete"
+            );
+        }
     }
 
     #[doc(hidden)]
@@ -149,7 +143,7 @@ impl LiveOhclvCache {
         pool_id: &str,
         start_time_ms: i64,
         end_time_ms: i64,
-        limit: Option<i32>,
+        limit: i32,
         stored: Vec<Candle>,
     ) -> Vec<Candle> {
         let Some(interval_ms) = interval_width_ms(interval) else {
@@ -180,20 +174,30 @@ impl LiveOhclvCache {
                 .then_with(|| a.event_digest.cmp(&b.event_digest))
         });
 
-        let stored_watermarks: HashMap<i64, i64> = stored
-            .iter()
-            .filter_map(|candle| {
-                candle
-                    .last_trade_timestamp_ms
-                    .map(|last_trade_timestamp_ms| (candle.timestamp_ms, last_trade_timestamp_ms))
-            })
-            .collect();
+        let stored_watermarks: HashMap<i64, i64> = if interval_ms == MINUTE_MS {
+            stored
+                .iter()
+                .filter_map(|candle| {
+                    candle
+                        .last_trade_timestamp_ms
+                        .map(|last_trade_timestamp_ms| {
+                            (candle.timestamp_ms, last_trade_timestamp_ms)
+                        })
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
 
         // Aggregate raw live fills into the requested interval before merging
         // them with DB candles.
         let mut live_by_bucket: HashMap<i64, LiveAggregate> = HashMap::new();
         for fill in live_fills {
             let bucket_start_ms = bucket_start_ms(fill.checkpoint_timestamp_ms, interval_ms);
+            if bucket_start_ms < start_time_ms {
+                continue;
+            }
+
             if stored_watermarks
                 .get(&bucket_start_ms)
                 .is_some_and(|last_trade_timestamp_ms| {
@@ -210,6 +214,7 @@ impl LiveOhclvCache {
                     aggregate.low = aggregate.low.min(fill.price);
                     aggregate.close = fill.price;
                     aggregate.base_volume += fill.base_volume;
+                    aggregate.last_trade_timestamp_ms = fill.checkpoint_timestamp_ms;
                 })
                 .or_insert(LiveAggregate {
                     open: fill.price,
@@ -217,6 +222,8 @@ impl LiveOhclvCache {
                     low: fill.price,
                     close: fill.price,
                     base_volume: fill.base_volume,
+                    first_trade_timestamp_ms: fill.checkpoint_timestamp_ms,
+                    last_trade_timestamp_ms: fill.checkpoint_timestamp_ms,
                 });
         }
 
@@ -231,9 +238,24 @@ impl LiveOhclvCache {
             candles_by_bucket
                 .entry(bucket_start_ms)
                 .and_modify(|candle| {
+                    if candle
+                        .first_trade_timestamp_ms
+                        .is_some_and(|first_trade_timestamp_ms| {
+                            live.first_trade_timestamp_ms < first_trade_timestamp_ms
+                        })
+                    {
+                        candle.open = live.open;
+                    }
                     candle.high = candle.high.max(live.high);
                     candle.low = candle.low.min(live.low);
-                    candle.close = live.close;
+                    if candle
+                        .last_trade_timestamp_ms
+                        .map_or(true, |last_trade_timestamp_ms| {
+                            live.last_trade_timestamp_ms > last_trade_timestamp_ms
+                        })
+                    {
+                        candle.close = live.close;
+                    }
                     candle.base_volume += live.base_volume;
                 })
                 .or_insert(Candle {
@@ -243,6 +265,7 @@ impl LiveOhclvCache {
                     low: live.low,
                     close: live.close,
                     base_volume: live.base_volume,
+                    first_trade_timestamp_ms: None,
                     last_trade_timestamp_ms: None,
                 });
         }
@@ -250,28 +273,48 @@ impl LiveOhclvCache {
         let mut candles: Vec<Candle> = candles_by_bucket.into_values().collect();
         candles.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
 
-        // Match get_ohclv's default response size after live buckets are added.
-        if let Some(limit) = normalized_limit(limit) {
-            candles.truncate(limit);
-        }
+        candles.truncate(normalized_limit(limit));
 
         candles
     }
 
     pub(crate) async fn poll_once(&self, reader: &Reader) -> Result<(), DeepBookError> {
-        let start_timestamp_ms = match self.next_poll_start_timestamp_ms() {
-            Some(timestamp_ms) => timestamp_ms,
-            None => reader
-                .get_live_ohclv_latest_materialized_timestamp()
-                .await?
-                .unwrap_or(0),
+        self.poll_once_at(reader, current_time_ms()).await
+    }
+
+    pub(crate) async fn poll_once_at(
+        &self,
+        reader: &Reader,
+        now_ms: i64,
+    ) -> Result<(), DeepBookError> {
+        let Some(latest_materialized_timestamp_ms) = reader
+            .get_live_ohclv_latest_materialized_timestamp()
+            .await?
+        else {
+            self.clear(None);
+            return Ok(());
+        };
+
+        if latest_materialized_timestamp_ms
+            < now_ms.saturating_sub(LIVE_OHCLV_MAX_MATERIALIZER_LAG_MS)
+        {
+            self.clear(Some(latest_materialized_timestamp_ms));
+            tracing::warn!(
+                latest_materialized_timestamp_ms,
+                now_ms,
+                max_lag_ms = LIVE_OHCLV_MAX_MATERIALIZER_LAG_MS,
+                "Live OHCLV overlay disabled because materialized OHCLV is stale"
+            );
+            return Ok(());
         }
-        .saturating_sub(MINUTE_MS);
+
+        let start_timestamp_ms =
+            latest_materialized_timestamp_ms.saturating_sub(LIVE_OHCLV_POLL_LOOKBACK_MS);
 
         let watermarks = reader
             .get_live_ohclv_watermarks_since(start_timestamp_ms)
             .await?;
-        self.replace_watermarks(watermarks);
+        self.replace_watermarks_with_latest(latest_materialized_timestamp_ms, watermarks);
 
         let fills = reader
             .get_live_ohclv_fills_since(start_timestamp_ms, self.max_fills())
@@ -279,6 +322,27 @@ impl LiveOhclvCache {
         self.insert_fills(fills);
 
         Ok(())
+    }
+
+    fn replace_watermarks_with_latest(
+        &self,
+        latest_materialized_timestamp_ms: i64,
+        watermarks: Vec<(MinuteKey, i64)>,
+    ) {
+        let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
+        replace_watermarks_locked(
+            &mut state,
+            Some(latest_materialized_timestamp_ms),
+            watermarks,
+        );
+    }
+
+    fn clear(&self, latest_materialized_timestamp_ms: Option<i64>) {
+        let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
+        state.fills_by_digest.clear();
+        state.fill_order.clear();
+        state.watermarks.clear();
+        state.latest_materialized_timestamp_ms = latest_materialized_timestamp_ms;
     }
 
     pub(crate) async fn run_poll_loop(&self, reader: Reader, poll_interval: Duration) {
@@ -306,11 +370,10 @@ fn interval_width_ms(interval: &str) -> Option<i64> {
     }
 }
 
-fn normalized_limit(limit: Option<i32>) -> Option<usize> {
+fn normalized_limit(limit: i32) -> usize {
     match limit {
-        Some(limit) if limit <= 0 => Some(0),
-        Some(limit) => Some(limit as usize),
-        None => Some(DEFAULT_LIMIT),
+        limit if limit <= 0 => 0,
+        limit => limit as usize,
     }
 }
 
@@ -333,6 +396,18 @@ fn is_fill_materialized(state: &LiveOhclvState, fill: &LiveFill) -> bool {
         .is_some_and(|last_trade_timestamp| fill.checkpoint_timestamp_ms <= *last_trade_timestamp)
 }
 
+fn replace_watermarks_locked(
+    state: &mut LiveOhclvState,
+    latest_materialized_timestamp_ms: Option<i64>,
+    watermarks: Vec<(MinuteKey, i64)>,
+) {
+    if latest_materialized_timestamp_ms.is_some() {
+        state.latest_materialized_timestamp_ms = latest_materialized_timestamp_ms;
+    }
+    state.watermarks = watermarks.into_iter().collect();
+    prune_materialized_fills(state);
+}
+
 fn prune_materialized_fills(state: &mut LiveOhclvState) {
     let digests_to_remove: Vec<String> = state
         .fills_by_digest
@@ -346,13 +421,16 @@ fn prune_materialized_fills(state: &mut LiveOhclvState) {
     }
 }
 
-fn prune_to_capacity(state: &mut LiveOhclvState, max_fills: usize) {
+fn prune_to_capacity(state: &mut LiveOhclvState, max_fills: usize) -> usize {
+    let mut dropped = 0;
     while state.fills_by_digest.len() > max_fills {
         let Some(oldest) = state.fill_order.iter().next().cloned() else {
             break;
         };
         remove_fill(state, &oldest.event_digest);
+        dropped += 1;
     }
+    dropped
 }
 
 fn remove_fill(state: &mut LiveOhclvState, event_digest: &str) {
@@ -362,4 +440,11 @@ fn remove_fill(state: &mut LiveOhclvState, event_digest: &str) {
             event_digest: fill.event_digest,
         });
     }
+}
+
+fn current_time_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }

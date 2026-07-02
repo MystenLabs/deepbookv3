@@ -57,6 +57,8 @@ struct OhclvRow {
     #[diesel(sql_type = Double)]
     base_volume: f64,
     #[diesel(sql_type = BigInt)]
+    first_trade_timestamp_ms: i64,
+    #[diesel(sql_type = BigInt)]
     last_trade_timestamp_ms: i64,
 }
 
@@ -69,6 +71,7 @@ impl From<OhclvRow> for Candle {
             low: row.low,
             close: row.close,
             base_volume: row.base_volume,
+            first_trade_timestamp_ms: Some(row.first_trade_timestamp_ms),
             last_trade_timestamp_ms: Some(row.last_trade_timestamp_ms),
         }
     }
@@ -601,32 +604,29 @@ impl Reader {
         &self,
         pool_id: String,
         interval: String,
-        start_time: Option<i64>,
-        end_time: Option<i64>,
-        limit: Option<i32>,
+        start_time: i64,
+        end_time: i64,
+        limit: i32,
     ) -> Result<Vec<Candle>, DeepBookError> {
         let mut connection = self.db.connect().await?;
-        let limit_val = limit.unwrap_or(1000);
         let _guard = self.metrics.db_latency.start_timer();
 
         // Convert milliseconds to seconds for to_timestamp()
-        let start_secs = start_time.map(|ts| ts / 1000);
-        let end_secs = end_time.map(|ts| ts / 1000);
+        let start_secs = start_time / 1000;
+        let end_secs = end_time / 1000;
 
         let res = diesel::sql_query(
             "SELECT EXTRACT(EPOCH FROM bucket_time)::bigint * 1000 as timestamp_ms, \
              open::float8, high::float8, low::float8, close::float8, base_volume::float8, \
+             first_trade_timestamp AS first_trade_timestamp_ms, \
              last_trade_timestamp AS last_trade_timestamp_ms \
-             FROM get_ohclv($1, $2, \
-                CASE WHEN $3 IS NULL THEN NULL ELSE to_timestamp($3)::timestamp END, \
-                CASE WHEN $4 IS NULL THEN NULL ELSE to_timestamp($4)::timestamp END, \
-                $5)",
+             FROM get_ohclv($1, $2, to_timestamp($3)::timestamp, to_timestamp($4)::timestamp, $5)",
         )
         .bind::<Text, _>(&interval)
         .bind::<Text, _>(&pool_id)
-        .bind::<Nullable<BigInt>, _>(&start_secs)
-        .bind::<Nullable<BigInt>, _>(&end_secs)
-        .bind::<Integer, _>(limit_val)
+        .bind::<BigInt, _>(start_secs)
+        .bind::<BigInt, _>(end_secs)
+        .bind::<Integer, _>(limit)
         .load::<OhclvRow>(&mut connection)
         .await
         .map_err(|e| DeepBookError::database(format!("Error fetching OHCLV data: {}", e)))
@@ -647,7 +647,7 @@ impl Reader {
     ) -> Result<Vec<LiveFill>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
-        let max_fills = max_fills as i64;
+        let max_fills_i64 = max_fills as i64;
 
         // Fetch recent raw fill candidates by timestamp only. The cache keeps
         // per-pool/per-minute OHCLV watermarks and prunes fills that have already
@@ -674,11 +674,20 @@ impl Reader {
              ORDER BY checkpoint_timestamp_ms ASC, event_digest ASC",
         )
         .bind::<BigInt, _>(start_timestamp_ms)
-        .bind::<BigInt, _>(max_fills)
+        .bind::<BigInt, _>(max_fills_i64)
         .load::<LiveOhclvFillRow>(&mut connection)
         .await
         .map_err(|e| DeepBookError::database(format!("Error fetching live OHCLV fills: {}", e)))
-        .map(|rows| rows.into_iter().map(LiveFill::from).collect());
+        .map(|rows| {
+            if rows.len() == max_fills {
+                tracing::warn!(
+                    start_timestamp_ms,
+                    max_fills,
+                    "Live OHCLV fill query reached cap; overlay may be incomplete"
+                );
+            }
+            rows.into_iter().map(LiveFill::from).collect()
+        });
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
@@ -694,13 +703,12 @@ impl Reader {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        // Cold-start lower bound for live fill polling. This is a global
-        // high-water mark only; per-pool correctness is enforced by refreshed
-        // minute watermarks in the cache.
+        // Cold-start lower bound for live fill polling. Bucket time is indexed,
+        // and the latest non-empty minute also carries the latest trade time.
         let res = diesel::sql_query(
             "SELECT last_trade_timestamp \
              FROM ohclv_1m \
-             ORDER BY last_trade_timestamp DESC \
+             ORDER BY bucket_time DESC, last_trade_timestamp DESC \
              LIMIT 1",
         )
         .load::<LiveOhclvLatestWatermarkRow>(&mut connection)
@@ -724,18 +732,20 @@ impl Reader {
     ) -> Result<Vec<(MinuteKey, i64)>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
+        let start_bucket_secs = start_timestamp_ms.div_euclid(60_000) * 60;
 
-        // Refresh minute-level watermarks for the cached fill range so the
-        // cache can drop fills once ohclv_1m has materialized them.
+        // Refresh minute-level watermarks for a bounded bucket-time window. This
+        // uses the existing ohclv_1m(bucket_time) index instead of requiring a
+        // deploy-time index build on last_trade_timestamp.
         let res = diesel::sql_query(
             "SELECT \
                 pool_id, \
                 EXTRACT(EPOCH FROM bucket_time)::bigint * 1000 AS bucket_start_ms, \
                 last_trade_timestamp \
              FROM ohclv_1m \
-             WHERE last_trade_timestamp >= $1",
+             WHERE bucket_time >= to_timestamp($1)::timestamp",
         )
-        .bind::<BigInt, _>(start_timestamp_ms)
+        .bind::<BigInt, _>(start_bucket_secs)
         .load::<LiveOhclvWatermarkRow>(&mut connection)
         .await
         .map_err(|e| {

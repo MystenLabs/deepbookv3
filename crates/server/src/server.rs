@@ -38,7 +38,7 @@ use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
 use crate::admin::routes::admin_routes;
-use crate::live_ohclv::{LiveFill, LiveOhclvCache};
+use crate::live_ohclv::{LiveFill, LiveOhclvCache, OHCLV_DEFAULT_LIMIT, OHCLV_DEFAULT_WINDOW_MS};
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::{PortfolioQueryResult, Reader};
@@ -261,6 +261,11 @@ impl AppState {
     #[doc(hidden)]
     pub async fn poll_live_ohclv_once(&self) -> Result<(), DeepBookError> {
         self.live_ohclv.poll_once(&self.reader).await
+    }
+
+    #[doc(hidden)]
+    pub async fn poll_live_ohclv_once_at(&self, now_ms: i64) -> Result<(), DeepBookError> {
+        self.live_ohclv.poll_once_at(&self.reader, now_ms).await
     }
 
     #[doc(hidden)]
@@ -2172,9 +2177,18 @@ async fn ohclv(
         .ok_or_else(|| DeepBookError::not_found(format!("Pool '{}'", pool_name)))?;
 
     let interval = params.get("interval").unwrap_or(&"1m".to_string()).clone();
-    let start_time = params.get("start_time").and_then(|v| v.parse::<i64>().ok());
-    let end_time = params.get("end_time").and_then(|v| v.parse::<i64>().ok());
-    let limit = params.get("limit").and_then(|v| v.parse::<i32>().ok());
+    let end_time = params
+        .get("end_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or_else(current_time_ms);
+    let start_time = params
+        .get("start_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or_else(|| end_time.saturating_sub(OHCLV_DEFAULT_WINDOW_MS));
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(OHCLV_DEFAULT_LIMIT);
 
     let valid_intervals = vec!["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"];
     if !valid_intervals.contains(&interval.as_str()) {
@@ -2197,8 +2211,8 @@ async fn ohclv(
     let candles = state.live_ohclv.overlay_candles(
         &interval,
         &pool.pool_id,
-        start_time.unwrap_or(0),
-        end_time.unwrap_or_else(current_time_ms),
+        start_time,
+        end_time,
         limit,
         candles,
     );

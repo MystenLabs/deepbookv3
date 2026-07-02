@@ -21,6 +21,7 @@ fn candle(
         low,
         close,
         base_volume,
+        first_trade_timestamp_ms: None,
         last_trade_timestamp_ms: None,
     }
 }
@@ -41,6 +42,7 @@ fn stored_candle(
         low,
         close,
         base_volume,
+        first_trade_timestamp_ms: Some(timestamp_ms),
         last_trade_timestamp_ms: Some(last_trade_timestamp_ms),
     }
 }
@@ -88,14 +90,8 @@ fn overlay_five_minute_bucket_with_unmaterialized_fills() {
     ]);
 
     let stored = vec![candle(bucket_1230, 100.0, 105.0, 95.0, 102.0, 10.0)];
-    let overlaid = cache.overlay_candles(
-        "5m",
-        pool_id,
-        bucket_1230,
-        bucket_1232 + 5_000,
-        Some(10),
-        stored,
-    );
+    let overlaid =
+        cache.overlay_candles("5m", pool_id, bucket_1230, bucket_1232 + 5_000, 10, stored);
 
     assert_eq!(overlaid.len(), 1);
     assert_eq!(
@@ -120,7 +116,7 @@ fn overlay_creates_current_minute_when_stored_bucket_is_missing() {
         pool_id,
         bucket_1232,
         bucket_1232 + 5_000,
-        Some(10),
+        10,
         Vec::new(),
     );
 
@@ -146,13 +142,85 @@ fn overlay_filters_by_request_end_time() {
         pool_id,
         bucket_1232,
         bucket_1232 + 5_000,
-        Some(10),
+        10,
         Vec::new(),
     );
 
     assert_eq!(
         overlaid,
         vec![candle(bucket_1232, 110.0, 110.0, 110.0, 110.0, 3.0)]
+    );
+}
+
+#[test]
+fn overlay_does_not_create_bucket_before_requested_start() {
+    let cache = LiveOhclvCache::new(100);
+    let bucket_1232 = minute(12 * 60 + 32);
+    let pool_id = "pool-1";
+
+    cache.insert_fills(vec![fill(
+        "mid-bucket",
+        pool_id,
+        bucket_1232 + 20_000,
+        110.0,
+        3.0,
+    )]);
+
+    let overlaid = cache.overlay_candles(
+        "1m",
+        pool_id,
+        bucket_1232 + 10_000,
+        bucket_1232 + 50_000,
+        10,
+        Vec::new(),
+    );
+
+    assert_eq!(overlaid, Vec::<Candle>::new());
+}
+
+#[test]
+fn overlay_keeps_stored_close_when_live_fill_is_older_than_stored_bucket_close() {
+    let cache = LiveOhclvCache::new(100);
+    let bucket_1230 = minute(12 * 60 + 30);
+    let bucket_1231 = minute(12 * 60 + 31);
+    let pool_id = "pool-1";
+
+    cache.insert_fills(vec![fill(
+        "out-of-order-minute",
+        pool_id,
+        bucket_1230 + 20_000,
+        110.0,
+        3.0,
+    )]);
+
+    let overlaid = cache.overlay_candles(
+        "5m",
+        pool_id,
+        bucket_1230,
+        bucket_1230 + 5 * MINUTE_MS - 1,
+        10,
+        vec![stored_candle(
+            bucket_1230,
+            100.0,
+            105.0,
+            95.0,
+            102.0,
+            10.0,
+            bucket_1231 + 30_000,
+        )],
+    );
+
+    assert_eq!(
+        overlaid,
+        vec![stored_candle(
+            bucket_1230,
+            100.0,
+            110.0,
+            95.0,
+            102.0,
+            13.0,
+            bucket_1231 + 30_000,
+        )]
     );
 }
 
@@ -172,25 +240,11 @@ fn overlay_skips_daily_and_weekly_intervals() {
     )]);
 
     assert_eq!(
-        cache.overlay_candles(
-            "1d",
-            pool_id,
-            0,
-            bucket_1232 + 5_000,
-            Some(10),
-            stored.clone()
-        ),
+        cache.overlay_candles("1d", pool_id, 0, bucket_1232 + 5_000, 10, stored.clone()),
         stored
     );
     assert_eq!(
-        cache.overlay_candles(
-            "1w",
-            pool_id,
-            0,
-            bucket_1232 + 5_000,
-            Some(10),
-            stored.clone()
-        ),
+        cache.overlay_candles("1w", pool_id, 0, bucket_1232 + 5_000, 10, stored.clone()),
         stored
     );
 }
@@ -218,7 +272,7 @@ fn cache_prunes_fills_covered_by_minute_watermark() {
         pool_id,
         bucket_1232,
         bucket_1232 + 5_000,
-        Some(10),
+        10,
         Vec::new(),
     );
 
@@ -247,7 +301,7 @@ fn overlay_skips_fills_covered_by_served_candle_watermark() {
         pool_id,
         bucket_1232,
         bucket_1232 + 5_000,
-        Some(10),
+        10,
         vec![stored_candle(
             bucket_1232,
             100.0,
@@ -290,7 +344,7 @@ fn cache_respects_max_fills_by_dropping_oldest() {
         pool_id,
         bucket_1232,
         bucket_1232 + 5_000,
-        Some(10),
+        10,
         Vec::new(),
     );
 

@@ -266,6 +266,13 @@ fn assert_candle(response: &Value, expected: CandleValues) {
     assert_eq!(candle[5].as_f64().unwrap(), expected.base_volume);
 }
 
+fn assert_no_candles(response: &Value) {
+    assert_eq!(
+        response["candles"].as_array().unwrap(),
+        &Vec::<Value>::new()
+    );
+}
+
 #[tokio::test]
 async fn ohclv_endpoint_overlays_new_fill_before_materialized_candle_catches_up() {
     let stored = candle(T0_MS, 10, 12, 9, 11, 5);
@@ -278,7 +285,10 @@ async fn ohclv_endpoint_overlays_new_fill_before_materialized_candle_catches_up(
     assert_candle(&materialized, stored);
 
     insert_live_fill(&db, live_fill).await;
-    state.poll_live_ohclv_once().await.unwrap();
+    state
+        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
+        .await
+        .unwrap();
 
     assert_eq!(
         state.live_ohclv_cached_fills(),
@@ -291,12 +301,17 @@ async fn ohclv_endpoint_overlays_new_fill_before_materialized_candle_catches_up(
 
 #[tokio::test]
 async fn ohclv_endpoint_creates_live_candle_when_materialized_bucket_is_missing() {
+    let previous = candle(T0_MS, 10, 12, 9, 11, 5);
     let live_fill = fill("missing-minute", T0_MS + MINUTE_MS + 2_000, 20, 3);
-    let (_temp_db, db, state, router) = setup(&[]).await;
+    let (_temp_db, db, state, router) =
+        setup(&[materialized_candle(previous, 55, 2, T0_MS, T0_MS + 10_000)]).await;
     let uri = uri(T0_MS + MINUTE_MS, T0_MS + 2 * MINUTE_MS - 1, 1);
 
     insert_live_fill(&db, live_fill).await;
-    state.poll_live_ohclv_once().await.unwrap();
+    state
+        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
+        .await
+        .unwrap();
 
     assert_eq!(
         state.live_ohclv_cached_fills(),
@@ -308,6 +323,42 @@ async fn ohclv_endpoint_creates_live_candle_when_materialized_bucket_is_missing(
 }
 
 #[tokio::test]
+async fn ohclv_endpoint_does_not_overlay_when_no_materialized_watermark_exists() {
+    let live_fill = fill("no-watermark", T0_MS + 2_000, 20, 3);
+    let (_temp_db, db, state, router) = setup(&[]).await;
+    let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
+
+    insert_live_fill(&db, live_fill).await;
+    state
+        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
+        .await
+        .unwrap();
+
+    assert_eq!(state.live_ohclv_cached_fills(), Vec::<LiveFill>::new());
+    let response = get(&router, &uri).await;
+    assert_no_candles(&response);
+}
+
+#[tokio::test]
+async fn ohclv_endpoint_does_not_overlay_when_materialized_watermark_is_stale() {
+    let stored = candle(T0_MS, 10, 12, 9, 11, 5);
+    let live_fill = fill("stale-materializer", T0_MS + 20_000, 15, 2);
+    let (_temp_db, db, state, router) =
+        setup(&[materialized_candle(stored, 55, 2, T0_MS, T0_MS + 10_000)]).await;
+    let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
+
+    insert_live_fill(&db, live_fill).await;
+    state
+        .poll_live_ohclv_once_at(T0_MS + 60 * MINUTE_MS)
+        .await
+        .unwrap();
+
+    assert_eq!(state.live_ohclv_cached_fills(), Vec::<LiveFill>::new());
+    let response = get(&router, &uri).await;
+    assert_candle(&response, stored);
+}
+
+#[tokio::test]
 async fn ohclv_endpoint_stops_overlaying_fill_after_materialized_watermark_catches_up() {
     let stored = candle(T0_MS, 10, 12, 9, 11, 5);
     let live_fill = fill("caught-up", T0_MS + 20_000, 15, 2);
@@ -316,7 +367,10 @@ async fn ohclv_endpoint_stops_overlaying_fill_after_materialized_watermark_catch
     let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
 
     insert_live_fill(&db, live_fill).await;
-    state.poll_live_ohclv_once().await.unwrap();
+    state
+        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
+        .await
+        .unwrap();
 
     assert_eq!(
         state.live_ohclv_cached_fills(),
@@ -334,6 +388,9 @@ async fn ohclv_endpoint_stops_overlaying_fill_after_materialized_watermark_catch
     let materialized = get(&router, &uri).await;
     assert_candle(&materialized, stored);
 
-    state.poll_live_ohclv_once().await.unwrap();
+    state
+        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
+        .await
+        .unwrap();
     assert_eq!(state.live_ohclv_cached_fills(), Vec::<LiveFill>::new());
 }
