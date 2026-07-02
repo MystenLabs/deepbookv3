@@ -94,19 +94,6 @@ computation cap; the ceiling is around 110-150 leveraged mints, data-dependent.
 gas scales linearly inside a PTB. See
 `stress/mint-batch-findings-2026-07-01.md`.
 
-## Coverage and Hygiene
-
-### T-1: Payout-tree GC needs a regression over post-removal valuation
-
-Add a deterministic test that removes an interior node and verifies
-`settled_payout_liability` / `walk_linear` bit-equality over the mutated tree.
-
-### T-3: Confirm external keeper migration for settled redeem API split
-
-`redeem_settled` is owner-auth and the permissionless path moved to
-`redeem_settled_permissionless`. Confirm keepers/integrators use the new path
-before deployment.
-
 ## Oracle Calibration
 
 ### O-1: Near-expiry oracle miscalibration is exploitable
