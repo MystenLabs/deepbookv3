@@ -121,17 +121,17 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// leveraged order net to zero, so no liquidation pass is needed for an exact mark.
 /// `correction <= linear` for any mint-admitted book (each leveraged order's `min`
 /// is capped at its own linear contribution), so the saturating_sub floors only the
-/// bounded valuation ulp dust the linear walk can carry — or that an enabled
-/// interpolation tolerance can introduce — rather than aborting. A pure read
-/// returning the liability fact; the caller owns the NAV/cash clamp.
+/// bounded valuation ulp dust the linear walk can carry, rather than aborting. A
+/// pure read returning the liability fact; the caller owns the NAV/cash clamp.
+///
+/// The linear walk prices every tree node once into `memo`; the correction reads
+/// each leveraged order's boundary prices back from it, so no order is re-priced.
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
-    // Linear term: the full payout-tree walk. Interpolation is gated by the
-    // upgrade-required `nav_interpolation_price_tolerance` (0 = fully exact).
-    let linear = exposure
-        .payout
-        .walk_linear(pricer, exposure.tick_size, constants::nav_interpolation_price_tolerance!());
-    // Correction term: the static-floor-capped scan over this book's leveraged set.
-    let correction = exposure.liquidation.correction_value(pricer, exposure.tick_size);
+    let mut memo = pricing::new_price_memo();
+    // Linear term: the full payout-tree walk, caching each boundary's price.
+    let linear = exposure.payout.walk_linear(pricer, exposure.tick_size, &mut memo);
+    // Correction term: the static-floor-capped scan, reading prices from the cache.
+    let correction = exposure.liquidation.correction_value(&memo);
     linear.saturating_sub(correction)
 }
 

@@ -187,10 +187,11 @@ High-frequency cost caveats:
 - `ObservationRecorded` emits for every accepted live update.
 - `exact_reads` are unbounded tables. Storage growth is paid by writers; a
   permissionless prune flow can be added later if long-run retention needs it.
-- Pyth source timestamps are ceil-rounded from microseconds to milliseconds, so
-  two source updates inside the same millisecond collide at the Propbook freshness
-  key and the second live update is a no-op. The expected source cadence is below
-  1 kHz per feed.
+- Pyth latest updates are ceil-rounded from microseconds to milliseconds, so two
+  source updates inside the same millisecond can collide at the Propbook
+  freshness key and the second live update is a no-op. Exact-history inserts are
+  stricter: `pyth_feed::insert_at` accepts only source timestamps that are
+  already exact whole milliseconds.
 
 ## Consumer Responsibilities
 

@@ -92,10 +92,10 @@ absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` 
 
 ## Prior-awareness (mandatory)
 Before raising anything, consult the settled-decision ledger and respect it:
-- `.claude/predict-design/DECISION_JOURNAL.md` (D000–latest) and `HISTORY.md` — accepted/rejected; rejected entries carry don't-revisit conditions.
 - `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions".
-- `.claude/predict-design/ROUNDING_POLICY.md` — R1 liveness (dust never aborts; reserve ≥ payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
-A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+λ, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id and downranked to Info — not raised as new.
+- `packages/predict/predeploy/rounding-policy.md` — R1 liveness (dust never aborts; reserve >= payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
+- `packages/predict/predeploy/open-items.md` — committed deploy gates and active findings; do not duplicate an item already represented there.
+A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+lambda, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id or committed-policy reference and downranked to Info — not raised as new.
 
 ## Empirical toolbox (lens 09 owns it; any lens may use Python)
 `packages/predict/simulations/` is a real localnet + Python economic harness:

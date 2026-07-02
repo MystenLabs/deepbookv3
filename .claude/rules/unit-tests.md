@@ -277,7 +277,7 @@ contract (and the expected value was derived independently per Rule 1):
 - **Never** re-express the bug as an `expected_failure` of the buggy behavior.
 - **Never** "fix" the contract to make the test pass (that is a separate effort).
 
-Instead: add an entry to the live audit tracker (`.claude/predict-review/OPEN-ITEMS.md`), tag the
+Instead: add an entry to the committed predeploy tracker (`packages/predict/predeploy/open-items.md`), tag the
 test `// KNOWN-FAILING: <id>`, and leave it RED. The tracker is the authoritative
 manifest of expected-failing tests, so a *new* red (a regression) is distinguishable
 from a *known* red. A green-on-first-write suite is suspect; tests are supposed to

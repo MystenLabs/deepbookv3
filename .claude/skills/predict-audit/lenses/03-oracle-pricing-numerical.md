@@ -36,7 +36,7 @@ gating, and what a worst-case-but-in-bounds supplier achieves.
 ### Part 2 — fixed-point math correctness (`fixed_math`, `pricing`, `strike_payout_tree`)
 - **Rounding DIRECTION audit:** for every mul/div/mul_div/ceil_div on a value path, determine the SAFE
   direction given who it credits/debits (protocol liability vs user entitlement vs collateral). Flag any that
-  favors the wrong party; note where dust accrues (ROUNDING_POLICY R2: dust to protocol).
+  favors the wrong party; note where dust accrues (`packages/predict/predeploy/rounding-policy.md` R2: dust to protocol).
 - **Approximation accuracy:** ln/exp/sqrt/normal_cdf — are the documented error bounds sufficient for the price
   ranges used, and do errors compound across SVI → total-variance → CDF → range-price? (See the known
   near-expiry `live_range_probability` conditioning note.)

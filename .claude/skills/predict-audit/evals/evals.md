@@ -32,17 +32,29 @@ The prior-awareness step must tag these with their D-id and downrank, never repo
 - Lens 09 must actually run a Python sim (not just describe one) and report either a reproduced break with a
   seed/scenario or quantitative coverage. A run with zero executed sims has skipped its required empirical pass.
 
-## F. Consolidator/tracker regression suite (run after editing those scripts)
-`python3 .claude/skills/predict-audit/evals/test_consolidate_track.py` — deterministic, no deps, exits
-non-zero on regression. Locks the silent-slip bugs found across the three skill reviews: `load()`
-marker-gating (a decoy preamble can't swallow the findings), id↔dedup agreement (distinct findings never
-share an id, so `track.py` can't silently collapse them), missing-id non-collapse, errored-harness loud exit,
-walk-`uncertain` tagging, checkbox no-false-resolve, re-open-on-re-detect, verdict-flows-to-tracker, and the
-no-slip accounting. Verified to actually go red when any of those fixes is reverted (a vacuous-pass test is
-worse than none). Run it before committing any change to `consolidate.py` / `track.py`.
+## F. Consolidator regression suite (run after editing the script)
+`python3 .claude/skills/predict-audit/evals/test_consolidate.py` — deterministic, no deps, exits
+non-zero on regression. Locks the silent-slip bugs found across skill reviews: `load()` marker-gating
+(a decoy preamble can't swallow the findings), id/dedup granularity (distinct findings never share an id),
+errored-harness loud exit, walk-`uncertain` tagging, the panel-health render (`unverified-panel` /
+`panel_degraded` / `panel_severity` never silently folded), and the no-slip accounting. Run it before
+committing any change to `consolidate.py`.
 
-## E. Seeded-bug smoke (optional, manual)
-To prove the harness can catch a planted bug, temporarily (in a scratch worktree, never committed) introduce
-one of: a backing subtraction changed to round the wrong way (R2 violation), a `>=` weakened to `>` on a
-payout-reserve compare (R1 underflow), or a removed version gate on a custody mutator. A full run should flag
-it at High/Critical. Revert before any commit.
+## E. Seeded-bug RECALL harness (`evals/seeds.md`)
+The one property two clean runs can't give you: does a run confirm a REAL bug it wasn't told about?
+`evals/seeds.md` holds content-based (drift-proof) seed recipes — apply ONE in a scratch worktree, run a
+cheap `depth:'low'` audit, confirm the expected finding surfaces at High/Critical, revert. A miss is a recall
+hole and the highest-signal input to the next skill revision. Never commit a seeded tree.
+
+## G. Verify-panel PRECISION bench (`verify-bench.workflow.js` + `evals/verify_corpus.json`)
+Benchmarks the single most load-bearing component — the verify panel — in isolation, with NO find phase, for
+a fraction of a full run. `verify_corpus.json` is a labeled corpus (each entry `expect`s refuted|settled,
+grounded at HEAD); `Workflow({ scriptPath: '.claude/skills/predict-audit/verify-bench.workflow.js' })` runs
+the real panel over it and reports precision + any false-positive `confirmed` LEAK. Run it after any change to
+the verify prompts/panel. Recall is section E (seeds), not this bench.
+
+## H. Pre-run drift lint (`preflight.py`) — MAIN loop, part of Step 1
+`python3 .claude/skills/predict-audit/preflight.py` — fatal on module-map drift (a `primer.md` path missing
+from the tree), warns on D-id drift (a cited `D0NN` absent from every committed ledger — it lives only in the
+local decision journal; promote it). A stale primer misleads hundreds of agents at once, so run this before
+every launch.

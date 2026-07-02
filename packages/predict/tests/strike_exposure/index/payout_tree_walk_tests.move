@@ -3,9 +3,8 @@
 
 /// Unit coverage for `strike_payout_tree::walk_linear` — the NAV linear walk —
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
-/// `current_nav` cannot reach directly: the bounded-interpolation gate (the
-/// production `nav_interpolation_price_tolerance` is 0, so `current_nav` always
-/// walks exactly), the skip-zero-delta path over an equal live start/end
+/// `current_nav` cannot reach directly: the per-flush price memo populated for
+/// the correction walk, the skip-zero-delta path over an equal live start/end
 /// boundary, and the boundary-aggregation dust clamp — the flat-price-tail integer
 /// underflow the ATM `current_nav` fixtures miss.
 ///
@@ -13,24 +12,19 @@
 /// `tick * tick_size`. These tests use the default `tick_size` (1e9) so tick `100`
 /// is raw strike `100e9`.
 ///
-/// The oracle uses an inflated base variance so three adjacent ticks carry
-/// genuinely clustered (close, smoothly decreasing, nonzero) prices — the regime
-/// where interpolation is meant to help.
-///
 /// References are independent of the walk (unit-tests rule 1): the exact walk is
 /// checked against a per-order `Σ mul(range_price, qty)` sum (a different pricer
-/// path than the walk's `up_price`), and the interpolated walk against that same
-/// sum within the gate's own `tolerance · quantity` bound.
+/// path than the walk's `up_price`). Memo lookup checks compare the cached boundary
+/// prices against `range_price` so a stale or missing memo entry is visible.
 #[test_only]
 module deepbook_predict::payout_tree_walk_tests;
 
 use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
-    pricing::Pricer,
+    pricing::{Self, Pricer},
     strike_payout_tree::{Self, StrikePayoutTree},
-    test_constants,
-    test_helpers
+    test_constants
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
@@ -60,9 +54,9 @@ fun exact_walk_matches_per_order_reference() {
     insert_up(&mut tree, t1, Q1);
     insert_up(&mut tree, t2, Q2);
 
-    // Exact walk (tolerance 0) equals the independent per-order sum bit-for-bit:
-    // each one-sided order is its own node, so there is no aggregation dust.
-    let exact = tree.walk_linear(&pricer, tick_size(), 0);
+    // The exact walk equals the independent per-order sum bit-for-bit: each
+    // one-sided order is its own node, so there is no aggregation dust.
+    let exact = walk_linear(&tree, &pricer);
     assert_eq!(exact, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
 
     destroy(tree);
@@ -70,34 +64,26 @@ fun exact_walk_matches_per_order_reference() {
 }
 
 #[test]
-fun interpolation_collapses_subtree_within_bound() {
+fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
+    insert_up(&mut tree, t2, Q2);
     insert_up(&mut tree, t0, Q0);
     insert_up(&mut tree, t1, Q1);
-    insert_up(&mut tree, t2, Q2);
 
-    let reference = up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]);
-    let total_quantity = Q0 + Q1 + Q2;
-
-    // Tolerance == the whole tree's exact price span, so the root subtree collapses
-    // to one midpoint price applied to the aggregate quantity.
-    let high_price = pricer.up_price(raw(t0)); // lowest strike -> highest price
-    let low_price = pricer.up_price(raw(t2));
-    let span = high_price - low_price;
-    let interpolated = tree.walk_linear(&pricer, tick_size(), span);
-
-    // Engagement: the result is exactly the midpoint-collapsed value (the gate
-    // fired over the whole tree) and differs from the exact walk.
-    let midpoint = (high_price + low_price) / 2;
-    assert_eq!(interpolated, math::mul(midpoint, total_quantity));
-    assert!(interpolated != tree.walk_linear(&pricer, tick_size(), 0));
-
-    // Bound: within `tolerance · total_quantity` of the true per-order value, a
-    // bound derived from the gate inputs (span, quantities), never from output.
-    test_helpers::assert_within(interpolated, reference, math::mul(span, total_quantity));
+    // Insertion order is intentionally not sorted. The in-order walk must still
+    // cache ascending ticks, because `cached_range_price` uses binary search.
+    let mut memo = pricing::new_price_memo();
+    let walk = tree.walk_linear(&pricer, tick_size(), &mut memo);
+    assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
+    assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
+    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(constants::neg_inf!(), raw(t0)));
+    assert_eq!(
+        memo.cached_range_price(t2, constants::pos_inf_tick!()),
+        pricer.range_price(raw(t2), constants::pos_inf!()),
+    );
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -115,7 +101,8 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     tree.insert_range(t0, t1, ADJACENT_QUANTITY, 0);
     tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
-    let walk = tree.walk_linear(&pricer, tick_size(), 0);
+    let mut memo = pricing::new_price_memo();
+    let walk = tree.walk_linear(&pricer, tick_size(), &mut memo);
     assert_eq!(
         walk,
         range_reference(
@@ -125,6 +112,10 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
             vector[ADJACENT_QUANTITY, ADJACENT_QUANTITY],
         ),
     );
+    // The shared boundary has equal start/end quantity and contributes no net
+    // linear value, but it must still be cached for leveraged correction lookups.
+    assert_eq!(memo.cached_range_price(t0, t1), pricer.range_price(raw(t0), raw(t1)));
+    assert_eq!(memo.cached_range_price(t1, t2), pricer.range_price(raw(t1), raw(t2)));
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -153,7 +144,7 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
         math::mul(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
         math::mul(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
     assert_eq!(reference, 0);
-    assert_eq!(tree.walk_linear(&pricer, tick_size(), 0), 0);
+    assert_eq!(walk_linear(&tree, &pricer), 0);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -167,6 +158,12 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 
 /// Raw strike for a tick under the default `tick_size`.
 fun raw(tick: u64): u64 { tick * tick_size() }
+
+/// Run the exact linear walk with the production price memo.
+fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
+    let mut memo = pricing::new_price_memo();
+    tree.walk_linear(pricer, tick_size(), &mut memo)
+}
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
 fun clustered_ticks(): (u64, u64, u64) {

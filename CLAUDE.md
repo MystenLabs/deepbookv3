@@ -45,11 +45,11 @@ When reviewing code in this repo, always read `.claude/rules/code-review.md` and
 
 Predict (`packages/predict/**`) is the most design-heavy surface, and most decisions here are already settled. **Before proposing or changing any Predict economics** (NAV/backing, rounding, oracle trust, liquidation, order-id/tick encoding, floor/leverage, supply/withdraw):
 
-- **Read the CURRENT settled list first** — `AGENTS.md` ("Predict Rework — LANDED" + "Settled design decisions") + `.claude/predict-design/OPEN_ISSUES.md` (current settled outcomes). Read that block, since Claude does not auto-load `AGENTS.md`. Treat `DECISION_JOURNAL.md` and `HISTORY.md` as **historical context, not the first stop**: many entries are superseded and several describe a model HEAD no longer runs. Never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met, and verify any journal claim against current HEAD before relying on it.
+- **Read the CURRENT settled list first** — `AGENTS.md` ("Predict Rework — LANDED" + "Settled design decisions") plus `packages/predict/predeploy/open-items.md` and `packages/predict/predeploy/rounding-policy.md`. Read those before historical scratch. Treat any `.claude/predict-design/DECISION_JOURNAL.md` or `HISTORY.md` copy as **historical context, not the first stop**: many entries are superseded and several describe a model HEAD no longer runs. Never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met, and verify any journal claim against current HEAD before relying on it.
 - **The floor model is static-floor knockout** (`floor_shares` = static `F`; no `floor_index`/`terminal_floor_index`; winner = `quantity - floor_shares`; knock-out at `floor_amount / liquidation_ltv`). The exact `current_nav` rework superseded the pre-rework NAV/valuation entries (band/haircut/fee/valuation-pass) — treat those as history. The **backing reserve** (D030 floor + λ-buffer, `backing_buffer_lambda`) is a **separate axis** from NAV valuation and may still be live — verify at HEAD rather than assuming it's gone. Any journal/HISTORY text describing a rising / time-varying floor is stale.
 - Design docs are **leads to verify against current HEAD**, not ground truth. Ground truth = Move source + git + `sui move test`.
 
-@.claude/predict-design/ROUNDING_POLICY.md
+Tracked predeploy docs: `packages/predict/predeploy/README.md`.
 
 ## Predict Build & Verify
 

@@ -1,0 +1,77 @@
+{
+  "_readme": "Labeled corpus for verify-bench.workflow.js — a CHEAP precision benchmark of the verify PANEL in isolation (no find phase). Each entry is a finding shaped like the orchestrator's FINDINGS_SCHEMA plus an `expect` verdict and a `why`. All entries are grounded at current HEAD: the `must-refute` ones describe a bug the code does NOT have (guarded on the spot), the `must-settle` ones describe a real behavior that is an ACCEPTED design decision. A healthy panel refutes/settles every entry; a panel that `confirms` one is a false-positive leak. RECALL (does the panel confirm a REAL bug) is tested separately by evals/seeds.md — apply a seed in a scratch worktree, then run a full audit. Keep entries anchored to real file:line; re-verify the anchors when the code moves.",
+  "corpus": [
+    {
+      "id": "settled-d031-oracle-guards",
+      "expect": "settled",
+      "why": "D031: the oracle basis/deviation drift guards were REMOVED by design — the BS operator is trusted (block_scholes_oracle::update is an unsigned stub). A finding that re-proposes them must be tagged settled (D031), not raised as new.",
+      "severity": "High", "title": "BS spot/forward/SVI pushes are accepted without a basis or deviation sanity guard",
+      "location": "packages/predict/sources/pricing/pricing.move (surface envelope) + block_scholes_oracle/sources/update.move",
+      "claim": "A compromised oracle operator can push an arbitrary forward/sigma and move the binary price with no on-chain deviation bound.",
+      "scenario": "Operator pushes a forward far from spot; pricing accepts it within the forward>0 / |rho|<=1 / sigma-band envelope and mints/redeems at a manipulated probability.",
+      "impact": "correctness", "confidence": "high",
+      "recommendation": "Add a max basis/deviation guard vs Pyth spot.",
+      "settled_ref": "", "evidence": "pricing envelope enforces forward>0/basis/|rho|<=1/sigma-band only; no deviation cap"
+    },
+    {
+      "id": "settled-d030-disjoint-backing",
+      "expect": "settled",
+      "why": "D030: payout backing = settlement floor + the aggregate disjoint-backing lambda buffer (backing_buffer_lambda). The old max-live-only under-reservation was fixed and the model is settled; a re-report must be tagged D030.",
+      "severity": "High", "title": "Payout backing reserves only the max single-order liability, under-reserving disjoint winners",
+      "location": "packages/predict/sources/strike_exposure/index/strike_payout_tree.move",
+      "claim": "Two disjoint winning ranges can both pay out but backing reserves only the max of the two, so the market is under-collateralized.",
+      "scenario": "Mint two non-overlapping winning ranges; at settlement both owe payout but reserved cash only covered the larger.",
+      "impact": "fund-loss", "confidence": "high",
+      "recommendation": "Reserve the sum of disjoint liabilities, not the max.",
+      "settled_ref": "", "evidence": "backing index tracks a max-live term"
+    },
+    {
+      "id": "settled-nav-no-band",
+      "expect": "settled",
+      "why": "Settled (AGENTS 'L10 supply mark = EXACT current_nav, no conservative band'): current_nav is the exact per-expiry recoverable value, one mark for supply and withdraw. A finding demanding a conservative haircut band is arguing against a settled decision.",
+      "severity": "Medium", "title": "current_nav lacks a conservative haircut, so the supply mark can over-count recoverable value",
+      "location": "packages/predict/sources/plp/plp.move (value_expiry / current_nav)",
+      "claim": "Without a haircut band the NAV mark can overstate recoverable value and dilute incumbents on supply.",
+      "scenario": "A supplier mints at a NAV that later proves optimistic, over-minting shares.",
+      "impact": "correctness", "confidence": "medium",
+      "recommendation": "Apply a conservative band to the supply mark.",
+      "settled_ref": "", "evidence": "value_expiry returns the exact walk_linear - correction_value"
+    },
+    {
+      "id": "refute-supply-shares-divzero",
+      "expect": "refuted",
+      "why": "Guarded on the spot: supply_shares/withdraw_dusdc assert mark.pool_value > 0 (EInvalidDrainMark) BEFORE the mul_div, so the div-by-zero cannot occur.",
+      "severity": "High", "title": "supply_shares divides by pool_value with no zero guard (div-by-zero brick)",
+      "location": "packages/predict/sources/plp/lp_book.move:365",
+      "claim": "If pool_value is zero the share math divides by zero and aborts, bricking supply.",
+      "scenario": "A collapsed pool reaches pool_value==0 and the next supply divides by it.",
+      "impact": "liveness-brick", "confidence": "high",
+      "recommendation": "Assert pool_value > 0 before dividing.",
+      "settled_ref": "", "evidence": "supply_shares body"
+    },
+    {
+      "id": "refute-memo-miss-brick",
+      "expect": "refuted",
+      "why": "Cannot co-occur: mint/close/liquidation mutate the payout tree AND the liquidation book together, so every active leveraged order's finite boundary tick IS a payout-tree node. The correction walk's memo lookup therefore always hits; the ETickNotInPriceMemo abort is unreachable on a consistent index.",
+      "severity": "High", "title": "NAV correction can look up a tick absent from the price memo and abort every flush",
+      "location": "packages/predict/sources/pricing/pricing.move (cached_up_price) + strike_exposure/index/liquidation_book.move (correction_value)",
+      "claim": "correction_value looks up a boundary tick that the tree walk never cached, so cached_up_price aborts ETickNotInPriceMemo and bricks the mandatory flush.",
+      "scenario": "A leveraged order whose boundary tick is missing from memo.ticks is priced during the correction walk.",
+      "impact": "liveness-brick", "confidence": "medium",
+      "recommendation": "Fall back to pricer.up_price on a memo miss.",
+      "settled_ref": "", "evidence": "cached_up_price aborts on a finite miss"
+    },
+    {
+      "id": "refute-assert-backing-off-by-one",
+      "expect": "refuted",
+      "why": "The code is correct: assert_backing checks balance >= required_cash(payout_liability) where required_cash = payout_liability + rebate_reserve. The invariant is an inclusive lower bound; there is no off-by-one — dust never aborts by ROUNDING_POLICY R1 (reserve >= payout by construction).",
+      "severity": "Medium", "title": "assert_backing uses >= where it should use > , allowing a one-ulp shortfall",
+      "location": "packages/predict/sources/expiry_cash.move:62",
+      "claim": "The backing assert admits balance exactly equal to required cash, leaving zero margin and risking a downstream underflow.",
+      "scenario": "balance == payout_liability + rebate_reserve exactly; a later dust subtraction underflows.",
+      "impact": "correctness", "confidence": "low",
+      "recommendation": "Tighten the compare to strictly greater.",
+      "settled_ref": "", "evidence": "assert_backing body + rounding-policy R1"
+    }
+  ]
+}
