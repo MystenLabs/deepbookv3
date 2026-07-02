@@ -1379,6 +1379,25 @@ public fun stake_deep_bundle(
         );
 }
 
+/// Withdraw all staked DEEP back to the account through the production PLP path.
+public fun unstake_deep_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .unstake_deep(
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
 /// Claim a settled trading-loss rebate through owner auth.
 public fun claim_trading_loss_rebate_bundle(
     self: &mut Fixture,

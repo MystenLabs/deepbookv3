@@ -15,13 +15,14 @@ module deepbook_predict::registry_guard_tests;
 
 use deepbook_predict::{
     accumulator_support,
-    admin::AdminCap,
+    admin::{Self, AdminCap},
     builder_code::{Self, BuilderCode},
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers,
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
+    oracle_fixture,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
@@ -866,6 +867,40 @@ fun bind_pyth_spot_and_surface(
 }
 
 // === PauseCap ===
+
+#[test]
+fun pause_cap_pauses_expiry_market_mint() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let admin_cap = admin::new(fx.scenario_mut().ctx());
+    let mut reg = fx.scenario_mut().take_shared<Registry>();
+    let pause_cap = reg.mint_pause_cap(&admin_cap, fx.scenario_mut().ctx());
+    let mut market = fx.take_expiry_market();
+
+    assert!(!market.mint_paused());
+    registry::pause_expiry_market_mint_pause_cap(&mut market, &reg, &pause_cap);
+    assert!(market.mint_paused());
+
+    pause_cap.destroy();
+    destroy(admin_cap);
+    return_shared(reg);
+    oracle_fixture::return_expiry_market(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = registry::EPauseCapNotValid)]
+fun revoked_pause_cap_cannot_pause_expiry_market_mint() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let admin_cap = admin::new(fx.scenario_mut().ctx());
+    let mut reg = fx.scenario_mut().take_shared<Registry>();
+    let pause_cap = reg.mint_pause_cap(&admin_cap, fx.scenario_mut().ctx());
+    reg.revoke_pause_cap(&admin_cap, pause_cap.id());
+    let mut market = fx.take_expiry_market();
+
+    registry::pause_expiry_market_mint_pause_cap(&mut market, &reg, &pause_cap);
+    abort 999
+}
 
 #[test, expected_failure(abort_code = registry::EPauseCapNotValid)]
 fun revoked_pause_cap_cannot_pause_trading() {

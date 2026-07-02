@@ -366,6 +366,10 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let rho = svi_params.rho();
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
+    // Analytically non-negative inside the pricing-safe envelope: |rho| <= 1 and
+    // sqrt((k-m)^2 + sigma^2) >= |k-m| >= |rho·(k-m)|. Kept as defense-in-depth
+    // against fixed-point rounding at the |rho| = 1 corner; no production input
+    // is known to reach it, so it carries no expected_failure test.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let a = svi_params.a();

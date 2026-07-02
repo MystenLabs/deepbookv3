@@ -204,6 +204,10 @@ public(package) fun next_deployable_market(
                     .is_some(),
                 EBlockScholesForwardFeedNotBoundToUnderlying,
             );
+            // Structurally unreachable at HEAD: Propbook binds forward and SVI
+            // atomically (bind/replace take the whole surface), so a missing SVI
+            // binding always trips the forward assert above first. Kept as
+            // defense-in-depth should the binding API ever split.
             assert!(
                 propbook_registry
                     .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
@@ -307,6 +311,10 @@ public(package) fun record_expiry_creation(
 ) {
     let cadence_index = cadence_index(cadence_id);
     let period_ms = cadence_period_ms(cadence_id);
+    // Both EInvalidDeploymentExpiry asserts are structurally unreachable via
+    // `registry::create_expiry_market`: the expiry always comes from
+    // `next_deployable_market`, which yields grid-aligned values strictly above
+    // the watermark. Kept as internal-invariant guards for any future caller.
     assert!(expiry % period_ms == 0, EInvalidDeploymentExpiry);
     assert!(
         expiry > manager

@@ -175,6 +175,10 @@ fun new_insert_read(
     new_raw_insert_read(raw, update_timestamp_ms)
 }
 
+/// NOTE: the `ELazerFeedNotFound` / `ELazerValueUnavailable` parse guards below are
+/// not reachable from Move unit tests — a real `pyth_lazer::Update` has no test
+/// constructor (which is why `record_raw_for_testing` exists and bypasses this
+/// path). They are exercised only against live Lazer payloads.
 fun raw_spot_from_update(update: &LazerUpdate, pyth_source_id: u32): RawSpot {
     let source_timestamp_us = update.timestamp();
     let feeds = update.feeds_ref();
