@@ -92,10 +92,12 @@ absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` 
 
 ## Prior-awareness (mandatory)
 Before raising anything, consult the settled-decision ledger and respect it:
-- `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions".
+- `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions" + "Rejected directions" (don't re-litigate a rejected direction unless its stated condition is met).
+- `packages/predict/predeploy/response-policies.md` — the register of settled tail-state response decisions (RP-*): chosen behavior, reasoning, pinning tests.
 - `packages/predict/predeploy/rounding-policy.md` — R1 liveness (dust never aborts; reserve >= payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
 - `packages/predict/predeploy/open-items.md` — committed deploy gates and active findings; do not duplicate an item already represented there.
-A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+lambda, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id or committed-policy reference and downranked to Info — not raised as new.
+A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+lambda, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id / RP-id / committed-policy reference and downranked to Info — not raised as new.
+Prior-awareness cuts BOTH ways: a register or ledger entry that no longer matches HEAD (the pinning test is gone, the code stopped implementing the recorded response, `docs/risks.md` claims behavior the code doesn't have) is NOT protection — that drift is itself a reportable finding, at the severity of the underlying gap.
 
 ## Empirical toolbox (lens 09 owns it; any lens may use Python)
 `packages/predict/simulations/` is a real localnet + Python economic harness:

@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Cross-reference linter for the Predict development system (this directory).
+
+The system's premise is that no session retains memory, so the artifacts must
+machine-check each other instead of relying on anyone remembering. This script
+is that check. It verifies, deterministically and stdlib-only:
+
+  1. PINNING TESTS (FATAL) — every test function named in a response-policies.md
+     "Pinning tests" field exists as `fun <name>` under packages/predict/tests/.
+     A register decision whose pinning test vanished is un-enforced: the exact
+     drift class that let risks.md promise unshipped behavior.
+  2. ID CROSS-REFS — every `RP-n` / `En` reference in the predeploy docs resolves
+     to a heading in response-policies.md / experiments.md (FATAL). Open-item
+     style IDs (`C-4`, `P-7`, ...) must resolve to open-items.md headings; a
+     miss is a WARNING (historical mentions of resolved items are legitimate
+     when the line says resolved/superseded/retired — those are skipped).
+  3. MEASURED LINKS (FATAL) — a register entry claiming a MEASURED risk profile
+     must name at least one findings doc that exists. MEASURED without linked
+     evidence is just BEST-GUESS wearing a costume.
+  4. DEAD PATHS (FATAL / WARNING) — file paths named in the predeploy docs must
+     exist (resolved against predeploy/, packages/predict/, the harness, and
+     the repo root). Bare filenames are globbed and only warned on.
+  5. EXPERIMENT SHAPE (WARNING) — every experiment names a driving ID; DONE
+     experiments link a stress/ findings doc.
+
+Usage:  python3 packages/predict/predeploy/check.py [REPO_ROOT]
+Exit 1 on any FATAL; warnings print but keep exit 0.
+
+Run this when a diff touches predeploy/, guards, or tests named here; the
+predict-audit skill runs it in preflight.
+"""
+import glob
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath(
+    os.path.join(HERE, '..', '..', '..'))
+PREDICT = os.path.join(ROOT, 'packages', 'predict')
+
+DOCS = sorted(glob.glob(os.path.join(HERE, '*.md')) +
+              glob.glob(os.path.join(HERE, 'stress', '*.md')))
+
+# Lines that legitimately mention IDs or paths of things that no longer exist.
+HISTORICAL = re.compile(
+    r'resolv|supersed|historical|former|retired|deleted|remov|graduat',
+    re.IGNORECASE)
+# Lines naming paths that live outside this repository.
+EXTERNAL = re.compile(r"external|not part of this repo|deployment repo|another repo",
+                      re.IGNORECASE)
+
+
+def read(path):
+    with open(path, encoding='utf-8') as f:
+        return f.read()
+
+
+def defined_ids():
+    """IDs defined by headings in the three tracker files."""
+    ids = {'rp': set(), 'e': set(), 'item': set()}
+    reg = os.path.join(HERE, 'response-policies.md')
+    if os.path.exists(reg):
+        ids['rp'] = set(re.findall(r'^## (RP-\d+)', read(reg), re.M))
+    exp = os.path.join(HERE, 'experiments.md')
+    if os.path.exists(exp):
+        ids['e'] = set(re.findall(r'^### (E\d+)', read(exp), re.M))
+    items = os.path.join(HERE, 'open-items.md')
+    if os.path.exists(items):
+        ids['item'] = set(re.findall(r'^### ([A-Z]{1,2}-\d+):', read(items), re.M))
+    return ids
+
+
+def check_pinning_tests(errors):
+    """Every function-shaped token in a 'Pinning tests' field exists in tests/."""
+    reg = os.path.join(HERE, 'response-policies.md')
+    if not os.path.exists(reg):
+        return
+    test_src = ''
+    for path in glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'),
+                          recursive=True):
+        test_src += read(path)
+    text = read(reg)
+    # A "Pinning tests" field runs from its bold label to the next bold field label.
+    for block in re.findall(r'\*\*Pinning tests[^*]*\*\*(.*?)(?=\n- \*\*|\n## |\Z)',
+                            text, re.S):
+        if 'not yet catalogued' in block:
+            continue
+        for tok in re.findall(r'`([a-z][a-z0-9_]+)`', block):
+            if '.' in tok or len(tok) < 10 or '_' not in tok:
+                continue  # filenames / short generic tokens, not test fn names
+            if not re.search(r'\bfun\s+' + re.escape(tok) + r'\b', test_src):
+                errors.append(
+                    f"response-policies.md pins test `{tok}` but no `fun {tok}` "
+                    f"exists under packages/predict/tests/")
+
+
+def check_id_refs(errors, warnings):
+    ids = defined_ids()
+    for path in DOCS:
+        name = os.path.relpath(path, HERE)
+        for line in read(path).splitlines():
+            for rp in re.findall(r'\b(RP-\d+)\b', line):
+                if rp not in ids['rp'] and not HISTORICAL.search(line):
+                    errors.append(f"{name}: reference to {rp} but no such entry "
+                                  f"in response-policies.md")
+            for e in re.findall(r'\b(E\d+)\b', line):
+                if e not in ids['e'] and not HISTORICAL.search(line):
+                    errors.append(f"{name}: reference to experiment {e} but no "
+                                  f"such heading in experiments.md")
+            if name == 'README.md':
+                continue  # the map's surface table names ID *classes*, not instances
+            for item in re.findall(r'\b([A-Z]{1,2}-\d+)\b', line):
+                if item.startswith(('RP-',)) or item in ids['item']:
+                    continue
+                if re.fullmatch(r'[SPCOHG]{1,2}-\d+', item) and not HISTORICAL.search(line):
+                    warnings.append(f"{name}: mentions {item}, which is not an "
+                                    f"open-items.md heading (resolved item? say so "
+                                    f"on the line, or point at the register entry)")
+
+
+def check_measured_links(errors):
+    reg = os.path.join(HERE, 'response-policies.md')
+    if not os.path.exists(reg):
+        return
+    text = read(reg)
+    entries = re.split(r'^## ', text, flags=re.M)[1:]
+    for entry in entries:
+        title = entry.splitlines()[0]
+        if not title.startswith('RP-'):
+            continue  # schema/discipline sections mention MEASURED as vocabulary
+        profile = re.search(r'\*\*Risk profile[^*]*\*\*(.*?)(?=\n- \*\*|\n## |\Z)',
+                            entry, re.S)
+        if not profile or 'MEASURED' not in profile.group(1):
+            continue
+        linked = re.findall(r'`([\w./-]+\.md)`', profile.group(1))
+        if not any(resolve(p) for p in linked):
+            errors.append(f"response-policies.md entry '{title}' claims MEASURED "
+                          f"but links no existing findings doc in its risk profile")
+
+
+def resolve(token, doc_dir=None):
+    """Resolve a path-like token against the naming doc's dir + the system's roots."""
+    bases = [HERE, PREDICT, os.path.join(PREDICT, 'harness'), ROOT]
+    if doc_dir:
+        bases.insert(0, doc_dir)
+    for base in bases:
+        if os.path.exists(os.path.normpath(os.path.join(base, token))):
+            return True
+    return False
+
+
+def check_paths(errors, warnings):
+    exts = ('.md', '.move', '.py', '.ts', '.js', '.sql', '.sh', '.toml')
+    for path in DOCS:
+        name = os.path.relpath(path, HERE)
+        seen = set()
+        for line in read(path).splitlines():
+            if HISTORICAL.search(line) or EXTERNAL.search(line):
+                continue
+            for tok in re.findall(r'`([\w./-]+)`', line):
+                if tok in seen or not tok.endswith(exts) or any(c in tok for c in '*{}<>'):
+                    continue
+                seen.add(tok)
+                if resolve(tok, doc_dir=os.path.dirname(path)):
+                    continue
+                if '/' in tok:
+                    errors.append(f"{name}: names path `{tok}` which does not exist")
+                else:
+                    hits = glob.glob(os.path.join(PREDICT, '**', tok), recursive=True) \
+                        or glob.glob(os.path.join(ROOT, '.claude', '**', tok), recursive=True)
+                    if not hits:
+                        warnings.append(f"{name}: names file `{tok}` not found under "
+                                        f"packages/predict/ or .claude/")
+
+
+def check_experiments(warnings):
+    exp = os.path.join(HERE, 'experiments.md')
+    if not os.path.exists(exp):
+        return
+    for entry in re.split(r'^### ', read(exp), flags=re.M)[1:]:
+        title = entry.splitlines()[0]
+        if title.startswith(('Backlog', 'Harness')):
+            continue
+        if '**Drives:**' not in entry:
+            warnings.append(f"experiments.md '{title}' has no Drives: field "
+                            f"(every experiment names the ID it informs)")
+        if 'DONE' in title:
+            refs = re.findall(r'`(stress/[\w.-]+\.md)`', entry)
+            if not any(resolve(p) for p in refs):
+                warnings.append(f"experiments.md '{title}' is DONE but links no "
+                                f"existing stress/ findings doc")
+
+
+def main():
+    errors, warnings = [], []
+    check_pinning_tests(errors)
+    check_id_refs(errors, warnings)
+    check_measured_links(errors)
+    check_paths(errors, warnings)
+    check_experiments(warnings)
+    for w in warnings:
+        print(f"WARNING: {w}")
+    for e in errors:
+        print(f"FATAL: {e}")
+    if errors:
+        print(f"\n{len(errors)} fatal, {len(warnings)} warnings")
+        return 1
+    print(f"OK: predeploy system cross-references clean ({len(warnings)} warnings)")
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

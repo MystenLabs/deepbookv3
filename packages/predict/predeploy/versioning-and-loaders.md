@@ -386,7 +386,8 @@ validates its own version.
 
 > Appended 2026-06-13 after reading the version surface end to end:
 > `protocol_config.move`, `registry.move`, `expiry_market.move`, `plp.move`,
-> `oracle/market_oracle.move`, `oracle/pyth/pyth_source.move`, and DeepBook core's
+> `oracle/market_oracle.move`, `oracle/pyth/pyth_source.move` (historical paths —
+> both since extracted to the external `propbook` package), and DeepBook core's
 > `packages/deepbook/sources/pool.move` `load_inner` (the pattern this doc cites).
 > Claims cite the code that backs them.
 

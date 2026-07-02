@@ -52,6 +52,7 @@ finding — never leave a known disagreement standing.
 | `oracle-calibration.md` | Near-expiry oracle miscalibration finding and repro (O-1) | |
 | `versioning-and-loaders.md` | Proposed (unimplemented) version-gate/loader cleanup | Verify its "shipped today" claims at HEAD before executing |
 | `stress/` | Measured capacity findings: consolidated doc + dated finding docs | Consolidated doc updated first; dated docs are evidence |
+| `check.py` | The system linter: pinning tests exist, ID cross-refs resolve, MEASURED links evidence, no dead paths | Run on any diff touching this directory or guards; audit preflight runs it too |
 | `AGENTS.md` (repo root) | Settled design decisions + rejected directions with don't-revisit-unless conditions | What the mechanism IS; the register is how it BEHAVES in tail states |
 | `.claude/rules/*.md` | Working rules per surface (move, tests, harness, indexer, code review) | Accumulated session knowledge; update when a session learns something durable |
 | `.claude/skills/predict-audit/` | The deep-audit harness (lenses, workflows, primer) | Audit runs must re-verify register entries at HEAD and not re-flag verified ones |
