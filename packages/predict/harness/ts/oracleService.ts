@@ -18,6 +18,7 @@ const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = run until SIGTE
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
 const GAS_BUDGET = 1_000_000_000;
 const SCALE_1E9 = 1_000_000_000;
+const DEFAULT_GRID_SPEC = "60000:3,300000:3,3600000:3";
 
 const to1e9 = (x: number) => BigInt(Math.round(x * SCALE_1E9));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -62,7 +63,7 @@ async function main() {
   // hour is in all three) — a duplicate expiry would mean duplicate sids in the BS batch.
   const gridNow = () => [
     ...new Set(
-      (process.env.GRID_SPEC ?? "60000:3,300000:3,3600000:3").split(",").flatMap((part) => {
+      (process.env.GRID_SPEC ?? DEFAULT_GRID_SPEC).split(",").flatMap((part) => {
         const [period, count] = part.split(":").map(Number);
         const base = Math.floor(Date.now() / period) * period;
         return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
@@ -71,7 +72,7 @@ async function main() {
   ];
   const { source, mode } = makeSource();
   await source.start(gridNow());
-  console.log(`[updater] source=${mode}; streaming a rolling grid (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:6"})...`);
+  console.log(`[updater] source=${mode}; streaming a rolling grid (GRID_SPEC=${process.env.GRID_SPEC ?? DEFAULT_GRID_SPEC})...`);
 
   const updaterAddress = process.env.UPDATER_ADDRESS;
   const signer = updaterAddress ? getSignerForAddress(updaterAddress) : getSigner();

@@ -16,8 +16,8 @@ lean into Move's grain: fields are module-private (only the declarer mutates cor
 ## How to apply (per function)
 For each function, ask its node's questions below against the module's **responsibility-map entry** (what it
 SHOULD own) and the entries of modules it composes. A violation is a **misplaced responsibility**, not a
-style nit. Before flagging, check the **known intentional exceptions** and the `DECISION_JOURNAL` settled
-list — these rules false-positive heavily on deliberate architecture.
+style nit. Before flagging, check the **known intentional exceptions** in `AGENTS.md` and committed
+predeploy policy/open items — these rules false-positive heavily on deliberate architecture.
 
 ---
 

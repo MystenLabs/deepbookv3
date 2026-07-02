@@ -29,6 +29,22 @@ public struct Pricer has copy, drop {
     svi: SVIParams,
 }
 
+/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
+///
+/// The NAV linear walk (`strike_payout_tree::walk_linear`) fills it once per node
+/// as it prices the payout tree in-order; the correction walk
+/// (`liquidation_book::correction_value`) then reads each leveraged order's boundary
+/// prices back by binary search instead of re-pricing every order. Every active
+/// leveraged order's finite boundary ticks are payout-tree nodes, so every finite
+/// lookup MUST hit: a miss is a broken exposure index, not a cache fallback, and
+/// `cached_range_price` aborts `ETickNotInPriceMemo` rather than silently repricing.
+public struct PriceMemo has drop {
+    /// Finite boundary ticks in ascending order (the in-order walk appends them).
+    ticks: vector<u64>,
+    /// `up_price(ticks[i] * tick_size)`, parallel to `ticks`.
+    prices: vector<u64>,
+}
+
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
@@ -42,6 +58,7 @@ const ELivePricingExpired: u64 = 9;
 const EBlockScholesSVIStale: u64 = 10;
 const EWrongBlockScholesForwardFeed: u64 = 11;
 const EWrongBlockScholesSVIFeed: u64 = 12;
+const ETickNotInPriceMemo: u64 = 13;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -106,7 +123,54 @@ public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
+/// Create an empty per-flush price cache (see `PriceMemo`).
+public(package) fun new_price_memo(): PriceMemo {
+    PriceMemo { ticks: vector[], prices: vector[] }
+}
+
+/// Read the cached range price `up_price(lower) - up_price(higher)` for one order's
+/// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
+/// Both finite boundaries must have been cached by the linear walk; a finite miss
+/// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
+public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher_tick: u64): u64 {
+    memo.cached_up_price(lower_tick).saturating_sub(memo.cached_up_price(higher_tick))
+}
+
+/// Price `tick` through `pricer` and append it to the cache. Called once per node by
+/// the in-order linear walk, so `ticks` stays ascending for `cached_up_price`'s
+/// binary search. Only finite ticks are stored (the tree never holds inf boundaries).
+public(package) fun price_and_cache(
+    memo: &mut PriceMemo,
+    pricer: &Pricer,
+    tick: u64,
+    tick_size: u64,
+): u64 {
+    let price = pricer.up_price(tick * tick_size);
+    memo.ticks.push_back(tick);
+    memo.prices.push_back(price);
+    price
+}
+
 // === Private Functions ===
+
+/// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
+/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
+/// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
+fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
+    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
+    if (tick == constants::pos_inf_tick!()) return 0;
+
+    let ticks = &memo.ticks;
+    let mut lo = 0;
+    let mut hi = ticks.length();
+    while (lo < hi) {
+        let mid = lo + (hi - lo) / 2;
+        let mid_tick = ticks[mid];
+        if (mid_tick == tick) return memo.prices[mid];
+        if (mid_tick < tick) lo = mid + 1 else hi = mid;
+    };
+    abort ETickNotInPriceMemo
+}
 
 fun assert_current_oracles(
     propbook_registry: &OracleRegistry,

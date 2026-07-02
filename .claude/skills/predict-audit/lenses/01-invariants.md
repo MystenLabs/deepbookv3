@@ -33,7 +33,7 @@ Produce:
 
 4. **LEAK ANALYSIS** — for each flow: can value be minted from nothing, double-counted, stranded/trapped, or
    transferred without consideration? Where does rounding accrue, in which direction, to whose benefit
-   (apply ROUNDING_POLICY R1/R2)? Is every subtraction on a settle/redeem/backing/withdraw path provably
+   (apply `packages/predict/predeploy/rounding-policy.md` R1/R2)? Is every subtraction on a settle/redeem/backing/withdraw path provably
    non-underflowing or saturating?
 
 **Focus areas (scope, not conclusions):**
@@ -43,7 +43,7 @@ Produce:
   settled liability — what guarantees the former bounds the latter for every order.
 - The exact `current_nav` mark (payout-tree `walk_linear` − leveraged `correction_value`, floored) and the
   precondition it rests on (every order whose gross value crossed its knock-out level (`floor_amount / liquidation_ltv`) has been liquidated before valuation — the
-  aggregate-floor precondition; see move.md NAV rules + the C3 note in ROUNDING_POLICY).
+  aggregate-floor precondition; see move.md NAV rules + the C3 note in `packages/predict/predeploy/rounding-policy.md`).
 - PLP share-pricing symmetry: supply and withdraw priced at the SAME frozen `current_nav` in `finish_flush` /
   `drain_lp_requests`; confirm `supply_NAV = TRUE = withdraw_NAV` at the valuation boundary (no over/under-count).
 - The rebate-reserve lifecycle (growth from fees, resolution, residual handling) and `pool_accounting` profit

@@ -19,5 +19,5 @@ testnet AND mainnet, verified via `getProtocolConfig`). The SUI cost differs by 
 (testnet 5 SUI, mainnet 0.5 SUI), but the *work* cap — and thus the OOG book size — is
 network-independent. `>30 SUI` txs are storage-heavy; the flush's NAV walk is pure computation.
 
-Context: `.claude/predict-review/OPEN-ITEMS.md` → `#cap-flush24` (Critical) and
-`.claude/predict-design/NAV_STRESS_INVESTIGATION_2026-06-28.md`.
+Context: `packages/predict/predeploy/open-items.md` (`C-1`) and
+`packages/predict/predeploy/stress/nav-stress-findings-2026-06-30.md`.
