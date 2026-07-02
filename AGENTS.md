@@ -15,19 +15,22 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
   - `predict/` is the prediction-market package built on top of DeepBook patterns.
   - `deepbook_margin/`, `margin_trading/`, `margin_liquidation/`, `token/`, `dbtc/`, `dusdc/` are supporting packages.
 - `crates/` contains Rust services:
-  - `server/`, `indexer/`, `schema/`
+  - `server/`, `indexer/`, `schema/` — the core DeepBook indexer stack
+  - `predict-server/`, `predict-indexer/`, `predict-schema/` — the Predict mirror stack
+  - `oracle-indexer/`, `oracle-server/` — propbook feed indexing
 - `scripts/` contains TypeScript transaction and ops scripts.
 - `.claude/rules/` contains repo-specific coding, testing, and review guidance.
 
 ## Context Routing
 
-**These rule files are NOT auto-loaded for you.** Codex auto-loads this `AGENTS.md`, but nothing loads `.claude/rules/*.md` by path — the `paths:` frontmatter on each is a map for a future hook, not a live mechanism. **Before editing a file under one of these globs, open and read the matching rule file.** Read manual-trigger files when the request matches.
+**Do not assume the rule files are in your context.** Codex auto-loads this `AGENTS.md` but nothing loads `.claude/rules/*.md` for you (recent Claude Code versions inject them by path via the `paths:` frontmatter; Codex and other agents get no injection). **Before editing a file under one of these globs, open and read the matching rule file.** Read manual-trigger files when the request matches.
 
 ### Path-Scoped Rules — read before editing files under the glob
 
 - `.claude/rules/move.md` for `packages/**/*.move`
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
 - `.claude/rules/predict-simulations.md` for `packages/predict/simulations/**`
+- `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
 - `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**`
 - `.claude/rules/predict-indexer.md` for the PREDICT crates `crates/predict-{server,indexer,schema}/**` (also read `indexer.md` for shared operational gotchas)
 - `.claude/rules/scripts.md` for `scripts/**`
@@ -36,6 +39,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 - `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes (for a deep Predict smart-contract audit, invoke the `predict-audit` skill at `.claude/skills/predict-audit/` — `rule-sweep.workflow.js` is the per-rule mechanical sweep, `ownership-walk.workflow.js` the per-module ownership conformance).
 - Before proposing/changing any **Predict economics** (NAV/backing, rounding, oracle trust, liquidation, tick/order-id encoding, floor/leverage, supply/withdraw): read `packages/predict/predeploy/open-items.md`, `packages/predict/predeploy/rounding-policy.md`, and the settled list below first. Historical `.claude/predict-design/` notes are local scratch if present; verify any old claim against current HEAD before relying on it.
+- `.claude/rules/harness-strategy.md` when the user wants to add or build a Predict harness trading strategy or test a scenario in the harness (also read `.claude/rules/predict-harness.md`).
 - `.claude/rules/wrap-up.md` when the user says "wrap up".
 
 ## Common Commands
@@ -86,7 +90,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 ## Predict Rework — LANDED (oracle extraction + tick re-encode + async NAV/LP)
 
-The three reworks are **consolidated on `at/predict-prune-supply-withdraw`**: the oracle
+The three reworks are **landed on `main`**: the oracle
 extracted to the standalone `propbook` feeds (`predict_math`→`fixed_math`), strikes
 re-encoded as absolute integer ticks, and the pool/NAV/LP layer rebuilt async with a
 privileged flush + exact `current_nav` mark. Source builds `--warnings-are-errors`
@@ -104,9 +108,15 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 - **Settlement is passive off Propbook exact Pyth timestamp history.** There is no public settle-only entrypoint: `expiry_market::ensure_settled` is the package-level branch gate used by settled redeem and pool rebalance/valuation. It validates the current Propbook Pyth binding and records `normalized_spot_at(expiry)` if present. If exact data is missing after expiry, the market remains unsettled and live valuation aborts; do not substitute an approximate mark because the single flush mark prices both supply and withdraw.
 - **Account app-auth is intentionally full-account, package-level authority.** An app authorized through `account::AccountRegistry` can mutably load any `AccountWrapper` it is handed and can use the normal `Account` balance/data APIs. Do not add per-user/per-coin app scoping unless a future account-margining design introduces dependency-aware user app grants (for example, preventing app revocation while open margin obligations require cross-app liquidation).
 
-**Still out of scope (follow-up work):**
-- The Rust `crates/predict-{schema,indexer,server}` need rewiring for the changed events: the new async-LP events (`SupplyRequested`/`WithdrawRequested`/`SupplyFilled`/`WithdrawFilled`/`SupplyRefunded`/`WithdrawRefunded`/`RequestCancelled`/`PoolValued`/`FlushExecuted`), M1 `ExpiryCashRebalanced`, `OrderMinted` carrying `lower_tick`/`higher_tick`, `MarketCreated` dropping `market_oracle_id`/min/max strike/source oracle ids and carrying `propbook_underlying_id` + `tick_size`, the collapsed `PricingConfigUpdated`, and the deleted oracle events — plus indexing the propbook feeds.
-- The simulation harness (`packages/predict/simulations`) is structurally rewired (tsc/py_compile/`bash -n` clean) but its economic parity + the `run.sh` localnet publish flow still need a full localnet `run.sh` run. Track remaining deploy-readiness work in `packages/predict/predeploy/open-items.md`.
+**Settled decisions — later additions (static-floor knockout era + promoted journal decisions):**
+- **Static-floor knockout leverage (landed).** `floor_shares` is a static `F` frozen at mint; a winner redeems `quantity - floor_shares`; an order knocks out when its gross value reaches `floor_amount / liquidation_ltv`. No rising floor, no `floor_index`/`terminal_floor_index`, no clock-dependent backing term; NAV is the exact per-expiry recoverable value. Any doc describing a rising/time-varying floor is stale. Full invariants: `.claude/rules/move.md` "Predict Economics".
+- **D025 — redeem deliberately has NO ask-price bound.** The mint-side probability bound is admission policy (the protocol declines to become counterparty in tail price regions); once a contract is live, redeeming at the live mark is the holder's right, and a redeem clamp would systematically underpay legitimate deep-ITM winners near expiry. The oracle-compromise exposure this leaves is the accepted trust model tracked by deploy gate S-4 / D031. Don't re-add exit-path price gates unless the oracle trust model changes.
+- **D026 — strike-quantity math stays u64.** A u128 widening was tried and deliberately reverted: the u64 mul ceiling is accepted because the failure mode is a graceful per-tx mint abort at extreme strike×quantity, never a brick, and inline u128 casts duplicated `fixed_math` semantics inside a core module. Don't reintroduce the widening.
+- **D031 — no oracle deviation/basis guards, deliberately (057f9565).** Per-push spot/basis deviation checks and the absolute basis band were removed: within the pricing-safe envelope, a compromised or buggy source prices live flows without bounds. Accepted and disclosed; the production mitigation is the signature verifier / cap-gating tracked by deploy gate S-4 (`packages/predict/predeploy/open-items.md`).
+
+**Follow-up state (verified 2026-07-02):**
+- The Rust `crates/predict-{schema,indexer,server}` crates are **landed** and handle the async-LP/oracle-era events (`supply_requested`/`withdraw_requested`/`supply_filled`/`withdraw_filled`/`request_cancelled`/`flush_executed`/`expiry_cash_rebalanced` handlers etc.), and `crates/oracle-{indexer,server}` index the propbook feeds. **Still open: an event-parity audit** — handlers remain for Move events that no longer exist (`predict_manager_created`, the three removed cap-mint handlers, `risk_config_updated`), and some current events (`PoolValued`, `SupplyRefunded`/`WithdrawRefunded`) have no handler. Verify handler↔event parity before relying on indexed data or deploying the indexer.
+- Simulation-harness deploy-readiness (full localnet `run.sh` parity) is tracked in `packages/predict/predeploy/open-items.md`; the Python-only path runs green.
 
 ## Code Review Norms
 
