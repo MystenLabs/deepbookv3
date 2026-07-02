@@ -2,22 +2,24 @@
 
 Status: accepted operational assumption as of 2026-07-02.
 
-This note resolves the former `S-1` deploy gate. No contract change is planned.
+This note resolves the former `S-1` deploy gate and the former `C-2`
+settled-but-unswept active-market liveness item. No contract change is planned.
 
 ## Contract Requirement
 
 Predict settlement intentionally uses an exact Propbook/Pyth timestamp. A market
 settles only after the keeper inserts a Pyth Lazer observation whose signed
 source timestamp matches `market.expiry` exactly. The settlement transaction then
-records the terminal `MarketSettled` event and sweeps the market in the same PTB.
+calls `plp::rebalance_expiry_cash`, which records the terminal `MarketSettled`
+event through `ensure_settled` and sweeps/deactivates the market in the same PTB.
 
 The expected transient state is:
 
 1. the market expires;
 2. live pricing is no longer allowed;
 3. the keeper queries Pyth for the exact expiry timestamp;
-4. `pyth_feed::insert_at`, `MarketSettled`, and the settled sweep land
-   atomically.
+4. `pyth_feed::insert_at`, `plp::rebalance_expiry_cash`, `MarketSettled`, and
+   the settled sweep/deactivation land atomically.
 
 During step 3, pool flushes intentionally defer or retry rather than using an
 approximate settlement mark.
@@ -31,7 +33,8 @@ the current subscribe-first design. Observed cadences ranged from 1 minute to
 multi-hour markets, with 13 to 14 concurrent expiry lanes.
 
 `insert_at` and `MarketSettled` share one latency number because the keeper lands
-the exact insert, settlement, and sweep atomically in one PTB.
+the exact insert, settlement, and settled sweep/deactivation atomically in one
+PTB.
 
 | Metric | Poll design, 840 settles | Subscribe-first design, 27 settles |
 | --- | ---: | ---: |
@@ -83,9 +86,13 @@ The keeper treats expired-unsettled as a designed, monitored transient:
 
 - retry cadence: every 10 seconds on the scan path;
 - retry duration: indefinite, isolated per market;
-- flush boundary guard: defer when any market is within 15 seconds of expiry;
+- sweep responsibility: every expired active market is driven through
+  `plp::rebalance_expiry_cash` after its exact row is available, removing it from
+  `PoolVault.active_expiry_markets` before routine flushes;
+- flush boundary guard: defer when any market is within 15 seconds of expiry or
+  when an expired active market has not yet been swept/deactivated;
 - stuck threshold: report a service failure if any market remains
-  expired-unsettled beyond 60 seconds;
+  expired-unsettled or expired-unswept beyond 60 seconds;
 - recovery: cold-start reseed from REST; pod restart is documented in the
   keeper deployment repo's `docs/operations/predict-keeper-redeploy.md` (the
   keeper is not part of this repository).
@@ -96,6 +103,7 @@ the period, and cleared automatically on the next tick.
 Escalation signals:
 
 - expired-unsettled market older than 60 seconds;
+- expired market still present in the pool active set older than 60 seconds;
 - sustained `source=rest` settlement ratio above the expected fallback level;
 - flush-stuck service failure records.
 

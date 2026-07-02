@@ -81,18 +81,6 @@ the 24-market cap is still far above the measured safe joint budget.
 measured single-PTB envelope, or make valuation resumable across PTBs. See
 `stress/capacity-and-gas-findings.md`.
 
-### C-2: Settled-but-unswept active markets can block flush liveness
-
-**Severity:** Low/Medium.
-
-The flush snapshots the whole active market set, and a settled market leaves that
-set only inside a successful `value_expiry`/sweep path. If expired-unswept
-markets accumulate, the active set can grow beyond the live-market creation cap
-and still must be processed by one flush.
-
-**Action:** Bound total active markets, add an out-of-flush sweep/deactivate
-path, or document the operator runbook requirement and cap cadence accordingly.
-
 ### C-3: Large multi-command PTBs amplify trade cost
 
 **Severity:** Medium for routers/keepers; normal one-op users unaffected.
