@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-01. This is the team-facing tracker for open Predict deploy
+Updated 2026-07-02. This is the team-facing tracker for open Predict deploy
 gates, audit findings, stress-test follow-ups, and required decisions.
 
 Resolved items should be removed from this file. Historical raw audit output may
@@ -83,16 +83,6 @@ transiently DoS priced flows until a valid push lands.
 **Action:** Restore write-time nonzero/normalizable guards for BS spot and
 forward updates, or document that the production verifier/source guarantees this.
 
-### P-6: `lp_pool_value` has six same-typed positional `u64` arguments
-
-**Severity:** Low.
-
-`lp_pool_value` takes multiple adjacent `u64` values, most from the same ledger
-struct. A transposition compiles and misprices PLP supply/withdraw.
-
-**Action:** Pass the ledger/accounting struct plus genuinely external values, or
-otherwise narrow the positional surface.
-
 ### P-7: Async LP requests have no fill-price protection
 
 **Severity:** Medium.
@@ -161,15 +151,6 @@ gas scales linearly inside a PTB. See
 
 Add a deterministic test that removes an interior node and verifies
 `settled_payout_liability` / `walk_linear` bit-equality over the mutated tree.
-
-### T-2: Cap tests and liquidation tests need cleanup
-
-Known cleanup:
-
-- `live_market_cap_tests` should synthesize IDs instead of hardcoding a vector
-  tied to one cap value.
-- One `liquidation_book` assertion is tautological for a 1x order and should
-  assert candidate/active counts instead.
 
 ### T-3: Confirm external keeper migration for settled redeem API split
 
