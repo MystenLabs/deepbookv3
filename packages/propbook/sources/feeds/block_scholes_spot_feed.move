@@ -37,6 +37,9 @@ public struct BlockScholesSpotFeed has key {
 
 // === Read Functions ===
 
+// Raw reads (`raw_*`) are public provenance/observability API (devInspect and
+// external composition); validated consumers use the `normalized_*` reads.
+
 /// Return the feed object ID.
 public fun id(feed: &BlockScholesSpotFeed): ID {
     feed.id.to_inner()

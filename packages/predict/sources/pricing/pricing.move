@@ -74,7 +74,7 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // === Public Functions ===
 
 /// Return the expiry market this pricer was loaded for.
-public fun expiry_market_id(pricer: &Pricer): ID {
+public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 

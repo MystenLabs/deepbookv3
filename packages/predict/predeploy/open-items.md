@@ -167,18 +167,6 @@ three amounts through) so both sites share one derivation. (audit 5de114)
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner. (audit 49108f)
 
-### H-4: Complete the public-read classify-or-delete pass
-
-**Severity:** Low; `public` signatures freeze at deploy.
-
-Remaining zero-caller `public` reads with no consumer class stated in their doc
-comments, per the move.md public-read classification rule: the ~20 propbook
-`raw_*` reader families (raw_spot/raw_spot_at/raw_price_magnitude/raw_forward_*/
-raw_svi_* across the four feeds) and `pricing::Pricer.expiry_market_id`. For
-each family: name the intended consumer class (PTB composition / devInspect /
-provenance) in a doc comment, or delete before the deploy snapshot.
-(audit 405de8, cb62a2, 88b7b8)
-
 ### H-5: Careful trade-flow dedup batch (verify deeply before fixing)
 
 **Severity:** Low, but all four sit on or near the mint/redeem path — not
@@ -206,16 +194,3 @@ hygiene-speed changes.
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further. (audit c3edaa)
 
-## Required Decisions
-
-### G-1: Pause-gate scope for pool cash growth and capital lock
-
-**Severity:** Decision; today's behavior may be intentional.
-
-Two flows mutate pool risk posture without the gates the rule text implies:
-`rebalance_expiry_cash`'s grow direction (`top_up_live_expiry_cash`) moves idle
-cash INTO a live market while trading is paused (is topping up "new risk
-creation"?), and `plp::lock_capital` mints genesis PLP without checking the
-valuation lock. Decide whether each is intentionally exempt, then either add
-the gate or record the exemption in the settled decisions.
-(audit 20aafa, 0e81b3)
