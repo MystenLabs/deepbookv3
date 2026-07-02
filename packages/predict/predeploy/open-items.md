@@ -47,18 +47,6 @@ and misprice mint/redeem flows.
 freshness with remaining time, or otherwise document and bound the accepted
 near-expiry pricing window.
 
-### P-4: Propbook bindings are insert-only and unrecoverable
-
-**Severity:** Medium.
-
-Predict treats Propbook's canonical binding as the oracle authenticity anchor.
-The registry binding path is insert-only with no unbind/rebind/replace. A trusted
-admin misbinding can permanently make a market unpriceable or mispriced, and a
-single unpriceable active market aborts the whole pool flush.
-
-**Action:** Add an admin-gated rebind/unbind path, or document immutable binding
-as a deliberate governance risk with operational tripwires.
-
 ### P-5: BS zero/non-normalizable updates can blank live reads
 
 **Severity:** Low / adjacent to S-4.

@@ -95,6 +95,40 @@ fun passive_settlement_with_wrong_pyth_feed_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
+fun passive_settlement_rejects_old_pyth_after_propbook_rebind() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let _rebound_pyth_id = fx.create_and_rebind_pyth(SECOND_SOURCE_ID);
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+
+    fx.ensure_settled_bundle(&mut market);
+
+    abort 999
+}
+
+#[test]
+fun passive_settlement_uses_rebound_pyth_after_exact_backfill() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let rebound_pyth_id = fx.create_and_rebind_pyth(SECOND_SOURCE_ID);
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle_with_pyth(expiry_id, rebound_pyth_id);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+
+    assert_eq!(fx.ensure_settled_bundle(&mut market), true);
+    assert_eq!(expiry_market::settlement_price(helpers::market(&market)), settlement_price);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 #[test]
 fun passive_settled_redeem_pays_terminal_payout() {
     let settlement_price = settlement_inside_default_finite_range();

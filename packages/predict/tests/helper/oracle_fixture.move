@@ -34,7 +34,7 @@ use propbook::{
     block_scholes_spot_feed::BlockScholesSpotFeed,
     block_scholes_svi_feed::BlockScholesSVIFeed,
     pyth_feed::{Self, PythFeed},
-    registry::{Self as propbook_registry, OracleRegistry}
+    registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::destroy;
 use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
@@ -46,6 +46,7 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 public struct OracleFixture {
     scenario: Scenario,
     admin_cap: AdminCap,
+    propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
     pyth_id: ID,
@@ -120,8 +121,10 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
 
     // tx2: bind all pricing feeds to the canonical underlying.
     scenario.next_tx(test_constants::admin());
+    let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     test_helpers::bind_feeds_to_underlying(
         &scenario,
+        &propbook_admin_cap,
         pyth_id,
         bs_spot_id,
         bs_forward_id,
@@ -162,6 +165,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     OracleFixture {
         scenario,
         admin_cap,
+        propbook_admin_cap,
         lifecycle_cap,
         clock,
         pyth_id,
@@ -184,16 +188,91 @@ public fun setup_oracle_default(): OracleFixture {
 
 /// Take oracle/config objects as one named bundle to avoid wide tuple plumbing.
 public fun take_oracle_bundle(self: &mut OracleFixture): OracleBundle {
+    let pyth_id = self.pyth_id;
+    let bs_spot_id = self.bs_spot_id;
+    let bs_forward_id = self.bs_forward_id;
+    let bs_svi_id = self.bs_svi_id;
+    self.take_oracle_bundle_by_ids(pyth_id, bs_spot_id, bs_forward_id, bs_svi_id)
+}
+
+/// Take oracle/config objects for explicit feed IDs. Used by binding-replacement
+/// tests where the market stays fixed but Propbook's current feed objects change.
+public fun take_oracle_bundle_by_ids(
+    self: &mut OracleFixture,
+    pyth_id: ID,
+    bs_spot_id: ID,
+    bs_forward_id: ID,
+    bs_svi_id: ID,
+): OracleBundle {
     OracleBundle {
-        pyth: self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        pyth: self.scenario.take_shared_by_id<PythFeed>(pyth_id),
         bs: bs_feed::new(
-            self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
-            self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
-            self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
+            self.scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id),
+            self.scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id),
+            self.scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id),
         ),
         oracle_registry: self.scenario.take_shared<OracleRegistry>(),
         config: self.scenario.take_shared<ProtocolConfig>(),
     }
+}
+
+/// Create replacement Propbook feeds for `source_id` and atomically rebind the
+/// fixture's underlying to them. The existing market stores only the underlying
+/// ID, so later `take_oracle_bundle_by_ids` calls can prove Predict follows the
+/// new current binding without recreating the market.
+public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): (ID, ID, ID, ID) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        source_id,
+        self.scenario.ctx(),
+    );
+    let bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
+        &mut oracle_registry,
+        source_id,
+        self.scenario.ctx(),
+    );
+    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
+        &mut oracle_registry,
+        source_id,
+        self.scenario.ctx(),
+    );
+    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
+        &mut oracle_registry,
+        source_id,
+        self.scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let bs_spot = self.scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
+    let bs_forward = self.scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
+    let bs_svi = self.scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
+    propbook_registry::replace_pyth_binding_for_underlying(
+        &mut oracle_registry,
+        &self.propbook_admin_cap,
+        &pyth,
+        test_constants::propbook_underlying_id(),
+    );
+    propbook_registry::replace_block_scholes_bindings_for_underlying(
+        &mut oracle_registry,
+        &self.propbook_admin_cap,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        test_constants::propbook_underlying_id(),
+    );
+    return_shared(bs_svi);
+    return_shared(bs_forward);
+    return_shared(bs_spot);
+    return_shared(pyth);
+    return_shared(oracle_registry);
+
+    self.scenario.next_tx(test_constants::admin());
+    (pyth_id, bs_spot_id, bs_forward_id, bs_svi_id)
 }
 
 /// Return the shared objects taken by `take_oracle_bundle`.
@@ -281,19 +360,20 @@ public fun prepare_real_oracle(
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
 ) {
+    let bs_source_id = bs.spot().bs_source_id();
     let live_ts = test_constants::live_source_timestamp_ms();
     store_pyth_spot(pyth, spot, live_ts, live_ts);
     bs
         .spot_mut()
         .update(
-            update::new_spot_update(test_constants::pyth_feed_id(), live_ts, spot),
+            update::new_spot_update(bs_source_id, live_ts, spot),
             &self.clock,
         );
     bs
         .forward_mut()
         .update(
             update::new_forward_update(
-                test_constants::pyth_feed_id(),
+                bs_source_id,
                 self.expiry,
                 live_ts,
                 forward,
@@ -305,7 +385,7 @@ public fun prepare_real_oracle(
         .svi_mut()
         .update(
             update::new_svi_update(
-                test_constants::pyth_feed_id(),
+                bs_source_id,
                 self.expiry,
                 live_ts,
                 svi_a,
@@ -357,10 +437,11 @@ public fun set_bs_spot_for_testing(
     source_timestamp_ms: u64,
     spot: u64,
 ) {
+    let bs_source_id = bs.spot().bs_source_id();
     bs
         .spot_mut()
         .update(
-            update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
+            update::new_spot_update(bs_source_id, source_timestamp_ms, spot),
             &self.clock,
         );
 }
@@ -384,11 +465,12 @@ public fun set_bs_forward_for_testing(
     source_timestamp_ms: u64,
     forward: u64,
 ) {
+    let bs_source_id = bs.forward().bs_source_id();
     bs
         .forward_mut()
         .update(
             update::new_forward_update(
-                test_constants::pyth_feed_id(),
+                bs_source_id,
                 self.expiry,
                 source_timestamp_ms,
                 forward,
@@ -507,6 +589,7 @@ public fun finish(self: OracleFixture) {
     let OracleFixture {
         scenario,
         admin_cap,
+        propbook_admin_cap,
         lifecycle_cap,
         clock,
         pyth_id: _,
@@ -517,6 +600,7 @@ public fun finish(self: OracleFixture) {
         expiry: _,
     } = self;
     lifecycle_cap.destroy();
+    destroy(propbook_admin_cap);
     destroy(admin_cap);
     clock.destroy_for_testing();
     scenario.end();

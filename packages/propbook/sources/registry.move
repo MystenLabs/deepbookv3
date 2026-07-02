@@ -5,7 +5,7 @@
 ///
 /// The registry owns two separate namespaces:
 /// - source catalog: one Propbook oracle object per source-local key
-/// - canonical binding: one immutable oracle per canonical consumer key
+/// - canonical binding: one active oracle per canonical consumer key
 ///
 /// Source oracle objects are permissionless wrappers around verified source data.
 /// Canonical bindings are admin-controlled because they are the trust claim that
@@ -31,6 +31,7 @@ const ESourceAlreadyBound: u64 = 3;
 const EBindingAlreadyExists: u64 = 4;
 const EBlockScholesSpotNotBound: u64 = 5;
 const EWrongBlockScholesSource: u64 = 6;
+const EBindingNotFound: u64 = 7;
 
 /// Oracle-kind tags stored in registry keys; future oracles add a value here.
 public(package) macro fun kind_pyth(): u8 {
@@ -87,7 +88,7 @@ public struct OracleBindingKey has copy, drop, store {
     value_kind: u8,
 }
 
-/// Canonical metadata for one immutable Propbook oracle binding.
+/// Canonical metadata for one active Propbook oracle binding.
 public struct OracleMetadata has copy, drop, store {
     propbook_underlying_id: u32,
     oracle_kind: u8,
@@ -112,6 +113,17 @@ public struct OracleBound has copy, drop {
     value_kind: u8,
 }
 
+/// Emitted when an admin replaces the active oracle for a canonical binding.
+public struct OracleRebound has copy, drop {
+    propbook_underlying_id: u32,
+    oracle_kind: u8,
+    value_kind: u8,
+    old_source_id: u32,
+    old_propbook_oracle_id: ID,
+    new_source_id: u32,
+    new_propbook_oracle_id: ID,
+}
+
 fun init(ctx: &mut TxContext) {
     create_and_share(ctx);
     transfer::public_transfer(RegistryAdminCap { id: object::new(ctx) }, ctx.sender());
@@ -133,10 +145,7 @@ public fun contains_pyth_source(registry: &OracleRegistry, pyth_source_id: u32):
 }
 
 /// Whether a Propbook BS spot wrapper exists for `bs_source_id`.
-public fun contains_block_scholes_spot_source(
-    registry: &OracleRegistry,
-    bs_source_id: u32,
-): bool {
+public fun contains_block_scholes_spot_source(registry: &OracleRegistry, bs_source_id: u32): bool {
     registry.contains_source(block_scholes_spot_source_key(bs_source_id))
 }
 
@@ -149,10 +158,7 @@ public fun contains_block_scholes_forward_source(
 }
 
 /// Whether a Propbook BS SVI wrapper exists for `bs_source_id`.
-public fun contains_block_scholes_svi_source(
-    registry: &OracleRegistry,
-    bs_source_id: u32,
-): bool {
+public fun contains_block_scholes_svi_source(registry: &OracleRegistry, bs_source_id: u32): bool {
     registry.contains_source(block_scholes_svi_source_key(bs_source_id))
 }
 
@@ -343,6 +349,25 @@ public fun bind_pyth_to_underlying(
     );
 }
 
+/// Admin-replace the canonical Pyth source feed for a Propbook underlying.
+///
+/// The replacement feed must already be registered in the source catalog. A
+/// source key already assigned to another underlying remains ineligible forever;
+/// replacement does not create an unbound intermediate state.
+public fun replace_pyth_binding_for_underlying(
+    registry: &mut OracleRegistry,
+    admin_cap: &RegistryAdminCap,
+    feed: &PythFeed,
+    propbook_underlying_id: u32,
+) {
+    registry.replace_oracle(
+        admin_cap,
+        pyth_source_key(pyth_feed::pyth_source_id(feed)),
+        pyth_feed::id(feed),
+        pyth_binding_key(propbook_underlying_id),
+    );
+}
+
 /// Admin-bind this BS spot source feed to a canonical Propbook underlying.
 public fun bind_block_scholes_spot_to_underlying(
     registry: &mut OracleRegistry,
@@ -402,6 +427,55 @@ public fun bind_block_scholes_surface_to_underlying(
     );
 }
 
+/// Admin-replace all canonical Block Scholes feeds for a Propbook underlying.
+///
+/// Spot, forward, and SVI are replaced atomically and must all come from the same
+/// `bs_source_id`, preserving the same-source surface invariant consumers rely on.
+public fun replace_block_scholes_bindings_for_underlying(
+    registry: &mut OracleRegistry,
+    admin_cap: &RegistryAdminCap,
+    spot_feed: &BlockScholesSpotFeed,
+    forward_feed: &BlockScholesForwardFeed,
+    svi_feed: &BlockScholesSVIFeed,
+    propbook_underlying_id: u32,
+) {
+    let bs_source_id = block_scholes_spot_feed::bs_source_id(spot_feed);
+    assert!(
+        bs_source_id == block_scholes_forward_feed::bs_source_id(forward_feed),
+        EWrongBlockScholesSource,
+    );
+    assert!(
+        bs_source_id == block_scholes_svi_feed::bs_source_id(svi_feed),
+        EWrongBlockScholesSource,
+    );
+
+    let spot_source_key = block_scholes_spot_source_key(bs_source_id);
+    let forward_source_key = block_scholes_forward_source_key(bs_source_id);
+    let svi_source_key = block_scholes_svi_source_key(bs_source_id);
+    let spot_binding_key = block_scholes_spot_binding_key(propbook_underlying_id);
+    let forward_binding_key = block_scholes_forward_binding_key(propbook_underlying_id);
+    let svi_binding_key = block_scholes_svi_binding_key(propbook_underlying_id);
+
+    registry.replace_oracle(
+        admin_cap,
+        spot_source_key,
+        block_scholes_spot_feed::id(spot_feed),
+        spot_binding_key,
+    );
+    registry.replace_oracle(
+        admin_cap,
+        forward_source_key,
+        block_scholes_forward_feed::id(forward_feed),
+        forward_binding_key,
+    );
+    registry.replace_oracle(
+        admin_cap,
+        svi_source_key,
+        block_scholes_svi_feed::id(svi_feed),
+        svi_binding_key,
+    );
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the singleton registry. Owning the share in the defining
@@ -414,7 +488,11 @@ public(package) fun create_and_share(ctx: &mut TxContext) {
 
 /// Bind a source key to its Propbook object ID, aborting if a source wrapper
 /// already exists for that key.
-fun record_source(registry: &mut OracleRegistry, source_key: OracleSourceKey, propbook_oracle_id: ID) {
+fun record_source(
+    registry: &mut OracleRegistry,
+    source_key: OracleSourceKey,
+    propbook_oracle_id: ID,
+) {
     assert!(!registry.sources.contains(source_key), ESourceAlreadyExists);
     registry.sources.add(source_key, propbook_oracle_id);
     event::emit(OracleSourceRegistered {
@@ -426,7 +504,7 @@ fun record_source(registry: &mut OracleRegistry, source_key: OracleSourceKey, pr
 
 /// Bind one source oracle object to a canonical Propbook underlying.
 /// Source wrapper creation remains permissionless; this canonical mapping is the
-/// insert-only admin-controlled trust claim downstream consumers can discover.
+/// initial admin-controlled trust claim downstream consumers can discover.
 fun bind_oracle(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,
@@ -437,13 +515,7 @@ fun bind_oracle(
     let propbook_underlying_id = binding_key.propbook_underlying_id;
     registry.assert_registered_source_object(source_key, propbook_oracle_id);
     registry.assert_binding_available(binding_key);
-
-    if (registry.source_bindings.contains(source_key)) {
-        assert!(
-            *registry.source_bindings.borrow(source_key) == propbook_underlying_id,
-            ESourceAlreadyBound,
-        );
-    };
+    registry.assert_source_assignable(source_key, propbook_underlying_id);
 
     let metadata = OracleMetadata {
         propbook_underlying_id,
@@ -453,10 +525,7 @@ fun bind_oracle(
         value_kind: binding_key.value_kind,
     };
     registry.bindings.add(binding_key, metadata);
-
-    if (!registry.source_bindings.contains(source_key)) {
-        registry.source_bindings.add(source_key, propbook_underlying_id);
-    };
+    registry.record_source_binding_if_missing(source_key, propbook_underlying_id);
 
     event::emit(OracleBound {
         propbook_underlying_id,
@@ -464,6 +533,42 @@ fun bind_oracle(
         source_id: source_key.source_id,
         propbook_oracle_id,
         value_kind: binding_key.value_kind,
+    });
+}
+
+/// Replace one active binding without clearing the canonical key. Callers that
+/// pass objects through the stable lookup APIs automatically follow the new ID.
+fun replace_oracle(
+    registry: &mut OracleRegistry,
+    _admin_cap: &RegistryAdminCap,
+    source_key: OracleSourceKey,
+    propbook_oracle_id: ID,
+    binding_key: OracleBindingKey,
+) {
+    let propbook_underlying_id = binding_key.propbook_underlying_id;
+    registry.assert_binding_exists(binding_key);
+    registry.assert_registered_source_object(source_key, propbook_oracle_id);
+    registry.assert_source_assignable(source_key, propbook_underlying_id);
+
+    let old_metadata = *registry.bindings.borrow(binding_key);
+    let metadata = OracleMetadata {
+        propbook_underlying_id,
+        oracle_kind: source_key.oracle_kind,
+        source_id: source_key.source_id,
+        propbook_oracle_id,
+        value_kind: binding_key.value_kind,
+    };
+    *registry.bindings.borrow_mut(binding_key) = metadata;
+    registry.record_source_binding_if_missing(source_key, propbook_underlying_id);
+
+    event::emit(OracleRebound {
+        propbook_underlying_id,
+        oracle_kind: source_key.oracle_kind,
+        value_kind: binding_key.value_kind,
+        old_source_id: old_metadata.source_id,
+        old_propbook_oracle_id: old_metadata.propbook_oracle_id,
+        new_source_id: source_key.source_id,
+        new_propbook_oracle_id: propbook_oracle_id,
     });
 }
 
@@ -522,6 +627,33 @@ fun assert_registered_source_object(
 
 fun assert_binding_available(registry: &OracleRegistry, binding_key: OracleBindingKey) {
     assert!(!registry.bindings.contains(binding_key), EBindingAlreadyExists);
+}
+
+fun assert_binding_exists(registry: &OracleRegistry, binding_key: OracleBindingKey) {
+    assert!(registry.bindings.contains(binding_key), EBindingNotFound);
+}
+
+fun assert_source_assignable(
+    registry: &OracleRegistry,
+    source_key: OracleSourceKey,
+    propbook_underlying_id: u32,
+) {
+    if (registry.source_bindings.contains(source_key)) {
+        assert!(
+            *registry.source_bindings.borrow(source_key) == propbook_underlying_id,
+            ESourceAlreadyBound,
+        );
+    };
+}
+
+fun record_source_binding_if_missing(
+    registry: &mut OracleRegistry,
+    source_key: OracleSourceKey,
+    propbook_underlying_id: u32,
+) {
+    if (!registry.source_bindings.contains(source_key)) {
+        registry.source_bindings.add(source_key, propbook_underlying_id);
+    };
 }
 
 fun assert_bound_block_scholes_spot_source(
