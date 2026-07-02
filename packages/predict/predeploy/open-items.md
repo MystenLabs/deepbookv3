@@ -63,6 +63,20 @@ should remain queued or be explicitly refundable/cancellable under a documented
 policy. Add tests for both pass and miss cases, including a volatile low-capital
 pool mark.
 
+### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
+
+**Severity:** Medium / required decision before deploy.
+
+Materialized protocol profit joins into `PoolVault.protocol_reserve_balance`
+(plp.move:797, :912) but no split/withdraw/claim entrypoint exists in any of the
+four packages (verified by grep at HEAD b34b0cd4; only a getter and an event
+field read it). The protocol cut is excluded from LP value and can never leave
+the vault without a package upgrade.
+
+**Action:** Add an AdminCap-gated withdraw entrypoint (e.g.
+`withdraw_protocol_reserve` splitting from the balance), or record deliberate
+deferral to a post-deploy upgrade as the decision. (audit 412e9e)
+
 ## Capacity and Liveness Findings
 
 ### C-1: Full-pool flush has no joint valuation budget
@@ -94,6 +108,25 @@ computation cap; the ceiling is around 110-150 leveraged mints, data-dependent.
 gas scales linearly inside a PTB. See
 `stress/mint-batch-findings-2026-07-01.md`.
 
+### C-4: LP flush drain hard-aborts on a zero-value head request or a NAV==0 mark
+
+**Severity:** Medium.
+
+`lp_book::drain` asserts `shares > 0` / `payout > 0` per filled request and
+`pool_value > 0` / `total_supply > 0` in the share-pricing helpers, all under a
+single `EInvalidDrainMark`. A head request whose fill rounds to zero, or a
+reachable NAV==0 mark (sticky profit-basis exclusion exceeding gross — see the
+plp.move:735-740 comment), aborts the entire flush instead of skipping or
+refunding the degenerate request. The only unblock is the request owner
+voluntarily cancelling; a hostile or absent owner stalls the FIFO indefinitely,
+freezing all supply/withdraw behind it.
+
+**Action:** Treat zero-value fills as skip/auto-cancel-and-refund instead of
+aborting, and reserve `EInvalidDrainMark` for genuinely invalid marks (or split
+the error codes and add an eviction path for degenerate head requests). Design
+this together with the P-7 limit-field policy, which already needs a
+stay-queued/skip decision for missed limits. (audit 11767b)
+
 ## Oracle Calibration
 
 ### O-1: Near-expiry oracle miscalibration is exploitable
@@ -106,3 +139,47 @@ See `oracle-calibration.md`.
 
 **Action:** Recalibrate near-expiry volatility/time-to-expiry behavior or block
 the affected near-expiry market shape until the reliability curve is verified.
+
+## Maintainability and Pre-Deploy Hygiene
+
+From the 2026-07-02 mini audit sweep (HEAD b34b0cd4). These are free to fix
+pre-deploy and breaking (or permanent) after; none block correctness today.
+
+### H-1: Dead public surface and error-code gaps should be pruned before deploy
+
+**Severity:** Low; public surface and error-code values are one-way doors.
+
+- `block_scholes_svi_feed::raw_svi_at` (public, zero callers anywhere) and
+  `OracleMetadata::oracle_kind`/`value_kind` getters (zero callers) ship as
+  permanent API with no consumer; `stake_config::lower/upper_benefit_power` are
+  test-only. (audit ffcc7d)
+- The forward and SVI feed error constants skip value 1 (0,2,3,4), unlike the
+  contiguous spot feed — renumbering is free pre-deploy only. (audit 4b9be6)
+
+**Action:** Delete the dead public getters and renumber the feed error
+constants before the deploy snapshot.
+
+### H-2: Mint fee breakdown derived twice between the slippage assert and payment
+
+**Severity:** Low (latent correctness risk under future edits).
+
+`mint_prepared_exact_quantity` (expiry_market.move:849-851) and
+`settle_mint_payment` (:1070-1073) independently derive the identical
+builder-fee/subsidy/trader-fee decomposition; the `max_cost` bound and the
+actual withdrawal stay equal only by hand-maintained sync. An edit to one copy
+silently makes traders pay a total the slippage guard never checked.
+
+**Action:** Compute the decomposition once (small summary struct or pass the
+three amounts through) so both sites share one derivation. (audit 5de114)
+
+### H-3: Smaller cleanup items
+
+- Document the `timestamp_ms < expiry_ms` precondition on
+  `strike_exposure_config::fee_rate`/`trading_fee` — the only underflow guard is
+  `ELivePricingExpired` two modules away in pricing. (audit 87a82c)
+- Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
+  helpers (and shared guard preamble) across the BS forward/SVI/spot feeds into
+  a generic `oracle_lane` helper. (audit 7af3ed)
+- `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
+  `ExpiryCash` solvency invariant — consider folding it into the custody
+  component so per-expiry DUSDC has one owner. (audit 49108f)
