@@ -88,9 +88,9 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Place a DeepBook limit order using account custody. The wrapper settles all
-/// three touched coin types, temporarily funds the embedded manager, calls core,
-/// then sweeps free balances back into the account.
+/// Place a DeepBook limit order using account custody. The wrapper settles and
+/// temporarily funds the embedded manager with all account balances for the
+/// three touched coin types, calls core, then sweeps free balances back.
 public fun place_limit_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -104,9 +104,6 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     is_bid: bool,
     pay_with_deep: bool,
     expire_timestamp: u64,
-    max_base_in: u64,
-    max_quote_in: u64,
-    max_deep_in: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -115,9 +112,10 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     wrapper.settle<QuoteAsset>(root, clock);
     wrapper.settle<DEEP>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let base_funding = account_data::withdraw_or_zero<BaseAsset>(account, max_base_in, ctx);
-    let quote_funding = account_data::withdraw_or_zero<QuoteAsset>(account, max_quote_in, ctx);
-    let deep_funding = account_data::withdraw_or_zero<DEEP>(account, max_deep_in, ctx);
+    let (base_funding, quote_funding, deep_funding) = account_data::withdraw_all<
+        BaseAsset,
+        QuoteAsset,
+    >(account, root, clock, ctx);
     account_data::ensure(account, deepbook_registry, ctx);
     let d = account_data::borrow_mut(account);
     account_data::deposit_to_manager_if_nonzero<BaseAsset>(d, base_funding, ctx);
@@ -162,9 +160,6 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     quantity: u64,
     is_bid: bool,
     pay_with_deep: bool,
-    max_base_in: u64,
-    max_quote_in: u64,
-    max_deep_in: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -173,9 +168,10 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     wrapper.settle<QuoteAsset>(root, clock);
     wrapper.settle<DEEP>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let base_funding = account_data::withdraw_or_zero<BaseAsset>(account, max_base_in, ctx);
-    let quote_funding = account_data::withdraw_or_zero<QuoteAsset>(account, max_quote_in, ctx);
-    let deep_funding = account_data::withdraw_or_zero<DEEP>(account, max_deep_in, ctx);
+    let (base_funding, quote_funding, deep_funding) = account_data::withdraw_all<
+        BaseAsset,
+        QuoteAsset,
+    >(account, root, clock, ctx);
     account_data::ensure(account, deepbook_registry, ctx);
     let d = account_data::borrow_mut(account);
     account_data::deposit_to_manager_if_nonzero<BaseAsset>(d, base_funding, ctx);

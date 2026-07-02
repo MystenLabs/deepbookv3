@@ -6,6 +6,7 @@ module deepbook_core_account::deepbook_core_account_tests;
 
 use account::{
     account::{Self, AccountWrapper},
+    account_events,
     account_registry::{Self, AccountAdminCap, AccountRegistry}
 };
 use deepbook::{
@@ -40,6 +41,8 @@ const ZERO_BALANCE: u64 = 0;
 const NO_OPEN_ORDER_COUNT: u64 = 0;
 const SINGLE_OPEN_ORDER_COUNT: u64 = 1;
 const FIRST_OPEN_ORDER_INDEX: u64 = 0;
+const NO_ACCOUNT_DEPOSIT_EVENTS_BEFORE_TRADE: u64 = 0;
+const ACCOUNT_DEPOSIT_EVENT_COUNT_AFTER_FULL_FUNDING_TRADE: u64 = 3;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
@@ -125,6 +128,10 @@ fun account_getters_return_core_account_and_order_state() {
     let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let root = scenario.take_shared<AccumulatorRoot>();
     let clock = scenario.take_shared<Clock>();
+    assert_eq!(
+        event::events_by_type<account_events::Deposited>().length(),
+        NO_ACCOUNT_DEPOSIT_EVENTS_BEFORE_TRADE,
+    );
     let ask = dca::place_limit_order<BASE, QUOTE>(
         &mut pool,
         &registry,
@@ -138,9 +145,6 @@ fun account_getters_return_core_account_and_order_state() {
         false,
         true,
         constants::max_u64(),
-        trade_amount,
-        0,
-        0,
         &root,
         &clock,
         scenario.ctx(),
@@ -162,6 +166,10 @@ fun account_getters_return_core_account_and_order_state() {
     assert_eq!(base_locked, trade_amount);
     assert_eq!(quote_locked, ZERO_BALANCE);
     assert_eq!(deep_locked, ZERO_BALANCE);
+    assert_eq!(
+        event::events_by_type<account_events::Deposited>().length(),
+        ACCOUNT_DEPOSIT_EVENT_COUNT_AFTER_FULL_FUNDING_TRADE,
+    );
 
     return_shared(clock);
     return_shared(root);
@@ -195,9 +203,6 @@ fun funding_round_trip_sweeps_back_to_account() {
         false,
         false,
         constants::max_u64(),
-        constants::min_size(),
-        0,
-        0,
         &root,
         &clock,
         scenario.ctx(),
@@ -247,9 +252,6 @@ fun withdraw_settled_amounts_sweeps_maker_fill_to_account() {
         false,
         true,
         constants::max_u64(),
-        trade_amount,
-        0,
-        0,
         &root,
         &clock,
         scenario.ctx(),
@@ -372,9 +374,6 @@ fun permissionless_withdraw_settled_amounts_uses_account_registry_app_auth() {
         false,
         true,
         constants::max_u64(),
-        trade_amount,
-        0,
-        0,
         &root,
         &clock,
         scenario.ctx(),

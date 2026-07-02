@@ -15,7 +15,7 @@ use deepbook::{
     registry::Registry
 };
 use std::internal::permit;
-use sui::{coin::{Self, Coin}, event};
+use sui::{accumulator::AccumulatorRoot, clock::Clock, coin::{Self, Coin}, event};
 use token::deep::DEEP;
 
 /// App witness that namespaces DeepBook core account data on an `Account`.
@@ -149,11 +149,26 @@ public(package) fun deposit_all<BaseAsset, QuoteAsset>(
     deposit_to_account_if_nonzero<DEEP>(account, deep);
 }
 
-public(package) fun withdraw_or_zero<T>(
+public(package) fun withdraw_all<BaseAsset, QuoteAsset>(
     account: &mut Account,
-    amount: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+    (
+        withdraw_all_of_type<BaseAsset>(account, root, clock, ctx),
+        withdraw_all_of_type<QuoteAsset>(account, root, clock, ctx),
+        withdraw_all_of_type<DEEP>(account, root, clock, ctx),
+    )
+}
+
+fun withdraw_all_of_type<T>(
+    account: &mut Account,
+    root: &AccumulatorRoot,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<T> {
+    let amount = account.balance<T>(root, clock);
     if (amount == 0) {
         coin::zero<T>(ctx)
     } else {
