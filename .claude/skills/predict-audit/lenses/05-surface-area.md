@@ -33,6 +33,14 @@ over-broad APIs, sync-invariant state — not just style.)
 - Over-generality: configurability never exercised; parameters always passed one value; error handling for
   impossible states.
 
+**Public READ surface — classify, don't declare dead (move.md public-read classification rule):** zero
+in-repo callers never proves a `public` read function is dead — devInspect and PTB consumers are invisible
+to grep. Check its doc comment for a stated consumer class (external composition / PTB construction /
+devInspect / provenance): if stated, it is a documented composability read — a NON-finding; if absent,
+report it as "unclassified public read (classify-or-delete pre-deploy)", never as "dead". `public(package)`
+and test-only getters are NOT frozen by upgrades — flag them as plain cleanup with no deploy urgency, never
+as a one-way door.
+
 **Also report (don't propose deletion, just surface):** pre-existing dead code or simplifications that are
 real but out of scope for a surgical change — per repo convention, do not delete pre-existing dead code
 reflexively; name it for the team to decide.
