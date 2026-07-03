@@ -81,18 +81,35 @@ def check_pinning_tests(errors):
                           recursive=True):
         test_src += read(path)
     text = read(reg)
-    # A "Pinning tests" field runs from its bold label to the next bold field label.
-    for block in re.findall(r'\*\*Pinning tests[^*]*\*\*(.*?)(?=\n- \*\*|\n## |\Z)',
-                            text, re.S):
-        if 'not yet catalogued' in block:
+    # Entry-driven, not block-driven: the register's rule is that EVERY RP entry
+    # links a pinning test or explicitly says it doesn't. Iterating only well-formed
+    # blocks would let a missing / mislabelled / un-backticked field slip past silently.
+    for entry in re.split(r'^## ', text, flags=re.M)[1:]:
+        title = entry.splitlines()[0]
+        if not title.startswith('RP-'):
             continue
-        for tok in re.findall(r'`([a-z][a-z0-9_]+)`', block):
-            if '.' in tok or len(tok) < 10 or '_' not in tok:
-                continue  # filenames / short generic tokens, not test fn names
+        block_m = re.search(r'\*\*Pinning tests[^*]*\*\*(.*?)(?=\n- \*\*|\n## |\Z)',
+                            entry, re.S)
+        if not block_m:
+            errors.append(f"response-policies.md entry '{title}' has no 'Pinning "
+                          f"tests' field (every entry must link tests or say "
+                          f"'not yet catalogued')")
+            continue
+        block = block_m.group(1)
+        if 'not yet catalogued' in block or 'untested' in block:
+            continue
+        toks = [t for t in re.findall(r'`([a-z][a-z0-9_]+)`', block)
+                if '.' not in t and len(t) >= 10 and '_' in t]
+        if not toks:
+            errors.append(f"response-policies.md entry '{title}' has a Pinning "
+                          f"tests field that names no backticked test function "
+                          f"(nor 'not yet catalogued')")
+            continue
+        for tok in toks:
             if not re.search(r'\bfun\s+' + re.escape(tok) + r'\b', test_src):
                 errors.append(
-                    f"response-policies.md pins test `{tok}` but no `fun {tok}` "
-                    f"exists under packages/predict/tests/")
+                    f"response-policies.md entry '{title}' pins test `{tok}` but "
+                    f"no `fun {tok}` exists under packages/predict/tests/")
 
 
 def check_id_refs(errors, warnings):

@@ -199,3 +199,28 @@ hygiene-speed changes.
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further. (audit c3edaa)
 
+### H-7: Test-coverage gaps from the PR #1097 review
+
+From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
+
+- **RP-3 clamp not directly pinned.** No flush test exercises the sticky-exclusion
+  clamp's own trigger (held-out total > a positive-then-collapsed gross). Add a
+  flush test that latches positive profit-basis credits (settle a profitable
+  market), withdraws idle, then collapses the remaining active mark so
+  `exclusion + pending > gross`, and asserts the flush still succeeds at NAV==0.
+- **New cadence public-read surface unclassified + uncovered.** The
+  `market_manager` cadence-config getters (registry.move:63 / market_manager.move
+  public reads) are `public` with no in-repo caller and no consumer-class doc
+  comment (violates the public-read classification policy this branch landed) and
+  have zero test coverage — classify each per the policy (delete or document the
+  consumer class), then cover the kept ones.
+- **`pricing` forward-absence branch untested.** `EBlockScholesPriceUnavailable`
+  is pinned for the spot-absence path but not the forward-absence path; add the
+  missing `expected_failure`.
+- **One-sided boundary/receiving-side assertions.** `unstake_deep` positive test
+  never asserts the account received the DEEP; the drain rounds-to-zero
+  boundaries are tested only on the aborting side; the all-in `max_cost` boundary
+  pair (from the now-resolved H-2 fix) pins only a 2-of-4-component decomposition
+  (zero builder fee / subsidy). Strengthen each to assert the received side / the
+  passing boundary.
+

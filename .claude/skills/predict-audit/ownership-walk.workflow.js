@@ -80,7 +80,7 @@ if (wantUnits && !UNITS.length) {
 const PRELUDE = `You are an agent in the Predict OWNERSHIP WALK — a recursive conformance audit of the ownership/boundary/policy rules. FIRST read these and follow them exactly:
   1. ${SKILL}/primer.md           (protocol, current module map, scope, prior-awareness, report format)
   2. ${SKILL}/references/ownership-rules.md  (R1-R7 — the rule-set you enforce, with intentional exceptions)
-Be prior-aware: AGENTS.md settled list + packages/predict/predeploy/rounding-policy.md + packages/predict/predeploy/open-items.md are the committed sources of truth. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
+Be prior-aware: AGENTS.md settled list + packages/predict/predeploy/rounding-policy.md + packages/predict/predeploy/response-policies.md + packages/predict/predeploy/open-items.md are the committed sources of truth. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
 
 const MODULE_ENTRY = {
   type: 'object',

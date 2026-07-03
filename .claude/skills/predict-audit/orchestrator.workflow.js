@@ -75,7 +75,7 @@ const FIND_EFFORT = D.effort || 'max'
 const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget.total * 0.3)) : 5_000_000 // reserve ~30% of the budget for verify + promote + synthesis
 // One definition of the committed settled-decision sources, interpolated into every prompt that cites them
 // (they were previously restated per-prompt and drifted on tracker moves).
-const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, and packages/predict/predeploy/open-items.md'
+const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
 // DELTA SCOPE: when the run targets a change set, lenses concentrate on these files + their blast radius.
 const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
 // Cross-run memory: adjudications from a previous run. Keyed with the same fkey used for in-run dedup, so a

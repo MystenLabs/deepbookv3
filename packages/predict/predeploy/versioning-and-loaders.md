@@ -7,13 +7,20 @@
 > today" notes below describe the current version surface; the rest is the proposed
 > loader/centralization cleanup, which can land on its own merits later.
 
-**Shipped today.** `Registry.allowed_versions` is the authoritative set. Exactly two
-Predict objects are version-gated and mirror it — `ExpiryMarket` and `PoolVault` —
-each refreshing its `VecSet<u64>` mirror through one permissionless registry sync
-(`sync_expiry_market_allowed_versions`, `sync_pool_vault_allowed_versions`). Each
-gated flow open-codes `self.assert_version_allowed()` (a plain `VecSet::contains`
-read) plus its own flow gates. There are no `Versioned` inner structs and no named
-flow loaders yet; the cleanup below proposes both. The external propbook feeds carry
+> **Note (2026-07-02):** this "Shipped today" description predates the current
+> version surface and is stale — corrected below to HEAD. The `allowed_versions`
+> VecSet-mirror + per-object sync model it described was replaced by the single
+> `ProtocolConfig.version_watermark`. Treat the rest of this doc as a proposal to
+> re-evaluate against the watermark model, not against the mirror model.
+
+**Shipped today.** `ProtocolConfig.version_watermark` (a single `u64`) is the
+authoritative gate. `config.assert_version()` aborts `EPackageVersionDisabled`
+unless `constants::current_version!() >= version_watermark`
+(`protocol_config.move:313`), and `bump_version_watermark` (AdminCap-gated,
+`:249`) advances it. Gated flows call `config.assert_version()` plus their own
+flow gates; there are no per-object `VecSet<u64>` mirrors, no permissionless
+registry sync functions, and no `Versioned` inner structs or named flow loaders
+yet — the cleanup below proposes the loaders. The external propbook feeds carry
 their own version and a forward-only `migrate`, so there is **no** Predict-side
 oracle/Pyth-source mirror or sync.
 
@@ -248,7 +255,7 @@ oracle objects; feeds are created in `propbook`):
 
 - `registry::mint_lifecycle_cap(..., config: &ProtocolConfig, ...)`, if granting
   lifecycle authority stays version-gated.
-- `registry::create_expiry_market(..., config: &ProtocolConfig, ...)` — it already
+- `registry::create_and_share_expiry_market(..., config: &ProtocolConfig, ...)` — it already
   takes `&ProtocolConfig`, so no change.
 - `expiry_market::set_mint_paused(market, config, admin_cap, paused)`, unless
   admin unpause is intentionally allowed during a version freeze.

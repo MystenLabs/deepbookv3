@@ -132,8 +132,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   underflow guard.
 - **Risk profile:** `BEST-GUESS` (requires gross ≤ held-out, i.e. severe
   drawdown after a profitable period).
-- **Pinning tests:** `pool_valuation_flow_tests.move` —
-  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`.
+- **Pinning tests:** partial — `pool_valuation_flow_tests.move` ·
+  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds` proves the flush
+  survives a NAV==0 mark, but reaches it via an underwater market
+  (`setup_underwater_market(0)`, gross=0, exclusion=0), so it does **not**
+  exercise the sticky-exclusion clamp's own trigger (held-out total exceeding a
+  positive-then-collapsed gross). The clamp direction is therefore not directly
+  pinned — tracked as a test gap in open-items C-4-adjacent follow-up.
 - **Reopen when:** the exclusion basis becomes non-sticky, or RP-2's
   implementation changes what a zero mark means for the queues.
 

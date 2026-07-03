@@ -470,7 +470,8 @@ export async function readPlpBalance(owner: string): Promise<bigint> {
 // prices PLP supply/withdraw against. devInspect loads the live pricer (updater-fresh feeds) then
 // reads `current_nav`. `Pricer has copy, drop`, so the unconsumed borrow is fine in a read-only
 // inspect. Phase-2b scaffolding for the (NOT-yet-landed) lp-adversary strategy — to watch the mark
-// collapse toward the NAV==0 brick (#lp-nav-zero-brick). Not consumed by any current strategy, so it
+// collapse toward a near-zero NAV mark, where a degenerate drain head aborts the flush
+// (open item C-4 / response-policies RP-2). Not consumed by any current strategy, so it
 // is validated against the deployed contracts when lp-adversary (harness E5) lands.
 export async function readCurrentNav(marketId: string, feeds: KeeperFeeds): Promise<bigint> {
     const tx = new Transaction();

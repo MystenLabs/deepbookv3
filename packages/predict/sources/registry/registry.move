@@ -216,7 +216,7 @@ public fun set_template_cadence_config(
 /// for the underlying. The market snapshots the cadence tick size and admission
 /// tick size, while pool accounting snapshots the cadence allocation cap and
 /// initial expiry cash target. Priced flows resolve the canonical oracle object IDs
-/// from Propbook's insert-only bindings. The market is created with zero cash and
+/// from Propbook's current (admin-replaceable) bindings. The market is created with zero cash and
 /// registered with the pool vault as an accounting row only; it is not mintable
 /// until `plp::rebalance_expiry_cash` funds it.
 public fun create_and_share_expiry_market(

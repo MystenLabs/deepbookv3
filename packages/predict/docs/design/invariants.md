@@ -138,7 +138,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Order encoding
 
-- The order id packs, in 184 dense low bits: quantity lots (u32), floor shares
+- The order id packs, in 196 dense low bits: quantity lots (u32), floor shares
   (u64), lower and higher strike **tick** (u30 each), and an expiry-local sequence
   (u40). Unused bits are leading bits and are rejected by decode validation. The
   quantity and floor fields store complements, so an ascending sort is
