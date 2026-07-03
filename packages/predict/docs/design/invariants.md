@@ -138,15 +138,15 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Order encoding
 
-- The order id packs, in 184 dense low bits: quantity lots (u32), floor shares
-  (u64), lower and higher strike **tick** (u24 each), and an expiry-local sequence
+- The order id packs, in 196 dense low bits: quantity lots (u32), floor shares
+  (u64), lower and higher strike **tick** (u30 each), and an expiry-local sequence
   (u40). Unused bits are leading bits and are rejected by decode validation. The
   quantity and floor fields store complements, so an ascending sort is
   larger-first. A finite strike is `tick · tick_size`; lower tick `0` is the
   `neg_inf` sentinel and higher tick `pos_inf_tick` is the `pos_inf` sentinel.
 - **Lossless tick round-trip.** Every atom the canonical evaluator reads —
   quantity, floor shares, and both ticks — round-trips through the packed id with
-  no loss. The two `u24` tick fields encode the *same* absolute ticks used at the
+  no loss. The two `u30` tick fields encode the *same* absolute ticks used at the
   entrypoints, the payout tree, and the liquidation book, so an order's strike
   range is bit-identical whether read from the id, the tree, or the event. A lossy
   repack would be an accounting bug, not a precision nit.

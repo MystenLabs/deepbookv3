@@ -106,8 +106,8 @@ public(package) fun new_read<Value: copy + drop + store>(
 
 public(package) fun update<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
-    propbook_oracle_id: ID,
     read: OracleRead<Payload>,
+    propbook_oracle_id: ID,
 ) {
     if (!read.read_has_valid_timestamp()) return;
     if (lane.latest.is_some()) {
@@ -123,8 +123,8 @@ public(package) fun update<Payload: copy + drop + store>(
 
 public(package) fun insert_at<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
-    propbook_oracle_id: ID,
     read: OracleRead<Payload>,
+    propbook_oracle_id: ID,
 ) {
     if (!read.read_has_valid_timestamp()) return;
     if (lane.exact_reads.contains(read.source_timestamp_ms)) return;

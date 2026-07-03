@@ -22,6 +22,10 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - Ownership and responsibility boundaries for modules/functions: verify state is mutated by its owner, helpers do not absorb parent responsibilities, and callers do not duplicate leaf invariants without a sequencing reason.
 - Producer-side policy: flag cross-module returns that pre-apply a consumer's policy — especially lossy transforms (clamp at zero, saturating subtraction, `min`/`max`, rounding) that a downstream consumer then corrects for or re-derives. Bug signatures: the same economic quantity clamped at two altitudes, stance-named returns (`*_optimistic`, `net_*`), or tests that must invert a producer's step to state expectations.
 - Non-functional regressions in "behavior-preserving" changes: before approving a hot-path/loop refactor, confirm a deliberate loop-invariant hoist wasn't traded away for a cleaner signature — recomputing a per-iteration value previously sampled once is a gas regression even if outputs are identical (D020/D021).
+- Guard removals or weakenings: require a duty inventory in the diff — what else the guard incidentally bounded (arithmetic headroom, ratio/scale sanity, a downstream cast or consumer precondition) — plus an entry in `packages/predict/predeploy/response-policies.md`. Reasoning that lives only in the commit message is a finding (the P-1 circuit breaker removal `cc67ed9f` silently dropped the only u64-headroom bound on LP fill math).
+- State-triggered aborts over market-controlled variables (NAV, prices, post-loss balances) in shared/mandatory paths (flush, keeper batches, permissionless cleanup): flag as undecided response policies unless registered in `response-policies.md`. Check the response sits on the right blast-radius ladder rung (abort = single-user recoverable only → skip/carry for batches → pause only with a recovery path → designed wind-down) and that boundary tests pin each classification edge — including representability edges (a bare `as u64` cast on an unbounded ratio is an untracked abort path).
+- Doc claims about failure behavior (`docs/risks.md`, module docs) must match code at HEAD. A doc describing intended-but-unimplemented behavior as shipped is a finding (precedent: risks.md claimed the LP drain refunds degenerate requests while the code hard-aborted, C-4).
+- When the diff touches `packages/predict/predeploy/`, Predict guards, or tests named in the register, run `python3 packages/predict/predeploy/check.py` — it verifies register pinning tests exist, tracker cross-references resolve, MEASURED claims link evidence, and named paths are live. A FATAL is a review finding.
 
 ## Comments and Documentation
 
@@ -72,3 +76,5 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - [ ] Do timestamp updates match the field's documented semantics?
 - [ ] Do function inputs match ownership: objects for owned/current state, narrow values for pure formulas, no wide same-typed primitive lists?
 - [ ] Do cross-module returns carry owned facts, with every lossy clamp applied once at the policy owner?
+- [ ] If a guard was removed or weakened, does the diff include its duty inventory and a `response-policies.md` entry?
+- [ ] Do doc claims about failure behavior (risks.md, module docs) match the code in this diff, with pinning tests?

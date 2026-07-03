@@ -47,6 +47,9 @@ public struct PythFeed has key {
 
 // === Read Functions ===
 
+// Raw reads (`raw_*`) are public provenance/observability API (devInspect and
+// external composition); validated consumers use the `normalized_*` reads.
+
 /// Return the feed object ID.
 public fun id(feed: &PythFeed): ID {
     feed.id.to_inner()
@@ -122,7 +125,7 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_read(&update, clock.timestamp_ms());
     let id = feed.id();
-    feed.lane.update(id, read);
+    feed.lane.update(read, id);
 }
 
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
@@ -134,7 +137,7 @@ public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_insert_read(&update, clock.timestamp_ms());
     let id = feed.id();
-    feed.lane.insert_at(id, read);
+    feed.lane.insert_at(read, id);
 }
 
 /// Migrate this feed to the running package version (forward-only).
@@ -175,6 +178,10 @@ fun new_insert_read(
     new_raw_insert_read(raw, update_timestamp_ms)
 }
 
+/// NOTE: the `ELazerFeedNotFound` / `ELazerValueUnavailable` parse guards below are
+/// not reachable from Move unit tests — a real `pyth_lazer::Update` has no test
+/// constructor (which is why `record_raw_for_testing` exists and bypasses this
+/// path). They are exercised only against live Lazer payloads.
 fun raw_spot_from_update(update: &LazerUpdate, pyth_source_id: u32): RawSpot {
     let source_timestamp_us = update.timestamp();
     let feeds = update.feeds_ref();
@@ -227,6 +234,9 @@ fun new_raw_spot(
 
 fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
     let source_timestamp_us = raw.source_timestamp_us;
+    // div_ceil rounds the us->ms conversion UP: the stored ms stamp is at most
+    // 1ms later than the true source time, making freshness checks marginally
+    // optimistic — accepted as immaterial against multi-second windows.
     oracle_lane::new_read(source_timestamp_us.div_ceil(1000), update_timestamp_ms, raw)
 }
 
@@ -337,8 +347,8 @@ public fun record_raw_for_testing(
     };
     let id = feed.id();
     if (insert_at) {
-        feed.lane.insert_at(id, read);
+        feed.lane.insert_at(read, id);
     } else {
-        feed.lane.update(id, read);
+        feed.lane.update(read, id);
     };
 }

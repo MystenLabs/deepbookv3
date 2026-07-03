@@ -129,7 +129,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     // Linear term: the full payout-tree walk, caching each boundary's price.
-    let linear = exposure.payout.walk_linear(pricer, exposure.tick_size, &mut memo);
+    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
     // Correction term: the static-floor-capped scan, reading prices from the cache.
     let correction = exposure.liquidation.correction_value(&memo);
     linear.saturating_sub(correction)
@@ -339,13 +339,16 @@ public(package) fun close_and_quote_live_order(
     let (lower, higher) = exposure.order_boundaries(order);
 
     let old_floor_shares = order.floor_shares();
-    let close_fraction = math::div(close_quantity, old_quantity);
-    let remove_floor_shares = math::mul(old_floor_shares, close_fraction);
     let remaining_quantity = old_quantity - close_quantity;
-    let remaining_floor_shares = old_floor_shares - remove_floor_shares;
+    let remaining_floor_shares = math::mul_div_down(
+        old_floor_shares,
+        remaining_quantity,
+        old_quantity,
+    );
+    let remove_floor_shares = old_floor_shares - remaining_floor_shares;
 
-    // Remove only the closed slice; floor-share dust stays with the survivor, so
-    // reserve accounting remains conservative across partial closes.
+    // Round survivor floor down so `floor_shares <= quantity` holds by
+    // construction; the closed slice carries the conserved floor-share dust.
     exposure
         .payout
         .remove_range(
@@ -357,11 +360,8 @@ public(package) fun close_and_quote_live_order(
     exposure.liquidation.remove_order(order);
 
     let range_probability = pricer.range_price(lower, higher);
-    // Round the floor deduction up so slice dust favors reserve, then clamp at zero
-    // when the closed slice is below floor.
-    let removed_floor_amount = math::mul_div_up(old_floor_shares, close_quantity, old_quantity);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
-    let redeem_amount = gross_redeem_amount.saturating_sub(removed_floor_amount);
+    let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
 
     if (remaining_quantity == 0) {
         return CloseQuote { resulting_order: *order, redeem_amount, range_probability }
@@ -406,15 +406,13 @@ public(package) fun liquidate_live_orders(
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
     let mut liquidated_count = 0;
-    let mut i = 0;
-    while (i < candidates.length()) {
-        let order = order::from_order_id(candidates[i]);
+    candidates.do!(|candidate| {
+        let order = order::from_order_id(candidate);
         let liquidated = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
         if (liquidated) {
             liquidated_count = liquidated_count + 1;
         };
-        i = i + 1;
-    };
+    });
     liquidated_count
 }
 

@@ -96,6 +96,10 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 }
 
 /// Return the raw trade fee for a live probability and quantity.
+///
+/// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
+/// before passing timestamps because the fee-rate helper derives time-to-expiry
+/// with exact subtraction.
 public(package) fun trading_fee(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
@@ -257,6 +261,10 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
     config.expiry_fee_max_multiplier = value;
 }
 
+/// Return the 1e9-scaled per-unit trade fee.
+///
+/// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
+/// liveness before this helper derives `expiry_ms - timestamp_ms`.
 fun fee_rate(
     config: &StrikeExposureConfig,
     expiry_ms: u64,

@@ -14,9 +14,9 @@ use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
-const ERawSVINotFound: u64 = 2;
-const EWrongVersion: u64 = 3;
-const ENotNewerVersion: u64 = 4;
+const ERawSVINotFound: u64 = 1;
+const EWrongVersion: u64 = 2;
+const ENotNewerVersion: u64 = 3;
 
 /// SVI smile parameters; `rho` and `m` are signed (`fixed_math::i64`).
 public struct SVIParams has copy, drop, store {
@@ -46,6 +46,9 @@ public struct BlockScholesSVIFeed has key {
 }
 
 // === Read Functions ===
+
+// Raw reads (`raw_*`) are public provenance/observability API (devInspect and
+// external composition); validated consumers use the `normalized_*` reads.
 
 /// Return the feed object ID.
 public fun id(feed: &BlockScholesSVIFeed): ID {
@@ -81,7 +84,9 @@ public fun normalized_svi(
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
 
-/// Exact raw BS SVI read for `(expiry_ms, timestamp_ms)`.
+/// Exact raw BS SVI read for `(expiry_ms, timestamp_ms)`. This is a
+/// provenance/observability read for external Move, PTB, and devInspect
+/// consumers that need the source-native exact SVI payload.
 public fun raw_svi_at(
     feed: &BlockScholesSVIFeed,
     expiry_ms: u64,
@@ -227,11 +232,11 @@ fun update_expiry(
     ctx: &mut TxContext,
 ) {
     if (feed.expiries.contains(expiry_ms)) {
-        feed.expiries.borrow_mut(expiry_ms).update(propbook_oracle_id, read);
+        feed.expiries.borrow_mut(expiry_ms).update(read, propbook_oracle_id);
     } else {
         if (!oracle_lane::read_has_valid_timestamp(&read)) return;
         let mut lane = oracle_lane::new(ctx);
-        lane.update(propbook_oracle_id, read);
+        lane.update(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
     };
 }
@@ -244,11 +249,11 @@ fun insert_expiry_at(
     ctx: &mut TxContext,
 ) {
     if (feed.expiries.contains(expiry_ms)) {
-        feed.expiries.borrow_mut(expiry_ms).insert_at(propbook_oracle_id, read);
+        feed.expiries.borrow_mut(expiry_ms).insert_at(read, propbook_oracle_id);
     } else {
         if (!oracle_lane::read_has_valid_timestamp(&read)) return;
         let mut lane = oracle_lane::new(ctx);
-        lane.insert_at(propbook_oracle_id, read);
+        lane.insert_at(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
     };
 }

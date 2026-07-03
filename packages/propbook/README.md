@@ -152,11 +152,40 @@ Canonical binding is admin-gated because it is the trust claim that a source id
 represents a Propbook underlying.
 
 Admin trust model: package init mints one `RegistryAdminCap`, and canonical
-bindings are insert-only for whoever holds that cap. Propbook does not implement
-on-chain multisig, rotation, timelock, or replacement flows. Production
-deployments should treat the cap as governance custody and enforce
-multisig/timelock operationally, or add an on-chain governance layer before
-relying on registry bindings as an irreversible trust anchor.
+bindings are controlled by whoever holds that cap. Propbook does not implement
+on-chain multisig, rotation, or timelock. Production deployments should treat the
+cap as governance custody and enforce multisig/timelock operationally, or add an
+on-chain governance layer before relying on registry bindings as a trust anchor.
+
+Canonical bindings are current accepted bindings, not historical snapshots. The
+initial `bind_*` calls require an unbound canonical key and abort on duplicates.
+Admin replacement APIs update an already-bound canonical key without creating an
+unbound intermediate state:
+
+- `replace_pyth_binding_for_underlying` replaces the active Pyth feed for one
+  Propbook underlying.
+- `replace_block_scholes_bindings_for_underlying` replaces BS spot, forward, and
+  SVI atomically. All three replacement feeds must share one `bs_source_id`, so
+  consumers never read a mixed-source BS surface through the canonical lookup.
+
+If an underlying has only a BS spot binding and no forward/SVI surface yet, the
+atomic BS replacement call aborts because there is no complete surface to replace.
+Recover by creating the missing forward/SVI wrappers for the current spot source,
+binding that surface, then replacing all three BS bindings atomically. Predict
+market creation requires the full Pyth + BS set, so no Predict market can already
+depend on a spot-only Propbook state.
+
+Source assignment remains sticky: once a source key has been assigned to an
+underlying, that source key can only be reused for the same underlying. Replacing
+BTC's Pyth feed from source A to source B does not free source A for another
+underlying. There is deliberately no unbind path; if a binding is wrong or a
+source dies, governance should replace it with the corrected current feed.
+
+Operational caveat for Pyth replacement: consumers such as Predict may need exact
+historical rows from `normalized_spot_at(timestamp_ms)` for unsettled markets.
+Before replacing a Pyth binding for an underlying with unsettled past expiries,
+backfill every required exact millisecond row into the replacement feed via
+`insert_at`, then replace the binding.
 
 Typical discovery question:
 
@@ -176,6 +205,9 @@ Propbook emits generic oracle events:
 
 - `ObservationRecorded<OracleRead<Payload>>`
 - `ObservationInserted<OracleRead<Payload>>`
+- `OracleSourceRegistered`
+- `OracleBound`
+- `OracleRebound`
 
 For BS forward and SVI rows, the payload includes the expiry, so the
 generic event is enough to index per-expiry writes. BS spot is source-level and

@@ -99,6 +99,29 @@ fun live_quote_with_equal_range_bounds_aborts() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
+fun live_quote_with_no_block_scholes_price_aborts() {
+    // A market that has never received a BS push: normalized_spot is none, so
+    // pricing aborts on absence (distinct from the staleness code below).
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let oracle = fx.take_oracle_bundle();
+    live_quote(&fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
+fun live_quote_with_prices_but_no_svi_aborts() {
+    // Spot and forward pushed, SVI never pushed: the SVI absence code fires,
+    // distinct from EBlockScholesSVIStale.
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let now = test_constants::live_source_timestamp_ms();
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    live_quote(&fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
 fun live_quote_with_stale_block_scholes_surface_aborts() {
     let (mut fx, oracle) = setup_live();
@@ -508,12 +531,12 @@ fun load_pricer_with_forward(
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
-        fx.expiry_id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(oracle),
         oracle_fixture::bs(oracle).spot(),
         forward,
         oracle_fixture::bs(oracle).svi(),
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );
@@ -523,12 +546,12 @@ fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockS
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
-        fx.expiry_id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(oracle),
         oracle_fixture::bs(oracle).spot(),
         oracle_fixture::bs(oracle).forward(),
         svi,
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );

@@ -721,7 +721,7 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
 export function mintLifecycleCapTx(recipient: string): Transaction {
     const tx = new Transaction();
     // MarketLifecycleCap mint moved from `plp` to `registry` (the allowlist now
-    // lives on Registry, its sole gating call site being create_expiry_market).
+    // lives on Registry, its sole gating call site being create_and_share_expiry_market).
     const cap = tx.moveCall({
         target: target("registry", "mint_lifecycle_cap"),
         // `mint_lifecycle_cap(registry, config, admin_cap, ctx)` — the mint is version-
@@ -785,7 +785,7 @@ export function setCadenceConfigTx(params: {
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "set_cadence_config"),
+        target: target("registry", "set_template_cadence_config"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
@@ -931,7 +931,7 @@ export async function seedOracleTx(params: {
 // Create the expiry market for one Propbook underlying. No spot is read at
 // creation. The registry validates, against propbook's canonical binding, that
 // Pyth + Block Scholes feeds are bound to `BS_UNDERLYING_ID` (run
-// `bindFeedsToUnderlyingTx` first). `create_expiry_market` returns one ID and
+// `bindFeedsToUnderlyingTx` first). `create_and_share_expiry_market` returns one ID and
 // registers the market with the vault as a zero-cash accounting row (not mintable
 // until `rebalance_expiry_cash` funds it).
 export function createExpiryMarketTx(params: {
@@ -942,7 +942,7 @@ export function createExpiryMarketTx(params: {
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "create_expiry_market"),
+        target: target("registry", "create_and_share_expiry_market"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(params.poolVaultId),

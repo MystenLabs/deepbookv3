@@ -9,7 +9,8 @@
 // args = {
 //   units?:  string[],   // subset of MAP_UNIT keys to walk (default: all) — use to scope cost
 //   groundTruth?: string,
-//   depth?: 'low'|'standard'|'max', // preset for rounds/verifyCap (explicit cap args win)
+//   depth?: 'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (explicit cap args win;
+//                        // mini = cleanup-triage: 1 round, NO verify subagents — violations reported raw)
 //   priorAdjudications?: [{title, location, status, note?}], // cross-run memory: seeded into check prompts
 //                        // (per-module, matched on the module name in `location`) as do-not-re-report; pass
 //                        // only entries whose cited files are unchanged — see SKILL.md. Prompt seeding only.
@@ -42,7 +43,7 @@ if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(none provided)'
 // DEPTH preset — same tiers/precedence as the orchestrator (explicit cap args win over the preset).
-const DEPTH = { low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxViolations: 16 } }
+const DEPTH = { mini: { maxRounds: 1, verifyCap: 0, effort: 'medium' }, low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxViolations: 16 } }
 const depthName = DEPTH[A.depth] ? A.depth : 'standard'
 const DP = DEPTH[depthName]
 const maxViolations = A.maxViolations || DP.maxViolations || 10
@@ -79,7 +80,7 @@ if (wantUnits && !UNITS.length) {
 const PRELUDE = `You are an agent in the Predict OWNERSHIP WALK — a recursive conformance audit of the ownership/boundary/policy rules. FIRST read these and follow them exactly:
   1. ${SKILL}/primer.md           (protocol, current module map, scope, prior-awareness, report format)
   2. ${SKILL}/references/ownership-rules.md  (R1-R7 — the rule-set you enforce, with intentional exceptions)
-Be prior-aware: AGENTS.md settled list + packages/predict/predeploy/rounding-policy.md + packages/predict/predeploy/open-items.md are the committed sources of truth. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
+Be prior-aware: AGENTS.md settled list + packages/predict/predeploy/rounding-policy.md + packages/predict/predeploy/response-policies.md + packages/predict/predeploy/open-items.md are the committed sources of truth. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
 
 const MODULE_ENTRY = {
   type: 'object',
@@ -174,7 +175,8 @@ function composedContext(entry) {
 // rounds or the budget floor. Auto-retries flaky units (a failed unit is an empty round that re-runs).
 const DRY_TARGET = A.dryRounds || DP.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || DP.maxRounds || 3
-const VERIFY_CAP = A.verifyCap || DP.verifyCap || 60
+// typeof-check, not ||: mini's verifyCap 0 is falsy and must not fall through to the default.
+const VERIFY_CAP = [A.verifyCap, DP.verifyCap, 60].find(v => typeof v === 'number')
 const RESERVE = (budget && budget.total) ? Math.max(4_000_000, Math.floor(budget.total * 0.3)) : 4_000_000
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 // strip line numbers from node so a same violation at a shifted line still dedups across rounds (else the
@@ -219,7 +221,7 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   const knownByModule = {}
   candidates.forEach(v => { (knownByModule[v.module] = knownByModule[v.module] || []).push(`- [${v.rule_family}] ${v.node}: ${(v.claim || '').slice(0, 120)}`) })
   const roundRes = await parallel(activeUnits.map(cu => () => agent(checkPrompt(cu, round, (knownByModule[cu.module] || []).join('\n')),
-    { schema: CHECK_SCHEMA, effort: 'max', phase: 'Check', label: `check:${cu.label}:r${round}` })))
+    { schema: CHECK_SCHEMA, effort: DP.effort || 'max', phase: 'Check', label: `check:${cu.label}:r${round}` })))
   const freshByUnit = {}
   // Index by the unit we DISPATCHED (activeUnits[i]), not the agent-returned r.module — parallel() preserves
   // order and the dispatched identity is stable (same fix as the orchestrator's lanes).

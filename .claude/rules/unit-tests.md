@@ -62,27 +62,29 @@ assert_eq!(normal_cdf(0, false), 500_000_000);
 A test that only verifies "doesn't abort" is not a test. Every `#[test]` function must have at least one `assert!` or `assert_eq!` that checks a return value or state change.
 
 ```move
-// BAD — tests nothing, will pass even if deposit is silently broken
+// BAD — tests nothing, will pass even if deposit is silently broken (schematic)
 #[test]
 fun deposit_adds_funds() {
-    let mut pm = create_predict_manager(ctx);
-    pm.deposit(coin::mint_for_testing(1000, ctx));
-    destroy(pm);
+    let mut account = new_test_account(ctx);
+    account.deposit(coin::mint_for_testing<SUI>(1000, ctx));
+    destroy(account);
 }
 
-// GOOD — verifies the state change actually happened
+// GOOD — verifies the state change actually happened (schematic)
 #[test]
 fun deposit_adds_funds() {
-    let mut pm = create_predict_manager(ctx);
-    pm.deposit(coin::mint_for_testing(1000, ctx));
-    assert_eq!(pm.balance<SUI>(), 1000);
-    destroy(pm);
+    let mut account = new_test_account(ctx);
+    account.deposit(coin::mint_for_testing<SUI>(1000, ctx));
+    assert_eq!(account.balance<SUI>(/* ... */), 1000);
+    destroy(account);
 }
 ```
 
 ### 4. Cover every abort code with an `expected_failure` test
 
-For every *reachable* `const E*` error constant in a source module, there must be at least one test that triggers it; untested abort codes are untested error paths. Coverage applies regardless of visibility: if a guard behind a `public(package)` helper can't be triggered as-is, that is a signal to make it independently testable — extract the pure precondition into a `public(package)` checker taking only its scalar inputs (e.g. `assert_plp_price_in_bounds(pool_nav, total_supply)`) and test that directly. "The guard is package-internal" is never a reason to ship an untested abort code; add the root-free unit test or ledger it as a tracked deploy-gate. For a code that is genuinely structurally-unreachable in production, document why instead of contriving a bypass test (Rule 12 forbids bypassing production validation just to reach a code).
+For every *reachable* `const E*` error constant in a source module, there must be at least one test that triggers it; untested abort codes are untested error paths. Coverage applies regardless of visibility: if a guard behind a `public(package)` helper can't be triggered as-is, that is a signal to make it independently testable — extract the pure precondition into a `public(package)` checker taking only its scalar inputs (e.g. a `lp_book::supply_shares(amount, mark)` helper whose `EInvalidDrainMark` guard is unit-testable directly) and test that directly. "The guard is package-internal" is never a reason to ship an untested abort code; add the root-free unit test or ledger it as a tracked deploy-gate. For a code that is genuinely structurally-unreachable in production, document why instead of contriving a bypass test (Rule 12 forbids bypassing production validation just to reach a code).
+
+Use the source module's named error constant in `expected_failure(abort_code = ...)`, not a numeric literal. The `E*` constant is the source of truth for the semantic error; if its numeric value is intentionally renumbered, behavior tests should not need updates. Numeric abort-code literals are allowed only for opaque VM/framework aborts with no named source constant, or for a deliberate ABI-layout test that is clearly labeled as such and not pretending to be behavior coverage.
 
 ```move
 #[test, expected_failure(abort_code = predict::EOracleSettled)]
@@ -219,24 +221,16 @@ If a test claims to model a real protocol scenario, its fixture must be valid un
 - Do not add test-only error codes or bypass paths just to validate a helper constructor itself unless the helper is the thing being intentionally tested.
 
 ```move
-// BAD — hides an impossible production state behind a permissive helper
-let oracle = oracle::create_test_oracle(...); // unconstrained strike grid
-predict::mint(&mut predict, &mut manager, &oracle, key, quantity, &clock, ctx);
+// BAD — hides an impossible production state behind a permissive helper (schematic)
+let market = new_unconstrained_test_market(ctx); // bypasses cadence/tick admission
+market.mint_exact_quantity(/* ... */, &clock, ctx);
 
-// GOOD — production-behavior test uses production-valid fixture rules
-let oracle = oracle::create_test_oracle_with_grid(
-    b"BTC".to_string(),
-    svi,
-    prices,
-    0,
-    expiry,
-    0,
-    min_strike,
-    max_strike,
-    tick_size,
-    ctx,
-);
-predict::mint(&mut predict, &mut manager, &oracle, key, quantity, &clock, ctx);
+// GOOD — production-behavior test builds state through production flows (schematic):
+// create the market via registry::create_and_share_expiry_market under a valid cadence
+// config, seed the propbook feeds for that market's ACTUAL expiry, then mint.
+let market = create_market_via_registry(&mut registry, /* ... */, ctx);
+seed_feeds_for_expiry(&mut pyth_feed, &mut bs_feeds, market.expiry(), /* ... */);
+market.mint_exact_quantity(/* ... */, &clock, ctx);
 ```
 
 ### 13. Shared-object tests should capture IDs and use `take_shared_by_id`
@@ -244,7 +238,7 @@ predict::mint(&mut predict, &mut manager, &oracle, key, quantity, &clock, ctx);
 When a test creates a shared object in `test_scenario`, capture its ID immediately and use that ID in later transactions. Do not rely on ambient `take_shared<T>()` when the object identity is already known.
 
 - Good:
-  - setup helper returns `predict_id`, `registry_id`, `manager_id`, `oracle_id`
+  - setup helper returns `registry_id`, `market_id`, `vault_id`, `account_id`
   - later transactions use `take_shared_by_id<T>(id)`
   - shared objects are returned with `return_shared(...)` before `next_tx(...)`
 - Bad:

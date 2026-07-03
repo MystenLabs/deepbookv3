@@ -39,7 +39,8 @@ use deepbook_predict::{
     pricing,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
-    test_constants
+    test_constants,
+    test_helpers
 };
 use dusdc::dusdc::DUSDC;
 use propbook::{
@@ -141,7 +142,7 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -183,35 +184,14 @@ public fun setup_market(tick: u64): Fixture {
     // and capture the vault id.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
-    let bs_forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
-    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
-    propbook_registry::bind_pyth_to_underlying(
-        &mut oracle_registry,
+    test_helpers::bind_feeds_to_underlying(
+        &scenario,
         &propbook_admin_cap,
-        &pyth,
-        test_constants::propbook_underlying_id(),
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
     );
-    propbook_registry::bind_block_scholes_spot_to_underlying(
-        &mut oracle_registry,
-        &propbook_admin_cap,
-        &bs_spot,
-        test_constants::propbook_underlying_id(),
-    );
-    propbook_registry::bind_block_scholes_surface_to_underlying(
-        &mut oracle_registry,
-        &propbook_admin_cap,
-        &bs_forward,
-        &bs_svi,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
@@ -287,7 +267,7 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let config = self.scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -312,7 +292,7 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -393,7 +373,7 @@ public fun set_default_cadence_allocation(
     self.scenario.next_tx(test_constants::admin());
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &self.admin_cap,
         test_constants::propbook_underlying_id(),
@@ -431,8 +411,20 @@ public fun sponsor_fee_incentives_bundle(
 /// Take the market transaction objects as a named bundle to avoid wide positional
 /// tuple plumbing in flow tests.
 public fun take_market_bundle(self: &mut Fixture, expiry_id: ID): MarketBundle {
+    let pyth_id = self.pyth_id;
+    self.take_market_bundle_with_pyth(expiry_id, pyth_id)
+}
+
+/// Take market transaction objects with an explicit Pyth feed id. Used by Propbook
+/// rebind tests where the market and BS feeds stay fixed but the current Pyth feed
+/// changes.
+public fun take_market_bundle_with_pyth(
+    self: &mut Fixture,
+    expiry_id: ID,
+    pyth_id: ID,
+): MarketBundle {
     MarketBundle {
-        pyth: self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        pyth: self.scenario.take_shared_by_id<PythFeed>(pyth_id),
         bs: self.take_bs(),
         oracle_registry: self.scenario.take_shared<OracleRegistry>(),
         vault: self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
@@ -473,6 +465,34 @@ public fun block_scholes_feed_for_testing(
     svi: BlockScholesSVIFeed,
 ): BlockScholesFeed {
     bs_feed::new(spot, forward, svi)
+}
+
+/// Create a replacement Propbook Pyth feed and rebind the fixture's underlying to
+/// it, leaving the old feed shared for negative binding tests.
+public fun create_and_rebind_pyth(self: &mut Fixture, source_id: u32): ID {
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        source_id,
+        self.scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
+    propbook_registry::replace_pyth_binding_for_underlying(
+        &mut oracle_registry,
+        &self.propbook_admin_cap,
+        &pyth,
+        test_constants::propbook_underlying_id(),
+    );
+    return_shared(pyth);
+    return_shared(oracle_registry);
+
+    self.scenario.next_tx(test_constants::admin());
+    pyth_id
 }
 
 /// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
@@ -1353,6 +1373,25 @@ public fun stake_deep_bundle(
             auth,
             &market.config,
             amount,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Withdraw all staked DEEP back to the account through the production PLP path.
+public fun unstake_deep_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .unstake_deep(
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
             &account_bundle.root,
             &self.clock,
             self.scenario.ctx(),

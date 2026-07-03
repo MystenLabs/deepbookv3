@@ -47,6 +47,19 @@ public struct MarketCreated has copy, drop, store {
     trading_loss_rebate_rate: u64,
 }
 
+/// Emitted when an admin updates or disables one underlying's cadence policy.
+/// Passing zero for all numeric policy fields disables the cadence.
+public struct CadenceConfigUpdated has copy, drop, store {
+    registry_id: ID,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    tick_size: u64,
+    admission_tick_size: u64,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+    window_size: u64,
+}
+
 /// Emitted when minting pause state changes for one expiry market.
 public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
     expiry_market_id: ID,
@@ -118,6 +131,28 @@ public(package) fun emit_market_created(
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
+    });
+}
+
+public(package) fun emit_cadence_config_updated(
+    registry_id: ID,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    tick_size: u64,
+    admission_tick_size: u64,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+    window_size: u64,
+) {
+    event::emit(CadenceConfigUpdated {
+        registry_id,
+        propbook_underlying_id,
+        cadence_id,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        window_size,
     });
 }
 

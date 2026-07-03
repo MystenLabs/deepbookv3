@@ -152,18 +152,33 @@ public fun balance<T>(account: &Account, root: &AccumulatorRoot, clock: &Clock):
 This returns stored balance plus unsettled accumulator funds unless this coin type
 has already been settled in the current timestamp.
 
-Write paths:
+Write paths. The bare `deposit`/`withdraw` operate on stored balance only — the
+caller settles accumulator funds at the flow boundary via `settle`:
 
 ```move
-public fun deposit<T>(
-    account: &mut Account,
+public fun deposit<T>(self: &mut Account, coin: Coin<T>)
+
+public fun withdraw<T>(self: &mut Account, amount: u64, ctx: &mut TxContext): Coin<T>
+
+public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock: &Clock)
+```
+
+The PTB-callable entrypoints `deposit_funds`/`withdraw_funds` fold
+settle → authorize → load → write into one call, taking an `Auth` and the
+`AccumulatorRoot`/`Clock`:
+
+```move
+public fun deposit_funds<T>(
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     coin: Coin<T>,
     root: &AccumulatorRoot,
     clock: &Clock,
 )
 
-public fun withdraw<T>(
-    account: &mut Account,
+public fun withdraw_funds<T>(
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
     amount: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
@@ -171,11 +186,10 @@ public fun withdraw<T>(
 ): Coin<T>
 ```
 
-Both write paths first passively settle accumulator-delivered funds for `T` into the
-stored balance. Settlement records the last timestamp per coin type in a `Bag`; if
-another parallel transaction tries to settle the same coin in the same timestamp,
-the later transaction skips settlement instead of trying to withdraw the same
-accumulator funds again.
+`settle` records the last timestamp per coin type in a `Bag`; if another parallel
+transaction tries to settle the same coin in the same timestamp, the later
+transaction skips settlement instead of trying to withdraw the same accumulator
+funds again.
 
 ## App Data
 

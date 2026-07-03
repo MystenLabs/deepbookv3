@@ -16,7 +16,7 @@ use deepbook_predict::{
     config_events,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
-    market_manager::{Self, MarketManager},
+    market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
     protocol_config::{Self, ProtocolConfig}
@@ -57,6 +57,15 @@ public fun expiry_market_id(
     expiry: u64,
 ): Option<ID> {
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
+}
+
+/// Return the stored deployment policy for one underlying/cadence.
+public fun cadence_config(
+    registry: &Registry,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+): CadenceConfig {
+    registry.market_manager.cadence_config(propbook_underlying_id, cadence_id)
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -160,7 +169,7 @@ public fun register_underlying(
 /// Set all deployment terms for one underlying's cadence. Passing zero for all
 /// five values disables the cadence; otherwise all values must be nonzero and
 /// valid.
-public fun set_cadence_config(
+public fun set_template_cadence_config(
     registry: &mut Registry,
     config: &ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -175,7 +184,7 @@ public fun set_cadence_config(
     config.assert_version();
     registry
         .market_manager
-        .set_cadence_config(
+        .set_template_cadence_config(
             propbook_underlying_id,
             cadence_id,
             tick_size,
@@ -184,6 +193,16 @@ public fun set_cadence_config(
             initial_expiry_cash,
             window_size,
         );
+    config_events::emit_cadence_config_updated(
+        registry.id(),
+        propbook_underlying_id,
+        cadence_id,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        window_size,
+    );
 }
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
@@ -197,10 +216,10 @@ public fun set_cadence_config(
 /// for the underlying. The market snapshots the cadence tick size and admission
 /// tick size, while pool accounting snapshots the cadence allocation cap and
 /// initial expiry cash target. Priced flows resolve the canonical oracle object IDs
-/// from Propbook's insert-only bindings. The market is created with zero cash and
+/// from Propbook's current (admin-replaceable) bindings. The market is created with zero cash and
 /// registered with the pool vault as an accounting row only; it is not mintable
 /// until `plp::rebalance_expiry_cash` funds it.
-public fun create_expiry_market(
+public fun create_and_share_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -261,7 +280,7 @@ public fun create_expiry_market(
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
-public fun create_builder_code(
+public fun create_and_share_builder_code(
     registry: &mut Registry,
     config: &ProtocolConfig,
     index: u64,

@@ -67,7 +67,7 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
         test_constants::short_expiry_ms(),
     );
     fx.scenario_mut().next_tx(test_constants::admin());
-    let harness_id = share_exposure_harness(&mut fx);
+    let harness_id = create_and_share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
     let mut oracle = fx.take_oracle_bundle();
@@ -92,7 +92,7 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
     (fx, oracle, harness, order)
 }
 
-fun share_exposure_harness(fx: &mut OracleFixture): ID {
+fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let expiry_market_id = fx.expiry_id();
     let expiry_ms = fx.expiry();
     let id = object::new(fx.scenario_mut().ctx());

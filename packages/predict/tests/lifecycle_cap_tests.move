@@ -3,7 +3,7 @@
 
 /// Lifecycle-cap allowlist coverage: `registry::mint_lifecycle_cap` /
 /// `registry::revoke_lifecycle_cap`, the `ELifecycleCapNotValid` gate on
-/// `registry::create_expiry_market`, and that destroying a cap leaves the
+/// `registry::create_and_share_expiry_market`, and that destroying a cap leaves the
 /// allowlist untouched.
 #[test_only]
 module deepbook_predict::lifecycle_cap_tests;
@@ -117,7 +117,7 @@ fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycle
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,

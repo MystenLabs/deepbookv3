@@ -206,8 +206,8 @@ public(package) fun record_fee_incentives_allocated_up_to(
 /// Receive DUSDC returned from an expiry.
 public(package) fun receive_expiry_cash(
     ledger: &mut Ledger,
-    expiry_market_id: ID,
     cash: Balance<DUSDC>,
+    expiry_market_id: ID,
 ): u64 {
     let amount = cash.value();
     if (amount == 0) {

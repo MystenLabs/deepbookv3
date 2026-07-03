@@ -49,7 +49,7 @@ fun send_and_receive_track_profit_basis() {
     assert_eq!(ledger.idle_balance(), 300);
 
     // Expiry returns 250: credits += 250, idle 300 -> 550.
-    ledger.receive_expiry_cash(id, balance::create_for_testing<DUSDC>(250));
+    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(250), id);
     assert_eq!(ledger.profit_basis_credits(), 250);
     assert_eq!(ledger.idle_balance(), 550);
 
@@ -103,20 +103,20 @@ fun materialize_carries_loss_forward_before_recognizing_profit() {
     // Sent 1000, then the expiry returns only 600 (a 400 terminal loss).
     ledger.receive_idle(balance::create_for_testing<DUSDC>(1000));
     destroy(ledger.send_expiry_cash(id, MAX_EXPIRY_ALLOCATION));
-    ledger.receive_expiry_cash(id, balance::create_for_testing<DUSDC>(600));
+    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(600), id);
 
     // First materialize latches the 400 loss; recognizes 0 profit, debits unchanged.
     assert_eq!(ledger.materialize_expiry_profit(id), 0);
     assert_eq!(ledger.profit_basis_debits(), 1000);
 
     // A later 300 gain (received 900) only refills the loss carry 400 -> 100.
-    ledger.receive_expiry_cash(id, balance::create_for_testing<DUSDC>(300));
+    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(300), id);
     assert_eq!(ledger.materialize_expiry_profit(id), 0);
     assert_eq!(ledger.profit_basis_debits(), 1000);
 
     // A further 200 gain (received 1100) clears the last 100 loss and recognizes
     // 100 profit, which lands in the debit basis.
-    ledger.receive_expiry_cash(id, balance::create_for_testing<DUSDC>(200));
+    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(200), id);
     assert_eq!(ledger.materialize_expiry_profit(id), 100);
     assert_eq!(ledger.profit_basis_debits(), 1100);
 
@@ -131,7 +131,7 @@ fun materialize_recognizes_immediate_profit_with_no_funding() {
     ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
 
     // No cash sent (sent 0); the expiry returns 500 of pure profit.
-    ledger.receive_expiry_cash(id, balance::create_for_testing<DUSDC>(500));
+    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(500), id);
     assert_eq!(ledger.materialize_expiry_profit(id), 500);
     assert_eq!(ledger.profit_basis_debits(), 500);
 

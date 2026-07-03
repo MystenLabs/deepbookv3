@@ -14,9 +14,9 @@
 // args = {
 //   groundTruth: string, scope: string,
 //   lenses?:     string[],  // subset of lens keys (default: all 10)
-//   profile?:    'security', // named lens preset when `lenses` is absent: drops the cleanup-tier lenses
-//                            // (surface-area, architecture) for budget runs
-//   depth?:      'low'|'standard'|'max', // preset for rounds/verifyCap (see DEPTH below)
+//   profile?:    'security'|'cleanup', // named lens preset when `lenses` is absent: security drops the
+//                            // cleanup-tier lenses (surface-area, architecture); cleanup keeps ONLY them
+//   depth?:      'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (see DEPTH below)
 //   files?:      string[],  // DELTA SCOPE: changed files — lenses concentrate on them + direct callers/callees
 //   priorAdjudications?: [  // cross-run memory: adjudicated findings from a PREVIOUS run's findings.json.
 //     { title, location, status: 'refuted'|'settled'|'confirmed', note? }
@@ -60,18 +60,22 @@ const scope = A.scope || 'full protocol at current HEAD'
 // DEPTH preset — ORTHOGONAL to breadth/scope: it tunes how hard each lens digs (rounds / verify / findings),
 // NOT how many lenses run. So depth:'low' is still a FULL-breadth audit (all lenses) — just a single pass per
 // lens. Precedence: an explicit cap arg wins over the depth preset, which wins over the hardcoded default.
-// Tiers: low = quick full-coverage pass; standard = the bounded default; max = reserve for high-budget runs.
-const DEPTH = { low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxFindings: 16 } }
+// Tiers: mini = cleanup-triage pass (1 round, NO verify subagents — everything reported raw, the operator is
+// the verifier; finder effort medium; pair with profile:'cleanup'); low = quick full-coverage pass;
+// standard = the bounded default; max = reserve for high-budget runs.
+const DEPTH = { mini: { maxRounds: 1, verifyCap: 0, effort: 'medium' }, low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxFindings: 16 } }
 const depthName = DEPTH[A.depth] ? A.depth : 'standard'
 const D = DEPTH[depthName]
 const maxFindings = A.maxFindings || D.maxFindings || 12
 const DRY_TARGET = A.dryRounds || D.dryRounds || 2
 const MAX_ROUNDS = A.maxRounds || D.maxRounds || 3
-const VERIFY_CAP = A.verifyCap || D.verifyCap || 60
+// typeof-check, not ||: mini's verifyCap 0 is falsy and must not fall through to the default.
+const VERIFY_CAP = [A.verifyCap, D.verifyCap, 60].find(v => typeof v === 'number')
+const FIND_EFFORT = D.effort || 'max'
 const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget.total * 0.3)) : 5_000_000 // reserve ~30% of the budget for verify + promote + synthesis
 // One definition of the committed settled-decision sources, interpolated into every prompt that cites them
 // (they were previously restated per-prompt and drifted on tracker moves).
-const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, and packages/predict/predeploy/open-items.md'
+const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
 // DELTA SCOPE: when the run targets a change set, lenses concentrate on these files + their blast radius.
 const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
 // Cross-run memory: adjudications from a previous run. Keyed with the same fkey used for in-run dedup, so a
@@ -92,14 +96,18 @@ const ALL_LANES = [
 ]
 const want = Array.isArray(A.lenses) ? A.lenses : null
 // profile:'security' = full bug-hunt breadth minus the cleanup-tier lenses (their findings are mostly the
-// unverified Info tail). An explicit `lenses` arg always wins over the profile.
+// unverified Info tail). profile:'cleanup' = the inverse — ONLY the cleanup-tier lenses, for the mini
+// triage pass (pair with depth:'mini'). An explicit `lenses` arg always wins over a profile.
 const PROFILE_DROP = { security: ['surface-area', 'architecture'] }
+const PROFILE_KEEP = { cleanup: ['surface-area', 'assertions', 'architecture'] }
 const profileDrop = !want && PROFILE_DROP[A.profile] ? PROFILE_DROP[A.profile] : null
+const profileKeep = !want && PROFILE_KEEP[A.profile] ? PROFILE_KEEP[A.profile] : null
 const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0)
+  : profileKeep ? ALL_LANES.filter(l => profileKeep.indexOf(l.key) >= 0)
   : profileDrop ? ALL_LANES.filter(l => profileDrop.indexOf(l.key) < 0) : ALL_LANES
 const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-log(`audit config — scope: "${scope}" | depth: ${depthName}${profileDrop ? ` | profile: ${A.profile}` : ''} | lenses: ${want ? want.join(',') : profileDrop ? `${LANES.length} (security profile)` : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
+log(`audit config — scope: "${scope}" | depth: ${depthName}${(profileDrop || profileKeep) ? ` | profile: ${A.profile}` : ''} | lenses: ${want ? want.join(',') : (profileDrop || profileKeep) ? `${LANES.length} (${A.profile} profile)` : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | verifyCap: ${VERIFY_CAP} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
   + (FILES ? ` | DELTA files: ${FILES.length}` : '')
   + (PRIOR.length ? ` | prior adjudications: ${PRIOR.length}` : '')
   + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
@@ -288,7 +296,7 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   const knownByLane = {}
   candidates.forEach(f => (f.lanes || [f.lane]).forEach(ln => { (knownByLane[ln] = knownByLane[ln] || []).push(`- [${f.severity}] ${f.title} @ ${f.location}`) }))
   const roundRes = await parallel(activeLanes.map(lane => () => agent(finderPrompt(lane, round, (knownByLane[lane.key] || []).join('\n')),
-    { schema: FINDINGS_SCHEMA, effort: 'max', phase: 'Find', label: `find:${lane.key}:r${round}` })))
+    { schema: FINDINGS_SCHEMA, effort: FIND_EFFORT, phase: 'Find', label: `find:${lane.key}:r${round}` })))
   const freshByLane = {}
   // Index by the lane we DISPATCHED (activeLanes[i]), not the agent-returned r.lane: parallel() preserves
   // order, and the dispatched key is the stable identity (some lenses fill `lane` with their file name).

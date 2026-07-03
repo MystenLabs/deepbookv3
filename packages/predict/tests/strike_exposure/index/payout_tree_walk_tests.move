@@ -43,6 +43,20 @@ const FLAT_REGION_FORWARD: u64 = 435_000_000_000;
 /// Tiny quantity (a partial-close survivor) whose per-order range value rounds to
 /// zero, so only boundary-aggregation rounding remains.
 const DUST_QUANTITY: u64 = 100_000;
+const GC_SURVIVOR_A_LOWER: u64 = 98;
+const GC_REMOVED_LOWER: u64 = 100;
+const GC_SURVIVOR_C_LOWER: u64 = 102;
+const GC_SURVIVOR_A_HIGHER: u64 = 104;
+const GC_REMOVED_HIGHER: u64 = 106;
+const GC_SURVIVOR_C_HIGHER: u64 = 108;
+const GC_SURVIVOR_A_QUANTITY: u64 = 1_000_000_000;
+const GC_REMOVED_QUANTITY: u64 = 500_000_000;
+const GC_SURVIVOR_C_QUANTITY: u64 = 300_000_000;
+const GC_PRE_REMOVE_NODE_COUNT: u64 = 6;
+const GC_POST_REMOVE_NODE_COUNT: u64 = 4;
+const GC_SETTLEMENT_A_ONLY_TICK: u64 = 100;
+const GC_SETTLEMENT_OVERLAP_TICK: u64 = 103;
+const GC_SETTLEMENT_C_ONLY_TICK: u64 = 106;
 
 #[test]
 fun exact_walk_matches_per_order_reference() {
@@ -76,7 +90,7 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     // Insertion order is intentionally not sorted. The in-order walk must still
     // cache ascending ticks, because `cached_range_price` uses binary search.
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, tick_size(), &mut memo);
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
     assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
     assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(constants::neg_inf!(), raw(t0)));
@@ -102,7 +116,7 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, tick_size(), &mut memo);
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(
         walk,
         range_reference(
@@ -150,6 +164,64 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     cleanup(fixture, oracle);
 }
 
+#[test]
+fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
+    let (mut fixture, oracle, pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
+    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
+    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
+    assert_eq!(tree.debug_node_count(), GC_PRE_REMOVE_NODE_COUNT);
+
+    // Removing the middle range deletes two interior boundary nodes through GC.
+    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
+    assert_eq!(tree.debug_node_count(), GC_POST_REMOVE_NODE_COUNT);
+    assert!(!tree.debug_contains_node(GC_REMOVED_LOWER));
+    assert!(!tree.debug_contains_node(GC_REMOVED_HIGHER));
+
+    let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
+    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
+
+    let settled_a_only = tree.settled_payout_liability(raw(GC_SETTLEMENT_A_ONLY_TICK), tick_size());
+    assert_eq!(
+        settled_a_only,
+        rebuilt.settled_payout_liability(raw(GC_SETTLEMENT_A_ONLY_TICK), tick_size()),
+    );
+    assert_eq!(settled_a_only, GC_SURVIVOR_A_QUANTITY);
+    let settled_overlap = tree.settled_payout_liability(
+        raw(GC_SETTLEMENT_OVERLAP_TICK),
+        tick_size(),
+    );
+    assert_eq!(
+        settled_overlap,
+        rebuilt.settled_payout_liability(raw(GC_SETTLEMENT_OVERLAP_TICK), tick_size()),
+    );
+    assert_eq!(settled_overlap, GC_SURVIVOR_A_QUANTITY + GC_SURVIVOR_C_QUANTITY);
+    let settled_c_only = tree.settled_payout_liability(raw(GC_SETTLEMENT_C_ONLY_TICK), tick_size());
+    assert_eq!(
+        settled_c_only,
+        rebuilt.settled_payout_liability(raw(GC_SETTLEMENT_C_ONLY_TICK), tick_size()),
+    );
+    assert_eq!(settled_c_only, GC_SURVIVOR_C_QUANTITY);
+
+    let mutated_walk = walk_linear(&tree, &pricer);
+    let rebuilt_walk = walk_linear(&rebuilt, &pricer);
+    let reference = range_reference(
+        &pricer,
+        vector[GC_SURVIVOR_A_LOWER, GC_SURVIVOR_C_LOWER],
+        vector[GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_C_HIGHER],
+        vector[GC_SURVIVOR_A_QUANTITY, GC_SURVIVOR_C_QUANTITY],
+    );
+    assert_eq!(mutated_walk, rebuilt_walk);
+    assert_eq!(mutated_walk, reference);
+
+    destroy(tree);
+    destroy(rebuilt);
+    cleanup(fixture, oracle);
+}
+
 // === Helpers ===
 
 /// The walk's `tick_size`: the default (1e9), so tick `t` maps to raw strike
@@ -162,7 +234,7 @@ fun raw(tick: u64): u64 { tick * tick_size() }
 /// Run the exact linear walk with the production price memo.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
-    tree.walk_linear(pricer, tick_size(), &mut memo)
+    tree.walk_linear(pricer, &mut memo, tick_size())
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).

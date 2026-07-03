@@ -98,50 +98,150 @@ fun bind_block_scholes_to_underlying_records_typed_lookups_and_metadata() {
         bs_spot_a_id,
     );
     assert_eq!(
-        registry
-            .propbook_block_scholes_forward_id_for_underlying(BTC_UNDERLYING_ID)
-            .destroy_some(),
+        registry.propbook_block_scholes_forward_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         bs_forward_a_id,
     );
     assert_metadata(
-        registry
-            .block_scholes_forward_metadata_for_underlying(BTC_UNDERLYING_ID)
-            .destroy_some(),
+        registry.block_scholes_forward_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         BTC_UNDERLYING_ID,
         BS_SOURCE_A,
         bs_forward_a_id,
     );
     assert_eq!(
-        registry
-            .propbook_block_scholes_svi_id_for_underlying(BTC_UNDERLYING_ID)
-            .destroy_some(),
+        registry.propbook_block_scholes_svi_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         bs_svi_a_id,
     );
     assert_metadata(
-        registry
-            .block_scholes_svi_metadata_for_underlying(BTC_UNDERLYING_ID)
-            .destroy_some(),
+        registry.block_scholes_svi_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
         BTC_UNDERLYING_ID,
         BS_SOURCE_A,
         bs_svi_a_id,
     );
-    assert!(
-        registry.propbook_block_scholes_spot_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
-    );
-    assert!(
-        registry
-            .propbook_block_scholes_forward_id_for_underlying(ETH_UNDERLYING_ID)
-            .is_none(),
-    );
-    assert!(
-        registry
-            .propbook_block_scholes_svi_id_for_underlying(ETH_UNDERLYING_ID)
-            .is_none(),
-    );
+    assert!(registry.propbook_block_scholes_spot_id_for_underlying(ETH_UNDERLYING_ID).is_none());
+    assert!(registry.propbook_block_scholes_forward_id_for_underlying(ETH_UNDERLYING_ID).is_none());
+    assert!(registry.propbook_block_scholes_svi_id_for_underlying(ETH_UNDERLYING_ID).is_none());
 
     return_shared(bs_svi);
     return_shared(bs_forward);
     return_shared(bs_spot);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun replace_pyth_binding_updates_typed_lookup_and_metadata() {
+    let (
+        scenario,
+        pyth_a_id,
+        pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+
+    assert_eq!(
+        registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        pyth_b_id,
+    );
+    assert_metadata(
+        registry.pyth_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        BTC_UNDERLYING_ID,
+        PYTH_SOURCE_B,
+        pyth_b_id,
+    );
+
+    return_shared(pyth_b);
+    return_shared(pyth_a);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun replace_block_scholes_bindings_updates_entire_surface() {
+    let (
+        scenario,
+        _pyth_a_id,
+        _pyth_b_id,
+        bs_spot_a_id,
+        bs_spot_b_id,
+        bs_forward_a_id,
+        bs_forward_b_id,
+        bs_svi_a_id,
+        bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let bs_spot_a = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_a_id);
+    let bs_spot_b = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_b_id);
+    let bs_forward_a = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_a_id);
+    let bs_forward_b = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_b_id);
+    let bs_svi_a = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_a_id);
+    let bs_svi_b = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_b_id);
+
+    registry.bind_block_scholes_spot_to_underlying(&admin_cap, &bs_spot_a, BTC_UNDERLYING_ID);
+    registry.bind_block_scholes_surface_to_underlying(
+        &admin_cap,
+        &bs_forward_a,
+        &bs_svi_a,
+        BTC_UNDERLYING_ID,
+    );
+    registry.replace_block_scholes_bindings_for_underlying(
+        &admin_cap,
+        &bs_spot_b,
+        &bs_forward_b,
+        &bs_svi_b,
+        BTC_UNDERLYING_ID,
+    );
+
+    assert_eq!(
+        registry.propbook_block_scholes_spot_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        bs_spot_b_id,
+    );
+    assert_metadata(
+        registry.block_scholes_spot_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        BTC_UNDERLYING_ID,
+        BS_SOURCE_B,
+        bs_spot_b_id,
+    );
+    assert_eq!(
+        registry.propbook_block_scholes_forward_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        bs_forward_b_id,
+    );
+    assert_metadata(
+        registry.block_scholes_forward_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        BTC_UNDERLYING_ID,
+        BS_SOURCE_B,
+        bs_forward_b_id,
+    );
+    assert_eq!(
+        registry.propbook_block_scholes_svi_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        bs_svi_b_id,
+    );
+    assert_metadata(
+        registry.block_scholes_svi_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        BTC_UNDERLYING_ID,
+        BS_SOURCE_B,
+        bs_svi_b_id,
+    );
+
+    return_shared(bs_svi_b);
+    return_shared(bs_svi_a);
+    return_shared(bs_forward_b);
+    return_shared(bs_forward_a);
+    return_shared(bs_spot_b);
+    return_shared(bs_spot_a);
     return_shared(registry);
     destroy(admin_cap);
     scenario.end();
@@ -191,6 +291,149 @@ fun bind_unregistered_source_aborts() {
     let unregistered_pyth = scenario.take_shared_by_id<PythFeed>(unregistered_pyth_id);
 
     registry.bind_pyth_to_underlying(&admin_cap, &unregistered_pyth, BTC_UNDERLYING_ID);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EBindingNotFound)]
+fun replace_pyth_binding_without_existing_binding_aborts() {
+    let (
+        scenario,
+        pyth_a_id,
+        _pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::ESourceAlreadyBound)]
+fun replace_pyth_binding_to_source_bound_to_other_underlying_aborts() {
+    let (
+        scenario,
+        pyth_a_id,
+        pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_b, ETH_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::ESourceAlreadyBound)]
+fun replaced_pyth_source_stays_bound_to_original_underlying() {
+    let (
+        scenario,
+        pyth_a_id,
+        pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, ETH_UNDERLYING_ID);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EBindingNotFound)]
+fun replace_block_scholes_bindings_without_existing_surface_aborts() {
+    let (
+        scenario,
+        _pyth_a_id,
+        _pyth_b_id,
+        bs_spot_a_id,
+        bs_spot_b_id,
+        _bs_forward_a_id,
+        bs_forward_b_id,
+        _bs_svi_a_id,
+        bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let bs_spot_a = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_a_id);
+    let bs_spot_b = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_b_id);
+    let bs_forward_b = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_b_id);
+    let bs_svi_b = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_b_id);
+
+    registry.bind_block_scholes_spot_to_underlying(&admin_cap, &bs_spot_a, BTC_UNDERLYING_ID);
+    registry.replace_block_scholes_bindings_for_underlying(
+        &admin_cap,
+        &bs_spot_b,
+        &bs_forward_b,
+        &bs_svi_b,
+        BTC_UNDERLYING_ID,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EWrongBlockScholesSource)]
+fun replace_block_scholes_bindings_with_mixed_sources_aborts() {
+    let (
+        scenario,
+        _pyth_a_id,
+        _pyth_b_id,
+        bs_spot_a_id,
+        bs_spot_b_id,
+        bs_forward_a_id,
+        bs_forward_b_id,
+        bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let bs_spot_a = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_a_id);
+    let bs_spot_b = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_b_id);
+    let bs_forward_a = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_a_id);
+    let bs_forward_b = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_b_id);
+    let bs_svi_a = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_a_id);
+
+    registry.bind_block_scholes_spot_to_underlying(&admin_cap, &bs_spot_a, BTC_UNDERLYING_ID);
+    registry.bind_block_scholes_surface_to_underlying(
+        &admin_cap,
+        &bs_forward_a,
+        &bs_svi_a,
+        BTC_UNDERLYING_ID,
+    );
+    registry.replace_block_scholes_bindings_for_underlying(
+        &admin_cap,
+        &bs_spot_b,
+        &bs_forward_b,
+        &bs_svi_a,
+        BTC_UNDERLYING_ID,
+    );
 
     abort 999
 }

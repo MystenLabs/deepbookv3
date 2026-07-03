@@ -12,6 +12,8 @@ use deepbook_predict::{
     constants,
     expiry_market,
     flow_test_helpers as helpers,
+    plp,
+    predict_account,
     test_constants
 };
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
@@ -93,6 +95,40 @@ fun passive_settlement_with_wrong_pyth_feed_aborts() {
     fx.rebalance_expiry_cash_bundle_with_pyth(&mut market, &wrong_pyth);
 
     abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
+fun passive_settlement_rejects_old_pyth_after_propbook_rebind() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let _rebound_pyth_id = fx.create_and_rebind_pyth(SECOND_SOURCE_ID);
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+
+    fx.ensure_settled_bundle(&mut market);
+
+    abort 999
+}
+
+#[test]
+fun passive_settlement_uses_rebound_pyth_after_exact_backfill() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let rebound_pyth_id = fx.create_and_rebind_pyth(SECOND_SOURCE_ID);
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle_with_pyth(expiry_id, rebound_pyth_id);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+
+    assert_eq!(fx.ensure_settled_bundle(&mut market), true);
+    assert_eq!(expiry_market::settlement_price(helpers::market(&market)), settlement_price);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 #[test]
@@ -430,6 +466,92 @@ fun settlement_inside_default_finite_range(): u64 {
 
 fun settlement_below_default_finite_range(): u64 {
     (helpers::strike_tick() - 1) * test_constants::default_tick_size()
+}
+
+/// The plp rebate-claim wrapper's own settled gate: past expiry with no exact
+/// Propbook spot recorded, the claim aborts before touching rebate or account state.
+#[test, expected_failure(abort_code = plp::EMarketNotSettled)]
+fun rebate_claim_requires_settled_market() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
+
+    abort 999
+}
+
+/// A rebate claim resolves the account's expiry summary, which requires every
+/// position on the expiry closed: with an order still open after settlement it
+/// aborts instead of paying against an incomplete loss picture.
+#[test, expected_failure(abort_code = predict_account::EExpirySummaryHasOpenPositions)]
+fun rebate_claim_with_open_position_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let _order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_below_default_finite_range(),
+    );
+    // The position is never redeemed, so summary resolution must refuse the claim.
+    fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
+
+    abort 999
+}
+
+#[test]
+fun unstake_deep_returns_all_staked_custody() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
+    fx.stake_deep_bundle(
+        &mut market,
+        &mut account,
+        config_constants::default_upper_benefit_power!(),
+    );
+    assert_eq!(
+        helpers::vault(&market).staked_deep(),
+        config_constants::default_upper_benefit_power!(),
+    );
+
+    fx.unstake_deep_bundle(&mut market, &mut account);
+
+    // All staked DEEP custody (active and inactive) left the vault for the account.
+    assert_eq!(helpers::vault(&market).staked_deep(), 0);
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, helpers::Trader) {

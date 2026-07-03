@@ -122,18 +122,17 @@ public fun finish_registry_test(
 }
 
 /// Admin-bind already-shared propbook feeds to `propbook_underlying_id()`,
-/// so the production `registry::create_expiry_market` binding check passes. Uses
-/// the propbook `RegistryAdminCap` minted to admin by `propbook_registry::
-/// init_for_testing`. Operates within the CURRENT transaction (sender must be
-/// admin and both feeds must already be shared); the one-shot cap is consumed.
+/// so the production `registry::create_and_share_expiry_market` binding check passes.
+/// Operates within the CURRENT transaction; all feeds must already be shared.
+/// The caller keeps the propbook `RegistryAdminCap` for later rebind flows.
 public fun bind_feeds_to_underlying(
     scenario: &Scenario,
+    propbook_admin_cap: &RegistryAdminCap,
     pyth_id: ID,
     bs_spot_id: ID,
     bs_forward_id: ID,
     bs_svi_id: ID,
 ) {
-    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
     let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
@@ -141,19 +140,19 @@ public fun bind_feeds_to_underlying(
     let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
-        &admin_cap,
+        propbook_admin_cap,
         &pyth,
         test_constants::propbook_underlying_id(),
     );
     propbook_registry::bind_block_scholes_spot_to_underlying(
         &mut oracle_registry,
-        &admin_cap,
+        propbook_admin_cap,
         &bs_spot,
         test_constants::propbook_underlying_id(),
     );
     propbook_registry::bind_block_scholes_surface_to_underlying(
         &mut oracle_registry,
-        &admin_cap,
+        propbook_admin_cap,
         &bs_forward,
         &bs_svi,
         test_constants::propbook_underlying_id(),
@@ -163,5 +162,4 @@ public fun bind_feeds_to_underlying(
     return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
-    destroy(admin_cap);
 }

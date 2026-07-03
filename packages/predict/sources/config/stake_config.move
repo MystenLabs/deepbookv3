@@ -13,6 +13,10 @@ module deepbook_predict::stake_config;
 use deepbook_predict::{config_constants, constants};
 use fixed_math::math;
 
+const EInvalidBenefitPowers: u64 = 0;
+
+/// Admin-tunable DEEP-stake benefit curve thresholds; see the module doc for
+/// the curve shape.
 public struct StakeConfig has store {
     /// Active stake at the curve kink (half of max benefits), in raw DEEP units.
     lower_benefit_power: u64,
@@ -21,14 +25,6 @@ public struct StakeConfig has store {
 }
 
 // === Public-Package Functions ===
-
-public(package) fun lower_benefit_power(config: &StakeConfig): u64 {
-    config.lower_benefit_power
-}
-
-public(package) fun upper_benefit_power(config: &StakeConfig): u64 {
-    config.upper_benefit_power
-}
 
 /// Fee amount remaining after the active stake discount is applied.
 public(package) fun fee_amount_after_discount(
@@ -62,7 +58,12 @@ public(package) fun new(): StakeConfig {
 /// Set both benefit thresholds together (validated as a pair: each in range and
 /// `upper > 2 * lower`).
 public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upper: u64) {
-    config_constants::assert_benefit_powers(lower, upper);
+    config_constants::assert_lower_benefit_power(lower);
+    config_constants::assert_upper_benefit_power(upper);
+    // The upper segment must require strictly more stake than the lower one:
+    // `upper - lower > lower`, i.e. `upper > 2 * lower` (which also guarantees
+    // `upper > lower`, so `benefit_ratio`'s `upper - lower` denominator is positive).
+    assert!(upper > 2 * lower, EInvalidBenefitPowers);
     config.lower_benefit_power = lower;
     config.upper_benefit_power = upper;
 }

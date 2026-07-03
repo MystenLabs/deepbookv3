@@ -91,6 +91,11 @@ public fun expiry(market: &ExpiryMarket): u64 {
     market.expiry
 }
 
+/// Return the recorded settlement price. Aborts if the market is not settled.
+public fun settlement_price(market: &ExpiryMarket): u64 {
+    market.settlement_price.destroy_some()
+}
+
 /// Return DUSDC currently held by this expiry.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
@@ -184,12 +189,12 @@ public fun load_live_pricer(
     pricing::load_live_pricer(
         config.pricing_config(),
         propbook_registry,
-        market.id(),
-        market.propbook_underlying_id,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        market.id(),
+        market.propbook_underlying_id,
         market.expiry,
         clock,
     )
@@ -550,11 +555,6 @@ public fun set_mint_paused(
 
 // === Public-Package Functions ===
 
-/// Return the recorded settlement price. Aborts if the market is not settled.
-public(package) fun settlement_price(market: &ExpiryMarket): u64 {
-    market.settlement_price.destroy_some()
-}
-
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
 /// the attempt. This is the canonical passive settlement gate used immediately
@@ -846,20 +846,13 @@ fun mint_prepared_exact_quantity(
     let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
-    let trader_fee_amount = fee_amount - fee_subsidy_amount;
-    assert!(
-        net_premium + trader_fee_amount + builder_fee_amount + penalty_amount <= max_cost,
-        EMintCostAboveMax,
-    );
-
     let (builder_fee_amount, fee_incentive_subsidy) = market.settle_mint_payment(
         account,
         &minted_order,
         net_premium,
         fee_amount,
         penalty_amount,
+        max_cost,
         clock,
         ctx,
     );
@@ -1051,10 +1044,13 @@ fun redeem_settled_internal(
 
 /// Settle a mint payment and return the builder fee and fee incentive subsidy.
 ///
-/// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
-/// into expiry cash as surplus: it is not part of the rebate fee basis and
-/// earns no builder cut. Fee incentives subsidize only the trader-paid portion
-/// of the trading fee; the expiry still collects the full fee amount.
+/// Owns the only derivation of the mint fee decomposition (builder fee,
+/// fee-incentive subsidy, trader-paid fee), so the all-in `max_cost` slippage
+/// guard bounds the exact amount withdrawn. The EWMA penalty is withdrawn
+/// alongside the net premium and fees, but rides into expiry cash as surplus:
+/// it is not part of the rebate fee basis and earns no builder cut. Fee
+/// incentives subsidize only the trader-paid portion of the trading fee; the
+/// expiry still collects the full fee amount.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -1062,6 +1058,7 @@ fun settle_mint_payment(
     net_premium: u64,
     fee_amount: u64,
     penalty_amount: u64,
+    max_cost: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64) {
@@ -1071,6 +1068,7 @@ fun settle_mint_payment(
     let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
     let trader_fee_amount = fee_amount - fee_subsidy_amount;
     let withdraw_amount = net_premium + trader_fee_amount + builder_fee_amount + penalty_amount;
+    assert!(withdraw_amount <= max_cost, EMintCostAboveMax);
 
     predict_account::add_position(
         account,

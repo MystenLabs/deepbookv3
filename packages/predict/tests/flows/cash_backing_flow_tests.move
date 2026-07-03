@@ -10,8 +10,7 @@
 #[test_only]
 module deepbook_predict::cash_backing_flow_tests;
 
-use deepbook_predict::{config_constants, constants, flow_test_helpers as helpers, test_constants};
-use fixed_math::math;
+use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
 
 /// Both mints quote the exact ATM digital: forward == min_strike, so
 /// UP(min_strike) = Φ(0) = 0.5 exactly (the SVI wing rounds to zero), and the
@@ -105,7 +104,8 @@ fun cash_sheet_exact_after_every_flow() {
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            DOWN_QUANTITY + default_gap_buffer(test_constants::mint_quantity()),
+            // λ_default = 0.25, so the gap buffer is mint_quantity / 4.
+            DOWN_QUANTITY + test_constants::mint_quantity() / 4,
             REBATE_AFTER_MINT2,
         ),
     );
@@ -136,7 +136,8 @@ fun cash_sheet_exact_after_every_flow() {
     );
     let order1b = replacement.destroy_some();
     let cash_after_close = cash_after_mints - CLOSE_NET_PAYOUT;
-    let liability_after_close = DOWN_QUANTITY + default_gap_buffer(HALF_CLOSE);
+    // λ_default = 0.25, so the gap buffer is HALF_CLOSE / 4.
+    let liability_after_close = DOWN_QUANTITY + HALF_CLOSE / 4;
     helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(
@@ -163,8 +164,4 @@ fun cash_sheet_exact_after_every_flow() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
-}
-
-fun default_gap_buffer(gap: u64): u64 {
-    math::mul(config_constants::default_backing_buffer_lambda!(), gap)
 }

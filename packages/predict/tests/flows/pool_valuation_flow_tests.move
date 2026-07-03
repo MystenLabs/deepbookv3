@@ -44,7 +44,7 @@ const POST_VALUATION_PROFIT_DEBITS: u64 = 20_000_000_000;
 /// the protocol's 40% cut excludes 4m from LP NAV.
 const TWO_MARKET_POOL_NAV: u64 = 1_200_006_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
-/// that mark passes the fixed NAV-dust floor but fails the 0.01 PLP price floor.
+/// that mark is a very low but executable fair PLP price.
 const BELOW_MIN_PRICE_IDLE: u64 = 1_000_000_000;
 /// Large 1x order used to drive a fully-funded market underwater after a price jump.
 const UNDERWATER_QUANTITY: u64 = 500_000_000_000;
@@ -53,8 +53,10 @@ const DEEP_ITM_LIVE_PRICE: u64 = 1_000_000_000_000;
 const REPRICE_MS: u64 = 121_000;
 const REPRICE_SOURCE_TS: u64 = 119_500;
 /// Empty-market cash above the 10e9 target. Valuation sweeps the 1e9 surplus to
-/// idle and leaves 10e9 active NAV, far above the max price for 10m PLP supply.
+/// idle and leaves 10e9 active NAV. With the protocol's 40% profit exclusion on
+/// the 11e9 active+returned credit basis, the frozen LP mark is 6.61e9.
 const ABOVE_MAX_PRICE_MARKET_CASH: u64 = 11_000_000_000;
+const ABOVE_MAX_PRICE_POOL_NAV: u64 = 6_610_000_000;
 
 // === Happy path: aggregation ===
 
@@ -280,7 +282,7 @@ fun create_expiry_market_during_valuation_aborts() {
     bootstrap_pool(&mut fx, IDLE_SEED);
 
     // Engage the valuation lock on the shared config, then attempt to create a market:
-    // create_expiry_market is an active-set mutation, so it must abort under the lock.
+    // create_and_share_expiry_market is an active-set mutation, so it must abort under the lock.
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     config.begin_valuation();
@@ -381,34 +383,38 @@ fun value_expiry_for_inactive_market_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = plp::EPoolNavDust)]
-fun finish_flush_with_dust_pool_nav_aborts() {
+#[test]
+fun finish_flush_with_zero_pool_nav_and_empty_queues_succeeds() {
     let (mut fx, e) = setup_underwater_market(0);
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
     let mut val = fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut val, &mut market);
-    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    assert_eq!(pool_nav, 0);
 
-    abort 999
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
-#[test, expected_failure(abort_code = plp::EPlpPriceBelowCircuitBreaker)]
-fun finish_flush_with_plp_price_below_floor_aborts() {
+#[test]
+fun finish_flush_with_low_plp_price_and_empty_queues_succeeds() {
     let (mut fx, e) = setup_underwater_market(BELOW_MIN_PRICE_IDLE);
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
     let mut val = fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut val, &mut market);
-    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    assert_eq!(pool_nav, BELOW_MIN_PRICE_IDLE);
 
-    abort 999
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
-#[test, expected_failure(abort_code = plp::EPlpPriceAboveCircuitBreaker)]
-fun finish_flush_with_plp_price_above_ceiling_aborts() {
+#[test]
+fun finish_flush_with_high_plp_price_and_empty_queues_succeeds() {
     let mut fx = helpers::setup_market_default();
     bootstrap_pool(&mut fx, constants::min_bootstrap_liquidity!());
     let e = fx.create_expiry(test_constants::default_expiry_ms());
@@ -420,9 +426,11 @@ fun finish_flush_with_plp_price_above_ceiling_aborts() {
 
     let mut val = fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut val, &mut market);
-    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    assert_eq!(pool_nav, ABOVE_MAX_PRICE_POOL_NAV);
 
-    abort 999
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 // === Lock primitives ===

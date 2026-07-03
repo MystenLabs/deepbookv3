@@ -59,6 +59,8 @@ const EBlockScholesSVIStale: u64 = 10;
 const EWrongBlockScholesForwardFeed: u64 = 11;
 const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
+const EBlockScholesPriceUnavailable: u64 = 14;
+const EBlockScholesSVIUnavailable: u64 = 15;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -74,7 +76,7 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // === Public Functions ===
 
 /// Return the expiry market this pricer was loaded for.
-public fun expiry_market_id(pricer: &Pricer): ID {
+public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
@@ -91,12 +93,12 @@ public fun expiry_market_id(pricer: &Pricer): ID {
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
-    expiry_market_id: ID,
-    propbook_underlying_id: u32,
     pyth: &PythFeed,
     bs_spot: &BlockScholesSpotFeed,
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
     expiry: u64,
     clock: &Clock,
 ): Pricer {
@@ -223,7 +225,7 @@ fun live_inputs(
     clock: &Clock,
 ): (u64, SVIParams) {
     let bs_spot_read = bs_spot.normalized_spot();
-    assert!(bs_spot_read.is_some(), EBlockScholesPriceStale);
+    assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
     assert!(
         timestamp_is_fresh(
@@ -236,7 +238,7 @@ fun live_inputs(
     let bs_spot = bs_spot_read.read_value();
 
     let bs_forward_read = bs_forward.normalized_forward(expiry);
-    assert!(bs_forward_read.is_some(), EBlockScholesPriceStale);
+    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
     assert!(
         timestamp_is_fresh(
@@ -249,7 +251,7 @@ fun live_inputs(
     let bs_forward = bs_forward_read.read_value();
 
     let svi_read = bs_svi.normalized_svi(expiry);
-    assert!(svi_read.is_some(), EBlockScholesSVIStale);
+    assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
     assert!(
         timestamp_is_fresh(
@@ -366,6 +368,10 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let rho = svi_params.rho();
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
+    // Analytically non-negative inside the pricing-safe envelope: |rho| <= 1 and
+    // sqrt((k-m)^2 + sigma^2) >= |k-m| >= |rho·(k-m)|. Kept as defense-in-depth
+    // against fixed-point rounding at the |rho| = 1 corner; no production input
+    // is known to reach it, so it carries no expected_failure test.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let a = svi_params.a();

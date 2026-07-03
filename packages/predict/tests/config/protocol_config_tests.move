@@ -12,6 +12,36 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
+use std::unit_test::{assert_eq, destroy};
+use sui::test_scenario::return_shared;
+
+#[test]
+fun set_ewma_params_and_enabled_update_config() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.set_ewma_params(
+        &admin_cap,
+        config_constants::min_ewma_alpha!(),
+        config_constants::min_ewma_z_score_threshold!(),
+        config_constants::min_ewma_penalty_rate!(),
+    );
+    assert_eq!(config.ewma_config().alpha(), config_constants::min_ewma_alpha!());
+    assert_eq!(
+        config.ewma_config().z_score_threshold(),
+        config_constants::min_ewma_z_score_threshold!(),
+    );
+    assert_eq!(config.ewma_config().penalty_rate(), config_constants::min_ewma_penalty_rate!());
+
+    config.set_ewma_enabled(&admin_cap, true);
+    assert!(config.ewma_config().enabled());
+    config.set_ewma_enabled(&admin_cap, false);
+    assert!(!config.ewma_config().enabled());
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
 
 #[test]
 fun expiry_market_mint_pause_defaults_false_and_toggles() {
