@@ -122,7 +122,8 @@ export function mintExactAmount(
 }
 
 // Owner-authorized redeem of a live (not-yet-settled) position: close `closeQuantityRaw`
-// of `orderId` at the live pricer's mark, returning (proceeds u256, Option<order id>).
+// of `orderId` at the live pricer's mark, returning (closed_order_id u256,
+// Option<replacement order id> — present when a partial close leaves quantity open).
 // Command order is pricer → auth → redeem.
 //
 // DEPLOYED SURFACE (drift guard): the live testnet contract's `redeem_live` takes NO
@@ -158,7 +159,8 @@ export function redeemLive(
 }
 
 // Permissionless redeem of a settled position: close `closeQuantityRaw` of `orderId`
-// against the settlement pyth price, returning (proceeds u256, Option<order id>).
+// against the settlement pyth price, returning (closed_order_id u256,
+// Option<replacement order id>). Requires a full close on the deployed package.
 //
 // DEPLOYED SURFACE (drift guard): this is the app-auth path — it takes `account_registry`
 // and threads NO `Auth` hot potato, so there is no `generate_auth` call and no live

@@ -324,6 +324,9 @@ export class PredictClient {
 			m: Pick<MarketDescriptor, "underlying" | "expiryMs">,
 		): Promise<MarketSummary | null> => {
 			const expiryMs = BigInt(m.expiryMs);
+			// Deliberately re-queries and overwrites the cache instead of reading
+			// through it: this read must return live state (nav, mintPaused), and
+			// refreshing the cache on the way keeps later tx builds consistent.
 			const id = await expiryMarketId(this.client, this.cfg, m.underlying, expiryMs);
 			if (!id) return null;
 			const state = await marketState(this.client, this.cfg, id);

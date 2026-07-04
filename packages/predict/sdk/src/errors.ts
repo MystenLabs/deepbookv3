@@ -35,9 +35,9 @@ export class PredictMoveError extends Error {
 	}
 }
 
-// Abort code → name, per module. Generated from the DEPLOYED sources at branch
-// ec99cfae (packages/predict + packages/account of repos/deepbookv3): grep of
-// `const E<Name>: u64 = <n>;` in each module. Regenerate from that same branch if
+// Abort code → name, per module. Generated from the DEPLOYED sources at commit
+// ec99cfae (this repo's packages/predict + packages/account): grep of
+// `const E<Name>: u64 = <n>;` in each module. Regenerate from that same commit if
 // the deployed package changes — a stale table mislabels a real abort.
 export const ABORT_TABLES: Record<string, Record<number, string>> = {
 	expiry_market: {
