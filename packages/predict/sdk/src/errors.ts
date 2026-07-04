@@ -18,11 +18,13 @@ export class PredictInputError extends Error {
 /** A Move `abort` decoded from a simulate/read failure. */
 export class PredictMoveError extends Error {
 	readonly module: string;
-	readonly code: number;
+	/** Exact u64 abort code — bigint because clever-error encodings pack data
+	 * into the high bits, which Number would silently truncate. */
+	readonly code: bigint;
 	/** The `E…` constant name from the abort table, or null if unmapped. */
 	readonly abortName: string | null;
 
-	constructor(module: string, code: number, abortName: string | null) {
+	constructor(module: string, code: bigint, abortName: string | null) {
 		super(
 			abortName
 				? `Move abort in ${module}: ${abortName} (code ${code})`
@@ -110,7 +112,12 @@ export function decodeMoveAbort(raw: string): PredictMoveError | null {
 	const codeMatch = raw.match(CODE_RE);
 	if (!moduleMatch || !codeMatch) return null;
 	const module = moduleMatch[1];
-	const code = Number(codeMatch[1]);
-	const abortName = ABORT_TABLES[module]?.[code] ?? null;
+	const code = BigInt(codeMatch[1]);
+	// Table lookup via Number is safe: enum codes are tiny; a packed code above
+	// 2^53 can't collide into the table because it simply won't be found there.
+	const abortName =
+		code <= BigInt(Number.MAX_SAFE_INTEGER)
+			? (ABORT_TABLES[module]?.[Number(code)] ?? null)
+			: null;
 	return new PredictMoveError(module, code, abortName);
 }

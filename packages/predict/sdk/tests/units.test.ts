@@ -17,6 +17,17 @@ test("toRaw exact decimal string math (no float)", () => {
 	expect(() => toRaw("1.1234567", 6)).toThrow(/decimals/);
 	expect(() => toRaw("-1", 6)).toThrow(/negative/);
 });
+test("exponential-notation number inputs convert exactly", () => {
+	// Number.toString() goes exponential below 1e-6 and at/above 1e21; these are
+	// exactly representable and must not be rejected as "invalid".
+	expect(probabilityToRaw(1e-7)).toBe(100n);
+	expect(priceToRaw(1e-9)).toBe(1n);
+	expect(toRaw(2.5e-7, 9)).toBe(250n);
+	expect(toRaw(1e21, 6)).toBe(1_000_000_000_000_000_000_000_000_000n);
+	// Still exact: sub-representable magnitudes throw rather than round.
+	expect(() => toRaw(1e-10, 9)).toThrow(/decimals/);
+});
+
 test("wrappers", () => {
 	expect(usdcToRaw(100)).toBe(100_000_000n);
 	expect(rawToUsdc(12_500_000n)).toBe(12.5);

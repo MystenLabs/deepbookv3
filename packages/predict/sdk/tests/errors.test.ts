@@ -19,7 +19,7 @@ describe("decodeMoveAbort", () => {
 		expect(e).toBeInstanceOf(PredictMoveError);
 		expect(e).toMatchObject({
 			module: "expiry_market",
-			code: 6,
+			code: 6n,
 			abortName: "EMintQuantityBelowMin",
 		});
 	});
@@ -27,13 +27,19 @@ describe("decodeMoveAbort", () => {
 	test("known module, unknown code → abortName null", () => {
 		const e = decodeMoveAbort(ABORT_STR.replace(/, 6\)$/, ", 99)"));
 		expect(e?.module).toBe("expiry_market");
-		expect(e?.code).toBe(99);
+		expect(e?.code).toBe(99n);
 		expect(e?.abortName).toBeNull();
 	});
 
 	test("unknown module → abortName null", () => {
 		const e = decodeMoveAbort(ABORT_STR.replace("expiry_market", "nonsense_mod"));
 		expect(e?.module).toBe("nonsense_mod");
+		expect(e?.abortName).toBeNull();
+	});
+
+	test("u64 abort codes above 2^53 decode exactly (clever-error packing)", () => {
+		const e = decodeMoveAbort(ABORT_STR.replace(/, 6\)$/, ", 9223372036854775814)"));
+		expect(e?.code).toBe(9223372036854775814n);
 		expect(e?.abortName).toBeNull();
 	});
 
@@ -45,7 +51,7 @@ describe("decodeMoveAbort", () => {
 
 	test("tolerates a trailing suffix after the abort code (e.g. ' in command 0')", () => {
 		const e = decodeMoveAbort(`${ABORT_STR} in command 0`);
-		expect(e).toMatchObject({ module: "expiry_market", code: 6 });
+		expect(e).toMatchObject({ module: "expiry_market", code: 6n });
 	});
 
 	test("message includes module and abort name when known", () => {

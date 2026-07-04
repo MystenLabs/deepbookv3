@@ -98,8 +98,10 @@ interface ResolvedMarket {
 export class PredictClient {
 	readonly cfg: PredictConfig;
 	private readonly client: ReadClient;
-	// underlying:expiryMs → resolved market. Market ids/state are immutable for a
-	// given (underlying, expiry), so one resolution per market per client suffices.
+	// underlying:expiryMs → resolved market. The id and tickSizeRaw — the only
+	// state tx building depends on — are immutable per (underlying, expiry), so
+	// one resolution per market per client suffices. (mintPaused IS mutable; the
+	// cached copy is never consulted for a tx decision — the chain enforces it.)
 	private readonly marketCache = new Map<string, ResolvedMarket>();
 
 	constructor(opts: {
@@ -216,8 +218,9 @@ export class PredictClient {
 		): Promise<Transaction> => {
 			const feeds = this.feeds(m.underlying);
 			const { id, state } = await this.resolveMarket(m);
+			// No lot check: min_quantity is a floor the chain compares against an
+			// already-lot-floored minted quantity, so any floor value is legal.
 			const minQuantityRaw = usdcToRaw(opts.minQuantity);
-			this.assertLot(minQuantityRaw);
 			const { lowerTick, higherTick } = binaryRangeTicks(
 				priceToRaw(m.strike),
 				m.side,
@@ -244,12 +247,14 @@ export class PredictClient {
 		): Promise<Transaction> => {
 			const feeds = this.feeds(m.underlying);
 			const { id } = await this.resolveMarket(m);
+			const closeQuantityRaw = usdcToRaw(opts.quantity);
+			this.assertLot(closeQuantityRaw);
 			const tx = new Transaction();
 			redeemLive(this.cfg, tx, {
 				expiryMarketId: id,
 				wrapperId: this.wrapperIdFor(owner),
 				orderId: opts.orderId,
-				closeQuantityRaw: usdcToRaw(opts.quantity),
+				closeQuantityRaw,
 				...feeds,
 			});
 			return tx;
@@ -262,12 +267,14 @@ export class PredictClient {
 		): Promise<Transaction> => {
 			const feeds = this.feeds(m.underlying);
 			const { id } = await this.resolveMarket(m);
+			const closeQuantityRaw = usdcToRaw(opts.quantity);
+			this.assertLot(closeQuantityRaw);
 			const tx = new Transaction();
 			redeemSettled(this.cfg, tx, {
 				expiryMarketId: id,
 				wrapperId: this.wrapperIdFor(owner),
 				orderId: opts.orderId,
-				closeQuantityRaw: usdcToRaw(opts.quantity),
+				closeQuantityRaw,
 				pythFeedId: feeds.pythFeedId,
 			});
 			return tx;

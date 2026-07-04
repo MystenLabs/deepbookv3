@@ -62,7 +62,10 @@ deployment — quote first, close fast.
 ## Units
 
 Everything human-facing is decimal; everything on-chain is scaled integers.
-The facade converts exactly (string/bigint math — no floats touch money).
+The facade converts **inputs** exactly (string/bigint math — no floats on the
+money path in). Read outputs typed `number` are display values: above 2^53
+raw they lose low-digit precision — for accounting-exact reads use the
+primitives layer, which returns raw `bigint`s (`accountBalance`, `poolStats`, …).
 
 | Concept | You pass / receive | On-chain raw |
 | --- | --- | --- |

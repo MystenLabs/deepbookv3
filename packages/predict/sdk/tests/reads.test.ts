@@ -175,7 +175,7 @@ describe("markets reads", () => {
 		// abort in std::option. The read maps exactly that abort to null.
 		const client = {
 			simulateTransaction: async () => {
-				throw new PredictMoveError("option", 262145, null);
+				throw new PredictMoveError("option", 262145n, null);
 			},
 		} as unknown as ReadClient;
 		expect(await settlementPrice(client, cfg, "0xdeadbeef")).toBeNull();
@@ -184,7 +184,7 @@ describe("markets reads", () => {
 	test("settlementPrice: unrelated aborts propagate", async () => {
 		const client = {
 			simulateTransaction: async () => {
-				throw new PredictMoveError("expiry_market", 3, "EWrongPythFeed");
+				throw new PredictMoveError("expiry_market", 3n, "EWrongPythFeed");
 			},
 		} as unknown as ReadClient;
 		await expect(settlementPrice(client, cfg, "0xdeadbeef")).rejects.toThrow(

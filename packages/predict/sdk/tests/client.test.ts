@@ -178,6 +178,27 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 		).rejects.toThrow(/lot/);
 	});
 
+	test("sub-lot close quantity throws /lot/ on redeem and claimSettled", async () => {
+		const pc = new PredictClient({ network: "testnet", client: mockClient().client });
+		const m = { underlying: "BTC", expiryMs: EXPIRY, strike: 105_000, side: "up" } as const;
+		await expect(pc.tx.redeem(OWNER, m, { orderId: 1n, quantity: 0.001 })).rejects.toThrow(
+			/lot/,
+		);
+		await expect(
+			pc.tx.claimSettled(OWNER, m, { orderId: 1n, quantity: 0.001 }),
+		).rejects.toThrow(/lot/);
+	});
+
+	test("mintAmount minQuantity is a floor — sub-lot values are accepted", async () => {
+		const pc = new PredictClient({ network: "testnet", client: mockClient().client });
+		const tx = await pc.tx.mintAmount(
+			OWNER,
+			{ underlying: "BTC", expiryMs: EXPIRY, strike: 105_000, side: "up" },
+			{ spend: 10, minQuantity: 0.015 },
+		);
+		expect(tx).toBeTruthy();
+	});
+
 	test("market resolution is cached: a second mint does not re-resolve", async () => {
 		const { client, counts } = mockClient();
 		const pc = new PredictClient({ network: "testnet", client });
