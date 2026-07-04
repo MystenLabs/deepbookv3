@@ -1,5 +1,6 @@
 import { Transaction } from "@mysten/sui/transactions";
 import { predictTarget, type PredictConfig } from "../config/index.js";
+import { PredictMoveError } from "../errors.js";
 import { loadLivePricer } from "../tx/trade.js";
 import { inspectReturns, type ReadClient } from "./inspect.js";
 import { parseOptionalId, parseU64LE, parseVectorOfIds } from "./parse.js";
@@ -44,19 +45,20 @@ export interface MarketState {
 	expiryMs: bigint;
 	tickSizeRaw: bigint;
 	mintPaused: boolean;
-	settlementPriceRaw: bigint;
 }
 
-// A market's four single-arg state reads batched into one PTB (command order fixed
-// below). `expiry_market::{expiry, tick_size, mint_paused, settlement_price}` — see
-// packages/predict/sources/expiry_market.move:{90,146,234,95}.
+// A market's three single-arg state reads batched into one PTB (command order fixed
+// below). `expiry_market::{expiry, tick_size, mint_paused}` — see
+// packages/predict/sources/expiry_market.move:{90,146,234}. Settlement price is
+// deliberately NOT batched here: on the deployed package it aborts for a live
+// (unsettled) market — use `settlementPrice` below.
 export async function marketState(
 	client: ReadClient,
 	cfg: PredictConfig,
 	marketId: string,
 ): Promise<MarketState> {
 	const tx = new Transaction();
-	for (const fn of ["expiry", "tick_size", "mint_paused", "settlement_price"]) {
+	for (const fn of ["expiry", "tick_size", "mint_paused"]) {
 		tx.moveCall({
 			target: predictTarget(cfg, "expiry_market", fn),
 			arguments: [tx.object(marketId)],
@@ -67,8 +69,39 @@ export async function marketState(
 		expiryMs: parseU64LE(cmds[0][0]),
 		tickSizeRaw: parseU64LE(cmds[1][0]),
 		mintPaused: (cmds[2][0][0] ?? 0) !== 0, // BCS bool: 1 byte
-		settlementPriceRaw: parseU64LE(cmds[3][0]),
 	};
+}
+
+// The recorded settlement price, or null while the market is unsettled.
+//
+// On the deployed package `expiry_market::settlement_price` is public(package) and
+// `destroy_some`s the stored Option — callable here only because simulate runs with
+// checksEnabled:false, and it aborts in std::option (EOPTION_NOT_SET) when the
+// market has not settled; we map exactly that abort (and the public
+// EMarketNotSettled variant, should a future package guard it directly) to null.
+export async function settlementPrice(
+	client: ReadClient,
+	cfg: PredictConfig,
+	marketId: string,
+): Promise<bigint | null> {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: predictTarget(cfg, "expiry_market", "settlement_price"),
+		arguments: [tx.object(marketId)],
+	});
+	try {
+		const [cmd0] = await inspectReturns(client, tx);
+		return parseU64LE(cmd0[0]);
+	} catch (e) {
+		if (
+			e instanceof PredictMoveError &&
+			(e.module === "option" ||
+				(e.module === "expiry_market" && e.abortName === "EMarketNotSettled"))
+		) {
+			return null;
+		}
+		throw e;
+	}
 }
 
 // A market's current NAV mark (the per-expiry recoverable value the flush prices

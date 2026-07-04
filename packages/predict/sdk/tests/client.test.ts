@@ -48,12 +48,11 @@ function mockClient() {
 			if (fn === "expiry_market_id") {
 				results = [[bcs.option(bcs.Address).serialize(MARKET_ID).toBytes()]];
 			} else if (fn === "expiry") {
-				// marketState PTB: expiry, tick_size, mint_paused, settlement_price
+				// marketState PTB: expiry, tick_size, mint_paused
 				results = [
 					[bcs.u64().serialize(BigInt(EXPIRY)).toBytes()],
 					[bcs.u64().serialize(10_000_000n).toBytes()],
 					[bcs.bool().serialize(false).toBytes()],
-					[bcs.u64().serialize(0n).toBytes()],
 				];
 			} else {
 				// e.g. currentNav's load_live_pricer → current_nav: one u64 per command.

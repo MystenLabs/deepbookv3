@@ -3,6 +3,7 @@ import { Transaction } from "@mysten/sui/transactions";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { describe, expect, test } from "vitest";
 import { TESTNET_CONFIG as cfg } from "../src/config/index.js";
+import { PredictMoveError } from "../src/errors.js";
 import { accountBalance } from "../src/reads/balances.js";
 import type { ReadClient } from "../src/reads/inspect.js";
 import { inspectReturns } from "../src/reads/inspect.js";
@@ -11,6 +12,7 @@ import {
 	currentNav,
 	expiryMarketId,
 	marketState,
+	settlementPrice,
 } from "../src/reads/markets.js";
 import {
 	parseOptionalId,
@@ -138,26 +140,56 @@ describe("markets reads", () => {
 		await expect(expiryMarketId(client, cfg, "DOGE", 1n)).rejects.toThrow(/DOGE/);
 	});
 
-	test("marketState: one PTB with 4 reads, dispatched per command index", async () => {
+	test("marketState: one PTB with 3 reads, dispatched per command index", async () => {
 		const { client, captured } = mockClient([
 			[bcs.u64().serialize(1_700_000_000_000n).toBytes()], // expiry
 			[bcs.u64().serialize(10_000_000n).toBytes()], // tick_size
 			[bcs.bool().serialize(true).toBytes()], // mint_paused
-			[bcs.u64().serialize(65_000_000_000_000n).toBytes()], // settlement_price
 		]);
 		const s = await marketState(client, cfg, "0xdeadbeef");
 		expect(targets(captured.tx!)).toEqual([
 			`${cfg.packages.predict}::expiry_market::expiry`,
 			`${cfg.packages.predict}::expiry_market::tick_size`,
 			`${cfg.packages.predict}::expiry_market::mint_paused`,
-			`${cfg.packages.predict}::expiry_market::settlement_price`,
 		]);
 		expect(s).toEqual({
 			expiryMs: 1_700_000_000_000n,
 			tickSizeRaw: 10_000_000n,
 			mintPaused: true,
-			settlementPriceRaw: 65_000_000_000_000n,
 		});
+	});
+
+	test("settlementPrice: settled market → u64", async () => {
+		const { client, captured } = mockClient([
+			[bcs.u64().serialize(65_000_000_000_000n).toBytes()],
+		]);
+		const p = await settlementPrice(client, cfg, "0xdeadbeef");
+		expect(targets(captured.tx!)).toEqual([
+			`${cfg.packages.predict}::expiry_market::settlement_price`,
+		]);
+		expect(p).toBe(65_000_000_000_000n);
+	});
+
+	test("settlementPrice: unsettled market's option abort → null", async () => {
+		// The deployed getter destroy_some()s the stored Option; unsettled markets
+		// abort in std::option. The read maps exactly that abort to null.
+		const client = {
+			simulateTransaction: async () => {
+				throw new PredictMoveError("option", 262145, null);
+			},
+		} as unknown as ReadClient;
+		expect(await settlementPrice(client, cfg, "0xdeadbeef")).toBeNull();
+	});
+
+	test("settlementPrice: unrelated aborts propagate", async () => {
+		const client = {
+			simulateTransaction: async () => {
+				throw new PredictMoveError("expiry_market", 3, "EWrongPythFeed");
+			},
+		} as unknown as ReadClient;
+		await expect(settlementPrice(client, cfg, "0xdeadbeef")).rejects.toThrow(
+			PredictMoveError,
+		);
 	});
 
 	test("currentNav: load_live_pricer → current_nav, parses last command's u64", async () => {

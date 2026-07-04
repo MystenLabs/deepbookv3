@@ -70,7 +70,13 @@ export { setBuilderCode, unsetBuilderCode } from "./tx/builderCode.js";
 // === Reads ===
 export { inspectReturns } from "./reads/inspect.js";
 export type { ReadClient } from "./reads/inspect.js";
-export { activeMarketIds, currentNav, expiryMarketId, marketState } from "./reads/markets.js";
+export {
+	activeMarketIds,
+	currentNav,
+	expiryMarketId,
+	marketState,
+	settlementPrice,
+} from "./reads/markets.js";
 export type { MarketState } from "./reads/markets.js";
 export { accountBalance } from "./reads/balances.js";
 export { poolStats } from "./reads/pool.js";
