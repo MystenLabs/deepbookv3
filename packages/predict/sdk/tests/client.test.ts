@@ -45,7 +45,9 @@ function mockClient() {
 				"MoveCall" in cmds[0] && cmds[0].MoveCall ? cmds[0].MoveCall.function : "?";
 			counts[fn] = (counts[fn] ?? 0) + 1;
 			let results: Uint8Array[][];
-			if (fn === "expiry_market_id") {
+			if (fn === "active_expiry_markets") {
+				results = [[bcs.vector(bcs.Address).serialize([MARKET_ID]).toBytes()]];
+			} else if (fn === "expiry_market_id") {
 				results = [[bcs.option(bcs.Address).serialize(MARKET_ID).toBytes()]];
 			} else if (fn === "expiry") {
 				// marketState PTB: expiry, tick_size, mint_paused
@@ -197,6 +199,19 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 			{ spend: 10, minQuantity: 0.015 },
 		);
 		expect(tx).toBeTruthy();
+	});
+
+	test("read.markets returns tradeable summaries", async () => {
+		const pc = new PredictClient({ network: "testnet", client: mockClient().client });
+		const markets = await pc.read.markets();
+		expect(markets).toEqual([
+			{
+				id: MARKET_ID,
+				expiryMs: BigInt(EXPIRY),
+				tickSize: 0.01,
+				mintPaused: false,
+			},
+		]);
 	});
 
 	test("market resolution is cached: a second mint does not re-resolve", async () => {

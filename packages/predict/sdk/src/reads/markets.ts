@@ -72,6 +72,31 @@ export async function marketState(
 	};
 }
 
+// Batched marketState for N markets in ONE PTB (3 commands per market, same
+// order as marketState). Returns states aligned with `marketIds`.
+export async function marketStates(
+	client: ReadClient,
+	cfg: PredictConfig,
+	marketIds: readonly string[],
+): Promise<MarketState[]> {
+	if (marketIds.length === 0) return [];
+	const tx = new Transaction();
+	for (const id of marketIds) {
+		for (const fn of ["expiry", "tick_size", "mint_paused"]) {
+			tx.moveCall({
+				target: predictTarget(cfg, "expiry_market", fn),
+				arguments: [tx.object(id)],
+			});
+		}
+	}
+	const cmds = await inspectReturns(client, tx);
+	return marketIds.map((_, i) => ({
+		expiryMs: parseU64LE(cmds[3 * i][0]),
+		tickSizeRaw: parseU64LE(cmds[3 * i + 1][0]),
+		mintPaused: (cmds[3 * i + 2][0][0] ?? 0) !== 0,
+	}));
+}
+
 // The recorded settlement price, or null while the market is unsettled.
 //
 // On the deployed package `expiry_market::settlement_price` is public(package) and

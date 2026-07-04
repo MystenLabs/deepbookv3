@@ -1,14 +1,28 @@
 import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
 import { getConfig, type PredictConfig } from "./config/index.js";
+import {
+	decodeAccountsCreated,
+	decodeBuilderCodeSets,
+	decodeClaims,
+	decodeDeposits,
+	decodeMints,
+	decodePlpCancels,
+	decodePlpRequests,
+	decodeRedeems,
+	decodeWithdrawals,
+	exactlyOne,
+	type DecodableTransactionResult,
+} from "./decode.js";
 import { PredictInputError } from "./errors.js";
 import type { ReadClient } from "./reads/inspect.js";
-import { accountBalance } from "./reads/balances.js";
+import { accountBalance, hasPosition } from "./reads/balances.js";
 import {
 	activeMarketIds,
 	currentNav,
 	expiryMarketId,
 	marketState,
+	marketStates,
 	type MarketState,
 } from "./reads/markets.js";
 import { poolStats } from "./reads/pool.js";
@@ -64,6 +78,15 @@ export interface MintAmountOptions {
 export interface CloseOptions {
 	orderId: bigint;
 	quantity: number;
+}
+
+/** One tradeable market as returned by read.markets(). */
+export interface ActiveMarket {
+	id: string;
+	expiryMs: bigint;
+	/** Strike granularity in USD (e.g. 0.01). */
+	tickSize: number;
+	mintPaused: boolean;
 }
 
 /** A resolved live market: its on-chain state summary for the caller. */
@@ -325,7 +348,23 @@ export class PredictClient {
 
 	// === reads ===
 	readonly read = {
-		markets: (): Promise<string[]> => activeMarketIds(this.client, this.cfg),
+		// All tradeable (active) markets with the state a frontend needs to render
+		// and mint: one chain read for ids + one batched PTB for the states.
+		markets: async (): Promise<ActiveMarket[]> => {
+			const ids = await activeMarketIds(this.client, this.cfg);
+			const states = await marketStates(this.client, this.cfg, ids);
+			return ids.map((id, i) => ({
+				id,
+				expiryMs: states[i].expiryMs,
+				tickSize: fromRaw(states[i].tickSizeRaw, 9),
+				mintPaused: states[i].mintPaused,
+			}));
+		},
+
+		// Validate an app-stored order id against the chain (stale after full
+		// close or partial-close replacement — see RedeemReceipt.replacementOrderId).
+		hasPosition: (owner: string, marketId: string, orderId: bigint): Promise<boolean> =>
+			hasPosition(this.client, this.cfg, owner, marketId, orderId),
 
 		market: async (
 			m: Pick<MarketDescriptor, "underlying" | "expiryMs">,
@@ -364,5 +403,33 @@ export class PredictClient {
 				withdrawPending: fromRaw(s.withdrawRequestsPending, 6), // PLP shares queued
 			};
 		},
+	};
+
+	// === execution-result decoders ===
+	// Pure event parsing (no network): pass the executed/simulated transaction
+	// result (with events included) and get a typed receipt back. Singular forms
+	// throw unless exactly one matching event exists; plural forms return all
+	// (an integrator batching N actions in one PTB gets N receipts).
+	readonly decode = {
+		mint: (r: DecodableTransactionResult) => exactlyOne(decodeMints(this.cfg, r), "OrderMinted"),
+		mints: (r: DecodableTransactionResult) => decodeMints(this.cfg, r),
+		redeem: (r: DecodableTransactionResult) =>
+			exactlyOne(decodeRedeems(this.cfg, r), "order-redeemed"),
+		redeems: (r: DecodableTransactionResult) => decodeRedeems(this.cfg, r),
+		claim: (r: DecodableTransactionResult) =>
+			exactlyOne(decodeClaims(this.cfg, r), "SettledOrderRedeemed"),
+		claims: (r: DecodableTransactionResult) => decodeClaims(this.cfg, r),
+		createManager: (r: DecodableTransactionResult) =>
+			exactlyOne(decodeAccountsCreated(this.cfg, r), "AccountCreated"),
+		deposit: (r: DecodableTransactionResult) =>
+			exactlyOne(decodeDeposits(this.cfg, r), "Deposited"),
+		withdraw: (r: DecodableTransactionResult) =>
+			exactlyOne(decodeWithdrawals(this.cfg, r), "Withdrawn"),
+		plpRequest: (r: DecodableTransactionResult) =>
+			exactlyOne(decodePlpRequests(this.cfg, r), "supply/withdraw-requested"),
+		plpCancel: (r: DecodableTransactionResult) =>
+			exactlyOne(decodePlpCancels(this.cfg, r), "RequestCancelled"),
+		builderCode: (r: DecodableTransactionResult) =>
+			exactlyOne(decodeBuilderCodeSets(this.cfg, r), "BuilderCodeSet"),
 	};
 }

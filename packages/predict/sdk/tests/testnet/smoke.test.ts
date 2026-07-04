@@ -19,7 +19,6 @@ import {
 	PredictMoveError,
 	TESTNET_CONFIG,
 	accountTarget,
-	marketState,
 	mintExactQuantity,
 	redeemLive,
 } from "../../src/index.js";
@@ -35,7 +34,7 @@ const client = new SuiGrpcClient({ network: "testnet", baseUrl: TESTNET_GRPC_URL
 const predict = new PredictClient({ network: "testnet", client });
 
 // Shared across tests (vitest runs a file's tests sequentially by default).
-let liveMarketIds: string[] = [];
+let liveMarkets: Awaited<ReturnType<typeof predict.read.markets>> = [];
 
 // Build a PTB that creates a FRESH AccountWrapper and threads it straight into a
 // trade builder, then shares it. The facade derives wrapper ids for existing
@@ -90,10 +89,15 @@ function expectSemanticOrSuccess(outcome: unknown, label: string): void {
 }
 
 describe("testnet smoke (live deployment)", () => {
-	test("read.markets() — simulate plumbing + result shape end-to-end", async () => {
-		liveMarketIds = await predict.read.markets();
-		expect(Array.isArray(liveMarketIds)).toBe(true);
-		for (const id of liveMarketIds) expect(id).toMatch(/^0x[0-9a-f]{64}$/);
+	test("read.markets() — tradeable summaries, simulate plumbing end-to-end", async () => {
+		liveMarkets = await predict.read.markets();
+		expect(Array.isArray(liveMarkets)).toBe(true);
+		for (const m of liveMarkets) {
+			expect(m.id).toMatch(/^0x[0-9a-f]{64}$/);
+			expect(m.expiryMs > 0n).toBe(true);
+			expect(m.tickSize).toBeGreaterThan(0);
+			expect(typeof m.mintPaused).toBe("boolean");
+		}
 	});
 
 	test("read.pool() — pool objects resolve, pool is bootstrapped", async () => {
@@ -104,25 +108,20 @@ describe("testnet smoke (live deployment)", () => {
 		expect(pool.withdrawPending).toBeGreaterThanOrEqual(0);
 	});
 
-	test("marketState + registry mapping agree for a live market", async () => {
-		if (liveMarketIds.length === 0) return; // no live expiry right now — skip
-		const id = liveMarketIds[0];
-		const state = await marketState(client, cfg, id);
-		expect(state.tickSizeRaw > 0n).toBe(true);
-		expect(typeof state.mintPaused).toBe("boolean");
-		expect(state.expiryMs > 0n).toBe(true);
+	test("registry mapping agrees with the summary for a live market", async () => {
+		if (liveMarkets.length === 0) return; // no live expiry right now — skip
+		const m = liveMarkets[0];
 		// BTC is the only registered underlying on testnet, so the registry must map
 		// (BTC, this expiry) back to this exact market object.
-		const summary = await predict.read.market({ underlying: "BTC", expiryMs: state.expiryMs });
-		expect(summary?.id).toBe(id);
+		const summary = await predict.read.market({ underlying: "BTC", expiryMs: m.expiryMs });
+		expect(summary?.id).toBe(m.id);
 		expect(summary!.nav).toBeGreaterThanOrEqual(0);
-		expect(summary!.tickSize).toBeGreaterThan(0);
+		expect(summary!.tickSize).toBe(m.tickSize);
 	});
 
 	test("arity guard: mint_exact_quantity matches the deployed surface", async () => {
-		if (liveMarketIds.length === 0) return;
-		const id = liveMarketIds[0];
-		const state = await marketState(client, cfg, id);
+		if (liveMarkets.length === 0) return;
+		const id = liveMarkets[0].id;
 		const { tx, wrapper } = freshWrapperTx();
 		mintExactQuantity(cfg, tx, {
 			expiryMarketId: id,
@@ -135,14 +134,14 @@ describe("testnet smoke (live deployment)", () => {
 			...predictFeeds(),
 		});
 		shareWrapper(tx, wrapper);
-		expectSemanticOrSuccess(await simulate(tx), `mint on ${id} (tick ${state.tickSizeRaw})`);
+		expectSemanticOrSuccess(await simulate(tx), `mint on ${id}`);
 	});
 
 	test("arity guard: redeem_live matches the deployed surface", async () => {
-		if (liveMarketIds.length === 0) return;
+		if (liveMarkets.length === 0) return;
 		const { tx, wrapper } = freshWrapperTx();
 		redeemLive(cfg, tx, {
-			expiryMarketId: liveMarketIds[0],
+			expiryMarketId: liveMarkets[0].id,
 			wrapperId: wrapper,
 			orderId: 1n, // no such order for a fresh account — semantic abort expected
 			closeQuantityRaw: 10_000n,
@@ -152,11 +151,24 @@ describe("testnet smoke (live deployment)", () => {
 		expectSemanticOrSuccess(await simulate(tx), "redeem_live");
 	});
 
-	test("arity guard: createManager simulates clean (account package)", async () => {
+	test("createManager simulates clean AND its real event decodes", async () => {
 		const tx = predict.tx.createManager();
-		const outcome = await simulate(tx);
-		// A fresh sender has no wrapper yet, so pure create+share must fully succeed.
-		expect(outcome).toBeNull();
+		tx.setSender(SMOKE_SENDER);
+		// include events: this validates decode.createManager against a REAL
+		// emitted event (BCS layout, type matching, byte handling) — the live
+		// anchor for the decoder layer's field-order assumptions.
+		const result = await client.simulateTransaction({
+			transaction: tx,
+			checksEnabled: false,
+			include: { events: true },
+		});
+		expect(result.$kind).toBe("Transaction"); // fresh sender: create+share succeeds
+		const receipt = predict.decode.createManager({
+			events: result.Transaction?.events ?? [],
+		});
+		expect(receipt.owner).toBe(SMOKE_SENDER);
+		// The decoded on-chain wrapper id must equal the client-side derivation.
+		expect(receipt.wrapperId).toBe(predict.wrapperIdFor(SMOKE_SENDER));
 	});
 });
 

@@ -4,7 +4,7 @@ import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { describe, expect, test } from "vitest";
 import { TESTNET_CONFIG as cfg } from "../src/config/index.js";
 import { PredictMoveError } from "../src/errors.js";
-import { accountBalance } from "../src/reads/balances.js";
+import { accountBalance, hasPosition } from "../src/reads/balances.js";
 import type { ReadClient } from "../src/reads/inspect.js";
 import { inspectReturns } from "../src/reads/inspect.js";
 import {
@@ -12,6 +12,7 @@ import {
 	currentNav,
 	expiryMarketId,
 	marketState,
+	marketStates,
 	settlementPrice,
 } from "../src/reads/markets.js";
 import {
@@ -157,6 +158,48 @@ describe("markets reads", () => {
 			tickSizeRaw: 10_000_000n,
 			mintPaused: true,
 		});
+	});
+
+	test("marketStates: batched N markets in one PTB, parsed by index", async () => {
+		const { client, captured } = mockClient([
+			[bcs.u64().serialize(1_000n).toBytes()], // m0 expiry
+			[bcs.u64().serialize(10_000_000n).toBytes()], // m0 tick
+			[bcs.bool().serialize(false).toBytes()], // m0 paused
+			[bcs.u64().serialize(2_000n).toBytes()], // m1 expiry
+			[bcs.u64().serialize(20_000_000n).toBytes()], // m1 tick
+			[bcs.bool().serialize(true).toBytes()], // m1 paused
+		]);
+		const states = await marketStates(client, cfg, [ADDR_A, ADDR_B]);
+		expect(targets(captured.tx!).length).toBe(6);
+		expect(states).toEqual([
+			{ expiryMs: 1_000n, tickSizeRaw: 10_000_000n, mintPaused: false },
+			{ expiryMs: 2_000n, tickSizeRaw: 20_000_000n, mintPaused: true },
+		]);
+	});
+
+	test("marketStates: empty input → no network call", async () => {
+		let called = 0;
+		const client = {
+			simulateTransaction: async () => {
+				called++;
+				throw new Error("unreachable");
+			},
+		} as unknown as ReadClient;
+		expect(await marketStates(client, cfg, [])).toEqual([]);
+		expect(called).toBe(0);
+	});
+
+	test("hasPosition: load_account → has_position, parses bool", async () => {
+		const { client, captured } = mockClient([
+			[new Uint8Array(0)], // load_account returns a reference — no value needed
+			[bcs.bool().serialize(true).toBytes()],
+		]);
+		const ok = await hasPosition(client, cfg, ADDR_A, ADDR_B, 7n);
+		expect(targets(captured.tx!)).toEqual([
+			`${cfg.packages.account}::account::load_account`,
+			`${cfg.packages.predict}::predict_account::has_position`,
+		]);
+		expect(ok).toBe(true);
 	});
 
 	test("settlementPrice: settled market → u64", async () => {

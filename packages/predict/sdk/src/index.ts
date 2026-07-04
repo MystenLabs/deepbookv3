@@ -3,6 +3,7 @@ export const SDK_NAME = "@mysten/predict";
 // === Facade ===
 export { PredictClient } from "./client.js";
 export type {
+	ActiveMarket,
 	MarketDescriptor,
 	MarketSummary,
 	MintOptions,
@@ -75,12 +76,38 @@ export {
 	currentNav,
 	expiryMarketId,
 	marketState,
+	marketStates,
 	settlementPrice,
 } from "./reads/markets.js";
 export type { MarketState } from "./reads/markets.js";
-export { accountBalance } from "./reads/balances.js";
+export { accountBalance, hasPosition } from "./reads/balances.js";
 export { poolStats } from "./reads/pool.js";
 export type { PoolStats } from "./reads/pool.js";
+
+// === Execution-result decoders (pure event parsing, no network) ===
+export {
+	decodeAccountsCreated,
+	decodeBuilderCodeSets,
+	decodeClaims,
+	decodeDeposits,
+	decodeMints,
+	decodePlpCancels,
+	decodePlpRequests,
+	decodeRedeems,
+	decodeWithdrawals,
+} from "./decode.js";
+export type {
+	BalanceChangeReceipt,
+	BuilderCodeReceipt,
+	ClaimReceipt,
+	CreateManagerReceipt,
+	DecodableEvent,
+	DecodableTransactionResult,
+	MintReceipt,
+	PlpCancelReceipt,
+	PlpRequestReceipt,
+	RedeemReceipt,
+} from "./decode.js";
 export {
 	parseOptionalId,
 	parseOptionalU64,

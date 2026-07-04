@@ -44,9 +44,16 @@ const mintTx = await predict.tx.mint(
 );
 // -> sign & execute any of these with your wallet / dapp-kit / signer
 
-// Read: live markets and pool state.
-const marketIds = await predict.read.markets();
-const market = await predict.read.market({ underlying: "BTC", expiryMs: 1767225600000 });
+// Decode the receipt from the execution result (execute with events included):
+const receipt = predict.decode.mint(mintResult);
+receipt.orderId; // PERSIST THIS — needed to redeem/claim later
+receipt.entryProbability; // your fill price (0..1 per $1 payout)
+receipt.netPremium, receipt.fees; // exact cost breakdown
+
+// Read: tradeable markets and pool state.
+const markets = await predict.read.markets();
+// -> [{ id, expiryMs, tickSize, mintPaused }, ...] — pick an expiry from here
+const market = await predict.read.market({ underlying: "BTC", expiryMs: markets[0].expiryMs });
 console.log(market?.nav, market?.tickSize, market?.mintPaused);
 ```
 
@@ -87,9 +94,16 @@ primitives layer, which returns raw `bigint`s (`accountBalance`, `poolStats`, �
   async: they resolve the market object from
   `{ underlying, expiryMs, strike, side }` via the on-chain registry (cached
   per client).
-- **`PredictClient.read`** — `markets()`, `market(desc)` (state + live NAV),
-  `balance(owner)`, `plpBalance(owner)`, `pool()`. All reads run over gRPC
-  `simulateTransaction`; no indexer required.
+- **`PredictClient.read`** — `markets()` (tradeable summaries: id, expiry,
+  tick size, mint-paused), `market(desc)` (state + live NAV), `balance(owner)`,
+  `plpBalance(owner)`, `pool()`, `hasPosition(owner, marketId, orderId)`.
+  All reads run over gRPC `simulateTransaction`; no indexer required.
+- **`PredictClient.decode`** — pure execution-result decoders (no network):
+  `mint`, `redeem`, `claim`, `createManager`, `deposit`, `withdraw`,
+  `plpRequest`, `plpCancel`, `builderCode`, each with a plural form for
+  batched PTBs. Execute transactions with events included and pass the result;
+  receipts come back in SDK units with raw bigints alongside. Decoding uses
+  the events' canonical BCS bytes, so it is transport-independent.
 - **Composable primitives** — every Move entrypoint is also exported as a
   `(cfg, tx, args) => …` function with raw bigint units
   (`mintExactQuantity`, `redeemLive`, `requestSupply`, …) for integrators
@@ -111,11 +125,14 @@ resolution.
 
 ## Notes
 
-- Position enumeration (all open orders for an account) is not on-chain
-  readable and ships with the indexer API integration later; `mint` returns
-  the order id in its transaction result, and `OrderMinted` events carry it.
+- **Your app owns order-id persistence.** Position enumeration is not
+  on-chain readable (indexer integration comes later): capture
+  `decode.mint(result).orderId` at mint time and store it. **After a partial
+  redeem, the old id is retired** — update your store from
+  `decode.redeem(result).replacementOrderId` or the stored id goes stale.
+  Validate stored ids cheaply with `read.hasPosition`.
 - PLP supply/withdraw are queued and fill at the next pool flush; cancels
-  take the queue `index` from the request transaction's events.
+  take the queue `index` — get it from `decode.plpRequest(result).index`.
 - `claimSettled` requires a full close of the order (contract rule).
 
 ## Development
