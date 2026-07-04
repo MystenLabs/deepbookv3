@@ -16,6 +16,7 @@
         "dist"
     ],
     "scripts": {
+        "prepare": "pnpm run build",
         "build": "tsup src/index.ts --format esm,cjs --dts --clean",
         "test": "vitest run",
         "test:testnet": "PREDICT_SDK_TESTNET=1 vitest run tests/testnet"
