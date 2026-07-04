@@ -23,10 +23,11 @@ import {
 	expiryMarketId,
 	marketState,
 	marketStates,
+	referenceTick,
 	type MarketState,
 } from "./reads/markets.js";
 import { poolStats } from "./reads/pool.js";
-import { binaryRangeTicks, type Side } from "./ticks.js";
+import { POS_INF_TICK, binaryRangeTicks, type Side } from "./ticks.js";
 import { createAccount, depositFunds, withdrawFunds } from "./tx/account.js";
 import { setBuilderCode, unsetBuilderCode } from "./tx/builderCode.js";
 import { deriveAccountWrapperId } from "./tx/common.js";
@@ -55,7 +56,12 @@ const POSITION_LOT_SIZE = 10_000n;
 export interface MarketDescriptor {
 	underlying: string;
 	expiryMs: number | bigint;
-	strike: number;
+	/**
+	 * Strike in USD, or "reference" to trade at the market's on-chain reference
+	 * price (the Polymarket-style anchor: derived from the exact previous-window
+	 * oracle observation, so consecutive windows chain settlement → next strike).
+	 */
+	strike: number | "reference";
 	side: Side;
 }
 
@@ -87,6 +93,8 @@ export interface ActiveMarket {
 	/** Strike granularity in USD (e.g. 0.01). */
 	tickSize: number;
 	mintPaused: boolean;
+	/** The window's anchor strike in USD, or null until the keeper seeds it. */
+	referencePrice: number | null;
 }
 
 /** A resolved live market: its on-chain state summary for the caller. */
@@ -96,6 +104,8 @@ export interface MarketSummary {
 	tickSize: number;
 	mintPaused: boolean;
 	nav: number;
+	/** The window's anchor strike in USD, or null until the keeper seeds it. */
+	referencePrice: number | null;
 }
 
 /** Aggregate pool figures, in human units (shares raw, everything else scaled). */
@@ -167,6 +177,36 @@ export class PredictClient {
 		return resolved;
 	}
 
+	// Reference PRICE in USD from a state (tick index × tick size), or null.
+	private static referencePriceOf(state: MarketState): number | null {
+		return state.referenceTickRaw == null
+			? null
+			: fromRaw(state.referenceTickRaw * state.tickSizeRaw, 9);
+	}
+
+	// Resolve a descriptor's strike to the (lower, higher) tick pair. A numeric
+	// strike converts and validates against the tick grid; "reference" reads the
+	// market's reference tick FRESH (never cached — it is unset early in a
+	// window) and uses it directly: it is on the tick grid by construction.
+	private async strikeTicks(
+		m: MarketDescriptor,
+		marketId: string,
+		state: MarketState,
+	): Promise<{ lowerTick: bigint; higherTick: bigint }> {
+		if (m.strike !== "reference") {
+			return binaryRangeTicks(priceToRaw(m.strike), m.side, state.tickSizeRaw);
+		}
+		const tick = await referenceTick(this.client, this.cfg, marketId);
+		if (tick == null) {
+			throw new PredictInputError(
+				`reference price not set yet for ${m.underlying} @ ${m.expiryMs} — retry shortly or pass a numeric strike`,
+			);
+		}
+		return m.side === "up"
+			? { lowerTick: tick, higherTick: POS_INF_TICK }
+			: { lowerTick: 0n, higherTick: tick };
+	}
+
 	// Raw payout quantity must land on a lot boundary — the chain rejects otherwise.
 	private assertLot(quantityRaw: bigint): void {
 		if (quantityRaw % POSITION_LOT_SIZE !== 0n) {
@@ -213,11 +253,7 @@ export class PredictClient {
 			const { id, state } = await this.resolveMarket(m);
 			const quantityRaw = usdcToRaw(opts.quantity);
 			this.assertLot(quantityRaw);
-			const { lowerTick, higherTick } = binaryRangeTicks(
-				priceToRaw(m.strike),
-				m.side,
-				state.tickSizeRaw,
-			);
+			const { lowerTick, higherTick } = await this.strikeTicks(m, id, state);
 			const tx = new Transaction();
 			mintExactQuantity(this.cfg, tx, {
 				expiryMarketId: id,
@@ -244,11 +280,7 @@ export class PredictClient {
 			// No lot check: min_quantity is a floor the chain compares against an
 			// already-lot-floored minted quantity, so any floor value is legal.
 			const minQuantityRaw = usdcToRaw(opts.minQuantity);
-			const { lowerTick, higherTick } = binaryRangeTicks(
-				priceToRaw(m.strike),
-				m.side,
-				state.tickSizeRaw,
-			);
+			const { lowerTick, higherTick } = await this.strikeTicks(m, id, state);
 			const tx = new Transaction();
 			mintExactAmount(this.cfg, tx, {
 				expiryMarketId: id,
@@ -358,6 +390,7 @@ export class PredictClient {
 				expiryMs: states[i].expiryMs,
 				tickSize: fromRaw(states[i].tickSizeRaw, 9),
 				mintPaused: states[i].mintPaused,
+				referencePrice: PredictClient.referencePriceOf(states[i]),
 			}));
 		},
 
@@ -384,6 +417,7 @@ export class PredictClient {
 				tickSize: fromRaw(state.tickSizeRaw, 9), // strike/price scale
 				mintPaused: state.mintPaused,
 				nav: rawToUsdc(navRaw),
+				referencePrice: PredictClient.referencePriceOf(state),
 			};
 		},
 

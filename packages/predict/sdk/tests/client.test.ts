@@ -50,12 +50,16 @@ function mockClient() {
 			} else if (fn === "expiry_market_id") {
 				results = [[bcs.option(bcs.Address).serialize(MARKET_ID).toBytes()]];
 			} else if (fn === "expiry") {
-				// marketState PTB: expiry, tick_size, mint_paused
+				// marketState PTB: expiry, tick_size, mint_paused, reference_tick
 				results = [
 					[bcs.u64().serialize(BigInt(EXPIRY)).toBytes()],
 					[bcs.u64().serialize(10_000_000n).toBytes()],
 					[bcs.bool().serialize(false).toBytes()],
+					[bcs.option(bcs.u64()).serialize(10_500_000n).toBytes()],
 				];
+			} else if (fn === "reference_tick") {
+				// mint-at-reference fresh read: tick 10_500_000 (= $105,000 @ $0.01)
+				results = [[bcs.option(bcs.u64()).serialize(10_500_000n).toBytes()]];
 			} else {
 				// e.g. currentNav's load_live_pricer → current_nav: one u64 per command.
 				results = cmds.map(() => [bcs.u64().serialize(0n).toBytes()]);
@@ -210,8 +214,80 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 				expiryMs: BigInt(EXPIRY),
 				tickSize: 0.01,
 				mintPaused: false,
+				referencePrice: 105_000, // tick 10_500_000 × $0.01
 			},
 		]);
+	});
+
+	test("mint at the reference strike uses the on-chain reference tick directly", async () => {
+		const { client, counts } = mockClient();
+		const pc = new PredictClient({ network: "testnet", client });
+		const tx = await pc.tx.mint(
+			OWNER,
+			{ underlying: "BTC", expiryMs: EXPIRY, strike: "reference", side: "up" },
+			{ quantity: 50 },
+		);
+		// The fresh reference read must have happened (never served from cache).
+		expect(counts.reference_tick).toBe(1);
+		// lowerTick input = the reference tick itself; higherTick = +inf sentinel.
+		const inputs = tx.getData().inputs;
+		const pureB64 = inputs
+			.filter((i) => "Pure" in i && i.Pure)
+			.map((i) => (i as { Pure: { bytes: string } }).Pure.bytes);
+		expect(pureB64).toContain(b64(10_500_000n)); // reference tick
+		expect(pureB64).toContain(b64((1n << 30n) - 1n)); // POS_INF_TICK
+	});
+
+	test("mint at reference: DOWN side puts the tick on the higher bound", async () => {
+		const pc = new PredictClient({ network: "testnet", client: mockClient().client });
+		const tx = await pc.tx.mint(
+			OWNER,
+			{ underlying: "BTC", expiryMs: EXPIRY, strike: "reference", side: "down" },
+			{ quantity: 50 },
+		);
+		const pureB64 = tx
+			.getData()
+			.inputs.filter((i) => "Pure" in i && i.Pure)
+			.map((i) => (i as { Pure: { bytes: string } }).Pure.bytes);
+		expect(pureB64).toContain(b64(0n)); // -inf sentinel on the lower bound
+		expect(pureB64).toContain(b64(10_500_000n)); // reference tick on the higher
+	});
+
+	test("mint at reference: unset reference → PredictInputError", async () => {
+		const base = mockClient().client as unknown as {
+			simulateTransaction: (o: { transaction: Transaction }) => Promise<unknown>;
+		};
+		// Wrap the mock: reference_tick returns None; everything else passes through.
+		const client = {
+			async simulateTransaction(opts: { transaction: Transaction }) {
+				const cmds = opts.transaction.getData().commands;
+				const fn =
+					"MoveCall" in cmds[0] && cmds[0].MoveCall ? cmds[0].MoveCall.function : "?";
+				if (fn === "reference_tick") {
+					return {
+						$kind: "Transaction",
+						Transaction: {},
+						commandResults: [
+							{
+								returnValues: [
+									{ bcs: bcs.option(bcs.u64()).serialize(null).toBytes() },
+								],
+								mutatedReferences: [],
+							},
+						],
+					};
+				}
+				return base.simulateTransaction(opts);
+			},
+		} as never;
+		const pc = new PredictClient({ network: "testnet", client });
+		await expect(
+			pc.tx.mint(
+				OWNER,
+				{ underlying: "BTC", expiryMs: EXPIRY, strike: "reference", side: "up" },
+				{ quantity: 50 },
+			),
+		).rejects.toThrow(/reference price not set/);
 	});
 
 	test("market resolution is cached: a second mint does not re-resolve", async () => {

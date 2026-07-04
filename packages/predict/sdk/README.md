@@ -52,7 +52,7 @@ receipt.netPremium, receipt.fees; // exact cost breakdown
 
 // Read: tradeable markets and pool state.
 const markets = await predict.read.markets();
-// -> [{ id, expiryMs, tickSize, mintPaused }, ...] — pick an expiry from here
+// -> [{ id, expiryMs, tickSize, mintPaused, referencePrice }, ...]
 const market = await predict.read.market({ underlying: "BTC", expiryMs: markets[0].expiryMs });
 console.log(market?.nav, market?.tickSize, market?.mintPaused);
 ```
@@ -85,6 +85,30 @@ primitives layer, which returns raw `bigint`s (`accountBalance`, `poolStats`, �
 
 `side: "up"` wins if the settlement price is above the strike; `"down"` below.
 
+## Reference-price markets (Polymarket-style windows)
+
+Each market carries an on-chain **reference price** — derived from the exact
+previous-window oracle observation, so consecutive windows chain naturally
+(the prior window's settlement observation anchors the next window's strike).
+Build an up/down board straight from discovery, and trade at the anchor with
+`strike: "reference"`:
+
+```ts
+const markets = await predict.read.markets();
+// each market: "BTC above $<referencePrice>?  ↑ / ↓"
+
+const tx = await predict.tx.mint(
+	myAddress,
+	{ underlying: "BTC", expiryMs: markets[0].expiryMs, strike: "reference", side: "up" },
+	{ quantity: 25, maxCost: 15 },
+);
+```
+
+The reference tick is read fresh at build time (it is unset briefly at the
+start of a window until the keeper seeds it — you get a clean
+`PredictInputError` rather than a chain abort). Numeric strikes away from the
+reference remain fully supported.
+
 ## What's in the box
 
 - **`PredictClient.tx`** — `createManager`, `deposit`, `withdraw`, `mint`,
@@ -95,7 +119,7 @@ primitives layer, which returns raw `bigint`s (`accountBalance`, `poolStats`, �
   `{ underlying, expiryMs, strike, side }` via the on-chain registry (cached
   per client).
 - **`PredictClient.read`** — `markets()` (tradeable summaries: id, expiry,
-  tick size, mint-paused), `market(desc)` (state + live NAV), `balance(owner)`,
+  tick size, mint-paused, reference price), `market(desc)` (state + live NAV), `balance(owner)`,
   `plpBalance(owner)`, `pool()`, `hasPosition(owner, marketId, orderId)`.
   All reads run over gRPC `simulateTransaction`; no indexer required.
 - **`PredictClient.decode`** — pure execution-result decoders (no network):

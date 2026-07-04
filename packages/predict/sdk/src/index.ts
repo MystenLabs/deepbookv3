@@ -77,6 +77,7 @@ export {
 	expiryMarketId,
 	marketState,
 	marketStates,
+	referenceTick,
 	settlementPrice,
 } from "./reads/markets.js";
 export type { MarketState } from "./reads/markets.js";

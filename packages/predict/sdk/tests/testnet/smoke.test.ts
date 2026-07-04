@@ -97,6 +97,8 @@ describe("testnet smoke (live deployment)", () => {
 			expect(m.expiryMs > 0n).toBe(true);
 			expect(m.tickSize).toBeGreaterThan(0);
 			expect(typeof m.mintPaused).toBe("boolean");
+			// Option parse validated live: unset → null, seeded → a positive USD price.
+			if (m.referencePrice !== null) expect(m.referencePrice).toBeGreaterThan(0);
 		}
 	});
 

@@ -13,6 +13,7 @@ import {
 	expiryMarketId,
 	marketState,
 	marketStates,
+	referenceTick,
 	settlementPrice,
 } from "../src/reads/markets.js";
 import {
@@ -141,23 +142,36 @@ describe("markets reads", () => {
 		await expect(expiryMarketId(client, cfg, "DOGE", 1n)).rejects.toThrow(/DOGE/);
 	});
 
-	test("marketState: one PTB with 3 reads, dispatched per command index", async () => {
+	test("marketState: one PTB with 4 reads, dispatched per command index", async () => {
 		const { client, captured } = mockClient([
 			[bcs.u64().serialize(1_700_000_000_000n).toBytes()], // expiry
 			[bcs.u64().serialize(10_000_000n).toBytes()], // tick_size
 			[bcs.bool().serialize(true).toBytes()], // mint_paused
+			[bcs.option(bcs.u64()).serialize(10_500_000n).toBytes()], // reference_tick
 		]);
 		const s = await marketState(client, cfg, "0xdeadbeef");
 		expect(targets(captured.tx!)).toEqual([
 			`${cfg.packages.predict}::expiry_market::expiry`,
 			`${cfg.packages.predict}::expiry_market::tick_size`,
 			`${cfg.packages.predict}::expiry_market::mint_paused`,
+			`${cfg.packages.predict}::expiry_market::reference_tick`,
 		]);
 		expect(s).toEqual({
 			expiryMs: 1_700_000_000_000n,
 			tickSizeRaw: 10_000_000n,
 			mintPaused: true,
+			referenceTickRaw: 10_500_000n,
 		});
+	});
+
+	test("referenceTick: Some → tick, None → null", async () => {
+		const some = mockClient([[bcs.option(bcs.u64()).serialize(42n).toBytes()]]);
+		expect(await referenceTick(some.client, cfg, "0xdeadbeef")).toBe(42n);
+		expect(targets(some.captured.tx!)).toEqual([
+			`${cfg.packages.predict}::expiry_market::reference_tick`,
+		]);
+		const none = mockClient([[bcs.option(bcs.u64()).serialize(null).toBytes()]]);
+		expect(await referenceTick(none.client, cfg, "0xdeadbeef")).toBeNull();
 	});
 
 	test("marketStates: batched N markets in one PTB, parsed by index", async () => {
@@ -165,15 +179,17 @@ describe("markets reads", () => {
 			[bcs.u64().serialize(1_000n).toBytes()], // m0 expiry
 			[bcs.u64().serialize(10_000_000n).toBytes()], // m0 tick
 			[bcs.bool().serialize(false).toBytes()], // m0 paused
+			[bcs.option(bcs.u64()).serialize(7n).toBytes()], // m0 reference
 			[bcs.u64().serialize(2_000n).toBytes()], // m1 expiry
 			[bcs.u64().serialize(20_000_000n).toBytes()], // m1 tick
 			[bcs.bool().serialize(true).toBytes()], // m1 paused
+			[bcs.option(bcs.u64()).serialize(null).toBytes()], // m1 reference (unset)
 		]);
 		const states = await marketStates(client, cfg, [ADDR_A, ADDR_B]);
-		expect(targets(captured.tx!).length).toBe(6);
+		expect(targets(captured.tx!).length).toBe(8);
 		expect(states).toEqual([
-			{ expiryMs: 1_000n, tickSizeRaw: 10_000_000n, mintPaused: false },
-			{ expiryMs: 2_000n, tickSizeRaw: 20_000_000n, mintPaused: true },
+			{ expiryMs: 1_000n, tickSizeRaw: 10_000_000n, mintPaused: false, referenceTickRaw: 7n },
+			{ expiryMs: 2_000n, tickSizeRaw: 20_000_000n, mintPaused: true, referenceTickRaw: null },
 		]);
 	});
 

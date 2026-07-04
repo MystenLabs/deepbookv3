@@ -3,7 +3,7 @@ import { predictTarget, type PredictConfig } from "../config/index.js";
 import { PredictMoveError } from "../errors.js";
 import { loadLivePricer } from "../tx/trade.js";
 import { inspectReturns, type ReadClient } from "./inspect.js";
-import { parseOptionalId, parseU64LE, parseVectorOfIds } from "./parse.js";
+import { parseOptionalId, parseOptionalU64, parseU64LE, parseVectorOfIds } from "./parse.js";
 
 // On-chain ids of the pool's active (live, not-yet-settled) expiry markets.
 // `plp::active_expiry_markets(vault)` — see packages/predict/sources/plp/plp.move:182.
@@ -45,35 +45,42 @@ export interface MarketState {
 	expiryMs: bigint;
 	tickSizeRaw: bigint;
 	mintPaused: boolean;
+	/**
+	 * The reference fine-grid tick (Polymarket-style anchor strike: derived
+	 * on-chain from the exact previous-window oracle observation), or null while
+	 * the keeper has not seeded it. Reference PRICE raw = tick * tickSizeRaw.
+	 */
+	referenceTickRaw: bigint | null;
 }
 
-// A market's three single-arg state reads batched into one PTB (command order fixed
-// below). `expiry_market::{expiry, tick_size, mint_paused}` — see
-// packages/predict/sources/expiry_market.move:{90,146,234}. Settlement price is
-// deliberately NOT batched here: on the deployed package it aborts for a live
-// (unsettled) market — use `settlementPrice` below.
+// The per-market state commands, in fixed order. `expiry_market::{expiry,
+// tick_size, mint_paused, reference_tick}` — see
+// packages/predict/sources/expiry_market.move:{90,141,~230,149}. reference_tick
+// returns Option (no abort risk), unlike settlement_price which is deliberately
+// NOT batched here: on the deployed package it aborts for a live (unsettled)
+// market — use `settlementPrice` below.
+const STATE_FNS = ["expiry", "tick_size", "mint_paused", "reference_tick"] as const;
+
+function parseStateAt(cmds: Uint8Array[][], base: number): MarketState {
+	return {
+		expiryMs: parseU64LE(cmds[base][0]),
+		tickSizeRaw: parseU64LE(cmds[base + 1][0]),
+		mintPaused: (cmds[base + 2][0][0] ?? 0) !== 0, // BCS bool: 1 byte
+		referenceTickRaw: parseOptionalU64(cmds[base + 3][0]),
+	};
+}
+
 export async function marketState(
 	client: ReadClient,
 	cfg: PredictConfig,
 	marketId: string,
 ): Promise<MarketState> {
-	const tx = new Transaction();
-	for (const fn of ["expiry", "tick_size", "mint_paused"]) {
-		tx.moveCall({
-			target: predictTarget(cfg, "expiry_market", fn),
-			arguments: [tx.object(marketId)],
-		});
-	}
-	const cmds = await inspectReturns(client, tx);
-	return {
-		expiryMs: parseU64LE(cmds[0][0]),
-		tickSizeRaw: parseU64LE(cmds[1][0]),
-		mintPaused: (cmds[2][0][0] ?? 0) !== 0, // BCS bool: 1 byte
-	};
+	const [state] = await marketStates(client, cfg, [marketId]);
+	return state;
 }
 
-// Batched marketState for N markets in ONE PTB (3 commands per market, same
-// order as marketState). Returns states aligned with `marketIds`.
+// Batched marketState for N markets in ONE PTB (STATE_FNS.length commands per
+// market, same order). Returns states aligned with `marketIds`.
 export async function marketStates(
 	client: ReadClient,
 	cfg: PredictConfig,
@@ -82,7 +89,7 @@ export async function marketStates(
 	if (marketIds.length === 0) return [];
 	const tx = new Transaction();
 	for (const id of marketIds) {
-		for (const fn of ["expiry", "tick_size", "mint_paused"]) {
+		for (const fn of STATE_FNS) {
 			tx.moveCall({
 				target: predictTarget(cfg, "expiry_market", fn),
 				arguments: [tx.object(id)],
@@ -90,11 +97,24 @@ export async function marketStates(
 		}
 	}
 	const cmds = await inspectReturns(client, tx);
-	return marketIds.map((_, i) => ({
-		expiryMs: parseU64LE(cmds[3 * i][0]),
-		tickSizeRaw: parseU64LE(cmds[3 * i + 1][0]),
-		mintPaused: (cmds[3 * i + 2][0][0] ?? 0) !== 0,
-	}));
+	return marketIds.map((_, i) => parseStateAt(cmds, STATE_FNS.length * i));
+}
+
+// Fresh single read of the reference tick — used by mint-at-reference, which
+// must not trust a cached state (the reference is unset early in a window
+// until the keeper seeds it).
+export async function referenceTick(
+	client: ReadClient,
+	cfg: PredictConfig,
+	marketId: string,
+): Promise<bigint | null> {
+	const tx = new Transaction();
+	tx.moveCall({
+		target: predictTarget(cfg, "expiry_market", "reference_tick"),
+		arguments: [tx.object(marketId)],
+	});
+	const [cmd0] = await inspectReturns(client, tx);
+	return parseOptionalU64(cmd0[0]);
 }
 
 // The recorded settlement price, or null while the market is unsettled.
