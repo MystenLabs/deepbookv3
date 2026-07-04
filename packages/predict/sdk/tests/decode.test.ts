@@ -167,11 +167,14 @@ describe("decodeRedeems", () => {
 		};
 	}
 
-	test("partial close surfaces the replacement order id", () => {
+	test("partial close surfaces the replacement order id and NET proceeds", () => {
 		const [r] = decodeRedeems(cfg, { events: [liveRedeem(8n)] });
 		expect(r.replacementOrderId).toBe(8n);
 		expect(r.remaining).toBe(30);
-		expect(r.proceeds).toBe(6);
+		// redeem_amount 6.0 is GROSS; net = gross − trading (0.05) − builder − penalty
+		expect(r.gross).toBe(6);
+		expect(r.proceeds).toBe(5.95);
+		expect(r.raw.proceeds).toBe(5_950_000n);
 		expect(r.liquidated).toBe(false);
 	});
 

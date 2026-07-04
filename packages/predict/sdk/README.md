@@ -44,6 +44,16 @@ const mintTx = await predict.tx.mint(
 );
 // -> sign & execute any of these with your wallet / dapp-kit / signer
 
+// Quote before you trade: dry-runs your exact mint, real fees, real account.
+const q = await predict.read.quoteMint(myAddress, market, { quantity: 50 });
+q.entryProbability; // your fill (0..1 per $1 payout)
+q.cost;             // exact all-in debit — pass as maxCost (+ your buffer)
+
+// Anonymous board price (no account needed): both sides of any strike.
+const { up, down } = await predict.read.price({
+	underlying: "BTC", expiryMs, strike: "reference",
+});
+
 // Decode the receipt from the execution result (execute with events included):
 const receipt = predict.decode.mint(mintResult);
 receipt.orderId; // PERSIST THIS — needed to redeem/claim later
@@ -62,9 +72,9 @@ console.log(market?.nav, market?.tickSize, market?.mintPaused);
 `mint` mirrors the chain's semantics: when you omit `maxCost` and
 `maxProbability`, the mint is **uncapped** — if the price moves between your
 quote and execution, the position can cost up to your full account balance.
-Frontends always have a quote in hand: **pass `maxCost` from your quote.**
+**Call `read.quoteMint` and pass its `cost` (plus your buffer) as `maxCost`.**
 The same applies to `redeem`, which has no slippage floor on the current
-deployment — quote first, close fast.
+deployment — `read.quoteRedeem` first, close fast.
 
 ## Units
 
@@ -119,8 +129,13 @@ reference remain fully supported.
   `{ underlying, expiryMs, strike, side }` via the on-chain registry (cached
   per client).
 - **`PredictClient.read`** — `markets()` (tradeable summaries: id, expiry,
-  tick size, mint-paused, reference price), `market(desc)` (state + live NAV), `balance(owner)`,
-  `plpBalance(owner)`, `pool()`, `hasPosition(owner, marketId, orderId)`.
+  tick size, mint-paused, reference price), `market(desc)` (state + live NAV),
+  `price(m)` (anonymous both-sides pricing for any strike),
+  `quoteMint(owner, m, opts)` / `quoteRedeem(owner, m, opts)` (exact dry-run
+  quotes: real fees from the real code path — and they throw the same typed
+  errors the real trade would, so a quote doubles as preflight),
+  `balance(owner)`, `plpBalance(owner)`, `pool()`,
+  `hasPosition(owner, marketId, orderId)`.
   All reads run over gRPC `simulateTransaction`; no indexer required.
 - **`PredictClient.decode`** — pure execution-result decoders (no network):
   `mint`, `redeem`, `claim`, `createManager`, `deposit`, `withdraw`,

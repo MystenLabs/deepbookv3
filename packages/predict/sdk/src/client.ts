@@ -16,6 +16,7 @@ import {
 } from "./decode.js";
 import { PredictInputError } from "./errors.js";
 import type { ReadClient } from "./reads/inspect.js";
+import { simulateWithEvents } from "./reads/inspect.js";
 import { accountBalance, hasPosition } from "./reads/balances.js";
 import {
 	activeMarketIds,
@@ -23,6 +24,7 @@ import {
 	expiryMarketId,
 	marketState,
 	marketStates,
+	rangePrices,
 	referenceTick,
 	type MarketState,
 } from "./reads/markets.js";
@@ -43,6 +45,7 @@ import {
 	leverageToRaw,
 	priceToRaw,
 	probabilityToRaw,
+	rawToProbability,
 	rawToUsdc,
 	usdcToRaw,
 	fromRaw,
@@ -114,6 +117,39 @@ export interface PoolSummary {
 	idleUsdc: number;
 	supplyPending: number;
 	withdrawPending: number;
+}
+
+/** Exact pre-trade quote: the dry-run receipt of the mint you are about to send. */
+export interface MintQuote {
+	/** Fill price, 0..1 per $1 payout. */
+	entryProbability: number;
+	/** Net premium into LP backing (quote units). */
+	premium: number;
+	fees: { trading: number; subsidy: number; builder: number; penalty: number };
+	/**
+	 * All-in account debit: premium + (trading − subsidy) + builder + penalty —
+	 * exactly what the chain withdraws; pass this (plus your buffer) as maxCost.
+	 */
+	cost: number;
+	quantity: number;
+	raw: { premium: bigint; cost: bigint; quantity: bigint; entryProbability: bigint };
+	/** True: computed by the real mint code path against real account state. */
+	feesExact: true;
+}
+
+/** Exact pre-close quote: the dry-run receipt of the redeem you are about to send. */
+export interface RedeemQuote {
+	/** NET quote credited to the account. */
+	proceeds: number;
+	/** Gross close value before fees. */
+	gross: number;
+	fees: { trading: number; builder: number; penalty: number };
+	quantityClosed: number;
+	remaining: number;
+	/** True when the position would close as a liquidated tombstone (zero payout). */
+	wouldLiquidate: boolean;
+	raw: { proceeds: bigint; gross: bigint; quantityClosed: bigint };
+	feesExact: true;
 }
 
 interface ResolvedMarket {
@@ -216,6 +252,80 @@ export class PredictClient {
 		}
 	}
 
+	// Shared construction for tx.mint and read.quoteMint — the quote dry-runs
+	// EXACTLY the transaction the trade would send.
+	private async buildMint(
+		owner: string,
+		m: MarketDescriptor,
+		opts: MintOptions,
+	): Promise<Transaction> {
+		const feeds = this.feeds(m.underlying);
+		const { id, state } = await this.resolveMarket(m);
+		const quantityRaw = usdcToRaw(opts.quantity);
+		this.assertLot(quantityRaw);
+		const { lowerTick, higherTick } = await this.strikeTicks(m, id, state);
+		const tx = new Transaction();
+		mintExactQuantity(this.cfg, tx, {
+			expiryMarketId: id,
+			wrapperId: this.wrapperIdFor(owner),
+			lowerTick,
+			higherTick,
+			quantityRaw,
+			leverageRaw: leverageToRaw(opts.leverage ?? 1),
+			maxCostRaw: opts.maxCost != null ? usdcToRaw(opts.maxCost) : undefined,
+			maxProbabilityRaw:
+				opts.maxProbability != null ? probabilityToRaw(opts.maxProbability) : undefined,
+			...feeds,
+		});
+		return tx;
+	}
+
+	// Shared construction for tx.redeem and read.quoteRedeem.
+	private async buildRedeem(
+		owner: string,
+		m: MarketDescriptor,
+		opts: CloseOptions,
+	): Promise<Transaction> {
+		const feeds = this.feeds(m.underlying);
+		const { id } = await this.resolveMarket(m);
+		const closeQuantityRaw = usdcToRaw(opts.quantity);
+		this.assertLot(closeQuantityRaw);
+		const tx = new Transaction();
+		redeemLive(this.cfg, tx, {
+			expiryMarketId: id,
+			wrapperId: this.wrapperIdFor(owner),
+			orderId: opts.orderId,
+			closeQuantityRaw,
+			...feeds,
+		});
+		return tx;
+	}
+
+	// Raw strike for anonymous pricing: numeric strikes validate against the tick
+	// grid; "reference" reads the market's reference tick fresh (unset → typed error).
+	private async strikeRawFor(
+		m: Pick<MarketDescriptor, "underlying" | "expiryMs" | "strike">,
+		marketId: string,
+		state: MarketState,
+	): Promise<bigint> {
+		if (m.strike !== "reference") {
+			const raw = priceToRaw(m.strike);
+			if (raw % state.tickSizeRaw !== 0n) {
+				throw new PredictInputError(
+					`strike ${m.strike} is not on the ${fromRaw(state.tickSizeRaw, 9)} tick grid`,
+				);
+			}
+			return raw;
+		}
+		const tick = await referenceTick(this.client, this.cfg, marketId);
+		if (tick == null) {
+			throw new PredictInputError(
+				`reference price not set yet for ${m.underlying} @ ${m.expiryMs} — retry shortly or pass a numeric strike`,
+			);
+		}
+		return tick * state.tickSizeRaw;
+	}
+
 	// === tx builders ===
 	// Each returns a ready-to-sign Transaction. Market-resolving builders are async.
 	readonly tx = {
@@ -248,27 +358,8 @@ export class PredictClient {
 			return tx;
 		},
 
-		mint: async (owner: string, m: MarketDescriptor, opts: MintOptions): Promise<Transaction> => {
-			const feeds = this.feeds(m.underlying);
-			const { id, state } = await this.resolveMarket(m);
-			const quantityRaw = usdcToRaw(opts.quantity);
-			this.assertLot(quantityRaw);
-			const { lowerTick, higherTick } = await this.strikeTicks(m, id, state);
-			const tx = new Transaction();
-			mintExactQuantity(this.cfg, tx, {
-				expiryMarketId: id,
-				wrapperId: this.wrapperIdFor(owner),
-				lowerTick,
-				higherTick,
-				quantityRaw,
-				leverageRaw: leverageToRaw(opts.leverage ?? 1),
-				maxCostRaw: opts.maxCost != null ? usdcToRaw(opts.maxCost) : undefined,
-				maxProbabilityRaw:
-					opts.maxProbability != null ? probabilityToRaw(opts.maxProbability) : undefined,
-				...feeds,
-			});
-			return tx;
-		},
+		mint: (owner: string, m: MarketDescriptor, opts: MintOptions): Promise<Transaction> =>
+			this.buildMint(owner, m, opts),
 
 		mintAmount: async (
 			owner: string,
@@ -295,25 +386,8 @@ export class PredictClient {
 			return tx;
 		},
 
-		redeem: async (
-			owner: string,
-			m: MarketDescriptor,
-			opts: CloseOptions,
-		): Promise<Transaction> => {
-			const feeds = this.feeds(m.underlying);
-			const { id } = await this.resolveMarket(m);
-			const closeQuantityRaw = usdcToRaw(opts.quantity);
-			this.assertLot(closeQuantityRaw);
-			const tx = new Transaction();
-			redeemLive(this.cfg, tx, {
-				expiryMarketId: id,
-				wrapperId: this.wrapperIdFor(owner),
-				orderId: opts.orderId,
-				closeQuantityRaw,
-				...feeds,
-			});
-			return tx;
-		},
+		redeem: (owner: string, m: MarketDescriptor, opts: CloseOptions): Promise<Transaction> =>
+			this.buildRedeem(owner, m, opts),
 
 		claimSettled: async (
 			owner: string,
@@ -398,6 +472,77 @@ export class PredictClient {
 		// close or partial-close replacement — see RedeemReceipt.replacementOrderId).
 		hasPosition: (owner: string, marketId: string, orderId: bigint): Promise<boolean> =>
 			hasPosition(this.client, this.cfg, owner, marketId, orderId),
+
+		// Anonymous board pricing: the chain's probability for both sides of a
+		// strike, from one fresh pricer (no account needed). This is the ↑/↓
+		// button price before a user has onboarded.
+		price: async (
+			m: Pick<MarketDescriptor, "underlying" | "expiryMs" | "strike">,
+		): Promise<{ up: number; down: number }> => {
+			const feeds = this.feeds(m.underlying);
+			const { id, state } = await this.resolveMarket(m);
+			const strikeRaw = await this.strikeRawFor(m, id, state);
+			const { upRaw, downRaw } = await rangePrices(this.client, this.cfg, id, feeds, strikeRaw);
+			return { up: rawToProbability(upRaw), down: rawToProbability(downRaw) };
+		},
+
+		// Exact pre-trade quote: dry-runs the caller's own mint (same tx as
+		// tx.mint) and decodes the receipt. Requires a funded account; throws
+		// the same typed errors the real trade would — quote doubles as preflight.
+		quoteMint: async (
+			owner: string,
+			m: MarketDescriptor,
+			opts: Pick<MintOptions, "quantity" | "leverage">,
+		): Promise<MintQuote> => {
+			const tx = await this.buildMint(owner, m, opts);
+			const events = await simulateWithEvents(this.client, tx, owner);
+			const r = exactlyOne(decodeMints(this.cfg, { events }), "OrderMinted");
+			const costRaw =
+				r.raw.netPremium +
+				(r.raw.tradingFee - r.raw.feeIncentiveSubsidy) +
+				r.raw.builderFee +
+				r.raw.penaltyFee;
+			return {
+				entryProbability: r.entryProbability,
+				premium: r.netPremium,
+				fees: r.fees,
+				cost: rawToUsdc(costRaw),
+				quantity: r.quantity,
+				raw: {
+					premium: r.raw.netPremium,
+					cost: costRaw,
+					quantity: r.raw.quantity,
+					entryProbability: r.raw.entryProbability,
+				},
+				feesExact: true,
+			};
+		},
+
+		// Exact pre-close quote: dry-runs the caller's own redeem and decodes
+		// the receipt — the informed close against the floor-less deployed redeem.
+		quoteRedeem: async (
+			owner: string,
+			m: MarketDescriptor,
+			opts: CloseOptions,
+		): Promise<RedeemQuote> => {
+			const tx = await this.buildRedeem(owner, m, opts);
+			const events = await simulateWithEvents(this.client, tx, owner);
+			const r = exactlyOne(decodeRedeems(this.cfg, { events }), "order-redeemed");
+			return {
+				proceeds: r.proceeds,
+				gross: r.gross,
+				fees: { trading: r.fees.trading, builder: r.fees.builder, penalty: r.fees.penalty },
+				quantityClosed: r.quantityClosed,
+				remaining: r.remaining,
+				wouldLiquidate: r.liquidated,
+				raw: {
+					proceeds: r.raw.proceeds,
+					gross: r.raw.gross,
+					quantityClosed: r.raw.quantityClosed,
+				},
+				feesExact: true,
+			};
+		},
 
 		market: async (
 			m: Pick<MarketDescriptor, "underlying" | "expiryMs">,

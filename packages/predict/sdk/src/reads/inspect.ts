@@ -46,6 +46,36 @@ function abortRawString(error: SimAbortError | undefined): string | undefined {
 // default to the zero address. On abort the result's `$kind` is `FailedTransaction`;
 // we decode the carried abort into a typed PredictMoveError, falling back to a plain
 // Error with the failure message when it isn't a decodable Move abort.
+// Shared failure handling: decode the abort carried by a FailedTransaction
+// into a typed PredictMoveError, else throw a plain Error.
+function throwSimFailure(failed: unknown): never {
+	const status = (failed as { status?: { success: boolean; error?: SimAbortError } })?.status;
+	const error = status && status.success === false ? status.error : undefined;
+	const raw = abortRawString(error);
+	const decoded = raw != null ? decodeMoveAbort(raw) : null;
+	if (decoded) throw decoded;
+	throw new Error(error?.message ?? "simulateTransaction aborted (FailedTransaction)");
+}
+
+// Simulate a full transaction (typically one built by a tx.* builder) and return
+// the events it would emit — the quote path: dry-run the real action, decode the
+// receipt. Sender must be the acting owner so account auth resolves. Throws the
+// same typed errors the real execution would surface.
+export async function simulateWithEvents(
+	client: ReadClient,
+	tx: Transaction,
+	sender: string,
+): Promise<{ eventType?: string; bcs?: Uint8Array | string }[]> {
+	tx.setSender(sender);
+	const result = await client.simulateTransaction<{ events: true }>({
+		transaction: tx,
+		checksEnabled: false,
+		include: { events: true },
+	});
+	if (result.$kind === "FailedTransaction") throwSimFailure(result.FailedTransaction);
+	return (result.Transaction?.events ?? []) as { eventType?: string; bcs?: Uint8Array }[];
+}
+
 export async function inspectReturns(
 	client: ReadClient,
 	tx: Transaction,
@@ -57,16 +87,7 @@ export async function inspectReturns(
 		checksEnabled: false,
 		include: { commandResults: true },
 	});
-	if (result.$kind === "FailedTransaction") {
-		const status = result.FailedTransaction?.status as
-			| { success: boolean; error?: SimAbortError }
-			| undefined;
-		const error = status && status.success === false ? status.error : undefined;
-		const raw = abortRawString(error);
-		const decoded = raw != null ? decodeMoveAbort(raw) : null;
-		if (decoded) throw decoded;
-		throw new Error(error?.message ?? "simulateTransaction aborted (FailedTransaction)");
-	}
+	if (result.$kind === "FailedTransaction") throwSimFailure(result.FailedTransaction);
 	const commands = result.commandResults;
 	if (!commands) throw new Error("simulateTransaction returned no commandResults");
 	return commands.map((c) => c.returnValues.map((rv) => rv.bcs));

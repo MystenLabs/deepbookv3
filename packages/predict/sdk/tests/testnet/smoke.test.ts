@@ -153,6 +153,42 @@ describe("testnet smoke (live deployment)", () => {
 		expectSemanticOrSuccess(await simulate(tx), "redeem_live");
 	});
 
+	test("read.price: live both-sides pricing for a grid strike", async () => {
+		if (liveMarkets.length === 0) return;
+		const m = liveMarkets[0];
+		// A deep-ITM-for-UP strike: 1000 ticks above zero — any grid point works,
+		// the assertion is on plumbing + probability domain, not on moneyness.
+		const strike = m.tickSize * 1_000;
+		const p = await predict.read.price({
+			underlying: "BTC",
+			expiryMs: m.expiryMs,
+			strike,
+		});
+		expect(p.up).toBeGreaterThanOrEqual(0);
+		expect(p.up).toBeLessThanOrEqual(1);
+		expect(p.down).toBeGreaterThanOrEqual(0);
+		expect(p.down).toBeLessThanOrEqual(1);
+		// Complementary within chain rounding.
+		expect(Math.abs(p.up + p.down - 1)).toBeLessThan(0.05);
+	});
+
+	test("read.quoteMint: unfunded owner fails as a typed semantic abort (preflight)", async () => {
+		if (liveMarkets.length === 0) return;
+		const m = liveMarkets[0];
+		// SMOKE_SENDER never onboarded, so its derived wrapper doesn't exist:
+		// the dry-run fails at input resolution ("Object 0x… " from the node) —
+		// while a funded-but-broke owner would surface a typed Move abort. Either
+		// way the quote fails EXACTLY like the real trade would (preflight), and
+		// this proves the build → simulate-with-events → error path live.
+		await expect(
+			predict.read.quoteMint(
+				SMOKE_SENDER,
+				{ underlying: "BTC", expiryMs: m.expiryMs, strike: m.tickSize * 1_000, side: "up" },
+				{ quantity: 1 },
+			),
+		).rejects.toThrow(/Object|Move abort|aborted|not found|no market/i);
+	});
+
 	test("createManager simulates clean AND its real event decodes", async () => {
 		const tx = predict.tx.createManager();
 		tx.setSender(SMOKE_SENDER);

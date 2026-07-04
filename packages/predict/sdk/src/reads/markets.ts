@@ -1,7 +1,8 @@
 import { Transaction } from "@mysten/sui/transactions";
 import { predictTarget, type PredictConfig } from "../config/index.js";
 import { PredictMoveError } from "../errors.js";
-import { loadLivePricer } from "../tx/trade.js";
+import { U64_MAX } from "../units.js";
+import { loadLivePricer, type MarketFeeds } from "../tx/trade.js";
 import { inspectReturns, type ReadClient } from "./inspect.js";
 import { parseOptionalId, parseOptionalU64, parseU64LE, parseVectorOfIds } from "./parse.js";
 
@@ -98,6 +99,35 @@ export async function marketStates(
 	}
 	const cmds = await inspectReturns(client, tx);
 	return marketIds.map((_, i) => parseStateAt(cmds, STATE_FNS.length * i));
+}
+
+// Anonymous both-sides pricing for one strike: the chain's own probability for
+// (strike, +inf) and (-inf, strike). `pricing::range_price` takes RAW strikes
+// with sentinels neg_inf=0 / pos_inf=u64::MAX (range_codec::strikes_from_ticks);
+// it is public(package) on the deployed package, reachable here only because
+// simulate runs with checksEnabled:false — same coupling as `settlementPrice`,
+// dies when a public quote endpoint lands on-chain. Both sides are read from
+// the SAME pricer in one PTB, so `down` is the chain's number, not 1 − up.
+export async function rangePrices(
+	client: ReadClient,
+	cfg: PredictConfig,
+	marketId: string,
+	feeds: MarketFeeds,
+	strikeRaw: bigint,
+): Promise<{ upRaw: bigint; downRaw: bigint }> {
+	const tx = new Transaction();
+	const pricer = loadLivePricer(cfg, tx, { expiryMarketId: marketId, ...feeds });
+	for (const [lower, higher] of [
+		[strikeRaw, U64_MAX], // UP: (strike, +inf)
+		[0n, strikeRaw], // DOWN: (-inf, strike)
+	] as const) {
+		tx.moveCall({
+			target: predictTarget(cfg, "pricing", "range_price"),
+			arguments: [pricer, tx.pure.u64(lower), tx.pure.u64(higher)],
+		});
+	}
+	const cmds = await inspectReturns(client, tx);
+	return { upRaw: parseU64LE(cmds[1][0]), downRaw: parseU64LE(cmds[2][0]) };
 }
 
 // Fresh single read of the reference tick — used by mint-at-reference, which

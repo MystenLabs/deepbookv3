@@ -234,8 +234,11 @@ export interface RedeemReceipt {
 	 * the remaining quantity — update your stored id or it goes silently stale.
 	 */
 	replacementOrderId: bigint | null;
-	/** Net quote credited to the account (0 for a liquidated tombstone). */
+	/** NET quote credited to the account: gross − trading − builder − penalty
+	 * (verified against the deployed settle path; 0 for a liquidated tombstone). */
 	proceeds: number;
+	/** Gross close value before fees (the event's redeem_amount). */
+	gross: number;
 	liquidated: boolean;
 	fees: { trading: number; builder: number; penalty: number };
 	builderCodeId: string | null;
@@ -243,6 +246,7 @@ export interface RedeemReceipt {
 		quantityClosed: bigint;
 		remaining: bigint;
 		proceeds: bigint;
+		gross: bigint;
 		tradingFee: bigint;
 		builderFee: bigint;
 		penaltyFee: bigint;
@@ -368,7 +372,16 @@ export function decodeRedeems(
 			remaining: fromRaw(BigInt(e.remaining_quantity), 6),
 			replacementOrderId:
 				e.replacement_order_id == null ? null : BigInt(e.replacement_order_id),
-			proceeds: fromRaw(BigInt(e.redeem_amount), 6),
+			// settle_live_redeem_payment credits redeem_amount minus all three
+			// fee components — the event's redeem_amount is GROSS.
+			proceeds: fromRaw(
+				BigInt(e.redeem_amount) -
+					BigInt(e.trading_fee) -
+					BigInt(e.builder_fee) -
+					BigInt(e.penalty_fee),
+				6,
+			),
+			gross: fromRaw(BigInt(e.redeem_amount), 6),
 			liquidated: false,
 			fees: {
 				trading: fromRaw(BigInt(e.trading_fee), 6),
@@ -379,7 +392,12 @@ export function decodeRedeems(
 			raw: {
 				quantityClosed: BigInt(e.quantity_closed),
 				remaining: BigInt(e.remaining_quantity),
-				proceeds: BigInt(e.redeem_amount),
+				proceeds:
+					BigInt(e.redeem_amount) -
+					BigInt(e.trading_fee) -
+					BigInt(e.builder_fee) -
+					BigInt(e.penalty_fee),
+				gross: BigInt(e.redeem_amount),
 				tradingFee: BigInt(e.trading_fee),
 				builderFee: BigInt(e.builder_fee),
 				penaltyFee: BigInt(e.penalty_fee),
@@ -403,6 +421,7 @@ export function decodeRedeems(
 			remaining: 0,
 			replacementOrderId: null,
 			proceeds: 0,
+			gross: 0,
 			liquidated: true,
 			fees: { trading: 0, builder: 0, penalty: 0 },
 			builderCodeId: null,
@@ -410,6 +429,7 @@ export function decodeRedeems(
 				quantityClosed: BigInt(e.quantity_closed),
 				remaining: 0n,
 				proceeds: 0n,
+				gross: 0n,
 				tradingFee: 0n,
 				builderFee: 0n,
 				penaltyFee: 0n,

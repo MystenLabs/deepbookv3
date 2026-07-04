@@ -9,6 +9,7 @@ import type { ReadClient } from "../src/reads/inspect.js";
 import { inspectReturns } from "../src/reads/inspect.js";
 import {
 	activeMarketIds,
+	rangePrices,
 	currentNav,
 	expiryMarketId,
 	marketState,
@@ -162,6 +163,37 @@ describe("markets reads", () => {
 			mintPaused: true,
 			referenceTickRaw: 10_500_000n,
 		});
+	});
+
+	test("rangePrices: one pricer, both sides, sentinel bounds", async () => {
+		const { client, captured } = mockClient([
+			[new Uint8Array(0)], // load_live_pricer (reference return unused)
+			[bcs.u64().serialize(340_000_000n).toBytes()], // up
+			[bcs.u64().serialize(660_000_000n).toBytes()], // down
+		]);
+		const feeds = {
+			pythFeedId: cfg.underlyings.BTC.pythFeedId,
+			bsSpotFeedId: cfg.underlyings.BTC.bsSpotFeedId,
+			bsForwardFeedId: cfg.underlyings.BTC.bsForwardFeedId,
+			bsSviFeedId: cfg.underlyings.BTC.bsSviFeedId,
+		};
+		const r = await rangePrices(client, cfg, ADDR_A, feeds, 105_000_000_000_000n);
+		expect(r).toEqual({ upRaw: 340_000_000n, downRaw: 660_000_000n });
+		expect(targets(captured.tx!)).toEqual([
+			`${cfg.packages.predict}::expiry_market::load_live_pricer`,
+			`${cfg.packages.predict}::pricing::range_price`,
+			`${cfg.packages.predict}::pricing::range_price`,
+		]);
+		// sentinel bounds: UP = (strike, u64::MAX), DOWN = (0, strike)
+		const pure = captured
+			.tx!.getData()
+			.inputs.filter((i) => "Pure" in i && i.Pure)
+			.map((i) => (i as { Pure: { bytes: string } }).Pure.bytes);
+		const b64u64 = (v: bigint) =>
+			Buffer.from(bcs.u64().serialize(v).toBytes()).toString("base64");
+		expect(pure).toContain(b64u64((1n << 64n) - 1n));
+		expect(pure).toContain(b64u64(0n));
+		expect(pure).toContain(b64u64(105_000_000_000_000n));
 	});
 
 	test("referenceTick: Some → tick, None → null", async () => {

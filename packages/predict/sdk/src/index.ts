@@ -3,6 +3,8 @@ export const SDK_NAME = "@mysten/predict";
 // === Facade ===
 export { PredictClient } from "./client.js";
 export type {
+	MintQuote,
+	RedeemQuote,
 	ActiveMarket,
 	MarketDescriptor,
 	MarketSummary,
@@ -69,7 +71,7 @@ export {
 export { setBuilderCode, unsetBuilderCode } from "./tx/builderCode.js";
 
 // === Reads ===
-export { inspectReturns } from "./reads/inspect.js";
+export { inspectReturns, simulateWithEvents } from "./reads/inspect.js";
 export type { ReadClient } from "./reads/inspect.js";
 export {
 	activeMarketIds,
@@ -77,6 +79,7 @@ export {
 	expiryMarketId,
 	marketState,
 	marketStates,
+	rangePrices,
 	referenceTick,
 	settlementPrice,
 } from "./reads/markets.js";
