@@ -30,8 +30,9 @@ use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
+    builder_code::BuilderCode,
     constants,
-    expiry_market::ExpiryMarket,
+    expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
@@ -322,6 +323,54 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 /// Pause / unpause global trading through a market bundle.
 public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
     self.set_trading_paused(&mut market.config, paused);
+}
+
+/// Enable the EWMA congestion penalty with explicit parameters through the
+/// real admin path.
+public fun set_ewma_penalty(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    alpha: u64,
+    z_score_threshold: u64,
+    penalty_rate: u64,
+) {
+    config.set_ewma_params(&self.admin_cap, alpha, z_score_threshold, penalty_rate);
+    config.set_ewma_enabled(&self.admin_cap, true);
+}
+
+/// Enable the EWMA congestion penalty through a market bundle.
+public fun set_ewma_penalty_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    alpha: u64,
+    z_score_threshold: u64,
+    penalty_rate: u64,
+) {
+    self.set_ewma_penalty(&mut market.config, alpha, z_score_threshold, penalty_rate);
+}
+
+/// Create and share a builder code, then set it as the trader's sticky
+/// attribution. Runs its own transactions; call before taking bundles.
+public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
+    self.scenario.next_tx(trader.owner);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let code_id = registry.create_and_share_builder_code(
+        &config,
+        code_index,
+        self.scenario.ctx(),
+    );
+    return_shared(registry);
+    return_shared(config);
+
+    self.scenario.next_tx(trader.owner);
+    let code = self.scenario.take_shared_by_id<BuilderCode>(code_id);
+    let mut wrapper = self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id);
+    let auth = account::generate_auth(self.scenario.ctx());
+    predict_account::set_builder_code(&mut wrapper, auth, &code, self.scenario.ctx());
+    return_shared(code);
+    return_shared(wrapper);
+    code_id
 }
 
 /// Pause / unpause minting for one expiry market through the real admin path.
@@ -860,6 +909,77 @@ public fun mint_exact_quantity_bundle(
         max_cost,
         max_probability,
     )
+}
+
+/// Anonymous read-only mint quote through a market bundle: same pricer wiring
+/// as the mint helpers, no account objects.
+public fun quote_mint_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint(
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Account-aware read-only mint quote through market/account bundles.
+public fun quote_mint_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
 }
 
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
