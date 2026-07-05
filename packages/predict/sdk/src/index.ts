@@ -85,6 +85,12 @@ export {
 } from "./reads/markets.js";
 export type { MarketState } from "./reads/markets.js";
 export { accountBalance, hasPosition } from "./reads/balances.js";
+export {
+	positions,
+	positionsFromTable,
+	resolvePositionsTable,
+} from "./reads/positions.js";
+export type { ObjectReadClient, OpenPosition, PositionsHandle } from "./reads/positions.js";
 export { poolStats } from "./reads/pool.js";
 export type { PoolStats } from "./reads/pool.js";
 

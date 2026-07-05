@@ -17,6 +17,13 @@ import {
 import { PredictInputError } from "./errors.js";
 import type { ReadClient } from "./reads/inspect.js";
 import { simulateWithEvents } from "./reads/inspect.js";
+import {
+	positionsFromTable,
+	resolvePositionsTable,
+	type ObjectReadClient,
+	type OpenPosition,
+	type PositionsHandle,
+} from "./reads/positions.js";
 import { accountBalance, hasPosition } from "./reads/balances.js";
 import {
 	activeMarketIds,
@@ -172,6 +179,10 @@ export class PredictClient {
 	// one resolution per market per client suffices. (mintPaused IS mutable; the
 	// cached copy is never consulted for a tx decision — the chain enforces it.)
 	private readonly marketCache = new Map<string, ResolvedMarket>();
+	// owner → resolved position-store ids. accountUid and the table id are
+	// immutable once created, so cache-forever; a missing table (no Predict
+	// data yet) is NOT cached — it appears after the owner's first trade.
+	private readonly positionsCache = new Map<string, PositionsHandle>();
 
 	constructor(opts: {
 		network: "testnet" | "mainnet";
@@ -250,6 +261,19 @@ export class PredictClient {
 				`quantity ${quantityRaw} raw is not a whole ${POSITION_LOT_SIZE}-unit lot (position_lot_size)`,
 			);
 		}
+	}
+
+	// Position enumeration needs object reads beyond the simulate-only
+	// ReadClient contract; real SuiGrpcClient/SuiJsonRpcClient instances have
+	// them, simulate-only mocks do not — fail with a pointed message.
+	private objectReadClient(): ObjectReadClient {
+		const c = this.client as unknown as ObjectReadClient;
+		if (typeof c.getObject !== "function" || typeof c.listDynamicFields !== "function") {
+			throw new PredictInputError(
+				"read.positions needs a client with getObject + listDynamicFields (e.g. SuiGrpcClient)",
+			);
+		}
+		return c;
 	}
 
 	// Shared construction for tx.mint and read.quoteMint — the quote dry-runs
@@ -472,6 +496,22 @@ export class PredictClient {
 		// close or partial-close replacement — see RedeemReceipt.replacementOrderId).
 		hasPosition: (owner: string, marketId: string, orderId: bigint): Promise<boolean> =>
 			hasPosition(this.client, this.cfg, owner, marketId, orderId),
+
+		// All open positions for an owner, enumerated from the chain (the
+		// account's positions Table): 1 call per page warm, +2 resolution calls
+		// once per owner. Returns [] for owners with no Predict account.
+		positions: async (owner: string): Promise<OpenPosition[]> => {
+			const client = this.objectReadClient();
+			let handle = this.positionsCache.get(owner);
+			if (!handle?.positionsTableId) {
+				const resolved = await resolvePositionsTable(client, this.cfg, owner);
+				if (!resolved) return []; // never onboarded — do not cache
+				if (resolved.positionsTableId) this.positionsCache.set(owner, resolved);
+				handle = resolved;
+			}
+			if (!handle.positionsTableId) return [];
+			return positionsFromTable(client, handle.positionsTableId);
+		},
 
 		// Anonymous board pricing: the chain's probability for both sides of a
 		// strike, from one fresh pricer (no account needed). This is the ↑/↓

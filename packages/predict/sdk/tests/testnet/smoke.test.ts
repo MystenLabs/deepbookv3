@@ -189,6 +189,31 @@ describe("testnet smoke (live deployment)", () => {
 		).rejects.toThrow(/Object|Move abort|aborted|not found|no market/i);
 	});
 
+	test("read.positions: never-onboarded owner resolves to [] against the live chain", async () => {
+		// Validates the wrapper-derivation + not-found path with real node errors.
+		expect(await predict.read.positions(SMOKE_SENDER)).toEqual([]);
+	});
+
+	test("read.positions: real owner enumerates from the live account table (opt-in)", async () => {
+		// Set PREDICT_SDK_SMOKE_OWNER to a funded testnet owner to validate the
+		// full BCS walk (wrapper → PredictData → positions table) against real
+		// objects. Kept out of the repo: no fixture addresses in public code.
+		const owner = process.env.PREDICT_SDK_SMOKE_OWNER;
+		if (!owner) return;
+		const out = await predict.read.positions(owner);
+		expect(Array.isArray(out)).toBe(true);
+		for (const p of out) {
+			expect(p.marketId).toMatch(/^0x[0-9a-f]{64}$/);
+			expect(p.orderId > 0n).toBe(true);
+			// Cross-validate a sample against the on-chain membership check.
+		}
+		if (out.length > 0) {
+			expect(await predict.read.hasPosition(owner, out[0].marketId, out[0].orderId)).toBe(
+				true,
+			);
+		}
+	});
+
 	test("createManager simulates clean AND its real event decodes", async () => {
 		const tx = predict.tx.createManager();
 		tx.setSender(SMOKE_SENDER);

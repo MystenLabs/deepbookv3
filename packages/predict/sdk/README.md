@@ -135,6 +135,7 @@ reference remain fully supported.
   quotes: real fees from the real code path — and they throw the same typed
   errors the real trade would, so a quote doubles as preflight),
   `balance(owner)`, `plpBalance(owner)`, `pool()`,
+  `positions(owner)` (chain-only enumeration of open positions),
   `hasPosition(owner, marketId, orderId)`.
   All reads run over gRPC `simulateTransaction`; no indexer required.
 - **`PredictClient.decode`** — pure execution-result decoders (no network):
@@ -164,12 +165,13 @@ resolution.
 
 ## Notes
 
-- **Your app owns order-id persistence.** Position enumeration is not
-  on-chain readable (indexer integration comes later): capture
-  `decode.mint(result).orderId` at mint time and store it. **After a partial
-  redeem, the old id is retired** — update your store from
-  `decode.redeem(result).replacementOrderId` or the stored id goes stale.
-  Validate stored ids cheaply with `read.hasPosition`.
+- **Positions are enumerable on-chain**: `read.positions(owner)` lists every
+  open position (market + order id) straight from the account's position
+  table — one round trip warm, no indexer. Persisting
+  `decode.mint(result).orderId` and applying
+  `decode.redeem(result).replacementOrderId` is still the fastest hot path,
+  with `read.positions` as the fresh-start/recovery source and
+  `read.hasPosition` as the cheap validator.
 - PLP supply/withdraw are queued and fill at the next pool flush; cancels
   take the queue `index` — get it from `decode.plpRequest(result).index`.
 - `claimSettled` requires a full close of the order (contract rule).
