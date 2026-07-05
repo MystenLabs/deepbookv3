@@ -96,6 +96,12 @@ public fun settlement_price(market: &ExpiryMarket): u64 {
     market.settlement_price.destroy_some()
 }
 
+/// The recorded settlement price, or none while the market is unsettled — the
+/// non-aborting read for consumers that must not branch on an abort.
+public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
+    market.settlement_price
+}
+
 /// Return DUSDC currently held by this expiry.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
@@ -198,6 +204,147 @@ public fun load_live_pricer(
         market.expiry,
         clock,
     )
+}
+
+/// A fee-complete mint quote: exactly what `mint_exact_quantity` would charge,
+/// computed by the same code paths, with no state touched.
+public struct MintQuote has copy, drop {
+    /// 1e9-scaled range probability quoted at entry (the per-contract price).
+    entry_probability: u64,
+    /// Net premium into LP backing, in DUSDC base units.
+    net_premium: u64,
+    /// Full trading fee, including the near-expiry window ramp, after any
+    /// stake discount (account-aware variant) and before the sponsor subsidy.
+    trading_fee: u64,
+    /// Portion of `trading_fee` the expiry's fee incentives would cover.
+    fee_incentive_subsidy: u64,
+    /// Builder cut (zero in the anonymous variant or without a sticky code).
+    builder_fee: u64,
+    /// EWMA congestion surcharge at the CURRENT smoothed estimate (a peek —
+    /// the trade itself first folds its own gas observation in, so the
+    /// executed penalty can differ marginally).
+    penalty_fee: u64,
+    /// All-in account debit: net_premium + (trading_fee − subsidy) + builder
+    /// + penalty. The value `max_cost` bounds.
+    all_in_cost: u64,
+}
+
+public fun quote_entry_probability(quote: &MintQuote): u64 { quote.entry_probability }
+
+public fun quote_net_premium(quote: &MintQuote): u64 { quote.net_premium }
+
+public fun quote_trading_fee(quote: &MintQuote): u64 { quote.trading_fee }
+
+public fun quote_fee_incentive_subsidy(quote: &MintQuote): u64 { quote.fee_incentive_subsidy }
+
+public fun quote_builder_fee(quote: &MintQuote): u64 { quote.builder_fee }
+
+public fun quote_penalty_fee(quote: &MintQuote): u64 { quote.penalty_fee }
+
+public fun quote_all_in_cost(quote: &MintQuote): u64 { quote.all_in_cost }
+
+/// Quote a live mint anonymously: no stake discount, no builder fee. Runs the
+/// same gates the mint runs (live-mint allowed, tick admission,
+/// probability/leverage policy), so a quote aborts exactly when the trade
+/// would — a successful quote is a preflight. Read-only by construction
+/// (`&ExpiryMarket`).
+public fun quote_mint(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): MintQuote {
+    market.quote_mint_internal(
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        0,
+        &option::none(),
+        clock,
+        ctx,
+    )
+}
+
+/// Quote a live mint as a specific account would be charged: applies the
+/// account's rolled stake discount and sticky builder code. Needs no auth and
+/// no funded balance — quoting is free.
+public fun quote_mint_for_account(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): MintQuote {
+    let account = wrapper.load_account();
+    let active_stake = predict_account::rolled_active_stake(account, ctx);
+    let builder_code_id = predict_account::builder_code_id(account);
+    market.quote_mint_internal(
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        active_stake,
+        &builder_code_id,
+        clock,
+        ctx,
+    )
+}
+
+fun quote_mint_internal(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    active_stake: u64,
+    builder_code_id: &Option<ID>,
+    clock: &Clock,
+    ctx: &TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer);
+    let (entry_probability, net_premium, _floor_shares) = market
+        .strike_exposure
+        .quote_mint_terms(
+            pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+        );
+    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+    // Peek only: `ewma_penalty` (the trade path) folds this tx's gas
+    // observation in via `ewma.update` first; a read must not mutate.
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
+    let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
+    let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
+    let all_in_cost = net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee;
+    MintQuote {
+        entry_probability,
+        net_premium,
+        trading_fee,
+        fee_incentive_subsidy,
+        builder_fee,
+        penalty_fee,
+        all_in_cost,
+    }
 }
 
 /// Return this expiry market's exact live NAV: free cash minus the exact
@@ -717,11 +864,12 @@ public(package) fun create_and_share(
     expiry_market_id
 }
 
-// === Private Functions ===
-
-fun is_settled(market: &ExpiryMarket): bool {
+/// Whether terminal settlement has been recorded for this expiry.
+public fun is_settled(market: &ExpiryMarket): bool {
     market.settlement_price.is_some()
 }
+
+// === Private Functions ===
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
 fun materialize_settled_liability(market: &mut ExpiryMarket): u64 {

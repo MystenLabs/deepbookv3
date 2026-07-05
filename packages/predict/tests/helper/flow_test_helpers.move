@@ -31,7 +31,7 @@ use deepbook_predict::{
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
     constants,
-    expiry_market::ExpiryMarket,
+    expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
@@ -434,6 +434,11 @@ public fun take_market_bundle_with_pyth(
 }
 
 /// Return the shared objects taken by `take_market_bundle`.
+/// Immutable view of the bundle's market (read-only assertions in tests).
+public fun market_ref(bundle: &MarketBundle): &ExpiryMarket {
+    &bundle.market
+}
+
 public fun return_market_bundle(bundle: MarketBundle) {
     let MarketBundle { pyth, bs, oracle_registry, vault, market, config } = bundle;
     return_shared(market);
@@ -1472,6 +1477,56 @@ public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
         &market.pyth,
         &market.bs,
     )
+}
+
+/// Anonymous mint quote through a market bundle (fresh pricer, fixture clock).
+public fun quote_mint_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint(
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Account-aware mint quote through the bundles (stake discount + builder code).
+public fun quote_mint_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
 }
 
 public fun load_pricer(

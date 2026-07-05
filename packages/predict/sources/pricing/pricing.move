@@ -116,12 +116,13 @@ public(package) fun load_live_pricer(
 }
 
 /// Return the current UP tail price for one strike.
-public(package) fun up_price(pricer: &Pricer, strike: u64): u64 {
+public fun up_price(pricer: &Pricer, strike: u64): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
-/// Return the current raw probability for a live range.
-public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+/// Return the current raw probability for a live range. Raw-strike bounds with
+/// the open-range sentinels `neg_inf!()`/`pos_inf!()` (see `range_codec`).
+public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 

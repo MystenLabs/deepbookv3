@@ -122,6 +122,19 @@ public fun inactive_stake(account: &Account): u64 {
     data(account).inactive_stake
 }
 
+/// Non-mutating counterpart of `roll_active_stake`: the active stake a
+/// discount-bearing interaction would see this epoch, including the inactive
+/// stake an actual roll would activate. Same u64 the mutating roll returns.
+public fun rolled_active_stake(account: &Account, ctx: &TxContext): u64 {
+    if (!account.has_data<PredictApp>()) return 0;
+    let d = data(account);
+    if (d.stake_epoch != ctx.epoch()) {
+        d.active_stake + d.inactive_stake
+    } else {
+        d.active_stake
+    }
+}
+
 /// Return the sticky builder-code ID, if set.
 public fun builder_code_id(account: &Account): Option<ID> {
     if (!account.has_data<PredictApp>()) return option::none();

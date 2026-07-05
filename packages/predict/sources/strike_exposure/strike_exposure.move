@@ -256,22 +256,13 @@ public(package) fun allocate_mint_order(
     quantity: u64,
     leverage: u64,
 ): MintQuote {
-    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let (lower, higher) = range_codec::strikes_from_ticks(
+    let (entry_probability, net_premium, floor_shares) = exposure.quote_mint_terms(
+        pricer,
         lower_tick,
         higher_tick,
-        exposure.tick_size,
+        quantity,
+        leverage,
     );
-    let entry_probability = pricer.range_price(lower, higher);
-    let admission = exposure
-        .config
-        .assert_mint_admission(
-            entry_probability,
-            quantity,
-            leverage,
-        );
-    let net_premium = admission.net_premium();
-    let floor_shares = admission.floor_shares();
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_ticks(
@@ -300,6 +291,35 @@ public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64)
     };
     exposure.reference_tick = option::some(tick);
     true
+}
+
+/// Read-only mint valuation: `(entry_probability, net_premium, floor_shares)`
+/// for a candidate order, running the same admission gates the mint runs. The
+/// single source of mint pricing — `allocate_mint_order` composes this with the
+/// book mutations, so a quote and the trade it precedes cannot disagree.
+public(package) fun quote_mint_terms(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): (u64, u64, u64) {
+    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
+    let (lower, higher) = range_codec::strikes_from_ticks(
+        lower_tick,
+        higher_tick,
+        exposure.tick_size,
+    );
+    let entry_probability = pricer.range_price(lower, higher);
+    let admission = exposure
+        .config
+        .assert_mint_admission(
+            entry_probability,
+            quantity,
+            leverage,
+        );
+    (entry_probability, admission.net_premium(), admission.floor_shares())
 }
 
 /// Quote immutable mint entry probability without mutating the exposure book.

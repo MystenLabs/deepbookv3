@@ -6,6 +6,20 @@ gates, audit findings, stress-test follow-ups, and required decisions.
 Resolved items should be removed from this file. Historical raw audit output may
 remain in ignored agent scratchpads, but this file is the tracked manifest.
 
+## Consumer-Surface Work
+
+### order_state: on-chain position-valuation read (DBU-513)
+
+**Severity:** Feature ask, isolated review required.
+
+Split from the consumer quote surface (DBU-512, landed as `quote_mint` +
+settlement readability + public pricing getters): `order_state(market, pricer,
+order_id)` returning the exact holder value (leverage/floor-share aware),
+`is_liquidated`, and `is_liquidatable_now`. Requires factoring the read-only
+valuation half out of `strike_exposure::close_and_quote_live_order` — the same
+pure/mutating split `quote_mint_terms` vs `allocate_mint_order` now uses on the
+mint side. Tracked in Linear DBU-513.
+
 ## Deploy Gates
 
 ### S-4: Block Scholes updates are forgeable while the verifier is a stub
