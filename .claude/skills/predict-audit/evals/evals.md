@@ -43,7 +43,7 @@ committing any change to `consolidate.py`.
 ## E. Seeded-bug RECALL harness (`evals/seeds.md`)
 The one property two clean runs can't give you: does a run confirm a REAL bug it wasn't told about?
 `evals/seeds.md` holds content-based (drift-proof) seed recipes — apply ONE in a scratch worktree, run a
-cheap `depth:'low'` audit, confirm the expected finding surfaces at High/Critical, revert. A miss is a recall
+cheap audit (`lenses:'all', maxRounds:1`), confirm the expected finding surfaces at High/Critical, revert. A miss is a recall
 hole and the highest-signal input to the next skill revision. Never commit a seeded tree.
 
 ## G. Verify-panel PRECISION bench (`verify-bench.workflow.js` + `evals/verify_corpus.json`)

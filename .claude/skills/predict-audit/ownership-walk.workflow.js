@@ -10,19 +10,14 @@
 //   units:   string[] | 'all', // REQUIRED: subset of MAP_UNIT keys to walk, or the explicit string 'all'
 //                        // for every unit — there is NO whole-walk default
 //   groundTruth?: string,
-//   depth?: 'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (explicit cap args win;
-//                        // mini = cleanup-triage: 1 round, NO verify subagents — violations reported raw)
 //   maxViolations?: number, // cap per check unit (default 10)
-//   dryRounds?: number,     // stop after this many no-new-violation rounds (default 2)
-//   maxRounds?: number,     // hard round cap (default 3)
 //   verifyCap?: number,     // max violations sent to the verifier (default 60)
 // }
-// COST IS BOUNDED BY CONSTRUCTION: agents <= units (map) + maxRounds*checkUnits (check) + verifyCap (verify),
-// so a run cannot hit the 1000-agent cap. The `budget` global (a "+NNNm" turn directive) is only an optional
-// early-stop and often does NOT propagate into a background workflow — never rely on it. Verify is
-// SEVERITY-GATED: 'cleanup'-tier violations are reported RAW (unverified, no subagent); 'high'/'correctness'
-// get one CROSS-MODEL verifier each (codex, retried once on Claude if it errors — same discipline as the
-// orchestrator's panel).
+// ONE CHECK PASS per module (per-module conformance enumerates against the map rather than samples — the
+// next run is round 2). COST IS BOUNDED BY CONSTRUCTION: agents <= units (map) + checkUnits (check) +
+// verifyCap (verify), so a run cannot hit the 1000-agent cap. Verify is SEVERITY-GATED: only 'high'-tier
+// violations get one CROSS-MODEL verifier each (codex, retried once on Claude if it errors — same discipline
+// as the orchestrator's panel); 'correctness'/'cleanup' tiers are reported RAW for operator triage.
 // Subagents are READ-ONLY on source; no sui build/test or localnet (watchdog) — reason from source + grep + git.
 
 export const meta = {
@@ -30,8 +25,8 @@ export const meta = {
   description: 'Recursive per-module ownership/boundary/policy conformance audit of Predict (map -> check -> verify) against references/ownership-rules.md R1-R7',
   phases: [
     { title: 'Map', detail: 'build the responsibility map per subsystem (BARRIER — checks need the whole map)' },
-    { title: 'Check', detail: 'per-module fan-out: walk every function vs R1-R7 + the map' },
-    { title: 'Verify', detail: 'severity-gated: refute each high/correctness violation vs the map + committed predeploy/settled docs; cleanup-tier reported raw' },
+    { title: 'Check', detail: 'per-module fan-out (single pass): walk every function vs R1-R7 + the map' },
+    { title: 'Verify', detail: 'severity-gated: refute each high-tier violation vs the map + committed predeploy/settled docs; correctness/cleanup tiers reported raw' },
   ],
 }
 
@@ -40,11 +35,7 @@ let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(none provided)'
-// DEPTH preset — same tiers/precedence as the orchestrator (explicit cap args win over the preset).
-const DEPTH = { mini: { maxRounds: 1, verifyCap: 0, effort: 'medium' }, low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxViolations: 16 } }
-const depthName = DEPTH[A.depth] ? A.depth : 'standard'
-const DP = DEPTH[depthName]
-const maxViolations = A.maxViolations || DP.maxViolations || 10
+const maxViolations = A.maxViolations || 10
 // There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
 // registers (AGENTS.md + predeploy policies), which the PRELUDE already makes every agent read.
 
@@ -71,7 +62,7 @@ if (!(wantUnits && wantUnits.length) && A.units !== 'all') {
 }
 const UNITS = wantUnits && wantUnits.length ? MAP_UNITS.filter(u => wantUnits.indexOf(u.key) >= 0) : MAP_UNITS
 const unknownUnits = wantUnits ? wantUnits.filter(k => !MAP_UNITS.some(u => u.key === k)) : []
-log(`ownership-walk config — units: ${wantUnits ? wantUnits.join(',') : `ALL ${MAP_UNITS.length}`} | depth: ${depthName} | maxViolations/module: ${maxViolations}`
+log(`ownership-walk config — units: ${wantUnits ? wantUnits.join(',') : `ALL ${MAP_UNITS.length}`} | maxViolations/module: ${maxViolations}`
   + ` | groundTruth: ${String(groundTruth).slice(0, 60)}`
   + (unknownUnits.length ? ` | ⚠ UNKNOWN UNIT KEYS IGNORED: ${unknownUnits.join(',')} (valid: ${MAP_UNITS.map(u => u.key).join(',')})` : ''))
 if (!A.groundTruth || String(A.groundTruth).length < 40) {
@@ -175,25 +166,15 @@ function composedContext(entry) {
     .map(e => `  - ${e.module} [${e.role}] owns: ${e.owns}`).join('\n') || '  (none mapped in scope)'
 }
 
-// MAXIMAL MODE: loop-until-dry CHECK. Violations are sampled, so re-walk each module across rounds (each
-// told what's already found FOR THAT MODULE so it hunts new ground), union new violations, until K dry
-// rounds or the budget floor. Auto-retries flaky units (a failed unit is an empty round that re-runs).
-const DRY_TARGET = A.dryRounds || DP.dryRounds || 2
-const MAX_ROUNDS = A.maxRounds || DP.maxRounds || 3
-// typeof-check, not ||: mini's verifyCap 0 is falsy and must not fall through to the default.
-const VERIFY_CAP = [A.verifyCap, DP.verifyCap, 60].find(v => typeof v === 'number')
-const RESERVE = (budget && budget.total) ? Math.max(4_000_000, Math.floor(budget.total * 0.3)) : 4_000_000
-function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
-// strip line numbers from node so a same violation at a shifted line still dedups across rounds (else the
-// loop never dries — see orchestrator nloc comment).
+const VERIFY_CAP = typeof A.verifyCap === 'number' ? A.verifyCap : 60
+// strip line numbers from node so a same violation at a shifted line still dedups.
 function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9:_]/g, '')}|${(v.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40)}` }
 
-function checkPrompt(cu, round, known) {
-  return `${PRELUDE}\n\n=== CHECK PASS (round ${round}) — module ${cu.module} (${cu.file}) ===\n`
+function checkPrompt(cu) {
+  return `${PRELUDE}\n\n=== CHECK PASS — module ${cu.module} (${cu.file}) ===\n`
     + `This module's responsibility-map entry:\n  role: ${cu.entry.role}\n  owns: ${cu.entry.owns}\n  must_not_own: ${cu.entry.must_not_own}\n`
     + `Modules it composes (their owned facts — use to judge binding/derivation/producer-fact):\n${composedContext(cu.entry)}\n\n`
-    + (known ? `ALREADY-FOUND violations in this module (do NOT re-report — hunt DIFFERENT, deeper, rarer ones, and functions not yet covered):\n${known}\n\n` : '')
-    + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence NEW violations.`
+    + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence violations.`
 }
 function verifyPromptV(v) {
   return `${PRELUDE}\n\nYou are the ADVERSARIAL VERIFIER for one ownership-walk violation. TEST it; do not agree by default — R1-R7 false-positive heavily on intentional architecture (the strike_payout_tree::payout_terms single evaluator, D033 deferred-carry, saturating_sub-as-deliberate-policy, documented post-mutation calcs). Read the cited code + the data_flow + the responsibility map. Verdict: confirmed (real misplaced responsibility) / refuted (the responsibility IS correctly placed, or the claim is wrong) / settled (matches AGENTS or committed predeploy policy/open item — cite the D-id or committed-doc reference) / uncertain. Also classify: fix-code / update-rule (defensible → narrowest rule exception) / design-decision / false-positive.\n\nVIOLATION (module ${v.module}):\n${JSON.stringify(v, null, 2)}`
@@ -202,48 +183,34 @@ function verifyPromptV(v) {
 const seen = new Set()
 const candidates = []
 const coverageByModule = {}
-// PER-UNIT retirement (ported from the orchestrator's per-lane trim): a check unit that produces no NEW
-// violation for DRY_TARGET consecutive rounds retires, so later rounds only re-walk units still surfacing
-// issues. An ERRORED unit (null result) is neither advanced nor reset — it retries next round.
-const dryByUnit = {}
-CHECK_UNITS.forEach(cu => { dryByUnit[cu.label] = 0 })
-let round = 0
-while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
-  const activeUnits = CHECK_UNITS.filter(cu => dryByUnit[cu.label] < DRY_TARGET)
-  if (!activeUnits.length) break
-  round++
-  const knownByModule = {}
-  candidates.forEach(v => { (knownByModule[v.module] = knownByModule[v.module] || []).push(`- [${v.rule_family}] ${v.node}: ${(v.claim || '').slice(0, 120)}`) })
-  const roundRes = await parallel(activeUnits.map(cu => () => agent(checkPrompt(cu, round, (knownByModule[cu.module] || []).join('\n')),
-    { schema: CHECK_SCHEMA, effort: DP.effort || 'max', phase: 'Check', label: `check:${cu.label}:r${round}` })))
-  const freshByUnit = {}
-  // Index by the unit we DISPATCHED (activeUnits[i]), not the agent-returned r.module — parallel() preserves
-  // order and the dispatched identity is stable (same fix as the orchestrator's lanes).
-  roundRes.forEach((r, i) => {
-    if (!r) return
-    const cu = activeUnits[i]
-    if (r.coverage) coverageByModule[cu.module] = r.coverage
-    ;(r.violations || []).forEach(v => {
-      const vv = { ...v, module: cu.module }
-      const k = vkey(vv)
-      if (!seen.has(k)) { seen.add(k); candidates.push(vv); freshByUnit[cu.label] = (freshByUnit[cu.label] || 0) + 1 }
-    })
+// ONE pass per check unit — per-module conformance against the map enumerates rather than samples; a failed
+// unit is reported and cheaply completed via resumeFromRunId. The next run is round 2.
+const checkRes = await parallel(CHECK_UNITS.map(cu => () => agent(checkPrompt(cu),
+  { schema: CHECK_SCHEMA, effort: 'max', phase: 'Check', label: `check:${cu.label}` })))
+// Index by the unit we DISPATCHED (CHECK_UNITS[i]), not the agent-returned r.module — parallel() preserves
+// order and the dispatched identity is stable (same fix as the orchestrator's lanes).
+checkRes.forEach((r, i) => {
+  if (!r) return
+  const cu = CHECK_UNITS[i]
+  if (r.coverage) coverageByModule[cu.module] = r.coverage
+  ;(r.violations || []).forEach(v => {
+    const vv = { ...v, module: cu.module }
+    const k = vkey(vv)
+    if (!seen.has(k)) { seen.add(k); candidates.push(vv) }
   })
-  activeUnits.forEach((cu, i) => { if (!roundRes[i]) return; if ((freshByUnit[cu.label] || 0) === 0) dryByUnit[cu.label]++; else dryByUnit[cu.label] = 0 })
-  const freshCount = Object.values(freshByUnit).reduce((a, b) => a + b, 0)
-  const retired = CHECK_UNITS.filter(cu => dryByUnit[cu.label] >= DRY_TARGET).length
-  log(`Check round ${round}: ran ${activeUnits.length} unit(s), +${freshCount} new (total ${candidates.length}) | ${retired}/${CHECK_UNITS.length} retired | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
-}
-log(`Check converged after ${round} rounds: ${candidates.length} unique candidate violations (${CHECK_UNITS.filter(cu => dryByUnit[cu.label] >= DRY_TARGET).length}/${CHECK_UNITS.length} units retired)`)
+})
+const failedUnits = CHECK_UNITS.filter((cu, i) => !checkRes[i]).map(cu => cu.label)
+if (failedUnits.length) log(`⚠ ${failedUnits.length} check unit(s) returned nothing (agent error) — resume to fill: ${failedUnits.join(', ')}`)
+log(`Check complete: ${candidates.length} candidate violation(s) across ${CHECK_UNITS.length - failedUnits.length}/${CHECK_UNITS.length} units`)
 
-// SEVERITY-GATED + CAPPED: only 'high'/'correctness' violations get a verifier; 'cleanup'-tier violations are
-// reported RAW (unverified). Capped at VERIFY_CAP by severity so the agent count stays bounded.
+// SEVERITY-GATED + CAPPED: only 'high'-tier violations get a verifier; 'correctness'/'cleanup' tiers are
+// reported RAW (unverified) for operator triage. Capped at VERIFY_CAP so the agent count stays bounded.
 phase('Verify')
 const sevRankV = { high: 3, correctness: 2, cleanup: 1 }
-const verifyAll = candidates.filter(v => v.severity !== 'cleanup').sort((a, b) => (sevRankV[b.severity] || 0) - (sevRankV[a.severity] || 0))
+const verifyAll = candidates.filter(v => v.severity === 'high').sort((a, b) => (sevRankV[b.severity] || 0) - (sevRankV[a.severity] || 0))
 const toVerify = verifyAll.slice(0, VERIFY_CAP)
 const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // beyond the cap -> reported unverified (logged, never silently dropped)
-const unverifiedV = candidates.filter(v => v.severity === 'cleanup').concat(verifyOverflow)
+const unverifiedV = candidates.filter(v => v.severity !== 'high').concat(verifyOverflow)
 if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} violation(s) reported UNVERIFIED — raise verifyCap to verify them all`)
 // CROSS-MODEL verify (ported from the orchestrator): the verifier runs on codex — a different model than the
 // Claude checker — and a null verdict (codex absent, StructuredOutput flake) is retried ONCE on Claude.
@@ -271,10 +238,10 @@ all.forEach(x => { byRule[x.rule_family] = byRule[x.rule_family] || { confirmed:
 confirmed.forEach(x => { byRule[x.rule_family].confirmed++ })
 all.filter(x => x.verdict && (x.verdict.classification === 'update-rule' || x.verdict.classification === 'design-decision')).forEach(x => { byRule[x.rule_family].defensible++ })
 
-log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | rounds: ${round} | violations: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length} | verifier-dead: ${verdictDead.length}`)
+log(`Modules: ${allModules.length} | check units: ${CHECK_UNITS.length} | violations: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length} | verifier-dead: ${verdictDead.length}`)
 
 return {
-  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, unmapped_units: unmappedUnits, rounds: round, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length, unverified: unverifiedV.length + verdictDead.length, verifier_dead: verdictDead.length },
+  summary: { modules: allModules.length, checkUnits: CHECK_UNITS.length, unmapped_units: unmappedUnits, failed_check_units: failedUnits, rounds: 1, violations: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length, unverified: unverifiedV.length + verdictDead.length, verifier_dead: verdictDead.length },
   responsibility_map: allModules.map(m => ({ module: m.module, role: m.role, owns: m.owns, composes: m.composes })),
   coverage: Object.keys(coverageByModule).map(m => ({ lane: m, coverage: coverageByModule[m] })),
   unverified: unverifiedV.map(x => ({ rule_family: x.rule_family, node: x.node, claim: x.claim, severity: x.severity, settled_ref: x.settled_ref, recommendation: x.recommendation, status: 'unverified' }))
