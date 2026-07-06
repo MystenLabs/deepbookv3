@@ -245,6 +245,41 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-9: Congestion surcharge charges against the pre-trade EWMA estimate
+
+- **Trigger state:** a trade lands at an outlier gas price (congestion spike or
+  trader-chosen gas) on either charging path — mint or live redeem.
+- **Controller:** market — gas price is trader/network-chosen; the protocol only
+  chooses the ordering of charge vs estimate update.
+- **Blast radius:** per-trade fee only (the surcharge is additive and
+  single-user); no shared-path liveness interaction.
+- **Response:** charge first, then fold the observation
+  (`expiry_market::ewma_penalty`) — a deliberate ordering divergence from
+  DeepBook core, which folds first and so tests each observation against a
+  distribution that already contains it.
+- **Reasoning:** detect-then-update is the standard anomaly-test order (the
+  spike is judged against the prior distribution, not diluted by itself), and
+  it makes the public quote surface exact: `quote_mint` /
+  `quote_mint_for_account` compute the same pre-fold penalty a same-state,
+  same-gas-price mint charges. Consequence: the surcharge fires more readily at
+  spike onset than under core's ordering; sustained spikes converge to the same
+  behavior. The first-observation variance-poisoning weakness
+  (`docs/concepts/fees-and-rebates.md` § 4) is unchanged.
+- **Risk profile:** `BEST-GUESS` — spike-onset firing frequency not measured
+  (the penalty is disabled by default).
+- **Pinning tests:** `extreme_first_observation_suppresses_penalty_for_later_trades`
+  (ewma_tests, charge-then-fold narrative),
+  `ewma_penalty_included_in_quote_and_mint_debits_exactly`
+  (quote_mint_tests, nonzero pre-fold penalty quoted and charged identically in
+  one transaction),
+  `quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost`
+  (quote_mint_tests, quote equals the debit with the penalty term at zero).
+- **Reopen when:** the penalty is enabled in production and measured firing
+  rates diverge materially from intent, or a redeem-side quote lands (DBU-513
+  scope) and wants different redeem semantics.
+
+---
+
 ## RP-10: Large atomic PTBs are cost-amplified by transaction-level metering — accept + disclose (resolves C-3)
 
 - **Trigger state:** a router, keeper, or integrator builds a large

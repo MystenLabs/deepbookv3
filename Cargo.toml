@@ -5,11 +5,6 @@ members = [
     "crates/indexer",
     "crates/schema",
     "crates/server",
-    "crates/predict-schema",
-    "crates/predict-indexer",
-    "crates/predict-server",
-    "crates/oracle-indexer",
-    "crates/oracle-server",
 ]
 
 [workspace.dependencies]

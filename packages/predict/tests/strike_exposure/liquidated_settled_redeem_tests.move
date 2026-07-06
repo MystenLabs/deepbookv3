@@ -74,16 +74,16 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    let order = harness
+    let terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             test_constants::default_strike_tick(),
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             LEVERAGE_TWO_X,
-        )
-        .allocated_order();
+        );
+    let order = harness.exposure.allocate_mint_order(terms);
 
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);

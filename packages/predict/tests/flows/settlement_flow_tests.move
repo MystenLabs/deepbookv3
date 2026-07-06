@@ -122,10 +122,13 @@ fun passive_settlement_uses_rebound_pyth_after_exact_backfill() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle_with_pyth(expiry_id, rebound_pyth_id);
+    assert!(!helpers::market(&market).is_settled());
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
 
     assert_eq!(fx.ensure_settled_bundle(&mut market), true);
     assert_eq!(expiry_market::settlement_price(helpers::market(&market)), settlement_price);
+    assert!(helpers::market(&market).is_settled());
+    assert_eq!(helpers::market(&market).try_settlement_price(), option::some(settlement_price));
 
     helpers::return_market_bundle(market);
     fx.finish();

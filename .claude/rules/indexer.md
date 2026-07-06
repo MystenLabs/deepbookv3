@@ -7,7 +7,7 @@ paths:
 
 # Indexer Development Rules
 
-> **Scope:** this file covers the CORE crates (`crates/{server,indexer,schema}`). The globs above do **NOT** cover the sibling PREDICT crates `crates/predict-{server,indexer,schema}` — for those, read `.claude/rules/predict-indexer.md` first (it intentionally improves on a few core patterns), then this file for the shared operational gotchas.
+> **Scope:** this file covers the core DeepBook Rust crates that remain in this repo: `crates/{server,indexer,schema}`.
 
 **Update this file** when you discover new indexer insights, performance issues, or debugging tips during sessions.
 
