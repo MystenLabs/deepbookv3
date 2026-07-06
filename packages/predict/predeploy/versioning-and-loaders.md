@@ -407,9 +407,11 @@ obviously safe and isolates the one real architectural decision.
 
 The doc reads as one cleanup, but the code touches three independent things:
 
-1. **Where the package allowed-versions set lives.** Today `Registry` is the source
-   of truth and `ExpiryMarket` / `PoolVault` each hold a `VecSet<u64>` *mirror*
-   refreshed by two permissionless `sync_*_allowed_versions` entrypoints. (The
+1. **Where the package allowed-versions set lives.** In the pre-watermark model
+   this analysis was written against, `Registry` was the source of truth and
+   `ExpiryMarket` / `PoolVault` each held a `VecSet<u64>` *mirror*
+   refreshed by two permissionless `sync_*_allowed_versions` entrypoints — all
+   since replaced by the shipped `version_watermark` (see § Shipped today). (The
    former `MarketOracle` / `PythSource` mirrors and their syncs are gone — those
    objects left for `propbook`, which versions itself.) (A) moves the set to
    `ProtocolConfig` and deletes the remaining two mirrors + syncs.
