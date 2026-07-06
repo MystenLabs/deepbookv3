@@ -7,7 +7,8 @@
 // responsibility map must exist before any check runs. Checks R1-R7 from references/ownership-rules.md.
 //
 // args = {
-//   units?:  string[],   // subset of MAP_UNIT keys to walk (default: all) — use to scope cost
+//   units:   string[] | 'all', // REQUIRED: subset of MAP_UNIT keys to walk, or the explicit string 'all'
+//                        // for every unit — there is NO whole-walk default
 //   groundTruth?: string,
 //   depth?: 'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (explicit cap args win;
 //                        // mini = cleanup-triage: 1 round, NO verify subagents — violations reported raw)
@@ -64,6 +65,12 @@ const MAP_UNITS = [
   { key: 'block_scholes_oracle', pkg: 'block_scholes_oracle', paths: 'sources' },
 ]
 const wantUnits = Array.isArray(A.units) ? A.units : null
+// Scope is REQUIRED. The old no-arg fall-through walked every unit — the most expensive shape as the
+// accident default. An explicit units:'all' is the deliberate opt-in for the full walk.
+if (!(wantUnits && wantUnits.length) && A.units !== 'all') {
+  log('⚠ no scope given — pass units: [<keys>] or units: "all"; the whole-walk no-arg default was removed')
+  return { error: 'scope_required', valid_keys: MAP_UNITS.map(u => u.key) }
+}
 const UNITS = wantUnits && wantUnits.length ? MAP_UNITS.filter(u => wantUnits.indexOf(u.key) >= 0) : MAP_UNITS
 const unknownUnits = wantUnits ? wantUnits.filter(k => !MAP_UNITS.some(u => u.key === k)) : []
 log(`ownership-walk config — units: ${wantUnits ? wantUnits.join(',') : `ALL ${MAP_UNITS.length}`} | depth: ${depthName} | maxViolations/module: ${maxViolations}`

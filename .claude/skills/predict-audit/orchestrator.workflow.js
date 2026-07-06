@@ -13,7 +13,9 @@
 //
 // args = {
 //   groundTruth: string, scope: string,
-//   lenses?:     string[],  // subset of lens keys (default: all 10)
+//   lenses:      string[] | 'all',  // REQUIRED (or a profile): subset of lens keys, or the explicit string
+//                            // 'all' for every lens — there is NO whole-fleet default (a no-arg launch used
+//                            // to silently run the most expensive shape; now it errors)
 //   profile?:    'security'|'cleanup', // named lens preset when `lenses` is absent: security drops the
 //                            // cleanup-tier lenses (surface-area, architecture); cleanup keeps ONLY them
 //   depth?:      'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (see DEPTH below)
@@ -103,9 +105,16 @@ const PROFILE_KEEP = { cleanup: ['surface-area', 'assertions', 'architecture'] }
 const profileDrop = !want && PROFILE_DROP[A.profile] ? PROFILE_DROP[A.profile] : null
 const profileKeep = !want && PROFILE_KEEP[A.profile] ? PROFILE_KEEP[A.profile] : null
 const LANES = want && want.length ? ALL_LANES.filter(l => want.indexOf(l.key) >= 0)
+  : A.lenses === 'all' ? ALL_LANES
   : profileKeep ? ALL_LANES.filter(l => profileKeep.indexOf(l.key) >= 0)
-  : profileDrop ? ALL_LANES.filter(l => profileDrop.indexOf(l.key) < 0) : ALL_LANES
+  : profileDrop ? ALL_LANES.filter(l => profileDrop.indexOf(l.key) < 0) : null
 const unknownLenses = want ? want.filter(k => !ALL_LANES.some(l => l.key === k)) : []
+// Scope is REQUIRED. The old no-arg fall-through ran every lens — the most expensive shape as the accident
+// default. An explicit lenses:'all' is the deliberate opt-in for the whole fleet.
+if (!LANES) {
+  log('⚠ no scope given — pass lenses: [<keys>] or lenses: "all" (or a profile); the whole-fleet no-arg default was removed')
+  return { error: 'scope_required', valid_lenses: ALL_LANES.map(l => l.key), valid_profiles: ['security', 'cleanup'] }
+}
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 log(`audit config — scope: "${scope}" | depth: ${depthName}${(profileDrop || profileKeep) ? ` | profile: ${A.profile}` : ''} | lenses: ${want ? want.join(',') : (profileDrop || profileKeep) ? `${LANES.length} (${A.profile} profile)` : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | verifyCap: ${VERIFY_CAP} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
   + (FILES ? ` | DELTA files: ${FILES.length}` : '')

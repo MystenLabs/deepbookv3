@@ -8,7 +8,8 @@
 // Before Mutate", and the leaf-self-consistency half of 9) are NOT here — they need deep per-module context
 // and live in ownership-walk.workflow.js (R1-R7). Do not duplicate them.
 //
-// args = { rules?: string[] (subset of family keys), maxFindings?: number, groundTruth?: string,
+// args = { rules: string[] | 'all' (REQUIRED — subset of family keys, or the explicit string 'all' for every
+//            family; there is NO whole-sweep default), maxFindings?: number, groundTruth?: string,
 //          depth?: 'mini'|'low'|'standard'|'max' (preset for rounds/verifyCap/effort; explicit caps win;
 //            mini = cleanup-triage: 1 round, NO verify subagents — findings reported raw, sweep effort medium),
 //          files?: string[] (DELTA SCOPE: concentrate the sweep on these changed files + direct callers),
@@ -104,6 +105,12 @@ const RULE_FAMILIES = [
 ]
 
 const wantRules = Array.isArray(A.rules) ? A.rules : null
+// Scope is REQUIRED. The old no-arg fall-through swept every family — the most expensive shape as the
+// accident default. An explicit rules:'all' is the deliberate opt-in for the full sweep.
+if (!(wantRules && wantRules.length) && A.rules !== 'all') {
+  log('⚠ no scope given — pass rules: [<keys>] or rules: "all"; the whole-sweep no-arg default was removed')
+  return { error: 'scope_required', valid_keys: RULE_FAMILIES.map(r => r.key) }
+}
 const FAMILIES = wantRules && wantRules.length ? RULE_FAMILIES.filter(r => wantRules.indexOf(r.key) >= 0) : RULE_FAMILIES
 const unknown = wantRules ? wantRules.filter(k => !RULE_FAMILIES.some(r => r.key === k)) : []
 log(`rule-sweep config — rules: ${wantRules ? wantRules.join(',') : `ALL ${RULE_FAMILIES.length}`} | depth: ${depthName} | maxFindings/rule: ${maxFindings}`
