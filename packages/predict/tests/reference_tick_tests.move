@@ -161,15 +161,16 @@ fun set_reference_tick_floor_to_zero_aborts() {
 fun off_grid_tick_before_reference_tick_is_set_aborts() {
     let (_fx, pricer, mut harness) = setup_priced_harness();
 
-    harness
+    let terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             REFERENCE_TICK,
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
         );
+    harness.exposure.allocate_mint_order(terms);
     abort EUnexpectedSuccess
 }
 
@@ -179,26 +180,26 @@ fun reference_tick_admits_up_and_down_ranges() {
 
     assert_reference_tick_is_off_admission_grid(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
     harness.exposure.set_reference_tick(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
-    let up_order = harness
+    let up_terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
-        )
-        .allocated_order();
-    let down_order = harness
+        );
+    let up_order = harness.exposure.allocate_mint_order(up_terms);
+    let down_terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             0,
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
-        )
-        .allocated_order();
+        );
+    let down_order = harness.exposure.allocate_mint_order(down_terms);
 
     assert_range(&up_order, ADMISSIBLE_OFF_GRID_REFERENCE_TICK, constants::pos_inf_tick!());
     assert_range(&down_order, 0, ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
@@ -211,15 +212,16 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
     let (_fx, pricer, mut harness) = setup_priced_harness();
 
     harness.exposure.set_reference_tick(REFERENCE_TICK);
-    harness
+    let terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             OTHER_OFF_GRID_TICK,
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
         );
+    harness.exposure.allocate_mint_order(terms);
     abort EUnexpectedSuccess
 }
 

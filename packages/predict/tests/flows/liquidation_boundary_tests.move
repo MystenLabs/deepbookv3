@@ -15,7 +15,9 @@
 #[test_only]
 module deepbook_predict::liquidation_boundary_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{config_constants, constants, flow_test_helpers as helpers, test_constants};
+use dusdc::dusdc::DUSDC;
+use fixed_math::math;
 use std::unit_test::assert_eq;
 
 /// now (120_000) + leverage_floor_window_ms / 2: floor phase at mint is
@@ -52,6 +54,9 @@ const REBATE_AFTER_REDEEM: u64 = 6_300_000;
 /// = 420_000_000; removed floor is the 210_000_000 open floor; net of the
 /// withheld TRADE_FEE = 205_800_000.
 const REDEEM_NET_PAYOUT: u64 = 205_800_000;
+/// Public order-value read is gross of close-side fees: gross 420_000_000 minus
+/// the static order floor 210_000_000.
+const SOLVENT_ORDER_VALUE_GROSS_OF_FEES: u64 = 210_000_000;
 /// One grid tick below the orders' lower strike: the digital steps to p = 0,
 /// gross = 0 <= threshold floor(214_400_000 * 1e9 / 0.85e9) = 252_235_294.
 const DROPPED_SPOT: u64 = 99_000_000_000;
@@ -132,6 +137,8 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         helpers::expected_manager_state(POST_MINT_BALANCE, 2 * TRADE_FEE, 2, 0, 0),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_a));
+    assert_eq!(fx.order_value_bundle(&market, order_a), SOLVENT_ORDER_VALUE_GROSS_OF_FEES);
+    assert_eq!(fx.order_value_bundle(&market, order_b), SOLVENT_ORDER_VALUE_GROSS_OF_FEES);
 
     // --- L1 liveness: the not-liquidatable order closes at its spec value
     // (gross minus the LIVE floor at T1, minus the withheld fee).
@@ -188,6 +195,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
             0,
         ),
     );
+    assert_eq!(fx.order_value_bundle(&market, order_b), 0);
 
     // --- Targeted liquidation below the threshold: the knockout removes the
     // order's full backing, moves no cash, and never touches the manager.
@@ -207,6 +215,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
             0,
         ),
     );
+    assert_eq!(fx.order_value_bundle(&market, order_b), 0);
     assert!(helpers::has_position_bundle(&account, expiry_id, order_b));
 
     // --- Tombstone cleanup: zero payout, zero fee, position cleared.
@@ -233,6 +242,119 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         helpers::expected_market_cash(cash_after_redeem, 0, REBATE_AFTER_REDEEM),
     );
     assert!(!helpers::has_position_bundle(&account, expiry_id, order_b));
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun redeem_live_target_liquidates_order_missed_by_budgeted_sweep() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let budget = config_constants::default_trade_liquidation_budget!();
+    let first_filler = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        constants::neg_inf!(),
+        helpers::strike_tick(),
+        QUANTITY,
+        LEVERAGE_TWO_X,
+    );
+    let mut i = 1;
+    while (i < budget) {
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            constants::neg_inf!(),
+            helpers::strike_tick(),
+            QUANTITY,
+            LEVERAGE_TWO_X,
+        );
+        i = i + 1;
+    };
+    let target_order = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_TWO_X,
+    );
+    let mint_count = budget + 1;
+    let total_fees = mint_count * TRADE_FEE;
+    let total_mint_cost = mint_count * (CONTRIBUTION + TRADE_FEE);
+    let cash_after_mints = test_constants::default_seeded_expiry_cash() + total_mint_cost;
+    let balance_after_mints = test_constants::default_manager_deposit() - total_mint_cost;
+    let rebate_after_mints = math::mul(
+        total_fees,
+        config_constants::default_trading_loss_rebate_rate!(),
+    );
+    let target_disjoint_buffer = math::mul(
+        LIVE_BACKING_PER_ORDER,
+        config_constants::default_backing_buffer_lambda!(),
+    );
+    helpers::check_market_cash_bundle(
+        &market,
+        helpers::expected_market_cash(
+            cash_after_mints,
+            budget * LIVE_BACKING_PER_ORDER + target_disjoint_buffer,
+            rebate_after_mints,
+        ),
+    );
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(
+            balance_after_mints,
+            total_fees,
+            mint_count,
+            0,
+            0,
+        ),
+    );
+
+    fx.set_clock_for_testing(T1_MS);
+    fx.prepare_live_oracle_bundle_at(&mut market, DROPPED_SPOT, T1_DROP_SOURCE_TS);
+    assert_eq!(fx.order_value_bundle(&market, first_filler), LIVE_BACKING_PER_ORDER);
+    assert_eq!(fx.order_value_bundle(&market, target_order), 0);
+
+    let balance_before = fx.account_balance_bundle<DUSDC>(&account);
+    let (closed_id, replacement) = fx.redeem_bundle(
+        &mut market,
+        &mut account,
+        target_order,
+        QUANTITY,
+    );
+
+    assert_eq!(closed_id, target_order);
+    assert!(replacement.is_none());
+    assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_before);
+    assert!(helpers::has_position_bundle(&account, expiry_id, first_filler));
+    assert!(!helpers::has_position_bundle(&account, expiry_id, target_order));
+    helpers::check_market_cash_bundle(
+        &market,
+        helpers::expected_market_cash(
+            cash_after_mints,
+            budget * LIVE_BACKING_PER_ORDER,
+            rebate_after_mints,
+        ),
+    );
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(
+            balance_after_mints,
+            total_fees,
+            budget,
+            0,
+            0,
+        ),
+    );
+    assert!(!fx.liquidate_order_bundle(&mut market, target_order));
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
