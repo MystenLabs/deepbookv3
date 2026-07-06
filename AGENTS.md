@@ -28,12 +28,10 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 ### Path-Scoped Rules — read before editing files under the glob
 
 - `.claude/rules/move.md` for `packages/**/*.move`
-- `.claude/rules/predict-contracts.md` for `packages/predict/**/*.move` (also read `move.md`)
+- `.claude/rules/predict-contracts.md` for the Predict-cluster packages `packages/{predict,propbook,block_scholes_oracle,account}/**/*.move` (also read `move.md`)
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
-- `.claude/rules/predict-simulations.md` for `packages/predict/simulations/**`
 - `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
-- `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**`
-- `.claude/rules/predict-indexer.md` for the PREDICT crates `crates/predict-{server,indexer,schema}/**` (also read `indexer.md` for shared operational gotchas)
+- `.claude/rules/predict-indexer.md` for the PREDICT crates `crates/predict-{server,indexer,schema}/**`
 - `.claude/rules/scripts.md` for `scripts/**`
 
 ### Manual-Trigger Rules — read when the request matches

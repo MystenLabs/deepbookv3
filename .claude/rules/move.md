@@ -7,7 +7,7 @@ paths:
 
 **Update the matching rule file** when you discover new Move patterns, gotchas, or best practices during sessions: general Move (any package) → this file; Predict-specific (architecture, economics, capacity) → `.claude/rules/predict-contracts.md`. Before adding a rule, check whether an existing one already covers it; a new rule should name the failure it prevents. Point at measured findings and history (stress docs, git, design records) instead of restating their numbers.
 
-Predict-specific rules (package architecture, config/capability shapes, API shape, validation ownership, economics, gas/capacity) live in `.claude/rules/predict-contracts.md` — auto-injected for `packages/predict/**/*.move`; read it explicitly otherwise.
+Predict-specific rules (package architecture, config/capability shapes, API shape, validation ownership, economics, gas/capacity) live in `.claude/rules/predict-contracts.md` — auto-injected for the Predict-cluster packages (`packages/{predict,propbook,block_scholes_oracle,account}/**/*.move`); read it explicitly otherwise.
 
 - Comments are opt-in, not a coverage requirement. Use comments to explain module responsibility, public API contracts, ownership boundaries, invariants, unit/scaling conventions, lifecycle state, sequencing requirements, gas/storage tradeoffs, external dependency quirks, or non-obvious math.
 

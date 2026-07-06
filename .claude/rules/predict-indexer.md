@@ -9,7 +9,11 @@ paths:
 
 Read this when editing `crates/predict-schema/**`, `crates/predict-indexer/**`, or `crates/predict-server/**`. These crates index the Predict package's on-chain events into Postgres and serve them over HTTP. They **mirror** the core DeepBook crates (`crates/{schema,indexer,server}`) but are independent and intentionally improve on a few core patterns. When a rule here conflicts with what core does, this file wins **for Predict crates only** — do not change core to match, and do not copy core's known weaknesses forward.
 
-Also read `.claude/rules/indexer.md` (shared operational gotchas: migrations can't use `CREATE INDEX CONCURRENTLY`, `IF NOT EXISTS` for idempotency, 3 connection pools, the `to_timestamp()::timestamp` cast).
+Shared Postgres/diesel operational gotchas (absorbed from the retired core `indexer.md`):
+
+- Diesel migrations run inside a transaction — `CREATE INDEX CONCURRENTLY` cannot be used in them; use `IF NOT EXISTS` for idempotency. Zero-downtime index creation on production: run `CREATE INDEX CONCURRENTLY` manually via psql first, then the `IF NOT EXISTS` migration is a no-op.
+- PostgreSQL function matching needs exact parameter types: `to_timestamp()` returns `TIMESTAMPTZ`; cast `to_timestamp($3)::timestamp` when the function expects `TIMESTAMP`.
+- The core server runs 3 separate connection pools (reader / writer / margin poller) against the same Postgres — monitor total connections when diagnosing pool exhaustion.
 
 ## Crate Layout (mirror core exactly)
 

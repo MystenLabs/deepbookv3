@@ -1,11 +1,14 @@
 ---
 paths:
   - "packages/predict/**/*.move"
+  - "packages/propbook/**/*.move"
+  - "packages/block_scholes_oracle/**/*.move"
+  - "packages/account/**/*.move"
 ---
 
 # Predict Contract Rules
 
-Predict-specific Move rules: package architecture, config and capability shapes, API shape, validation ownership, economics, and measured gas/capacity bounds. General Move rules live in `.claude/rules/move.md`; both apply to `packages/predict/**` Move work. **Update this file** when you discover new Predict-specific patterns or invariants — check for an existing rule first, name the failure a new rule prevents, and point at measured findings (`packages/predict/predeploy/stress/`) rather than restating numbers.
+Predict-specific Move rules: package architecture, config and capability shapes, API shape, validation ownership, economics, and measured gas/capacity bounds. General Move rules live in `.claude/rules/move.md`; both apply to Predict-cluster Move work (`packages/{predict,propbook,block_scholes_oracle,account}`). **Update this file** when you discover new Predict-specific patterns or invariants — check for an existing rule first, name the failure a new rule prevents, and point at measured findings (`packages/predict/predeploy/stress/`) rather than restating numbers.
 
 - Predict sources are organized by domain subsystem, not by visibility. A subsystem with helper modules gets a folder named for the domain, and its state-owning facade or entry module lives in that folder with its internals. Single-module domains stay as root files. Entrypoints live with the state they mutate because Move struct fields are module-private; do not split a public entry module away from its domain just to make root-level files mean "callable." Predict tests should mirror source domain folders except for shared helpers and broad flow tests.
 

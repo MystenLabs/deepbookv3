@@ -374,6 +374,34 @@ Important fields:
 
 ## Maintenance Rules
 
+-   Do not add unit tests under `packages/predict/simulations/**`. Verify changes
+    with `npx tsc --noEmit`, `bash -n run.sh`, a Python replay, or a small
+    `bash run.sh --sim_max_rows=N --skip-analysis` smoke run instead.
+-   If a Move entrypoint used by the simulation changes generic parameters or its
+    signature, audit `src/runtime.ts` for stale `typeArguments` or argument
+    lists; otherwise benchmark CI fails only as an external
+    `sim exited with code 1`.
+-   Gas verdicts must respect run-to-run noise: different `run.sh` invocations
+    use different generated scenarios, so treat per-action deltas below the noise
+    floor (watch an untouched action like `supply`/`withdraw`) as neutral — only
+    a pinned-scenario A/B is a trustworthy signal. Per-op gas is also
+    data-dependent (`normal_cdf` has cheap and expensive branches by moneyness)
+    and multi-command PTBs amplify per-command cost, so sweep scenarios and
+    measure batched ops separately; measured capacity numbers live in
+    `../predeploy/stress/`.
+-   The capacity wall is per-tx computation (`max_gas_computation_bucket`), not
+    the gas budget: a tx over it fails `InsufficientGas` regardless of
+    `--gas-budget`.
+-   One localnet per git worktree: `run.sh` mutates `Move.toml` during publish,
+    so concurrent runs must not share a checkout. `SIM_PORT_OFFSET` gives each
+    run its own ports; never rewrite the genesis `.blob`/swarm ports (that
+    desyncs config from the baked committee). `stress/` holds the parallel
+    stress/fuzz infra (read `stress/README.md` first, including the
+    `SIM_STRESS_*` knobs in `src/sim.ts`); stress runs need `--skip-analysis`,
+    and `SIM_STRESS_LEVERAGE>1` aborting via
+    `assert_mint_probability_and_leverage_policy` is correct moneyness-capping,
+    not a harness bug.
+
 -   Keep `run.sh` limited to the four documented manual command forms. The hidden
     benchmark compatibility path exists only for the Docker benchmark worker and
     should not grow into a second manual runner interface.
