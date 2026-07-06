@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-02. This is the team-facing tracker for open Predict deploy
+Updated 2026-07-06. This is the team-facing tracker for open Predict deploy
 gates, audit findings, stress-test follow-ups, and required decisions.
 
 Resolved items should be removed from this file. Historical raw audit output may
@@ -94,19 +94,6 @@ the 24-market cap is still far above the measured safe joint budget.
 **Action:** Add a joint budget across all active markets, tighten caps to the
 measured single-PTB envelope, or make valuation resumable across PTBs. See
 `stress/capacity-and-gas-findings.md`.
-
-### C-3: Large multi-command PTBs amplify trade cost
-
-**Severity:** Medium for routers/keepers; normal one-op users unaffected.
-
-Localnet experiments show batched leveraged mints/redeems cost far more per op
-than standalone transactions because command cost scales with transaction
-position / accumulated transaction state. A 100-mint PTB uses about 68% of the
-computation cap; the ceiling is around 110-150 leveraged mints, data-dependent.
-
-**Action:** Treat large atomic router PTBs as bounded; do not assume standalone
-gas scales linearly inside a PTB. See
-`stress/mint-batch-findings-2026-07-01.md`.
 
 ### C-4: LP flush drain hard-aborts on a zero-value head request or a NAV==0 mark
 
