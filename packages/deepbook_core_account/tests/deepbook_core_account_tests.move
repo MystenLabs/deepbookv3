@@ -97,11 +97,11 @@ fun uninitialized_account_getters_return_empty_values() {
     let account = wrapper.load_account();
     let (base_locked, quote_locked, deep_locked) = dca::locked_balance<BASE, QUOTE>(&pool, account);
 
-    assert!(!dca::account_exists<BASE, QUOTE>(&pool, account));
-    assert!(dca::account<BASE, QUOTE>(&pool, account).is_none());
-    assert!(dca::account_open_orders<BASE, QUOTE>(&pool, account).is_empty());
+    assert!(!dca::pool_account_exists<BASE, QUOTE>(&pool, account));
+    assert!(dca::pool_account<BASE, QUOTE>(&pool, account).is_none());
+    assert!(dca::pool_account_open_orders<BASE, QUOTE>(&pool, account).is_empty());
     assert_eq!(
-        dca::get_account_order_details<BASE, QUOTE>(&pool, account).length(),
+        dca::get_pool_account_order_details<BASE, QUOTE>(&pool, account).length(),
         NO_OPEN_ORDER_COUNT,
     );
     assert_eq!(base_locked, ZERO_BALANCE);
@@ -148,12 +148,12 @@ fun account_getters_return_core_account_and_order_state() {
     );
     let account = wrapper.load_account();
     let order_id = ask.order_id();
-    let open_orders = dca::account_open_orders<BASE, QUOTE>(&pool, account);
-    let order_details = dca::get_account_order_details<BASE, QUOTE>(&pool, account);
-    let core_account = dca::account<BASE, QUOTE>(&pool, account).destroy_some();
+    let open_orders = dca::pool_account_open_orders<BASE, QUOTE>(&pool, account);
+    let order_details = dca::get_pool_account_order_details<BASE, QUOTE>(&pool, account);
+    let core_account = dca::pool_account<BASE, QUOTE>(&pool, account).destroy_some();
     let (base_locked, quote_locked, deep_locked) = dca::locked_balance<BASE, QUOTE>(&pool, account);
 
-    assert!(dca::account_exists<BASE, QUOTE>(&pool, account));
+    assert!(dca::pool_account_exists<BASE, QUOTE>(&pool, account));
     assert!(open_orders.contains(&order_id));
     assert_eq!(open_orders.length(), SINGLE_OPEN_ORDER_COUNT);
     assert_eq!(core_account.open_orders().length(), SINGLE_OPEN_ORDER_COUNT);

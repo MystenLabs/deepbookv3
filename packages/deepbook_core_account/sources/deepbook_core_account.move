@@ -18,8 +18,8 @@ use deepbook_core_account::account_data;
 use sui::{accumulator::AccumulatorRoot, clock::Clock, vec_set::{Self as vec_set, VecSet}};
 use token::deep::DEEP;
 
-/// Return whether this account's embedded balance manager has pool account data.
-public fun account_exists<BaseAsset, QuoteAsset>(
+/// Return whether this account's embedded manager has DeepBook core pool account data.
+public fun pool_account_exists<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     account: &Account,
 ): bool {
@@ -31,8 +31,8 @@ public fun account_exists<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Return a copy of the DeepBook core account for this account's balance manager.
-public fun account<BaseAsset, QuoteAsset>(
+/// Return a copy of this account's DeepBook core per-pool account, if it exists.
+public fun pool_account<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     account: &Account,
 ): Option<CoreAccount> {
@@ -49,8 +49,8 @@ public fun account<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Return the open order IDs for this account's embedded balance manager.
-public fun account_open_orders<BaseAsset, QuoteAsset>(
+/// Return the open order IDs for this account's DeepBook core pool account.
+public fun pool_account_open_orders<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     account: &Account,
 ): VecSet<u128> {
@@ -62,8 +62,8 @@ public fun account_open_orders<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Return full order details for this account's embedded balance manager.
-public fun get_account_order_details<BaseAsset, QuoteAsset>(
+/// Return full order details for this account's DeepBook core pool account.
+public fun get_pool_account_order_details<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     account: &Account,
 ): vector<Order> {
