@@ -1,0 +1,14 @@
+[package]
+name = "deepbook_core_account"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+account = { local = "../account" }
+deepbook = { local = "../deepbook" }
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
+MoveStdlib = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "1fd64849c11a130de450168e64e3913885a3bee4", override = true }
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "1fd64849c11a130de450168e64e3913885a3bee4", override = true }
+
+[addresses]
+deepbook_core_account = "0x0"
