@@ -90,6 +90,38 @@ public macro fun cadence_one_week(): u8 { 4 }
 /// Cadence ID for one-month markets.
 public macro fun cadence_one_month(): u8 { 5 }
 
+// === Public Functions ===
+
+/// Return the raw-price-per-tick factor for this cadence config.
+public fun cadence_tick_size(config: &CadenceConfig): u64 {
+    config.tick_size
+}
+
+/// Return the coarser raw-price step that new finite mint boundaries must align to.
+public fun cadence_admission_tick_size(config: &CadenceConfig): u64 {
+    config.admission_tick_size
+}
+
+/// Return the DUSDC pool allocation cap snapshotted for each created expiry.
+public fun cadence_max_expiry_allocation(config: &CadenceConfig): u64 {
+    config.max_expiry_allocation
+}
+
+/// Return the minimum DUSDC cash target snapshotted for each created expiry.
+public fun cadence_initial_expiry_cash(config: &CadenceConfig): u64 {
+    config.initial_expiry_cash
+}
+
+/// Return the number of future cadence slots deployment may keep filled.
+public fun cadence_window_size(config: &CadenceConfig): u64 {
+    config.window_size
+}
+
+/// Return whether this cadence is enabled.
+public fun cadence_enabled(config: &CadenceConfig): bool {
+    config.window_size > 0
+}
+
 // === Public-Package Functions ===
 
 public(package) fun new(ctx: &mut TxContext): MarketManager {
@@ -110,6 +142,17 @@ public(package) fun expiry_market_id(
     } else {
         option::none()
     }
+}
+
+/// Return the stored deployment policy for one underlying/cadence.
+public(package) fun cadence_config(
+    manager: &MarketManager,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+): CadenceConfig {
+    let cadence_index = cadence_index(cadence_id);
+    let cadence = &manager.underlying_config(propbook_underlying_id).cadences[cadence_index];
+    *cadence
 }
 
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
@@ -161,6 +204,10 @@ public(package) fun next_deployable_market(
                     .is_some(),
                 EBlockScholesForwardFeedNotBoundToUnderlying,
             );
+            // Structurally unreachable at HEAD: Propbook binds forward and SVI
+            // atomically (bind/replace take the whole surface), so a missing SVI
+            // binding always trips the forward assert above first. Kept as
+            // defense-in-depth should the binding API ever split.
             assert!(
                 propbook_registry
                     .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
@@ -231,7 +278,7 @@ public(package) fun register_underlying(manager: &mut MarketManager, propbook_un
         );
 }
 
-public(package) fun set_cadence_config(
+public(package) fun set_template_cadence_config(
     manager: &mut MarketManager,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -264,6 +311,10 @@ public(package) fun record_expiry_creation(
 ) {
     let cadence_index = cadence_index(cadence_id);
     let period_ms = cadence_period_ms(cadence_id);
+    // Both EInvalidDeploymentExpiry asserts are structurally unreachable via
+    // `registry::create_and_share_expiry_market`: the expiry always comes from
+    // `next_deployable_market`, which yields grid-aligned values strictly above
+    // the watermark. Kept as internal-invariant guards for any future caller.
     assert!(expiry % period_ms == 0, EInvalidDeploymentExpiry);
     assert!(
         expiry > manager

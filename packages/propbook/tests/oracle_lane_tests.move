@@ -28,8 +28,8 @@ fun update_accepts_newer_latest_without_exact_insert() {
     let ctx = &mut tx_context::dummy();
     let mut lane = new_lane(ctx);
 
-    lane.update(oracle_id(), new_read(SPOT_A, T_EARLY, UPDATE_EARLY));
-    lane.update(oracle_id(), new_read(SPOT_B, T_MID, UPDATE_MID));
+    lane.update(new_read(SPOT_A, T_EARLY, UPDATE_EARLY), oracle_id());
+    lane.update(new_read(SPOT_B, T_MID, UPDATE_MID), oracle_id());
 
     let latest = lane.latest_read().destroy_some();
     assert_eq!(latest.read_source_timestamp_ms(), T_MID);
@@ -46,11 +46,11 @@ fun update_stale_future_and_zero_sources_are_no_ops() {
     let ctx = &mut tx_context::dummy();
     let mut lane = new_lane(ctx);
 
-    lane.update(oracle_id(), new_read(SPOT_A, T_MID, UPDATE_MID));
-    lane.update(oracle_id(), new_read(SPOT_B, T_MID, UPDATE_LATE));
-    lane.update(oracle_id(), new_read(SPOT_B, T_EARLY, UPDATE_LATE));
-    lane.update(oracle_id(), new_read(SPOT_B, T_LATE, T_EARLY));
-    lane.update(oracle_id(), new_read(SPOT_B, T_ZERO, UPDATE_LATE));
+    lane.update(new_read(SPOT_A, T_MID, UPDATE_MID), oracle_id());
+    lane.update(new_read(SPOT_B, T_MID, UPDATE_LATE), oracle_id());
+    lane.update(new_read(SPOT_B, T_EARLY, UPDATE_LATE), oracle_id());
+    lane.update(new_read(SPOT_B, T_LATE, T_EARLY), oracle_id());
+    lane.update(new_read(SPOT_B, T_ZERO, UPDATE_LATE), oracle_id());
 
     let latest = lane.latest_read().destroy_some();
     assert_eq!(latest.read_source_timestamp_ms(), T_MID);
@@ -65,7 +65,7 @@ fun insert_at_records_exact_read_without_latest() {
     let ctx = &mut tx_context::dummy();
     let mut lane = new_lane(ctx);
 
-    lane.insert_at(oracle_id(), new_read(SPOT_A, T_EARLY, UPDATE_EARLY));
+    lane.insert_at(new_read(SPOT_A, T_EARLY, UPDATE_EARLY), oracle_id());
 
     assert!(lane.latest_read().is_none());
     let exact = lane.read_at(T_EARLY).destroy_some();
@@ -82,10 +82,10 @@ fun insert_at_duplicate_future_and_zero_sources_are_no_ops() {
     let ctx = &mut tx_context::dummy();
     let mut lane = new_lane(ctx);
 
-    lane.insert_at(oracle_id(), new_read(SPOT_A, T_EARLY, UPDATE_EARLY));
-    lane.insert_at(oracle_id(), new_read(SPOT_B, T_EARLY, UPDATE_LATE));
-    lane.insert_at(oracle_id(), new_read(SPOT_B, T_LATE, T_EARLY));
-    lane.insert_at(oracle_id(), new_read(SPOT_B, T_ZERO, UPDATE_LATE));
+    lane.insert_at(new_read(SPOT_A, T_EARLY, UPDATE_EARLY), oracle_id());
+    lane.insert_at(new_read(SPOT_B, T_EARLY, UPDATE_LATE), oracle_id());
+    lane.insert_at(new_read(SPOT_B, T_LATE, T_EARLY), oracle_id());
+    lane.insert_at(new_read(SPOT_B, T_ZERO, UPDATE_LATE), oracle_id());
 
     let exact = lane.read_at(T_EARLY).destroy_some();
     assert_eq!(exact.read_source_timestamp_ms(), T_EARLY);

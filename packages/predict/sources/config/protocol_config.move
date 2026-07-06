@@ -252,6 +252,19 @@ public fun bump_version_watermark(config: &mut ProtocolConfig, _admin_cap: &Admi
     config.version_watermark = version;
 }
 
+/// Set the protocol reserve profit share used when materializing aggregate
+/// expiry profit. Admin-gated; validated against its config-constants envelope.
+public fun set_protocol_reserve_profit_share(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    protocol_reserve_profit_share: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
+    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -331,19 +344,6 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
 /// `PauseCap` holders going through the registry; cannot be used to unpause.
 public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
-}
-
-/// Set the protocol reserve profit share used when materializing aggregate
-/// expiry profit. Admin-gated; validated against its config-constants envelope.
-public fun set_protocol_reserve_profit_share(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    protocol_reserve_profit_share: u64,
-) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
-    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
 /// Begin a transaction-local full-pool valuation lock.

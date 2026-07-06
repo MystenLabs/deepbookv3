@@ -24,7 +24,7 @@ use deepbook_predict::{
     predict_account,
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
-    strike_exposure::{Self, StrikeExposure},
+    strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
@@ -74,6 +74,20 @@ public struct ExpiryMarket has key {
     mint_paused: bool,
 }
 
+/// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
+/// `trading_fee` is the post-stake-discount fee before the sponsor subsidy, and
+/// `all_in_cost` is the exact account withdrawal the same-state mint would make:
+/// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
+public struct MintQuote has copy, drop {
+    entry_probability: u64,
+    net_premium: u64,
+    trading_fee: u64,
+    fee_incentive_subsidy: u64,
+    builder_fee: u64,
+    penalty_fee: u64,
+    all_in_cost: u64,
+}
+
 // === Public Functions ===
 
 /// Return the expiry market object ID.
@@ -89,6 +103,23 @@ public fun propbook_underlying_id(market: &ExpiryMarket): u32 {
 /// Return the expiry timestamp in milliseconds.
 public fun expiry(market: &ExpiryMarket): u64 {
     market.expiry
+}
+
+/// Return the recorded settlement price. Aborts if the market is not settled.
+public fun settlement_price(market: &ExpiryMarket): u64 {
+    market.settlement_price.destroy_some()
+}
+
+/// Return whether terminal settlement has been recorded for this market.
+/// Public read for SDK/devInspect settlement-state checks.
+public fun is_settled(market: &ExpiryMarket): bool {
+    market.settlement_price.is_some()
+}
+
+/// Return the recorded settlement price, or `none` while the market is live.
+/// Non-aborting companion to `settlement_price` for SDK/devInspect reads.
+public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
+    market.settlement_price
 }
 
 /// Return DUSDC currently held by this expiry.
@@ -184,12 +215,12 @@ public fun load_live_pricer(
     pricing::load_live_pricer(
         config.pricing_config(),
         propbook_registry,
-        market.id(),
-        market.propbook_underlying_id,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        market.id(),
+        market.propbook_underlying_id,
         market.expiry,
         clock,
     )
@@ -225,9 +256,116 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.cash.free_cash().saturating_sub(liability)
 }
 
+/// Return the live holder value of one order, gross of fees.
+///
+/// Already-liquidated and currently-liquidatable orders return zero; otherwise
+/// this returns the order's current range value net of its static floor. Public
+/// read for SDK/devInspect and external Move composition; callers must already
+/// know the order belongs to the position they are valuing.
+public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
+    market.assert_pricer_bound(pricer);
+    let order = order::from_order_id(order_id);
+    market.strike_exposure.order_value(pricer, &order)
+}
+
 /// Return whether minting is currently paused on this expiry market.
 public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
+}
+
+/// Quote the all-in cost of `mint_exact_quantity` for an anonymous taker (no
+/// stake discount, no builder code) without mutating any market state. Applies
+/// the same live-mint gates and admission asserts as the mint path, so a quote
+/// aborts exactly when the mint-side terms computation would; it does not
+/// preflight account balance, slippage caps, or exposure-index capacity.
+/// `penalty_fee` is computed from the pre-trade EWMA stats exactly as the mint
+/// path computes its charge, so it matches a same-state, same-gas-price mint;
+/// across transactions it can still drift (different gas price, or trades
+/// folding observations in between). Public read for SDK/devInspect pre-trade
+/// pricing.
+public fun quote_mint(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer);
+    let terms = market
+        .strike_exposure
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+    let builder_code_id: Option<ID> = option::none();
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
+    market.compute_mint_quote(config, &terms, 0, &builder_code_id, penalty_fee, clock)
+}
+
+/// Quote the all-in cost of `mint_exact_quantity` for one account, reading the
+/// account's builder code and current `active_stake` as-is. An un-rolled stake
+/// from a prior epoch quotes a smaller discount than the mint (which rolls
+/// first) would apply, so the quote can only overstate cost. Same gates,
+/// admission aborts, and EWMA-peek semantics as `quote_mint`. Public read for
+/// SDK/devInspect pre-trade pricing.
+public fun quote_mint_for_account(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer);
+    let account = wrapper.load_account();
+    let terms = market
+        .strike_exposure
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+    let builder_code_id = predict_account::builder_code_id(account);
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
+    market.compute_mint_quote(
+        config,
+        &terms,
+        predict_account::active_stake(account),
+        &builder_code_id,
+        penalty_fee,
+        clock,
+    )
+}
+
+// === MintQuote Getters ===
+
+public fun entry_probability(quote: &MintQuote): u64 {
+    quote.entry_probability
+}
+
+public fun net_premium(quote: &MintQuote): u64 {
+    quote.net_premium
+}
+
+public fun trading_fee(quote: &MintQuote): u64 {
+    quote.trading_fee
+}
+
+public fun fee_incentive_subsidy(quote: &MintQuote): u64 {
+    quote.fee_incentive_subsidy
+}
+
+public fun builder_fee(quote: &MintQuote): u64 {
+    quote.builder_fee
+}
+
+public fun penalty_fee(quote: &MintQuote): u64 {
+    quote.penalty_fee
+}
+
+public fun all_in_cost(quote: &MintQuote): u64 {
+    quote.all_in_cost
 }
 
 /// Mint an exact live position quantity against this expiry market.
@@ -350,8 +488,10 @@ public fun mint_exact_amount(
 
 /// Redeem a live order you hold account authority over.
 ///
-/// A live order is priced and closed (partial or full); a liquidated tombstone is
-/// fully closed with zero payout. Settled orders must use `redeem_settled`.
+/// A live order is priced and closed (partial or full), unless it is currently
+/// liquidatable, in which case it is knocked out and fully closed with zero
+/// payout. A liquidated tombstone is fully closed with zero payout. Settled
+/// orders must use `redeem_settled`.
 /// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
 /// only when a live partial close leaves quantity open.
 ///
@@ -383,6 +523,7 @@ public fun redeem_live(
 
     let redeemed_order = order::from_order_id(order_id);
     market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget());
+    market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
         return (redeemed_order.id(), option::none())
@@ -550,11 +691,6 @@ public fun set_mint_paused(
 
 // === Public-Package Functions ===
 
-/// Return the recorded settlement price. Aborts if the market is not settled.
-public(package) fun settlement_price(market: &ExpiryMarket): u64 {
-    market.settlement_price.destroy_some()
-}
-
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
 /// the attempt. This is the canonical passive settlement gate used immediately
@@ -719,10 +855,6 @@ public(package) fun create_and_share(
 
 // === Private Functions ===
 
-fun is_settled(market: &ExpiryMarket): bool {
-    market.settlement_price.is_some()
-}
-
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
 fun materialize_settled_liability(market: &mut ExpiryMarket): u64 {
     let settlement = market.settlement_price();
@@ -800,9 +932,14 @@ fun assert_pricer_bound(market: &ExpiryMarket, pricer: &Pricer) {
     assert!(pricer.expiry_market_id() == market.id(), EWrongPricer);
 }
 
-/// Fold the current gas price into this market's EWMA and return the congestion
-/// surcharge (in DUSDC) for `quantity`, zero unless the penalty is enabled and
-/// gas is a high outlier. Mutates the smoothed estimate on every trade.
+/// Return the congestion surcharge (in DUSDC) for `quantity` from the pre-trade
+/// EWMA stats, then fold the current gas price into the estimate. Penalty before
+/// fold on every trade path (mint and live redeem): the trade's gas is judged
+/// against the prior distribution rather than one already containing it, which
+/// for mint additionally makes the charge equal what the quote functions compute
+/// for the same state and gas price. Deliberate ordering divergence from
+/// DeepBook core, which folds first — registered in
+/// `predeploy/response-policies.md` (RP-9).
 fun ewma_penalty(
     market: &mut ExpiryMarket,
     config: &EwmaConfig,
@@ -810,8 +947,43 @@ fun ewma_penalty(
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
+    let penalty = market.ewma.penalty_fee(config, quantity, ctx);
     market.ewma.update(config, clock, ctx);
-    market.ewma.penalty_fee(config, quantity, ctx)
+    penalty
+}
+
+/// Assemble the mint cost decomposition from priced terms. The single home of
+/// the mint payment formula: quotes return it as-is and the mint path settles
+/// exactly these amounts, so a quote's `all_in_cost` matches the debit of a
+/// same-state mint by construction.
+fun compute_mint_quote(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    terms: &MintTerms,
+    active_stake: u64,
+    builder_code_id: &Option<ID>,
+    penalty_fee: u64,
+    clock: &Clock,
+): MintQuote {
+    let entry_probability = terms.entry_probability();
+    let quantity = terms.quantity();
+    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+    let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
+    let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
+    let net_premium = terms.net_premium();
+    let all_in_cost =
+        net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee;
+
+    MintQuote {
+        entry_probability,
+        net_premium,
+        trading_fee,
+        fee_incentive_subsidy,
+        builder_fee,
+        penalty_fee,
+        all_in_cost,
+    }
 }
 
 fun mint_prepared_exact_quantity(
@@ -829,40 +1001,26 @@ fun mint_prepared_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let mint_quote = market
+    let terms = market
         .strike_exposure
-        .allocate_mint_order(
-            pricer,
-            lower_tick,
-            higher_tick,
-            quantity,
-            leverage,
-        );
-    let minted_order = mint_quote.allocated_order();
-    let entry_probability = mint_quote.entry_probability();
-    let net_premium = mint_quote.net_premium();
-    assert!(entry_probability <= max_probability, EMintProbabilityAboveMax);
-    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
-    let fee_amount = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+    assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
+    // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
-    let trader_fee_amount = fee_amount - fee_subsidy_amount;
-    assert!(
-        net_premium + trader_fee_amount + builder_fee_amount + penalty_amount <= max_cost,
-        EMintCostAboveMax,
-    );
-
-    let (builder_fee_amount, fee_incentive_subsidy) = market.settle_mint_payment(
-        account,
-        &minted_order,
-        net_premium,
-        fee_amount,
+    let quote = market.compute_mint_quote(
+        config,
+        &terms,
+        active_stake,
+        &builder_code_id,
         penalty_amount,
         clock,
-        ctx,
     );
+    assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+
+    let leverage = terms.leverage();
+    let minted_order = market.strike_exposure.allocate_mint_order(terms);
+    market.settle_mint_payment(account, &minted_order, &quote, builder_code_id, clock, ctx);
     order_events::emit_order_minted(
         market.id(),
         account.account_id(),
@@ -870,12 +1028,12 @@ fun mint_prepared_exact_quantity(
         builder_code_id,
         &minted_order,
         leverage,
-        entry_probability,
-        net_premium,
-        fee_amount,
-        fee_incentive_subsidy,
-        builder_fee_amount,
-        penalty_amount,
+        quote.entry_probability,
+        quote.net_premium,
+        quote.trading_fee,
+        quote.fee_incentive_subsidy,
+        quote.builder_fee,
+        quote.penalty_fee,
     );
     minted_order.id()
 }
@@ -1049,28 +1207,25 @@ fun redeem_settled_internal(
     (redeemed_order.id(), option::none())
 }
 
-/// Settle a mint payment and return the builder fee and fee incentive subsidy.
-///
-/// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
-/// into expiry cash as surplus: it is not part of the rebate fee basis and
-/// earns no builder cut. Fee incentives subsidize only the trader-paid portion
-/// of the trading fee; the expiry still collects the full fee amount.
+/// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
+/// account, route the builder fee and the subsidized trading fee, and keep the
+/// remainder in expiry cash. The caller owns the all-in `max_cost` guard and the
+/// quote derivation (`compute_mint_quote`), and passes its single
+/// `builder_code_id` read so the fee amount and the routing destination cannot
+/// come from different reads. The EWMA penalty rides into expiry cash as
+/// surplus: it is not part of the rebate fee basis and earns no builder cut.
+/// Fee incentives subsidize only the trader-paid portion of the trading fee;
+/// the expiry still collects the full fee amount.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
     order: &Order,
-    net_premium: u64,
-    fee_amount: u64,
-    penalty_amount: u64,
+    quote: &MintQuote,
+    builder_code_id: Option<ID>,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u64, u64) {
-    let quantity = order.quantity();
-    let builder_code_id = predict_account::builder_code_id(account);
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let fee_subsidy_amount = market.fee_incentive_subsidy_amount(fee_amount);
-    let trader_fee_amount = fee_amount - fee_subsidy_amount;
-    let withdraw_amount = net_premium + trader_fee_amount + builder_fee_amount + penalty_amount;
+) {
+    let trader_fee_amount = quote.trading_fee - quote.fee_incentive_subsidy;
 
     predict_account::add_position(
         account,
@@ -1080,18 +1235,17 @@ fun settle_mint_payment(
         clock.timestamp_ms(),
         ctx,
     );
-    predict_account::record_gross_paid_to_expiry(account, market.id(), net_premium, ctx);
-    let mut payment = account.withdraw<DUSDC>(withdraw_amount, ctx).into_balance();
-    let builder_fee_payment = payment.split(builder_fee_amount);
-    send_builder_fee(copy builder_code_id, builder_fee_payment);
+    predict_account::record_gross_paid_to_expiry(account, market.id(), quote.net_premium, ctx);
+    let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
+    let builder_fee_payment = payment.split(quote.builder_fee);
+    send_builder_fee(builder_code_id, builder_fee_payment);
     let mut fee_payment = payment.split(trader_fee_amount);
-    fee_payment.join(market.fee_incentive_balance.split(fee_subsidy_amount));
+    fee_payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.collect_trade_fee(account, fee_payment, trader_fee_amount, ctx);
     // Remaining balance is the net premium plus the penalty surplus.
     market.cash.receive(payment);
 
     market.assert_cash_backing();
-    (builder_fee_amount, fee_subsidy_amount)
 }
 
 /// Settle a live redeem and return the builder fee and penalty actually applied.

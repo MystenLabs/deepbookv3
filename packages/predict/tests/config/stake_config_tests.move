@@ -7,32 +7,27 @@ module deepbook_predict::stake_config_tests;
 use deepbook_predict::{config_constants, stake_config};
 use std::unit_test::{assert_eq, destroy};
 
-// Active-stake levels in raw DEEP units; LOWER/UPPER match the StakeConfig defaults.
+// Active-stake levels in raw DEEP units.
 const TWENTY_K: u64 = 20_000_000_000;
-const LOWER: u64 = 100_000_000_000; // default lower_benefit_power
 const THREE_HUNDRED_K: u64 = 300_000_000_000;
-const UPPER: u64 = 1_100_000_000_000; // default upper_benefit_power
 const TWO_MILLION: u64 = 2_000_000_000_000;
 const FEE_AMOUNT: u64 = 1_000_000_000;
-
-// === Construction and getter ===
-
-#[test]
-fun default_matches_config_constants() {
-    let config = stake_config::new();
-    assert_eq!(config.lower_benefit_power(), config_constants::default_lower_benefit_power!());
-    assert_eq!(config.upper_benefit_power(), config_constants::default_upper_benefit_power!());
-    destroy(config);
-}
+const CUSTOM_LOWER: u64 = 200_000_000_000;
+const CUSTOM_UPPER: u64 = 1_000_000_000_000;
+const NO_DISCOUNT_FEE: u64 = 1_000_000_000;
+const TWENTY_K_DISCOUNTED_FEE: u64 = 950_000_000;
+const HALF_BENEFIT_FEE: u64 = 750_000_000;
+const THREE_HUNDRED_K_DISCOUNTED_FEE: u64 = 700_000_000;
+const FULL_BENEFIT_FEE: u64 = 500_000_000;
 
 // === set_benefit_powers ===
 
 #[test]
-fun set_benefit_powers_updates_both() {
+fun set_benefit_powers_updates_curve() {
     let mut config = stake_config::new();
-    config.set_benefit_powers(200_000_000_000, 1_000_000_000_000); // 200k / 1M (1M > 400k)
-    assert_eq!(config.lower_benefit_power(), 200_000_000_000);
-    assert_eq!(config.upper_benefit_power(), 1_000_000_000_000);
+    config.set_benefit_powers(CUSTOM_LOWER, CUSTOM_UPPER);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_LOWER), HALF_BENEFIT_FEE);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_UPPER), FULL_BENEFIT_FEE);
     destroy(config);
 }
 
@@ -45,21 +40,33 @@ fun set_benefit_powers_accepts_boundaries() {
         config_constants::min_lower_benefit_power!(),
         config_constants::min_upper_benefit_power!(),
     );
-    assert_eq!(config.lower_benefit_power(), config_constants::min_lower_benefit_power!());
-    assert_eq!(config.upper_benefit_power(), config_constants::min_upper_benefit_power!());
+    assert_eq!(
+        config.fee_amount_after_discount(FEE_AMOUNT, config_constants::min_lower_benefit_power!()),
+        HALF_BENEFIT_FEE,
+    );
+    assert_eq!(
+        config.fee_amount_after_discount(FEE_AMOUNT, config_constants::min_upper_benefit_power!()),
+        FULL_BENEFIT_FEE,
+    );
 
     // Max lower with max upper: 50M > 2*1M.
     config.set_benefit_powers(
         config_constants::max_lower_benefit_power!(),
         config_constants::max_upper_benefit_power!(),
     );
-    assert_eq!(config.lower_benefit_power(), config_constants::max_lower_benefit_power!());
-    assert_eq!(config.upper_benefit_power(), config_constants::max_upper_benefit_power!());
+    assert_eq!(
+        config.fee_amount_after_discount(FEE_AMOUNT, config_constants::max_lower_benefit_power!()),
+        HALF_BENEFIT_FEE,
+    );
+    assert_eq!(
+        config.fee_amount_after_discount(FEE_AMOUNT, config_constants::max_upper_benefit_power!()),
+        FULL_BENEFIT_FEE,
+    );
 
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidBenefitPowers)]
+#[test, expected_failure(abort_code = stake_config::EInvalidBenefitPowers)]
 fun set_benefit_powers_non_steeper_upper_aborts() {
     // upper == 2*lower is not strictly greater -> rejected.
     let mut config = stake_config::new();
@@ -90,11 +97,26 @@ fun set_benefit_powers_upper_below_min_aborts() {
 #[test]
 fun fee_amount_after_discount_follows_two_segment_curve() {
     let config = stake_config::new();
-    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, 0), 1_000_000_000);
-    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWENTY_K), 950_000_000);
-    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, LOWER), 750_000_000);
-    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, THREE_HUNDRED_K), 700_000_000);
-    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, UPPER), 500_000_000);
-    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWO_MILLION), 500_000_000);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, 0), NO_DISCOUNT_FEE);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWENTY_K), TWENTY_K_DISCOUNTED_FEE);
+    assert_eq!(
+        config.fee_amount_after_discount(
+            FEE_AMOUNT,
+            config_constants::default_lower_benefit_power!(),
+        ),
+        HALF_BENEFIT_FEE,
+    );
+    assert_eq!(
+        config.fee_amount_after_discount(FEE_AMOUNT, THREE_HUNDRED_K),
+        THREE_HUNDRED_K_DISCOUNTED_FEE,
+    );
+    assert_eq!(
+        config.fee_amount_after_discount(
+            FEE_AMOUNT,
+            config_constants::default_upper_benefit_power!(),
+        ),
+        FULL_BENEFIT_FEE,
+    );
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWO_MILLION), FULL_BENEFIT_FEE);
     destroy(config);
 }

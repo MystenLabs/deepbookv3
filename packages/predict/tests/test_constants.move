@@ -49,7 +49,7 @@ public fun quote_asset_id(): u32 { 840 }
 
 /// Wall-clock the fixture's `Clock` starts at. Grid-aligned (a multiple of
 /// `constants::resolution_period_ms!()`) so `now + N*period` expiries land on the
-/// settlement grid that `create_expiry_market` enforces.
+/// settlement grid that `create_and_share_expiry_market` enforces.
 public fun now_ms(): u64 { 120_000 }
 
 /// Source timestamp for the bootstrap/live oracle seed (< `now_ms`, within

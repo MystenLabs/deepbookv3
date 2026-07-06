@@ -88,9 +88,9 @@ Every live pricing path resolves a single `(forward, SVIParams)` tuple before pr
 
 ```mermaid
 flowchart TD
-    A[BS spot and forward fresh?] -- no --> X[abort EBlockScholesPriceStale]
-    A -- yes --> S[SVI fresh?]
-    S -- no --> Y[abort EBlockScholesSVIStale]
+    A[BS spot and forward present and fresh?] -- no --> X[abort EBlockScholesPriceUnavailable / EBlockScholesPriceStale]
+    A -- yes --> S[SVI present and fresh?]
+    S -- no --> Y[abort EBlockScholesSVIUnavailable / EBlockScholesSVIStale]
     S -- yes --> B{normalized Pyth spot fresh?}
     B -- yes --> C["forward = pyth_spot x basis(expiry)<br/>basis = bs.forward / bs.spot"]
     B -- no --> D["forward = bs.forward(expiry)<br/>(Block Scholes fallback)"]
@@ -103,7 +103,7 @@ The rules:
 - **Pyth spot is canonical for spot when fresh and usable.** When `normalized_spot()` returns a positive spot and its source timestamp is fresh, the live forward is rebuilt from it: `forward = pyth_spot × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
 - **Missing, stale, or unusable Pyth spot falls back to Block Scholes.** If Pyth has no normalized latest spot, the normalized spot is non-positive/unrepresentable, or its source timestamp is stale, pricing falls back to the fresh `BlockScholesForwardFeed` value directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
 - **Oversized normalized Pyth spot is still rejected.** A normalized Pyth spot above Predict's pricing envelope aborts with `EPythSpotInvalid`; this is a consumer-side fixed-point safety bound, not a Propbook validity rule.
-- **The Block Scholes inputs have no fallback.** BS spot, BS forward, and SVI must be fresh enough either way; stale BS spot/forward blocks pricing with `EBlockScholesPriceStale`, and stale SVI blocks pricing with `EBlockScholesSVIStale`.
+- **The Block Scholes inputs have no fallback.** BS spot, BS forward, and SVI must be present and fresh either way. An absent input — never published, or a stored value that does not normalize (e.g. zero) — aborts with `EBlockScholesPriceUnavailable` (spot/forward) or `EBlockScholesSVIUnavailable` (SVI); a present-but-stale input aborts with `EBlockScholesPriceStale` or `EBlockScholesSVIStale`.
 
 Note the asymmetry: the Block Scholes forward/SVI source set is mandatory and gated by hard aborts, while the Pyth spot is an optimization that degrades to the Block Scholes forward when absent, stale, or not positively normalizable.
 

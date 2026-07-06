@@ -82,10 +82,12 @@ Built-in: `fuzz` (default — random feasible trades + adversarial probes), `min
 (high-frequency unleveraged mints into the nearest expiry, 10k run-to-completion), `mixed-churn`
 (leveraged mints + partial/full redeems + LP supply/withdraw), `liq-churn` (high-leverage
 near-the-money orders that knock out, so the liquidation pass + NAV-under-liquidation accounting
-are exercised), and `nav-stress` (piles a low-leverage book into ONE 1h market to measure the max
-leverage-book size the keeper flush can value in one PTB; `analyze` plots flush gas vs book size and
-finds the breakpoint — run with `SIM_GAS_BUDGET=50000000000` so the trader has headroom and the
-flush is measured against the protocol gas ceiling).
+are exercised), `mint-batch` (batched leveraged mint scaling), `nav-stress` / `nav-stress-atm` /
+`nav-stress-multi` (single-market, ATM-cost, and pool-total flush scaling), and
+`batch-max-book` / `batch-max-markets` (fast batched fills toward the per-market leveraged cap and
+the live-market pool total). Stress strategies that submit large mint PTBs should be run with
+`SIM_GAS_BUDGET=50000000000` so the trader has headroom and the keeper flush is measured against
+the protocol computation ceiling.
 
 `campaign S1 S2 …` runs each named strategy on its **own** localnet (all off one shared hub) to
 completion, tears everything down, then prints a **per-strategy** `analyze` report + an aggregate

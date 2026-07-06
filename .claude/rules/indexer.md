@@ -7,7 +7,7 @@ paths:
 
 # Indexer Development Rules
 
-> **Scope:** this file covers the CORE crates (`crates/{server,indexer,schema}`). The globs above do **NOT** cover the sibling PREDICT crates `crates/predict-{server,indexer,schema}` — for those, read `.claude/rules/predict-indexer.md` first (it intentionally improves on a few core patterns), then this file for the shared operational gotchas.
+> **Scope:** this file covers the core DeepBook Rust crates that remain in this repo: `crates/{server,indexer,schema}`.
 
 **Update this file** when you discover new indexer insights, performance issues, or debugging tips during sessions.
 
@@ -60,9 +60,11 @@ Calls `/ticker` internally, so inherits all its performance issues.
 ### margin_manager_state Table
 - Manager lookups: filter/join by `deepbook_pool_id`
 
-## Recommended Indices
+## Performance Indices (already applied)
 
-These composite indices significantly improve query performance:
+These composite indices exist via migration
+`2026-02-03-000000-0000_add_ticker_performance_indexes` — do not re-add them.
+Kept here as the query-pattern reference for new endpoints:
 
 ```sql
 -- order_fills: volume and ticker queries

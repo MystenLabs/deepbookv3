@@ -39,6 +39,8 @@ public struct OrderMinted has copy, drop, store {
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
+    /// Builder credited for `builder_fee`; `none` when no builder fee was paid
+    /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
 }
 
@@ -62,6 +64,8 @@ public struct LiveOrderRedeemed has copy, drop, store {
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
+    /// Builder credited for `builder_fee`; `none` when no builder fee was paid
+    /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
 }
 

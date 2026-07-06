@@ -67,23 +67,23 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
         test_constants::short_expiry_ms(),
     );
     fx.scenario_mut().next_tx(test_constants::admin());
-    let harness_id = share_exposure_harness(&mut fx);
+    let harness_id = create_and_share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    let order = harness
+    let terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             test_constants::default_strike_tick(),
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             LEVERAGE_TWO_X,
-        )
-        .allocated_order();
+        );
+    let order = harness.exposure.allocate_mint_order(terms);
 
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);
@@ -92,7 +92,7 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
     (fx, oracle, harness, order)
 }
 
-fun share_exposure_harness(fx: &mut OracleFixture): ID {
+fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let expiry_market_id = fx.expiry_id();
     let expiry_ms = fx.expiry();
     let id = object::new(fx.scenario_mut().ctx());

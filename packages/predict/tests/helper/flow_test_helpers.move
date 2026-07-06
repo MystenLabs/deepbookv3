@@ -30,8 +30,9 @@ use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
+    builder_code::BuilderCode,
     constants,
-    expiry_market::ExpiryMarket,
+    expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
@@ -39,7 +40,8 @@ use deepbook_predict::{
     pricing,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
-    test_constants
+    test_constants,
+    test_helpers
 };
 use dusdc::dusdc::DUSDC;
 use propbook::{
@@ -141,7 +143,7 @@ public fun setup_market(tick: u64): Fixture {
     config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
@@ -183,35 +185,14 @@ public fun setup_market(tick: u64): Fixture {
     // and capture the vault id.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
-    let bs_forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
-    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
-    propbook_registry::bind_pyth_to_underlying(
-        &mut oracle_registry,
+    test_helpers::bind_feeds_to_underlying(
+        &scenario,
         &propbook_admin_cap,
-        &pyth,
-        test_constants::propbook_underlying_id(),
+        pyth_id,
+        bs_spot_id,
+        bs_forward_id,
+        bs_svi_id,
     );
-    propbook_registry::bind_block_scholes_spot_to_underlying(
-        &mut oracle_registry,
-        &propbook_admin_cap,
-        &bs_spot,
-        test_constants::propbook_underlying_id(),
-    );
-    propbook_registry::bind_block_scholes_surface_to_underlying(
-        &mut oracle_registry,
-        &propbook_admin_cap,
-        &bs_forward,
-        &bs_svi,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
@@ -287,7 +268,7 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let config = self.scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -312,7 +293,7 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry.create_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
@@ -342,6 +323,54 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 /// Pause / unpause global trading through a market bundle.
 public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
     self.set_trading_paused(&mut market.config, paused);
+}
+
+/// Enable the EWMA congestion penalty with explicit parameters through the
+/// real admin path.
+public fun set_ewma_penalty(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    alpha: u64,
+    z_score_threshold: u64,
+    penalty_rate: u64,
+) {
+    config.set_ewma_params(&self.admin_cap, alpha, z_score_threshold, penalty_rate);
+    config.set_ewma_enabled(&self.admin_cap, true);
+}
+
+/// Enable the EWMA congestion penalty through a market bundle.
+public fun set_ewma_penalty_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    alpha: u64,
+    z_score_threshold: u64,
+    penalty_rate: u64,
+) {
+    self.set_ewma_penalty(&mut market.config, alpha, z_score_threshold, penalty_rate);
+}
+
+/// Create and share a builder code, then set it as the trader's sticky
+/// attribution. Runs its own transactions; call before taking bundles.
+public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
+    self.scenario.next_tx(trader.owner);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let code_id = registry.create_and_share_builder_code(
+        &config,
+        code_index,
+        self.scenario.ctx(),
+    );
+    return_shared(registry);
+    return_shared(config);
+
+    self.scenario.next_tx(trader.owner);
+    let code = self.scenario.take_shared_by_id<BuilderCode>(code_id);
+    let mut wrapper = self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id);
+    let auth = account::generate_auth(self.scenario.ctx());
+    predict_account::set_builder_code(&mut wrapper, auth, &code, self.scenario.ctx());
+    return_shared(code);
+    return_shared(wrapper);
+    code_id
 }
 
 /// Pause / unpause minting for one expiry market through the real admin path.
@@ -393,7 +422,7 @@ public fun set_default_cadence_allocation(
     self.scenario.next_tx(test_constants::admin());
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    registry.set_cadence_config(
+    registry.set_template_cadence_config(
         &config,
         &self.admin_cap,
         test_constants::propbook_underlying_id(),
@@ -431,8 +460,20 @@ public fun sponsor_fee_incentives_bundle(
 /// Take the market transaction objects as a named bundle to avoid wide positional
 /// tuple plumbing in flow tests.
 public fun take_market_bundle(self: &mut Fixture, expiry_id: ID): MarketBundle {
+    let pyth_id = self.pyth_id;
+    self.take_market_bundle_with_pyth(expiry_id, pyth_id)
+}
+
+/// Take market transaction objects with an explicit Pyth feed id. Used by Propbook
+/// rebind tests where the market and BS feeds stay fixed but the current Pyth feed
+/// changes.
+public fun take_market_bundle_with_pyth(
+    self: &mut Fixture,
+    expiry_id: ID,
+    pyth_id: ID,
+): MarketBundle {
     MarketBundle {
-        pyth: self.scenario.take_shared_by_id<PythFeed>(self.pyth_id),
+        pyth: self.scenario.take_shared_by_id<PythFeed>(pyth_id),
         bs: self.take_bs(),
         oracle_registry: self.scenario.take_shared<OracleRegistry>(),
         vault: self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
@@ -473,6 +514,34 @@ public fun block_scholes_feed_for_testing(
     svi: BlockScholesSVIFeed,
 ): BlockScholesFeed {
     bs_feed::new(spot, forward, svi)
+}
+
+/// Create a replacement Propbook Pyth feed and rebind the fixture's underlying to
+/// it, leaving the old feed shared for negative binding tests.
+public fun create_and_rebind_pyth(self: &mut Fixture, source_id: u32): ID {
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        source_id,
+        self.scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
+    propbook_registry::replace_pyth_binding_for_underlying(
+        &mut oracle_registry,
+        &self.propbook_admin_cap,
+        &pyth,
+        test_constants::propbook_underlying_id(),
+    );
+    return_shared(pyth);
+    return_shared(oracle_registry);
+
+    self.scenario.next_tx(test_constants::admin());
+    pyth_id
 }
 
 /// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
@@ -840,6 +909,77 @@ public fun mint_exact_quantity_bundle(
         max_cost,
         max_probability,
     )
+}
+
+/// Anonymous read-only mint quote through a market bundle: same pricer wiring
+/// as the mint helpers, no account objects.
+public fun quote_mint_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint(
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Account-aware read-only mint quote through market/account bundles.
+public fun quote_mint_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
 }
 
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
@@ -1359,6 +1499,25 @@ public fun stake_deep_bundle(
         );
 }
 
+/// Withdraw all staked DEEP back to the account through the production PLP path.
+public fun unstake_deep_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account_bundle: &mut AccountBundle,
+) {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .vault
+        .unstake_deep(
+            &mut account_bundle.wrapper,
+            auth,
+            &market.config,
+            &account_bundle.root,
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
 /// Claim a settled trading-loss rebate through owner auth.
 public fun claim_trading_loss_rebate_bundle(
     self: &mut Fixture,
@@ -1433,6 +1592,12 @@ public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
         &market.pyth,
         &market.bs,
     )
+}
+
+/// Read one order's gross-of-fees live holder value through a market bundle.
+public fun order_value_bundle(self: &Fixture, market: &MarketBundle, order_id: u256): u64 {
+    let pricer = self.load_pricer_bundle(market);
+    market.market.order_value(&pricer, order_id)
 }
 
 public fun load_pricer(

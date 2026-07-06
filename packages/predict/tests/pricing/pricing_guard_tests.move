@@ -35,7 +35,9 @@
 /// a valid surface is pushed, never a mispricing. `ECannotBeNegative` in
 /// `compute_nd2` is the one genuinely unreachable guard: the envelope's `|rho| <= 1`
 /// makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0` always; it is a
-/// defensive fixed-point guard, noted not tested.
+/// defensive fixed-point guard, noted not tested. `ETickNotInPriceMemo` is a
+/// package-level cache contract guard and is covered directly below; the successful
+/// memo path is covered in `payout_tree_walk_tests`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -66,15 +68,22 @@ const DEEP_ITM_STRIKE: u64 = 1;
 /// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
 /// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
-
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
 const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
 const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
+const PRICE_MEMO_MISSING_TICK: u64 = 100;
 
-// === Abort guards (production-valid fixture bring-up) ===
+// === Abort guards ===
+
+#[test, expected_failure(abort_code = pricing::ETickNotInPriceMemo)]
+fun cached_range_price_with_missing_finite_tick_aborts() {
+    let memo = pricing::new_price_memo();
+    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+    abort EUnexpectedSuccess
+}
 
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]
 fun live_quote_with_equal_range_bounds_aborts() {
@@ -87,6 +96,29 @@ fun live_quote_with_equal_range_bounds_aborts() {
         test_constants::default_live_price(),
         test_constants::default_live_price(),
     );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
+fun live_quote_with_no_block_scholes_price_aborts() {
+    // A market that has never received a BS push: normalized_spot is none, so
+    // pricing aborts on absence (distinct from the staleness code below).
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let oracle = fx.take_oracle_bundle();
+    live_quote(&fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
+fun live_quote_with_prices_but_no_svi_aborts() {
+    // Spot and forward pushed, SVI never pushed: the SVI absence code fires,
+    // distinct from EBlockScholesSVIStale.
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let now = test_constants::live_source_timestamp_ms();
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    live_quote(&fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
     abort EUnexpectedSuccess
 }
 
@@ -160,9 +192,11 @@ fun live_pricer_with_wrong_forward_feed_aborts() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
-    let wrong_forward = fx.scenario_mut().take_shared_by_id<BlockScholesForwardFeed>(
-        wrong_forward_id,
-    );
+    let wrong_forward = fx
+        .scenario_mut()
+        .take_shared_by_id<BlockScholesForwardFeed>(
+            wrong_forward_id,
+        );
     load_pricer_with_forward(&fx, &oracle, &wrong_forward);
 
     abort EUnexpectedSuccess
@@ -497,12 +531,12 @@ fun load_pricer_with_forward(
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
-        fx.expiry_id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(oracle),
         oracle_fixture::bs(oracle).spot(),
         forward,
         oracle_fixture::bs(oracle).svi(),
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );
@@ -512,12 +546,12 @@ fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockS
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
-        fx.expiry_id(),
-        test_constants::propbook_underlying_id(),
         oracle_fixture::pyth(oracle),
         oracle_fixture::bs(oracle).spot(),
         oracle_fixture::bs(oracle).forward(),
         svi,
+        fx.expiry_id(),
+        test_constants::propbook_underlying_id(),
         fx.expiry(),
         fx.clock(),
     );

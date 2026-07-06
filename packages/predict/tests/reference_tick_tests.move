@@ -29,8 +29,11 @@ const REFERENCE_TICK: u64 = 101;
 const ADMISSIBLE_OFF_GRID_REFERENCE_TICK: u64 = 75_788;
 const OTHER_OFF_GRID_TICK: u64 = 102;
 const REFERENCE_SPOT_WITH_DUST: u64 = 101_123_456_789;
+/// Floors to tick 105 — a different reference tick than REFERENCE_SPOT_WITH_DUST's 101.
+const CONFLICTING_REFERENCE_SPOT: u64 = 105_500_000_000;
 const TINY_SPOT: u64 = 999_999_999;
 const ROGUE_PYTH_SOURCE_ID: u32 = 999;
+const REBOUND_PYTH_SOURCE_ID: u32 = 777;
 const LARGE_VARIANCE_SCENARIO: u64 = 0;
 const EUnexpectedSuccess: u64 = 999;
 
@@ -107,6 +110,37 @@ fun set_reference_tick_floors_spot_and_is_idempotent() {
     fx.finish();
 }
 
+/// A second reference-tick set can only derive a CONFLICTING value if the canonical
+/// Pyth binding was replaced in between (the exact-history print itself is
+/// first-write-wins). The replacement feed carries a different exact print at the
+/// reference timestamp, so the second set aborts instead of silently moving the tick.
+#[test, expected_failure(abort_code = strike_exposure::EReferenceTickAlreadySet)]
+fun set_reference_tick_conflicting_value_after_rebind_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let mut market = fx.take_expiry_market();
+    let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
+
+    fx.insert_exact_pyth_bundle(&mut oracle, REFERENCE_SPOT_WITH_DUST, source_timestamp_ms);
+    market.set_reference_tick(
+        oracle_fixture::config(&oracle),
+        oracle_fixture::oracle_registry(&oracle),
+        oracle_fixture::pyth(&oracle),
+    );
+    oracle_fixture::return_oracle_bundle(oracle);
+
+    let rebound_ids = fx.create_and_rebind_oracle(REBOUND_PYTH_SOURCE_ID);
+    let mut rebound = fx.take_oracle_bundle_by_ids(rebound_ids);
+    fx.insert_exact_pyth_bundle(&mut rebound, CONFLICTING_REFERENCE_SPOT, source_timestamp_ms);
+    market.set_reference_tick(
+        oracle_fixture::config(&rebound),
+        oracle_fixture::oracle_registry(&rebound),
+        oracle_fixture::pyth(&rebound),
+    );
+
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = strike_exposure::EInvalidReferenceTick)]
 fun set_reference_tick_floor_to_zero_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
@@ -127,15 +161,16 @@ fun set_reference_tick_floor_to_zero_aborts() {
 fun off_grid_tick_before_reference_tick_is_set_aborts() {
     let (_fx, pricer, mut harness) = setup_priced_harness();
 
-    harness
+    let terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             REFERENCE_TICK,
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
         );
+    harness.exposure.allocate_mint_order(terms);
     abort EUnexpectedSuccess
 }
 
@@ -145,26 +180,26 @@ fun reference_tick_admits_up_and_down_ranges() {
 
     assert_reference_tick_is_off_admission_grid(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
     harness.exposure.set_reference_tick(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
-    let up_order = harness
+    let up_terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
-        )
-        .allocated_order();
-    let down_order = harness
+        );
+    let up_order = harness.exposure.allocate_mint_order(up_terms);
+    let down_terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             0,
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
-        )
-        .allocated_order();
+        );
+    let down_order = harness.exposure.allocate_mint_order(down_terms);
 
     assert_range(&up_order, ADMISSIBLE_OFF_GRID_REFERENCE_TICK, constants::pos_inf_tick!());
     assert_range(&down_order, 0, ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
@@ -177,15 +212,16 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
     let (_fx, pricer, mut harness) = setup_priced_harness();
 
     harness.exposure.set_reference_tick(REFERENCE_TICK);
-    harness
+    let terms = harness
         .exposure
-        .allocate_mint_order(
+        .quote_mint_terms(
             &pricer,
             OTHER_OFF_GRID_TICK,
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
         );
+    harness.exposure.allocate_mint_order(terms);
     abort EUnexpectedSuccess
 }
 
@@ -206,14 +242,14 @@ fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
     oracle_fixture::return_oracle_bundle(oracle);
-    let harness_id = share_exposure_harness(&mut fx);
+    let harness_id = create_and_share_exposure_harness(&mut fx);
     fx.scenario_mut().next_tx(test_constants::admin());
     let harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
 
     (fx, pricer, harness)
 }
 
-fun share_exposure_harness(fx: &mut OracleFixture): ID {
+fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
     let exposure = strike_exposure::new(

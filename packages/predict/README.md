@@ -5,7 +5,7 @@ Predict is an on-chain protocol for European cash-settled binary options
 at a fixed future **expiry**: a contract pays a fixed notional if the settlement
 price lands inside the trader's chosen strike range, and zero otherwise. Each
 contract can carry **deterministic leverage**, modelled as embedded premium
-financing — a time-varying floor on the contract's own payoff — plus a
+financing — a static floor on the contract's own payoff — plus a
 knock-out, rather than as a separate debt position. A shared **pool** of
 liquidity providers writes every contract and earns the trading flow.
 
@@ -27,5 +27,13 @@ sui move build                          # build the package
 sui move test --gas-limit 100000000000  # run the Move test suite
 ```
 
-See the repository root `CLAUDE.md` and `.claude/rules/` for contributor
-conventions.
+## Developing Predict
+
+The team's development system — the live tracker, settled decision records,
+response policies, harness experiment ledger, and audit obligations — starts at
+[`predeploy/README.md`](./predeploy/README.md) (the system map and authority
+order). Read it before proposing or changing protocol behavior; it is how work
+stays coherent across sessions and contributors.
+
+See the repository root `CLAUDE.md` / `AGENTS.md` and `.claude/rules/` for
+contributor conventions.

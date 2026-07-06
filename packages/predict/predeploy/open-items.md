@@ -1,0 +1,213 @@
+# Predict Predeploy Open Items
+
+Updated 2026-07-06. This is the team-facing tracker for open Predict deploy
+gates, audit findings, stress-test follow-ups, and required decisions.
+
+Resolved items should be removed from this file. Historical raw audit output may
+remain in ignored agent scratchpads, but this file is the tracked manifest.
+
+## Deploy Gates
+
+### S-4: Block Scholes updates are forgeable while the verifier is a stub
+
+**Severity:** Deploy gate.
+
+`block_scholes_oracle::update` currently constructs public stub updates. Propbook
+BS feed writes are permissionless and gated by source id, timestamp monotonicity,
+freshness, and Predict's pricing-safe envelope, not by a production signature
+verifier. Do not deploy to a value-bearing environment until the real verifier
+replaces the stub or the BS push surface is cap-gated.
+
+## Contract Findings
+
+### P-2: Near-expiry SVI freshness can overprice tails
+
+**Severity:** Medium.
+
+SVI total variance is consumed as variance-to-expiry, but the SVI freshness
+window is much wider than the final seconds/minutes before expiry. A stale but
+fresh-enough surface near expiry can materially overstate remaining uncertainty
+and misprice mint/redeem flows.
+
+**Action:** Add a minimum time-to-expiry live-pricing cutoff, scale SVI
+freshness with remaining time, or otherwise document and bound the accepted
+near-expiry pricing window.
+
+### P-5: BS zero/non-normalizable updates can blank live reads
+
+**Severity:** Low / adjacent to S-4.
+
+The BS spot/forward read projections return `none` for zero values, but the write
+path accepts and stores raw zero values. A bad push can blank the latest read and
+transiently DoS priced flows until a valid push lands.
+
+**Action:** Restore write-time nonzero/normalizable guards for BS spot and
+forward updates, or document that the production verifier/source guarantees this.
+
+### P-7: Async LP requests have no fill-price protection
+
+**Severity:** Medium.
+
+PLP supply and withdraw requests are queued and filled later at the next flush's
+frozen PLP mark. If the pool has a small amount of PLP capital and at least one
+live market, `current_nav` can be volatile. A large backlog of supply requests
+could all be filled at an unfavorable transient PLP price, and withdraw requests
+have the symmetric risk. Economically, queued supply/withdraw requests behave
+like limit orders to buy or sell PLP, but the request objects currently carry no
+per-request slippage bound.
+
+**Action:** Add request-time limit fields: `min_plp_out` for supply requests and
+`min_dusdc_out` for withdraw requests. `finish_flush` should fill only requests
+whose frozen-mark output satisfies the limit; requests that miss their limit
+should remain queued or be explicitly refundable/cancellable under a documented
+policy. Add tests for both pass and miss cases, including a volatile low-capital
+pool mark.
+
+### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
+
+**Severity:** Medium / required decision before deploy.
+
+Materialized protocol profit joins into `PoolVault.protocol_reserve_balance`
+(plp.move:797, :912) but no split/withdraw/claim entrypoint exists in any of the
+four packages (verified by grep at HEAD b34b0cd4; only a getter and an event
+field read it). The protocol cut is excluded from LP value and can never leave
+the vault without a package upgrade.
+
+**Action:** Add an AdminCap-gated withdraw entrypoint (e.g.
+`withdraw_protocol_reserve` splitting from the balance), or record deliberate
+deferral to a post-deploy upgrade as the decision. (audit 412e9e)
+
+## Capacity and Liveness Findings
+
+### C-1: Full-pool flush has no joint valuation budget
+
+**Severity:** Medium / must be accepted or fixed before deployment.
+
+The flush values every active market in one PTB. Current independent caps
+(`24` live markets, `1000` payout nodes, `5000` leveraged orders per market) do
+not compose into the 5M computation-unit wall. The NAV price memo removed the
+single-market pre-cap OOG: one market at 5,000 leveraged orders has been measured
+around 47-54% of the wall. The remaining deploy blocker is the pool-total case:
+multi-market stress reached the wall around the current aggregate envelope, and
+the 24-market cap is still far above the measured safe joint budget.
+
+**Action:** Add a joint budget across all active markets, tighten caps to the
+measured single-PTB envelope, or make valuation resumable across PTBs. See
+`stress/capacity-and-gas-findings.md`.
+
+### C-4: LP flush drain hard-aborts on a zero-value head request or a NAV==0 mark
+
+**Severity:** Medium.
+
+`lp_book::drain` asserts `shares > 0` / `payout > 0` per filled request and
+`pool_value > 0` / `total_supply > 0` in the share-pricing helpers, all under a
+single `EInvalidDrainMark`. A head request whose fill rounds to zero, or a
+reachable NAV==0 mark (sticky profit-basis exclusion exceeding gross — see the
+plp.move:735-740 comment), aborts the entire flush instead of skipping or
+refunding the degenerate request. The only unblock is the request owner
+voluntarily cancelling; a hostile or absent owner stalls the FIFO indefinitely,
+freezing all supply/withdraw behind it.
+
+**2026-07-02 extension — the opposite (overflow) boundary is also uncovered.**
+At a dust-but-nonzero mark (reachable via `lp_pool_value`'s zero-floor path), a
+large-enough queued supply request makes
+`supply_shares = mul_div_down(amount, total_supply, pool_value)` exceed u64 and
+the flush dies on `math::mul_div_down`'s raw u64 cast — an untracked arithmetic
+abort, not `EInvalidDrainMark`. A smaller request that fits mints ~1e18 shares;
+`total_supply` only shrinks via withdrawals, so the inflated supply persists
+after NAV recovers, permanently pinning PLP price at dust and progressively
+widening the overflow band (one dust fill converts a micro-DUSDC fragile window
+into a thousands-of-DUSDC one). The P-1 circuit breaker deleted in `cc67ed9f`
+was incidentally the only u64-headroom bound on this math. See
+`response-policies.md` RP-1/RP-2.
+
+**Action:** Treat zero-value fills as skip/auto-cancel-and-refund instead of
+aborting, and reserve `EInvalidDrainMark` for genuinely invalid marks (or split
+the error codes and add an eviction path for degenerate head requests). The fix
+must compute fills in u128 and classify "does not fit u64" the same as "rounds
+to zero" (skip, never abort), add boundary tests on both sides of each
+classification, and decide whether supply fills execute at all below an
+executable mark price (ratchet prevention — never mint into a degenerate
+ratio). Design this together with the P-7 limit-field policy, which already
+needs a stay-queued/skip decision for missed limits. (audit 11767b; overflow
+extension from the 2026-07-02 sweep)
+
+## Oracle Calibration
+
+### O-1: Near-expiry oracle miscalibration is exploitable
+
+**Severity:** High if near-expiry markets are enabled without recalibration.
+
+Offline and on-chain tests found high-priced near-expiry binary contracts
+systematically underpriced and low-priced contracts systematically overpriced.
+See `oracle-calibration.md`.
+
+**Action:** Recalibrate near-expiry volatility/time-to-expiry behavior or block
+the affected near-expiry market shape until the reliability curve is verified.
+
+## Maintainability and Pre-Deploy Hygiene
+
+From the 2026-07-02 mini audit sweep (HEAD b34b0cd4). These are free to fix
+pre-deploy and breaking (or permanent) after; none block correctness today.
+
+### H-3: Smaller cleanup items
+
+- Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
+  helpers (and shared guard preamble) across the BS forward/SVI/spot feeds into
+  a generic `oracle_lane` helper. (audit 7af3ed)
+- `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
+  `ExpiryCash` solvency invariant — consider folding it into the custody
+  component so per-expiry DUSDC has one owner. (audit 49108f)
+
+### H-5: Careful trade-flow dedup batch (verify deeply before fixing)
+
+**Severity:** Low, but all four sit on or near the mint/redeem path — not
+hygiene-speed changes.
+
+- Pyth canonical-binding check re-implemented in `expiry_market` (:776-783)
+  instead of owned by `pricing` — re-home behind one owner. (audit 0622da)
+- `mint_exact_amount` prices and admission-validates the same range twice per
+  call — verify the second validation is not a distinct fact, then dedupe.
+  (audit fb3ec8)
+- Four cascading asserts under one `ENetPremiumBudgetTooHigh` exist only to
+  pre-empt +1 overflow — verify and collapse. (audit a68338)
+- `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
+  returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
+
+### H-6: Maintainability backlog
+
+- Thread the cadence value group (tick_size, admission_tick_size,
+  max_expiry_allocation, initial_expiry_cash, window_size) as a named
+  `CadenceParams` struct instead of a 5-long u64 run through
+  registry → market_manager → event; reshapes the public
+  `set_template_cadence_config` signature, so coordinate with the positional TS
+  callers. (hygiene sweep)
+- `expiry_market` god-module decomposition (trade sequencing / fee decomposition
+  / payment settlement / lifecycle in one 1170-line module) — decide a seam or
+  consciously accept before the codebase grows further. (audit c3edaa)
+
+### H-7: Test-coverage gaps from the PR #1097 review
+
+From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
+
+- **RP-3 clamp not directly pinned.** No flush test exercises the sticky-exclusion
+  clamp's own trigger (held-out total > a positive-then-collapsed gross). Add a
+  flush test that latches positive profit-basis credits (settle a profitable
+  market), withdraws idle, then collapses the remaining active mark so
+  `exclusion + pending > gross`, and asserts the flush still succeeds at NAV==0.
+- **New cadence public-read surface unclassified + uncovered.** The
+  `market_manager` cadence-config getters (registry.move:63 / market_manager.move
+  public reads) are `public` with no in-repo caller and no consumer-class doc
+  comment (violates the public-read classification policy this branch landed) and
+  have zero test coverage — classify each per the policy (delete or document the
+  consumer class), then cover the kept ones.
+- **`pricing` forward-absence branch untested.** `EBlockScholesPriceUnavailable`
+  is pinned for the spot-absence path but not the forward-absence path; add the
+  missing `expected_failure`.
+- **One-sided boundary/receiving-side assertions.** `unstake_deep` positive test
+  never asserts the account received the DEEP; the drain rounds-to-zero
+  boundaries are tested only on the aborting side; the all-in `max_cost` boundary
+  pair (from the now-resolved H-2 fix) pins only a 2-of-4-component decomposition
+  (zero builder fee / subsidy). Strengthen each to assert the received side / the
+  passing boundary.
+

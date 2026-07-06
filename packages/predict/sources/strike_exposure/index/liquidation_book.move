@@ -8,13 +8,13 @@
 /// orders that should be checked first. Beyond serving liquidation candidates, the
 /// book owns exactly one valuation read: `correction_value` walks its active
 /// leveraged set to value the NAV floor-correction term — the only place this
-/// module touches pricing/tick/floor math, and it does so through a caller-supplied
-/// `Pricer`, never owning the pricing model itself. It does not own payout backing,
+/// module touches floor math, and it reads range prices back from a caller-supplied
+/// `PriceMemo`, never owning the pricing model itself. It does not own payout backing,
 /// cash, or account positions. Liquidated tombstones persist until the holder
 /// redeems the worthless order and clears their account position.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, range_codec};
+use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo};
 use fixed_math::math;
 use sui::table::{Self, Table};
 
@@ -75,26 +75,24 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
 ///
 /// The active index already holds exactly the leveraged orders (1x mints are
 /// no-ops, liquidated orders are tombstoned out), so this scan needs no extra
-/// filtering. Each active order is priced by its encoded range. The `min` is the
-/// order's limited-recourse static floor: a knocked-out
-/// order's range value is capped at its floor and nets to zero against the linear
-/// term, so NAV needs no liquidation pass for an exact mark. All terms are
-/// non-negative — a plain `u64` sum. The caller (which owns the model) supplies the
-/// live `pricer` and the market `tick_size` for raw-strike decoding.
-public(package) fun correction_value(book: &LiquidationBook, pricer: &Pricer, tick_size: u64): u64 {
+/// filtering. Each active order's range price is read back from `memo` — the price
+/// cache the NAV linear walk filled for every tree node — so no order is re-priced.
+/// The `min` is the order's limited-recourse static floor: a knocked-out order's
+/// range value is capped at its floor and nets to zero against the linear term, so
+/// NAV needs no liquidation pass for an exact mark. All terms are non-negative — a
+/// plain `u64` sum. Every leveraged boundary is a tree node, so every lookup hits;
+/// `cached_range_price` aborts if one does not (a broken exposure index).
+public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): u64 {
     let mut correction = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
-        let (lower, higher) = range_codec::strikes_from_ticks(
-            order.lower_tick(),
-            order.higher_tick(),
-            tick_size,
+        let range_value = math::mul(
+            memo.cached_range_price(order.lower_tick(), order.higher_tick()),
+            order.quantity(),
         );
-        let range_value = math::mul(pricer.range_price(lower, higher), order.quantity());
-        let floor_value = order.floor_shares();
-        correction = correction + range_value.min(floor_value);
+        correction = correction + range_value.min(order.floor_shares());
         cursor = book.next_cursor(scan);
     };
     correction

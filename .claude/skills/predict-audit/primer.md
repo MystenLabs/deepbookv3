@@ -48,7 +48,7 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 ## Module map (CURRENT)
 
 ### `predict` (31 modules — the protocol core)
-- `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap & lifecycle-cap allowlists, `create_expiry_market`.
+- `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap & lifecycle-cap allowlists, `create_and_share_expiry_market`.
 - `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
 - `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions, per-expiry summaries, DEEP stake mirror; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
@@ -85,17 +85,19 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 - `account_events.move` — account event structs.
 
 ## Lifecycle (per expiry market)
-`market_manager` cadence config → `create_expiry_market` (reads no live spot; absolute ticks snapshotted from cadence) → seed propbook Pyth + BS data for the emitted expiry → `mint` → live trade/redeem (partial or full close) → permissionless passive liquidation (budgeted, folded into mint/redeem/supply/withdraw) → **passive settlement** (terminal spot = the exact post-expiry Pyth print from propbook minute history; if absent, the market stays unsettled and live valuation aborts) → settled redeem → compaction (free storage). Full-pool valuation: a transaction-local `PoolValuation` snapshots active expiries, values each once under the valuation lock; the **privileged** flush prices PLP supply AND withdraw at one exact `current_nav` mark.
+`market_manager` cadence config → `create_and_share_expiry_market` (reads no live spot; absolute ticks snapshotted from cadence) → seed propbook Pyth + BS data for the emitted expiry → `mint` → live trade/redeem (partial or full close) → permissionless passive liquidation (budgeted, folded into mint/redeem/supply/withdraw) → **passive settlement** (terminal spot = the exact post-expiry Pyth print from propbook minute history; if absent, the market stays unsettled and live valuation aborts) → settled redeem → compaction (free storage). Full-pool valuation: a transaction-local `PoolValuation` snapshots active expiries, values each once under the valuation lock; the **privileged** flush prices PLP supply AND withdraw at one exact `current_nav` mark.
 
 ## Glossary (neutral)
 absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` = open-ended-range sentinels. floor_shares = the **static** deterministic floor `F` of a leveraged position (the LP-funded leverage portion); winner payout = `Q − F`. terminal vs live (backing) payout: under the static floor the winner's `Q - F` is exact at settlement, and the only pre-settlement conservatism is the aggregate disjoint-backing λ buffer (D030). payout_liability / settled_payout_liability = cash the market must back. rebate_reserve = reserve from collected-but-unresolved trading fees for loss rebates. EWMA penalty = gas-congestion fee surcharge. basis = forward/spot from BS pushes. SVI = volatility-surface parameterization for the binary tail. NAV = pool value pricing PLP shares; the flush mark is the **exact** `current_nav` (tree `walk_linear` − leveraged `correction_value`, floored), no conservative band. float_scaling = 1e9 fixed-point.
 
 ## Prior-awareness (mandatory)
 Before raising anything, consult the settled-decision ledger and respect it:
-- `.claude/predict-design/DECISION_JOURNAL.md` (D000–latest) and `HISTORY.md` — accepted/rejected; rejected entries carry don't-revisit conditions.
-- `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions".
-- `.claude/predict-design/ROUNDING_POLICY.md` — R1 liveness (dust never aborts; reserve ≥ payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
-A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+λ, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id and downranked to Info — not raised as new.
+- `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions" + "Rejected directions" (don't re-litigate a rejected direction unless its stated condition is met).
+- `packages/predict/predeploy/response-policies.md` — the register of settled tail-state response decisions (RP-*): chosen behavior, reasoning, pinning tests.
+- `packages/predict/predeploy/rounding-policy.md` — R1 liveness (dust never aborts; reserve >= payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
+- `packages/predict/predeploy/open-items.md` — committed deploy gates and active findings; do not duplicate an item already represented there.
+A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+lambda, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id / RP-id / committed-policy reference and downranked to Info — not raised as new.
+Prior-awareness cuts BOTH ways: a register or ledger entry that no longer matches HEAD (the pinning test is gone, the code stopped implementing the recorded response, `docs/risks.md` claims behavior the code doesn't have) is NOT protection — that drift is itself a reportable finding, at the severity of the underlying gap.
 
 ## Empirical toolbox (lens 09 owns it; any lens may use Python)
 `packages/predict/simulations/` is a real localnet + Python economic harness:

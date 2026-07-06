@@ -70,8 +70,8 @@ const BS_UNDERLYING_ID = PYTH_FEED_ID;
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
-// side). The harness tick size is $1 (1e9-scaled), mirroring the registered market
-// tick size for this Propbook underlying.
+// side). The concrete tick size below mirrors the registered market tick size for
+// this Propbook underlying.
 const TICK_BITS = 30n;
 const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 // $0.01 in 1e9 fixed-point — matches the testnet cadence tick_size (verified
@@ -470,7 +470,8 @@ export async function readPlpBalance(owner: string): Promise<bigint> {
 // prices PLP supply/withdraw against. devInspect loads the live pricer (updater-fresh feeds) then
 // reads `current_nav`. `Pricer has copy, drop`, so the unconsumed borrow is fine in a read-only
 // inspect. Phase-2b scaffolding for the (NOT-yet-landed) lp-adversary strategy — to watch the mark
-// collapse toward the NAV==0 brick (#lp-nav-zero-brick). Not consumed by any current strategy, so it
+// collapse toward a near-zero NAV mark, where a degenerate drain head aborts the flush
+// (open item C-4 / response-policies RP-2). Not consumed by any current strategy, so it
 // is validated against the deployed contracts when lp-adversary (harness E5) lands.
 export async function readCurrentNav(marketId: string, feeds: KeeperFeeds): Promise<bigint> {
     const tx = new Transaction();
@@ -929,7 +930,7 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
 export function mintLifecycleCapTx(recipient: string): Transaction {
     const tx = new Transaction();
     // MarketLifecycleCap mint moved from `plp` to `registry` (the allowlist now
-    // lives on Registry, its sole gating call site being create_expiry_market).
+    // lives on Registry, its sole gating call site being create_and_share_expiry_market).
     const cap = tx.moveCall({
         target: target("registry", "mint_lifecycle_cap"),
         // `mint_lifecycle_cap(registry, config, admin_cap, ctx)` — the mint is version-
@@ -993,7 +994,7 @@ export function setCadenceConfigTx(params: {
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "set_cadence_config"),
+        target: target("registry", "set_template_cadence_config"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
@@ -1160,7 +1161,7 @@ export async function seedOracleTx(params: {
 // Create the expiry market for one Propbook underlying. No spot is read at
 // creation. The registry validates, against propbook's canonical binding, that
 // Pyth + Block Scholes feeds are bound to `BS_UNDERLYING_ID` (run
-// `bindFeedsToUnderlyingTx` first). `create_expiry_market` returns one ID and
+// `bindFeedsToUnderlyingTx` first). `create_and_share_expiry_market` returns one ID and
 // registers the market with the vault as a zero-cash accounting row (not mintable
 // until `rebalance_expiry_cash` funds it).
 export function createExpiryMarketTx(params: {
@@ -1171,7 +1172,7 @@ export function createExpiryMarketTx(params: {
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "create_expiry_market"),
+        target: target("registry", "create_and_share_expiry_market"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(params.poolVaultId),

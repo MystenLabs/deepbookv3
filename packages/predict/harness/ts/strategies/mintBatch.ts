@@ -17,8 +17,8 @@
 // A large batch may OOG at the ~5e9 computation cap -> the ~110-op atomic-batch ceiling (caught + traced
 // as {oog:true}, not a crash). REQUIRES SIM_GAS_BUDGET=50000000000 so a batch can reach the cap.
 import { type Instruction } from "../resolver.js";
-import { type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
-import { errorTag } from "../trace.js";
+import { type MintLeg, type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
+import { errorTag, isOog } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
@@ -26,7 +26,6 @@ const TWO_HOURS_MS = 2 * 3_600_000;
 // the scan cost is isolated with no book churn (matches nav-stress's 1.1x).
 const LVG = 1.1;
 
-type Leg = { strike1e9: bigint; isUp: boolean; quantity: bigint; leverage1e9: bigint; maxCost: bigint; maxProbability: bigint };
 // One controlled batch per tick, cycled. `n` identical legs at `lev`x; `tailLeveraged` appends one LVG leg.
 type Spec = { kind: string; n: number; lev: number; tailLeveraged?: boolean };
 const SCRIPT: Spec[] = [
@@ -41,17 +40,26 @@ const SCRIPT: Spec[] = [
 
 let step = 0;
 let leveragedBook = 0; // running count of leveraged (>1x) orders in the liq book
+let lockedId: string | null = null;
 
 // Lock onto ONE persisting far-out (1h, >2h away) market so the whole script runs against one book.
 function targetMarket(ctx: StrategyCtx): Mkt | null {
-  if (ctx.held.length > 0) return ctx.markets().find((m) => m.id === ctx.held[0].marketId) ?? null;
+  if (lockedId) {
+    const locked = ctx.markets().find((m) => m.id === lockedId);
+    if (locked) return locked;
+    lockedId = null;
+    leveragedBook = 0;
+    step = 0;
+  }
   const live = ctx.markets();
   if (!live.length) return null;
   const farthest = live.reduce((a, b) => (b.expiryMs > a.expiryMs ? b : a));
-  return farthest.expiryMs > Date.now() + TWO_HOURS_MS ? farthest : null;
+  if (farthest.expiryMs <= Date.now() + TWO_HOURS_MS) return null;
+  lockedId = farthest.id;
+  return farthest;
 }
 
-function legFrom(ctx: StrategyCtx, market: Mkt, leverage: number): Leg | null {
+function legFrom(ctx: StrategyCtx, market: Mkt, leverage: number): MintLeg | null {
   const inst: Instruction = { direction: "UP", leverage, targetProbability: 0.5, spendUsd: ctx.rand(5, 10) };
   const r = ctx.resolve(inst, market);
   if (!r) return null;
@@ -78,7 +86,7 @@ const mintBatch: Strategy = {
 
     const base = legFrom(ctx, market, spec.lev);
     if (!base) return null;
-    const legs: Leg[] = [];
+    const legs: MintLeg[] = [];
     for (let i = 0; i < spec.n; i++) legs.push(base);
     if (spec.tailLeveraged) {
       const l = legFrom(ctx, market, LVG);
@@ -91,8 +99,7 @@ const mintBatch: Strategy = {
       leveragedBook += leveragedLegs;
       return "mint";
     } catch (e) {
-      const oog = /InsufficientGas|OUT_OF_GAS|computation/i.test(String(e));
-      if (oog) {
+      if (isOog(e)) {
         // OOG at the tx gas budget / 5e9 computation cap -> the atomic-batch ceiling. NOT a bug.
         ctx.trace({ type: "mintBatch", kind: spec.kind, n: legs.length, lev: spec.lev, book: leveragedBook, oog: true, err: errorTag(e) });
       } else {

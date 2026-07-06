@@ -46,11 +46,6 @@ jobs:
         run: |
           cargo nextest run -E 'package(deepbook-server)'
 
-      - name: Run predict indexer/server tests
-        run: |
-          cargo nextest run -E 'package(predict-indexer) + package(predict-server) + package(predict-schema)'
-
-
   rustfmt:
     runs-on: [ ubuntu-latest ]
     steps:

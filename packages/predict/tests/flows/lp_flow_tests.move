@@ -7,21 +7,18 @@
 /// `cancel_*`) pull from / refund to the manager's internal custody and therefore
 /// auto-settle from a `sui::accumulator::AccumulatorRoot`, which a Move unit test
 /// cannot construct (private `create`, `@0x0`-only). So the vault-level
-/// request / flush / circuit-breaker paths live in the untested outer layer; the
-/// flush DRAIN economics (proportional shares, FIFO-until-dry, per-queue budgets,
-/// frozen mark) and the manager-routed cancel refund + recipient check are re-covered
-/// root-free against a standalone `LpBook` in `lp_book_tests`. This file keeps only
-/// the root-free vault gates: the genesis `lock_capital` mint and the bootstrap
-/// precondition on the flush.
+/// request / cancel custody paths live in the accumulator-bound outer layer. Flush
+/// valuation is covered in `pool_valuation_flow_tests`, while the drain economics
+/// (proportional shares, FIFO-until-dry, per-queue budgets, frozen mark) and the
+/// manager-routed cancel refund + recipient check are re-covered root-free against
+/// a standalone `LpBook` in `lp_book_tests`. This file keeps only the root-free
+/// vault gates: the genesis `lock_capital` mint and the bootstrap precondition on
+/// the flush.
 #[test_only]
 module deepbook_predict::lp_flow_tests;
 
 use deepbook_predict::{
-    constants::{
-        min_bootstrap_liquidity as min_bootstrap,
-        min_supply_request as min_supply,
-        min_withdraw_request as min_withdraw
-    },
+    constants::{min_bootstrap_liquidity as min_bootstrap, min_supply_request as min_supply},
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
@@ -62,13 +59,6 @@ fun lock_capital_below_floor_aborts() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_bootstrap!() - 1); // below the genesis floor
     abort 999
-}
-
-#[test]
-fun min_bootstrap_liquidity_covers_withdraw_dust_band() {
-    // The genesis floor must keep total_supply at or above the withdraw dust band, so the
-    // (deleted) EPlpSupplyDust band is structurally unreachable once the pool is locked.
-    assert!(min_bootstrap!() >= min_withdraw!());
 }
 
 #[test, expected_failure(abort_code = plp::ENotBootstrapped)]

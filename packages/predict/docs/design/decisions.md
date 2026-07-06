@@ -165,7 +165,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
   fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
 	  be fresh under the BS price window, and SVI must be fresh under its own looser
-	  window (`EBlockScholesPriceStale` / `EBlockScholesSVIStale`).
+	  window (`EBlockScholesPriceStale` / `EBlockScholesSVIStale`; an absent or
+	  non-normalizable BS input aborts `EBlockScholesPriceUnavailable` /
+	  `EBlockScholesSVIUnavailable` instead).
 	  *Rationale:* the BS forward feed alone carries a usable forward, so a momentarily
 	  stale or non-positive/unrepresentable Pyth spot should not block trading. An oversized
 	  normalized Pyth spot still aborts under Predict's pricing envelope. BS spot, forward,
