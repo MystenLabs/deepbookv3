@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-02. This is the tracked register of **settled response-policy
+Updated 2026-07-06. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -242,6 +242,45 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
   touched.
 - **Reopen when:** profit-realization flow is redesigned.
+
+---
+
+*RP-9 is reserved by the in-flight quote-surface branch
+(`at/dbu-512-predict-quote-surface`, congestion-surcharge charge ordering).*
+
+## RP-10: Large atomic PTBs are cost-amplified by transaction-level metering — accept + disclose (closes C-3)
+
+- **Trigger state:** a router, keeper, or integrator builds a large
+  multi-command PTB of leveraged mints/redeems; per-command computation cost
+  grows with command position / accumulated transaction state, so the PTB hits
+  the 5M computation-unit wall far below N × standalone cost.
+- **Controller:** external — Sui's per-transaction metering, not a Predict code
+  path. No contract change alters it; raising the gas budget does not bypass
+  the computation wall.
+- **Blast radius:** the oversized transaction only — it aborts on OOG with no
+  state change; normal one-op user flows are unaffected. The same metering is
+  a cost term inside the mandatory flush PTB, tracked separately under C-1's
+  joint valuation budget.
+- **Response:** accept + disclose (`docs/risks.md` § Batched transactions).
+  Integrators chunk batches instead of assuming linear scaling. Scan-once
+  caching inside Predict was evaluated and rejected as low-yield: the
+  amplification is not primarily Predict's logical work.
+- **Reasoning:** the discriminator run was decisive — a leveraged mint appended
+  after twenty 1x mints (which never write the liquidation book) amplified
+  ~20.2×, ruling out liquidation-book page dirtying; the mechanism is
+  transaction-level command-position accumulation and applies to large
+  multi-command PTBs generally.
+- **Risk profile:** `MEASURED` on localnet (two replicated runs, harness E4):
+  ~110–150 leveraged mints/PTB atomic ceiling; a 100-mint PTB ≈ 68% of the
+  wall. Magnitude is book- and transaction-shape-dependent — localnet gives
+  mechanism and direction, not a permanent production multiplier; flows
+  designed near the ceiling should measure, not assume.
+- **Pinning tests:** none — platform metering behavior, not pinnable in Move
+  unit tests; evidence: `stress/mint-batch-findings-2026-07-01.md`
+  (`experiments.md` E4).
+- **Reopen when:** Sui's metering model changes materially, or a production
+  measurement diverges from the localnet ceiling enough to invalidate the
+  integrator guidance.
 
 ---
 
