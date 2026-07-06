@@ -25,20 +25,7 @@ If the user described it, restate your understanding and fill the gaps. Otherwis
 
 ## 2. Map the request to the `StrategyCtx`
 
-A strategy's `tick(ctx)` may use ONLY what the ctx (`ts/strategy.ts`) exposes. Check the request
-against it before promising anything:
-
-| Want to… | ctx surface |
-| --- | --- |
-| read live markets / oracle | `ctx.markets()`, `ctx.snapshot()`, `ctx.feeds` |
-| pick an expiry | `ctx.nearestExpiry()`, `ctx.randomExpiry()` |
-| price an order | `ctx.resolve(inst, market)` (feasibility + strike + caps) |
-| open a position | `ctx.mint(market, inst)` (leverage via `inst.leverage`, cap `ctx.leverageCap(p)`) |
-| close a position | `ctx.redeem(h, closeQuantity)` (partial or full; tracks the replacement) |
-| LP | `ctx.supply(dusdc)` (from custody), `ctx.withdraw(shares)` (after `ctx.refreshPlp()`) |
-| send an invalid / guard probe | `ctx.submitMint(market, params)` (raw, no bookkeeping) |
-| track / clean state | `ctx.held`, `ctx.plpShares`, `ctx.pruneSettled()` |
-| misc | `ctx.rand`, `ctx.pick`, `ctx.trace(record)` |
+A strategy's `tick(ctx)` may use ONLY what the ctx exposes — `ts/strategy.ts` is the authoritative surface (a table that lived here drifted from it and was removed); read it before promising anything. If the request needs something the ctx can't express, go to 3b.
 
 ## 3a. If the scenario IS supported → build it
 
@@ -68,15 +55,9 @@ multi-account interaction, cancelling a queued LP request, a new order type, …
    needs a contract change, raise it as a separate finding, not a harness edit.
 4. Validate as in 3a, then **tee up a PR** for the harness extension + the new strategy.
 
-## 4. Invariants every strategy must respect (see `predict-harness.md`)
+## 4. Invariants every strategy must respect
 
-- **Supply is custody-only** (`ctx.supply` → `requestSupplyFromCustodyTx`); **withdraw reads
-  first** (`ctx.refreshPlp()`, then `withdraw ≤ plpShares`) — an over-draw aborts in `lp_book`
-  and the bug oracle flags it as a false positive.
-- **One op per tick, `tickMs ≥ ~1s`** — opening and closing the same order in the same `Clock`
-  ms aborts (`EMintRedeemSameTimestamp`).
-- Go through the ctx — don't call builders / `submit` directly, and don't add a second data
-  stream (the updater is the only market-data consumer).
+`.claude/rules/predict-harness.md` owns them; the ones strategies most often violate are custody-only supply / read-before-withdraw, one-op-per-tick pacing (`tickMs ≥ ~1s`), ctx-only access, and one data stream.
 
 ## References
 - `ts/strategy.ts` — the `StrategyCtx` + `Strategy` contract (the only surface a strategy sees).
