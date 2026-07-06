@@ -48,9 +48,11 @@ loss/compromise/leak is recoverable.
 **Version-gating consistency (first-class deliverable):**
 - Enumerate EVERY state-mutating public/external entry across all four packages; build the version-gate on/off
   table. Find asymmetries — custody moves, fund-claim, object-creation NOT gated while sibling trade paths ARE;
-  for each, deliberate escape hatch or oversight? The mirror-sync model (allowed_versions on Registry copied to
-  each object via permissionless sync): failure modes of a partially-synced fleet; can the running version be
-  disabled out from under live flows?
+  for each, deliberate escape hatch or oversight? The watermark model (`ProtocolConfig.version_watermark` is a
+  monotonic floor; `config.assert_version()` gates; AdminCap `bump_version_watermark` advances): which mutating
+  entrypoints deliberately bypass the gate (emergency pause/revocation, terminal user exits) and is every bypass
+  harm-reducing-only? Can a watermark bump strand value a user already owns (settled redeems, withdrawals) that
+  must stay reachable under a freeze?
 - **Cross-package version skew + permissionless `migrate` (the unowned seam — audit it here).** THREE
   independent version schemes coexist: predict's `ProtocolConfig.version_watermark`/`current_version!()`,
   propbook's PER-FEED `version`, and `account` has NO version gate at all. Nothing reconciles them — predict

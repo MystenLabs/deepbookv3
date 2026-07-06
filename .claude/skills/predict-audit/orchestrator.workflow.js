@@ -20,7 +20,7 @@
 //   maxFindings?: number,   // cap NEW findings per lens per round (default: 12)
 //   dryRounds?:  number,    // stop after this many consecutive no-new-finding rounds (default: 2)
 //   maxRounds?:  number,    // hard round cap (default: 3)
-//   verifyCap?:  number,    // max Medium+ candidates sent to the verify panel (default: 60)
+//   verifyCap?:  number,    // max High/Critical candidates sent to the verify panel (default: 60)
 // }
 // COST IS BOUNDED BY CONSTRUCTION: total agents <= maxRounds*lenses (find) + verifyCap*3 (verify) + 1, so a
 // run CANNOT hit the 1000-agent cap even when no token budget binds. The `budget` global (a "+NNNm" turn
@@ -299,9 +299,9 @@ log(`Find converged after ${round} round(s): ${candidates.length} unique candida
 phase('Verify')
 const verifyAll = candidates.filter(shouldVerify).sort((a, b) => sevOf(b.severity) - sevOf(a.severity))
 const toVerify = verifyAll.slice(0, VERIFY_CAP)
-const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // Medium+ beyond the cap -> reported unverified (logged, never silently dropped)
+const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // High/Critical beyond the cap -> reported unverified (logged, never silently dropped)
 const unverified = candidates.filter(f => !shouldVerify(f)).concat(verifyOverflow)
-if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} Medium+ candidate(s) reported UNVERIFIED — raise verifyCap to panel them all`)
+if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} High/Critical candidate(s) reported UNVERIFIED — raise verifyCap to panel them all`)
 // A null verdict (codex absent, StructuredOutput flake) is retried ONCE on the default Claude agent before
 // being accepted as dead — infrastructure failure must not quietly demote a finding to 'uncertain'.
 async function verdictAgent(prompt, lens, label) {

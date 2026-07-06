@@ -29,6 +29,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 - **Predict-cluster contracts** (`packages/{predict,propbook,block_scholes_oracle,account}/**/*.move`) → `.claude/rules/predict-contracts.md` *(also read `move.md`)*
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
 - **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
+- **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md` *(thin stub — retires when the core crates migrate)*
 - **Predict indexer** (`crates/predict-{server,schema,indexer}/**`) → `.claude/rules/predict-indexer.md`
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 

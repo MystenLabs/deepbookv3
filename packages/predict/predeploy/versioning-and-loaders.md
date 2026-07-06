@@ -44,8 +44,7 @@ is disabled.
 - Keep raw getters and operational discovery readable during a version freeze.
 - Move duplicated flow preconditions into named flow loaders where they truly
   apply.
-- Remove per-object `allowed_versions` mirrors if there is a cleaner central
-  pattern.
+- ~~Remove per-object `allowed_versions` mirrors~~ Shipped: no mirrors exist at HEAD — `ProtocolConfig.version_watermark` is the central pattern.
 - Keep emergency, recovery, and harm-reducing paths callable even when the
   active version is disabled.
 - Keep Predict independent of the extracted oracle package's versioning (already
@@ -80,37 +79,24 @@ mirrors anywhere at HEAD.
 
 ## Central version authority
 
-The cleaner long-term pattern is to store Predict's authoritative
-`allowed_versions` in exactly one Predict object: `ProtocolConfig`.
-
-`ProtocolConfig` is a better home than `Registry` for the runtime version gate:
-
-- It already owns global flow gates such as `trading_paused` and
-  `valuation_in_progress`.
-- Most hot protocol flows already take `&ProtocolConfig`.
-- Moving the version set there removes registry sync calls from runtime
-  versioning.
-- The registry can stay focused on uniqueness, cap allowlists, factories, and
-  derived-object roots.
-
-With this pattern, `ExpiryMarket` and `PoolVault` no longer store
-`allowed_versions`. Their checked loaders take `&ProtocolConfig` and call a
-package-internal version assertion:
+**Shipped.** Central version authority lives in exactly one Predict object —
+`ProtocolConfig` — via the monotonic `version_watermark` (a single `u64`).
+`ExpiryMarket` and `PoolVault` store no version state; gated flows call:
 
 ```move
-public(package) fun assert_version_allowed(config: &ProtocolConfig) {
+// protocol_config.move (HEAD) — the authoritative gate
+public(package) fun assert_version(config: &ProtocolConfig) {
     assert!(
-        config.allowed_versions.contains(&constants::current_version!()),
+        constants::current_version!() >= config.version_watermark,
         EPackageVersionDisabled,
     );
 }
 ```
 
-Disabling the active package version becomes immediate for every flow that uses
-the central config gate. This intentionally removes the current stale-mirror
-window where a per-object mirror may remain enabled until a sync transaction
-updates it. Because Predict is still pre-deploy, this is a reasonable semantic
-improvement rather than a migration concern.
+`bump_version_watermark` (AdminCap-gated) advances the floor; disabling an old
+package version is immediate for every gated flow the moment the watermark
+passes it — there is no per-object mirror and no sync window. The loader
+proposal below builds on this shipped gate; it does not change the model.
 
 ## Loader contract
 
@@ -336,24 +322,19 @@ This can be revisited if repeated config checks become a measured gas issue.
 
 ### Single allowed version scalar
 
-Store one allowed package version instead of a set.
-
-Pros:
-
-- Less storage and simpler checks.
-
-Cons:
-
-- No overlapping upgrade window.
-- Harder to run old and new package versions during a controlled migration.
-
-The set is worth keeping.
+Store one allowed package version instead of a set. This analysis originally
+rejected the scalar assuming exact-match semantics (no overlapping upgrade
+window). **Resolved by the shipped design:** the `version_watermark` scalar is a
+*floor*, not an exact match — every version `>= watermark` passes, so old and
+new package versions coexist during a controlled migration and the old one is
+retired by bumping the watermark past it. The floor scalar delivers the set's
+overlap property with scalar storage; there is no version set at HEAD.
 
 ## Recommended design
 
-Use `ProtocolConfig.allowed_versions` as the single authoritative Predict
-version set. Delete per-object `allowed_versions` mirrors from long-term Predict
-objects and remove the corresponding sync entrypoints.
+Keep `ProtocolConfig.version_watermark` as the single authoritative Predict
+version gate (shipped — see § Central version authority). There are no
+per-object mirrors or sync entrypoints; do not reintroduce them.
 
 Use checked `load_inner(config)` and `load_inner_mut(config)` for
 version-gated protocol objects, especially `ExpiryMarket` and `PoolVault`.

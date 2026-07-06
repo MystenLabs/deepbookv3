@@ -31,6 +31,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 - `.claude/rules/predict-contracts.md` for the Predict-cluster packages `packages/{predict,propbook,block_scholes_oracle,account}/**/*.move` (also read `move.md`)
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
 - `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
+- `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**` (thin stub)
 - `.claude/rules/predict-indexer.md` for the PREDICT crates `crates/predict-{server,indexer,schema}/**`
 - `.claude/rules/scripts.md` for `scripts/**`
 
