@@ -1594,6 +1594,12 @@ public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
     )
 }
 
+/// Read one order's gross-of-fees live holder value through a market bundle.
+public fun order_value_bundle(self: &Fixture, market: &MarketBundle, order_id: u256): u64 {
+    let pricer = self.load_pricer_bundle(market);
+    market.market.order_value(&pricer, order_id)
+}
+
 public fun load_pricer(
     self: &Fixture,
     market: &ExpiryMarket,

@@ -349,6 +349,25 @@ public(package) fun quote_mint_entry_probability(
     entry_probability
 }
 
+/// Return the live holder value of a full order close, gross of fees.
+///
+/// Already-liquidated and currently-liquidatable orders have zero holder value;
+/// otherwise this returns the order's current range value net of its static floor.
+public(package) fun order_value(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): u64 {
+    if (exposure.is_liquidated_order(order)) return 0;
+
+    let gross_value = exposure.gross_order_value(pricer, order);
+    let floor_amount = order.floor_shares();
+    let liquidation_threshold = math::div(floor_amount, exposure.config.liquidation_ltv());
+    if (gross_value <= liquidation_threshold) return 0;
+
+    gross_value.saturating_sub(floor_amount)
+}
+
 /// Close live indexed quantity and return redeem terms as a `CloseQuote`.
 ///
 /// The trade fee is recovered via `trading_fee` from the returned `range_probability`.
@@ -464,6 +483,16 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
+fun gross_order_value(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): u64 {
+    let (lower, higher) = exposure.order_boundaries(order);
+    let range_probability = pricer.range_price(lower, higher);
+    math::mul(range_probability, order.quantity())
+}
+
 /// Liquidate (knock out) `order` when its live value has reached the static floor:
 /// `qty·P <= floor_shares / liquidation_ltv`. The LTV buffer is the anti-arbitrage
 /// enforcement margin — knock out a hair before zero equity so a missed barrier
@@ -476,10 +505,8 @@ fun liquidate_order_if_under_floor(
     liquidation_ltv: u64,
 ): bool {
     let quantity = order.quantity();
-    let (lower, higher) = exposure.order_boundaries(order);
-    let range_probability = pricer.range_price(lower, higher);
     let floor_amount = order.floor_shares();
-    let gross_value = math::mul(range_probability, quantity);
+    let gross_value = exposure.gross_order_value(pricer, order);
     let liquidation_threshold = math::div(floor_amount, liquidation_ltv);
     let can_liquidate = gross_value <= liquidation_threshold;
     if (!can_liquidate) return false;

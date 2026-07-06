@@ -256,6 +256,18 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.cash.free_cash().saturating_sub(liability)
 }
 
+/// Return the live holder value of one order, gross of fees.
+///
+/// Already-liquidated and currently-liquidatable orders return zero; otherwise
+/// this returns the order's current range value net of its static floor. Public
+/// read for SDK/devInspect and external Move composition; callers must already
+/// know the order belongs to the position they are valuing.
+public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
+    market.assert_pricer_bound(pricer);
+    let order = order::from_order_id(order_id);
+    market.strike_exposure.order_value(pricer, &order)
+}
+
 /// Return whether minting is currently paused on this expiry market.
 public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
@@ -476,8 +488,10 @@ public fun mint_exact_amount(
 
 /// Redeem a live order you hold account authority over.
 ///
-/// A live order is priced and closed (partial or full); a liquidated tombstone is
-/// fully closed with zero payout. Settled orders must use `redeem_settled`.
+/// A live order is priced and closed (partial or full), unless it is currently
+/// liquidatable, in which case it is knocked out and fully closed with zero
+/// payout. A liquidated tombstone is fully closed with zero payout. Settled
+/// orders must use `redeem_settled`.
 /// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
 /// only when a live partial close leaves quantity open.
 ///
@@ -509,6 +523,7 @@ public fun redeem_live(
 
     let redeemed_order = order::from_order_id(order_id);
     market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget());
+    market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
         return (redeemed_order.id(), option::none())

@@ -52,6 +52,9 @@ const REBATE_AFTER_REDEEM: u64 = 6_300_000;
 /// = 420_000_000; removed floor is the 210_000_000 open floor; net of the
 /// withheld TRADE_FEE = 205_800_000.
 const REDEEM_NET_PAYOUT: u64 = 205_800_000;
+/// Public order-value read is gross of close-side fees: gross 420_000_000 minus
+/// the static order floor 210_000_000.
+const SOLVENT_ORDER_VALUE_GROSS_OF_FEES: u64 = 210_000_000;
 /// One grid tick below the orders' lower strike: the digital steps to p = 0,
 /// gross = 0 <= threshold floor(214_400_000 * 1e9 / 0.85e9) = 252_235_294.
 const DROPPED_SPOT: u64 = 99_000_000_000;
@@ -132,6 +135,14 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         helpers::expected_manager_state(POST_MINT_BALANCE, 2 * TRADE_FEE, 2, 0, 0),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_a));
+    assert_eq!(
+        fx.order_value_bundle(&market, order_a),
+        SOLVENT_ORDER_VALUE_GROSS_OF_FEES,
+    );
+    assert_eq!(
+        fx.order_value_bundle(&market, order_b),
+        SOLVENT_ORDER_VALUE_GROSS_OF_FEES,
+    );
 
     // --- L1 liveness: the not-liquidatable order closes at its spec value
     // (gross minus the LIVE floor at T1, minus the withheld fee).
@@ -188,6 +199,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
             0,
         ),
     );
+    assert_eq!(fx.order_value_bundle(&market, order_b), 0);
 
     // --- Targeted liquidation below the threshold: the knockout removes the
     // order's full backing, moves no cash, and never touches the manager.
@@ -207,6 +219,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
             0,
         ),
     );
+    assert_eq!(fx.order_value_bundle(&market, order_b), 0);
     assert!(helpers::has_position_bundle(&account, expiry_id, order_b));
 
     // --- Tombstone cleanup: zero payout, zero fee, position cleared.
