@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{self, MissedTickBehavior};
@@ -84,28 +84,14 @@ impl LiveOhclvCache {
         self.max_fills
     }
 
-    pub fn replace_watermarks(&self, watermarks: Vec<(MinuteKey, i64)>) {
-        let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
-        let latest_materialized_timestamp_ms = watermarks
-            .iter()
-            .map(|(_, timestamp_ms)| *timestamp_ms)
-            .max();
-        replace_watermarks_locked(&mut state, latest_materialized_timestamp_ms, watermarks);
-    }
-
     pub fn insert_fills(&self, fills: Vec<LiveFill>) {
         let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
 
         for fill in fills {
-            if is_fill_materialized(&state, &fill) {
+            if is_fill_materialized(&state, &fill)
+                || state.fills_by_digest.contains_key(&fill.event_digest)
+            {
                 continue;
-            }
-
-            if let Some(existing) = state.fills_by_digest.remove(&fill.event_digest) {
-                state.fill_order.remove(&FillOrderKey {
-                    timestamp_ms: existing.checkpoint_timestamp_ms,
-                    event_digest: existing.event_digest,
-                });
             }
 
             state.fill_order.insert(FillOrderKey {
@@ -127,16 +113,6 @@ impl LiveOhclvCache {
         }
     }
 
-    #[doc(hidden)]
-    pub fn cached_fills(&self) -> Vec<LiveFill> {
-        let state = self.state.read().expect("live OHCLV cache lock poisoned");
-        state
-            .fill_order
-            .iter()
-            .filter_map(|key| state.fills_by_digest.get(&key.event_digest).cloned())
-            .collect()
-    }
-
     pub fn overlay_candles(
         &self,
         interval: &str,
@@ -150,8 +126,13 @@ impl LiveOhclvCache {
             return stored;
         };
 
-        // Only overlay fills that match this request and are still newer than the
-        // corresponding materialized 1m candle watermark.
+        let latest_stored_trade_timestamp_ms = stored
+            .iter()
+            .filter_map(|candle| candle.last_trade_timestamp_ms)
+            .max();
+
+        // Only overlay fills that match this request and are newer than what
+        // the endpoint query just read from the materialized OHCLV table.
         let state = self.state.read().expect("live OHCLV cache lock poisoned");
         let mut live_fills: Vec<LiveFill> = state
             .fills_by_digest
@@ -160,7 +141,9 @@ impl LiveOhclvCache {
                 fill.pool_id == pool_id
                     && fill.checkpoint_timestamp_ms >= start_time_ms
                     && fill.checkpoint_timestamp_ms <= end_time_ms
-                    && !is_fill_materialized(&state, fill)
+                    && latest_stored_trade_timestamp_ms.map_or(true, |timestamp_ms| {
+                        fill.checkpoint_timestamp_ms > timestamp_ms
+                    })
             })
             .cloned()
             .collect();
@@ -174,27 +157,6 @@ impl LiveOhclvCache {
                 .then_with(|| a.event_digest.cmp(&b.event_digest))
         });
 
-        // A stored candle's last-trade timestamp is an exact materialization
-        // watermark only for 1m candles. Wider intervals use MAX(last_trade)
-        // across many 1m buckets, so using that value as a bucket-wide watermark
-        // would incorrectly hide unmaterialized fills from earlier minutes in the
-        // same 5m/1h/4h candle. Wider intervals rely on the cache's minute
-        // watermarks, then merge live fills into the stored candle below.
-        let stored_watermarks: HashMap<i64, i64> = if interval_ms == MINUTE_MS {
-            stored
-                .iter()
-                .filter_map(|candle| {
-                    candle
-                        .last_trade_timestamp_ms
-                        .map(|last_trade_timestamp_ms| {
-                            (candle.timestamp_ms, last_trade_timestamp_ms)
-                        })
-                })
-                .collect()
-        } else {
-            HashMap::new()
-        };
-
         // Aggregate raw live fills into the requested interval before merging
         // them with DB candles.
         let mut live_by_bucket: HashMap<i64, LiveAggregate> = HashMap::new();
@@ -204,15 +166,6 @@ impl LiveOhclvCache {
             // behavior so a mid-bucket request does not synthesize a partial
             // live candle timestamped before the requested window.
             if bucket_start_ms < start_time_ms {
-                continue;
-            }
-
-            if stored_watermarks
-                .get(&bucket_start_ms)
-                .is_some_and(|last_trade_timestamp_ms| {
-                    fill.checkpoint_timestamp_ms <= *last_trade_timestamp_ms
-                })
-            {
                 continue;
             }
 
@@ -236,7 +189,7 @@ impl LiveOhclvCache {
                 });
         }
 
-        let mut candles_by_bucket: HashMap<i64, Candle> = stored
+        let mut candles_by_bucket: BTreeMap<i64, Candle> = stored
             .into_iter()
             .map(|candle| (candle.timestamp_ms, candle))
             .collect();
@@ -279,8 +232,11 @@ impl LiveOhclvCache {
                 });
         }
 
-        let mut candles: Vec<Candle> = candles_by_bucket.into_values().collect();
-        candles.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
+        let mut candles: Vec<Candle> = candles_by_bucket
+            .into_iter()
+            .rev()
+            .map(|(_, candle)| candle)
+            .collect();
 
         candles.truncate(normalized_limit(limit));
 
@@ -323,7 +279,14 @@ impl LiveOhclvCache {
         let watermarks = reader
             .get_live_ohclv_watermarks_since(start_timestamp_ms)
             .await?;
-        self.replace_watermarks_with_latest(latest_materialized_timestamp_ms, watermarks);
+        {
+            let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
+            replace_watermarks_locked(
+                &mut state,
+                Some(latest_materialized_timestamp_ms),
+                watermarks,
+            );
+        }
 
         let fills = reader
             .get_live_ohclv_fills_since(start_timestamp_ms, self.max_fills())
@@ -331,19 +294,6 @@ impl LiveOhclvCache {
         self.insert_fills(fills);
 
         Ok(())
-    }
-
-    fn replace_watermarks_with_latest(
-        &self,
-        latest_materialized_timestamp_ms: i64,
-        watermarks: Vec<(MinuteKey, i64)>,
-    ) {
-        let mut state = self.state.write().expect("live OHCLV cache lock poisoned");
-        replace_watermarks_locked(
-            &mut state,
-            Some(latest_materialized_timestamp_ms),
-            watermarks,
-        );
     }
 
     fn clear(&self, latest_materialized_timestamp_ms: Option<i64>) {

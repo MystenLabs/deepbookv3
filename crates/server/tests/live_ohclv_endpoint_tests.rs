@@ -1,14 +1,15 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use deepbook_server::live_ohclv::LiveFill;
 use diesel_async::RunQueryDsl;
 use http_body_util::BodyExt;
 use prometheus::Registry;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sui_pg_db::temp::TempDb;
 use sui_pg_db::{Db, DbArgs};
+use tokio::time::sleep;
 use tower::ServiceExt;
 use url::Url;
 
@@ -16,7 +17,7 @@ use deepbook_server::server::{make_router, AppState};
 
 const POOL_NAME: &str = "BASE_USDC";
 const POOL_ID: &str = "pool-1";
-const T0_MS: i64 = 1_699_999_980_000;
+const STALE_T0_MS: i64 = 1_699_999_980_000;
 const MINUTE_MS: i64 = 60_000;
 
 #[derive(Clone, Copy, Debug)]
@@ -125,14 +126,12 @@ fn fill(tag: &'static str, timestamp_ms: i64, price: i64, base_volume: i64) -> L
     }
 }
 
-fn expected_cached_fill(fill: LiveFillSeed) -> LiveFill {
-    LiveFill {
-        event_digest: format!("fill-{}", fill.tag),
-        pool_id: POOL_ID.to_string(),
-        checkpoint_timestamp_ms: fill.timestamp_ms,
-        price: fill.price as f64,
-        base_volume: fill.base_volume as f64,
-    }
+fn fresh_t0_ms() -> i64 {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    (now_ms / MINUTE_MS - 2) * MINUTE_MS
 }
 
 fn raw_amount(value: i64) -> i64 {
@@ -266,6 +265,42 @@ fn assert_candle(response: &Value, expected: CandleValues) {
     assert_eq!(candle[5].as_f64().unwrap(), expected.base_volume);
 }
 
+fn response_matches_candle(response: &Value, expected: CandleValues) -> bool {
+    let Some(candles) = response["candles"].as_array() else {
+        return false;
+    };
+    if candles.len() != 1 {
+        return false;
+    }
+    let Some(candle) = candles[0].as_array() else {
+        return false;
+    };
+
+    candle[0].as_i64() == Some(expected.timestamp_ms)
+        && candle[1].as_f64() == Some(expected.open)
+        && candle[2].as_f64() == Some(expected.high)
+        && candle[3].as_f64() == Some(expected.low)
+        && candle[4].as_f64() == Some(expected.close)
+        && candle[5].as_f64() == Some(expected.base_volume)
+}
+
+async fn wait_for_candle(router: &Router, uri: &str, expected: CandleValues) -> Value {
+    let mut last_response = None;
+    for _ in 0..50 {
+        let response = get(router, uri).await;
+        if response_matches_candle(&response, expected) {
+            return response;
+        }
+        last_response = Some(response);
+        sleep(Duration::from_millis(20)).await;
+    }
+
+    panic!(
+        "OHCLV endpoint did not return expected candle {:?}; last response: {:?}",
+        expected, last_response
+    );
+}
+
 fn assert_no_candles(response: &Value) {
     assert_eq!(
         response["candles"].as_array().unwrap(),
@@ -275,122 +310,93 @@ fn assert_no_candles(response: &Value) {
 
 #[tokio::test]
 async fn ohclv_endpoint_overlays_new_fill_before_materialized_candle_catches_up() {
-    let stored = candle(T0_MS, 10, 12, 9, 11, 5);
-    let live_fill = fill("live-1", T0_MS + 20_000, 15, 2);
+    let t0_ms = fresh_t0_ms();
+    let stored = candle(t0_ms, 10, 12, 9, 11, 5);
+    let live_fill = fill("live-1", t0_ms + 20_000, 15, 2);
     let (_temp_db, db, state, router) =
-        setup(&[materialized_candle(stored, 55, 2, T0_MS, T0_MS + 10_000)]).await;
-    let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
+        setup(&[materialized_candle(stored, 55, 2, t0_ms, t0_ms + 10_000)]).await;
+    let uri = uri(t0_ms, t0_ms + MINUTE_MS - 1, 1);
 
     let materialized = get(&router, &uri).await;
     assert_candle(&materialized, stored);
 
+    let poller = state.start_live_ohclv_poller(Duration::from_millis(10));
     insert_live_fill(&db, live_fill).await;
-    state
-        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
-        .await
-        .unwrap();
 
-    assert_eq!(
-        state.live_ohclv_cached_fills(),
-        vec![expected_cached_fill(live_fill)]
-    );
-
-    let live = get(&router, &uri).await;
-    assert_candle(&live, candle(T0_MS, 10, 15, 9, 15, 7));
+    let live = wait_for_candle(&router, &uri, candle(t0_ms, 10, 15, 9, 15, 7)).await;
+    assert_candle(&live, candle(t0_ms, 10, 15, 9, 15, 7));
+    poller.abort();
 }
 
 #[tokio::test]
 async fn ohclv_endpoint_creates_live_candle_when_materialized_bucket_is_missing() {
-    let previous = candle(T0_MS, 10, 12, 9, 11, 5);
-    let live_fill = fill("missing-minute", T0_MS + MINUTE_MS + 2_000, 20, 3);
+    let t0_ms = fresh_t0_ms();
+    let previous = candle(t0_ms, 10, 12, 9, 11, 5);
+    let live_fill = fill("missing-minute", t0_ms + MINUTE_MS + 2_000, 20, 3);
     let (_temp_db, db, state, router) =
-        setup(&[materialized_candle(previous, 55, 2, T0_MS, T0_MS + 10_000)]).await;
-    let uri = uri(T0_MS + MINUTE_MS, T0_MS + 2 * MINUTE_MS - 1, 1);
+        setup(&[materialized_candle(previous, 55, 2, t0_ms, t0_ms + 10_000)]).await;
+    let uri = uri(t0_ms + MINUTE_MS, t0_ms + 2 * MINUTE_MS - 1, 1);
 
     insert_live_fill(&db, live_fill).await;
-    state
-        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
-        .await
-        .unwrap();
+    let poller = state.start_live_ohclv_poller(Duration::from_millis(10));
 
-    assert_eq!(
-        state.live_ohclv_cached_fills(),
-        vec![expected_cached_fill(live_fill)]
-    );
-
-    let live = get(&router, &uri).await;
-    assert_candle(&live, candle(T0_MS + MINUTE_MS, 20, 20, 20, 20, 3));
+    let live = wait_for_candle(&router, &uri, candle(t0_ms + MINUTE_MS, 20, 20, 20, 20, 3)).await;
+    assert_candle(&live, candle(t0_ms + MINUTE_MS, 20, 20, 20, 20, 3));
+    poller.abort();
 }
 
 #[tokio::test]
 async fn ohclv_endpoint_does_not_overlay_when_no_materialized_watermark_exists() {
-    let live_fill = fill("no-watermark", T0_MS + 2_000, 20, 3);
+    let t0_ms = fresh_t0_ms();
+    let live_fill = fill("no-watermark", t0_ms + 2_000, 20, 3);
     let (_temp_db, db, state, router) = setup(&[]).await;
-    let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
+    let uri = uri(t0_ms, t0_ms + MINUTE_MS - 1, 1);
 
     insert_live_fill(&db, live_fill).await;
-    state
-        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
-        .await
-        .unwrap();
+    let poller = state.start_live_ohclv_poller(Duration::from_millis(10));
+    sleep(Duration::from_millis(50)).await;
 
-    assert_eq!(state.live_ohclv_cached_fills(), Vec::<LiveFill>::new());
     let response = get(&router, &uri).await;
     assert_no_candles(&response);
+    poller.abort();
 }
 
 #[tokio::test]
 async fn ohclv_endpoint_does_not_overlay_when_materialized_watermark_is_stale() {
-    let stored = candle(T0_MS, 10, 12, 9, 11, 5);
-    let live_fill = fill("stale-materializer", T0_MS + 20_000, 15, 2);
+    let t0_ms = STALE_T0_MS;
+    let stored = candle(t0_ms, 10, 12, 9, 11, 5);
+    let live_fill = fill("stale-materializer", t0_ms + 20_000, 15, 2);
     let (_temp_db, db, state, router) =
-        setup(&[materialized_candle(stored, 55, 2, T0_MS, T0_MS + 10_000)]).await;
-    let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
+        setup(&[materialized_candle(stored, 55, 2, t0_ms, t0_ms + 10_000)]).await;
+    let uri = uri(t0_ms, t0_ms + MINUTE_MS - 1, 1);
 
     insert_live_fill(&db, live_fill).await;
-    state
-        .poll_live_ohclv_once_at(T0_MS + 60 * MINUTE_MS)
-        .await
-        .unwrap();
+    let poller = state.start_live_ohclv_poller(Duration::from_millis(10));
+    sleep(Duration::from_millis(50)).await;
 
-    assert_eq!(state.live_ohclv_cached_fills(), Vec::<LiveFill>::new());
     let response = get(&router, &uri).await;
     assert_candle(&response, stored);
+    poller.abort();
 }
 
 #[tokio::test]
 async fn ohclv_endpoint_stops_overlaying_fill_after_materialized_watermark_catches_up() {
-    let stored = candle(T0_MS, 10, 12, 9, 11, 5);
-    let live_fill = fill("caught-up", T0_MS + 20_000, 15, 2);
+    let t0_ms = fresh_t0_ms();
+    let stored = candle(t0_ms, 10, 12, 9, 11, 5);
+    let live_fill = fill("caught-up", t0_ms + 20_000, 15, 2);
     let (_temp_db, db, state, router) =
-        setup(&[materialized_candle(stored, 55, 2, T0_MS, T0_MS + 10_000)]).await;
-    let uri = uri(T0_MS, T0_MS + MINUTE_MS - 1, 1);
+        setup(&[materialized_candle(stored, 55, 2, t0_ms, t0_ms + 10_000)]).await;
+    let uri = uri(t0_ms, t0_ms + MINUTE_MS - 1, 1);
 
     insert_live_fill(&db, live_fill).await;
-    state
-        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
-        .await
-        .unwrap();
+    let poller = state.start_live_ohclv_poller(Duration::from_millis(10));
 
-    assert_eq!(
-        state.live_ohclv_cached_fills(),
-        vec![expected_cached_fill(live_fill)]
-    );
-    let overlaid = get(&router, &uri).await;
-    assert_candle(&overlaid, candle(T0_MS, 10, 15, 9, 15, 7));
+    let overlaid = wait_for_candle(&router, &uri, candle(t0_ms, 10, 15, 9, 15, 7)).await;
+    assert_candle(&overlaid, candle(t0_ms, 10, 15, 9, 15, 7));
 
-    update_materialized_watermark(&db, T0_MS, live_fill.timestamp_ms).await;
+    update_materialized_watermark(&db, t0_ms, live_fill.timestamp_ms).await;
 
-    assert_eq!(
-        state.live_ohclv_cached_fills(),
-        vec![expected_cached_fill(live_fill)]
-    );
-    let materialized = get(&router, &uri).await;
+    let materialized = wait_for_candle(&router, &uri, stored).await;
     assert_candle(&materialized, stored);
-
-    state
-        .poll_live_ohclv_once_at(T0_MS + 2 * MINUTE_MS)
-        .await
-        .unwrap();
-    assert_eq!(state.live_ohclv_cached_fills(), Vec::<LiveFill>::new());
+    poller.abort();
 }

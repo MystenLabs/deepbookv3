@@ -1,4 +1,4 @@
-use deepbook_server::live_ohclv::{Candle, LiveFill, LiveOhclvCache, MinuteKey};
+use deepbook_server::live_ohclv::{Candle, LiveFill, LiveOhclvCache};
 
 const MINUTE_MS: i64 = 60_000;
 
@@ -70,14 +70,8 @@ fn overlay_five_minute_bucket_with_unmaterialized_fills() {
     let bucket_1232 = minute(12 * 60 + 32);
     let pool_id = "pool-1";
 
-    cache.replace_watermarks(vec![(
-        MinuteKey {
-            pool_id: pool_id.to_string(),
-            bucket_start_ms: bucket_1232,
-        },
-        bucket_1232 + 1_000,
-    )]);
     cache.insert_fills(vec![
+        // Already covered by the materialized candle's last trade timestamp.
         fill(
             "already-materialized",
             pool_id,
@@ -89,14 +83,30 @@ fn overlay_five_minute_bucket_with_unmaterialized_fills() {
         fill("live-b", pool_id, bucket_1232 + 4_000, 108.0, 2.0),
     ]);
 
-    let stored = vec![candle(bucket_1230, 100.0, 105.0, 95.0, 102.0, 10.0)];
+    let stored = vec![stored_candle(
+        bucket_1230,
+        100.0,
+        105.0,
+        95.0,
+        102.0,
+        10.0,
+        bucket_1232 + 1_000,
+    )];
     let overlaid =
         cache.overlay_candles("5m", pool_id, bucket_1230, bucket_1232 + 5_000, 10, stored);
 
     assert_eq!(overlaid.len(), 1);
     assert_eq!(
         overlaid[0],
-        candle(bucket_1230, 100.0, 110.0, 95.0, 108.0, 15.0)
+        stored_candle(
+            bucket_1230,
+            100.0,
+            110.0,
+            95.0,
+            108.0,
+            15.0,
+            bucket_1232 + 1_000
+        )
     );
 }
 
@@ -166,6 +176,8 @@ fn overlay_does_not_create_bucket_before_requested_start() {
         3.0,
     )]);
 
+    // The DB query filters by bucket_time >= start_time. The fill timestamp is
+    // inside the requested range, but its 1m bucket starts before start_time.
     let overlaid = cache.overlay_candles(
         "1m",
         pool_id,
@@ -179,7 +191,7 @@ fn overlay_does_not_create_bucket_before_requested_start() {
 }
 
 #[test]
-fn overlay_keeps_stored_close_when_live_fill_is_older_than_stored_bucket_close() {
+fn overlay_uses_stored_latest_trade_timestamp_as_cutoff() {
     let cache = LiveOhclvCache::new(100);
     let bucket_1230 = minute(12 * 60 + 30);
     let bucket_1231 = minute(12 * 60 + 31);
@@ -215,10 +227,10 @@ fn overlay_keeps_stored_close_when_live_fill_is_older_than_stored_bucket_close()
         vec![stored_candle(
             bucket_1230,
             100.0,
-            110.0,
+            105.0,
             95.0,
             102.0,
-            13.0,
+            10.0,
             bucket_1231 + 30_000,
         )]
     );
@@ -246,39 +258,6 @@ fn overlay_skips_daily_and_weekly_intervals() {
     assert_eq!(
         cache.overlay_candles("1w", pool_id, 0, bucket_1232 + 5_000, 10, stored.clone()),
         stored
-    );
-}
-
-#[test]
-fn cache_prunes_fills_covered_by_minute_watermark() {
-    let cache = LiveOhclvCache::new(100);
-    let bucket_1232 = minute(12 * 60 + 32);
-    let pool_id = "pool-1";
-
-    cache.insert_fills(vec![
-        fill("old", pool_id, bucket_1232 + 2_000, 110.0, 3.0),
-        fill("new", pool_id, bucket_1232 + 4_000, 108.0, 2.0),
-    ]);
-    cache.replace_watermarks(vec![(
-        MinuteKey {
-            pool_id: pool_id.to_string(),
-            bucket_start_ms: bucket_1232,
-        },
-        bucket_1232 + 2_000,
-    )]);
-
-    let overlaid = cache.overlay_candles(
-        "1m",
-        pool_id,
-        bucket_1232,
-        bucket_1232 + 5_000,
-        10,
-        Vec::new(),
-    );
-
-    assert_eq!(
-        overlaid,
-        vec![candle(bucket_1232, 108.0, 108.0, 108.0, 108.0, 2.0)]
     );
 }
 

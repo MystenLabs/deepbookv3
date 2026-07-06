@@ -38,7 +38,7 @@ use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
 use crate::admin::routes::admin_routes;
-use crate::live_ohclv::{LiveFill, LiveOhclvCache, OHCLV_DEFAULT_LIMIT, OHCLV_DEFAULT_WINDOW_MS};
+use crate::live_ohclv::{LiveOhclvCache, OHCLV_DEFAULT_LIMIT, OHCLV_DEFAULT_WINDOW_MS};
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::{PortfolioQueryResult, Reader};
@@ -256,21 +256,6 @@ impl AppState {
                 .run_poll_loop(live_ohclv_reader, poll_interval)
                 .await;
         })
-    }
-
-    #[doc(hidden)]
-    pub async fn poll_live_ohclv_once(&self) -> Result<(), DeepBookError> {
-        self.live_ohclv.poll_once(&self.reader).await
-    }
-
-    #[doc(hidden)]
-    pub async fn poll_live_ohclv_once_at(&self, now_ms: i64) -> Result<(), DeepBookError> {
-        self.live_ohclv.poll_once_at(&self.reader, now_ms).await
-    }
-
-    #[doc(hidden)]
-    pub fn live_ohclv_cached_fills(&self) -> Vec<LiveFill> {
-        self.live_ohclv.cached_fills()
     }
 
     pub fn is_valid_admin_token(&self, token: &str) -> bool {

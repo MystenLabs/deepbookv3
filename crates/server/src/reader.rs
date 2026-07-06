@@ -97,6 +97,8 @@ struct LiveOhclvFillRow {
 
 impl From<LiveOhclvFillRow> for LiveFill {
     fn from(row: LiveOhclvFillRow) -> Self {
+        // Match the materialized OHCLV functions: DeepBook prices have 9
+        // extra decimals before adjusting for base/quote asset decimals.
         let price_factor =
             10_f64.powi(9 - row.base_asset_decimals as i32 + row.quote_asset_decimals as i32);
         let base_quantity_factor = 10_f64.powi(row.base_asset_decimals as i32);
