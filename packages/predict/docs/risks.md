@@ -148,6 +148,12 @@ Liquidation passes are bounded by a per-transaction candidate budget: each call 
 
 The settlement-floor reserve is the cushion that makes this safe: the floor counts every open order's payout at each settlement price it can win, so a lagging liquidator does not by itself make the expiry under-backed — a position that should have been liquidated still has its (future) settlement payout covered, and removing it late can only release reserve. Because the per-order NAV correction already nets an exhausted order to zero, a lagging liquidator does not overstate the LP mark either; its only cost is leaving worthless orders in the live indexes until a later pass clears them.
 
+## Batched transactions
+
+Sui meters computation per transaction, and a command's cost grows with its position and the accumulated transaction state, so a large multi-command PTB costs far more than the sum of its commands run standalone. Measured on localnet: a standalone leveraged mint costs about 2M MIST of computation, the hundredth identical mint in one PTB about 34M, and a 100-mint PTB consumes roughly 68% of the 5M computation-unit cap — the atomic ceiling is around 110–150 leveraged mints per PTB, depending on book and transaction shape. This is platform-level metering, not a Predict code path: the amplification appears even when the batch prefix never touches the liquidation book, and raising the gas budget does not bypass the computation wall.
+
+Normal one-operation flows are unaffected. Routers, keepers, and integrators building atomic batches should chunk them into multiple transactions rather than assume standalone gas scales linearly, and should measure any flow designed near the ceiling — localnet gives the mechanism and direction, not a permanent production multiplier. Evidence and decision record: [`predeploy/stress/mint-batch-findings-2026-07-01.md`](../predeploy/stress/mint-batch-findings-2026-07-01.md) and the response-policy register (RP-10).
+
 ## Maturity and limitations
 
 Predict is pre-deployment software. Beyond the per-topic caveats above:

@@ -75,6 +75,18 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
 
+/// Return the current UP tail price for one strike. Public read for
+/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
+public fun up_price(pricer: &Pricer, strike: u64): u64 {
+    compute_up_price(&pricer.svi, pricer.forward, strike)
+}
+
+/// Return the current raw probability for a live range. Public read for
+/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
+public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+}
+
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
@@ -113,16 +125,6 @@ public(package) fun load_live_pricer(
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
     let (forward, svi) = live_inputs(config, pyth, bs_spot, bs_forward, bs_svi, expiry, clock);
     Pricer { expiry_market_id, forward, svi }
-}
-
-/// Return the current UP tail price for one strike.
-public(package) fun up_price(pricer: &Pricer, strike: u64): u64 {
-    compute_up_price(&pricer.svi, pricer.forward, strike)
-}
-
-/// Return the current raw probability for a live range.
-public(package) fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
 /// Create an empty per-flush price cache (see `PriceMemo`).

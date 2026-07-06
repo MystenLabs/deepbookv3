@@ -30,6 +30,7 @@ const EInvalidCloseQuantity: u64 = 0;
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
+const ETermsExposureMismatch: u64 = 4;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -57,12 +58,21 @@ public struct StrikeExposure has store {
     payout: StrikePayoutTree,
 }
 
-/// Quote and allocation result for a live mint order, returned by name so callers
-/// cannot transpose the entry probability and the cash net premium.
-public struct MintQuote has drop {
-    allocated_order: Order,
+/// Pure mint terms for one prospective live mint: the priced tick range,
+/// quantity, and leverage, plus the admission results they produced. Built only
+/// by `quote_mint_terms` and consumed by value in `allocate_mint_order`, so one
+/// terms value backs at most one allocation and allocation can never see inputs
+/// that differ from the priced ones. Terms carry the pricing exposure's market
+/// identity; allocation asserts it, so terms cannot cross exposure books.
+public struct MintTerms has drop {
+    expiry_market_id: ID,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    leverage: u64,
     entry_probability: u64,
     net_premium: u64,
+    floor_shares: u64,
 }
 
 /// Redeem terms from closing live indexed quantity. `resulting_order` is the
@@ -74,16 +84,20 @@ public struct CloseQuote has drop {
     range_probability: u64,
 }
 
-public(package) fun allocated_order(quote: &MintQuote): Order {
-    quote.allocated_order
+public(package) fun entry_probability(terms: &MintTerms): u64 {
+    terms.entry_probability
 }
 
-public(package) fun entry_probability(quote: &MintQuote): u64 {
-    quote.entry_probability
+public(package) fun net_premium(terms: &MintTerms): u64 {
+    terms.net_premium
 }
 
-public(package) fun net_premium(quote: &MintQuote): u64 {
-    quote.net_premium
+public(package) fun quantity(terms: &MintTerms): u64 {
+    terms.quantity
+}
+
+public(package) fun leverage(terms: &MintTerms): u64 {
+    terms.leverage
 }
 
 public(package) fun resulting_order(quote: &CloseQuote): Order {
@@ -246,23 +260,20 @@ public(package) fun close_settled_order(
     payout
 }
 
-/// Quote and allocate a live mint order for the tick range `(lower_tick, higher_tick]`.
-/// Returns a `MintQuote` with the allocated order, entry probability, and net premium.
-public(package) fun allocate_mint_order(
-    exposure: &mut StrikeExposure,
+/// Quote the pure mint terms for the tick range `(lower_tick, higher_tick]`
+/// without touching the exposure book: entry pricing, mint admission, and the
+/// derived premium/floor. Shares every admission abort with the mint path,
+/// including lot-size validity, so a quote aborts exactly when the mint-side
+/// terms computation would.
+public(package) fun quote_mint_terms(
+    exposure: &StrikeExposure,
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
-): MintQuote {
-    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let (lower, higher) = range_codec::strikes_from_ticks(
-        lower_tick,
-        higher_tick,
-        exposure.tick_size,
-    );
-    let entry_probability = pricer.range_price(lower, higher);
+): MintTerms {
+    let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
     let admission = exposure
         .config
         .assert_mint_admission(
@@ -270,8 +281,29 @@ public(package) fun allocate_mint_order(
             quantity,
             leverage,
         );
-    let net_premium = admission.net_premium();
-    let floor_shares = admission.floor_shares();
+    // Runs after admission so the quote path keeps mint's abort order (mint hits
+    // this check inside order construction, after admission).
+    order::assert_valid_quantity(quantity);
+    MintTerms {
+        expiry_market_id: exposure.expiry_market_id,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        entry_probability,
+        net_premium: admission.net_premium(),
+        floor_shares: admission.floor_shares(),
+    }
+}
+
+/// Allocate a live mint order from priced terms: consume the expiry-local
+/// sequence and insert the order into the liquidation and payout indexes.
+/// Taking `terms` by value ties each allocation to exactly one admission
+/// result, so the order's contract fields are always the ones that were priced,
+/// and the market-identity assert rejects terms priced on another exposure.
+public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
+    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, floor_shares, .. } = terms;
+    assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_ticks(
@@ -286,7 +318,7 @@ public(package) fun allocate_mint_order(
     exposure.liquidation.insert_order(&allocated_order);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
 
-    MintQuote { allocated_order, entry_probability, net_premium }
+    allocated_order
 }
 
 /// Set the reference fine-grid tick that can bypass coarser mint admission once wired.
@@ -303,6 +335,8 @@ public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64)
 }
 
 /// Quote immutable mint entry probability without mutating the exposure book.
+/// Quantity-free sibling of `quote_mint_terms` for sizing flows that price
+/// before the quantity is known; policy asserts only, no full admission.
 public(package) fun quote_mint_entry_probability(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -310,15 +344,28 @@ public(package) fun quote_mint_entry_probability(
     higher_tick: u64,
     leverage: u64,
 ): u64 {
-    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let (lower, higher) = range_codec::strikes_from_ticks(
-        lower_tick,
-        higher_tick,
-        exposure.tick_size,
-    );
-    let entry_probability = pricer.range_price(lower, higher);
+    let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
     exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
     entry_probability
+}
+
+/// Return the live holder value of a full order close, gross of fees.
+///
+/// Already-liquidated and currently-liquidatable orders have zero holder value;
+/// otherwise this returns the order's current range value net of its static floor.
+public(package) fun order_value(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): u64 {
+    if (exposure.is_liquidated_order(order)) return 0;
+
+    let gross_value = exposure.gross_order_value(pricer, order);
+    let floor_amount = order.floor_shares();
+    let liquidation_threshold = math::div(floor_amount, exposure.config.liquidation_ltv());
+    if (gross_value <= liquidation_threshold) return 0;
+
+    gross_value.saturating_sub(floor_amount)
 }
 
 /// Close live indexed quantity and return redeem terms as a `CloseQuote`.
@@ -438,6 +485,16 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
+fun gross_order_value(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): u64 {
+    let (lower, higher) = exposure.order_boundaries(order);
+    let range_probability = pricer.range_price(lower, higher);
+    math::mul(range_probability, order.quantity())
+}
+
 /// Liquidate (knock out) `order` when its live value has reached the static floor:
 /// `qty·P <= floor_shares / liquidation_ltv`. The LTV buffer is the anti-arbitrage
 /// enforcement margin — knock out a hair before zero equity so a missed barrier
@@ -450,10 +507,8 @@ fun liquidate_order_if_under_floor(
     liquidation_ltv: u64,
 ): bool {
     let quantity = order.quantity();
-    let (lower, higher) = exposure.order_boundaries(order);
-    let range_probability = pricer.range_price(lower, higher);
     let floor_amount = order.floor_shares();
-    let gross_value = math::mul(range_probability, quantity);
+    let gross_value = exposure.gross_order_value(pricer, order);
     let liquidation_threshold = math::div(floor_amount, liquidation_ltv);
     let can_liquidate = gross_value <= liquidation_threshold;
     if (!can_liquidate) return false;
@@ -484,6 +539,24 @@ fun liquidate_order_if_under_floor(
 /// settlement comparison, mapping the open-ended sentinels.
 fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
     range_codec::strikes_from_ticks(order.lower_tick(), order.higher_tick(), exposure.tick_size)
+}
+
+/// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
+/// validation. The single pricing-prefix orchestration shared by every mint
+/// quote/terms path.
+fun admitted_entry_probability(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+): u64 {
+    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
+    let (lower, higher) = range_codec::strikes_from_ticks(
+        lower_tick,
+        higher_tick,
+        exposure.tick_size,
+    );
+    pricer.range_price(lower, higher)
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {

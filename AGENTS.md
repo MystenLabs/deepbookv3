@@ -16,8 +16,6 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
   - `deepbook_margin/`, `margin_trading/`, `margin_liquidation/`, `token/`, `dbtc/`, `dusdc/` are supporting packages.
 - `crates/` contains Rust services:
   - `server/`, `indexer/`, `schema/` — the core DeepBook indexer stack
-  - `predict-server/`, `predict-indexer/`, `predict-schema/` — the Predict mirror stack
-  - `oracle-indexer/`, `oracle-server/` — propbook feed indexing
 - `scripts/` contains TypeScript transaction and ops scripts.
 - `.claude/rules/` contains repo-specific coding, testing, and review guidance.
 
@@ -32,7 +30,6 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
 - `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
 - `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**` (thin stub)
-- `.claude/rules/predict-indexer.md` for the PREDICT crates `crates/predict-{server,indexer,schema}/**`
 - `.claude/rules/scripts.md` for `scripts/**`
 
 ### Manual-Trigger Rules — read when the request matches
@@ -131,7 +128,7 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 - **v1 scope exclusions:** double-sided range leverage, a fungible "2x beta" token, and utilization-based financing rates — excluded because exact strike-level liquidation indexing requires monotonic single-sided payoffs and history-independent floors.
 
 **Follow-up state (verified 2026-07-02):**
-- The Rust `crates/predict-{schema,indexer,server}` crates are **landed** and handle the async-LP/oracle-era events (`supply_requested`/`withdraw_requested`/`supply_filled`/`withdraw_filled`/`request_cancelled`/`flush_executed`/`expiry_cash_rebalanced` handlers etc.), and `crates/oracle-{indexer,server}` index the propbook feeds. **Still open: an event-parity audit** — handlers remain for Move events that no longer exist (`predict_manager_created`, the three removed cap-mint handlers, `risk_config_updated`). Note that `PoolValued` was renamed `FlushExecuted` and the `SupplyRefunded`/`WithdrawRefunded` events do not exist yet (the drain refund path is the unimplemented C-4 fix), so don't treat those as current-but-unhandled. Verify handler↔event parity against the actual `vault_events`/`config_events` structs before relying on indexed data or deploying the indexer.
+- The old in-repo Rust Predict/oracle indexer crates were removed by #1098 because they were non-deployed parallel copies. Future Predict/propbook event decode work should start from the current Move event definitions; this repo no longer contains those service crates.
 - Simulation-harness deploy-readiness (full localnet `run.sh` parity) is tracked in `packages/predict/predeploy/open-items.md`; the Python-only path runs green.
 
 ## Code Review Norms

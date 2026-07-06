@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-02. This is the tracked register of **settled response-policy
+Updated 2026-07-06. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -242,6 +242,78 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
   touched.
 - **Reopen when:** profit-realization flow is redesigned.
+
+---
+
+## RP-9: Congestion surcharge charges against the pre-trade EWMA estimate
+
+- **Trigger state:** a trade lands at an outlier gas price (congestion spike or
+  trader-chosen gas) on either charging path — mint or live redeem.
+- **Controller:** market — gas price is trader/network-chosen; the protocol only
+  chooses the ordering of charge vs estimate update.
+- **Blast radius:** per-trade fee only (the surcharge is additive and
+  single-user); no shared-path liveness interaction.
+- **Response:** charge first, then fold the observation
+  (`expiry_market::ewma_penalty`) — a deliberate ordering divergence from
+  DeepBook core, which folds first and so tests each observation against a
+  distribution that already contains it.
+- **Reasoning:** detect-then-update is the standard anomaly-test order (the
+  spike is judged against the prior distribution, not diluted by itself), and
+  it makes the public quote surface exact: `quote_mint` /
+  `quote_mint_for_account` compute the same pre-fold penalty a same-state,
+  same-gas-price mint charges. Consequence: the surcharge fires more readily at
+  spike onset than under core's ordering; sustained spikes converge to the same
+  behavior. The first-observation variance-poisoning weakness
+  (`docs/concepts/fees-and-rebates.md` § 4) is unchanged.
+- **Risk profile:** `BEST-GUESS` — spike-onset firing frequency not measured
+  (the penalty is disabled by default).
+- **Pinning tests:** `extreme_first_observation_suppresses_penalty_for_later_trades`
+  (ewma_tests, charge-then-fold narrative),
+  `ewma_penalty_included_in_quote_and_mint_debits_exactly`
+  (quote_mint_tests, nonzero pre-fold penalty quoted and charged identically in
+  one transaction),
+  `quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost`
+  (quote_mint_tests, quote equals the debit with the penalty term at zero).
+- **Reopen when:** the penalty is enabled in production and measured firing
+  rates diverge materially from intent, or a redeem-side quote lands (DBU-513
+  scope) and wants different redeem semantics.
+
+---
+
+## RP-10: Large atomic PTBs are cost-amplified by transaction-level metering — accept + disclose (resolves C-3)
+
+- **Trigger state:** a router, keeper, or integrator builds a large
+  multi-command PTB of leveraged mints/redeems; per-command computation cost
+  grows with command position / accumulated transaction state, so the PTB hits
+  the 5M computation-unit wall far below N × standalone cost.
+- **Controller:** external — Sui's per-transaction metering, not a Predict code
+  path. No contract change alters it; raising the gas budget does not bypass
+  the computation wall.
+- **Blast radius:** the oversized transaction only — it aborts on OOG with no
+  state change; normal one-op user flows are unaffected. The same metering is
+  a cost term inside the mandatory flush PTB, tracked separately under C-1's
+  joint valuation budget.
+- **Response:** accept + disclose (`docs/risks.md` § Batched transactions).
+  Integrators chunk batches instead of assuming linear scaling. Scan-once
+  caching inside Predict was evaluated and rejected as low-yield: the
+  amplification is not primarily Predict's logical work.
+- **Reasoning:** the discriminator run was decisive — a leveraged mint appended
+  after twenty 1x mints (which never write the liquidation book) amplified
+  ~20.2×, ruling out liquidation-book page dirtying; the mechanism is
+  transaction-level command-position accumulation and applies to large
+  multi-command PTBs generally.
+- **Risk profile:** `MEASURED` on localnet (two replicated runs, harness E4):
+  ~110–150 leveraged mints/PTB atomic ceiling; a 100-mint PTB ≈ 68% of the
+  wall. Findings: `stress/mint-batch-findings-2026-07-01.md`. Magnitude is
+  book- and transaction-shape-dependent — localnet gives mechanism and
+  direction, not a permanent production multiplier; flows designed near the
+  ceiling should measure, not assume.
+- **Pinning tests:** not yet catalogued — platform metering behavior, not
+  pinnable in Move unit tests by nature; the evidence is the harness finding
+  linked above (`experiments.md` E4).
+- **Reopen when:** Sui's metering model changes materially, or a production
+  measurement diverges from the localnet ceiling enough to invalidate the
+  integrator guidance.
 
 ---
 

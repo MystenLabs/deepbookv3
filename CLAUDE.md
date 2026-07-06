@@ -30,7 +30,6 @@ DeepBook is a decentralized order book on the Sui blockchain.
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
 - **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
 - **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md` *(thin stub — retires when the core crates migrate)*
-- **Predict indexer** (`crates/predict-{server,schema,indexer}/**`) → `.claude/rules/predict-indexer.md`
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 
 ### Manual-Trigger Rules — read when the request matches
