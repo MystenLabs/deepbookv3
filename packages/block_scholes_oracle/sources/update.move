@@ -10,7 +10,8 @@
 /// is not production-safe until the real verifier lands.
 module block_scholes_oracle::update;
 
-/// A verified BS spot update for one source id.
+/// Operator-supplied BS spot update for one source id (signature verification
+/// arrives with the production verifier — see module doc; forgeable until then).
 public struct SpotUpdate has copy, drop {
     source_id: u32,
     /// Publisher snapshot timestamp, in milliseconds.
@@ -19,7 +20,8 @@ public struct SpotUpdate has copy, drop {
     spot: u64,
 }
 
-/// A verified BS forward update for one source id and expiry.
+/// Operator-supplied BS forward update for one source id and expiry (signature
+/// verification arrives with the production verifier — see module doc).
 public struct ForwardUpdate has copy, drop {
     source_id: u32,
     expiry_ms: u64,
@@ -29,9 +31,10 @@ public struct ForwardUpdate has copy, drop {
     forward: u64,
 }
 
-/// A verified BS SVI update for one source id and expiry. SVI `rho`/`m` are
-/// signed, carried as magnitude + sign primitives so this package stays
-/// dependency-free.
+/// Operator-supplied BS SVI update for one source id and expiry (signature
+/// verification arrives with the production verifier — see module doc). SVI
+/// `rho`/`m` are signed, carried as magnitude + sign primitives so this package
+/// stays dependency-free.
 public struct SVIUpdate has copy, drop {
     source_id: u32,
     expiry_ms: u64,

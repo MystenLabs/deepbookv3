@@ -32,7 +32,7 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 
 | Object | Role | Sharing |
 | --- | --- | --- |
-| `Registry` | Feed/expiry uniqueness, version set, pause + lifecycle caps, creation entrypoints | shared |
+| `Registry` | Feed/expiry uniqueness, cadence deployment configs, pause + lifecycle caps, creation entrypoints (versioning lives on `ProtocolConfig.version_watermark`) | shared |
 | `ProtocolConfig` | Admin-tunable config, `trading_paused`, the valuation lock, per-expiry runtime controls | shared |
 | `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, staked-DEEP custody, expiry ledger, the LP supply/withdraw queues | shared |
 | `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` DUSDC, exact `current_nav`, cleanup | shared, one per expiry |

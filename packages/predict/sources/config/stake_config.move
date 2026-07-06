@@ -72,8 +72,8 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 
 /// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING
 /// (0..1): linear 0 -> 0.5 over `0..lower`, linear 0.5 -> 1 over `lower..upper`,
-/// capped at 1 above `upper`. Relies on the `upper > 2 * lower` invariant (so
-/// `lower > 0` and `upper - lower > 0`).
+/// capped at 1 above `upper`. Relies on `lower >= min_lower_benefit_power!() > 0`
+/// (config bound) and the `upper > 2 * lower` pair invariant (so `upper - lower > 0`).
 fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
     let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;

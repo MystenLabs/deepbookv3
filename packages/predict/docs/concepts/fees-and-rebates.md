@@ -14,7 +14,7 @@ The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at cr
 
 ```text
 base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
-ramped_rate     = base_fee_rate * expiry_ramp_multiplier(time_to_expiry)   (>= base_fee_rate)
+ramped_rate     = base_fee_rate * expiry_fee_multiplier(time_to_expiry)   (>= base_fee_rate)
 trading_fee     = ramped_rate * quantity
 
 fee_after_disc  = trading_fee - trading_fee * (benefit_ratio * max_fee_discount)   (staking)

@@ -133,8 +133,8 @@ The packed layout is also reused as a deterministic liquidation priority key; se
 
 Minting quotes the live entry probability, computes the mint economics, validates
 them, derives `floor_shares`, and inserts the order into the expiry's live
-indexes. Beyond the price-band check on the all-in execution price (entry
-probability plus the live trade fee), mint admission enforces leverage-specific
+indexes. Beyond the admission band on the raw entry probability (fees are charged
+on top and excluded from the bound), mint admission enforces leverage-specific
 gates.
 
 ### Dynamic admission cap

@@ -88,7 +88,8 @@ The keeper treats expired-unsettled as a designed, monitored transient:
 - retry duration: indefinite, isolated per market;
 - sweep responsibility: every expired active market is driven through
   `plp::rebalance_expiry_cash` after its exact row is available, removing it from
-  `PoolVault.active_expiry_markets` before routine flushes;
+  the pool's active-expiry set (`pool_accounting::Ledger.active_expiry_markets`,
+  reached via the vault's expiry accounting) before routine flushes;
 - flush boundary guard: defer when any market is within 15 seconds of expiry or
   when an expired active market has not yet been swept/deactivated;
 - stuck threshold: report a service failure if any market remains

@@ -938,9 +938,10 @@ fun materialize_expiry_profit(
     );
 }
 
-/// Engage the valuation lock and snapshot the active expiry set. Shared by both
-/// cap-gated flush entrypoints. Gated on a bootstrapped pool so the flush mark
-/// always has nonzero PLP supply.
+/// Engage the valuation lock and snapshot the active expiry set for the single
+/// flush entrypoint, `start_pool_valuation` (lifecycle-cap-gated; the root-AdminCap
+/// flush path was removed — admin's break-glass is minting itself a lifecycle cap).
+/// Gated on a bootstrapped pool so the flush mark always has nonzero PLP supply.
 fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();

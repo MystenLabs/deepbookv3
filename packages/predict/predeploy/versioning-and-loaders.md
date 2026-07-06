@@ -68,15 +68,15 @@ Predict shared objects fall into different versioning categories:
 
 | Category | Objects | Version policy |
 | --- | --- | --- |
-| Version authority | `Registry` | **Shipped:** owns the authoritative `allowed_versions` set; the two gated objects mirror it. Also owns underlying admission, expiry uniqueness, cap allowlists, and derived-object creation. Version-management and emergency pause/revocation paths bypass the gate. (The proposal below moves the *runtime* version set to `ProtocolConfig`; that has not shipped.) |
-| Global flow gates | `ProtocolConfig` | Owns trading pause, the valuation lock, and admin-tunable config. Does not own the version set today. |
-| Version-gated protocol state | `ExpiryMarket`, `PoolVault` | The only two version-gated objects. Each mirrors `Registry.allowed_versions` and asserts it on every mutating flow; raw getters stay ungated. |
-| User and attribution objects | `PredictManager`, `BuilderCode` | Not package-version gated. They own user custody, caps, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
-| External oracle package | `PythFeed`, `BlockScholesFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict validates current Propbook binding and freshness through `pricing::load_live_pricer`, never through feed version checks. There is no Predict-side oracle mirror or sync. |
+| Version authority | `ProtocolConfig` | **Shipped (watermark model — supersedes the mirror description this doc originally carried):** the single `version_watermark` is the authoritative gate; there is no `allowed_versions` set and no per-object mirrors. Version-management and emergency pause/revocation paths bypass the gate (lifecycle-cap mint is gated). |
+| Registry-scoped state | `Registry` | Owns underlying admission, expiry uniqueness, cap allowlists, cadence deployment configs, and derived-object creation. No version state. |
+| Version-gated protocol state | `ExpiryMarket`, `PoolVault` | **Shipped:** gated via `config.assert_version()` on every mutating flow (no per-object mirrors); raw getters stay ungated. |
+| User and attribution objects | `account::AccountWrapper` (+ Predict app data), `BuilderCode` | Not package-version gated. They own user custody, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
+| External oracle package | `PythFeed`, `BlockScholesSpotFeed` / `BlockScholesForwardFeed` / `BlockScholesSVIFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict validates current Propbook binding and freshness through `pricing::load_live_pricer`, never through feed version checks. There is no Predict-side oracle mirror or sync. |
 
 The oracle extraction is complete: there is no in-package `MarketOracle` or
-`PythSource` to keep a version check on. The only mirrors Predict carries are
-`ExpiryMarket` and `PoolVault`.
+`PythSource` to keep a version check on, and there are no per-object version
+mirrors anywhere at HEAD.
 
 ## Central version authority
 

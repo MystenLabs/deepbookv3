@@ -160,7 +160,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Fees
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
-  min_fee) × expiry_ramp_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
+  min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
 - PLP supply and withdraw carry **no fee**. The former uncertainty-band withdraw

@@ -4,7 +4,7 @@ Predict prices its range digitals (binary options) off external Propbook feeds a
 
 ## Propbook feeds
 
-Predict separates the *spot* of the underlying asset, the forward surface, and the SVI shape of the implied distribution into separate permanent `propbook` feed objects. Forward and SVI values are keyed by expiry inside those feeds. The feeds are permissionless to update — a verified provider payload is its own provenance proof — and none of them knows anything about Predict, markets, expiries, or positions.
+Predict separates the *spot* of the underlying asset, the forward surface, and the SVI shape of the implied distribution into separate permanent `propbook` feed objects. Forward and SVI values are keyed by expiry inside those feeds. The feeds are permissionless to update — the design intent is that a verified provider payload is its own provenance proof (the current `block_scholes_oracle` payload is an unvalidated stub until the production verifier lands; see risks.md) — and none of them knows anything about Predict, markets, expiries, or positions.
 
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |

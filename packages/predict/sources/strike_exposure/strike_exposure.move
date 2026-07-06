@@ -418,8 +418,10 @@ public(package) fun liquidate_live_orders(
 
 /// Cache terminal settled payout liability.
 ///
-/// The live payout tree is retained after caching (the settled-redeem path
-/// still removes from it order by order).
+/// The live payout tree is retained after caching because nothing deletes it —
+/// no compaction path exists; post-materialization it is never read or mutated
+/// (settled redeems touch only the liquidation book and the cached liability).
+/// This retained storage is an input to the H-6 compaction decision.
 public(package) fun materialize_settled_liability(
     exposure: &mut StrikeExposure,
     settlement: u64,
