@@ -58,7 +58,7 @@ const FIND_EFFORT = 'max'
 const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget.total * 0.3)) : 5_000_000 // reserve ~30% of the budget for verify + promote + synthesis
 // One definition of the committed settled-decision sources, interpolated into every prompt that cites them
 // (they were previously restated per-prompt and drifted on tracker moves).
-const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
+const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/response-policies.md (Rounding policy R1-R3), packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
 // DELTA SCOPE: when the run targets a change set, lenses concentrate on these files + their blast radius.
 // (There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
 // registers — SETTLED_SOURCES — which every finder and verifier already reads. One home, no staleness filter.)

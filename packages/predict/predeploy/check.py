@@ -9,19 +9,23 @@ is that check. It verifies, deterministically and stdlib-only:
      "Pinning tests" field exists as `fun <name>` under packages/predict/tests/.
      A register decision whose pinning test vanished is un-enforced: the exact
      drift class that let risks.md promise unshipped behavior.
-  2. ID CROSS-REFS — every `RP-n` / `En` reference in the predeploy docs resolves
-     to a heading in response-policies.md / experiments.md (FATAL). Open-item
-     style IDs (`C-4`, `P-7`, ...) must resolve to open-items.md headings; a
-     miss is a WARNING (historical mentions of resolved items are legitimate
-     when the line says resolved/superseded/retired — those are skipped).
+  2. ID CROSS-REFS — every `RP-n` reference in the predeploy docs resolves to a
+     heading in response-policies.md (FATAL). Open-item style IDs (`C-4`,
+     `P-7`, ...) must resolve to open-items.md headings; a miss is a WARNING
+     (historical mentions of resolved items are legitimate when the line says
+     resolved/superseded/retired — those are skipped).
   3. MEASURED LINKS (FATAL) — a register entry claiming a MEASURED risk profile
      must name at least one findings doc that exists. MEASURED without linked
      evidence is just BEST-GUESS wearing a costume.
   4. DEAD PATHS (FATAL / WARNING) — file paths named in the predeploy docs must
      exist (resolved against predeploy/, packages/predict/, the harness, and
      the repo root). Bare filenames are globbed and only warned on.
-  5. EXPERIMENT SHAPE (WARNING) — every experiment names a driving ID; DONE
-     experiments link a stress/ findings doc.
+  5. EVIDENCE SHAPE (FATAL) — every evidence/ record carries an ownership
+     header (`**Item:** <id>`) in its first lines, and is referenced from at
+     least one tracker doc (open-items.md, response-policies.md, or README.md).
+     An unanchored or unreferenced evidence file is a dump, not a record.
+  6. UNIQUE RESOLUTION (FATAL) — at most one register entry's title claims to
+     resolve a given open item ("resolves X-n").
 
 Usage:  python3 packages/predict/predeploy/check.py [REPO_ROOT]
 Exit 1 on any FATAL; warnings print but keep exit 0.
@@ -40,7 +44,7 @@ ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath(
 PREDICT = os.path.join(ROOT, 'packages', 'predict')
 
 DOCS = sorted(glob.glob(os.path.join(HERE, '*.md')) +
-              glob.glob(os.path.join(HERE, 'stress', '*.md')))
+              glob.glob(os.path.join(HERE, 'evidence', '*.md')))
 
 # Lines that legitimately mention IDs or paths of things that no longer exist.
 HISTORICAL = re.compile(
@@ -57,14 +61,11 @@ def read(path):
 
 
 def defined_ids():
-    """IDs defined by headings in the three tracker files."""
-    ids = {'rp': set(), 'e': set(), 'item': set()}
+    """IDs defined by headings in the two tracker files."""
+    ids = {'rp': set(), 'item': set()}
     reg = os.path.join(HERE, 'response-policies.md')
     if os.path.exists(reg):
         ids['rp'] = set(re.findall(r'^## (RP-\d+)', read(reg), re.M))
-    exp = os.path.join(HERE, 'experiments.md')
-    if os.path.exists(exp):
-        ids['e'] = set(re.findall(r'^### (E\d+)', read(exp), re.M))
     items = os.path.join(HERE, 'open-items.md')
     if os.path.exists(items):
         ids['item'] = set(re.findall(r'^### ([A-Z]{1,2}-\d+):', read(items), re.M))
@@ -121,10 +122,6 @@ def check_id_refs(errors, warnings):
                 if rp not in ids['rp'] and not HISTORICAL.search(line):
                     errors.append(f"{name}: reference to {rp} but no such entry "
                                   f"in response-policies.md")
-            for e in re.findall(r'\b(E\d+)\b', line):
-                if e not in ids['e'] and not HISTORICAL.search(line):
-                    errors.append(f"{name}: reference to experiment {e} but no "
-                                  f"such heading in experiments.md")
             if name == 'README.md':
                 continue  # the map's surface table names ID *classes*, not instances
             for item in re.findall(r'\b([A-Z]{1,2}-\d+)\b', line):
@@ -191,22 +188,37 @@ def check_paths(errors, warnings):
                                         f"packages/predict/ or .claude/")
 
 
-def check_experiments(warnings):
-    exp = os.path.join(HERE, 'experiments.md')
-    if not os.path.exists(exp):
+def check_evidence(errors):
+    """Every evidence/ record is anchored to an owner and referenced by a tracker."""
+    trackers = ''
+    for fname in ('open-items.md', 'response-policies.md', 'README.md'):
+        path = os.path.join(HERE, fname)
+        if os.path.exists(path):
+            trackers += read(path)
+    for path in sorted(glob.glob(os.path.join(HERE, 'evidence', '*.md'))):
+        base = os.path.basename(path)
+        head = '\n'.join(read(path).splitlines()[:6])
+        if not re.search(r'\*\*Item:\*\* *([A-Z]{1,2}|RP)-\d+', head):
+            errors.append(f"evidence/{base}: no ownership header "
+                          f"('**Item:** <id>') in its first lines")
+        if base not in trackers:
+            errors.append(f"evidence/{base}: referenced by no tracker doc "
+                          f"(open-items.md / response-policies.md / README.md) "
+                          f"— cite it or it shouldn't exist")
+
+
+def check_unique_resolution(errors):
+    reg = os.path.join(HERE, 'response-policies.md')
+    if not os.path.exists(reg):
         return
-    for entry in re.split(r'^### ', read(exp), flags=re.M)[1:]:
-        title = entry.splitlines()[0]
-        if title.startswith(('Backlog', 'Harness')):
-            continue
-        if '**Drives:**' not in entry:
-            warnings.append(f"experiments.md '{title}' has no Drives: field "
-                            f"(every experiment names the ID it informs)")
-        if 'DONE' in title:
-            refs = re.findall(r'`(stress/[\w.-]+\.md)`', entry)
-            if not any(resolve(p) for p in refs):
-                warnings.append(f"experiments.md '{title}' is DONE but links no "
-                                f"existing stress/ findings doc")
+    resolved = {}
+    for m in re.finditer(r'^## (RP-\d+):.*resolves ([A-Z]{1,2}-\d+)',
+                         read(reg), re.M):
+        rp, item = m.group(1), m.group(2)
+        if item in resolved:
+            errors.append(f"response-policies.md: both {resolved[item]} and {rp} "
+                          f"claim to resolve {item} — one item, one resolution")
+        resolved[item] = rp
 
 
 def main():
@@ -215,7 +227,8 @@ def main():
     check_id_refs(errors, warnings)
     check_measured_links(errors)
     check_paths(errors, warnings)
-    check_experiments(warnings)
+    check_evidence(errors)
+    check_unique_resolution(errors)
     for w in warnings:
         print(f"WARNING: {w}")
     for e in errors:

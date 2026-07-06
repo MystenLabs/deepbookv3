@@ -1,5 +1,7 @@
 # NAV Stress Findings - 2026-06-30
 
+**Item:** C-1 · **Instrument:** `nav-stress` (localnet harness) · **Date:** 2026-06-30
+
 This finding measures how large one leveraged book can get before the pool flush
 OOGs while valuing NAV.
 

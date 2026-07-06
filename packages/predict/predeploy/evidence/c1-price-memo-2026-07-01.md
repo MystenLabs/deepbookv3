@@ -1,7 +1,9 @@
 # NAV Price-Memo Findings — 2026-07-01
 
+**Item:** C-1 · **Instrument:** `nav-stress` post-memo rerun (localnet harness) · **Date:** 2026-07-01
+
 Status: measured finding for the landed NAV price-memo change. The single-market
-result is folded into `capacity-and-gas-findings.md`; the multi-market result
+result graduated into open-items C-1's capacity model; the multi-market result
 remains a pool-total cap input. Supersedes the pre-memo single-market flush OOG
 finding for the single-market case only.
 
@@ -81,5 +83,5 @@ live markets on the cheap branch), i.e. `per_market ≈ safe_total / max_live_ma
 3. A worst-case-moneyness multi variant, since the linear walk (the memo's remaining
    per-market pricing) is where moneyness now bites.
 
-Cross-refs: `capacity-and-gas-findings.md`, `nav-stress-findings-2026-06-30.md`,
-`mint-batch-findings-2026-07-01.md`, `../open-items.md` (`C-1`).
+Cross-refs: `c1-nav-stress-2026-06-30.md`, `c3-mint-batch-2026-07-01.md`,
+`../open-items.md` (`C-1`, which carries the consolidated capacity model).

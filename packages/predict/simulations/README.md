@@ -388,7 +388,7 @@ Important fields:
     data-dependent (`normal_cdf` has cheap and expensive branches by moneyness)
     and multi-command PTBs amplify per-command cost, so sweep scenarios and
     measure batched ops separately; measured capacity numbers live in
-    `../predeploy/stress/`.
+    `../predeploy/evidence/` and the open-items C-1 capacity model.
 -   The capacity wall is per-tx computation (`max_gas_computation_bucket`), not
     the gas budget: a tx over it fails `InsufficientGas` regardless of
     `--gas-budget`.

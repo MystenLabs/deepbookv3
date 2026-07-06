@@ -42,7 +42,7 @@ someone else?":
 
 **Explicit DoS / liveness sub-mandate (rank as high as theft — a bricked market is a failed launch):**
 - Any underflow-aborting subtraction on a critical path (drive state so redeem/settle/supply/withdraw/
-  liquidation permanently aborts — cross-reference `packages/predict/predeploy/rounding-policy.md` R1).
+  liquidation permanently aborts — cross-reference `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)` R1).
 - Griefing via permissionless entry (forcing others to pay liquidation/sync work; reshaping NAV before a victim's tx).
 - Unbounded/growing computation on hot paths (NAV valuation, treap `walk_linear`, liquidation-book paging/scan).
 - Starvation of a needed risk-reducing action (under-floor liquidation, surplus release, settlement, flush).

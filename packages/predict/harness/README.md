@@ -95,6 +95,15 @@ verdict (non-zero exit if the bug oracle flags anything). `--timeout S` caps the
 trader funding (plus the prod cadence set — 1m/5m/1h, window 3 — every keeper runs) comes from
 `strategies/meta.ts`, the single source of truth.
 
+## Extension backlog (enablers for planned campaigns)
+
+| # | Extension | Enables | Status |
+|---|---|---|---|
+| 1 | Batched-mint PTB (`runtime.mintBatchTx` + `ctx.submitMintBatch`) | batch scaling probes | shipped |
+| 2 | NAV / mark readback (`ctx.currentNav(market)` / `ctx.idleBalance()`) | LP-adversary observability | shipped |
+| 3 | Scripted-oracle trajectory (updater follows a configured mark path; keeps the one-stream invariant) | the C-4 LP-adversary + dust-mark-window campaigns (plans on open-items C-4) | designed (approach a), not built |
+| 4 | Raw liquidate builder (`ctx.submitLiquidate`) | the unbounded-liquidate-budget probe (open-items H-6) | not built |
+
 ## Requirements
 
 - The `sui` CLI (resolved via `$SUI_BINARY`, `~/.local/bin/sui`, or `PATH`).

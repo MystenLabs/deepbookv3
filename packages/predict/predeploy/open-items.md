@@ -1,10 +1,15 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-06. This is the team-facing tracker for open Predict deploy
-gates, audit findings, stress-test follow-ups, and required decisions.
-
-Resolved items should be removed from this file. Historical raw audit output may
-remain in ignored agent scratchpads, but this file is the tracked manifest.
+Updated 2026-07-06. **The single source of truth for open work.** Anything that
+needs conscious attention — a bug, a suspicion, an undecided question, an audit
+finding — lands here first; if it is not on this list, it does not need
+addressing. An item that needs measurement carries its experiment plan inline
+(question, harness strategy, decision rule written before the run); run results
+land as immutable dated records in `evidence/`. An item exits only by deletion
+in the PR that resolves it; if the resolution embodied a judgment call, the
+decision graduates to `response-policies.md`. There is no third destination.
+Raw audit output stays in ignored agent scratchpads; this file is the tracked
+manifest.
 
 ## Deploy Gates
 
@@ -86,14 +91,57 @@ deferral to a post-deploy upgrade as the decision. (audit 412e9e)
 The flush values every active market in one PTB. Current independent caps
 (`24` live markets, `1000` payout nodes, `5000` leveraged orders per market) do
 not compose into the 5M computation-unit wall. The NAV price memo removed the
-single-market pre-cap OOG: one market at 5,000 leveraged orders has been measured
-around 47-54% of the wall. The remaining deploy blocker is the pool-total case:
-multi-market stress reached the wall around the current aggregate envelope, and
-the 24-market cap is still far above the measured safe joint budget.
+single-market pre-cap OOG; the remaining deploy blocker is the pool-total case.
+The missing bound is a joint sum across all active markets, not another
+isolated per-market cap.
 
-**Action:** Add a joint budget across all active markets, tighten caps to the
-measured single-PTB envelope, or make valuation resumable across PTBs. See
-`stress/capacity-and-gas-findings.md`.
+**Capacity model (measured, as of 2026-07-01):**
+
+- The binding wall is the Sui per-transaction computation cap,
+  `max_gas_computation_bucket = 5,000,000` units (5e9 MIST at reference gas
+  price 1000; a protocol constant, so the OOG book size is
+  network-independent). The flush is computation-bound — raising the gas
+  budget does not bypass the wall.
+- Single market, post-memo: a full 5,000-leveraged-order book values at
+  ~47–54% of the wall (`evidence/c1-price-memo-2026-07-01.md`); the per-market
+  order cap binds before NAV computation does. Pre-memo the flush OOG'd at
+  ~4,580 orders (`evidence/c1-nav-stress-2026-06-30.md`) — historical evidence
+  for why the pool total needs a joint budget.
+- Pool-total: multi-market stress reached ~8,640 total leveraged orders across
+  ~9 markets at ~92% of the wall, entangled with `expiry_cash::EInsufficientCash`
+  (pool capital bound the book before gas did), so it is not the final gas-only
+  cap — but enough to show the independent caps do not compose.
+- Expired-unswept markets leave the active set only inside a successful
+  `value_expiry`/sweep, so the flush's active tail is not bounded by the
+  live-market creation cap.
+- Cap-sizing shape:
+  `sum_over_active_markets(nodes*c_node + orders*c_order + base) + drain_budget
+  < safety_fraction (~60%) * 5,000,000 units`.
+
+**Fix options:** a joint budget across active markets · caps tightened to a
+measured single-PTB envelope · valuation resumable across PTBs · an
+out-of-flush settled sweep/deactivate path (bounds the active tail) ·
+documented operator throttling (an off-chain acceptance, not an on-chain
+guarantee).
+
+**Plan — runs that finish the number (decision rules pre-registered
+2026-07-02):**
+
+- Worst-branch per-order cost (`ts/strategies/navStressAtm.ts`): the measured
+  expensive-branch (`exp_series`, moderate moneyness) cost replaces the
+  fuzz-derived ~3,644 units/order in the cap sizing; if the joint budget at
+  current caps exceeds ~60% of the wall, cap tightening becomes a deploy
+  blocker. Verify the branch was reached via the gas-by-moneyness buckets.
+- Pool-total confirmation (`ts/strategies/navStressMulti.ts` or the faster
+  `ts/strategies/batchMaxMarkets.ts`): confirms the binding constraint is the
+  sum over markets under one wall and measures the per-market base. Size LP
+  capital first so `EInsufficientCash` does not bound the book before flush
+  gas does.
+- Payout-tree probe (max nodes × max leveraged orders in one market): the
+  1,000-node cap has never been benchmarked — prior runs reached only ~83
+  boundaries — and supplies the `c_node` term.
+- Any final cap change is followed by one run that reaches the new boundary
+  and proves the flush stays under the safety target.
 
 ### C-4: LP flush drain hard-aborts on a zero-value head request or a NAV==0 mark
 
@@ -132,6 +180,27 @@ ratio). Design this together with the P-7 limit-field policy, which already
 needs a stay-queued/skip decision for missed limits. (audit 11767b; overflow
 extension from the 2026-07-02 sweep)
 
+**Plan — harness measurement (decision rules pre-registered 2026-07-02; both
+blocked on the scripted-oracle harness extension — approach (a), designed
+against `oracleService.ts`, keeps the one-stream updater invariant):**
+
+- LP-adversary campaign (drives this item, RP-2/RP-3, and P-7's queued-request
+  mark exposure): drive the NAV mark with a scripted trajectory (inflate → LPs
+  withdraw idle → collapse → sticky exclusion exceeds gross → NAV=0) and
+  observe the queues; the `EInvalidDrainMark` abort is the brick signal. If a
+  degenerate flush sample is reachable with realistic oracle motion, RP-2's
+  risk profile flips BEST-GUESS → MEASURED and this fix escalates; a clean
+  campaign bounds (does not close) the organic-reachability estimate.
+- Dust-mark-window campaign (drives the overflow extension): measure the
+  fragile band's real width — how long `lp_pool_value` sits where a queued
+  fill would overflow u64 or mint ratchet-scale shares, and what the cheapest
+  (young, small-pool) entry looks like. If no sampled flush lands in the band
+  at mature-pool scale and the young-pool entry cannot be produced organically,
+  RP-2 keeps BEST-GUESS with a measured lower bound; if any flush samples
+  inside the band, this fix becomes a deploy gate. The Move boundary tests
+  (`lp_book_tests`) pin the exact edges; this measures reachability dynamics
+  only.
+
 ## Oracle Calibration
 
 ### O-1: Near-expiry oracle miscalibration is exploitable
@@ -140,7 +209,7 @@ extension from the 2026-07-02 sweep)
 
 Offline and on-chain tests found high-priced near-expiry binary contracts
 systematically underpriced and low-priced contracts systematically overpriced.
-See `oracle-calibration.md`.
+See `evidence/o1-oracle-calibration.md`.
 
 **Action:** Recalibrate near-expiry volatility/time-to-expiry behavior or block
 the affected near-expiry market shape until the reliability curve is verified.
@@ -185,6 +254,9 @@ hygiene-speed changes.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further. (audit c3edaa)
+- Public `liquidate()` takes an unbounded caller budget — low-priority self-DoS
+  probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
+  (from the retired experiments backlog)
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 
@@ -210,4 +282,3 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   pair (from the now-resolved H-2 fix) pins only a 2-of-4-component decomposition
   (zero builder fee / subsidy). Strengthen each to assert the received side / the
   passing boundary.
-

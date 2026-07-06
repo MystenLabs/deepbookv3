@@ -107,4 +107,4 @@ user-facing overview; this file is the editing-critical knowledge.
   `gasOf`) against that cap; the flush's `InsufficientGas` deferral at that book size is the
   nav-stress BREAKPOINT (the measurement) and is excluded from the oracle — don't reintroduce a
   gas-budget ceiling (it both mis-reports the breakpoint and false-flags the OOGs as bugs). See
-  `packages/predict/predeploy/stress/nav-stress-findings-2026-06-30.md`.
+  `packages/predict/predeploy/evidence/c1-nav-stress-2026-06-30.md`.
