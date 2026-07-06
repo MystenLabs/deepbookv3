@@ -28,6 +28,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 ### Path-Scoped Rules — read before editing files under the glob
 
 - `.claude/rules/move.md` for `packages/**/*.move`
+- `.claude/rules/predict-contracts.md` for `packages/predict/**/*.move` (also read `move.md`)
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
 - `.claude/rules/predict-simulations.md` for `packages/predict/simulations/**`
 - `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
@@ -83,7 +84,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 ## Predict Package Notes
 
-- Predict sources are organized by domain subsystem, not by visibility. See `.claude/rules/move.md` for the canonical layout rule.
+- Predict sources are organized by domain subsystem, not by visibility. See `.claude/rules/predict-contracts.md` for the canonical layout rule.
 - Predict tests mirror source domain folders except shared helpers and broad flow tests.
 - If you change Predict pricing, pool/vault accounting, oracle math, or public protocol flows, rerun the full Predict suite:
   - `sui move test --path packages/predict --gas-limit 100000000000`

@@ -26,6 +26,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 ### Path-Scoped Rules — read before editing files under the glob
 
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
+- **Predict contracts** (`packages/predict/**/*.move`) → `.claude/rules/predict-contracts.md` *(also read `move.md`)*
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
 - **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
 - **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
