@@ -93,7 +93,7 @@ Workflow({ scriptPath: '.claude/skills/predict-audit/rule-sweep.workflow.js',
 Workflow({ scriptPath: '.claude/skills/predict-audit/orchestrator.workflow.js',
            args: { groundTruth: '<build/test summary>', profile: 'cleanup', depth: 'mini' } })  # cleanup-tier lenses only
 ```
-Then consolidate + curate as usual (Steps 3–4). The payoff loop: fix or disposition the mini findings, then feed the run's `findings.json` into the deep run's `priorAdjudications` so it doesn't re-report them (drop entries whose cited files changed since — see Incremental & delta runs).
+Then consolidate + curate as usual (Steps 3–4). The payoff loop: fix or disposition the mini findings, and promote durable dispositions into the committed registers (AGENTS.md settled list / `response-policies.md` / `open-items.md`) — finders and verifiers are prior-aware via those registers, so a promoted disposition is not re-reported.
 
 **Step 3 — consolidate in the MAIN LOOP (no-slip guarantee).** Each harness's FULL result is persisted to its task output file — **the notification preview is TRUNCATED; never synthesize from it.** Re-run any failed units first (`Workflow({ scriptPath, resumeFromRunId })`), then run the deterministic consolidator over the full files:
 ```
@@ -133,7 +133,7 @@ The whole-codebase last-line-of-defense run is the exception, not the default. F
   | `predict/sources/events/**` | `predict-events` |
   | `propbook/**` / `account/**` / `block_scholes_oracle/**` | `propbook` / `account` / `block_scholes_oracle` |
 
-- **`args.priorAdjudications`** (all three) — cross-run memory: the previous run's adjudicated findings so this run doesn't re-find and re-verify the settled ones at full panel cost. Build it from the prior `findings.json` (`refuted` + `settled`; you may include `confirmed` for context but they are NOT suppressed — a still-open bug keeps flowing into `kept[]`), as `[{title, location, status, note?}]`. **A refutation is only valid for the code it was issued against** — before passing an entry, drop any whose cited file appears in `git diff --name-only <that-run's-SHA>..HEAD`; a stale suppression can hide a bug that became real. The orchestrator suppresses exact-key refuted/settled rematches (returned under `prior_rediscovered`); the siblings seed the list into their prompts.
+- **Cross-run memory lives in the committed registers, not in run artifacts.** There is no adjudication carry between runs: a disposition worth remembering is promoted into AGENTS.md "Settled design decisions" / `response-policies.md` / `open-items.md` (one home, no staleness filter), and finders/verifiers are prior-aware via those registers. A disposition not worth committing is not worth carrying.
 - **Watermark**: record the audited SHA (in `reports/<run>/` or an `open-items.md` note) so the next incremental run scopes `files`/`units` to `git diff` since it and refreshes the watermark.
 
 ### Which harness, in what order

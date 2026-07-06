@@ -13,10 +13,9 @@
 //          depth?: 'mini'|'low'|'standard'|'max' (preset for rounds/verifyCap/effort; explicit caps win;
 //            mini = cleanup-triage: 1 round, NO verify subagents — findings reported raw, sweep effort medium),
 //          files?: string[] (DELTA SCOPE: concentrate the sweep on these changed files + direct callers),
-//          priorAdjudications?: [{title, location, status, note?}] (cross-run memory: seeded into the sweep
-//            prompts as do-not-re-report; pass only entries whose cited files are unchanged — see SKILL.md.
-//            Unlike the orchestrator there is no key-based suppression here, prompt seeding only),
 //          dryRounds?: number (default 2), maxRounds?: number (default 3), verifyCap?: number (default 60) }
+// There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
+// registers (AGENTS.md + predeploy policies), which the PRELUDE already makes every agent read.
 // COST IS BOUNDED BY CONSTRUCTION: agents <= maxRounds*families (sweep) + verifyCap (verify), so a run cannot
 // hit the 1000-agent cap. The `budget` global (a "+NNNm" turn directive) is only an optional early-stop and
 // often does NOT propagate into a background workflow — never rely on it. Verify is SEVERITY-GATED: low/cleanup
@@ -45,7 +44,6 @@ const depthName = DEPTH[A.depth] ? A.depth : 'standard'
 const DP = DEPTH[depthName]
 const maxFindings = A.maxFindings || DP.maxFindings || 12
 const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
-const PRIOR = Array.isArray(A.priorAdjudications) ? A.priorAdjudications : []
 
 const ALL = 'all four packages (predict + propbook + account + block_scholes_oracle) sources, and tests where the rule names tests'
 
@@ -114,7 +112,7 @@ if (!(wantRules && wantRules.length) && A.rules !== 'all') {
 const FAMILIES = wantRules && wantRules.length ? RULE_FAMILIES.filter(r => wantRules.indexOf(r.key) >= 0) : RULE_FAMILIES
 const unknown = wantRules ? wantRules.filter(k => !RULE_FAMILIES.some(r => r.key === k)) : []
 log(`rule-sweep config — rules: ${wantRules ? wantRules.join(',') : `ALL ${RULE_FAMILIES.length}`} | depth: ${depthName} | maxFindings/rule: ${maxFindings}`
-  + (FILES ? ` | DELTA files: ${FILES.length}` : '') + (PRIOR.length ? ` | prior adjudications: ${PRIOR.length}` : '')
+  + (FILES ? ` | DELTA files: ${FILES.length}` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 60)}`
   + (unknown.length ? ` | ⚠ UNKNOWN RULE KEYS IGNORED: ${unknown.join(',')} (valid: ${RULE_FAMILIES.map(r => r.key).join(',')})` : ''))
 if (!A.groundTruth || String(A.groundTruth).length < 40) {
@@ -170,14 +168,11 @@ function budgetLeft() { return budget && typeof budget.remaining === 'function' 
 // strip line numbers (so a shifted-line same violation dedups) but KEEP a claim digest, so two DISTINCT
 // violations of the same rule in the same file stay distinct and the 2nd is not silently dropped.
 function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '')}|${(f.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 50)}`.slice(0, 220) }
-const priorBlock = PRIOR.length
-  ? `ADJUDICATED IN PREVIOUS RUNS (already confirmed/refuted/settled over unchanged code — do NOT re-report):\n${PRIOR.map(p => `- [${p.status}] ${p.title || p.claim || ''} @ ${p.location}${p.note ? ` — ${p.note}` : ''}`).join('\n')}\n\n`
-  : ''
 const focusBlock = FILES
   ? `DELTA SCOPE — this sweep targets a change set. CONCENTRATE on rule sites in/around these changed files (plus their direct callers); treat the rest as context:\n${FILES.map(f => `- ${f}`).join('\n')}\n\n`
   : ''
 function sweepPrompt(rf, round, known) {
-  return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} (round ${round}) ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n${focusBlock}${priorBlock}`
+  return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} (round ${round}) ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n${focusBlock}`
     + (known ? `ALREADY-FOUND violations of this rule (do NOT re-report — find DIFFERENT ones, in modules/branches not yet covered):\n${known}\n\n` : '')
     + `Inspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, a SEVERITY (high only if it can strand funds / brick a flow / misprice an indexer — e.g. a write-only field; most hygiene is cleanup/low), context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output. Cap at your ${maxFindings} highest-value NEW findings.`
 }

@@ -12,9 +12,6 @@
 //   groundTruth?: string,
 //   depth?: 'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (explicit cap args win;
 //                        // mini = cleanup-triage: 1 round, NO verify subagents — violations reported raw)
-//   priorAdjudications?: [{title, location, status, note?}], // cross-run memory: seeded into check prompts
-//                        // (per-module, matched on the module name in `location`) as do-not-re-report; pass
-//                        // only entries whose cited files are unchanged — see SKILL.md. Prompt seeding only.
 //   maxViolations?: number, // cap per check unit (default 10)
 //   dryRounds?: number,     // stop after this many no-new-violation rounds (default 2)
 //   maxRounds?: number,     // hard round cap (default 3)
@@ -48,7 +45,8 @@ const DEPTH = { mini: { maxRounds: 1, verifyCap: 0, effort: 'medium' }, low: { m
 const depthName = DEPTH[A.depth] ? A.depth : 'standard'
 const DP = DEPTH[depthName]
 const maxViolations = A.maxViolations || DP.maxViolations || 10
-const PRIOR = Array.isArray(A.priorAdjudications) ? A.priorAdjudications : []
+// There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
+// registers (AGENTS.md + predeploy policies), which the PRELUDE already makes every agent read.
 
 // Map units = subsystem clusters. Each map agent builds the responsibility-map entries for its modules.
 const MAP_UNITS = [
@@ -74,7 +72,7 @@ if (!(wantUnits && wantUnits.length) && A.units !== 'all') {
 const UNITS = wantUnits && wantUnits.length ? MAP_UNITS.filter(u => wantUnits.indexOf(u.key) >= 0) : MAP_UNITS
 const unknownUnits = wantUnits ? wantUnits.filter(k => !MAP_UNITS.some(u => u.key === k)) : []
 log(`ownership-walk config — units: ${wantUnits ? wantUnits.join(',') : `ALL ${MAP_UNITS.length}`} | depth: ${depthName} | maxViolations/module: ${maxViolations}`
-  + (PRIOR.length ? ` | prior adjudications: ${PRIOR.length}` : '') + ` | groundTruth: ${String(groundTruth).slice(0, 60)}`
+  + ` | groundTruth: ${String(groundTruth).slice(0, 60)}`
   + (unknownUnits.length ? ` | ⚠ UNKNOWN UNIT KEYS IGNORED: ${unknownUnits.join(',')} (valid: ${MAP_UNITS.map(u => u.key).join(',')})` : ''))
 if (!A.groundTruth || String(A.groundTruth).length < 40) {
   log('⚠ groundTruth is missing or suspiciously short — confirm Step 1 (build/test in the MAIN loop) actually ran; a false "all green" poisons the walk')
@@ -190,21 +188,10 @@ function budgetLeft() { return budget && typeof budget.remaining === 'function' 
 // loop never dries — see orchestrator nloc comment).
 function vkey(v) { return `${v.module}|${v.rule_family}|${(v.node || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9:_]/g, '')}|${(v.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40)}` }
 
-// Prior adjudications relevant to a module (matched on the module's short name appearing in the entry's
-// location/node) are seeded into its check prompt as do-not-re-report.
-function priorForModule(moduleName) {
-  const short = (moduleName || '').split('::').pop()
-  if (!short) return ''
-  const hits = PRIOR.filter(p => ((p.location || '') + (p.title || '')).indexOf(short) >= 0)
-  return hits.length
-    ? `ADJUDICATED IN PREVIOUS RUNS (already confirmed/refuted/settled over unchanged code — do NOT re-report):\n${hits.map(p => `- [${p.status}] ${p.title || ''} @ ${p.location}${p.note ? ` — ${p.note}` : ''}`).join('\n')}\n\n`
-    : ''
-}
 function checkPrompt(cu, round, known) {
   return `${PRELUDE}\n\n=== CHECK PASS (round ${round}) — module ${cu.module} (${cu.file}) ===\n`
     + `This module's responsibility-map entry:\n  role: ${cu.entry.role}\n  owns: ${cu.entry.owns}\n  must_not_own: ${cu.entry.must_not_own}\n`
     + `Modules it composes (their owned facts — use to judge binding/derivation/producer-fact):\n${composedContext(cu.entry)}\n\n`
-    + priorForModule(cu.module)
     + (known ? `ALREADY-FOUND violations in this module (do NOT re-report — hunt DIFFERENT, deeper, rarer ones, and functions not yet covered):\n${known}\n\n` : '')
     + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence NEW violations.`
 }

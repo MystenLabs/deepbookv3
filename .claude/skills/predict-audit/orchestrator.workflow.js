@@ -20,13 +20,6 @@
 //                            // cleanup-tier lenses (surface-area, architecture); cleanup keeps ONLY them
 //   depth?:      'mini'|'low'|'standard'|'max', // preset for rounds/verifyCap/effort (see DEPTH below)
 //   files?:      string[],  // DELTA SCOPE: changed files — lenses concentrate on them + direct callers/callees
-//   priorAdjudications?: [  // cross-run memory: adjudicated findings from a PREVIOUS run's findings.json.
-//     { title, location, status: 'refuted'|'settled'|'confirmed', note? }
-//   ],                      // Re-found REFUTED/SETTLED matches are suppressed (not re-verified) and returned
-//                           // under `prior_rediscovered`; CONFIRMED priors are NOT suppressed (a still-open
-//                           // bug keeps flowing into kept[]). Pass ONLY entries whose cited files are
-//                           // UNCHANGED since the adjudicating run (filter with git diff --name-only
-//                           // <sha>..HEAD — see SKILL.md); a stale suppression can hide a bug that became real.
 //   maxFindings?: number,   // cap NEW findings per lens per round (default: 12)
 //   dryRounds?:  number,    // stop after this many consecutive no-new-finding rounds (default: 2)
 //   maxRounds?:  number,    // hard round cap (default: 3)
@@ -79,10 +72,9 @@ const RESERVE = (budget && budget.total) ? Math.max(5_000_000, Math.floor(budget
 // (they were previously restated per-prompt and drifted on tracker moves).
 const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
 // DELTA SCOPE: when the run targets a change set, lenses concentrate on these files + their blast radius.
+// (There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
+// registers — SETTLED_SOURCES — which every finder and verifier already reads. One home, no staleness filter.)
 const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
-// Cross-run memory: adjudications from a previous run. Keyed with the same fkey used for in-run dedup, so a
-// re-found match is suppressed BEFORE it burns a verify panel; suppressed items return under prior_rediscovered.
-const PRIOR = Array.isArray(A.priorAdjudications) ? A.priorAdjudications : []
 
 const ALL_LANES = [
   { key: 'invariants', file: '01-invariants.md' },
@@ -118,7 +110,6 @@ if (!LANES) {
 function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 log(`audit config — scope: "${scope}" | depth: ${depthName}${(profileDrop || profileKeep) ? ` | profile: ${A.profile}` : ''} | lenses: ${want ? want.join(',') : (profileDrop || profileKeep) ? `${LANES.length} (${A.profile} profile)` : `ALL ${ALL_LANES.length}`} | maxFindings/lens/round: ${maxFindings} | dryRounds: ${DRY_TARGET} | maxRounds: ${MAX_ROUNDS} | verifyCap: ${VERIFY_CAP} | budget: ${budgetLeft() === Infinity ? 'unset (dry/round-bounded)' : Math.round(budgetLeft() / 1e6) + 'M'}`
   + (FILES ? ` | DELTA files: ${FILES.length}` : '')
-  + (PRIOR.length ? ` | prior adjudications: ${PRIOR.length}` : '')
   + (unknownLenses.length ? ` | ⚠ UNKNOWN LENS KEYS IGNORED: ${unknownLenses.join(',')} (valid: ${ALL_LANES.map(l => l.key).join(',')})` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 80)}`)
 if (!A.groundTruth || String(A.groundTruth).length < 40) {
@@ -169,9 +160,6 @@ const VERDICT_SCHEMA = {
   required: ['verdict', 'adjusted_severity', 'reasoning', 'evidence'],
 }
 
-const priorBlock = PRIOR.length
-  ? `\nADJUDICATED IN PREVIOUS RUNS — these were already confirmed/refuted/settled by a prior audit whose cited code is unchanged. Do NOT re-report them:\n${PRIOR.map(p => `- [${p.status}] ${p.title} @ ${p.location}${p.note ? ` — ${p.note}` : ''}`).join('\n')}\n`
-  : ''
 const focusBlock = FILES
   ? `\nDELTA SCOPE — this audit targets a change set. CONCENTRATE on these files and their direct callers/callees (grep both directions); treat the rest of the packages as context, and report findings wherever the change set's blast radius reaches:\n${FILES.map(f => `- ${f}`).join('\n')}\n`
   : ''
@@ -189,7 +177,7 @@ ${focusBlock}GROUND TRUTH (do NOT re-run sui build/test or localnet; the watchdo
 
 THIS IS FIND ROUND ${round} OF A LOOP-UNTIL-DRY AUDIT. The following candidates were ALREADY found by earlier rounds — do NOT re-report them. Hunt DIFFERENT, deeper, rarer issues, and explore functions/branches/edges not yet covered. Return ONLY findings not already in this list:
 ${known || '(none yet — first round)'}
-${priorBlock}
+
 DISCIPLINE (binding):
 - Read-only on packages/*/sources/**. Verify every claim against the actual function body + call sites (grep), not its name.
 - Be prior-aware: a candidate matching a settled decision or committed policy (${SETTLED_SOURCES}) gets settled_ref=<D-id-or-policy-ref> and severity Info.
@@ -278,16 +266,6 @@ function fkey(f) { return `${nloc(f.location).slice(0, 80)}|${ntitle(f.title)}` 
 const byKey = new Map()
 const candidates = []
 const coverageByLane = {}
-// Cross-run suppression: a found candidate matching a prior REFUTED/SETTLED adjudication is recorded (once)
-// and NOT verified again (the "don't re-litigate" cases). A prior CONFIRMED finding is deliberately NOT
-// suppressed — a still-open bug must keep flowing into this run's actionable kept[] and get cheaply
-// re-verified (cheap insurance it wasn't silently fixed), not vanish because a past run saw it. The prior
-// list is pre-filtered by the operator to unchanged-code entries (see the args comment).
-const priorByKey = new Map()
-PRIOR.filter(p => p.status === 'refuted' || p.status === 'settled')
-  .forEach(p => { const k = fkey(p); if (!priorByKey.has(k)) priorByKey.set(k, p) })
-const rediscoveredKeys = new Set()
-const priorRediscovered = []
 // PER-LANE retirement (sequence trim): each lens carries its own consecutive-dry counter. A lens that
 // produces no NEW finding for DRY_TARGET rounds retires and is not re-run, so later rounds spend ONLY on
 // lenses still surfacing issues — instead of re-running all of them every round until a single GLOBAL dry
@@ -315,11 +293,6 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
     coverageByLane[laneKey] = { coverage: r.coverage, top3: r.top3 || [] }
     ;(r.findings || []).forEach(f => {
       const k = fkey(f)
-      const prior = priorByKey.get(k)
-      if (prior) {  // already adjudicated by a previous run over unchanged code — suppress, don't re-verify
-        if (!rediscoveredKeys.has(k)) { rediscoveredKeys.add(k); priorRediscovered.push({ title: f.title, location: f.location, lane: laneKey, severity: f.severity, prior_status: prior.status, prior_note: prior.note || '' }) }
-        return
-      }
       const ex = byKey.get(k)
       if (!ex) { const ff = { ...f, lane: laneKey, lanes: [laneKey] }; byKey.set(k, ff); candidates.push(ff); freshByLane[laneKey] = (freshByLane[laneKey] || 0) + 1 }
       else {  // same issue from another lens/round — merge: record the lens, keep the worst severity + real impact
@@ -337,8 +310,7 @@ while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
   log(`Find round ${round}: ran ${activeLanes.length} lens(es), +${freshTotal} new (total ${candidates.length}) | ${retired}/${LANES.length} retired | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
 }
 const retiredFinal = LANES.filter(l => dryByLane[l.key] >= DRY_TARGET).length
-log(`Find converged after ${round} round(s): ${candidates.length} unique candidates (${retiredFinal}/${LANES.length} lenses retired)`
-  + (priorRediscovered.length ? ` | ${priorRediscovered.length} prior-adjudicated rediscoveries suppressed` : ''))
+log(`Find converged after ${round} round(s): ${candidates.length} unique candidates (${retiredFinal}/${LANES.length} lenses retired)`)
 
 // ---------- VERIFY: SEVERITY-GATED (bounds the agent count) ----------
 // Only Medium+ non-cleanup findings are verified; Info/Low + cleanup-only are reported RAW (unverified).
@@ -404,11 +376,8 @@ return {
     kept_uncertain: keptUncertain,
     kept_panel_dead: panelDead,
     settled: settledOut.length, refuted: refutedOut.length, unverified: unverified.length, promoted: promoted.length,
-    prior_rediscovered: priorRediscovered.length,
   },
   kept, settled: settledOut, refuted: refutedOut, promoted,
   unverified: unverified.map(f => ({ ...f, status: 'unverified' })),
-  // Informational: candidates suppressed because a previous run already adjudicated them (unchanged code).
-  prior_rediscovered: priorRediscovered,
   coverage: lanes.map(l => ({ lane: l.lane, coverage: l.coverage, top3: l.top3 })),
 }
