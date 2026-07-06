@@ -5,7 +5,7 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 ## Review Scope
 
 - When the user asks to "review uncommitted changes" or "review uncomitted changes", review the full working-tree diff.
-- For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`.
+- For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`; for Predict-touching Move reviews additionally `.claude/rules/predict-contracts.md`.
 - **Deep Predict smart-contract audit.** This flat checklist is the quick pass. For a deep audit of the Predict contracts (predict + propbook + block_scholes_oracle + account), invoke the **`predict-audit`** skill (`.claude/skills/predict-audit/`): read its `primer.md` (orientation + current module map + finding format) and the relevant `lenses/NN-*.md` (`01-invariants`, `02-adversarial-audit`, `03-oracle-pricing-numerical`, `04-access-control`, `05-surface-area`, `06-assertions`, `07-lifecycle`, `08-cross-package-trust`, `09-economic-simulation`, `10-architecture-maintainability`), or launch its `orchestrator.workflow.js` (lens fan-out), `ownership-walk.workflow.js` (per-module ownership/boundary/policy conformance, R1–R7), or `rule-sweep.workflow.js` (per-rule mechanical sweep). Emit findings in the primer's Severity / Location / Claim / Scenario / Impact / Confidence / Recommendation format.
 - Treat design/research docs (`packages/predict/predeploy/`, `.redesign/`, `.claude/predict-design/`) as **leads to verify against current HEAD**, not ground truth — verify every load-bearing claim against Move source + git + `sui move test`.
 - Findings should focus on correctness, regressions, missing coverage, and brittle assumptions.
@@ -19,11 +19,8 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - Architectural bottlenecks and new chokepoints introduced by the change.
 - Flow and branching friction: trace the affected flows end to end and identify new dependencies, surprising sequencing, non-landable intermediate states, or branches that now do too much.
 - Intuitive behavior: check whether names, public APIs, events, and state transitions match what a protocol integrator or maintainer would expect.
-- Ownership and responsibility boundaries for modules/functions: verify state is mutated by its owner, helpers do not absorb parent responsibilities, and callers do not duplicate leaf invariants without a sequencing reason.
-- Producer-side policy: flag cross-module returns that pre-apply a consumer's policy — especially lossy transforms (clamp at zero, saturating subtraction, `min`/`max`, rounding) that a downstream consumer then corrects for or re-derives. Bug signatures: the same economic quantity clamped at two altitudes, stance-named returns (`*_optimistic`, `net_*`), or tests that must invert a producer's step to state expectations.
-- Non-functional regressions in "behavior-preserving" changes: before approving a hot-path/loop refactor, confirm a deliberate loop-invariant hoist wasn't traded away for a cleaner signature — recomputing a per-iteration value previously sampled once is a gas regression even if outputs are identical (D020/D021).
-- Guard removals or weakenings: require a duty inventory in the diff — what else the guard incidentally bounded (arithmetic headroom, ratio/scale sanity, a downstream cast or consumer precondition) — plus an entry in `packages/predict/predeploy/response-policies.md`. Reasoning that lives only in the commit message is a finding (the P-1 circuit breaker removal `cc67ed9f` silently dropped the only u64-headroom bound on LP fill math).
-- State-triggered aborts over market-controlled variables (NAV, prices, post-loss balances) in shared/mandatory paths (flush, keeper batches, permissionless cleanup): flag as undecided response policies unless registered in `response-policies.md`. Check the response sits on the right blast-radius ladder rung (abort = single-user recoverable only → skip/carry for batches → pause only with a recovery path → designed wind-down) and that boundary tests pin each classification edge — including representability edges (a bare `as u64` cast on an unbounded ratio is an untracked abort path).
+- Check the diff against the rule corpus loaded at Review Scope (`move.md`, `predict-contracts.md`, `unit-tests.md`) rather than from memory — those files own the rule text (ownership boundaries, producer-fact/lossy-transform placement, loop-invariant hoists, guard duty inventories, the response-policy blast-radius ladder); violations are findings, and this file does not restate them.
+- Two rule-corpus checks need diff-level evidence, not just code shape: a removed or weakened guard must carry its duty inventory and `packages/predict/predeploy/response-policies.md` entry IN THE DIFF (precedent: the P-1 circuit-breaker removal `cc67ed9f`), and a new abort over a market-controlled variable in a shared/mandatory path is an undecided response policy unless registered there.
 - Doc claims about failure behavior (`docs/risks.md`, module docs) must match code at HEAD. A doc describing intended-but-unimplemented behavior as shipped is a finding (precedent: risks.md claimed the LP drain refunds degenerate requests while the code hard-aborted, C-4).
 - When the diff touches `packages/predict/predeploy/`, Predict guards, or tests named in the register, run `python3 packages/predict/predeploy/check.py` — it verifies register pinning tests exist, tracker cross-references resolve, MEASURED claims link evidence, and named paths are live. A FATAL is a review finding.
 
@@ -41,12 +38,10 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 
 ## Module Boundaries
 
-- Utility and math modules guard math preconditions only (division by zero, overflow, insufficient balance in a data structure). They do not encode application-level policy ("this state shouldn't happen", "this user type gets different treatment"). Application-level guards belong in the calling module.
 - If a function has branches that treat the same parameter differently (allowed in one path, rejected in another), verify the asymmetry is mathematically necessary, not an accidental policy decision.
 
 ## Tests
 
-- Every `expected_failure` test should trigger the abort on a specific line. The trailing guard abort must use a code distinct from the expected one (for example `abort 999`) so the test still fails if execution reaches the guard.
 - When a test checks a return value against a stored value, use a getter to read the stored value directly. Don't use indirect checks like "ID is non-zero" when you can assert the exact value matches.
 
 ## Generated Test Data
@@ -56,25 +51,6 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - Don't add workarounds (magic thresholds, special-case branches) in test assertions to make generated tests pass. If a test can't assert directly, understand why and fix the root cause.
 - Review generated output before committing — check for duplicates, trivial cases (100 inputs that all return 0), and wasted coverage.
 
-## Constants and Configuration
+## Self-Review (before pushing)
 
-- Don't hardcode values in tests that exist in the `constants` module. Import the macro instead. A "must stay in sync" comment is a sign you should be importing.
-- Protocol parameters that may need tuning (e.g., staleness thresholds) should be configurable via config structs, not compile-time constants. Pattern: constant defines the default, config struct stores the runtime value, `new()` initializes from default, `set_*` lets admin update.
-
-## Self-Review Checklist (before pushing)
-
-- [ ] Do all comments match the actual code they describe?
-- [ ] Do test names match what the test actually verifies?
-- [ ] Do error constant names make sense for every case that triggers them?
-- [ ] Are utility module guards strictly about math correctness, not application policy?
-- [ ] Are assertions in `expected_failure` tests targeting the right abort codes?
-- [ ] Does every test call the function it claims to test?
-- [ ] Is all generated test data exercised against the contract?
-- [ ] Are there any workaround thresholds or special-case branches hiding assertion failures?
-- [ ] Are all constants imported from the `constants` module, not hardcoded?
-- [ ] Do all `expected_failure` tests specify a named abort code (no bare `expected_failure`)?
-- [ ] Do timestamp updates match the field's documented semantics?
-- [ ] Do function inputs match ownership: objects for owned/current state, narrow values for pure formulas, no wide same-typed primitive lists?
-- [ ] Do cross-module returns carry owned facts, with every lossy clamp applied once at the policy owner?
-- [ ] If a guard was removed or weakened, does the diff include its duty inventory and a `response-policies.md` entry?
-- [ ] Do doc claims about failure behavior (risks.md, module docs) match the code in this diff, with pinning tests?
+Re-run the lenses above against your own diff, plus the rule files from Review Scope. The rule corpus is the checklist — an item-by-item copy that lived here restated it and drifted, so it was removed.

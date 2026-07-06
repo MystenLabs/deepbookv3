@@ -26,10 +26,10 @@ DeepBook is a decentralized order book on the Sui blockchain.
 ### Path-Scoped Rules — read before editing files under the glob
 
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
+- **Predict-cluster contracts** (`packages/{predict,propbook,block_scholes_oracle,account}/**/*.move`) → `.claude/rules/predict-contracts.md` *(also read `move.md`)*
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
-- **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
 - **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
-- **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md`
+- **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md` *(thin stub — retires when the core crates migrate)*
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 
 ### Manual-Trigger Rules — read when the request matches
@@ -63,13 +63,17 @@ A hard guardrail: run every `sui move build` / `sui move test` **in the main loo
 ## PR Descriptions
 
 When asked for a PR summary/description, or when creating a PR, always use this format:
-- **Summary**: Bullet points describing what changed and why
+- **Summary**: Bullet points describing what changed
+- **Why**: Bullet points describing why the PR exists: the problem, pressure, or intent behind the change; do not repeat the summary
 - **Test plan**: Checklist of manual or automated verification steps
 
 When creating a PR with `gh pr create`, always ask the user for a branch name before creating the branch. Format the body as:
 ```
 ## Summary
 - <bullet points>
+
+## Why
+- <why this PR exists: problem, pressure, or intent>
 
 ## Key decisions
 - <decisions that teammates should know about: trade-offs, design choices, why something was done a certain way>

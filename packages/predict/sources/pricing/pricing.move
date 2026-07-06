@@ -67,7 +67,7 @@ const EBlockScholesSVIUnavailable: u64 = 15;
 /// tightly enough that Predict's fixed-point pricing math remains live and
 /// meaningful.
 macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
-// max_pricing_spot * max_pricing_basis / float_scaling == u64::max by
+// max_pricing_spot * max_pricing_basis / float_scaling <= u64::max by
 // construction: the re-anchored forward (spot * basis) can't overflow u64.
 macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
 macro fun min_svi_sigma(): u64 { 1_000_000 }

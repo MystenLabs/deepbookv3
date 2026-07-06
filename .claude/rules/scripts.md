@@ -84,11 +84,7 @@ Format: `MoveAbort(MoveLocation { module: ModuleId { address: ..., name: "module
 
 To decode:
 1. Find the module in `packages/`
-2. Search for `const E.*: u64 = ERROR_CODE`
-3. Common errors:
-   - `ECannotLiquidate (9)` - Position not eligible for liquidation
-   - `EBorrowRiskRatioExceeded (7)` - Borrow would exceed risk ratio
-   - `EWithdrawRiskRatioExceeded (8)` - Withdraw would exceed risk ratio
+2. Search for `const E.*: u64 = ERROR_CODE` in that module — the source constant is the authority (codes hardcoded here drifted and were removed)
 
 ### Environment Variables
 - `PRIVATE_KEY` - Use instead of local keystore

@@ -6,13 +6,13 @@ runs cannot tell you. Each seed is a **content-based** find→replace (not a lin
 drift) against current HEAD. Apply ONE seed in a scratch worktree, run an audit, check the expected finding
 surfaces at High/Critical, then revert. **Never commit a seeded tree.**
 
-## How to run a recall check (cheap: `depth:'low'`, one pass per lens)
+## How to run a recall check (cheap: `lenses:'all', maxRounds:1` — one pass per lens)
 
 ```bash
 git worktree add /tmp/predict-seed HEAD           # isolated tree, never committed
 # apply ONE seed's replacement (below) in /tmp/predict-seed
 sui move build --path /tmp/predict-seed/packages/predict --warnings-are-errors   # must still compile
-# from the MAIN loop, launch the orchestrator against the seeded tree with depth:'low' (full breadth, 1 round)
+# from the MAIN loop, launch the orchestrator against the seeded tree with lenses:'all', maxRounds:1 (full breadth, 1 round)
 # then confirm the seed's "expect" finding appears in kept[] at the stated severity.
 git worktree remove --force /tmp/predict-seed     # discard the seeded tree
 ```

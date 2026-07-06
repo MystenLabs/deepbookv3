@@ -75,7 +75,7 @@ There is **no band, no separate supply/withdraw pricing, and no optimistic/conse
 
 ```mermaid
 flowchart TD
-  CAP[AdminCap / MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
+  CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
   LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
   EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
   NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]

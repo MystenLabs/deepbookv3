@@ -44,8 +44,7 @@ is disabled.
 - Keep raw getters and operational discovery readable during a version freeze.
 - Move duplicated flow preconditions into named flow loaders where they truly
   apply.
-- Remove per-object `allowed_versions` mirrors if there is a cleaner central
-  pattern.
+- ~~Remove per-object `allowed_versions` mirrors~~ Shipped: no mirrors exist at HEAD — `ProtocolConfig.version_watermark` is the central pattern.
 - Keep emergency, recovery, and harm-reducing paths callable even when the
   active version is disabled.
 - Keep Predict independent of the extracted oracle package's versioning (already
@@ -68,49 +67,36 @@ Predict shared objects fall into different versioning categories:
 
 | Category | Objects | Version policy |
 | --- | --- | --- |
-| Version authority | `Registry` | **Shipped:** owns the authoritative `allowed_versions` set; the two gated objects mirror it. Also owns underlying admission, expiry uniqueness, cap allowlists, and derived-object creation. Version-management and emergency pause/revocation paths bypass the gate. (The proposal below moves the *runtime* version set to `ProtocolConfig`; that has not shipped.) |
-| Global flow gates | `ProtocolConfig` | Owns trading pause, the valuation lock, and admin-tunable config. Does not own the version set today. |
-| Version-gated protocol state | `ExpiryMarket`, `PoolVault` | The only two version-gated objects. Each mirrors `Registry.allowed_versions` and asserts it on every mutating flow; raw getters stay ungated. |
-| User and attribution objects | `PredictManager`, `BuilderCode` | Not package-version gated. They own user custody, caps, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
-| External oracle package | `PythFeed`, `BlockScholesFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict validates current Propbook binding and freshness through `pricing::load_live_pricer`, never through feed version checks. There is no Predict-side oracle mirror or sync. |
+| Version authority | `ProtocolConfig` | **Shipped (watermark model — supersedes the mirror description this doc originally carried):** the single `version_watermark` is the authoritative gate; there is no `allowed_versions` set and no per-object mirrors. Version-management and emergency pause/revocation paths bypass the gate (lifecycle-cap mint is gated). |
+| Registry-scoped state | `Registry` | Owns underlying admission, expiry uniqueness, cap allowlists, cadence deployment configs, and derived-object creation. No version state. |
+| Version-gated protocol state | `ExpiryMarket`, `PoolVault` | **Shipped:** gated via `config.assert_version()` on every mutating flow (no per-object mirrors); raw getters stay ungated. |
+| User and attribution objects | `account::AccountWrapper` (+ Predict app data), `BuilderCode` | Not package-version gated. They own user custody, positions, and builder-fee claiming. Flow-specific owner/cap checks stay local. |
+| External oracle package | `PythFeed`, `BlockScholesSpotFeed` / `BlockScholesForwardFeed` / `BlockScholesSVIFeed` (in `propbook`) | **Not gated by Predict at all.** Each carries its own `version` and forward-only `migrate`; Predict validates current Propbook binding and freshness through `pricing::load_live_pricer`, never through feed version checks. There is no Predict-side oracle mirror or sync. |
 
 The oracle extraction is complete: there is no in-package `MarketOracle` or
-`PythSource` to keep a version check on. The only mirrors Predict carries are
-`ExpiryMarket` and `PoolVault`.
+`PythSource` to keep a version check on, and there are no per-object version
+mirrors anywhere at HEAD.
 
 ## Central version authority
 
-The cleaner long-term pattern is to store Predict's authoritative
-`allowed_versions` in exactly one Predict object: `ProtocolConfig`.
-
-`ProtocolConfig` is a better home than `Registry` for the runtime version gate:
-
-- It already owns global flow gates such as `trading_paused` and
-  `valuation_in_progress`.
-- Most hot protocol flows already take `&ProtocolConfig`.
-- Moving the version set there removes registry sync calls from runtime
-  versioning.
-- The registry can stay focused on uniqueness, cap allowlists, factories, and
-  derived-object roots.
-
-With this pattern, `ExpiryMarket` and `PoolVault` no longer store
-`allowed_versions`. Their checked loaders take `&ProtocolConfig` and call a
-package-internal version assertion:
+**Shipped.** Central version authority lives in exactly one Predict object —
+`ProtocolConfig` — via the monotonic `version_watermark` (a single `u64`).
+`ExpiryMarket` and `PoolVault` store no version state; gated flows call:
 
 ```move
-public(package) fun assert_version_allowed(config: &ProtocolConfig) {
+// protocol_config.move (HEAD) — the authoritative gate
+public(package) fun assert_version(config: &ProtocolConfig) {
     assert!(
-        config.allowed_versions.contains(&constants::current_version!()),
+        constants::current_version!() >= config.version_watermark,
         EPackageVersionDisabled,
     );
 }
 ```
 
-Disabling the active package version becomes immediate for every flow that uses
-the central config gate. This intentionally removes the current stale-mirror
-window where a per-object mirror may remain enabled until a sync transaction
-updates it. Because Predict is still pre-deploy, this is a reasonable semantic
-improvement rather than a migration concern.
+`bump_version_watermark` (AdminCap-gated) advances the floor; disabling an old
+package version is immediate for every gated flow the moment the watermark
+passes it — there is no per-object mirror and no sync window. The loader
+proposal below builds on this shipped gate; it does not change the model.
 
 ## Loader contract
 
@@ -336,24 +322,19 @@ This can be revisited if repeated config checks become a measured gas issue.
 
 ### Single allowed version scalar
 
-Store one allowed package version instead of a set.
-
-Pros:
-
-- Less storage and simpler checks.
-
-Cons:
-
-- No overlapping upgrade window.
-- Harder to run old and new package versions during a controlled migration.
-
-The set is worth keeping.
+Store one allowed package version instead of a set. This analysis originally
+rejected the scalar assuming exact-match semantics (no overlapping upgrade
+window). **Resolved by the shipped design:** the `version_watermark` scalar is a
+*floor*, not an exact match — every version `>= watermark` passes, so old and
+new package versions coexist during a controlled migration and the old one is
+retired by bumping the watermark past it. The floor scalar delivers the set's
+overlap property with scalar storage; there is no version set at HEAD.
 
 ## Recommended design
 
-Use `ProtocolConfig.allowed_versions` as the single authoritative Predict
-version set. Delete per-object `allowed_versions` mirrors from long-term Predict
-objects and remove the corresponding sync entrypoints.
+Keep `ProtocolConfig.version_watermark` as the single authoritative Predict
+version gate (shipped — see § Central version authority). There are no
+per-object mirrors or sync entrypoints; do not reintroduce them.
 
 Use checked `load_inner(config)` and `load_inner_mut(config)` for
 version-gated protocol objects, especially `ExpiryMarket` and `PoolVault`.
@@ -426,9 +407,11 @@ obviously safe and isolates the one real architectural decision.
 
 The doc reads as one cleanup, but the code touches three independent things:
 
-1. **Where the package allowed-versions set lives.** Today `Registry` is the source
-   of truth and `ExpiryMarket` / `PoolVault` each hold a `VecSet<u64>` *mirror*
-   refreshed by two permissionless `sync_*_allowed_versions` entrypoints. (The
+1. **Where the package allowed-versions set lives.** In the pre-watermark model
+   this analysis was written against, `Registry` was the source of truth and
+   `ExpiryMarket` / `PoolVault` each held a `VecSet<u64>` *mirror*
+   refreshed by two permissionless `sync_*_allowed_versions` entrypoints — all
+   since replaced by the shipped `version_watermark` (see § Shipped today). (The
    former `MarketOracle` / `PythSource` mirrors and their syncs are gone — those
    objects left for `propbook`, which versions itself.) (A) moves the set to
    `ProtocolConfig` and deletes the remaining two mirrors + syncs.

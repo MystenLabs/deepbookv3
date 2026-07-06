@@ -26,10 +26,10 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 ### Path-Scoped Rules — read before editing files under the glob
 
 - `.claude/rules/move.md` for `packages/**/*.move`
+- `.claude/rules/predict-contracts.md` for the Predict-cluster packages `packages/{predict,propbook,block_scholes_oracle,account}/**/*.move` (also read `move.md`)
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
-- `.claude/rules/predict-simulations.md` for `packages/predict/simulations/**`
 - `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
-- `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**`
+- `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**` (thin stub)
 - `.claude/rules/scripts.md` for `scripts/**`
 
 ### Manual-Trigger Rules — read when the request matches
@@ -80,7 +80,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 ## Predict Package Notes
 
-- Predict sources are organized by domain subsystem, not by visibility. See `.claude/rules/move.md` for the canonical layout rule.
+- Predict sources are organized by domain subsystem, not by visibility. See `.claude/rules/predict-contracts.md` for the canonical layout rule.
 - Predict tests mirror source domain folders except shared helpers and broad flow tests.
 - If you change Predict pricing, pool/vault accounting, oracle math, or public protocol flows, rerun the full Predict suite:
   - `sui move test --path packages/predict --gas-limit 100000000000`
@@ -110,6 +110,7 @@ are **retired** — the normal norms (tests + docs land with code) apply again.
 - **D025 — redeem deliberately has NO ask-price bound.** The mint-side probability bound is admission policy (the protocol declines to become counterparty in tail price regions); once a contract is live, redeeming at the live mark is the holder's right, and a redeem clamp would systematically underpay legitimate deep-ITM winners near expiry. The oracle-compromise exposure this leaves is the accepted trust model tracked by deploy gate S-4 / D031. Don't re-add exit-path price gates unless the oracle trust model changes.
 - **D026 — strike-quantity math stays u64.** A u128 widening was tried and deliberately reverted: the u64 mul ceiling is accepted because the failure mode is a graceful per-tx mint abort at extreme strike×quantity, never a brick, and inline u128 casts duplicated `fixed_math` semantics inside a core module. Don't reintroduce the widening.
 - **Pause/valuation gate exemptions (decided 2026-07-02).** `rebalance_expiry_cash`'s grow direction (`top_up_live_expiry_cash`) is intentionally NOT trading-pause-gated: pause blocks risk creation at the mint gate itself, while top-up only positions cash backing existing exposure and keeps exits fundable (gating it could starve redeems mid-emergency). `plp::lock_capital` intentionally carries no valuation-lock gate: it is only legal at `total_supply == 0`, and both LP request entrypoints abort `ENotBootstrapped` until supply > 0, so no queue entry or PLP holder the lock protects can exist when it runs.
+- **Audit dispositions promoted from the 2026-07-02 cleanup pass (the audit skill's cross-run adjudication carry was removed — durable dispositions live here).** `plp::stake_deep`/`unstake_deep` intentionally carry no valuation-lock gate: staked DEEP is excluded from `lp_pool_value`, so neither can move the flush mark. The raw-ID key-anchoring rule targets constructors/mutators; public read-only ID lookups (e.g. `predict_account::has_position`) are conformant as-is. The `CadenceConfig` getter surface on `market_manager` is deliberately retained observability/PTB read surface (e644181c). `predict_account`'s `EInsufficientPosition` guard protects a structurally-unreachable count underflow — defense-in-depth, documented here rather than given a contrived bypass test (unit-tests Rule 12).
 - **D031 — no oracle deviation/basis guards, deliberately (057f9565).** Per-push spot/basis deviation checks and the absolute basis band were removed: within the pricing-safe envelope, a compromised or buggy source prices live flows without bounds. Accepted and disclosed; the production mitigation is the signature verifier / cap-gating tracked by deploy gate S-4 (`packages/predict/predeploy/open-items.md`).
 - **Launch parameters: the contract defaults ARE the genesis values (AUD-002, 2026-06-10).** No separate launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.25, caps, budgets) ship as-is unless an open item changes one.
 - **Degenerate/tail-state behavior decisions live in `packages/predict/predeploy/response-policies.md`** (chosen response, reasoning, risk profile, pinning tests). Check it before adding, removing, or weakening any guard.

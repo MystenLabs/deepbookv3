@@ -7,7 +7,8 @@
 /// - source catalog: one Propbook oracle object per source-local key
 /// - canonical binding: one active oracle per canonical consumer key
 ///
-/// Source oracle objects are permissionless wrappers around verified source data.
+/// Source oracle objects are permissionless wrappers around source data (Pyth:
+/// signature-verified; BS: stub payloads, unverified until the production verifier lands).
 /// Canonical bindings are admin-controlled because they are the trust claim that
 /// source data represents a Propbook underlying such as BTC.
 ///

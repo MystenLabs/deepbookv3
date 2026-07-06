@@ -38,6 +38,8 @@ use fun df::remove as UID.remove;
 const EInvalidOwner: u64 = 0;
 const EBalanceTooLow: u64 = 1;
 const EInvalidAuth: u64 = 2;
+
+// === Auth Kinds ===
 const AUTH_OWNER: u8 = 0;
 const AUTH_APP: u8 = 1;
 
@@ -48,8 +50,9 @@ public struct AccountWrapper has key {
     account: Account,
 }
 
-/// Wrapped account state and custody. Its ID is the canonical account identity,
-/// receive address, and app-data storage root.
+/// Wrapped account state and custody. Its ID is the canonical account identity
+/// and app-data storage root; funds delivery uses `receive_address` (the wrapper
+/// object's address), never this ID's address.
 public struct Account has store {
     account_id: UID,
     /// EOA address or object-ID-as-address that owns this account.

@@ -28,7 +28,6 @@ const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id le
 const CODEX = 'codex:codex-rescue'
 const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
 function sevOf(s) { return SEVRANK[(s || '').toLowerCase()] || 0 }
-function isHigh(sev) { return sev === 'Critical' || sev === 'High' }
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -40,13 +39,13 @@ const VERDICT_SCHEMA = {
   },
   required: ['verdict', 'adjusted_severity', 'reasoning', 'evidence'],
 }
-// MIRROR of orchestrator.workflow.js LENSES / COMBINED_VERIFY — keep in sync.
+// MIRROR of orchestrator.workflow.js LENSES — keep in sync. (Production panels only High/Critical; the
+// bench runs the full panel on every corpus entry regardless of severity to measure panel precision.)
 const LENSES = [
   { tag: 'refute', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REFUTE-BY-CORRECTNESS. Try to prove this finding FALSE from the actual code. Read the cited lines, grep all call sites, check whether the precondition can hold. If you cannot construct a concrete code-grounded triggering path, verdict "refuted". Cite file:line.' },
   { tag: 'settled', agentType: null, build: () => `ADVERSARIAL LENS = SETTLED-DECISION CHECK. Check ${SETTLED_SOURCES}. Is this an accepted/rejected design decision, committed policy, or already-tracked open item? If yes, verdict "settled" with the D-id or committed-doc reference in evidence. Otherwise pass through.` },
   { tag: 'repro', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REPRODUCE. Trace the exact PTB-ordered sequence through the real mint/redeem/liquidate/settle/flush code. Does it actually reach the cited line with all preconditions co-occurring? If they cannot co-exist, verdict "refuted"; if it genuinely triggers, "confirmed". Cite the call chain.' },
 ]
-const COMBINED_VERIFY = { tag: 'verify', agentType: CODEX, build: () => `ADVERSARIAL VERIFY (single pass — do ALL THREE): (1) REFUTE from the actual code; if no concrete triggering path, "refuted". (2) SETTLED — check ${SETTLED_SOURCES}; if it matches, "settled" with the D-id/doc ref. (3) REPRODUCE the PTB-ordered path; if preconditions co-occur, "confirmed", else "refuted". Cite file:line / D-id / doc ref.` }
 const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md for the module map + prior-awareness. The .claude/predict-review/ files are STALE — trust the current tree. Do NOT run sui build/test or localnet; reason from source, grep, git, and Python. STAY SCOPED. Verdicts: confirmed / refuted / settled (cite a D-id) / uncertain. Provide file:line / git evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object.`
 function verifyPrompt(f, lens) { return `${VERIFY_PREAMBLE}\n\nFINDING:\n${JSON.stringify(f, null, 2)}\n\n${lens.build()}` }
 
@@ -90,8 +89,7 @@ log(`verify-bench — ${corpus.length} corpus entries from ${Array.isArray(A.cor
 // ---------- Verify + score ----------
 phase('Verify')
 const results = await parallel(corpus.map((f, fi) => async () => {
-  const panel = isHigh(f.severity) ? LENSES : [COMBINED_VERIFY]
-  const verdicts = await parallel(panel.map(lens => () => verdictAgent(verifyPrompt(f, lens), lens, `bench:${f.id}:${lens.tag}`)))
+  const verdicts = await parallel(LENSES.map(lens => () => verdictAgent(verifyPrompt(f, lens), lens, `bench:${f.id}:${lens.tag}`)))
   const status = aggregateStatus(verdicts)
   return {
     id: f.id, expect: f.expect, got: status, pass: status === f.expect,

@@ -148,10 +148,10 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
   which the contract is extinguished. It sits above the financing balance by
   the LTV buffer; that gap is the pool's recovery margin against gap risk.
 - **Knock-out probability** — the same barrier in probability space:
-  `p*(t) = floor_amount(t) / (liquidation_ltv × quantity)`. The contract knocks
-  out when its range probability falls to `p*(t)`. Because the financing
-  balance accretes, `p*` rises with time — a position can knock out with no
-  price move at all.
+  `p* = floor_amount / (liquidation_ltv × quantity)`. The contract knocks
+  out when its range probability falls to `p*`. The floor is static, so `p*`
+  is constant for the life of the order — knock-out requires the range
+  probability to fall (a price or vol move), never time alone.
 - **Liquidation LTV** — the loan-to-value bound that `floor / gross value` may
   reach before knock-out; code `liquidation_ltv`, snapshotted per expiry. A
   smaller value knocks out earlier.

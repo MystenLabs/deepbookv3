@@ -74,16 +74,16 @@ code owner claiming accumulated rewards is the domain action.
 
 | Capability | Module | Authority | Lifecycle |
 | --- | --- | --- | --- |
-| `AdminCap` | `admin` | global policy: all admin-tunable config, version enable/disable, mint pause/unpause, market-lifecycle caps, pause caps, underlying approval, cadence deployment configs; also genesis-bootstraps the pool (`plp::lock_capital`) | one, minted at init, transferred to deployer (multisig) |
+| `AdminCap` | `admin` | global policy: all admin-tunable config, version-watermark bump, mint pause/unpause, market-lifecycle caps, pause caps, underlying approval, cadence deployment configs; also genesis-bootstraps the pool (`plp::lock_capital`) | one, minted at init, transferred to deployer (multisig) |
 | `MarketLifecycleCap` | `market_lifecycle_cap` | create expiry markets (`registry::create_and_share_expiry_market`); also the **sole** authority to start the privileged pool flush (`plp::start_pool_valuation`) | minted and revoked by `AdminCap` against the `Registry` allowlist |
-| `PauseCap` | `registry` | emergency kill switch: disable a version, force `trading_paused = true`, force per-market mint pause | minted/revoked by `AdminCap`; cannot unpause anything |
+| `PauseCap` | `pause_cap` | emergency kill switch: force `trading_paused = true`, force per-market mint pause | minted/revoked by `AdminCap` against the `Registry` allowlist; cannot unpause anything |
 | `BuilderCode` | `builder_code` | builder-fee attribution identity | derived shared object; permanent owner |
 
 **`AdminCap` is a dependency-leaf.** Modules that own admin-tunable state accept the `AdminCap` directly as a parameter rather than routing the mutation through `Registry`. `protocol_config` setters, `expiry_market::set_mint_paused`, and registry-owned flows all take `&AdminCap`. The cap is passed as an unused reference (`_admin_cap`); holding it is the authorization. `Registry` only owns flows that are genuinely registry-scoped: version management, `PauseCap` and `MarketLifecycleCap` lifecycle, uniqueness-indexed creation (`create_and_share_expiry_market`), Propbook underlying admission, and cadence deployment policy.
 
 **`MarketLifecycleCap` is the market-lifecycle key.** Its primary authority is creating an expiry market (`registry::create_and_share_expiry_market`); it is also the sole holder permitted to start the pool flush (`plp::start_pool_valuation`) — the root-`AdminCap` flush path was removed, and admin retains a break-glass route by minting itself a lifecycle cap. It grants no other authority. The allowlist of valid lifecycle caps lives on `Registry` — its only creation call site — where `AdminCap` mints into it (`registry::mint_lifecycle_cap`) and revokes from it (`registry::revoke_lifecycle_cap`). There is no oracle-writer capability in Predict at all: Block Scholes data is written permissionlessly into the external `propbook` feed by anyone holding a verified `Update`, so Predict mints and holds no price-writing authority.
 
-**`PauseCap` is the emergency brake.** `AdminCap` mints `PauseCap`s into the registry's `allowed_pause_caps` set for trusted operators. A valid `PauseCap` can disable a package version, force global trading pause, or force per-market mint pause — all one-way. Unpausing always requires `AdminCap`. The pause-cap mint and the version-disable paths intentionally bypass the version gate, so the kill switch stays available even when admin has misconfigured versions.
+**`PauseCap` is the emergency brake.** `AdminCap` mints `PauseCap`s into the registry's `allowed_pause_caps` set for trusted operators. A valid `PauseCap` can force global trading pause or force per-market mint pause — both one-way. Unpausing always requires `AdminCap`. The pause-cap mint and both pause paths intentionally bypass the version gate, so the kill switch stays available even when admin has misconfigured versions. (There is no version-disable authority anywhere: versioning is the admin-only monotonic watermark described below.)
 
 **`BuilderCode` attributes builder fees.** It is a derived shared object claimed from the registry per `(owner, index)` pair, with a permanent owner. A Predict account can set a sticky `builder_code_id`; trades then add a builder fee (bounded by a per-quantity rate cap — see [fees and rebates](../concepts/fees-and-rebates.md)) and route it to the code's address. The owner claims accumulated builder fees explicitly with `claim_all_builder_fees`. This keeps builder fees out of the pool/expiry custody mesh entirely.
 
@@ -140,7 +140,7 @@ graph TD
     MOLC -->|creates markets| REG
     MOLC -->|starts pool flush| VAULT
     PAUSE -->|one-way pause| CFG
-    PAUSE -->|disable version| REG
+    PAUSE -->|one-way mint pause| EM
 
     AW <-->|DUSDC trade flows| EM
     AW <-->|LP requests / staking| VAULT
@@ -199,7 +199,7 @@ Package upgrades are gated by a single monotonic **version watermark** stored on
 
 `ProtocolConfig` is threaded into every version-gated public entrypoint, and `config.assert_version()` is its first line. There are no per-object version sets and no sync entrypoints: one central watermark replaces the former `Registry.allowed_versions` set and its `ExpiryMarket`/`PoolVault` mirrors. (`assert_trading_allowed` still omits the version check — version and trading-pause are independent gates that each public flow applies as needed.)
 
-Raising the floor is admin-only and footgun-free: `protocol_config::bump_version_watermark` takes no target — it sets the watermark to the running `current_version!()`. Because that value is whatever package binary is executing, the floor can only ever advance to a version a published binary actually embeds; admin can never set it above the running package and brick it, and retiring old versions requires executing the bump against the upgraded package. The watermark is monotonic (it cannot be lowered), so a disabled running version is recovered by upgrading, not by lowering the floor. The setter itself, the `PauseCap` / `MarketLifecycleCap` mint-and-revoke entries, and all reads are deliberately ungated. The external propbook feeds carry their *own* version and forward-only `migrate`; Predict does not gate them.
+Raising the floor is admin-only and footgun-free: `protocol_config::bump_version_watermark` takes no target — it sets the watermark to the running `current_version!()`. Because that value is whatever package binary is executing, the floor can only ever advance to a version a published binary actually embeds; admin can never set it above the running package and brick it, and retiring old versions requires executing the bump against the upgraded package. The watermark is monotonic (it cannot be lowered), so a disabled running version is recovered by upgrading, not by lowering the floor. The setter itself, the `PauseCap` mint, both revocations, and all reads are deliberately ungated; lifecycle-cap **mint** is the exception — it is version-gated (`registry::mint_lifecycle_cap`), because granting privileged lifecycle authority under a version freeze is risky. The external propbook feeds carry their *own* version and forward-only `migrate`; Predict does not gate them.
 
 Reversible emergency stops are separate from the watermark: `trading_paused` (global) and per-expiry `mint_paused`, both admin-settable and `PauseCap`-forceable one-way.
 
@@ -207,6 +207,6 @@ Reversible emergency stops are separate from the watermark: `trading_paused` (gl
 
 - Tunable values, templates, and the snapshot-at-creation model: [configuration](./configuration.md).
 - Settled design decisions and what they superseded: [decisions](./decisions.md); the invariants they preserve: [invariants](./invariants.md).
-- Admin powers, oracle trust, the privileged flush, and version-disable risk: [risks](../risks.md).
+- Admin powers, oracle trust, the privileged flush, and version-freeze risk: [risks](../risks.md).
 - How prices are formed from the propbook feeds: [pricing and oracles](../concepts/pricing-and-oracles.md).
 - How positions, fees, and the pool behave economically: [markets and positions](../concepts/markets-and-positions.md), [fees and rebates](../concepts/fees-and-rebates.md), [liquidity and NAV](../concepts/liquidity-and-nav.md).

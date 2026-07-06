@@ -8,19 +8,15 @@
 // Before Mutate", and the leaf-self-consistency half of 9) are NOT here — they need deep per-module context
 // and live in ownership-walk.workflow.js (R1-R7). Do not duplicate them.
 //
-// args = { rules?: string[] (subset of family keys), maxFindings?: number, groundTruth?: string,
-//          depth?: 'mini'|'low'|'standard'|'max' (preset for rounds/verifyCap/effort; explicit caps win;
-//            mini = cleanup-triage: 1 round, NO verify subagents — findings reported raw, sweep effort medium),
-//          files?: string[] (DELTA SCOPE: concentrate the sweep on these changed files + direct callers),
-//          priorAdjudications?: [{title, location, status, note?}] (cross-run memory: seeded into the sweep
-//            prompts as do-not-re-report; pass only entries whose cited files are unchanged — see SKILL.md.
-//            Unlike the orchestrator there is no key-based suppression here, prompt seeding only),
-//          dryRounds?: number (default 2), maxRounds?: number (default 3), verifyCap?: number (default 60) }
-// COST IS BOUNDED BY CONSTRUCTION: agents <= maxRounds*families (sweep) + verifyCap (verify), so a run cannot
-// hit the 1000-agent cap. The `budget` global (a "+NNNm" turn directive) is only an optional early-stop and
-// often does NOT propagate into a background workflow — never rely on it. Verify is SEVERITY-GATED: low/cleanup
-// hygiene findings are reported RAW (unverified, no subagent); high/medium (or fix-code) get one CROSS-MODEL
-// verifier each (codex, retried once on Claude if it errors — same panel discipline as the orchestrator).
+// args = { rules: string[] | 'all' (REQUIRED — subset of family keys, or the explicit string 'all' for every
+//            family; there is NO whole-sweep default), maxFindings?: number, groundTruth?: string,
+//          files?: string[] (DELTA SCOPE: concentrate the sweep on these changed files + direct callers) }
+// There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
+// registers (AGENTS.md + predeploy policies), which the PRELUDE already makes every agent read.
+// ONE PASS, ALL FINDINGS RAW: these families ENUMERATE grep-decidable properties rather than sample — in the
+// last multi-round run no family ever retired dry and the extra rounds only lengthened the raw tail — so each
+// family runs exactly once at medium effort and the OPERATOR is the verifier for this mechanical tier.
+// Cost = 1 agent per family. The next run is round 2.
 // Subagents READ-ONLY; no sui build/test or localnet (watchdog) — the main loop runs the compiler in the
 // parent-reconciliation pass (rule-auditor's build/test step).
 
@@ -28,8 +24,7 @@ export const meta = {
   name: 'predict-rule-sweep',
   description: 'Per-rule sweep of the mechanical/local repo rules across the Predict packages (refreshed rule-auditor): sweep -> verify/classify',
   phases: [
-    { title: 'Sweep', detail: 'one agent per rule family sweeps every relevant module for that rule' },
-    { title: 'Verify', detail: 'severity-gated: refute/classify each high/medium finding; low/cleanup hygiene reported raw' },
+    { title: 'Sweep', detail: 'one agent per rule family sweeps every relevant module for that rule; all findings reported raw for operator triage' },
   ],
 }
 
@@ -38,13 +33,8 @@ let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(none provided)'
-// DEPTH preset — same tiers/precedence as the orchestrator (explicit cap args win over the preset).
-const DEPTH = { mini: { maxRounds: 1, verifyCap: 0, effort: 'medium' }, low: { maxRounds: 1, verifyCap: 30 }, standard: {}, max: { maxRounds: 5, dryRounds: 3, verifyCap: 100, maxFindings: 16 } }
-const depthName = DEPTH[A.depth] ? A.depth : 'standard'
-const DP = DEPTH[depthName]
-const maxFindings = A.maxFindings || DP.maxFindings || 12
+const maxFindings = A.maxFindings || 12
 const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
-const PRIOR = Array.isArray(A.priorAdjudications) ? A.priorAdjudications : []
 
 const ALL = 'all four packages (predict + propbook + account + block_scholes_oracle) sources, and tests where the rule names tests'
 
@@ -104,10 +94,16 @@ const RULE_FAMILIES = [
 ]
 
 const wantRules = Array.isArray(A.rules) ? A.rules : null
+// Scope is REQUIRED. The old no-arg fall-through swept every family — the most expensive shape as the
+// accident default. An explicit rules:'all' is the deliberate opt-in for the full sweep.
+if (!(wantRules && wantRules.length) && A.rules !== 'all') {
+  log('⚠ no scope given — pass rules: [<keys>] or rules: "all"; the whole-sweep no-arg default was removed')
+  return { error: 'scope_required', valid_keys: RULE_FAMILIES.map(r => r.key) }
+}
 const FAMILIES = wantRules && wantRules.length ? RULE_FAMILIES.filter(r => wantRules.indexOf(r.key) >= 0) : RULE_FAMILIES
 const unknown = wantRules ? wantRules.filter(k => !RULE_FAMILIES.some(r => r.key === k)) : []
-log(`rule-sweep config — rules: ${wantRules ? wantRules.join(',') : `ALL ${RULE_FAMILIES.length}`} | depth: ${depthName} | maxFindings/rule: ${maxFindings}`
-  + (FILES ? ` | DELTA files: ${FILES.length}` : '') + (PRIOR.length ? ` | prior adjudications: ${PRIOR.length}` : '')
+log(`rule-sweep config — rules: ${wantRules ? wantRules.join(',') : `ALL ${RULE_FAMILIES.length}`} | maxFindings/rule: ${maxFindings}`
+  + (FILES ? ` | DELTA files: ${FILES.length}` : '')
   + ` | groundTruth: ${String(groundTruth).slice(0, 60)}`
   + (unknown.length ? ` | ⚠ UNKNOWN RULE KEYS IGNORED: ${unknown.join(',')} (valid: ${RULE_FAMILIES.map(r => r.key).join(',')})` : ''))
 if (!A.groundTruth || String(A.groundTruth).length < 40) {
@@ -120,7 +116,7 @@ if (wantRules && !FAMILIES.length) {
 
 const PRELUDE = `You are an agent in the Predict RULE SWEEP — a per-rule conformance audit of the MECHANICAL repo rules. FIRST read:
   1. ${SKILL}/primer.md  (current module map, scope, prior-awareness, report format)
-  2. the source rules: .claude/rules/move.md, .claude/rules/code-review.md, .claude/rules/unit-tests.md, and AGENTS.md "Settled design decisions".
+  2. the source rules: .claude/rules/move.md, .claude/rules/predict-contracts.md, .claude/rules/code-review.md, .claude/rules/unit-tests.md, and AGENTS.md "Settled design decisions".
 Conflict order: most-specific Predict rule in AGENTS.md, then committed predeploy policy (rounding-policy + response-policies RP-*) / open items, then .claude/rules/*.md, then general guidance. Be prior-aware: a candidate matching an AGENTS settled decision or committed predeploy policy/open item is a non-finding (tag it). Do not use local ignored design scratch as authority for audit triage. The .claude/predict-review map is STALE — trust primer.md + the current tree. Read-only on source; do NOT run sui build/test or localnet (the watchdog kills subagents — the main loop runs the compiler in reconciliation). Your job is ONE rule only; do not report other rules' violations or the ownership-walk's R1-R7.`
 
 const FINDING = {
@@ -141,121 +137,46 @@ const SWEEP_SCHEMA = {
   properties: { rule_family: { type: 'string' }, coverage: { type: 'string' }, findings: { type: 'array', items: FINDING } },
   required: ['rule_family', 'coverage', 'findings'],
 }
-const VERDICT_SCHEMA = {
-  type: 'object',
-  properties: {
-    verdict: { type: 'string', enum: ['confirmed', 'refuted', 'settled'] },
-    classification: { type: 'string', enum: ['fix-code', 'update-rule', 'design-decision', 'false-positive'] },
-    reasoning: { type: 'string' },
-    evidence: { type: 'string' },
-  },
-  required: ['verdict', 'classification', 'reasoning', 'evidence'],
-}
-
-// MAXIMAL MODE: loop-until-dry SWEEP. Re-sweep each rule family across rounds (each told what's already
-// found for that family so it hunts new sites), union new findings, until K dry rounds or the budget floor.
-const DRY_TARGET = A.dryRounds || DP.dryRounds || 2
-const MAX_ROUNDS = A.maxRounds || DP.maxRounds || 3
-// typeof-check, not ||: mini's verifyCap 0 is falsy and must not fall through to the default.
-const VERIFY_CAP = [A.verifyCap, DP.verifyCap, 60].find(v => typeof v === 'number')
-const RESERVE = (budget && budget.total) ? Math.max(3_000_000, Math.floor(budget.total * 0.3)) : 3_000_000
-function budgetLeft() { return budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity }
 // strip line numbers (so a shifted-line same violation dedups) but KEEP a claim digest, so two DISTINCT
 // violations of the same rule in the same file stay distinct and the 2nd is not silently dropped.
 function fkey(f) { return `${f.rule_family}|${(f.location || '').toLowerCase().replace(/:[0-9][0-9,\- ]*/g, '').replace(/[^a-z0-9/._;]/g, '')}|${(f.claim || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 50)}`.slice(0, 220) }
-const priorBlock = PRIOR.length
-  ? `ADJUDICATED IN PREVIOUS RUNS (already confirmed/refuted/settled over unchanged code — do NOT re-report):\n${PRIOR.map(p => `- [${p.status}] ${p.title || p.claim || ''} @ ${p.location}${p.note ? ` — ${p.note}` : ''}`).join('\n')}\n\n`
-  : ''
 const focusBlock = FILES
   ? `DELTA SCOPE — this sweep targets a change set. CONCENTRATE on rule sites in/around these changed files (plus their direct callers); treat the rest as context:\n${FILES.map(f => `- ${f}`).join('\n')}\n\n`
   : ''
-function sweepPrompt(rf, round, known) {
-  return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} (round ${round}) ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n${focusBlock}${priorBlock}`
-    + (known ? `ALREADY-FOUND violations of this rule (do NOT re-report — find DIFFERENT ones, in modules/branches not yet covered):\n${known}\n\n` : '')
-    + `Inspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, a SEVERITY (high only if it can strand funds / brick a flow / misprice an indexer — e.g. a write-only field; most hygiene is cleanup/low), context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output. Cap at your ${maxFindings} highest-value NEW findings.`
+function sweepPrompt(rf) {
+  return `${PRELUDE}\n\n=== RULE FAMILY: ${rf.key} ===\nRULE: ${rf.rule}\nSCOPE: ${rf.scope}\nWHERE TO LOOK: ${rf.focus}\n\n${focusBlock}`
+    + `Inspect every relevant module/function/branch/test for THIS rule across the scope. Report each violation with file:line, the rule text it breaks, a SEVERITY (high only if it can strand funds / brick a flow / misprice an indexer — e.g. a write-only field; most hygiene is cleanup/low), context, whether it is a defensible exception (yes/no/unclear), the recommended action (fix-code / update-rule / design-decision / false-positive), and the smallest fix or narrowest rule exception. Per the calibration principle, a defensible recurring pattern is an update-rule candidate, not many repeat findings. Keep each finding CONCISE — claim and recommendation ≤2 sentences each, context ≤1 line; a verbose response risks truncating the structured output. Cap at your ${maxFindings} highest-value findings.`
 }
 
+// ONE pass per family, everything reported RAW — the operator is the verifier for this mechanical tier.
 phase('Sweep')
 const seen = new Set()
 const candidates = []
 const coverageByFamily = {}
-// PER-FAMILY retirement (ported from the orchestrator's per-lane trim): a family that produces no NEW
-// finding for DRY_TARGET consecutive rounds retires, so later rounds only re-run families still surfacing
-// issues. An ERRORED family (null result) is neither advanced nor reset — it retries next round.
-const dryByFamily = {}
-FAMILIES.forEach(rf => { dryByFamily[rf.key] = 0 })
-let round = 0
-while (round < MAX_ROUNDS && budgetLeft() > RESERVE) {
-  const activeFamilies = FAMILIES.filter(rf => dryByFamily[rf.key] < DRY_TARGET)
-  if (!activeFamilies.length) break
-  round++
-  const knownByFamily = {}
-  candidates.forEach(f => { (knownByFamily[f.rule_family] = knownByFamily[f.rule_family] || []).push(`- ${f.location}: ${(f.claim || '').slice(0, 120)}`) })
-  const roundRes = await parallel(activeFamilies.map(rf => () => agent(sweepPrompt(rf, round, (knownByFamily[rf.key] || []).join('\n')),
-    { schema: SWEEP_SCHEMA, effort: DP.effort || 'high', phase: 'Sweep', label: `sweep:${rf.key}:r${round}` })))
-  const freshByFamily = {}
-  // Index by the family we DISPATCHED (activeFamilies[i]), not the agent-returned r.rule_family — parallel()
-  // preserves order and the dispatched key is the stable identity (same fix as the orchestrator's lanes).
-  roundRes.forEach((r, i) => {
-    if (!r) return
-    const famKey = activeFamilies[i].key
-    if (r.coverage) coverageByFamily[famKey] = r.coverage
-    ;(r.findings || []).forEach(f => {
-      const ff = { ...f, rule_family: famKey }
-      const k = fkey(ff)
-      if (!seen.has(k)) { seen.add(k); candidates.push(ff); freshByFamily[famKey] = (freshByFamily[famKey] || 0) + 1 }
-    })
+const results = await parallel(FAMILIES.map(rf => () => agent(sweepPrompt(rf),
+  { schema: SWEEP_SCHEMA, effort: 'medium', phase: 'Sweep', label: `sweep:${rf.key}` })))
+// Index by the family we DISPATCHED (FAMILIES[i]), not the agent-returned r.rule_family — parallel()
+// preserves order and the dispatched key is the stable identity (same fix as the orchestrator's lanes).
+results.forEach((r, i) => {
+  if (!r) return
+  const famKey = FAMILIES[i].key
+  if (r.coverage) coverageByFamily[famKey] = r.coverage
+  ;(r.findings || []).forEach(f => {
+    const ff = { ...f, rule_family: famKey }
+    const k = fkey(ff)
+    if (!seen.has(k)) { seen.add(k); candidates.push(ff) }
   })
-  activeFamilies.forEach((rf, i) => { if (!roundRes[i]) return; if ((freshByFamily[rf.key] || 0) === 0) dryByFamily[rf.key]++; else dryByFamily[rf.key] = 0 })
-  const freshCount = Object.values(freshByFamily).reduce((a, b) => a + b, 0)
-  const retired = FAMILIES.filter(rf => dryByFamily[rf.key] >= DRY_TARGET).length
-  log(`Sweep round ${round}: ran ${activeFamilies.length} famil(ies), +${freshCount} new (total ${candidates.length}) | ${retired}/${FAMILIES.length} retired | budget ${budgetLeft() === Infinity ? '∞' : Math.round(budgetLeft() / 1e6) + 'M'} left`)
-}
-log(`Sweep converged after ${round} rounds: ${candidates.length} unique candidate findings (${FAMILIES.filter(rf => dryByFamily[rf.key] >= DRY_TARGET).length}/${FAMILIES.length} families retired)`)
-
-// SEVERITY-GATED + CAPPED: only high/medium (or fix-code) findings get a verifier; low/cleanup hygiene is
-// reported RAW (unverified). Capped at VERIFY_CAP by severity so the agent count stays bounded.
-phase('Verify')
-const sevRankF = { high: 4, medium: 3, low: 2, cleanup: 1 }
+})
+const failedFamilies = FAMILIES.filter((rf, i) => !results[i]).map(rf => rf.key)
+if (failedFamilies.length) log(`⚠ ${failedFamilies.length} famil(ies) returned nothing (agent error) — resume to fill: ${failedFamilies.join(', ')}`)
 const effSev = f => f.severity || (f.classification === 'fix-code' ? 'medium' : 'low')
-const ruleShouldVerify = f => { const s = effSev(f); return s === 'high' || s === 'medium' }
-const verifyAll = candidates.filter(ruleShouldVerify).sort((a, b) => (sevRankF[effSev(b)] || 0) - (sevRankF[effSev(a)] || 0))
-const toVerify = verifyAll.slice(0, VERIFY_CAP)
-const verifyOverflow = verifyAll.slice(VERIFY_CAP)   // beyond the cap -> reported unverified (logged, never silently dropped)
-const unverifiedF = candidates.filter(f => !ruleShouldVerify(f)).concat(verifyOverflow)
-if (verifyOverflow.length) log(`Verify cap ${VERIFY_CAP} hit: ${verifyOverflow.length} finding(s) reported UNVERIFIED — raise verifyCap to verify them all`)
-// CROSS-MODEL verify (ported from the orchestrator): the verifier runs on codex — a different model than the
-// Claude sweeper — and a null verdict (codex absent, StructuredOutput flake) is retried ONCE on Claude.
-const CODEX = 'codex:codex-rescue'
-async function verdictAgent(prompt, label) {
-  const base = { schema: VERDICT_SCHEMA, effort: 'high', phase: 'Verify' }
-  let v = await agent(prompt, { ...base, label, agentType: CODEX })
-  if (!v) v = await agent(prompt, { ...base, label: `${label}:retry` })
-  return v
-}
-const verifiedRaw = (await parallel(toVerify.map((f, fi) => () => verdictAgent(
-  `${PRELUDE}\n\nADVERSARIALLY VERIFY this single rule-sweep finding (rule family ${f.rule_family}). Read the cited code; decide: confirmed (real violation) / refuted (not a violation, or the claim is wrong) / settled (matches AGENTS or committed predeploy policy/open item — cite it). Then classify: fix-code / update-rule (defensible → narrowest exception) / design-decision / false-positive. Be skeptical; mechanical rules have many intentional exceptions (deliberately retained getters, public APIs needed for PTBs, disabled test suites).\n\nFINDING:\n${JSON.stringify(f, null, 2)}`,
-  `verify:${f.rule_family}:${fi}`)
-  .then(verdict => ({ ...f, verdict }))))).filter(Boolean)
-// A finding whose verifier died even after the retry is reported UNVERIFIED — the pre-port code let it
-// vanish from every output bucket (a silent drop the consolidator's accounting could not see).
-const verdictDead = verifiedRaw.filter(x => !x.verdict)
-if (verdictDead.length) log(`⚠ ${verdictDead.length} finding(s) lost their verifier even after retry — reported unverified, not dropped`)
-const all = verifiedRaw.filter(x => x.verdict)
-const confirmed = all.filter(x => x.verdict.verdict === 'confirmed')
-const settledOut = all.filter(x => x.verdict.verdict === 'settled')
-const refutedOut = all.filter(x => x.verdict.verdict === 'refuted')
-log(`Rule families: ${FAMILIES.length} | rounds: ${round} | findings: ${all.length} | confirmed: ${confirmed.length} | settled: ${settledOut.length} | refuted: ${refutedOut.length} | verifier-dead: ${verdictDead.length}`)
+log(`Sweep complete: ${candidates.length} candidate finding(s) across ${FAMILIES.length - failedFamilies.length}/${FAMILIES.length} families — ALL RAW (operator verifies)`)
 
-function shape(x) {
-  return { rule_family: x.rule_family, severity: x.severity || (x.classification === 'fix-code' ? 'medium' : 'low'), location: x.location, claim: x.claim, classification: (x.verdict && x.verdict.classification) || x.classification, recommendation: x.recommendation, evidence: x.verdict && x.verdict.evidence }
-}
 return {
-  summary: { rule_families: FAMILIES.length, rounds: round, findings: all.length, confirmed: confirmed.length, settled: settledOut.length, refuted: refutedOut.length, unverified: unverifiedF.length + verdictDead.length, verifier_dead: verdictDead.length },
+  summary: { rule_families: FAMILIES.length, rounds: 1, findings: candidates.length, confirmed: 0, settled: 0, refuted: 0, unverified: candidates.length, failed_families: failedFamilies },
   coverage: Object.keys(coverageByFamily).map(rf => ({ lane: rf, coverage: coverageByFamily[rf] })),
-  confirmed: confirmed.map(shape),
-  settled: settledOut.map(shape),
-  refuted: refutedOut.map(x => ({ rule_family: x.rule_family, location: x.location, claim: x.claim, why: x.verdict && x.verdict.reasoning })),
-  unverified: unverifiedF.map(x => ({ rule_family: x.rule_family, severity: effSev(x), location: x.location, claim: x.claim, classification: x.classification, recommendation: x.recommendation, status: 'unverified' }))
-    .concat(verdictDead.map(x => ({ rule_family: x.rule_family, severity: effSev(x), location: x.location, claim: x.claim, classification: x.classification, recommendation: x.recommendation, status: 'unverified-panel' }))),
+  confirmed: [],
+  settled: [],
+  refuted: [],
+  unverified: candidates.map(x => ({ rule_family: x.rule_family, severity: effSev(x), location: x.location, claim: x.claim, classification: x.classification, recommendation: x.recommendation, status: 'unverified' })),
 }

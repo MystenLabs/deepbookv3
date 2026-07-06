@@ -26,7 +26,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   persists until the holder redeems and clears it. *Rejected:* residual-paying
   liquidation.
 - **The ask-price band applies to mint only — redeems price at the live mark.**
-  The mint-time `[min_ask, max_ask]` band is admission policy: the protocol
+  The mint-time `[min_entry_probability, max_entry_probability]` band is admission policy: the protocol
   declines to become counterparty in the tail price regions where the curve is
   least reliable. Once a contract is live, redeeming at the live mark is the
   holder's right; a redeem clamp would systematically underpay legitimate
@@ -146,8 +146,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  `propbook::block_scholes_spot_feed::BlockScholesSpotFeed`, and source-level
 	  `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` /
 	  `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` objects with per-expiry
-	  rows. Each is updated permissionlessly from a self-authenticating verified
-	  update, so there is no writer capability.
+	  rows. Each is updated permissionlessly — the design intent is that a verified
+	  update is self-authenticating, so there is no writer capability (the current
+	  `block_scholes_oracle` payload is an unvalidated stub until the production
+	  verifier lands; see risks.md).
   *Rationale:* the oracle suite is reusable by the wider ecosystem and has a clean,
   Predict-agnostic boundary; possessing a verified `Update` is the only proof
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
@@ -211,7 +213,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the `u64` cast. *Rationale:* the widened tick domain makes a deep tail reachable by
   a forward drift alone, and the NAV walk prices every live boundary — one
   unpriceable order would otherwise brick NAV, redeem, and liquidation for the whole
-  market until settlement. Saturation keeps those reads live; the `[min_ask, max_ask]`
+  market until settlement. Saturation keeps those reads live; the `[min_entry_probability, max_entry_probability]`
   admission band, not an abort, is what keeps the protocol from writing a tail it
   prices poorly. *Rejected:* a standalone reject-at-mint strike-range guard (redundant
   with the ask band on mint, and it would not cover redeem / NAV / liquidation, which
