@@ -60,7 +60,7 @@ Findings graduate to `stress/` (dated finding doc, then the consolidated
 
 ### E4 · `mint-batch` · DONE
 
-- **Drives:** C-3 (batched PTB amplification) — closed 2026-07-06 as
+- **Drives:** C-3 (batched PTB amplification) — resolved 2026-07-06 as
   accept + disclose (`response-policies.md` RP-10, `docs/risks.md`
   § Batched transactions).
 - **Question:** why does a 100-mint PTB cost 3–5B computation when 100

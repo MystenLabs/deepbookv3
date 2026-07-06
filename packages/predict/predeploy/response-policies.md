@@ -245,10 +245,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-*RP-9 is reserved by the in-flight quote-surface branch
-(`at/dbu-512-predict-quote-surface`, congestion-surcharge charge ordering).*
-
-## RP-10: Large atomic PTBs are cost-amplified by transaction-level metering — accept + disclose (closes C-3)
+## RP-10: Large atomic PTBs are cost-amplified by transaction-level metering — accept + disclose (resolves C-3)
 
 - **Trigger state:** a router, keeper, or integrator builds a large
   multi-command PTB of leveraged mints/redeems; per-command computation cost
@@ -272,12 +269,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   multi-command PTBs generally.
 - **Risk profile:** `MEASURED` on localnet (two replicated runs, harness E4):
   ~110–150 leveraged mints/PTB atomic ceiling; a 100-mint PTB ≈ 68% of the
-  wall. Magnitude is book- and transaction-shape-dependent — localnet gives
-  mechanism and direction, not a permanent production multiplier; flows
-  designed near the ceiling should measure, not assume.
-- **Pinning tests:** none — platform metering behavior, not pinnable in Move
-  unit tests; evidence: `stress/mint-batch-findings-2026-07-01.md`
-  (`experiments.md` E4).
+  wall. Findings: `stress/mint-batch-findings-2026-07-01.md`. Magnitude is
+  book- and transaction-shape-dependent — localnet gives mechanism and
+  direction, not a permanent production multiplier; flows designed near the
+  ceiling should measure, not assume.
+- **Pinning tests:** not yet catalogued — platform metering behavior, not
+  pinnable in Move unit tests by nature; the evidence is the harness finding
+  linked above (`experiments.md` E4).
 - **Reopen when:** Sui's metering model changes materially, or a production
   measurement diverges from the localnet ceiling enough to invalidate the
   integrator guidance.
