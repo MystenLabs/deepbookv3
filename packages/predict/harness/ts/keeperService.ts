@@ -81,11 +81,10 @@ function cadenceOf(expiryMs: number): number {
   return 0; // 1m
 }
 
-// Settle every currently-past-expiry active market, each in its own PTB (insert exact spot +
-// rebalance_expiry_cash -> ensure_settled -> sweep). Reads a FRESH clock + chain active set so it
-// reflects markets that expired since the tick began. Returns whether all succeeded, the last error
-// tag, and how many it settled — callers loop it until count==0 so a market expiring DURING a settle
-// pass is swept before the flush values it (else the flush trips ensure_settled on the straggler).
+// The durable settlement lane: settle every currently-past-expiry active market, each in its own PTB
+// (insert exact spot + rebalance_expiry_cash -> ensure_settled -> sweep). Needs only the exact Pyth
+// spot, NOT live BS pricing, so a BS outage that defers the flush can never back settlement up (no
+// beyond-retention brick). Reads a fresh clock + chain active set. Returns ok / last error / count.
 async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: string; count: number }> {
   const clock = Number(await clockTimestampMs());
   const expired: Mkt[] = [];
@@ -120,49 +119,47 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   const active: Mkt[] = [];
   for (const id of await readActiveMarketIds()) active.push({ id, expiryMs: await expiryOf(id) });
 
-  // 1a. Settle expired markets (own PTBs, decoupled from the flush — settlement needs only the exact
-  //     Pyth spot, so a BS live-pricing outage that defers the flush can NEVER block it, and no
-  //     settlement backlog can age observations out of Pyth-history retention and brick the flush).
-  //     LOOP until nothing is past-expiry (bounded): a market that expires DURING a settle pass is
-  //     swept before the flush values it — else the flush trips ensure_settled on the unsettled
-  //     straggler (the boundary-race flush deferral). Per-market so one bad settle fails alone.
-  let settledOk = true;
-  let lastSettleErr = "";
-  let didSettle = false;
-  for (let pass = 0; pass < 3; pass++) {
-    const s = await settleExpired(feeds);
-    if (s.count > 0) didSettle = true;
-    if (!s.ok) { settledOk = false; lastSettleErr = s.lastErr; break; }
-    if (s.count === 0) break; // caught up: nothing is past-expiry
-  }
+  // 1a. Durable settlement lane (single pass): settle + sweep every market past-expiry now. Decoupled
+  //     from the flush so a BS outage can never back it up (brick fix). One bad settle fails alone.
+  const s1 = await settleExpired(feeds);
+  const settledOk = s1.ok;
+  const didSettle = s1.count > 0;
   if (settledOk) consecutiveSettleDefers = 0;
   else if (++consecutiveSettleDefers >= 8) {
-    // A real settlement stall (NOT a flush OOG): expired markets are not settling, so the active set
-    // can't drain. Report the ACTUAL last error tag, not a canned cause — this is the brick signal
-    // the bug oracle exists to catch (a stall that began after the first flush succeeded).
-    appendTrace("keeper", { type: "keeper-stall", consecutiveDefers: consecutiveSettleDefers, lastError: lastSettleErr });
-    console.error(`[keeper] *** settlement STALLED ${consecutiveSettleDefers} ticks (lastError=${lastSettleErr}) — expired markets not settling; roll paused ***`);
+    // A real settlement stall (NOT a flush OOG): expired markets are not settling. Report the ACTUAL
+    // error tag — this is the brick signal the bug oracle exists to catch.
+    appendTrace("keeper", { type: "keeper-stall", consecutiveDefers: consecutiveSettleDefers, lastError: s1.lastErr });
+    console.error(`[keeper] *** settlement STALLED ${consecutiveSettleDefers} ticks (lastError=${s1.lastErr}) — expired markets not settling; roll paused ***`);
   }
 
-  // 1b. Pool flush (own PTB): once a boundary passed and settlement swept the expired markets, value
-  //     the POST-settle active set (re-read from chain). Gated on settledOk so it never tries to value
-  //     an unswept expired market. A flush OOG here is the nav-stress BREAKPOINT (analyze.py excludes
-  //     it from the oracle), NOT a stall — logged as a plain flush fail, distinct from the 1a stall.
+  // 1b. Pool flush (own PTB): value every active market. The 1a lane swept the markets past-expiry when
+  //     it ran; a market that expired SINCE (a boundary-race straggler) is still active + unsettled, so
+  //     the flush inserts its exact-expiry observation inline — value_expiry then settles it via
+  //     ensure_settled instead of tripping dynamic_field on a missing obs. These inserts are the
+  //     race-avoidance ONLY; the durable settlement is 1a (a BS outage reverts the flush's inserts but
+  //     can't block 1a, so no brick). A flush OOG here is the nav-stress BREAKPOINT (analyze.py
+  //     excludes it), NOT a stall — logged as a plain flush fail.
   if (didSettle && settledOk) {
-    const flushIds = [...(await readActiveMarketIds())];
     try {
+      const nowClock = Number(await clockTimestampMs());
+      const flush: Mkt[] = [];
+      for (const id of await readActiveMarketIds()) flush.push({ id, expiryMs: await expiryOf(id) });
+      const settlements: { expiryMs: bigint; price: bigint }[] = [];
+      for (const m of flush) {
+        if (m.expiryMs <= nowClock) settlements.push({ expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
+      }
       const fr = await executeAndWait(
-        keeperFlushTx({ feeds, marketIds: flushIds, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
+        keeperFlushTx({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush",
         FLUSH_GAS_BUDGET,
       );
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
-        type: "flush", marketCount: fe ? Number(fe.market_count) : flushIds.length,
+        type: "flush", marketCount: fe ? Number(fe.market_count) : flush.length, stragglers: settlements.length,
         poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
         activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr), compGas: computationOf(fr),
       });
-      console.log(`[keeper] flushed ${flushIds.length} active market(s)`);
+      console.log(`[keeper] flushed ${flush.length} active market(s)`);
     } catch (e) {
       appendTrace("keeper", { type: "fail", lane: "flush", tag: errorTag(e) });
       console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);

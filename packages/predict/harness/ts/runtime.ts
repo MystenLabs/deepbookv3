@@ -1357,19 +1357,25 @@ export interface KeeperFeeds {
     bsSviFeedId: string;
 }
 
-// The keeper's pool-flush PTB: value EVERY active market between start and finish. Settlement is a
-// SEPARATE PTB (keeperSettleTx) run first, so by the time this flush reads the active set the expired
-// markets are already settled + swept — the flush no longer inserts observations or piggybacks
-// settlement. Live-market valuation reads the updater-maintained fresh BS feed; decoupling settlement
-// out means a BS live-pricing outage defers only this flush, never settlement.
+// The keeper's pool-flush PTB: value EVERY active market between start and finish. The durable
+// settlement lane (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
+// are only the boundary-race STRAGGLERS that expired since — their exact-expiry observations are
+// inserted so `value_expiry` -> `ensure_settled` settles them inline instead of aborting on a missing
+// dynamic field. These inserts are race-avoidance, not the durable path: a BS outage aborts this whole
+// PTB (reverting them), but the settlement lane already settled durably, so no brick. Live-market
+// valuation reads the updater-maintained fresh BS feed.
 export function keeperFlushTx(params: {
     feeds: KeeperFeeds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
     lifecycleCapId: string;
+    settlements: { expiryMs: bigint; price: bigint }[];
 }): Transaction {
     const tx = new Transaction();
+    for (const s of params.settlements) {
+        addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
+    }
     const proof = tx.moveCall({
         target: target("registry", "generate_lifecycle_proof"),
         arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
