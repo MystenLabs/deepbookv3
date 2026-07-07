@@ -81,21 +81,20 @@ function cadenceOf(expiryMs: number): number {
   return 0; // 1m
 }
 
-async function tick(feeds: Feeds, lifecycleCapId: string) {
+// Settle every currently-past-expiry active market, each in its own PTB (insert exact spot +
+// rebalance_expiry_cash -> ensure_settled -> sweep). Reads a FRESH clock + chain active set so it
+// reflects markets that expired since the tick began. Returns whether all succeeded, the last error
+// tag, and how many it settled — callers loop it until count==0 so a market expiring DURING a settle
+// pass is swept before the flush values it (else the flush trips ensure_settled on the straggler).
+async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: string; count: number }> {
   const clock = Number(await clockTimestampMs());
-  // Reconcile the active set from CHAIN — never an in-memory list.
-  const active: Mkt[] = [];
-  for (const id of await readActiveMarketIds()) active.push({ id, expiryMs: await expiryOf(id) });
-
-  // 1a. Settle expired markets — each in its OWN PTB (insert exact spot + rebalance_expiry_cash ->
-  //     ensure_settled -> sweep). Decoupled from the flush (1b): settlement needs only the exact Pyth
-  //     spot, so a BS live-pricing outage that defers the flush can NEVER block it. That removes the
-  //     coupled-PTB failure where a pricing outage stalled settlement until expired markets aged out
-  //     of Pyth-history retention and the flush bricked on a missing observation. Per-market so one
-  //     bad market's settle fails alone; a boundary race (no obs yet) just retries next tick.
-  const expired = active.filter((m) => m.expiryMs <= clock);
-  let settledOk = true;
-  let lastSettleErr = "";
+  const expired: Mkt[] = [];
+  for (const id of await readActiveMarketIds()) {
+    const e = await expiryOf(id);
+    if (e <= clock) expired.push({ id, expiryMs: e });
+  }
+  let ok = true;
+  let lastErr = "";
   for (const m of expired) {
     try {
       const price = await fetchExactSpot1e9(m.expiryMs);
@@ -106,11 +105,35 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       expiryCache.delete(m.id); funded.delete(m.id); // swept off-chain; forget
       appendTrace("keeper", { type: "settle", market: m.id, expiryMs: m.expiryMs });
     } catch (e) {
-      settledOk = false;
-      lastSettleErr = errorTag(e);
-      appendTrace("keeper", { type: "fail", lane: "settle", tag: lastSettleErr });
+      ok = false;
+      lastErr = errorTag(e);
+      appendTrace("keeper", { type: "fail", lane: "settle", tag: lastErr });
       console.warn(`[keeper] settle deferred ${m.id.slice(0, 10)}: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
     }
+  }
+  return { ok, lastErr, count: expired.length };
+}
+
+async function tick(feeds: Feeds, lifecycleCapId: string) {
+  // Reconcile the active set from CHAIN — never an in-memory list. Used by liquidate / rebalance /
+  // roll below; settlement (step 1) re-reads a fresh set of its own each pass.
+  const active: Mkt[] = [];
+  for (const id of await readActiveMarketIds()) active.push({ id, expiryMs: await expiryOf(id) });
+
+  // 1a. Settle expired markets (own PTBs, decoupled from the flush — settlement needs only the exact
+  //     Pyth spot, so a BS live-pricing outage that defers the flush can NEVER block it, and no
+  //     settlement backlog can age observations out of Pyth-history retention and brick the flush).
+  //     LOOP until nothing is past-expiry (bounded): a market that expires DURING a settle pass is
+  //     swept before the flush values it — else the flush trips ensure_settled on the unsettled
+  //     straggler (the boundary-race flush deferral). Per-market so one bad settle fails alone.
+  let settledOk = true;
+  let lastSettleErr = "";
+  let didSettle = false;
+  for (let pass = 0; pass < 3; pass++) {
+    const s = await settleExpired(feeds);
+    if (s.count > 0) didSettle = true;
+    if (!s.ok) { settledOk = false; lastSettleErr = s.lastErr; break; }
+    if (s.count === 0) break; // caught up: nothing is past-expiry
   }
   if (settledOk) consecutiveSettleDefers = 0;
   else if (++consecutiveSettleDefers >= 8) {
@@ -125,7 +148,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //     the POST-settle active set (re-read from chain). Gated on settledOk so it never tries to value
   //     an unswept expired market. A flush OOG here is the nav-stress BREAKPOINT (analyze.py excludes
   //     it from the oracle), NOT a stall — logged as a plain flush fail, distinct from the 1a stall.
-  if (expired.length && settledOk) {
+  if (didSettle && settledOk) {
     const flushIds = [...(await readActiveMarketIds())];
     try {
       const fr = await executeAndWait(
