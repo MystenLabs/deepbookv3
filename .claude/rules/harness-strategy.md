@@ -19,6 +19,12 @@ If the user described it, restate your understanding and fill the gaps. Otherwis
   attempt.
 - **What to measure / the success signal** — gas, NAV / pool drain, liquidation volume, a
   specific invariant, or simply "the bug oracle stays clean".
+  - A stress strategy that DELIBERATELY probes a wall (a capacity ceiling, a framework abort)
+    must declare it via `Strategy.expect: { terminal: [...] }` — substrings `analyze` matches
+    against abort tags + the failed-tx `executionErrorSource`. The declared abort is then expected
+    (not a bug oracle hit) for that run ONLY, and a run that never reaches its declared wall fails
+    as VACUOUS. Never add such a wall to the GLOBAL `EXPECTED_CODES` (analyze.py) — an abort that
+    bricks a normal run must stay a bug outside the strategy that intends it.
 - **Pacing + volume** — rate (`tickMs`) and stop condition (`maxOps` for run-to-completion, or
   duration).
 - **Expiry selection** — nearest, random, or a specific cadence.

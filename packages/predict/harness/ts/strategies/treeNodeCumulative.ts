@@ -74,6 +74,9 @@ const treeNodeCumulative: Strategy = {
   tickMs: 1000,
   maxOps: 0,
   fund: 30_000_000_000_000n,
+  // Probes the object-cache ceiling cumulatively: the flush is EXPECTED to abort once the two markets'
+  // combined node count crosses ~1000. Whitelisted for THIS run only (a normal flush hitting it is C-1).
+  expect: { terminal: ["cached objects limit"], note: "cumulative two-market node ceiling (C-1)" },
   async tick(ctx) {
     const ids = ensureLocked(ctx);
     if (ids.length < 2 || !ctx.snapshot()) return null;

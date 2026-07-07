@@ -76,6 +76,9 @@ const treeNodeSweep: Strategy = {
   tickMs: 1200,
   maxOps: 0, // duration-only: fill toward the node cap, then hold so the keeper flush is measured at high node count
   fund: 20_000_000_000_000n,
+  // Probes the object-runtime cache ceiling: the flush is EXPECTED to abort on it once node count
+  // crosses ~1000. Whitelisted for THIS run only (a normal flush hitting it is the C-1 brick).
+  expect: { terminal: ["cached objects limit"], note: "single-market payout-tree node ceiling (C-1)" },
   async tick(ctx) {
     const market = targetMarket(ctx);
     if (!market || !ctx.snapshot()) return null;

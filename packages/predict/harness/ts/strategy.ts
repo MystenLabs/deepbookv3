@@ -103,6 +103,12 @@ export interface Strategy {
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
+  // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
+  // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
+  // (e.g. the object-cache limit "cached objects limit", which bricks a normal flush but is the whole
+  // point here) is expected, not a bug oracle hit; a run that never reaches a declared wall fails as
+  // VACUOUS (a stress that did not stress). Scope narrowly — this whitelist is per-strategy, not global.
+  expect?: { terminal: string[]; note?: string };
   tick(ctx: StrategyCtx): Promise<OpKind | null>;
 }
 
