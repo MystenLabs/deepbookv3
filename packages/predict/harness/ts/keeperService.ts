@@ -38,9 +38,11 @@ const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
 const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M default; campaign overrides per strategy
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
-// Flush gas budget. The pool-valuation flush OOGs at the per-tx COMPUTATION cap (5e9 MIST), not the
-// budget, so the budget only needs headroom above that cap. Set to 15e9 (3x): still lets the flush
-// reach the 5e9 computation wall (the nav-stress breakpoint), but far below the old 50e9 — because
+// Flush gas budget. The SINGLE dense market (nav-stress) OOGs at the per-tx COMPUTATION cap
+// (5e9 MIST), not the budget; the pool total binds earlier on the object-runtime cached-objects
+// limit (C-1) at ~16-50% of that cap. Either way the budget only needs headroom above the 5e9 cap.
+// Set to 15e9 (3x): still lets the single-market flush reach the 5e9 wall, but far below the old
+// 50e9 — because
 // signExecThreaded pins ONE gas coin per sender and Sui requires that coin >= the budget, a 50e9
 // floor starved the keeper's shrinking pinned coin (batch run 2026-07-06: 219 gas-starved flushes).
 // 15e9 ~triples the coin's runway. Mitigation, not a full fix — a long enough run still drains the

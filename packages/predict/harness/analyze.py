@@ -137,8 +137,14 @@ def _vm_errors(inst: Path) -> Counter:
             continue
         dr = o.get("dry_run") or {}
         status = (dr.get("effects") or {}).get("status") or {}
-        msg = dr.get("executionErrorSource") or status.get("error")
-        if msg and "MoveAbort" not in str(msg):
+        src = dr.get("executionErrorSource") or ""
+        msg = src or status.get("error")
+        # Skip ordinary Move aborts (guards) — they are legible in the tag. A MoveAbort shows as
+        # `status ABORTED` in executionErrorSource and `MoveAbort(...)` in status.error; a framework/VM
+        # error (the kind the tag hides, e.g. MEMORY_LIMIT_EXCEEDED) shows a different status. Filter on
+        # both because a MoveAbort's executionErrorSource does NOT contain the literal "MoveAbort".
+        is_abort = "status ABORTED" in src or "MoveAbort" in str(status.get("error") or "")
+        if msg and not is_abort:
             out[str(msg)[:160]] += 1
     return out
 
