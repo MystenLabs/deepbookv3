@@ -257,6 +257,14 @@ async function collectTransactionDebug(params: {
     const path = failedTransactionArtifactPath(params.label, params.attempt);
     writeJson(path, artifact);
     process.stderr.write(`[${ts()}]   Failed transaction artifact: ${path}\n`);
+    // Surface the REAL VM error, not just the artifact path. A framework-level MovePrimitiveRuntimeError
+    // (e.g. 0x2::dynamic_field::borrow_child_object) names only the framework fn, hiding the true cause;
+    // the dry-run's `executionErrorSource` states it in plain English (e.g. "Object runtime cached objects
+    // limit (1000 entries) reached"). This line is why: the C-1 flush ceiling was debugged for days off the
+    // truncated framework string while this exact message sat unsurfaced in the artifact. Always print it.
+    const dr = artifact.dry_run as any;
+    const vmError = dr?.executionErrorSource ?? dr?.effects?.status?.error ?? (artifact.status as any)?.error ?? null;
+    if (vmError) process.stderr.write(`[${ts()}]   VM error: ${String(vmError).slice(0, 300)}\n`);
     return path;
 }
 

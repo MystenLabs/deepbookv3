@@ -122,6 +122,27 @@ def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]
     return expected, transient, flagged
 
 
+def _vm_errors(inst: Path) -> Counter:
+    """Distinct non-MoveAbort VM errors (the dry-run `executionErrorSource`) from this instance's
+    saved failed-tx artifacts — the plain-English cause a framework-level MovePrimitiveRuntimeError
+    tag hides. Filtered to VM/framework errors; MoveAbort guards are already legible in the tag."""
+    out: Counter = Counter()
+    art = inst / "artifacts" / "failed_transactions"
+    if not art.is_dir():
+        return out
+    for f in sorted(art.glob("*.json")):
+        try:
+            o = json.loads(f.read_text())
+        except Exception:
+            continue
+        dr = o.get("dry_run") or {}
+        status = (dr.get("effects") or {}).get("status") or {}
+        msg = dr.get("executionErrorSource") or status.get("error")
+        if msg and "MoveAbort" not in str(msg):
+            out[str(msg)[:160]] += 1
+    return out
+
+
 def _analyze_one(inst: Path) -> list[str]:
     """Print one instance's report; return the list of bug-signal tags (empty = clean)."""
     recs = _load(inst / "trace")
@@ -325,6 +346,11 @@ def _analyze_one(inst: Path) -> list[str]:
         print(f"  *** BUG ORACLE: {len(flagged)} invariant/non-package abort(s) ***")
         for tag, n in Counter(flagged).most_common(10):
             print(f"     {n}x  {tag}")
+        # A framework-level tag (dynamic_field::borrow_child_object etc.) names only the framework fn.
+        # Surface the dry-run's executionErrorSource from the saved artifacts — the plain-English VM
+        # cause the tag hides (e.g. "Object runtime cached objects limit (1000 entries) reached").
+        for msg, n in _vm_errors(inst).most_common(6):
+            print(f"       -> {n}x  {msg}")
     else:
         print("  bug oracle clean (no invariant/non-package aborts)")
 

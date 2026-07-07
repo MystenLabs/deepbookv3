@@ -12,6 +12,8 @@ import navStress from "./navStress.js";
 import navStressAtm from "./navStressAtm.js";
 import navStressMulti from "./navStressMulti.js";
 import navStressNodes from "./navStressNodes.js";
+import treeNodeCumulative from "./treeNodeCumulative.js";
+import treeNodeSweep from "./treeNodeSweep.js";
 
 export const STRATEGIES: Record<string, Strategy> = {
   [fuzz.name]: fuzz,
@@ -25,6 +27,8 @@ export const STRATEGIES: Record<string, Strategy> = {
   [mintBatch.name]: mintBatch,
   [batchMaxBook.name]: batchMaxBook,
   [batchMaxMarkets.name]: batchMaxMarkets,
+  [treeNodeSweep.name]: treeNodeSweep,
+  [treeNodeCumulative.name]: treeNodeCumulative,
 };
 
 export function getStrategy(name: string): Strategy {
