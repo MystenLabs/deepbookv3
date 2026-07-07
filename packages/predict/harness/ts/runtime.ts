@@ -1357,26 +1357,19 @@ export interface KeeperFeeds {
     bsSviFeedId: string;
 }
 
-// The keeper's flush+settle PTB. First inserts the exact-expiry Pyth observation for
-// each expired market (so `value_expiry`'s `ensure_settled` settles + sweeps it), then
-// runs ONE full-pool flush valuing EVERY active market between start and finish. A
-// settled market contributes 0 and is swept (cash back to pool); a live market is
-// rebalanced + valued. Relies on the running updater to keep live-market feeds fresh.
+// The keeper's pool-flush PTB: value EVERY active market between start and finish. Settlement is a
+// SEPARATE PTB (keeperSettleTx) run first, so by the time this flush reads the active set the expired
+// markets are already settled + swept — the flush no longer inserts observations or piggybacks
+// settlement. Live-market valuation reads the updater-maintained fresh BS feed; decoupling settlement
+// out means a BS live-pricing outage defers only this flush, never settlement.
 export function keeperFlushTx(params: {
     feeds: KeeperFeeds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
     lifecycleCapId: string;
-    settlements: { expiryMs: bigint; price: bigint }[];
 }): Transaction {
     const tx = new Transaction();
-    // Insert each expired market's terminal observation so value_expiry's ensure_settled
-    // settles + sweeps it; live-market valuation reads the updater-maintained fresh feed.
-    // One atomic flush values EVERY active market.
-    for (const s of params.settlements) {
-        addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
-    }
     const proof = tx.moveCall({
         target: target("registry", "generate_lifecycle_proof"),
         arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
@@ -1410,6 +1403,36 @@ export function keeperFlushTx(params: {
             tx.object(params.protocolConfigId),
             tx.pure(bcs.option(bcs.u64()).serialize(null)),
             tx.pure(bcs.option(bcs.u64()).serialize(null)),
+        ],
+    });
+    return tx;
+}
+
+// Settle ONE expired market in its own PTB (decoupled from the flush): insert its exact-expiry Pyth
+// observation, then rebalance_expiry_cash — which for a past-expiry market runs ensure_settled ->
+// sweep_settled_expiry, removing it from active_expiry_markets. Needs only the exact Pyth spot, NOT
+// live BS pricing, so it proceeds even while the flush defers on a BS outage — no settlement backlog,
+// no beyond-retention brick. Mirrors the production keeper's settlement lane (deepbook-services
+// decision 0010). Per-market so one bad market's settle fails alone.
+export function keeperSettleTx(params: {
+    pythFeedId: string;
+    expiryMs: bigint;
+    price: bigint;
+    marketId: string;
+    poolVaultId: string;
+    protocolConfigId: string;
+}): Transaction {
+    const tx = new Transaction();
+    addPythFeedInsert(tx, params.pythFeedId, params.price, params.expiryMs);
+    tx.moveCall({
+        target: target("plp", "rebalance_expiry_cash"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.marketId),
+            tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;
