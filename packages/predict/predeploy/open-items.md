@@ -90,43 +90,69 @@ deferral to a post-deploy upgrade as the decision. (audit 412e9e)
 
 The flush values every active market in one PTB. Current independent caps
 (`24` live markets, `1000` payout nodes, `5000` leveraged orders per market) do
-not compose into the 5M computation-unit wall. The NAV price memo removed the
-single-market pre-cap OOG; the remaining deploy blocker is the pool-total case.
-The missing bound is a joint sum across all active markets, not another
-isolated per-market cap.
+not compose into a single-PTB budget — and the binding limit is object-count,
+not compute (corrected 2026-07-07; see the model below). The NAV price memo
+removed the single-market pre-cap OOG; the remaining deploy blocker is the
+pool-total case. The missing bound is a joint sum across all active markets, not
+another isolated per-market cap.
 
-**Capacity model (measured, as of 2026-07-01):**
+**Capacity model (corrected 2026-07-07 — the binding wall is object-count, not compute):**
 
-- The binding wall is the Sui per-transaction computation cap,
-  `max_gas_computation_bucket = 5,000,000` units (5e9 MIST at reference gas
-  price 1000; a protocol constant, so the OOG book size is
-  network-independent). The flush is computation-bound — raising the gas
-  budget does not bypass the wall.
-- Single market, post-memo: a full 5,000-leveraged-order book values at
-  ~47–54% of the wall (`evidence/c1-price-memo-2026-07-01.md`); the per-market
-  order cap binds before NAV computation does. Pre-memo the flush OOG'd at
-  ~4,580 orders (`evidence/c1-nav-stress-2026-06-30.md`) — historical evidence
-  for why the pool total needs a joint budget.
-- Pool-total: multi-market stress reached ~8,640 total leveraged orders across
-  ~9 markets at ~92% of the wall, entangled with `expiry_cash::EInsufficientCash`
-  (pool capital bound the book before gas did), so it is not the final gas-only
-  cap — but enough to show the independent caps do not compose.
+- The binding wall for the pool total is the Sui **object-runtime cached-objects
+  limit: 1,000 dynamic-field child objects per transaction**
+  (`object_runtime_max_num_cached_objects`; a protocol constant, taken as
+  network-invariant). The flush loads each market's payout-tree nodes and
+  liquidation-book pages as dynamic-field children, and the object-runtime cache
+  **accumulates across every `value_expiry` command in the one PTB**. On overflow
+  it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object` —
+  a framework error whose true cause is this limit. It binds at 16–50% of the 5M
+  compute cap, so the pool flush is object-count-bound, not computation-bound
+  (`evidence/c1-object-cache-flush-2026-07-07.md`).
+- Driver = distinct payout-tree nodes: one `Table<tick,PayoutNode>` child per
+  distinct strike tick, and `walk_linear` loads every node. Node count = distinct
+  ticks, NOT order count (the tree aggregates by boundary) — which is why
+  single-market runs at narrow strikes never reached it despite large books.
+  Liquidation-book pages (`ceil(leveraged_orders / 64)`) are a minor contributor.
+- Confirmed cumulative, not per-command: two 1× markets at 586 nodes each —
+  neither near 1,000 — abort the flush at ~1,172 combined; a single 1× market
+  crosses at ~982 nodes (`evidence/c1-object-cache-flush-2026-07-07.md`).
+- Superseded conclusion: the 2026-07-01 model called the flush
+  computation-bound. That holds for the SINGLE market (a full 5,000-order book
+  values at ~47–54% of the compute cap, `evidence/c1-price-memo-2026-07-01.md`;
+  pre-memo that single market OOG'd at ~4,580 orders,
+  `evidence/c1-nav-stress-2026-06-30.md`) but not the pool total. Earlier
+  pool-total runs hit
+  `expiry_cash::EInsufficientCash` (capital) at ~92% compute before reaching the
+  object wall; raising the allocation cap removed that mask and exposed the
+  1,000-child limit.
 - Expired-unswept markets leave the active set only inside a successful
   `value_expiry`/sweep, so the flush's active tail is not bounded by the
   live-market creation cap.
-- Cap-sizing shape:
-  `sum_over_active_markets(nodes*c_node + orders*c_order + base) + drain_budget
-  < safety_fraction (~60%) * 5,000,000 units`.
+- Capacity law:
+  `sum_over_active_markets(distinct_ticks + ceil(leveraged_orders / 64) + base_children)
+  < 1,000 dynamic-field children per flush PTB` — a joint sum across all active
+  markets, dominated by distinct strike ticks.
 
-**Fix options:** a joint budget across active markets · caps tightened to a
-measured single-PTB envelope · valuation resumable across PTBs · an
-out-of-flush settled sweep/deactivate path (bounds the active tail) ·
-documented operator throttling (an off-chain acceptance, not an on-chain
-guarantee).
+**Fix options (reframed for the object-count wall):** shrink the per-market
+NAV-walk child footprint (e.g. cache tree aggregates so `walk_linear` need not
+load every node) · a joint active-market×node budget enforced at creation/roll ·
+valuation resumable across PTBs (partial state instead of a hot potato) · an
+out-of-flush settled sweep/deactivate path (bounds the active tail) · documented
+operator throttling (an off-chain acceptance, not an on-chain guarantee).
 
 **Plan — runs that finish the number (decision rules pre-registered
 2026-07-02):**
 
+The binding wall is now identified (object-cache, 2026-07-07 above); the compute
+runs below are superseded for the pool total (compute is not the wall), and what
+remains open is the FIX, not the measurement. Retained for context:
+
+- Payout-tree probe — DONE 2026-07-07 (`ts/strategies/treeNodeSweep.ts`,
+  `ts/strategies/treeNodeCumulative.ts`): filling one 1× market to the node cap
+  and two markets to 586 each proved the pool-total wall is the object-runtime
+  cached-objects limit, cumulative across the PTB, not compute
+  (`evidence/c1-object-cache-flush-2026-07-07.md`). The `c_node`/compute terms are
+  moot for the pool total — object count binds first.
 - Worst-branch per-order cost (`ts/strategies/navStressAtm.ts`): the measured
   expensive-branch (`exp_series`, moderate moneyness) cost replaces the
   fuzz-derived ~3,644 units/order in the cap sizing; if the joint budget at
@@ -137,9 +163,6 @@ guarantee).
   sum over markets under one wall and measures the per-market base. Size LP
   capital first so `EInsufficientCash` does not bound the book before flush
   gas does.
-- Payout-tree probe (max nodes × max leveraged orders in one market): the
-  1,000-node cap has never been benchmarked — prior runs reached only ~83
-  boundaries — and supplies the `c_node` term.
 - Any final cap change is followed by one run that reaches the new boundary
   and proves the flush stays under the safety target.
 
