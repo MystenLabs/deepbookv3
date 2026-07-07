@@ -1,5 +1,7 @@
 # Mint-Batch Findings - 2026-07-01
 
+**Item:** C-3 (resolved → RP-10) · **Instrument:** `mint-batch` (localnet harness) · **Date:** 2026-07-01
+
 This finding resolves the question: why does a 100-mint PTB cost billions of
 MIST in computation when 100 standalone mints are much cheaper?
 

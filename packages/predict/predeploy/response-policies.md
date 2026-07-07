@@ -6,9 +6,13 @@ the behavior someone deliberately chose, why, and the tests that pin it.
 
 `open-items.md` tracks work that is still open; when an item closes, the
 *decision* it produced graduates into an entry here instead of surviving only
-in a commit message. `docs/risks.md` is the public disclosure and must describe
-the behavior recorded here — a `risks.md` claim about failure behavior that has
-no register entry (or contradicts one) is a finding.
+in a commit message — this register is the pipeline's single terminal for
+judgment calls, and at most one entry resolves a given item. Measured evidence
+behind entries lives as dated records in `evidence/`. `docs/risks.md` is the
+public disclosure and must describe the behavior recorded here — a `risks.md`
+claim about failure behavior that has no register entry (or contradicts one)
+is a finding. The protocol-wide rounding policy (R1–R3) also lives here, at
+the end of the register.
 
 ## The discipline
 
@@ -155,10 +159,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   mark**: a settlement-dependent market has no well-defined true value, and
   the single mark prices both queue directions — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
-- **Reasoning + evidence:** `settlement-liveness.md` (accepted operational
-  assumption, testnet evidence); grid-snap at creation makes the key
-  representable, resolution endpoints make it producible.
-- **Risk profile:** `MEASURED` (testnet evidence in `settlement-liveness.md`);
+- **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` (accepted
+  operational assumption, testnet evidence); grid-snap at creation makes the
+  key representable, resolution endpoints make it producible.
+- **Risk profile:** `MEASURED` (testnet evidence in
+  `evidence/rp4-settlement-liveness.md`);
   residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
   `risks.md`.
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
@@ -236,7 +241,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   trader/principal backing outranks protocol revenue; the carried amount is
   held out of NAV.
 - **Reasoning:** liveness class distinct from rounding-dust underflow
-  (`rounding-policy.md` R1); seniority must be explicit so the deferred cut
+  (Rounding policy § R1 below); seniority must be explicit so the deferred cut
   never preempts funding.
 - **Risk profile:** n/a (accounting-liveness policy).
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
@@ -304,16 +309,72 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   multi-command PTBs generally.
 - **Risk profile:** `MEASURED` on localnet (two replicated runs, harness E4):
   ~110–150 leveraged mints/PTB atomic ceiling; a 100-mint PTB ≈ 68% of the
-  wall. Findings: `stress/mint-batch-findings-2026-07-01.md`. Magnitude is
+  wall. Findings: `evidence/c3-mint-batch-2026-07-01.md`. Magnitude is
   book- and transaction-shape-dependent — localnet gives mechanism and
   direction, not a permanent production multiplier; flows designed near the
   ceiling should measure, not assume.
 - **Pinning tests:** not yet catalogued — platform metering behavior, not
   pinnable in Move unit tests by nature; the evidence is the harness finding
-  linked above (`experiments.md` E4).
+  linked above (the `mint-batch` strategy, formerly experiments-ledger E4).
 - **Reopen when:** Sui's metering model changes materially, or a production
   measurement diverges from the localnet ceiling enough to invalidate the
   integrator guidance.
+
+---
+
+## Rounding policy (R1–R3)
+
+Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
+sub-unit dust is economically negligible; the real risk is an off-by-one that
+aborts a transaction and strands funds. The protocol therefore optimizes for
+liveness and a protocol-favored dust bias, not bit-exactness for its own sake.
+
+### R1: Liveness first
+
+Dust must never abort a settlement, redeem, backing, or liability path. Every
+`available - requested` subtraction on those paths must be provably
+non-underflowing: the reserve or liability backing a payout must always be at
+least the amount paid against it. Preferred construction: compute the reserve
+and payout from the same expression; or remove and reinsert exact terms so the
+accounting atoms match bit-for-bit; or, where that is impossible, round the
+reserve up. A `>=` relation that can become `<` by one unit of precision is
+the bug class. R1 covers only dust/ulp underflow — deferred-realization
+shortfall uses defer-and-carry accounting (RP-8), and bootstrap /
+`total_supply == 0` issues need a minimum-liquidity or equivalent structural
+solution.
+
+### R2: Dust is biased to the protocol
+
+When a rounding choice exists, the protocol or LP pool keeps the dust; the
+user or LP counterparty receives at most one unit less. Concretely:
+user-facing outflows round down (redeem, withdraw, payout, rebate);
+protocol-held reserves and liabilities are greater than or equal to the
+corresponding outflow; use bit-equal reserve/payout pairing where possible,
+otherwise round reserves up. Net result: dust accrues to the pool, is never
+stranded, and never causes an abort.
+
+### R3: Document direction and owner
+
+Every money-moving expression names its rounding direction and who owns the
+dust when the expression is not obvious (e.g.
+`// = amount * p / S, round down (user eats <=1 ulp; pool never short).`);
+use `ceil(...)` terminology for round-up paths.
+
+**Applications.** Partial close to settled payout: derive reserve and payout
+from the same order atoms — remove old order terms and reinsert replacement
+terms exactly, so tree reserve equals settled payout with no dust buffer.
+Protocol reserve realization: never bare-split a balance for an amount
+recognized earlier if the backing cash can be redeployed before the split —
+realize `min(pending, available)`, carry the remainder, keep it out of LP
+value (RP-8). NAV and floor correction: round floor correction so it cannot
+overstate recoverable value; one-unit dust biases toward incumbents/the
+protocol, never toward overpaying a withdrawal.
+
+**Audit obligation.** Every money flow is checked against R1 and R2 — mint
+contribution, live redeem, settled payout, liquidation, fees and discounts,
+rebate reserve, LP supply/withdraw pricing, NAV floor correction. If a flow
+can underflow or round toward the user, fix it or document the accepted
+tradeoff explicitly.
 
 ---
 
@@ -322,6 +383,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - New entries come from: closing an `open-items.md` item that embodied a
   response decision; removing/weakening any guard (mandatory duty-inventory
   entry); an audit or review finding an undecided state that is then decided.
+- At most one entry resolves a given open item; name the resolved item in the
+  entry title (e.g. "resolves C-3").
 - Every entry must link at least one pinning test, or carry an explicit
   "not yet catalogued" / "untested — gap" marker. A decision with no pinning
   test is not enforced and must not be described as shipped behavior in
@@ -333,4 +396,4 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   finding.
 - `BEST-GUESS` risk profiles are standing candidates for harness measurement;
   when a campaign measures one, replace the tag with `MEASURED` and link the
-  findings doc under `stress/` or a dated findings file.
+  dated findings record under `evidence/`.

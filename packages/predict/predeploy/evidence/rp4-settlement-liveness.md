@@ -1,5 +1,7 @@
 # Predict Exact-Timestamp Settlement Liveness
 
+**Item:** RP-4 (register annex evidence) · **Instrument:** testnet observation · **Date:** 2026-07-02
+
 Status: accepted operational assumption as of 2026-07-02.
 
 This note resolves the former `S-1` deploy gate and the former `C-2`

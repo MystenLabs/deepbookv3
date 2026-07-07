@@ -1,5 +1,7 @@
 # Near-Expiry Oracle Calibration Finding
 
+**Item:** O-1 · **Instrument:** offline + on-chain calibration study · **Date:** 2026-06-21
+
 Status: confirmed offline and on-chain on 2026-06-21.
 
 Severity: High if near-expiry markets are enabled without recalibration.

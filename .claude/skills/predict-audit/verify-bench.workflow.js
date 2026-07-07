@@ -24,7 +24,7 @@ let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const CORPUS_PATH = A.corpusPath || `${SKILL}/evals/verify_corpus.json`
-const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/rounding-policy.md, packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
+const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/response-policies.md (Rounding policy R1-R3), packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
 const CODEX = 'codex:codex-rescue'
 const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
 function sevOf(s) { return SEVRANK[(s || '').toLowerCase()] || 0 }
