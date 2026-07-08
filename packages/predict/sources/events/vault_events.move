@@ -74,29 +74,33 @@ public struct DeepUnstaked has copy, drop, store {
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
-/// `index` is the queue handle used to cancel.
+/// `min_plp_out` is the minimum PLP the frozen mark must mint before the request
+/// fills. `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
+    min_plp_out: u64,
 }
 
 /// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC will be delivered to `recipient` at a later flush.
+/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is the
+/// minimum DUSDC the frozen mark must pay before the request fills.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
+    min_dusdc_out: u64,
 }
 
 /// Emitted when a still-pending request is cancelled and the escrow (`amount` of
 /// DUSDC if `is_supply`, else PLP) is refunded straight into the requesting account.
 /// Cancellation can be user-requested before flush or protocol-triggered when the
-/// frozen mark makes the request non-executable.
+/// frozen mark makes the request non-executable, or after repeated limit misses.
 public struct RequestCancelled has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -104,6 +108,23 @@ public struct RequestCancelled has copy, drop, store {
     index: u64,
     amount: u64,
     is_supply: bool,
+    /// 0=user, 1=non-executable frozen mark, 2=limit expired.
+    reason: u8,
+}
+
+/// Emitted when a queued LP request reaches the head during a flush but the frozen
+/// mark output misses its request-time limit and the request remains queued.
+public struct RequestLimitMissed has copy, drop, store {
+    pool_vault_id: ID,
+    account_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+    quoted_output: u64,
+    min_output: u64,
+    missed_flushes: u64,
+    max_misses: u64,
 }
 
 /// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
@@ -293,6 +314,7 @@ public(package) fun emit_supply_requested(
     recipient: address,
     index: u64,
     amount: u64,
+    min_plp_out: u64,
 ) {
     event::emit(SupplyRequested {
         pool_vault_id,
@@ -300,6 +322,7 @@ public(package) fun emit_supply_requested(
         recipient,
         index,
         amount,
+        min_plp_out,
     });
 }
 
@@ -309,6 +332,7 @@ public(package) fun emit_withdraw_requested(
     recipient: address,
     index: u64,
     amount: u64,
+    min_dusdc_out: u64,
 ) {
     event::emit(WithdrawRequested {
         pool_vault_id,
@@ -316,6 +340,7 @@ public(package) fun emit_withdraw_requested(
         recipient,
         index,
         amount,
+        min_dusdc_out,
     });
 }
 
@@ -326,6 +351,7 @@ public(package) fun emit_request_cancelled(
     index: u64,
     amount: u64,
     is_supply: bool,
+    reason: u8,
 ) {
     event::emit(RequestCancelled {
         pool_vault_id,
@@ -334,6 +360,33 @@ public(package) fun emit_request_cancelled(
         index,
         amount,
         is_supply,
+        reason,
+    });
+}
+
+public(package) fun emit_request_limit_missed(
+    pool_vault_id: ID,
+    account_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+    quoted_output: u64,
+    min_output: u64,
+    missed_flushes: u64,
+    max_misses: u64,
+) {
+    event::emit(RequestLimitMissed {
+        pool_vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        is_supply,
+        quoted_output,
+        min_output,
+        missed_flushes,
+        max_misses,
     });
 }
 
