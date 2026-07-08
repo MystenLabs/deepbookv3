@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-06. **The single source of truth for open work.** Anything that
+Updated 2026-07-07. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -49,6 +49,26 @@ transiently DoS priced flows until a valid push lands.
 **Action:** Restore write-time nonzero/normalizable guards for BS spot and
 forward updates, or document that the production verifier/source guarantees this.
 
+**2026-07-07 extension — settlement lane, permanent brick.** The same
+write-time normalizability gap reaches settlement, not just live reads. A
+non-normalizable exact-expiry Pyth print (negative, normalizes-to-zero,
+u64-overflow, or exponent-shift > 18 — `normalize_raw_spot` returns none,
+pyth_feed.move:281-308) inserted at `key == expiry_ms` locks that key forever:
+the exact-history lane is first-writer-wins with no overwrite/remove
+(oracle_lane.move:130). `ensure_settled` (expiry_market.move:698-720) then
+returns false permanently and post-expiry live pricing aborts
+(`ELivePricingExpired`), so the market never settles and the pool-wide flush
+stays bricked. This defeats RP-4's stated recovery (the permissionless exact-ms
+insert followed by passive settlement) — the later valid insert is silently
+dropped. Reachability is low for real major-asset feeds but the failure is
+permanent.
+
+**Action (extension):** Extend the proposed write-time nonzero/normalizable
+guard to the exact-ms settlement insert (reject a raw that cannot produce a
+positive normalized spot before it can claim the key), or add an authorized
+overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
+cover the permanent (not just transient) case. (audit 4d2a1e)
+
 ### P-7: Async LP requests have no fill-price protection
 
 **Severity:** Medium.
@@ -81,6 +101,106 @@ the vault without a package upgrade.
 **Action:** Add an AdminCap-gated withdraw entrypoint (e.g.
 `withdraw_protocol_reserve` splitting from the balance), or record deliberate
 deferral to a post-deploy upgrade as the decision. (audit 412e9e)
+
+**2026-07-07 extension — the cut is order-dependent, not just accrue-only.**
+The protocol cut is realized against a single pool-wide, forward-only
+`net_losses_to_fill` (pool_accounting.move:36): a loss grows it (:240) and only
+a *later* profit shrinks it (:245,:249) — a loss never claws back a cut already
+materialized from an earlier profit. Because cross-market materialization order
+is permissionless (`rebalance_expiry_cash` → `sweep_settled_expiry` →
+`materialize_expiry_profit`, plp.move:412), a profit-first ordering splits
+`share × (gross profit recognized before losses)` into
+`protocol_reserve_balance` (join-only, plp.move:814,929 — never split, matching
+this item's accrue-only claim) instead of `share × net pool profit`. Lens split
+this run: the lifecycle sim called it an LP leak (High), while the
+invariants-lens 40k-scenario fuzz and one cross-model verifier found it
+NAV-neutral under fair live marking (the cut is pre-reserved in
+`lp_pool_value`'s exclusion, plp.move:713-737) — the excess only bites when the
+offsetting loss market is *settled-but-unswept* at the profit-first instant, a
+narrow ordering window. Panel severity: Medium.
+
+**Action (extension):** Fold into the accrue-only deploy decision — take the
+cut against NET realized pool profit (a pool-level net-profit high-water mark
+realizing the incremental cut of the running net), or make `net_losses`
+symmetrically reduce not-yet-realized/pending protocol profit before any cut is
+split. Verify with a cross-market Move flow test: value/sweep a profitable
+market before an offsetting lossy one and assert
+`protocol_reserve == share × net` (expected to fail at HEAD). (audit db0506)
+
+### P-9: Trading-loss rebate scales by claim-time stake, not at-trade stake
+
+**Severity:** Medium.
+
+`claim_trading_loss_rebate` (expiry_market.move:743-778) prices the rebate as
+`rebate_amount(eligible_rebate, active_stake)` where `active_stake =
+roll_active_stake(account, ctx)` is the account-global DEEP stake evaluated at
+*claim* time and `benefit_ratio(0) = 0` rises monotonically with stake.
+`ExpiryTradingSummary` (predict_account.move:50-55) snapshots fees and gross
+flows at trade time but never snapshots stake, and `resolve_expiry_summary`
+removes the summary (one-shot). Two consequences: (a) a trader can stake DEEP
+*after* the trading window and collect a larger rebate than their at-trade
+stake earned, with the LP pool paying the excess; (b)
+`claim_trading_loss_rebate_permissionless` (plp.move:458-484) lets any third
+party resolve a victim's one-shot summary at a low-stake instant (e.g. before
+inactive stake activates — `roll_active_stake`'s epoch gate,
+predict_account.move:296-305), permanently denying part or all of an owed
+rebate for zero attacker profit.
+
+**Action:** Snapshot the benefit-relevant stake into `ExpiryTradingSummary` at
+first trade (per expiry) and price the rebate off that snapshot instead of
+claim-time `active_stake`, so the benefit reflects stake-at-risk during
+trading. Independently, restrict the permissionless claim to owner-auth or
+otherwise bound/authorize the resolution timing so a third party cannot pin the
+resolution to a low-stake instant. (audit 8b5d5f)
+
+### P-10: current_nav carries an undocumented conservative band
+
+**Severity:** Low.
+
+Liquidatable-but-still-active leveraged orders (live gross in
+`(floor, floor/ltv]`) are marked at holder value (gross-floor) by
+`correction_value`'s min-cap (liquidation_book.move:85-99), and `value_expiry`
+runs no pre-valuation liquidation pass (plp.move:244-279), so `current_nav`
+(expiry_market.move:247-257) understates recoverable value by up to the LTV
+buffer. This contradicts the settled "exact `current_nav`, no conservative
+band" framing (RP-1 reasoning) and dilutes incumbent LPs on a same-flush supply
+(NAV reads low → the supplier mints too many shares). Distinct from the ~1-ulp
+aggregation-dust *over*-statement (walk_linear per-node end-term) also flagged
+this run.
+
+**Action:** Decide and document — either accept and disclose the conservative
+band in `docs/risks.md` (reconciling the "exact NAV" framing), or run a
+pre-valuation liquidation pass so the flush marks liquidatable orders at their
+liquidated value. (2026-07-07 holistic audit)
+
+## Access and Governance
+
+### G-1: Root admin caps have no on-chain revocation or rotation
+
+**Severity:** Deploy decision.
+
+The three root caps — predict `AdminCap` (admin.move:13), propbook
+`RegistryAdminCap` (registry.move:67), and account `AccountAdminCap`
+(account_registry.move:25) — have no on-chain revoke or rotate path (contrast
+predict's `revoke_pause_cap` / `revoke_lifecycle_cap`, registry.move:86,111).
+Coupled exposures:
+
+- A leaked `AccountAdminCap` is an unrecoverable path to draining all user
+  custody: it authorizes apps (`authorize_app`), and account app-auth is
+  generic — any co-authorized app can call public `account::withdraw` on any
+  predict user's wrapper (account.move:131-139). AGENTS.md:106 records the
+  full-account app-auth as intentional, but the deploy-time authorization
+  hygiene and the cap-compromise recovery are not an explicit item.
+- The propbook `RegistryAdminCap` is a *separate* admin domain that can rebind
+  an underlying's oracle (`replace_pyth_binding_for_underlying`,
+  registry.move:365-377), instantly redirecting and stranding pricing AND
+  settlement of all in-flight predict markets, with no timelock and no
+  predict-side detection.
+
+**Action:** Before a value-bearing deploy, decide the governance posture —
+multisig custody of each root cap, an allowlist-revocation for authorized apps
+(as the derived caps already have), and/or documented acceptance of the
+cross-package admin trust coupling. (2026-07-07 holistic audit)
 
 ## Capacity and Liveness Findings
 
@@ -242,6 +362,11 @@ hygiene-speed changes.
   pre-empt +1 overflow — verify and collapse. (audit a68338)
 - `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
   returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
+- `mint_exact_amount` disables BOTH slippage guards (`max_cost` and
+  `max_probability` hardcoded to `u64::max`, expiry_market.move:482-483),
+  asymmetric with `mint_exact_quantity` — decide whether a premium-budget mint
+  should be able to bound total fees/penalty and entry probability, and add the
+  optional guards if so. (2026-07-07 holistic audit)
 
 ### H-6: Maintainability backlog
 
