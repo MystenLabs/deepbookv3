@@ -189,17 +189,45 @@ public(package) fun drain<LP>(
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
 ): DrainSummary {
-    let mut supplies_filled = 0;
-    let mut supplies_processed = 0;
-    let mut withdrawals_filled = 0;
-    let mut withdrawals_processed = 0;
+    let (supplies_filled, supplies_processed) = drain_supply_queue(
+        book,
+        ledger,
+        &mark,
+        pool_vault_id,
+        &supply_budget,
+    );
+    let (withdrawals_filled, withdrawals_processed) = drain_withdraw_queue(
+        book,
+        ledger,
+        &mark,
+        pool_vault_id,
+        &withdraw_budget,
+        ctx,
+    );
+
+    DrainSummary {
+        supplies_filled,
+        withdrawals_filled,
+        requests_processed: supplies_processed + withdrawals_processed,
+    }
+}
+
+fun drain_supply_queue<LP>(
+    book: &mut LpBook<LP>,
+    ledger: &mut Ledger,
+    mark: &FlushMark,
+    pool_vault_id: ID,
+    budget: &Option<u64>,
+): (u64, u64) {
+    let mut filled = 0;
+    let mut processed = 0;
 
     let max_limit_misses = constants::lp_request_limit_flush_attempts!();
 
-    while (under_budget(&supply_budget, supplies_processed) && !book.supply_queue.is_empty()) {
+    while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
         let shares = mark.quote_supply_shares(request.amount);
-        supplies_processed = supplies_processed + 1;
+        processed = processed + 1;
         if (shares.is_none()) {
             shares.destroy_none();
             let (request, escrowed) = book.supply_queue.pop_front();
@@ -230,15 +258,11 @@ public(package) fun drain<LP>(
                         constants::request_cancel_reason_limit_expired!(),
                     );
                 } else {
-                    vault_events::emit_request_limit_missed(
+                    emit_request_limit_missed(
                         pool_vault_id,
-                        request.account_id,
-                        request.recipient,
-                        request.index,
-                        request.amount,
+                        &request,
                         true,
                         shares,
-                        request.min_output,
                         missed_flushes,
                         max_limit_misses,
                     );
@@ -257,20 +281,34 @@ public(package) fun drain<LP>(
                     request.amount,
                     shares,
                 );
-                supplies_filled = supplies_filled + 1;
+                filled = filled + 1;
             };
         };
     };
 
-    while (
-        under_budget(&withdraw_budget, withdrawals_processed) && !book.withdraw_queue.is_empty()
-    ) {
+    (filled, processed)
+}
+
+fun drain_withdraw_queue<LP>(
+    book: &mut LpBook<LP>,
+    ledger: &mut Ledger,
+    mark: &FlushMark,
+    pool_vault_id: ID,
+    budget: &Option<u64>,
+    ctx: &mut TxContext,
+): (u64, u64) {
+    let mut filled = 0;
+    let mut processed = 0;
+
+    let max_limit_misses = constants::lp_request_limit_flush_attempts!();
+
+    while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
         let payout = mark.quote_withdraw_dusdc(request.amount);
         if (payout.is_none()) {
             payout.destroy_none();
             let (request, escrowed_lp) = book.withdraw_queue.pop_front();
-            withdrawals_processed = withdrawals_processed + 1;
+            processed = processed + 1;
             refund_withdraw_request(
                 pool_vault_id,
                 request,
@@ -280,7 +318,7 @@ public(package) fun drain<LP>(
         } else {
             let payout = payout.destroy_some();
             if (payout < request.min_output) {
-                withdrawals_processed = withdrawals_processed + 1;
+                processed = processed + 1;
                 let missed_flushes = book.withdraw_queue.record_front_limit_miss();
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed_lp) = book.withdraw_queue.pop_front();
@@ -291,15 +329,11 @@ public(package) fun drain<LP>(
                         constants::request_cancel_reason_limit_expired!(),
                     );
                 } else {
-                    vault_events::emit_request_limit_missed(
+                    emit_request_limit_missed(
                         pool_vault_id,
-                        request.account_id,
-                        request.recipient,
-                        request.index,
-                        request.amount,
+                        &request,
                         false,
                         payout,
-                        request.min_output,
                         missed_flushes,
                         max_limit_misses,
                     );
@@ -309,29 +343,26 @@ public(package) fun drain<LP>(
                 // FIFO-until-dry: idle can't cover the head request, so stop and carry
                 // this and every later withdrawal to reprice next flush.
                 break
+            } else {
+                let (_, escrowed_lp) = book.withdraw_queue.pop_front();
+                let payout_cash = ledger.withdraw_idle(payout);
+                book.treasury_cap.burn(escrowed_lp.into_coin(ctx));
+                balance::send_funds(payout_cash, request.recipient);
+                vault_events::emit_withdraw_filled(
+                    pool_vault_id,
+                    request.account_id,
+                    request.recipient,
+                    request.index,
+                    request.amount,
+                    payout,
+                );
+                processed = processed + 1;
+                filled = filled + 1;
             };
-            let (_, escrowed_lp) = book.withdraw_queue.pop_front();
-            let payout_cash = ledger.withdraw_idle(payout);
-            book.treasury_cap.burn(escrowed_lp.into_coin(ctx));
-            balance::send_funds(payout_cash, request.recipient);
-            vault_events::emit_withdraw_filled(
-                pool_vault_id,
-                request.account_id,
-                request.recipient,
-                request.index,
-                request.amount,
-                payout,
-            );
-            withdrawals_processed = withdrawals_processed + 1;
-            withdrawals_filled = withdrawals_filled + 1;
         };
     };
 
-    DrainSummary {
-        supplies_filled,
-        withdrawals_filled,
-        requests_processed: supplies_processed + withdrawals_processed,
-    }
+    (filled, processed)
 }
 
 /// Whether another request fits the budget: an unbounded (`None`) budget never
@@ -373,6 +404,28 @@ fun refund_withdraw_request<LP>(
         request.amount,
         false,
         reason,
+    );
+}
+
+fun emit_request_limit_missed(
+    pool_vault_id: ID,
+    request: &RequestEntry,
+    is_supply: bool,
+    quoted_output: u64,
+    missed_flushes: u64,
+    max_limit_misses: u64,
+) {
+    vault_events::emit_request_limit_missed(
+        pool_vault_id,
+        request.account_id,
+        request.recipient,
+        request.index,
+        request.amount,
+        is_supply,
+        quoted_output,
+        request.min_output,
+        missed_flushes,
+        max_limit_misses,
     );
 }
 
