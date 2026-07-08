@@ -76,6 +76,31 @@ def defined_ids():
     return ids
 
 
+def resolution_pairs():
+    """(RP-id, resolved-item-id) for every resolution a register heading declares.
+
+    A heading 'RP-n: ... resolves X-n' tombstones item X-n. Tolerant of the phrasings
+    that occur in practice — case ('Resolves'), intervening words ('resolves the C-4'),
+    and multiple ids ('resolves C-4, C-5'): every item id after a 'resolv...' keyword on
+    an RP heading line is captured (RP-ids themselves excluded — they are the register,
+    not items)."""
+    reg = os.path.join(HERE, 'response-policies.md')
+    if not os.path.exists(reg):
+        return []
+    pairs = []
+    for line in read(reg).splitlines():
+        m = re.match(r'## (RP-\d+):', line)
+        if not m:
+            continue
+        kw = re.search(r'\bresolv\w*\b', line, re.I)
+        if not kw:
+            continue
+        for item in re.findall(r'\b[A-Z]{1,2}-\d+\b', line[kw.end():]):
+            if not item.startswith('RP-'):
+                pairs.append((m.group(1), item))
+    return pairs
+
+
 def resolved_items():
     """Items tombstoned by the register (an entry titled 'RP-n: ... resolves X-n').
 
@@ -83,10 +108,7 @@ def resolved_items():
     item leaves the OPEN sections, but its id stays a valid reference target
     (provenance in evidence/register), not a dangling pointer. `open-items.md`
     headings mark OPEN work; a register-resolved id is done. See README authority order."""
-    reg = os.path.join(HERE, 'response-policies.md')
-    if not os.path.exists(reg):
-        return set()
-    return set(re.findall(r'^## RP-\d+:.*\bresolves ([A-Z]{1,2}-\d+)', read(reg), re.M))
+    return {item for _, item in resolution_pairs()}
 
 
 def check_pinning_tests(errors):
@@ -241,14 +263,9 @@ def check_evidence(errors):
 
 
 def check_unique_resolution(errors):
-    reg = os.path.join(HERE, 'response-policies.md')
-    if not os.path.exists(reg):
-        return
     resolved = {}
-    for m in re.finditer(r'^## (RP-\d+):.*resolves ([A-Z]{1,2}-\d+)',
-                         read(reg), re.M):
-        rp, item = m.group(1), m.group(2)
-        if item in resolved:
+    for rp, item in resolution_pairs():
+        if item in resolved and resolved[item] != rp:
             errors.append(f"response-policies.md: both {resolved[item]} and {rp} "
                           f"claim to resolve {item} — one item, one resolution")
         resolved[item] = rp

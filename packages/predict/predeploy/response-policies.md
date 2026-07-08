@@ -368,13 +368,16 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
   `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
   `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
-- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477),
-  `rebate_claim_with_open_position_aborts` (:496),
-  `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320),
-  `owner_auth_rebate_claim_survives_predict_app_deauth` (:334), plus the inactive-rebate-stake
-  fixture `prepare_settled_loss_with_inactive_rebate_stake` (:560) pinning the claim-time-stake
-  semantics. The gas-incentive is platform metering (like RP-10) — pinned by the harness evidence
-  above, not by a Move unit test. Audit provenance: finding 8b5d5f.
+- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477)
+  and `rebate_claim_with_open_position_aborts` (:496) pin the claim preconditions (settled market,
+  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320) and
+  `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
+  over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
+  inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
+  stake read at claim, `expiry_market.move:763`) is not pinned by a dedicated Move assertion — it
+  rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
+  is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
+  Audit provenance: finding 8b5d5f.
 - **Reopen when:** a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
   (re-measure the late-stake exposure; reconsider snapshotting benefit-relevant stake at mint); OR
   the settled-redeem storage footprint shrinks / Sui storage pricing drops enough that the cleanout
