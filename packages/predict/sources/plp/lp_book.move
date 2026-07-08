@@ -10,6 +10,7 @@ module deepbook_predict::lp_book;
 
 use deepbook_predict::{constants, pool_accounting::Ledger, vault_events};
 use dusdc::dusdc::DUSDC;
+use fixed_math::math;
 use sui::{balance::{Self, Balance}, coin::{Coin, TreasuryCap}, table::{Self, Table}};
 
 const ERequestNotFound: u64 = 0;
@@ -425,8 +426,7 @@ fun quote_supply_shares(amount: u64, mark: &FlushMark): Option<u64> {
     if (!mark.is_executable()) return option::none();
     // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
-    let shares = (amount as u128) * (mark.total_supply as u128) / (mark.pool_value as u128);
-    quote_u64(shares)
+    nonzero_quote(math::try_mul_div_down(amount, mark.total_supply, mark.pool_value))
 }
 
 /// DUSDC owed for `shares` LP at the frozen flush mark. `None` means the
@@ -435,8 +435,7 @@ fun quote_withdraw_dusdc(shares: u64, mark: &FlushMark): Option<u64> {
     if (!mark.is_executable()) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
-    let payout = (shares as u128) * (mark.pool_value as u128) / (mark.total_supply as u128);
-    quote_u64(payout)
+    nonzero_quote(math::try_mul_div_down(shares, mark.pool_value, mark.total_supply))
 }
 
 fun is_executable(mark: &FlushMark): bool {
@@ -448,10 +447,12 @@ fun is_executable(mark: &FlushMark): bool {
     scaled_pool_value >= min_value && scaled_pool_value <= max_value
 }
 
-fun quote_u64(value: u128): Option<u64> {
-    if (value == 0 || value > (std::u64::max_value!() as u128)) {
+fun nonzero_quote(quote: Option<u64>): Option<u64> {
+    if (quote.is_none()) {
+        quote.destroy_none();
         option::none()
     } else {
-        option::some(value as u64)
+        let quote = quote.destroy_some();
+        if (quote == 0) option::none() else option::some(quote)
     }
 }

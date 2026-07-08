@@ -9,6 +9,7 @@
 /// - div(x, y): 1e9-scaled division, rounded down
 /// - mul_div_down(x, y, denominator): raw integer x*y/denominator, rounded down
 /// - mul_div_up(x, y, denominator): raw integer x*y/denominator, rounded up
+/// - try_mul_div_down / try_mul_div_up: non-aborting checked variants
 /// - ln(x): natural logarithm
 /// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
@@ -137,6 +138,14 @@ public fun mul_div_down(x: u64, y: u64, denominator: u64): u64 {
     (((x as u128) * (y as u128)) / (denominator as u128)) as u64
 }
 
+/// Checked `mul_div_down`: returns `None` for a zero denominator or a result that
+/// does not fit in u64, and `Some(result)` otherwise.
+public fun try_mul_div_down(x: u64, y: u64, denominator: u64): Option<u64> {
+    if (denominator == 0) return option::none();
+    let result = (x as u128) * (y as u128) / (denominator as u128);
+    try_u64(result)
+}
+
 /// Multiply two raw integer values, divide by a raw denominator, and round up.
 /// `numerator + denominator - 1` cannot overflow u128 for any u64 operands
 /// (max is `(2^64-1)^2 + 2^64 - 2 < u128::MAX`), so no intermediate guard is needed.
@@ -144,6 +153,15 @@ public fun mul_div_up(x: u64, y: u64, denominator: u64): u64 {
     assert!(denominator > 0, EInputZero);
     let numerator = (x as u128) * (y as u128);
     ((numerator + (denominator as u128) - 1) / (denominator as u128)) as u64
+}
+
+/// Checked `mul_div_up`: returns `None` for a zero denominator or a result that
+/// does not fit in u64, and `Some(result)` otherwise.
+public fun try_mul_div_up(x: u64, y: u64, denominator: u64): Option<u64> {
+    if (denominator == 0) return option::none();
+    let numerator = (x as u128) * (y as u128);
+    let result = (numerator + (denominator as u128) - 1) / (denominator as u128);
+    try_u64(result)
 }
 
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).
@@ -213,6 +231,14 @@ public fun pow10(n: u64): u64 {
 }
 
 // === Private Functions ===
+
+fun try_u64(value: u128): Option<u64> {
+    if (value > (std::u64::max_value!() as u128)) {
+        option::none()
+    } else {
+        option::some(value as u64)
+    }
+}
 
 /// ln(y) where y is normalized to [F, 2F) and n is the shift count.
 /// Computes: n * ln(2) + 2 * (z + z³/3 + z⁵/5 + ... + z¹³/13)
