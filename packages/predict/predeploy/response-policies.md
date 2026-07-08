@@ -64,61 +64,64 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   recovery path — it bricked the flush in legitimate states (100x
   appreciation, post-drawdown recapitalization) until package upgrade.
 - **Risk profile:** `BEST-GUESS`. Residual found 2026-07-02: the deleted guard
-  was incidentally the only u64-headroom bound on fill math; at a
-  dust-but-nonzero mark a supply fill can overflow u64 or ratchet
-  `total_supply` — reopened as the C-4 extension (see RP-2).
+  was incidentally the only u64-headroom bound on fill math; RP-2 now owns
+  those fill-site degeneracies by classifying non-executable queue heads before
+  mutating pool state.
 - **Pinning tests:** `pool_valuation_flow_tests.move` —
   `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`,
   `finish_flush_with_low_plp_price_and_empty_queues_succeeds`,
   `finish_flush_with_high_plp_price_and_empty_queues_succeeds`.
-- **Reopen when:** the fill-site policy (RP-2 / C-4) turns out not to cover a
+- **Reopen when:** the fill-site policy (RP-2) turns out not to cover a
   mark-level degeneracy.
 
-## RP-2: Degenerate LP fills at the drain — skip/refund (decided; implementation open, C-4)
+## RP-2: Non-executable LP queue heads at the drain — refund
 
 - **Trigger state:** at the frozen mark, the head request's fill is not
-  executable: supply mints zero shares, withdraw pays zero, `pool_value == 0`,
-  or (dust-but-nonzero mark) the share computation exceeds u64.
+  executable: the implied PLP price is outside `[0.01, 100]` DUSDC/PLP,
+  supply would mint zero shares, withdraw would pay zero, or the computed
+  quote does not fit in u64.
 - **Controller:** market (the mark) × user (request size). The one
   protocol-controlled action in the loop is share issuance itself.
 - **Blast radius:** `lp_book::drain` runs inside `finish_flush`; an aborting
   fill aborts the entire pool-wide flush until the request owner voluntarily
   cancels. A hostile or absent owner stalls it indefinitely.
-- **Response — current code:** `abort` (`EInvalidDrainMark` for the zero/zero
-  cases; a raw untracked u64-cast abort in `math::mul_div_down` for the
-  overflow case). This rung is wrong for a mandatory path.
-- **Response — decided:** `skip/carry` (or auto-cancel-and-refund). Fills are
-  computed in u128 and classified before execution; "does not fit u64" is the
-  same outcome as "rounds to zero" — not executable this flush, flush
-  completes. Whether supply fills execute at all below an executable mark
-  price (ratchet prevention: never mint into a degenerate ratio) is decided
-  together with the P-7 limit-field policy. Implementation tracked as C-4.
+- **Response:** auto-cancel-and-refund. `lp_book::drain` classifies the head
+  before joining supply cash, minting PLP, burning PLP, or withdrawing idle
+  cash. A non-executable head is popped, its escrow is returned to the request
+  recipient with `RequestCancelled`, and the flush continues. Filled and
+  protocol-refunded heads both count against that queue's per-flush budget and
+  toward `FlushExecuted.requests_processed`. A withdrawal whose quote is valid
+  but exceeds idle is different: it stays queued, consumes no withdraw budget,
+  and the withdrawal pass stops FIFO-until-dry.
 - **Reasoning:** the drain must be total over request content. Beyond the
   stall, a fill that *fits* at a dust mark mints ~1e18 shares; `total_supply`
   only shrinks via withdrawals, so the inflated supply persists after NAV
   recovery, permanently pinning PLP price at dust and widening the overflow
-  band (one dust fill converts a micro-DUSDC fragile window into a
-  thousands-of-DUSDC one). Skipping fills at inexecutable marks enforces the
-  one maintainable direction of the old invariant: the protocol never
-  *manufactures* the degenerate ratio, even though it cannot forbid NAV
-  collapse.
+  band. Refunding fills at inexecutable marks enforces the one maintainable
+  direction of the old invariant: the protocol never *manufactures* the
+  degenerate ratio, even though it cannot forbid NAV collapse.
 - **Risk profile:** `BEST-GUESS` — organic reachability requires near-total LP
   wipeout (pool value in a micro-DUSDC band at the flush instant) and cannot
   be cheaply forced (attacker must win oracle-priced bets). The asymmetry is
   the ratchet: improbable per flush, irreversible once. Harness campaign
   candidate: drive NAV collapse and measure the window width and ratchet
   onset.
-- **Pinning tests (current abort behavior):** `lp_book_tests.move` —
-  `priced_supply_with_zero_pool_value_aborts`,
-  `priced_supply_that_rounds_to_zero_shares_aborts`,
-  `priced_withdraw_that_rounds_to_zero_payout_aborts`. The u64-overflow
-  boundary is untested; the C-4 fix must add boundary tests on both sides of
-  each classification.
-- **Reopen when:** C-4 lands (rewrite this entry to the implemented behavior)
-  or P-7 chooses stay-queued semantics that interact with skip.
-- **Note:** `docs/risks.md` claimed the skip/refund behavior as shipped from
-  PR #1071 until corrected on 2026-07-02 — a decision documented without a
-  pinning test un-decides itself.
+- **Pinning tests:** `lp_book_tests.move` —
+  `priced_supply_with_zero_pool_value_refunds`,
+  `priced_supply_that_rounds_to_zero_shares_refunds`,
+  `priced_withdraw_that_rounds_to_zero_payout_refunds`,
+  `supply_at_min_executable_plp_price_fills`,
+  `supply_below_min_executable_plp_price_refunds`,
+  `supply_at_max_executable_plp_price_fills`,
+  `supply_above_max_executable_plp_price_refunds`,
+  `oversized_supply_that_exceeds_u64_shares_refunds`,
+  `non_executable_supply_refunds_spend_supply_budget`,
+  `non_executable_withdraw_refunds_spend_withdraw_budget`, and
+  `withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
+  separately pins the checked mul-div helpers that classify u64-fit.
+- **Reopen when:** P-7 chooses stay-queued semantics that interact with
+  protocol-triggered refunds, or a new LP request type adds another
+  non-executable fill mode.
 
 ## RP-3: `lp_pool_value` floors at zero
 
@@ -142,7 +145,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (`setup_underwater_market(0)`, gross=0, exclusion=0), so it does **not**
   exercise the sticky-exclusion clamp's own trigger (held-out total exceeding a
   positive-then-collapsed gross). The clamp direction is therefore not directly
-  pinned — tracked as a test gap in open-items C-4-adjacent follow-up.
+  pinned; add direct sticky-exclusion coverage before changing this clamp.
 - **Reopen when:** the exclusion basis becomes non-sticky, or RP-2's
   implementation changes what a zero mark means for the queues.
 
