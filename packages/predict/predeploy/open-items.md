@@ -398,9 +398,9 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
 - **`pricing` forward-absence branch untested.** `EBlockScholesPriceUnavailable`
   is pinned for the spot-absence path but not the forward-absence path; add the
   missing `expected_failure`.
-- **One-sided boundary/receiving-side assertions.** `unstake_deep` positive test
-  never asserts the account received the DEEP; the drain rounds-to-zero
+- **One-sided boundary/receiving-side assertions.** The drain rounds-to-zero
   boundaries are tested only on the aborting side; the all-in `max_cost` boundary
   pair (from the now-resolved H-2 fix) pins only a 2-of-4-component decomposition
-  (zero builder fee / subsidy). Strengthen each to assert the received side / the
-  passing boundary.
+  (zero builder fee / subsidy). Strengthen each to assert the passing boundary.
+  (`unstake_deep` receiving-side assertion — that the account received the DEEP —
+  added on PR #1106.)
