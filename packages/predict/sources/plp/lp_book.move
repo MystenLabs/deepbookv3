@@ -10,14 +10,12 @@ module deepbook_predict::lp_book;
 
 use deepbook_predict::{constants, pool_accounting::Ledger, vault_events};
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
 use sui::{balance::{Self, Balance}, coin::{Coin, TreasuryCap}, table::{Self, Table}};
 
 const ERequestNotFound: u64 = 0;
 const EBelowMinSupplyRequest: u64 = 1;
 const EBelowMinWithdrawRequest: u64 = 2;
 const ENotRequestOwner: u64 = 3;
-const EInvalidDrainMark: u64 = 4;
 
 const PAGE_CAPACITY: u64 = 64;
 
@@ -71,6 +69,14 @@ public struct RequestQueue<phantom T> has store {
 public struct FlushMark has drop {
     pool_value: u64,
     total_supply: u64,
+}
+
+/// Result of draining both LP queues at one frozen mark.
+public struct DrainSummary has copy, drop {
+    supplies_filled: u64,
+    withdrawals_filled: u64,
+    supplies_processed: u64,
+    withdrawals_processed: u64,
 }
 
 // === Public-Package Functions ===
@@ -145,12 +151,33 @@ public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMar
     FlushMark { pool_value, total_supply }
 }
 
+public(package) fun supplies_filled(summary: &DrainSummary): u64 {
+    summary.supplies_filled
+}
+
+public(package) fun withdrawals_filled(summary: &DrainSummary): u64 {
+    summary.withdrawals_filled
+}
+
+public(package) fun supplies_processed(summary: &DrainSummary): u64 {
+    summary.supplies_processed
+}
+
+public(package) fun withdrawals_processed(summary: &DrainSummary): u64 {
+    summary.withdrawals_processed
+}
+
+public(package) fun requests_processed(summary: &DrainSummary): u64 {
+    summary.supplies_processed + summary.withdrawals_processed
+}
+
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
 /// supplies first then withdrawals. `supply_budget` / `withdraw_budget` bound how many
-/// live requests each queue may fill this flush; `None` drains that queue fully. The
-/// two budgets are independent, so supply pressure can never starve withdrawals.
+/// live requests each queue may process this flush; processed means filled or
+/// protocol-refunded as non-executable at the mark. `None` drains that queue fully.
+/// The two budgets are independent, so supply pressure can never starve withdrawals.
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
-/// Cancelled requests are removed at cancel time and never spend flush capacity.
+/// User-cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
@@ -159,59 +186,104 @@ public(package) fun drain<LP>(
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
-): (u64, u64) {
+): DrainSummary {
     let mut supplies_filled = 0;
+    let mut supplies_processed = 0;
     let mut withdrawals_filled = 0;
+    let mut withdrawals_processed = 0;
 
-    while (under_budget(&supply_budget, supplies_filled) && !book.supply_queue.is_empty()) {
+    while (under_budget(&supply_budget, supplies_processed) && !book.supply_queue.is_empty()) {
         let (request, escrowed) = book.supply_queue.pop_front();
-        let shares = supply_shares(request.amount, &mark);
-        assert!(shares > 0, EInvalidDrainMark);
-        ledger.receive_idle(escrowed);
-        let shares_minted = book.treasury_cap.mint_balance(shares);
-        balance::send_funds(shares_minted, request.recipient);
-        vault_events::emit_supply_filled(
-            pool_vault_id,
-            request.account_id,
-            request.recipient,
-            request.index,
-            request.amount,
-            shares,
-        );
-        supplies_filled = supplies_filled + 1;
-    };
-
-    while (under_budget(&withdraw_budget, withdrawals_filled) && !book.withdraw_queue.is_empty()) {
-        let request = book.withdraw_queue.front_request();
-        let payout = withdraw_dusdc(request.amount, &mark);
-        assert!(payout > 0, EInvalidDrainMark);
-        if (ledger.idle_balance() < payout) {
-            // FIFO-until-dry: idle can't cover the head request, so stop and carry
-            // this and every later withdrawal to reprice next flush.
-            break
+        let shares = quote_supply_shares(request.amount, &mark);
+        supplies_processed = supplies_processed + 1;
+        if (shares.is_none()) {
+            shares.destroy_none();
+            refund_supply_request(pool_vault_id, request, escrowed);
+        } else {
+            let shares = shares.destroy_some();
+            ledger.receive_idle(escrowed);
+            let shares_minted = book.treasury_cap.mint_balance(shares);
+            balance::send_funds(shares_minted, request.recipient);
+            vault_events::emit_supply_filled(
+                pool_vault_id,
+                request.account_id,
+                request.recipient,
+                request.index,
+                request.amount,
+                shares,
+            );
+            supplies_filled = supplies_filled + 1;
         };
-        let (_, escrowed_lp) = book.withdraw_queue.pop_front();
-        let payout_cash = ledger.withdraw_idle(payout);
-        book.treasury_cap.burn(escrowed_lp.into_coin(ctx));
-        balance::send_funds(payout_cash, request.recipient);
-        vault_events::emit_withdraw_filled(
-            pool_vault_id,
-            request.account_id,
-            request.recipient,
-            request.index,
-            request.amount,
-            payout,
-        );
-        withdrawals_filled = withdrawals_filled + 1;
     };
 
-    (supplies_filled, withdrawals_filled)
+    while (under_budget(&withdraw_budget, withdrawals_processed) && !book.withdraw_queue.is_empty()) {
+        let request = book.withdraw_queue.front_request();
+        let payout = quote_withdraw_dusdc(request.amount, &mark);
+        if (payout.is_none()) {
+            payout.destroy_none();
+            let (request, escrowed_lp) = book.withdraw_queue.pop_front();
+            withdrawals_processed = withdrawals_processed + 1;
+            refund_withdraw_request(pool_vault_id, request, escrowed_lp);
+        } else {
+            let payout = payout.destroy_some();
+            if (ledger.idle_balance() < payout) {
+                // FIFO-until-dry: idle can't cover the head request, so stop and carry
+                // this and every later withdrawal to reprice next flush.
+                break
+            };
+            let (_, escrowed_lp) = book.withdraw_queue.pop_front();
+            let payout_cash = ledger.withdraw_idle(payout);
+            book.treasury_cap.burn(escrowed_lp.into_coin(ctx));
+            balance::send_funds(payout_cash, request.recipient);
+            vault_events::emit_withdraw_filled(
+                pool_vault_id,
+                request.account_id,
+                request.recipient,
+                request.index,
+                request.amount,
+                payout,
+            );
+            withdrawals_processed = withdrawals_processed + 1;
+            withdrawals_filled = withdrawals_filled + 1;
+        };
+    };
+
+    DrainSummary {
+        supplies_filled,
+        withdrawals_filled,
+        supplies_processed,
+        withdrawals_processed,
+    }
 }
 
-/// Whether another fill fits the budget: an unbounded (`None`) budget never blocks;
-/// a bounded budget allows fills until `filled` reaches it.
-fun under_budget(budget: &Option<u64>, filled: u64): bool {
-    budget.is_none() || filled < *budget.borrow()
+/// Whether another request fits the budget: an unbounded (`None`) budget never
+/// blocks; a bounded budget allows fills/refunds until `processed` reaches it.
+fun under_budget(budget: &Option<u64>, processed: u64): bool {
+    budget.is_none() || processed < *budget.borrow()
+}
+
+fun refund_supply_request(pool_vault_id: ID, request: RequestEntry, escrowed: Balance<DUSDC>) {
+    balance::send_funds(escrowed, request.recipient);
+    vault_events::emit_request_cancelled(
+        pool_vault_id,
+        request.account_id,
+        request.recipient,
+        request.index,
+        request.amount,
+        true,
+    );
+}
+
+fun refund_withdraw_request<LP>(pool_vault_id: ID, request: RequestEntry, escrowed_lp: Balance<LP>) {
+    balance::send_funds(escrowed_lp, request.recipient);
+    vault_events::emit_request_cancelled(
+        pool_vault_id,
+        request.account_id,
+        request.recipient,
+        request.index,
+        request.amount,
+        false,
+    );
 }
 
 // === Queue Helpers ===
@@ -347,21 +419,39 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 
 // === Pricing Helpers ===
 
-/// LP shares minted for `amount` DUSDC at the frozen flush mark. `total_supply > 0`
-/// is guaranteed by the genesis lock (`plp::lock_capital`), so there is no
-/// supply==0 bootstrap branch.
-fun supply_shares(amount: u64, mark: &FlushMark): u64 {
-    assert!(mark.pool_value > 0, EInvalidDrainMark);
+/// LP shares minted for `amount` DUSDC at the frozen flush mark. `None` means the
+/// mark/request pair is not executable and the queued request must be refunded.
+fun quote_supply_shares(amount: u64, mark: &FlushMark): Option<u64> {
+    if (!mark.is_executable()) return option::none();
     // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
-    math::mul_div_down(amount, mark.total_supply, mark.pool_value)
+    let shares = (amount as u128) * (mark.total_supply as u128) / (mark.pool_value as u128);
+    quote_u64(shares)
 }
 
-/// DUSDC owed for `shares` LP at the frozen flush mark.
-fun withdraw_dusdc(shares: u64, mark: &FlushMark): u64 {
-    assert!(mark.total_supply > 0, EInvalidDrainMark);
-    assert!(mark.pool_value > 0, EInvalidDrainMark);
+/// DUSDC owed for `shares` LP at the frozen flush mark. `None` means the
+/// mark/request pair is not executable and the queued request must be refunded.
+fun quote_withdraw_dusdc(shares: u64, mark: &FlushMark): Option<u64> {
+    if (!mark.is_executable()) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
-    math::mul_div_down(shares, mark.pool_value, mark.total_supply)
+    let payout = (shares as u128) * (mark.pool_value as u128) / (mark.total_supply as u128);
+    quote_u64(payout)
+}
+
+fun is_executable(mark: &FlushMark): bool {
+    if (mark.pool_value == 0 || mark.total_supply == 0) return false;
+    let scaled_pool_value = (mark.pool_value as u128) * (constants::plp_price_unit!() as u128);
+    let total_supply = mark.total_supply as u128;
+    let min_value = total_supply * (constants::min_executable_plp_price!() as u128);
+    let max_value = total_supply * (constants::max_executable_plp_price!() as u128);
+    scaled_pool_value >= min_value && scaled_pool_value <= max_value
+}
+
+fun quote_u64(value: u128): Option<u64> {
+    if (value == 0 || value > (std::u64::max_value!() as u128)) {
+        option::none()
+    } else {
+        option::some(value as u64)
+    }
 }
