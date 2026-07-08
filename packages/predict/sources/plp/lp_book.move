@@ -70,6 +70,7 @@ public struct RequestQueue<phantom T> has store {
 public struct FlushMark has drop {
     pool_value: u64,
     total_supply: u64,
+    executable: bool,
 }
 
 /// Result of draining both LP queues at one frozen mark.
@@ -148,7 +149,11 @@ public(package) fun cancel_withdraw_request<LP>(
 }
 
 public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
-    FlushMark { pool_value, total_supply }
+    FlushMark {
+        pool_value,
+        total_supply,
+        executable: is_executable_mark(pool_value, total_supply),
+    }
 }
 
 public(package) fun supplies_filled(summary: &DrainSummary): u64 {
@@ -417,7 +422,7 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// LP shares minted for `amount` DUSDC at the frozen flush mark. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
 fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<u64> {
-    if (!mark.is_executable()) return option::none();
+    if (!mark.executable) return option::none();
     // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
     math::try_mul_div_down(amount, mark.total_supply, mark.pool_value).and!(|shares| {
@@ -428,7 +433,7 @@ fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<u64> {
 /// DUSDC owed for `shares` LP at the frozen flush mark. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
 fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
-    if (!mark.is_executable()) return option::none();
+    if (!mark.executable) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
     math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|payout| {
@@ -436,17 +441,17 @@ fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
     })
 }
 
-fun is_executable(mark: &FlushMark): bool {
-    if (mark.total_supply == 0) return false;
+fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
+    if (total_supply == 0) return false;
     let price_floor = math::try_mul_div_down(
-        mark.pool_value,
+        pool_value,
         constants::plp_price_unit!(),
-        mark.total_supply,
+        total_supply,
     );
     let price_ceil = math::try_mul_div_up(
-        mark.pool_value,
+        pool_value,
         constants::plp_price_unit!(),
-        mark.total_supply,
+        total_supply,
     );
     price_floor.is_some()
         && price_ceil.is_some()
