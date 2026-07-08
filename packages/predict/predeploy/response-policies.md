@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-06. This is the tracked register of **settled response-policy
+Updated 2026-07-08. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -119,7 +119,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `non_executable_withdraw_refunds_spend_withdraw_budget`, and
   `withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
-- **Reopen when:** P-7 chooses stay-queued semantics that interact with
+- **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, or a new LP request type adds another
   non-executable fill mode.
 
@@ -322,6 +322,43 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reopen when:** Sui's metering model changes materially, or a production
   measurement diverges from the localnet ceiling enough to invalidate the
   integrator guidance.
+
+---
+
+## RP-11: LP request limit misses carry for three flush attempts (resolves P-7)
+
+- **Trigger state:** a queued LP supply or withdraw request reaches the head of
+  its FIFO queue during a flush, the frozen mark is executable, but the quoted
+  output is below the request's minimum output (`min_plp_out` for supply,
+  `min_dusdc_out` for withdraw).
+- **Controller:** market (the frozen mark) × user (the request-time limit). The
+  protocol controls only the retry policy once the request is at the head.
+- **Blast radius:** `lp_book::drain` runs inside `finish_flush`; blindly filling
+  a limit-missing request gives the user unbounded slippage, while immediately
+  cancelling on the first miss makes ordinary mark volatility a poor LP UX.
+- **Response:** skip/carry with bounded expiry. A live limit miss increments the
+  request's miss count, emits `RequestLimitMissed`, counts against that queue's
+  per-flush processed budget, leaves the request at the head, and stops that
+  queue for the flush. On the third miss, the request is protocol-cancelled and
+  refunded with `RequestCancelled.reason = 2` (`limit expired`) instead of
+  carrying indefinitely. The user cannot modify a queued limit; changing price
+  protection means cancelling and submitting a new request.
+- **Reasoning:** carrying across a small fixed number of flush attempts absorbs
+  ordinary NAV noise without forcing users to monitor and re-submit after every
+  miss. Expiry bounds queue blockage: an overly tight or stale limit cannot
+  permanently block later FIFO requests. The fixed value is upgrade-required
+  (`lp_request_limit_flush_attempts = 3`) rather than per-user configurable to
+  keep the public surface and queue semantics simple pre-deploy.
+- **Risk profile:** `BEST-GUESS` — the UX win depends on actual flush cadence
+  and NAV volatility. The liveness risk is bounded by the three-attempt expiry,
+  and users retain the explicit cancel path while pending.
+- **Pinning tests:** `lp_book_tests.move` —
+  `supply_limit_miss_carries_then_fills_when_mark_improves`,
+  `supply_limit_expires_after_three_misses`,
+  `withdraw_limit_miss_carries_then_fills_when_mark_improves`, and
+  `withdraw_limit_expires_after_three_misses`.
+- **Reopen when:** flush cadence changes materially, the retry count becomes
+  user-configurable, or LP request limits become mutable in-place.
 
 ---
 
