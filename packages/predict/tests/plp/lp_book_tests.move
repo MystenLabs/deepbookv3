@@ -37,6 +37,7 @@ const BOB: address = @0xB0B;
 const ZERO_SHARE_SUPPLY_POOL_VALUE: u64 = 100_000_000_000_001;
 /// `min_withdraw + 1`: a min-sized withdrawal against pool value 1 pays 0 DUSDC.
 const ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY: u64 = 1_000_001;
+const NEAR_MAX_SUPPLY_HEADROOM: u64 = 5_000_000;
 const NO_SUPPLIES_FILLED: u64 = 0;
 const NO_WITHDRAWALS_FILLED: u64 = 0;
 
@@ -587,6 +588,33 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.supply_requests_pending(), 0);
     assert_eq!(book.total_supply(), plp_unit!());
+    assert_eq!(ledger.idle_balance(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun supply_that_exceeds_remaining_plp_headroom_refunds() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    let near_max_total_supply = std::u64::max_value!() - NEAR_MAX_SUPPLY_HEADROOM;
+    book.mint_locked_liquidity(near_max_total_supply);
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE);
+
+    // At a 1.0 executable mark, the min supply request quotes to min_supply shares,
+    // but only 5_000_000 PLP raw units remain before the treasury supply cap.
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(near_max_total_supply, near_max_total_supply),
+        vault_id(),
+        option::none(),
+        option::none(),
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), near_max_total_supply);
     assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);

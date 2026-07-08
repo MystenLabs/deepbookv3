@@ -193,18 +193,22 @@ public(package) fun drain<LP>(
             refund_supply_request(pool_vault_id, request, escrowed);
         } else {
             let shares = shares.destroy_some();
-            ledger.receive_idle(escrowed);
-            let shares_minted = book.treasury_cap.mint_balance(shares);
-            balance::send_funds(shares_minted, request.recipient);
-            vault_events::emit_supply_filled(
-                pool_vault_id,
-                request.account_id,
-                request.recipient,
-                request.index,
-                request.amount,
-                shares,
-            );
-            supplies_filled = supplies_filled + 1;
+            if (shares > std::u64::max_value!() - book.treasury_cap.total_supply()) {
+                refund_supply_request(pool_vault_id, request, escrowed);
+            } else {
+                ledger.receive_idle(escrowed);
+                let shares_minted = book.treasury_cap.mint_balance(shares);
+                balance::send_funds(shares_minted, request.recipient);
+                vault_events::emit_supply_filled(
+                    pool_vault_id,
+                    request.account_id,
+                    request.recipient,
+                    request.index,
+                    request.amount,
+                    shares,
+                );
+                supplies_filled = supplies_filled + 1;
+            };
         };
     };
 
