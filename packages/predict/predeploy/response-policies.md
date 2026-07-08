@@ -322,7 +322,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (accepts P-9)
+## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (resolves P-9)
 
 - **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
   settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
@@ -339,7 +339,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   is paid the storage rebate to run it) rather than on any protocol-run keeper. No contract change;
   the mint-time stake-snapshot fix is deliberately NOT taken.
 - **Reasoning + evidence:**
-  - The claim-time-stake leak (P-9) is structurally unreachable for every current-cadence market:
+  - The claim-time-stake leak (P-9, now resolved) is structurally unreachable for every current-cadence market:
     lazy stake activation (`roll_active_stake`, one epoch) means stake added mid-market cannot
     activate before the promptly-swept claim inside a sub-epoch (1m/5m/1h) market. Even in a
     hypothetical multi-epoch option the leak is bounded by `rate × fees`, captures at most the

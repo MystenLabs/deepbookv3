@@ -127,29 +127,6 @@ split. Verify with a cross-market Move flow test: value/sweep a profitable
 market before an offsetting lossy one and assert
 `protocol_reserve == share × net` (expected to fail at HEAD). (audit db0506)
 
-### P-9: Trading-loss rebate uses claim-time stake — ACCEPTED (resolved by RP-11)
-
-**Severity:** Medium → accept-and-disclose 2026-07-07. **Decision graduated to
-`response-policies.md` RP-11.** The rebate prices at claim-time `active_stake`
-(`expiry_market.move:763`) and its post-settlement resolution + cash release ride the
-permissionless cleanout. Both dimensions were measured/derived and accepted, not fixed (the
-mint-time stake-snapshot fix is deliberately NOT taken):
-
-- Claim-time-stake abuse (retroactive stake-to-boost + permissionless claim-to-deny grief) is
-  structurally unreachable for every current cadence (1m/5m/1h): lazy stake activation
-  (`roll_active_stake`) needs a full ~24 h epoch, so mid-market stake cannot activate before the
-  promptly-swept claim inside a sub-epoch market. `evidence/p9-stake-abuse-2026-07-07.md`.
-- The permissionless cleanout is self-incentivized (MEASURED, localnet): the one-PTB
-  `redeem_settled_permissionless` × N + `claim_trading_loss_rebate_permissionless` has NEGATIVE net
-  gas at every account size (−6.3M MIST at N=1 → −66M at N=20; ~3.29M MIST/position storage rebate
-  vs ~0.1M compute), so a keeper/MEV bot is PAID to sweep — no protocol-keeper reliance and no
-  up-front fee needed (E3 min-fee = 0). `evidence/p9-cleanout-gas-2026-07-07.md`. Holds for
-  LIQUIDATED accounts too (the archetypal loser) — MEASURED per-liquidated-position refund −4.47M
-  MIST, *more* incentivized than survivors. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
-
-Reopen conditions live in RP-11 (chiefly: a long-dated / multi-epoch option ships → re-measure the
-late-stake exposure). (audit 8b5d5f)
-
 ### P-10: current_nav carries an undocumented conservative band
 
 **Severity:** Low.
