@@ -127,16 +127,47 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   uses Predict app-auth so a keeper cron can resolve accounts after settlement.
   Intentional: post-settlement cleanout must not depend on each user acting, but
   deauthorizing `PredictApp` should stop keeper automation without blocking owner
-  claims. *Accepted residual:* a keeper can resolve an account's rebate at a
-  less-favorable active-stake snapshot; the prompt post-settlement sweep bounds
-  the window.
+  claims. *Accepted residual (now measured — predeploy RP-11):* a keeper resolves at
+  the claim-time active-stake snapshot, but the ~24h stake-activation gate makes
+  gaming that snapshot structurally unreachable on the sub-epoch cadences (1m/5m/1h),
+  and the permissionless cleanout is self-incentivized (negative net gas — a searcher
+  is paid the storage rebate to run the redeems and the claim, standalone or bundled),
+  so accounts resolve without relying on a protocol cron.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
   protocol profit and exposes no admin withdrawal path. Intentional for now — the
   reserve is left in the protocol backing solvency, and an explicit admin
   withdrawal flow can be added later if it is needed. *Rejected (for now):* an
   admin drain entrypoint.
 
-## Oracle extraction (recent)
+## Fees, staking, and rebates (recent)
+
+- **Staking is a gaming-resistance gate for the loss rebate, not a reward per se.**
+  The trading-loss rebate exists to move value from winners toward net losers; it
+  must target *aggregate* net losers (per trader), else a balanced (50/50) book
+  harvests it on its losing legs. Aggregation is sybil-gameable (one address per
+  order), so the rebate is scaled by `benefit_ratio(active_stake)` — faking N loser
+  accounts then costs N stakes. *Accepted limit:* stake is a refundable, plutocratic
+  gate, porous to correlated/directional bundling; genuinely reaching unstaked retail
+  would need off-chain identity (out of contract scope).
+- **Stake benefit is applied twice, by design.** `benefit_ratio(active_stake)` scales
+  both the mint-time fee discount (`× max_fee_discount`) and the settled loss rebate
+  (`× trading_loss_rebate_rate`), which are independent config knobs sharing the one
+  benefit curve. A high staker pays a small net fee — intended loyalty compounding, not
+  a double-count bug.
+- **Stake is account-global, not per-expiry.** One `active_stake` scales benefits
+  across all of an account's concurrent expiries; it is a discount multiplier, not a
+  per-market budget. It amortizes the sybil-gate cost across markets — accepted, same
+  as the fee discount.
+- **The rebate reserve is conservative by construction, and intrinsically so.** During
+  a market's life the full `unresolved_trading_fees_paid × trading_loss_rebate_rate` is
+  held out of NAV, because "did this trader net a loss" is unknowable until settlement,
+  so the max payable must be reserved. This is the unavoidable cost of an aggregate-net-
+  loss rebate; the residual (winners, unstaked, partial-benefit) returns to the pool as
+  each account resolves. *Rejected:* removing the reserve (would require downgrading the
+  rebate from a hard-guaranteed liability).
+- **Unstaking before the cleanout forfeits a pending rebate.** The rebate reads
+  `active_stake` at claim; an owner who unstakes post-settlement, pre-claim, is scaled
+  to zero. Accepted (self-inflicted; the prompt incentivized sweep bounds the window).
 
 - **The oracle moved out of Predict into the standalone `propbook` package.** The
 	  in-package `MarketOracle`, `PythSource`, `settlement_state`,

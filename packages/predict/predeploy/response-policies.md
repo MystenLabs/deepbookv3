@@ -358,12 +358,16 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
     storage) while creating less new storage (zero/floor payout). So the accounts most owed rebates
     are the most profitable to sweep. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
-- **Risk profile:** `MEASURED` — cleanout self-incentive measured on localnet for both surviving
-  (5-point sweep) and liquidated (two-marginal fit) accounts, 0 fails/retries; the stake-abuse bound
-  is analytical (config + the ~24 h epoch activation gate). Residual: a lagging cleanout leaves an
-  account's reserve in the expiry — self-correcting, not a loss. Findings:
+  - The rebate CLAIM is self-incentivized on its OWN, not just inside the bundle — so a searcher
+    resolves it even for non-owed (winner) accounts whose owner has no self-claim incentive, releasing
+    their reserve to the pool. MEASURED: standalone `claim_trading_loss_rebate_permissionless` net
+    −0.95M MIST; its in-bundle marginal −2.5M. `evidence/p9-claim-marginal-2026-07-08.md`.
+- **Risk profile:** `MEASURED` — cleanout self-incentive measured on localnet for surviving (5-point
+  sweep), liquidated (two-marginal fit), AND the standalone/marginal rebate claim, 0 fails/retries;
+  the stake-abuse bound is analytical (config + the ~24 h epoch activation gate). Residual: a lagging
+  cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
   `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
-  `evidence/p9-stake-abuse-2026-07-07.md`.
+  `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
 - **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477),
   `rebate_claim_with_open_position_aborts` (:496),
   `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320),

@@ -1021,6 +1021,32 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
     return tx;
 }
 
+// The cleanout split into its two halves, to measure the rebate claim's OWN economics (P-9 /
+// RP-11 follow-up): a gas-maximizing searcher includes the claim in its redeem PTB only if the
+// claim's MARGINAL net gas is <= 0. `redeemSettledAllTx` is the N redeems WITHOUT the claim (it
+// drives open_position_count -> 0, leaving an unresolved summary); `claimRebateOnlyTx` is the
+// claim ALONE (removes only the summary), runnable once positions are closed. Measuring both
+// isolates: standalone-claim net = claimRebateOnly; in-bundle marginal = cleanout - redeemSettledAll.
+export function redeemSettledAllTx(params: CleanoutParams): Transaction {
+    const tx = new Transaction();
+    for (const pos of params.positions) {
+        addRedeemSettledPermissionless(tx, {
+            expiryMarketId: params.expiryMarketId,
+            wrapperId: params.wrapperId,
+            pythFeedId: params.pythFeedId,
+            orderId: pos.orderId,
+            quantity: pos.quantity,
+        });
+    }
+    return tx;
+}
+
+export function claimRebateOnlyTx(params: { expiryMarketId: string; wrapperId: string; pythFeedId: string }): Transaction {
+    const tx = new Transaction();
+    addClaimRebatePermissionless(tx, params);
+    return tx;
+}
+
 export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
     const tx = new Transaction();
     tx.moveCall({

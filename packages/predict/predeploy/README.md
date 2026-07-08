@@ -27,8 +27,9 @@ finding — never leave a known disagreement standing.
 2. **`response-policies.md`** (incl. the rounding policy R1–R3) — settled
    policy; binds reviewers and future changes.
 3. **`open-items.md`** — live work state, including in-flight experiment plans.
-4. **`AGENTS.md` (settled + rejected design decisions), `.claude/rules/*.md`** —
-   standing design record and working rules.
+4. **`packages/predict/docs/design/decisions.md` (canonical settled + rejected design decisions),
+   `.claude/rules/*.md`** — standing design record and working rules. (`AGENTS.md`
+   keeps a dev quick-reference that points here.)
 5. **`packages/predict/docs/`** — public disclosure; must describe the behavior
    recorded above, never lead it.
 
@@ -40,7 +41,7 @@ finding — never leave a known disagreement standing.
 | `response-policies.md` | THE END — every decision that outlives an item: chosen tail-state behavior, accepted risks, guard removals, and the rounding policy (R1–R3) | At most one entry resolves a given item; guard removals require a duty inventory |
 | `evidence/` | Immutable dated run records, each anchored to the item (or register entry) it serves | Append-only; naming `<item>-<instrument>-<date>.md`; nothing unreferenced |
 | `check.py` | The system linter: pinning tests exist, ID cross-refs resolve, MEASURED links evidence, evidence is anchored and referenced, no dead paths | Run on any diff touching this directory or guards; audit preflight runs it too |
-| `AGENTS.md` (repo root) | Settled design decisions + rejected directions with don't-revisit-unless conditions | What the mechanism IS; the register is how it BEHAVES in tail states |
+| `packages/predict/docs/design/decisions.md` | CANONICAL settled + rejected design decisions with don't-revisit-unless conditions | What the mechanism IS; the register is how it BEHAVES in tail states. `AGENTS.md` (repo root) keeps a dev quick-reference pointer |
 | `.claude/rules/*.md` | Working rules per surface (move, tests, harness, indexer, code review) | Accumulated session knowledge; update when a session learns something durable |
 | `.claude/skills/predict-audit/` | The deep-audit harness (lenses, workflows, primer) | Audit runs must re-verify register entries at HEAD and not re-flag verified ones |
 | `packages/predict/harness/` | Localnet staging sim + strategies + bug-oracle analyzers | `.claude/rules/predict-harness.md` + `harness-strategy.md` are its rules |
@@ -83,7 +84,7 @@ stays in ignored scratch; only durable findings enter this directory.
 - **Review/audit something:** `.claude/rules/code-review.md` for the quick
   pass; the `predict-audit` skill for depth.
 - **Understand the protocol:** `packages/predict/docs/` (overview → concepts →
-  risks), then `AGENTS.md` for the settled design record.
+  risks → `packages/predict/docs/design/decisions.md` for the settled design record).
 
 ## Update rules
 

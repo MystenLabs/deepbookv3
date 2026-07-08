@@ -17,12 +17,14 @@ import {
   type CleanoutPosition,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  claimRebateOnlyTx,
   cleanoutAccountTx,
   mintBatchTx,
   mintTx,
   readCurrentNav,
   readIdleBalance,
   readIsSettled,
+  redeemSettledAllTx,
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
@@ -98,6 +100,12 @@ export interface StrategyCtx {
   // position on THIS account then claims its rebate, and return + trace the full gas breakdown
   // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
   cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
+  // Cleanout split (claim-marginal test): redeemAll = the N redeems WITHOUT the claim (leaves an
+  // unresolved summary); claimRebate = the claim ALONE (once positions are closed). Diffing them
+  // isolates whether a searcher's marginal cost of adding the claim is a refund (bundles it) or a
+  // cost (skips it, leaving non-owed accounts' reserve unresolved).
+  redeemAll(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown>;
+  claimRebate(marketId: string): Promise<GasBreakdown>;
   isSettled(marketId: string): Promise<boolean>; // devInspect expiry_market::is_settled
 
   // utils
@@ -321,6 +329,24 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;
       ctx.trace({ type: "cleanout", n: positions.length, nLiquidated, nSettled, ...g });
       return { ...g, nLiquidated, nSettled };
+    },
+    async redeemAll(marketId, positions) {
+      const res = await deps.submit(
+        redeemSettledAllTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, pythFeedId: deps.feeds.pythFeedId, positions }),
+        "redeemAll",
+      );
+      const g = gasBreakdownOf(res);
+      ctx.trace({ type: "redeemAll", n: positions.length, ...g });
+      return g;
+    },
+    async claimRebate(marketId) {
+      const res = await deps.submit(
+        claimRebateOnlyTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, pythFeedId: deps.feeds.pythFeedId }),
+        "claimRebate",
+      );
+      const g = gasBreakdownOf(res);
+      ctx.trace({ type: "claimRebate", ...g });
+      return g;
     },
     async isSettled(marketId) {
       return readIsSettled(marketId);

@@ -95,6 +95,14 @@ green; `sui move test --path packages/predict --gas-limit 100000000000` is green
 are current. The earlier build-phase directives (source-only / defer-tests / defer-docs)
 are **retired** — the normal norms (tests + docs land with code) apply again.
 
+**Canonical design-decision record:** `packages/predict/docs/design/decisions.md` is the source of
+truth for Predict design decisions (chosen shape, rationale, rejected alternatives + revisit
+conditions); tail-state response decisions live in `packages/predict/predeploy/response-policies.md`.
+Record NEW design decisions there, not here. The list below is a dev quick-reference — do not
+re-litigate a settled decision or reintroduce a rejected direction without meeting its stated revisit
+condition. (Retiring this quick-reference to a pure pointer, once `decisions.md` is confirmed a
+superset, is a deferred follow-up.)
+
 **Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit + the finalize audit):**
 - **Oracle is external (propbook), predict-unaware.** `PythFeed` (global spot) + split Block Scholes feeds (`BlockScholesSpotFeed`, `BlockScholesForwardFeed`, `BlockScholesSVIFeed`). `expiry_market` stores the Propbook underlying and tick size; `pricing::load_live_pricer` owns the live pricing boundary: current Propbook canonical binding, pre-expiry live-pricing check, feed freshness, and SVI math. Propbook stores raw BS source fields; the pricing-safe envelope (`forward>0`, basis, `|rho|<=1`, sigma band) is enforced by the consumer in `predict::pricing`.
 - **One canonical strike interpretation = absolute integer ticks, protocol-wide** (`raw = tick * tick_size`). `range_codec` owns packing/conversion/the settlement prefix; no centered grid, no boundary indices. No-spot market creation; price-tail saturation.
