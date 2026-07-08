@@ -12,14 +12,17 @@ import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
-import { abortInfo, appendTrace, computationOf, gasOf } from "./trace.js";
+import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
+  type CleanoutPosition,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  cleanoutAccountTx,
   mintBatchTx,
   mintTx,
   readCurrentNav,
   readIdleBalance,
+  readIsSettled,
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
@@ -54,6 +57,13 @@ export interface MintLeg {
   maxProbability: bigint;
 }
 export type OpKind = "mint" | "redeem" | "supply" | "withdraw";
+export interface GasBreakdown {
+  computationCost: number;
+  storageCost: number;
+  storageRebate: number;
+  nonRefundableStorageFee: number;
+  net: number; // comp + storage - rebate; NEGATIVE = the cleaner is paid (refund)
+}
 
 // Everything a strategy can read + do in one tick. The runner owns the actual deps; a
 // strategy only sees this interface.
@@ -83,6 +93,12 @@ export interface StrategyCtx {
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
   currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
   idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
+
+  // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
+  // position on THIS account then claims its rebate, and return + trace the full gas breakdown
+  // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
+  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown>;
+  isSettled(marketId: string): Promise<boolean>; // devInspect expiry_market::is_settled
 
   // utils
   rand(lo: number, hi: number): number;
@@ -288,6 +304,19 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
     async idleBalance() {
       return readIdleBalance();
+    },
+
+    async cleanout(marketId, positions) {
+      const res = await deps.submit(
+        cleanoutAccountTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, pythFeedId: deps.feeds.pythFeedId, positions }),
+        "cleanout",
+      );
+      const g = gasBreakdownOf(res);
+      ctx.trace({ type: "cleanout", n: positions.length, ...g });
+      return g;
+    },
+    async isSettled(marketId) {
+      return readIsSettled(marketId);
     },
 
     rand,

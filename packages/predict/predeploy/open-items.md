@@ -127,31 +127,26 @@ split. Verify with a cross-market Move flow test: value/sweep a profitable
 market before an offsetting lossy one and assert
 `protocol_reserve == share × net` (expected to fail at HEAD). (audit db0506)
 
-### P-9: Trading-loss rebate scales by claim-time stake, not at-trade stake
+### P-9: Trading-loss rebate uses claim-time stake — ACCEPTED (resolved by RP-11)
 
-**Severity:** Medium.
+**Severity:** Medium → accept-and-disclose 2026-07-07. **Decision graduated to
+`response-policies.md` RP-11.** The rebate prices at claim-time `active_stake`
+(`expiry_market.move:763`) and its post-settlement resolution + cash release ride the
+permissionless cleanout. Both dimensions were measured/derived and accepted, not fixed (the
+mint-time stake-snapshot fix is deliberately NOT taken):
 
-`claim_trading_loss_rebate` (expiry_market.move:743-778) prices the rebate as
-`rebate_amount(eligible_rebate, active_stake)` where `active_stake =
-roll_active_stake(account, ctx)` is the account-global DEEP stake evaluated at
-*claim* time and `benefit_ratio(0) = 0` rises monotonically with stake.
-`ExpiryTradingSummary` (predict_account.move:50-55) snapshots fees and gross
-flows at trade time but never snapshots stake, and `resolve_expiry_summary`
-removes the summary (one-shot). Two consequences: (a) a trader can stake DEEP
-*after* the trading window and collect a larger rebate than their at-trade
-stake earned, with the LP pool paying the excess; (b)
-`claim_trading_loss_rebate_permissionless` (plp.move:458-484) lets any third
-party resolve a victim's one-shot summary at a low-stake instant (e.g. before
-inactive stake activates — `roll_active_stake`'s epoch gate,
-predict_account.move:296-305), permanently denying part or all of an owed
-rebate for zero attacker profit.
+- Claim-time-stake abuse (retroactive stake-to-boost + permissionless claim-to-deny grief) is
+  structurally unreachable for every current cadence (1m/5m/1h): lazy stake activation
+  (`roll_active_stake`) needs a full ~24 h epoch, so mid-market stake cannot activate before the
+  promptly-swept claim inside a sub-epoch market. `evidence/p9-stake-abuse-2026-07-07.md`.
+- The permissionless cleanout is self-incentivized (MEASURED, localnet): the one-PTB
+  `redeem_settled_permissionless` × N + `claim_trading_loss_rebate_permissionless` has NEGATIVE net
+  gas at every account size (−6.3M MIST at N=1 → −66M at N=20; ~3.29M MIST/position storage rebate
+  vs ~0.1M compute), so a keeper/MEV bot is PAID to sweep — no protocol-keeper reliance and no
+  up-front fee needed (E3 min-fee = 0). `evidence/p9-cleanout-gas-2026-07-07.md`.
 
-**Action:** Snapshot the benefit-relevant stake into `ExpiryTradingSummary` at
-first trade (per expiry) and price the rebate off that snapshot instead of
-claim-time `active_stake`, so the benefit reflects stake-at-risk during
-trading. Independently, restrict the permissionless claim to owner-auth or
-otherwise bound/authorize the resolution timing so a third party cannot pin the
-resolution to a low-stake instant. (audit 8b5d5f)
+Reopen conditions live in RP-11 (chiefly: a long-dated / multi-epoch option ships → re-measure the
+late-stake exposure). (audit 8b5d5f)
 
 ### P-10: current_nav carries an undocumented conservative band
 
