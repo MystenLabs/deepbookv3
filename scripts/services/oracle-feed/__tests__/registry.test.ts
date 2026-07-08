@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import { bcs } from "@mysten/sui/bcs";
 import {
   classifyStatus,
   fetchCompactedOracleIds,
   parseOracleObject,
 } from "../registry";
+
+function objectId(suffix: string): string {
+  return `0x${suffix.padStart(64, "0")}`;
+}
 
 const silentLog = {
   info() {},
@@ -78,57 +83,50 @@ describe("fetchCompactedOracleIds", () => {
   it("returns all settled_oracle ids across a paginated table", async () => {
     const client = {
       getObject: vi.fn(async () => ({
-        data: {
-          content: {
-            dataType: "moveObject",
-            fields: {
-              vault: {
-                fields: {
-                  settled_oracles: {
-                    fields: { id: { id: "0xsettled-table" } },
-                  },
-                },
-              },
+        json: {
+          vault: {
+            settled_oracles: {
+              id: objectId("51"),
             },
           },
         },
       })),
-      getDynamicFields: vi.fn(async ({ cursor }: { cursor: string | null }) => {
+      listDynamicFields: vi.fn(async ({ cursor }: { cursor: string | null }) => {
         if (cursor === null) {
           return {
-            data: [
-              { name: { value: "0xoracle1" } },
-              { name: { value: "0xoracle2" } },
+            dynamicFields: [
+              { name: { bcs: bcs.Address.serialize(objectId("1")).toBytes() } },
+              { name: { bcs: bcs.Address.serialize(objectId("2")).toBytes() } },
             ],
             hasNextPage: true,
-            nextCursor: "page2",
+            cursor: "page2",
           };
         }
         return {
-          data: [{ name: { value: "0xoracle3" } }],
+          dynamicFields: [{ name: { bcs: bcs.Address.serialize(objectId("3")).toBytes() } }],
           hasNextPage: false,
-          nextCursor: null,
+          cursor: null,
         };
       }),
     } as any;
 
     const ids = await fetchCompactedOracleIds(client, "0xpredict", silentLog);
 
-    expect(ids).toEqual(new Set(["0xoracle1", "0xoracle2", "0xoracle3"]));
+    expect(ids).toEqual(new Set([objectId("1"), objectId("2"), objectId("3")]));
     expect(client.getObject).toHaveBeenCalledTimes(1);
-    expect(client.getDynamicFields).toHaveBeenCalledTimes(2);
+    expect(client.listDynamicFields).toHaveBeenCalledTimes(2);
   });
 
   it("returns an empty set when the Predict object has no moveObject content", async () => {
     const client = {
-      getObject: vi.fn(async () => ({ data: { content: null } })),
-      getDynamicFields: vi.fn(),
+      getObject: vi.fn(async () => ({ json: null })),
+      listDynamicFields: vi.fn(),
     } as any;
 
     const ids = await fetchCompactedOracleIds(client, "0xpredict", silentLog);
 
     expect(ids.size).toBe(0);
-    expect(client.getDynamicFields).not.toHaveBeenCalled();
+    expect(client.listDynamicFields).not.toHaveBeenCalled();
   });
 
   it("returns an empty set when getObject rejects, does not throw", async () => {
@@ -136,31 +134,26 @@ describe("fetchCompactedOracleIds", () => {
       getObject: vi.fn(async () => {
         throw new Error("rpc down");
       }),
-      getDynamicFields: vi.fn(),
+      listDynamicFields: vi.fn(),
     } as any;
 
     const ids = await fetchCompactedOracleIds(client, "0xpredict", silentLog);
 
     expect(ids.size).toBe(0);
-    expect(client.getDynamicFields).not.toHaveBeenCalled();
+    expect(client.listDynamicFields).not.toHaveBeenCalled();
   });
 
   it("returns an empty set when the settled_oracles table id is missing", async () => {
     const client = {
       getObject: vi.fn(async () => ({
-        data: {
-          content: {
-            dataType: "moveObject",
-            fields: { vault: { fields: {} } },
-          },
-        },
+        json: { vault: {} },
       })),
-      getDynamicFields: vi.fn(),
+      listDynamicFields: vi.fn(),
     } as any;
 
     const ids = await fetchCompactedOracleIds(client, "0xpredict", silentLog);
 
     expect(ids.size).toBe(0);
-    expect(client.getDynamicFields).not.toHaveBeenCalled();
+    expect(client.listDynamicFields).not.toHaveBeenCalled();
   });
 });

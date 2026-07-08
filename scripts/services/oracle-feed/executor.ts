@@ -1,13 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  SuiEvent,
-  SuiJsonRpcClient,
-  SuiTransactionBlockResponse,
-} from "@mysten/sui/jsonRpc";
 import type { Keypair } from "@mysten/sui/cryptography";
 import { Transaction } from "@mysten/sui/transactions";
+import type { ChainClient, ChainEvent, ChainTxResponse } from "./chain";
 import type { Config } from "./config";
 import type { Logger } from "./logger";
 import type { Lane, OracleState, PriceSample, ServiceState, Tier } from "./types";
@@ -30,7 +26,7 @@ import {
 /// Skipped while the manager window is running.
 export async function pushTick(
   state: ServiceState,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   log: Logger,
@@ -175,7 +171,7 @@ export function shouldRunManagerWindowNow(
 /// the next window retries it.
 export async function runManagerWindow(
   state: ServiceState,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   subscriber: Subscriber,
@@ -266,7 +262,7 @@ function reconcileLocalOracles(
 
 async function createOracleStep(
   state: ServiceState,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   lane: Lane,
@@ -308,7 +304,7 @@ async function createOracleStep(
 
 async function bootstrapOracleStep(
   state: ServiceState,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   lane: Lane,
@@ -347,7 +343,7 @@ async function bootstrapOracleStep(
 
 async function settleOracleStep(
   state: ServiceState,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   lane: Lane,
@@ -408,7 +404,7 @@ async function settleOracleStep(
 
 async function compactOracleStep(
   state: ServiceState,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   lane: Lane,
@@ -455,12 +451,11 @@ function isStaleLaneGasRefError(err: unknown, lane: Lane): boolean {
 }
 
 async function refreshLaneGasRef(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   lane: Lane,
 ): Promise<void> {
-  const resp = await client.getObject({ id: lane.gasCoinId });
-  const data = resp.data;
-  if (!data?.version || !data.digest) {
+  const data = await client.getObject(lane.gasCoinId);
+  if (!data.version || !data.digest) {
     throw new Error(`failed to refresh gas coin ref for lane ${lane.id}`);
   }
   lane.gasCoinVersion = String(data.version);
@@ -473,34 +468,39 @@ async function refreshLaneGasRef(
 async function executeLaneTx(
   tx: Transaction,
   lane: Lane,
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   log: Logger,
   ctx: { oracleId?: string; showEvents?: boolean } = {},
-): Promise<SuiTransactionBlockResponse | undefined> {
+): Promise<ChainTxResponse | undefined> {
   lane.available = false;
   try {
     const resp = await client.signAndExecuteTransaction({
       transaction: tx,
       signer,
-      options: { showEffects: true, showEvents: !!ctx.showEvents },
+      includeEvents: !!ctx.showEvents,
     });
-    if (resp.effects?.status.status !== "success") {
+    if (!resp.success) {
       log.error({
         event: "tx_failed",
         laneId: lane.id,
         oracleId: ctx.oracleId,
         txDigest: resp.digest,
-        status: resp.effects?.status,
+        status: resp.status,
       });
       return undefined;
     }
     await client.waitForTransaction({ digest: resp.digest });
-    const mutated = resp.effects?.mutated ?? [];
+    const mutated = resp.changedObjects ?? [];
     for (const ref of mutated) {
-      if (ref.reference.objectId === lane.gasCoinId) {
-        lane.gasCoinVersion = ref.reference.version;
-        lane.gasCoinDigest = ref.reference.digest;
+      if (
+        ref.objectId === lane.gasCoinId &&
+        ref.outputState === "ObjectWrite" &&
+        ref.outputVersion &&
+        ref.outputDigest
+      ) {
+        lane.gasCoinVersion = ref.outputVersion;
+        lane.gasCoinDigest = ref.outputDigest;
         break;
       }
     }
@@ -570,21 +570,21 @@ type ParsedEvents = {
   settled: Array<{ oracleId: string; settlementPrice: number; timestampMs: number }>;
 };
 
-function parseOracleEvents(events: SuiEvent[], packageId: string): ParsedEvents {
+function parseOracleEvents(events: ChainEvent[], packageId: string): ParsedEvents {
   const created: ParsedEvents["created"] = [];
   const settled: ParsedEvents["settled"] = [];
   const createdType = `${packageId}::registry::OracleCreated`;
   const settledType = `${packageId}::oracle::OracleSettled`;
   for (const e of events) {
-    if (e.type === createdType) {
-      const p = e.parsedJson as Record<string, string>;
+    if (e.eventType === createdType) {
+      const p = e.json as Record<string, string>;
       created.push({
         oracleId: p.oracle_id,
         underlyingAsset: p.underlying_asset,
         expiryMs: Number(p.expiry),
       });
-    } else if (e.type === settledType) {
-      const p = e.parsedJson as Record<string, string>;
+    } else if (e.eventType === settledType) {
+      const p = e.json as Record<string, string>;
       settled.push({
         oracleId: p.oracle_id,
         settlementPrice: Number(p.settlement_price),

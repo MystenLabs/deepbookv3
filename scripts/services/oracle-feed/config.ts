@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 import {
   predictPackageID,
   predictRegistryID,
@@ -92,6 +91,10 @@ function parseNumberEnv(key: string, defaultValue: number): number {
   return value;
 }
 
+function getDefaultGrpcFullnodeUrl(network: Network): string {
+  return `https://fullnode.${network}.sui.io:443`;
+}
+
 export function loadConfig(): Config {
   const network = required("NETWORK") as Network;
   if (network !== "testnet" && network !== "mainnet") {
@@ -121,7 +124,7 @@ export function loadConfig(): Config {
 
   return {
     network,
-    suiRpcUrl: process.env.RPC_URL ?? getJsonRpcFullnodeUrl(network),
+    suiRpcUrl: process.env.GRPC_URL ?? process.env.RPC_URL ?? getDefaultGrpcFullnodeUrl(network),
     suiSignerKey: required("PRIVATE_KEY"),
     predictPackageId: packageId,
     registryId,

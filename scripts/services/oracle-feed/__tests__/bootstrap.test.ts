@@ -41,10 +41,9 @@ describe("assertSignerOwnsAdminCap", () => {
   it("throws a clear error when the signer does not own the admin cap", async () => {
     const client = {
       getObject: async () => ({
-        data: {
-          owner: {
-            AddressOwner: "0xadmin",
-          },
+        owner: {
+          $kind: "AddressOwner",
+          AddressOwner: "0xadmin",
         },
       }),
     } as any;
@@ -67,19 +66,27 @@ describe("ensureCapsAndCoins", () => {
 
     const client = {
       getObject: vi.fn(async () => ({
-        data: { owner: { AddressOwner: signerAddress } },
+        owner: { $kind: "AddressOwner", AddressOwner: signerAddress },
       })),
-      getOwnedObjects: vi.fn(async () => ({
-        data: caps.map((capId) => ({ data: { objectId: capId } })),
+      listOwnedObjects: vi.fn(async () => ({
+        objects: caps.map((capId) => ({ objectId: capId })),
         hasNextPage: false,
+        cursor: null,
       })),
-      getCoins: vi.fn(async () => ({
-        data: refreshed ? refreshedCoins : initialCoins,
+      listCoins: vi.fn(async () => ({
+        coins: refreshed ? refreshedCoins : initialCoins,
         hasNextPage: false,
+        cursor: null,
       })),
       signAndExecuteTransaction: vi.fn(async () => {
         refreshed = true;
-        return { digest: "0xdigest", effects: { status: { status: "success" } } };
+        return {
+          digest: "0xdigest",
+          success: true,
+          status: { success: true, error: null },
+          changedObjects: [],
+          events: [],
+        };
       }),
       waitForTransaction: vi.fn(async () => undefined),
     } as any;
@@ -127,13 +134,20 @@ describe("refreshGasLanesIfNeeded", () => {
     let refreshed = false;
 
     const client = {
-      getCoins: vi.fn(async () => ({
-        data: refreshed ? refreshedCoins : initialCoins,
+      listCoins: vi.fn(async () => ({
+        coins: refreshed ? refreshedCoins : initialCoins,
         hasNextPage: false,
+        cursor: null,
       })),
       signAndExecuteTransaction: vi.fn(async () => {
         refreshed = true;
-        return { digest: "0xdigest", effects: { status: { status: "success" } } };
+        return {
+          digest: "0xdigest",
+          success: true,
+          status: { success: true, error: null },
+          changedObjects: [],
+          events: [],
+        };
       }),
       waitForTransaction: vi.fn(async () => undefined),
     } as any;
@@ -174,9 +188,10 @@ describe("refreshGasLanesIfNeeded", () => {
       },
     ];
     const client = {
-      getCoins: vi.fn(async () => ({
-        data: [coin("a1", 150), coin("a2", 120)],
+      listCoins: vi.fn(async () => ({
+        coins: [coin("a1", 150), coin("a2", 120)],
         hasNextPage: false,
+        cursor: null,
       })),
       signAndExecuteTransaction: vi.fn(),
       waitForTransaction: vi.fn(),

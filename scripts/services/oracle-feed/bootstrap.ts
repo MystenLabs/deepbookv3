@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SuiJsonRpcClient, CoinStruct } from "@mysten/sui/jsonRpc";
 import type { Keypair } from "@mysten/sui/cryptography";
 import { Transaction } from "@mysten/sui/transactions";
+import type { ChainClient, ChainCoin } from "./chain";
 import type { Config } from "./config";
 import type { CapId, Lane } from "./types";
 import type { Logger } from "./logger";
@@ -16,7 +16,7 @@ const SUI_TO_MIST = 1_000_000_000n;
 /// coin into `laneCount` equal pieces if coin count is insufficient. Returns
 /// the (cap, gas-coin) pairs as ready-to-use Lanes.
 export async function ensureCapsAndCoins(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   log: Logger,
@@ -62,7 +62,7 @@ export async function ensureCapsAndCoins(
 }
 
 export async function refreshGasLanesIfNeeded(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   lanes: Lane[] | undefined,
@@ -144,10 +144,9 @@ export async function refreshGasLanesIfNeeded(
   const resp = await client.signAndExecuteTransaction({
     transaction: tx,
     signer,
-    options: { showEffects: true },
   });
-  if (resp.effects?.status.status !== "success") {
-    throw new Error(`gas lane refresh failed: ${JSON.stringify(resp.effects?.status)}`);
+  if (!resp.success) {
+    throw new Error(`gas lane refresh failed: ${JSON.stringify(resp.status)}`);
   }
   await client.waitForTransaction({ digest: resp.digest });
 
@@ -178,17 +177,14 @@ export async function refreshGasLanesIfNeeded(
 }
 
 export async function assertSignerOwnsAdminCap(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signerAddress: string,
   adminCapId: string,
 ): Promise<void> {
-  const resp = await client.getObject({
-    id: adminCapId,
-    options: { showOwner: true },
-  });
-  const owner = resp.data?.owner;
+  const resp = await client.getObject(adminCapId);
+  const owner = resp.owner;
   const addressOwner =
-    owner && typeof owner === "object" && "AddressOwner" in owner
+    owner && typeof owner === "object" && owner.$kind === "AddressOwner"
       ? owner.AddressOwner
       : null;
 
@@ -200,7 +196,7 @@ export async function assertSignerOwnsAdminCap(
 }
 
 async function getOwnedCaps(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   address: string,
   packageId: string,
 ): Promise<CapId[]> {
@@ -208,32 +204,31 @@ async function getOwnedCaps(
   const out: CapId[] = [];
   let cursor: string | null | undefined = null;
   do {
-    const resp = await client.getOwnedObjects({
+    const resp = await client.listOwnedObjects({
       owner: address,
-      filter: { StructType: capType },
-      options: { showType: true },
+      type: capType,
       cursor,
     });
-    for (const o of resp.data) {
-      if (o.data?.objectId) out.push(o.data.objectId);
+    for (const o of resp.objects) {
+      if (o.objectId) out.push(o.objectId);
     }
-    cursor = resp.hasNextPage ? resp.nextCursor : null;
+    cursor = resp.hasNextPage ? resp.cursor : null;
   } while (cursor);
   return out;
 }
 
-async function getAllSuiCoins(client: SuiJsonRpcClient, address: string): Promise<CoinStruct[]> {
-  const out: CoinStruct[] = [];
+async function getAllSuiCoins(client: ChainClient, address: string): Promise<ChainCoin[]> {
+  const out: ChainCoin[] = [];
   let cursor: string | null | undefined = null;
   do {
-    const resp = await client.getCoins({ owner: address, coinType: "0x2::sui::SUI", cursor });
-    out.push(...resp.data);
-    cursor = resp.hasNextPage ? resp.nextCursor : null;
+    const resp = await client.listCoins({ owner: address, coinType: "0x2::sui::SUI", cursor });
+    out.push(...resp.coins);
+    cursor = resp.hasNextPage ? resp.cursor : null;
   } while (cursor);
   return out;
 }
 
-function coinRef(coin: CoinStruct) {
+function coinRef(coin: ChainCoin) {
   return {
     objectId: coin.coinObjectId,
     version: coin.version,
@@ -241,7 +236,7 @@ function coinRef(coin: CoinStruct) {
   };
 }
 
-function sortCoinsByBalanceDesc(coins: CoinStruct[]): CoinStruct[] {
+function sortCoinsByBalanceDesc(coins: ChainCoin[]): ChainCoin[] {
   return [...coins].sort((a, b) => {
     const aBalance = BigInt(a.balance);
     const bBalance = BigInt(b.balance);
@@ -250,7 +245,7 @@ function sortCoinsByBalanceDesc(coins: CoinStruct[]): CoinStruct[] {
   });
 }
 
-function sumCoinBalances(coins: CoinStruct[]): bigint {
+function sumCoinBalances(coins: ChainCoin[]): bigint {
   return coins.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
 }
 
@@ -268,7 +263,7 @@ function minBigInt(a: bigint, b: bigint): bigint {
 }
 
 async function createCaps(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   signer: Keypair,
   config: Config,
   count: number,
@@ -282,14 +277,19 @@ async function createCaps(
     });
     tx.transferObjects([cap], tx.pure.address(signerAddr));
   }
+  const before = new Set(await getOwnedCaps(client, signerAddr, config.predictPackageId));
   const resp = await client.signAndExecuteTransaction({
     transaction: tx,
     signer,
-    options: { showEffects: true, showObjectChanges: true },
   });
+  if (!resp.success) {
+    throw new Error(`create oracle caps failed: ${JSON.stringify(resp.status)}`);
+  }
   await client.waitForTransaction({ digest: resp.digest });
-  const capType = `${config.predictPackageId}::oracle::OracleSVICap`;
-  return (resp.objectChanges ?? [])
-    .filter((c: any) => c.type === "created" && c.objectType === capType)
-    .map((c: any) => c.objectId);
+  const after = await getOwnedCaps(client, signerAddr, config.predictPackageId);
+  const created = after.filter((capId) => !before.has(capId)).slice(0, count);
+  if (created.length < count) {
+    throw new Error(`create oracle caps produced ${created.length} caps, expected ${count}`);
+  }
+  return created;
 }

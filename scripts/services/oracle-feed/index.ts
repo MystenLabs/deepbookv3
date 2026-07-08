@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { loadConfig } from "./config";
+import { makeChainClient } from "./chain";
 import { makeLogger } from "./logger";
 import type { ServiceState } from "./types";
 import { ensureCapsAndCoins } from "./bootstrap";
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const log = makeLogger("service");
   log.info({ event: "service_started", network: config.network });
 
-  const client = new SuiJsonRpcClient({ url: config.suiRpcUrl, network: config.network });
+  const client = makeChainClient(config);
   const { secretKey } = decodeSuiPrivateKey(config.suiSignerKey);
   const signer = Ed25519Keypair.fromSecretKey(secretKey);
 

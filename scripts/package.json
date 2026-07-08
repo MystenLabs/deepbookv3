@@ -24,7 +24,7 @@
   "license": "ISC",
   "dependencies": {
     "@mysten/deepbook-v3": "^1.2.1",
-    "@mysten/sui": "^2.5.0",
+    "@mysten/sui": "^2.20.1",
     "esbuild": "^0.27.2",
     "pino": "^9.5.0",
     "tsx": "^4.21.0"

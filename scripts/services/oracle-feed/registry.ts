@@ -1,8 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { bcs } from "@mysten/sui/bcs";
 import { Transaction } from "@mysten/sui/transactions";
+import type { ChainClient, ChainObject } from "./chain";
 import type { Config } from "./config";
 import type { CapId, OracleId, OracleState, OracleStatus } from "./types";
 import type { Logger } from "./logger";
@@ -32,23 +33,19 @@ export function classifyStatus(
 /// back to the pre-fix classification) so the fix cannot make things worse
 /// than the current stall state when the network blips.
 export async function fetchCompactedOracleIds(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   predictId: string,
   log: Logger,
 ): Promise<Set<OracleId>> {
   try {
-    const predict = await client.getObject({
-      id: predictId,
-      options: { showContent: true },
-    });
-    const content = predict.data?.content;
-    if (!content || content.dataType !== "moveObject") {
+    const predict = await client.getObject(predictId, { json: true });
+    const fields = predict.json;
+    if (!fields) {
       log.warn({ event: "vault_settled_fetch_failed", reason: "no_content" });
       return new Set();
     }
-    const fields = content.fields as Record<string, any>;
-    const settledTableId =
-      fields?.vault?.fields?.settled_oracles?.fields?.id?.id ?? null;
+    const vault = fields.vault as { settled_oracles?: { id?: unknown } } | undefined;
+    const settledTableId = vault?.settled_oracles?.id ?? null;
     if (typeof settledTableId !== "string") {
       log.warn({ event: "vault_settled_fetch_failed", reason: "no_table_id" });
       return new Set();
@@ -57,20 +54,14 @@ export async function fetchCompactedOracleIds(
     const ids = new Set<OracleId>();
     let cursor: string | null = null;
     do {
-      const page = await client.getDynamicFields({
+      const page = await client.listDynamicFields({
         parentId: settledTableId,
         cursor,
       });
-      for (const field of page.data ?? []) {
-        // Table<ID, _> dynamic fields store the key under `name.value` as the
-        // oracle's object id string.
-        const name = field.name as { value?: unknown } | undefined;
-        const value = name?.value;
-        if (typeof value === "string") {
-          ids.add(value);
-        }
+      for (const field of page.dynamicFields) {
+        ids.add(bcs.Address.parse(field.name.bcs));
       }
-      cursor = page.hasNextPage ? page.nextCursor ?? null : null;
+      cursor = page.hasNextPage ? page.cursor ?? null : null;
     } while (cursor);
     return ids;
   } catch (err) {
@@ -87,7 +78,7 @@ export async function fetchCompactedOracleIds(
 /// registry::oracle_ids via devInspect for each cap, unions the results, then
 /// fetches the oracle objects to read their current state.
 export async function discoverOracles(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   config: Config,
   capIds: CapId[],
   nowMs: number,
@@ -109,7 +100,7 @@ export async function discoverOracles(
   const ids = [...oracleIdSet];
   for (let i = 0; i < ids.length; i += batchSize) {
     const batch = ids.slice(i, i + batchSize);
-    const resps = await client.multiGetObjects({ ids: batch, options: { showContent: true } });
+    const resps = await client.getObjects(batch, { json: true });
     for (const resp of resps) {
       const parsed = parseOracleObject(resp);
       if (!parsed) continue;
@@ -151,7 +142,7 @@ export async function discoverOracles(
 }
 
 async function oracleIdsForCap(
-  client: SuiJsonRpcClient,
+  client: ChainClient,
   config: Config,
   capId: CapId,
 ): Promise<OracleId[]> {
@@ -161,14 +152,9 @@ async function oracleIdsForCap(
     arguments: [tx.object(config.registryId), tx.pure.id(capId)],
   });
   try {
-    const resp = await client.devInspectTransactionBlock({
-      transactionBlock: tx,
-      sender: "0x0000000000000000000000000000000000000000000000000000000000000000",
-    });
-    const returnValues = resp.results?.[0]?.returnValues;
+    const returnValues = await client.simulateReturnValues(tx);
     if (!returnValues || returnValues.length === 0) return [];
-    const { bcs } = await import("@mysten/sui/bcs");
-    return bcs.vector(bcs.Address).parse(Uint8Array.from(returnValues[0][0])) as string[];
+    return bcs.vector(bcs.Address).parse(returnValues[0][0]) as string[];
   } catch {
     return [];
   }
@@ -183,17 +169,19 @@ type OracleObjectFields = {
   authorizedCaps: string[];
 };
 
-export function parseOracleObject(resp: any): OracleObjectFields | undefined {
-  const data = resp.data;
-  if (!data) return undefined;
-  const content = data.content;
-  if (!content || content.dataType !== "moveObject") return undefined;
-  const f = content.fields as Record<string, any>;
-  const authCapsRaw = f.authorized_caps?.fields?.contents ?? [];
+export function parseOracleObject(resp: ChainObject | any): OracleObjectFields | undefined {
+  const data = resp.data ?? resp;
+  if (!data?.objectId) return undefined;
+  const f = data.json ?? data.content?.fields;
+  if (!f) return undefined;
+  const authCapsRaw =
+    f.authorized_caps?.contents ?? f.authorized_caps?.fields?.contents ?? [];
   const authCaps = Array.isArray(authCapsRaw) ? authCapsRaw.map(String) : [];
   const settlementPriceOpt =
     typeof f.settlement_price === "string"
       ? Number(f.settlement_price)
+      : Array.isArray(f.settlement_price) && f.settlement_price.length > 0
+        ? Number(f.settlement_price[0])
       : f.settlement_price?.fields?.vec?.length > 0
         ? Number(f.settlement_price.fields.vec[0])
         : null;

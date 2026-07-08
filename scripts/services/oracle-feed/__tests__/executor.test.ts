@@ -198,16 +198,14 @@ describe("runManagerWindow", () => {
     const client = {
       signAndExecuteTransaction: vi.fn(async () => ({
         digest: "0xdigest",
-        effects: {
-          status: { status: "success" },
-          mutated: [{
-            reference: {
-              objectId: service.lanes[0]!.gasCoinId,
-              version: "2",
-              digest: "11111111111111111111111111111111",
-            },
-          }],
-        },
+        success: true,
+        status: { success: true, error: null },
+        changedObjects: [{
+          objectId: service.lanes[0]!.gasCoinId,
+          outputState: "ObjectWrite",
+          outputVersion: "2",
+          outputDigest: "11111111111111111111111111111111",
+        }],
         events: [],
       })),
       waitForTransaction: vi.fn(async () => undefined),
@@ -273,23 +271,20 @@ describe("pushTick", () => {
         .mockRejectedValueOnce(new Error(staleError))
         .mockResolvedValueOnce({
           digest: "0xdigest",
-          effects: {
-            status: { status: "success" },
-            mutated: [{
-              reference: {
-                objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
-                version: "3",
-                digest: "33333333333333333333333333333333",
-              },
-            }],
-          },
+          success: true,
+          status: { success: true, error: null },
+          changedObjects: [{
+            objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
+            outputState: "ObjectWrite",
+            outputVersion: "3",
+            outputDigest: "33333333333333333333333333333333",
+          }],
+          events: [],
         }),
       getObject: vi.fn(async () => ({
-        data: {
-          objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
-          version: "2",
-          digest: "22222222222222222222222222222222",
-        },
+        objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
+        version: "2",
+        digest: "22222222222222222222222222222222",
       })),
       waitForTransaction: vi.fn(async () => undefined),
     } as any;
@@ -349,16 +344,15 @@ describe("pushTick", () => {
     const client = {
       signAndExecuteTransaction: async () => ({
         digest: "0xdigest",
-        effects: {
-          status: { status: "success" },
-          mutated: [{
-            reference: {
-              objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
-              version: "2",
-              digest: "11111111111111111111111111111111",
-            },
-          }],
-        },
+        success: true,
+        status: { success: true, error: null },
+        changedObjects: [{
+          objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
+          outputState: "ObjectWrite",
+          outputVersion: "2",
+          outputDigest: "11111111111111111111111111111111",
+        }],
+        events: [],
       }),
       waitForTransaction: async () => {
         await new Promise<void>((resolve) => {
