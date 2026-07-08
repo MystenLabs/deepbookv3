@@ -76,8 +76,7 @@ public struct FlushMark has drop {
 public struct DrainSummary has copy, drop {
     supplies_filled: u64,
     withdrawals_filled: u64,
-    supplies_processed: u64,
-    withdrawals_processed: u64,
+    requests_processed: u64,
 }
 
 // === Public-Package Functions ===
@@ -160,16 +159,8 @@ public(package) fun withdrawals_filled(summary: &DrainSummary): u64 {
     summary.withdrawals_filled
 }
 
-public(package) fun supplies_processed(summary: &DrainSummary): u64 {
-    summary.supplies_processed
-}
-
-public(package) fun withdrawals_processed(summary: &DrainSummary): u64 {
-    summary.withdrawals_processed
-}
-
 public(package) fun requests_processed(summary: &DrainSummary): u64 {
-    summary.supplies_processed + summary.withdrawals_processed
+    summary.requests_processed
 }
 
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
@@ -252,8 +243,7 @@ public(package) fun drain<LP>(
     DrainSummary {
         supplies_filled,
         withdrawals_filled,
-        supplies_processed,
-        withdrawals_processed,
+        requests_processed: supplies_processed + withdrawals_processed,
     }
 }
 
@@ -443,7 +433,7 @@ fun quote_withdraw_dusdc(shares: u64, mark: &FlushMark): Option<u64> {
 }
 
 fun is_executable(mark: &FlushMark): bool {
-    if (mark.pool_value == 0 || mark.total_supply == 0) return false;
+    if (mark.total_supply == 0) return false;
     let price_floor = math::try_mul_div_down(
         mark.pool_value,
         constants::plp_price_unit!(),
