@@ -186,7 +186,7 @@ public(package) fun drain<LP>(
 
     while (under_budget(&supply_budget, supplies_processed) && !book.supply_queue.is_empty()) {
         let (request, escrowed) = book.supply_queue.pop_front();
-        let shares = quote_supply_shares(request.amount, &mark);
+        let shares = mark.quote_supply_shares(request.amount);
         supplies_processed = supplies_processed + 1;
         if (shares.is_none()) {
             shares.destroy_none();
@@ -214,7 +214,7 @@ public(package) fun drain<LP>(
 
     while (under_budget(&withdraw_budget, withdrawals_processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
-        let payout = quote_withdraw_dusdc(request.amount, &mark);
+        let payout = mark.quote_withdraw_dusdc(request.amount);
         if (payout.is_none()) {
             payout.destroy_none();
             let (request, escrowed_lp) = book.withdraw_queue.pop_front();
@@ -416,7 +416,7 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 
 /// LP shares minted for `amount` DUSDC at the frozen flush mark. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
-fun quote_supply_shares(amount: u64, mark: &FlushMark): Option<u64> {
+fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<u64> {
     if (!mark.is_executable()) return option::none();
     // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
@@ -427,7 +427,7 @@ fun quote_supply_shares(amount: u64, mark: &FlushMark): Option<u64> {
 
 /// DUSDC owed for `shares` LP at the frozen flush mark. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
-fun quote_withdraw_dusdc(shares: u64, mark: &FlushMark): Option<u64> {
+fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
     if (!mark.is_executable()) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
