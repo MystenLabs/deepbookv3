@@ -143,7 +143,9 @@ mint-time stake-snapshot fix is deliberately NOT taken):
   `redeem_settled_permissionless` × N + `claim_trading_loss_rebate_permissionless` has NEGATIVE net
   gas at every account size (−6.3M MIST at N=1 → −66M at N=20; ~3.29M MIST/position storage rebate
   vs ~0.1M compute), so a keeper/MEV bot is PAID to sweep — no protocol-keeper reliance and no
-  up-front fee needed (E3 min-fee = 0). `evidence/p9-cleanout-gas-2026-07-07.md`.
+  up-front fee needed (E3 min-fee = 0). `evidence/p9-cleanout-gas-2026-07-07.md`. Holds for
+  LIQUIDATED accounts too (the archetypal loser) — MEASURED per-liquidated-position refund −4.47M
+  MIST, *more* incentivized than survivors. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
 
 Reopen conditions live in RP-11 (chiefly: a long-dated / multi-epoch option ships → re-measure the
 late-stake exposure). (audit 8b5d5f)

@@ -97,7 +97,7 @@ export interface StrategyCtx {
   // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
   // position on THIS account then claims its rebate, and return + trace the full gas breakdown
   // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
-  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown>;
+  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
   isSettled(marketId: string): Promise<boolean>; // devInspect expiry_market::is_settled
 
   // utils
@@ -312,8 +312,15 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
         "cleanout",
       );
       const g = gasBreakdownOf(res);
-      ctx.trace({ type: "cleanout", n: positions.length, ...g });
-      return g;
+      // Split by redeem path: a LIQUIDATED position freed most of its storage at liquidation
+      // time (clear_liquidated_order), so its cleanout frees less than a SETTLED (surviving) one
+      // whose payout-tree node is freed here (close_settled_order). Counting each lets the fit
+      // separate the per-liquidated-position gas from the per-survivor gas.
+      const evs = (res.events ?? []) as any[];
+      const nLiquidated = evs.filter((e) => e.type?.includes("LiquidatedOrderRedeemed")).length;
+      const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;
+      ctx.trace({ type: "cleanout", n: positions.length, nLiquidated, nSettled, ...g });
+      return { ...g, nLiquidated, nSettled };
     },
     async isSettled(marketId) {
       return readIsSettled(marketId);

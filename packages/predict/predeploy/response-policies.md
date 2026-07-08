@@ -351,10 +351,19 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     3.14M·N`) — freeing the settled positions' storage rebates ~3.29M MIST/position against ~0.1M
     compute. No up-front fee / summary padding needed (E3 min-fee = 0).
     `evidence/p9-cleanout-gas-2026-07-07.md`.
-- **Risk profile:** `MEASURED` — cleanout self-incentive measured on localnet (5-point sweep, 0
-  fails/retries); the stake-abuse bound is analytical (config + the ~24 h epoch activation gate).
-  Residual: a lagging cleanout leaves an account's reserve in the expiry — self-correcting, not a
-  loss. Findings: `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
+  - The self-incentive holds for LIQUIDATED accounts too — the archetypal loser, which takes the
+    `redeem_liquidated_order` path. MEASURED (two-marginal fit, R²=0.999):
+    `net = −3.02M − 4.47M·nLiquidated − 3.19M·nSurvived` MIST — both marginals strongly negative and
+    the per-**liquidated**-position refund (−4.47M) EXCEEDS the per-survivor (−3.19M), because a
+    liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
+    storage) while creating less new storage (zero/floor payout). So the accounts most owed rebates
+    are the most profitable to sweep. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
+- **Risk profile:** `MEASURED` — cleanout self-incentive measured on localnet for both surviving
+  (5-point sweep) and liquidated (two-marginal fit) accounts, 0 fails/retries; the stake-abuse bound
+  is analytical (config + the ~24 h epoch activation gate). Residual: a lagging cleanout leaves an
+  account's reserve in the expiry — self-correcting, not a loss. Findings:
+  `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
+  `evidence/p9-stake-abuse-2026-07-07.md`.
 - **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477),
   `rebate_claim_with_open_position_aborts` (:496),
   `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320),

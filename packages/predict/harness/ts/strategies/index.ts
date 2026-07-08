@@ -4,6 +4,7 @@ import { type Strategy } from "../strategy.js";
 import batchMaxBook from "./batchMaxBook.js";
 import batchMaxMarkets from "./batchMaxMarkets.js";
 import cleanoutGas from "./cleanoutGas.js";
+import cleanoutGasLiq from "./cleanoutGasLiq.js";
 import fuzz from "./fuzz.js";
 import liqChurn from "./liqChurn.js";
 import mintBatch from "./mintBatch.js";
@@ -25,6 +26,7 @@ export const STRATEGIES: Record<string, Strategy> = {
   [batchMaxBook.name]: batchMaxBook,
   [batchMaxMarkets.name]: batchMaxMarkets,
   [cleanoutGas.name]: cleanoutGas,
+  [cleanoutGasLiq.name]: cleanoutGasLiq,
 };
 
 export function getStrategy(name: string): Strategy {
