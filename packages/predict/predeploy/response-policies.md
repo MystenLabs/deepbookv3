@@ -325,7 +325,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-11: LP request limit misses carry for three flush attempts (resolves P-7)
+## RP-12: LP request limit misses carry for three flush attempts (resolves P-7)
 
 - **Trigger state:** a queued LP supply or withdraw request reaches the head of
   its FIFO queue during a flush, the frozen mark is executable, but the quoted
