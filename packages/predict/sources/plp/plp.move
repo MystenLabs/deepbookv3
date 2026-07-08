@@ -286,10 +286,12 @@ public fun value_expiry(
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
 /// `supply_budget` / `withdraw_budget` bound how many requests each queue may
-/// process this flush (`None` = drain it fully); processed requests are filled or
-/// protocol-refunded as non-executable at the frozen mark. The operator sizes the
-/// budgets to the gas left after valuing the snapshotted markets. The budgets are
-/// independent, so a supply backlog never starves withdrawals.
+/// process this flush (`None` = unbounded). Filled heads, protocol-refunded
+/// non-executable heads, and live limit misses count as processed; a live limit
+/// miss remains queued and stops that queue for the flush. A withdrawal whose
+/// quote is valid but exceeds idle carries without spending budget. The operator
+/// sizes the budgets to the gas left after valuing the snapshotted markets. The
+/// budgets are independent, so a supply backlog never starves withdrawals.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,

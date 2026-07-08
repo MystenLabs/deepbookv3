@@ -156,9 +156,8 @@ public struct WithdrawFilled has copy, drop, store {
 /// valuation, so this single event carries the frozen mark every fill was priced at
 /// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
 /// plus `active_market_nav` over `market_count` active markets), how many of each
-/// kind filled, how many live requests were processed (filled or protocol-refunded;
-/// the supply/withdraw queues run independent per-flush budgets), and the idle
-/// balance after the drain.
+/// kind filled, how many queue heads spent per-flush budget (filled,
+/// protocol-refunded, or live limit-missed), and the idle balance after the drain.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,

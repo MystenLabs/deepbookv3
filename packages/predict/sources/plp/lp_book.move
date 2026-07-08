@@ -175,9 +175,10 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
 /// supplies first then withdrawals. `supply_budget` / `withdraw_budget` bound how many
-/// live requests each queue may process this flush; processed means filled or
-/// protocol-refunded as non-executable at the mark. `None` drains that queue fully.
-/// The two budgets are independent, so supply pressure can never starve withdrawals.
+/// head requests each queue may process this flush; processed means filled,
+/// protocol-refunded as non-executable at the mark, or a live limit miss that remains
+/// queued. `None` makes that queue unbounded. The two budgets are independent, so
+/// supply pressure can never starve withdrawals.
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
