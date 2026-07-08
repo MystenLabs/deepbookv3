@@ -426,7 +426,9 @@ fun quote_supply_shares(amount: u64, mark: &FlushMark): Option<u64> {
     if (!mark.is_executable()) return option::none();
     // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
-    nonzero_quote(math::try_mul_div_down(amount, mark.total_supply, mark.pool_value))
+    math::try_mul_div_down(amount, mark.total_supply, mark.pool_value).and!(|shares| {
+        if (shares == 0) option::none() else option::some(shares)
+    })
 }
 
 /// DUSDC owed for `shares` LP at the frozen flush mark. `None` means the
@@ -435,24 +437,25 @@ fun quote_withdraw_dusdc(shares: u64, mark: &FlushMark): Option<u64> {
     if (!mark.is_executable()) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
-    nonzero_quote(math::try_mul_div_down(shares, mark.pool_value, mark.total_supply))
+    math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|payout| {
+        if (payout == 0) option::none() else option::some(payout)
+    })
 }
 
 fun is_executable(mark: &FlushMark): bool {
     if (mark.pool_value == 0 || mark.total_supply == 0) return false;
-    let scaled_pool_value = (mark.pool_value as u128) * (constants::plp_price_unit!() as u128);
-    let total_supply = mark.total_supply as u128;
-    let min_value = total_supply * (constants::min_executable_plp_price!() as u128);
-    let max_value = total_supply * (constants::max_executable_plp_price!() as u128);
-    scaled_pool_value >= min_value && scaled_pool_value <= max_value
-}
-
-fun nonzero_quote(quote: Option<u64>): Option<u64> {
-    if (quote.is_none()) {
-        quote.destroy_none();
-        option::none()
-    } else {
-        let quote = quote.destroy_some();
-        if (quote == 0) option::none() else option::some(quote)
-    }
+    let price_floor = math::try_mul_div_down(
+        mark.pool_value,
+        constants::plp_price_unit!(),
+        mark.total_supply,
+    );
+    let price_ceil = math::try_mul_div_up(
+        mark.pool_value,
+        constants::plp_price_unit!(),
+        mark.total_supply,
+    );
+    price_floor.is_some()
+        && price_ceil.is_some()
+        && *price_floor.borrow() >= constants::min_executable_plp_price!()
+        && *price_ceil.borrow() <= constants::max_executable_plp_price!()
 }
