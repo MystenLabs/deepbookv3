@@ -37,6 +37,27 @@ export function computationOf(result: any): number {
   return Number(result?.effects?.gasUsed?.computationCost ?? 0);
 }
 
+// The FULL Sui gas breakdown (all MIST) for a tx result — the four `effects.gasUsed` terms plus
+// the derived net. `net = computationCost + storageCost - storageRebate`; NEGATIVE means the
+// sender's gas coin is refunded (a delete-heavy tx whose storage rebate dominates). The cleanout
+// gas-incentive measurement (E1) turns on this sign, and needs `storageRebate` isolated (the
+// per-tx trace's collapsed `gas` scalar can't be split back apart). `storageRebate` here is
+// already the sender's 99% portion; `nonRefundableStorageFee` is the ~1% burned to the storage fund.
+export function gasBreakdownOf(result: any): {
+  computationCost: number;
+  storageCost: number;
+  storageRebate: number;
+  nonRefundableStorageFee: number;
+  net: number;
+} {
+  const g = result?.effects?.gasUsed ?? {};
+  const computationCost = Number(g.computationCost ?? 0);
+  const storageCost = Number(g.storageCost ?? 0);
+  const storageRebate = Number(g.storageRebate ?? 0);
+  const nonRefundableStorageFee = Number(g.nonRefundableStorageFee ?? 0);
+  return { computationCost, storageCost, storageRebate, nonRefundableStorageFee, net: computationCost + storageCost - storageRebate };
+}
+
 // Parse the aborting module + code from a Move error; null if it is not a MoveAbort
 // (e.g. an arithmetic/VM error or an RPC failure — which the bug oracle flags hardest).
 export function abortInfo(err: unknown): { module: string; code: number } | null {

@@ -33,6 +33,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   deep-ITM winners near expiry (range probability legitimately approaches 1,
   consistent with settlement paying full quantity). *Rejected:* a symmetric
   redeem-side price band.
+- **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
+  and utilization-based financing rates are excluded from v1 — exact strike-level
+  liquidation indexing requires monotonic single-sided payoffs and history-independent
+  floors, which those break.
 
 ## Data structures
 
@@ -43,7 +47,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   *Rejected:* unpacking to a sequence + `Table<u64, Order>`.
 - **Mint-admission policy is kept out of the order id.** Admission caps and price
   thresholds live in config, not in order decoding, so a future policy change can
-  never retroactively invalidate an existing packed id.
+  never retroactively invalidate an existing packed id. *Rejected:* also packing the
+  entry price (`entry_probability` / `leverage_rank`) into the id — `floor_shares`
+  reconstructs everything needed; revisit only if a flow needs the lossless entry
+  price on-chain.
+- **`admin` is a dependency-leaf capability module.** *Rejected:* folding
+  `admin`/`AdminCap` into `registry` — it creates a Move import cycle
+  (`registry → protocol_config → admin`).
 - **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
   (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
   book coexist; the exact live NAV is read by decomposing the per-order liability
@@ -72,10 +82,18 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Per-expiry config is snapshotted immutable at creation**, so admin changes to
   the global template never reprice live orders.
+- **The contract defaults ARE the genesis values (AUD-002).** There is no separate
+  launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.25, caps,
+  budgets) ship as-is unless an open item changes one. Configured values live in
+  [configuration.md](./configuration.md).
 - **Uniform round-down math** at 1e9 scale; solvency rests on bit-identical
   reserve↔payout pairing (a reserve and its payout derive from the same quantity
   via the *identical* helper). *Rejected:* mixed ceil/floor primitives, which
   introduced super-additivity drift and were deleted.
+- **Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
+  the `u64` mul ceiling is accepted because the failure mode is a graceful per-tx
+  mint abort at extreme strike×quantity (never a brick), and inline `u128` casts
+  duplicated `fixed_math` semantics inside a core module. *Rejected:* the widening.
 - **DUSDC pools with a pool-coordinated settled-market sweep.** The sweep returns
   LP cash to the pool, unregisters the expiry from active valuation, and
   materializes terminal profit — there is no expiry-only path that can strand
@@ -127,14 +145,59 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   uses Predict app-auth so a keeper cron can resolve accounts after settlement.
   Intentional: post-settlement cleanout must not depend on each user acting, but
   deauthorizing `PredictApp` should stop keeper automation without blocking owner
-  claims. *Accepted residual:* a keeper can resolve an account's rebate at a
-  less-favorable active-stake snapshot; the prompt post-settlement sweep bounds
-  the window.
+  claims. *Accepted residual (now measured — predeploy RP-11):* a keeper resolves at
+  the claim-time active-stake snapshot, but the ~24h stake-activation gate makes
+  gaming that snapshot structurally unreachable on the sub-epoch cadences (1m/5m/1h),
+  and the permissionless cleanout is self-incentivized (negative net gas — a searcher
+  is paid the storage rebate to run the redeems and the claim, standalone or bundled),
+  so accounts resolve without relying on a protocol cron.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
   protocol profit and exposes no admin withdrawal path. Intentional for now — the
   reserve is left in the protocol backing solvency, and an explicit admin
   withdrawal flow can be added later if it is needed. *Rejected (for now):* an
-  admin drain entrypoint.
+  admin drain entrypoint. Whether to ship a withdrawal path pre-deploy is still an
+  open decision — tracked as predeploy `open-items.md` P-8.
+- **Account app-auth is intentionally full-account, package-level authority.** An
+  app authorized through `account::AccountRegistry` can mutably load any
+  `AccountWrapper` it is handed and use the normal `Account` balance/data APIs — so
+  predict-user solvency depends on the account admin's app-authorization hygiene and
+  every co-authorized app's honesty. *Rejected:* per-user/per-coin app scoping —
+  don't add it unless a future account-margining design needs dependency-aware user
+  app grants (e.g. blocking app revocation while open margin obligations require
+  cross-app liquidation).
+
+## Fees, staking, and rebates (recent)
+
+- **Staking is a gaming-resistance gate for the loss rebate, not a reward per se.**
+  The trading-loss rebate exists to move value from winners toward net losers; it
+  must target *aggregate* net losers (per trader), else a balanced (50/50) book
+  harvests it on its losing legs. Aggregation is sybil-gameable (one address per
+  order), so the rebate is scaled by `benefit_ratio(active_stake)` — faking N loser
+  accounts then costs N stakes. *Accepted limit:* stake is a refundable, plutocratic
+  gate, porous to correlated/directional bundling; genuinely reaching unstaked retail
+  would need off-chain identity (out of contract scope).
+- **Stake benefit is applied twice, by design.** `benefit_ratio(active_stake)` scales
+  both the mint-time fee discount (`× max_fee_discount`) and the settled loss rebate
+  (`× trading_loss_rebate_rate`), which are independent config knobs sharing the one
+  benefit curve. A high staker pays a small net fee — intended loyalty compounding, not
+  a double-count bug.
+- **Stake is account-global, not per-expiry.** One `active_stake` scales benefits
+  across all of an account's concurrent expiries; it is a discount multiplier, not a
+  per-market budget. It amortizes the sybil-gate cost across markets — accepted, same
+  as the fee discount.
+- **The rebate reserve is conservative by construction, and intrinsically so.** During
+  a market's life the full `unresolved_trading_fees_paid × trading_loss_rebate_rate` is
+  held out of NAV, because "did this trader net a loss" is unknowable until settlement,
+  so the max payable must be reserved. This is the unavoidable cost of an aggregate-net-
+  loss rebate; the residual (winners, unstaked, partial-benefit) returns to the pool as
+  each account resolves. *Rejected:* removing the reserve (would require downgrading the
+  rebate from a hard-guaranteed liability).
+- **Unstaking before the cleanout forfeits a pending rebate.** The rebate reads
+  `active_stake` at claim; an owner who unstakes post-settlement, pre-claim, is scaled
+  to zero. Accepted (self-inflicted; the prompt incentivized sweep bounds the window).
+- **`stake_deep` / `unstake_deep` carry no valuation-lock gate.** Staked DEEP is
+  excluded from `lp_pool_value`, so neither can move the flush mark; gating them would
+  add lock contention for no solvency benefit.
 
 ## Oracle extraction (recent)
 
@@ -181,6 +244,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   own version policy; a stale feed caller is harmless (it just reads an old, still
   migratable feed). This removed the per-object `allowed_versions` mirror and
   `sync_*` entry that the old in-package oracle objects carried.
+- **No inventory-aware mid shift.** *Rejected:* skewing the quoted mid by pool
+  inventory — the aggregate drifts when the SVI surface moves and it carried an `i64`
+  overflow risk (built, then fully reverted). Revisit only if the drift and overflow
+  are solved AND skew is shown to help LPs.
 
 ## One canonical strike representation — absolute ticks (recent)
 
@@ -305,3 +372,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   a delegation trace. The admin `ProtocolConfig` setters and the registry creation
   entrypoints were brought under the gate; per-account custody and builder-code
   config stay ungated so user exits survive a freeze.
+- **Two deliberate pause/valuation-gate exemptions.** `rebalance_expiry_cash`'s grow
+  direction (`top_up_live_expiry_cash`) is NOT trading-pause-gated — pause blocks risk
+  creation at the mint gate, while top-up only backs existing exposure and keeps exits
+  fundable (gating it could starve redeems mid-emergency). `plp::lock_capital` carries
+  no valuation-lock gate — it is legal only at `total_supply == 0` (both LP request
+  entrypoints abort `ENotBootstrapped` until supply > 0), so nothing the lock protects
+  can exist when it runs.

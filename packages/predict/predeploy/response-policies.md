@@ -322,6 +322,70 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (resolves P-9)
+
+- **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
+  settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
+  `active_stake` read at CLAIM time (`expiry_market.move:763`), and expiry cash stays reserved
+  until each account is resolved.
+- **Controller:** protocol (the resolution path + the app-auth gate) × user (their standing stake
+  and whether they self-claim). The cleanup TRIGGER is permissionless.
+- **Blast radius:** per account (the rebate amount) plus the expiry's reserved cash, released to
+  the pool only as accounts resolve. No shared-path liveness: an unresolved account strands only
+  its own reserve, which is self-correcting (returns to the pool whenever a cleanout runs).
+- **Response:** accept — (a) the rebate is priced at claim-time active stake, and (b) resolution +
+  cash release rely on the permissionless `redeem_settled_permissionless` +
+  `claim_trading_loss_rebate_permissionless` cleanout, which is SELF-INCENTIVIZED (a keeper/MEV bot
+  is paid the storage rebate to run it) rather than on any protocol-run keeper. No contract change;
+  the mint-time stake-snapshot fix is deliberately NOT taken.
+- **Reasoning + evidence:**
+  - The claim-time-stake leak (P-9, now resolved) is structurally unreachable for every current-cadence market:
+    lazy stake activation (`roll_active_stake`, one epoch) means stake added mid-market cannot
+    activate before the promptly-swept claim inside a sub-epoch (1m/5m/1h) market. Even in a
+    hypothetical multi-epoch option the leak is bounded by `rate × fees`, captures at most the
+    discount half of staking (`rate = max_fee_discount = 0.5`), and needs a genuine 100k+ DEEP
+    commitment (retail-excluded). The permissionless claim-to-deny grief has zero payoff under the
+    same gate. `evidence/p9-stake-abuse-2026-07-07.md` (analytical, config-derived).
+  - The cleanout is self-incentivized: MEASURED on localnet, the one-PTB cleanout net gas is
+    negative at every account size (−6.3M MIST at N=1 → −66M MIST at N=20; `net(N) ≈ −3.43M −
+    3.14M·N`) — freeing the settled positions' storage rebates ~3.29M MIST/position against ~0.1M
+    compute. No up-front fee / summary padding needed (E3 min-fee = 0).
+    `evidence/p9-cleanout-gas-2026-07-07.md`.
+  - The self-incentive holds for LIQUIDATED accounts too — the archetypal loser, which takes the
+    `redeem_liquidated_order` path. MEASURED (two-marginal fit, R²=0.999):
+    `net = −3.02M − 4.47M·nLiquidated − 3.19M·nSurvived` MIST — both marginals strongly negative and
+    the per-**liquidated**-position refund (−4.47M) EXCEEDS the per-survivor (−3.19M), because a
+    liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
+    storage) while creating less new storage (zero/floor payout). So the accounts most owed rebates
+    are the most profitable to sweep. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
+  - The rebate CLAIM is self-incentivized on its OWN, not just inside the bundle — so a searcher
+    resolves it even for non-owed (winner) accounts whose owner has no self-claim incentive, releasing
+    their reserve to the pool. MEASURED: standalone `claim_trading_loss_rebate_permissionless` net
+    −0.95M MIST; its in-bundle marginal −2.5M. `evidence/p9-claim-marginal-2026-07-08.md`.
+- **Risk profile:** `MEASURED` — cleanout self-incentive measured on localnet for surviving (5-point
+  sweep), liquidated (two-marginal fit), AND the standalone/marginal rebate claim, 0 fails/retries;
+  the stake-abuse bound is analytical (config + the ~24 h epoch activation gate). Residual: a lagging
+  cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
+  `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
+  `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
+- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477)
+  and `rebate_claim_with_open_position_aborts` (:496) pin the claim preconditions (settled market,
+  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320) and
+  `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
+  over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
+  inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
+  stake read at claim, `expiry_market.move:763`) is not pinned by a dedicated Move assertion — it
+  rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
+  is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
+  Audit provenance: finding 8b5d5f.
+- **Reopen when:** a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
+  (re-measure the late-stake exposure; reconsider snapshotting benefit-relevant stake at mint); OR
+  the settled-redeem storage footprint shrinks / Sui storage pricing drops enough that the cleanout
+  net gas turns positive (re-run the sweep; apply the E3 up-front-fee formula); OR
+  `trading_loss_rebate_rate` is set materially above `max_fee_discount`.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
