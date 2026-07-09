@@ -43,6 +43,7 @@ export interface GasUsage {
     computationCost: number;
     storageCost: number;
     storageRebate: number;
+    nonRefundableStorageFee: number;
     gasTotal: number;
 }
 
@@ -288,11 +289,16 @@ function gasSummaryFromEffects(effects: any): GasUsage {
     const computationCost = Number(gasUsed.computationCost ?? 0);
     const storageCost = Number(gasUsed.storageCost ?? 0);
     const storageRebate = Number(gasUsed.storageRebate ?? 0);
+    const nonRefundableStorageFee = Number(gasUsed.nonRefundableStorageFee ?? 0);
 
     return {
         computationCost,
         storageCost,
         storageRebate,
+        nonRefundableStorageFee,
+        // Net MIST the sender's gas coin is charged: comp + storage - rebate. Goes
+        // NEGATIVE (a refund) when a delete-heavy tx's storage rebate dominates —
+        // the cleanout-incentive measurement (rebate-vs-compute) turns on this sign.
         gasTotal: computationCost + storageCost - storageRebate,
     };
 }
@@ -427,6 +433,17 @@ export async function readActiveMarketIds(): Promise<string[]> {
     const tx = new Transaction();
     tx.moveCall({ target: target("plp", "active_expiry_markets"), arguments: [tx.object(POOL_VAULT_ID)] });
     return parseVectorId(await devInspectFirstReturn(tx));
+}
+
+// On-chain settlement flag for one market (devInspect `expiry_market::is_settled`). The
+// cleanout measurement waits on this: `redeem_settled` / `claim_trading_loss_rebate` both
+// require a settled market, and a settled market drops out of `active_expiry_markets`, so a
+// settled-but-still-present read is the safe "ready to clean out" signal. BCS bool = 1 byte.
+export async function readIsSettled(marketId: string): Promise<boolean> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("expiry_market", "is_settled"), arguments: [tx.object(marketId)] });
+    const bytes = await devInspectFirstReturn(tx);
+    return (bytes[0] ?? 0) !== 0;
 }
 
 // On-chain PLP total supply. NOTE: lock_capital mints the min-liquidity lock, so this is
@@ -923,6 +940,119 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             tx.object(CLOCK_ID),
         ],
     });
+}
+
+// === Account cleanout (rebate gas-incentive measurement, E1) ===
+// One PTB that redeems every settled position on `wrapper` (permissionless full-close) then
+// claims its trading-loss rebate (permissionless). This is the maximally-incentivized keeper
+// /MEV cleanout: it deletes the N position dynamic-field entries + the ExpiryTradingSummary
+// entry, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
+// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoints derive
+// PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
+// account's wrapper — the actual on-chain keeper surface, priced as-is.
+export interface CleanoutPosition {
+    orderId: string;
+    quantity: bigint; // redeem_settled requires close_quantity == the position's full quantity
+}
+export interface CleanoutParams {
+    expiryMarketId: string;
+    wrapperId: string;
+    pythFeedId: string;
+    positions: CleanoutPosition[];
+}
+
+function addRedeemSettledPermissionless(
+    tx: Transaction,
+    p: { expiryMarketId: string; wrapperId: string; pythFeedId: string; orderId: string; quantity: bigint },
+): void {
+    // redeem_settled_permissionless(market, account_registry, wrapper, config, propbook_registry,
+    //   pyth, order_id, close_quantity, root, clock, ctx) — expiry_market.move:583. No live pricer
+    // (settled), no BS feeds; app-auth is derived internally from the registry.
+    tx.moveCall({
+        target: target("expiry_market", "redeem_settled_permissionless"),
+        arguments: [
+            tx.object(p.expiryMarketId),
+            tx.object(ACCOUNT_REGISTRY_ID),
+            tx.object(p.wrapperId),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(p.pythFeedId),
+            tx.pure.u256(BigInt(p.orderId)),
+            tx.pure.u64(p.quantity),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
+function addClaimRebatePermissionless(
+    tx: Transaction,
+    p: { expiryMarketId: string; wrapperId: string; pythFeedId: string },
+): void {
+    // claim_trading_loss_rebate_permissionless(vault, market, wrapper, account_registry, config,
+    //   propbook_registry, pyth, root, clock, ctx) — plp.move:458. resolve_expiry_summary asserts
+    //   open_position_count == 0, so this MUST follow the redeems in the same PTB.
+    tx.moveCall({
+        target: target("plp", "claim_trading_loss_rebate_permissionless"),
+        arguments: [
+            tx.object(POOL_VAULT_ID),
+            tx.object(p.expiryMarketId),
+            tx.object(p.wrapperId),
+            tx.object(ACCOUNT_REGISTRY_ID),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(p.pythFeedId),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
+// N settled-redeems (drive open_position_count -> 0) THEN one rebate claim, in ONE PTB whose
+// single gas summary is the measurement. Order matters (claim asserts count == 0).
+export function cleanoutAccountTx(params: CleanoutParams): Transaction {
+    const tx = new Transaction();
+    for (const pos of params.positions) {
+        addRedeemSettledPermissionless(tx, {
+            expiryMarketId: params.expiryMarketId,
+            wrapperId: params.wrapperId,
+            pythFeedId: params.pythFeedId,
+            orderId: pos.orderId,
+            quantity: pos.quantity,
+        });
+    }
+    addClaimRebatePermissionless(tx, {
+        expiryMarketId: params.expiryMarketId,
+        wrapperId: params.wrapperId,
+        pythFeedId: params.pythFeedId,
+    });
+    return tx;
+}
+
+// The cleanout split into its two halves, to measure the rebate claim's OWN economics (P-9 /
+// RP-11 follow-up): a gas-maximizing searcher includes the claim in its redeem PTB only if the
+// claim's MARGINAL net gas is <= 0. `redeemSettledAllTx` is the N redeems WITHOUT the claim (it
+// drives open_position_count -> 0, leaving an unresolved summary); `claimRebateOnlyTx` is the
+// claim ALONE (removes only the summary), runnable once positions are closed. Measuring both
+// isolates: standalone-claim net = claimRebateOnly; in-bundle marginal = cleanout - redeemSettledAll.
+export function redeemSettledAllTx(params: CleanoutParams): Transaction {
+    const tx = new Transaction();
+    for (const pos of params.positions) {
+        addRedeemSettledPermissionless(tx, {
+            expiryMarketId: params.expiryMarketId,
+            wrapperId: params.wrapperId,
+            pythFeedId: params.pythFeedId,
+            orderId: pos.orderId,
+            quantity: pos.quantity,
+        });
+    }
+    return tx;
+}
+
+export function claimRebateOnlyTx(params: { expiryMarketId: string; wrapperId: string; pythFeedId: string }): Transaction {
+    const tx = new Transaction();
+    addClaimRebatePermissionless(tx, params);
+    return tx;
 }
 
 export function finalizeDusdcCurrencyRegistrationTx(): Transaction {

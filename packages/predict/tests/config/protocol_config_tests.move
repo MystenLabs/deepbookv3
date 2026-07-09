@@ -17,7 +17,7 @@ use sui::test_scenario::return_shared;
 
 #[test]
 fun set_ewma_params_and_enabled_update_config() {
-    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
 
     config.set_ewma_params(
         &admin_cap,
