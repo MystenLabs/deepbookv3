@@ -11,9 +11,13 @@ is that check. It verifies, deterministically and stdlib-only:
      drift class that let risks.md promise unshipped behavior.
   2. ID CROSS-REFS — every `RP-n` reference in the predeploy docs resolves to a
      heading in response-policies.md (FATAL). Open-item style IDs (`C-4`,
-     `P-7`, ...) must resolve to open-items.md headings; a miss is a WARNING
-     (historical mentions of resolved items are legitimate when the line says
-     resolved/superseded/retired — those are skipped).
+     `P-7`, ...) must resolve to EITHER an open-items.md heading (open work) OR a
+     register tombstone (an id a register entry title 'resolves'); a miss is a
+     WARNING. Model A: item ids are permanent — a resolved item leaves the OPEN
+     sections but its id stays a valid provenance reference (evidence/register
+     cite it forever), it is not a dangling pointer. A line explicitly saying
+     resolved/superseded/removed is also skipped. An id that is BOTH an open
+     heading AND register-resolved is a FATAL contradiction (open ∧ resolved).
   3. MEASURED LINKS (FATAL) — a register entry claiming a MEASURED risk profile
      must name at least one findings doc that exists. MEASURED without linked
      evidence is just BEST-GUESS wearing a costume.
@@ -72,6 +76,41 @@ def defined_ids():
     return ids
 
 
+def resolution_pairs():
+    """(RP-id, resolved-item-id) for every resolution a register heading declares.
+
+    A heading 'RP-n: ... resolves X-n' tombstones item X-n. Tolerant of the phrasings
+    that occur in practice — case ('Resolves'), intervening words ('resolves the C-4'),
+    and multiple ids ('resolves C-4, C-5'): every item id after a 'resolv...' keyword on
+    an RP heading line is captured (RP-ids themselves excluded — they are the register,
+    not items)."""
+    reg = os.path.join(HERE, 'response-policies.md')
+    if not os.path.exists(reg):
+        return []
+    pairs = []
+    for line in read(reg).splitlines():
+        m = re.match(r'## (RP-\d+):', line)
+        if not m:
+            continue
+        kw = re.search(r'\bresolv\w*\b', line, re.I)
+        if not kw:
+            continue
+        for item in re.findall(r'\b[A-Z]{1,2}-\d+\b', line[kw.end():]):
+            if not item.startswith('RP-'):
+                pairs.append((m.group(1), item))
+    return pairs
+
+
+def resolved_items():
+    """Items tombstoned by the register (an entry titled 'RP-n: ... resolves X-n').
+
+    Model A: item IDs are permanent, and the register IS the tombstone — a resolved
+    item leaves the OPEN sections, but its id stays a valid reference target
+    (provenance in evidence/register), not a dangling pointer. `open-items.md`
+    headings mark OPEN work; a register-resolved id is done. See README authority order."""
+    return {item for _, item in resolution_pairs()}
+
+
 def check_pinning_tests(errors):
     """Every function-shaped token in a 'Pinning tests' field exists in tests/."""
     reg = os.path.join(HERE, 'response-policies.md')
@@ -115,6 +154,7 @@ def check_pinning_tests(errors):
 
 def check_id_refs(errors, warnings):
     ids = defined_ids()
+    resolved = resolved_items()
     for path in DOCS:
         name = os.path.relpath(path, HERE)
         for line in read(path).splitlines():
@@ -125,12 +165,27 @@ def check_id_refs(errors, warnings):
             if name == 'README.md':
                 continue  # the map's surface table names ID *classes*, not instances
             for item in re.findall(r'\b([A-Z]{1,2}-\d+)\b', line):
-                if item.startswith(('RP-',)) or item in ids['item']:
+                # An item id resolves to OPEN work (a heading), a register tombstone
+                # (a resolved id — permanent, provenance-only), or a line explicitly
+                # flagging it historical. Anything else is a dangling pointer.
+                if item.startswith(('RP-',)) or item in ids['item'] or item in resolved:
                     continue
                 if re.fullmatch(r'[SPCOHG]{1,2}-\d+', item) and not HISTORICAL.search(line):
-                    warnings.append(f"{name}: mentions {item}, which is not an "
-                                    f"open-items.md heading (resolved item? say so "
-                                    f"on the line, or point at the register entry)")
+                    warnings.append(f"{name}: mentions {item}, which is neither an "
+                                    f"open-items.md heading nor a register-resolved id "
+                                    f"(dangling pointer? add it, resolve it, or say "
+                                    f"'resolved/removed' on the line)")
+
+
+def check_open_resolved_conflict(errors):
+    """Model A integrity: an id cannot be both OPEN and resolved. An open heading whose
+    id the register also claims to resolve is a live contradiction (resurrected-as-open,
+    or a resolution that forgot to remove the open block)."""
+    both = defined_ids()['item'] & resolved_items()
+    for item in sorted(both):
+        errors.append(f"open-items.md: {item} is an OPEN heading but the register also "
+                      f"resolves it — a resolved item must not remain open (remove the "
+                      f"open block; the register entry is its tombstone)")
 
 
 def check_measured_links(errors):
@@ -208,14 +263,9 @@ def check_evidence(errors):
 
 
 def check_unique_resolution(errors):
-    reg = os.path.join(HERE, 'response-policies.md')
-    if not os.path.exists(reg):
-        return
     resolved = {}
-    for m in re.finditer(r'^## (RP-\d+):.*resolves ([A-Z]{1,2}-\d+)',
-                         read(reg), re.M):
-        rp, item = m.group(1), m.group(2)
-        if item in resolved:
+    for rp, item in resolution_pairs():
+        if item in resolved and resolved[item] != rp:
             errors.append(f"response-policies.md: both {resolved[item]} and {rp} "
                           f"claim to resolve {item} — one item, one resolution")
         resolved[item] = rp
@@ -225,6 +275,7 @@ def main():
     errors, warnings = [], []
     check_pinning_tests(errors)
     check_id_refs(errors, warnings)
+    check_open_resolved_conflict(errors)
     check_measured_links(errors)
     check_paths(errors, warnings)
     check_evidence(errors)

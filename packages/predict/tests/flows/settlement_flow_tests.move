@@ -19,6 +19,7 @@ use deepbook_predict::{
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
+use token::deep::DEEP;
 
 const SECOND_SOURCE_ID: u32 = 2;
 const IDLE_SEED: u64 = 1_200_000_000_000;
@@ -546,6 +547,12 @@ fun unstake_deep_returns_all_staked_custody() {
 
     // All staked DEEP custody (active and inactive) left the vault for the account.
     assert_eq!(helpers::vault(&market).staked_deep(), 0);
+    // ...and arrived in the account's stored balance — the receiving side, so a vault-debit that
+    // failed to credit the account would fail here, not pass silently.
+    assert_eq!(
+        fx.account_balance_bundle<DEEP>(&account),
+        config_constants::default_upper_benefit_power!(),
+    );
     fx.check_manager_bundle(
         &account,
         expiry_id,

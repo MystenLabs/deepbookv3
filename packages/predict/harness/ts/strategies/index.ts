@@ -3,6 +3,9 @@
 import { type Strategy } from "../strategy.js";
 import batchMaxBook from "./batchMaxBook.js";
 import batchMaxMarkets from "./batchMaxMarkets.js";
+import cleanoutGas from "./cleanoutGas.js";
+import claimMarginal from "./claimMarginal.js";
+import cleanoutGasLiq from "./cleanoutGasLiq.js";
 import fuzz from "./fuzz.js";
 import liqChurn from "./liqChurn.js";
 import mintBatch from "./mintBatch.js";
@@ -23,6 +26,9 @@ export const STRATEGIES: Record<string, Strategy> = {
   [mintBatch.name]: mintBatch,
   [batchMaxBook.name]: batchMaxBook,
   [batchMaxMarkets.name]: batchMaxMarkets,
+  [cleanoutGas.name]: cleanoutGas,
+  [cleanoutGasLiq.name]: cleanoutGasLiq,
+  [claimMarginal.name]: claimMarginal,
 };
 
 export function getStrategy(name: string): Strategy {
