@@ -32,7 +32,8 @@ replaces the stub or the BS push surface is cap-gated.
 SVI total variance is consumed as variance-to-expiry, but the SVI freshness
 window is much wider than the final seconds/minutes before expiry. A stale but
 fresh-enough surface near expiry can materially overstate remaining uncertainty
-and misprice mint/redeem flows.
+and misprice mint/redeem flows. The SVI skew-adjusted digital term shares this
+near-expiry sensitivity through its `1/sqrt(w)` denominator.
 
 **Action:** Add a minimum time-to-expiry live-pricing cutoff, scale SVI
 freshness with remaining time, or otherwise document and bound the accepted
@@ -147,6 +148,50 @@ band in `docs/risks.md` (reconciling the "exact NAV" framing), or run a
 pre-valuation liquidation pass so the flush marks liquidatable orders at their
 liquidated value. (2026-07-07 holistic audit)
 
+### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
+
+**Severity:** Open envelope-hardening item; non-blocking for the skew-pricing
+correction. No sampled Block Scholes surface triggers it (`g(k) >= 0` over the
+scanned band on 4,000 sampled surfaces), and observed `b` is roughly 3,000 times
+below the constructed corner. The contract nevertheless accepts the corner
+because it bounds each SVI parameter independently and does not enforce
+butterfly freedom (`g(k) >= 0`).
+
+**Condition and controller.** The fixed-point counterexample uses an admitted
+surface with `a=1`, `b=max_svi_input`, `rho=-1`, `m=0`, and `sigma=min` at a
+forward of `100e9`. The trusted surface source controls these inputs; a trader
+cannot choose them. Exploitation additionally requires pre-existing offsetting
+ranges, a pool flush while the surface is active, and queued LP withdrawals.
+Under that surface the adjusted digital is non-monotone. `walk_linear` nets
+signed boundary contributions tree-wide and floors once at the aggregate,
+whereas `compute_range_price` floors each order at zero; the tree can therefore
+net away real liability and make `current_nav` overstate withdrawable value.
+
+**Economic impact.** The replay uses two ranges with `1e9` raw DUSDC units of
+quantity each, a $1,000 face value per range at six decimals. Per-order pricing
+returns `0` for `(80e9, 90e9]` and `898,433,481` raw units ($898.433481, or
+89.843% of face) for `(95e9, 105e9]`, so the contract's own per-order liability
+is $898.433481. `walk_linear` nets the first signed contribution before flooring
+and reports `255,159,574` raw units ($255.159574, or 25.516% of face): an
+absolute liability understatement of `643,273,907` raw units ($643.273907, or
+64.327% of face), which is 71.6% of the per-order liability. `current_nav`
+overstates by the same absolute amount; its percentage error depends on the
+market's free cash. This is an internal accounting discrepancy, not a claim that
+a live contract quote is 64% inaccurate.
+
+**Evidence grade.** The mechanism follows directly from `walk_linear`'s
+tree-wide signed netting versus `compute_range_price`'s per-order zero floor;
+the numbers above are reproduced by the fixed-point replay. They are a synthetic
+accepted-envelope counterexample, not a live-pool measurement or a realistic
+loss estimate.
+
+**Action:** Measure a `b`-specific envelope against observed surface history and
+evaluate a butterfly/monotonicity admission check. Add an actual payout-tree
+regression with whichever hardening change is selected; do not encode the known
+discrepancy as expected behavior in this pricing-formula change. Surface quality
+remains a trusted input until that follow-up lands. (2026-07-09 PR #1110 review;
+quantitative framing corrected 2026-07-11.)
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
@@ -219,6 +264,11 @@ another isolated per-market cap.
   `expiry_cash::EInsufficientCash` (capital) at ~92% compute before reaching the
   object wall; raising the allocation cap removed that mask and exposed the
   1,000-child limit.
+- Skew-adjusted pricing re-measured the single-market compute cost on 2026-07-09:
+  the per-order flush slope rose 2.2% (~480K → ~491K computation units) and a
+  full 5,000-order book used 51% of the compute wall. This does not change the
+  pool-total conclusion above: the object-cache limit binds first
+  (`evidence/c1-skew-gas-2026-07-09.md`).
 - Expired-unswept markets leave the active set only inside a successful
   `value_expiry`/sweep, so the flush's active tail is not bounded by the
   live-market creation cap.

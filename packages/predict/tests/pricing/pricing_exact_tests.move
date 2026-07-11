@@ -6,24 +6,25 @@
 ///
 /// The structural tests in `pricing_tests.move` only pin invariants that
 /// algebraically cancel the actual digital probability (complementarity,
-/// whole-line, monotonicity), so the real `Phi(d2)` VALUE is untested there. This
-/// file pins that value: per scenario it stands up a production-valid oracle, seeds
-/// the real SVI + spot/forward through the Block Scholes surface update, and asserts
-/// each live range price matches an INDEPENDENT true-math reference (Python stdlib
-/// `erf`, NOT the contract and NOT `python_replay`'s fixed-point pricer) within a
-/// per-point, analytically-derived precision budget. Inputs, references, budgets, and
-/// provenance live in the committed, generated `pricing_reference_data` module
+/// whole-line, monotonicity), so the real skew-adjusted digital VALUE is untested
+/// there. This file pins that value: per scenario it stands up a production-valid
+/// oracle, seeds the real SVI + spot/forward through the Block Scholes surface
+/// update, and asserts each live range price matches an INDEPENDENT true-math
+/// reference (Python stdlib `erf`, NOT the contract and NOT `python_replay`'s
+/// fixed-point pricer) within a per-point, analytically-derived precision budget.
+/// Inputs, references, budgets, and provenance live in the committed, generated
+/// `pricing_reference_data` module
 /// (regenerate with `tests/helper/reference/generate_pricing_reference.py`).
 ///
 /// Precision contract (see the generator header for the full derivation): each
-/// tolerance is the worst-case absolute fixed-point error of `UP = Phi(d2)`,
-/// propagated from `math.move`'s documented per-primitive budgets (ln <= 1e-7 rel,
-/// sqrt/mul/div <= 1 ULP, normal_cdf <= 2e-8 abs) at the TRUE values. The worst case
-/// over all scenarios/strikes is `pricing_reference_data::worst_case_budget()` =
-/// 2_401 units (2.4e-6), dominated by the small-variance (near-expiry) scenario at
-/// |d2| ~ 1, where `d2 = -(k + w/2)/sqrt(w)` is ill-conditioned in `w` (a `w^-3/2`
-/// sensitivity): a 1-ULP variance rounding there moves the quote ~1e-6. Far-wing
-/// strikes hit the `normal_cdf` clamp and are EXACT (tolerance = 2-unit cushion).
+/// tolerance is the worst-case absolute fixed-point error of `UP = N(d2) -
+/// phi(d2)*w'(k)/(2*sqrt(w))`, propagated from `math.move`'s documented
+/// per-primitive budgets (ln <= 1e-7 rel, sqrt/mul/div <= 1 ULP, normal_cdf <=
+/// 2e-8 abs, normal_pdf <= 50 units) at the TRUE values. The worst case over all
+/// scenarios/strikes is `pricing_reference_data::worst_case_budget()`, dominated
+/// by small-variance points where both `d2 = -(k + w/2)/sqrt(w)` and the skew term's
+/// `1/sqrt(w)` denominator amplify fixed-point variance and slope dust. Far-wing
+/// strikes hit the normal CDF/PDF clamps and are EXACT (tolerance = 2-unit cushion).
 #[test_only]
 module deepbook_predict::pricing_exact_tests;
 
@@ -37,6 +38,12 @@ use deepbook_predict::{
 };
 use fixed_math::math;
 use std::unit_test::assert_eq;
+
+const SKEW_CLAMP_SVI_A: u64 = 1;
+const SKEW_CLAMP_SVI_B: u64 = 100_000_000_000;
+const SKEW_CLAMP_RHO_UNIT: u64 = 1_000_000_000;
+const SKEW_CLAMP_M: u64 = 0;
+const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
 /// spot/forward, and assert `Pricer.range_price` matches the independent
@@ -85,9 +92,22 @@ fun real_scenario_medium_variance() { run_scenario(1); }
 #[test]
 fun real_scenario_small_variance() { run_scenario(2); }
 
+#[test]
+fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
+    assert_eq!(skew_clamp_up_price(false), 0);
+}
+
+#[test]
+fun negative_svi_slope_clamps_adjusted_digital_to_one() {
+    assert_eq!(skew_clamp_up_price(true), math::float_scaling!());
+}
+
 /// The single exact (`assert_eq!`) anchor. On the flat default fixture (degenerate
 /// SVI, spot == forward), the at-the-forward digital has `d2 == 0` exactly, so
-/// `Phi(d2) == 0.5 == 500_000_000`. This is the one point where the binary price is
+/// `Phi(d2) == 0.5 == 500_000_000`. Exactness also depends on the skew term
+/// vanishing: the fixture's tiny `b` floors `mul_scaled(b, slope)` to zero, so
+/// `compute_nd2` takes the `w' == 0` early return — a larger default `b` would
+/// break this anchor. This is the one point where the binary price is
 /// representable exactly; every real-scenario point above is an interior value that
 /// carries fundamental fixed-point error and so uses `assert_within`.
 #[test]
@@ -106,4 +126,35 @@ fun at_the_forward_is_exactly_one_half() {
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+/// Production-valid SVI envelope point where strike == forward, m == 0, |rho| == 1,
+/// b == max_svi_input, and sigma == min_svi_sigma. Then d2 is near -0.158, so the
+/// normal CDF/PDF tail guards do not fire; the enormous signed `w'` term is what
+/// pushes the raw adjusted digital outside [0, 1] and exercises compute_nd2's final
+/// clamp.
+fun skew_clamp_up_price(rho_is_negative: bool): u64 {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        SKEW_CLAMP_SVI_A,
+        SKEW_CLAMP_SVI_B,
+        SKEW_CLAMP_SIGMA,
+        SKEW_CLAMP_RHO_UNIT,
+        rho_is_negative,
+        SKEW_CLAMP_M,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let up = pricer.range_price(
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    up
 }

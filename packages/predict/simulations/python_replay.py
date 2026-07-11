@@ -92,6 +92,7 @@ LEVERAGE_THREE_X = 3_000_000_000
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
 LN2_U128 = 693_147_180
+INV_SQRT_2PI = 398_942_280
 SMALL_THRESHOLD = 662_910_000
 A0 = 2_235_252_035
 A1 = 161_028_231_069
@@ -784,9 +785,25 @@ def normal_cdf(value: I64) -> int:
     return normal_cdf_u128(value.magnitude, value.is_negative)
 
 
+def normal_pdf(value: I64) -> int:
+    x = value.magnitude
+    if x > 8 * FLOAT_SCALING:
+        return 0
+    x_sq_half = x * x // (2 * FLOAT_SCALING)
+    n = x_sq_half // LN2_U128
+    r = x_sq_half - n * LN2_U128
+    return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
+
+
 def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
-    strike_ratio = deepbook_div(strike, forward)
-    k = ln_fixed(strike_ratio)
+    # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
+    # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
+    strike_ratio_scaled = strike * FLOAT_SCALING // forward
+    if strike_ratio_scaled == 0:
+        return FLOAT_SCALING
+    if strike_ratio_scaled > 2**64 - 1:
+        return 0
+    k = ln_fixed(strike_ratio_scaled)
     m = I64(svi["m"], svi["mNegative"])
     k_minus_m = k.sub(m)
     k_minus_m_squared = k_minus_m.square_scaled()
@@ -803,7 +820,18 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
     d2_numerator = k.add(I64(total_var // 2))
     d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
-    return normal_cdf(d2)
+    nd2 = normal_cdf(d2)
+
+    slope_ratio = k_minus_m.div_scaled(I64(sq))
+    slope = rho.add(slope_ratio)
+    w_prime = I64(svi["b"]).mul_scaled(slope)
+    if w_prime.magnitude == 0:
+        return nd2
+
+    correction = mul_div_round_down(normal_pdf(d2), w_prime.magnitude, 2 * sqrt_var)
+    if w_prime.is_negative:
+        return min(FLOAT_SCALING, nd2 + correction)
+    return nd2 - correction if nd2 > correction else 0
 
 
 def svi_cache_key(svi: dict[str, Any]) -> tuple[int, int, int, bool, int, bool, int]:
