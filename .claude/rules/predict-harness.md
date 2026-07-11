@@ -16,6 +16,17 @@ user-facing overview; this file is the editing-critical knowledge.
 - Validate behavior with a real localnet run (`python3 -m harness up --traders N --seconds S`)
   then `python3 -m harness analyze`. Run these in the **main loop or background, never a
   blocking subagent** (long runs trip watchdogs). Retention/teardown model: README.
+- **On a PTB abort, read the real VM error, not the framework tag.** A
+  `MovePrimitiveRuntimeError` in `0x2::dynamic_field::borrow_child_object` names only the
+  framework fn; the true cause is the dry-run `executionErrorSource` in the saved
+  `artifacts/failed_transactions/*.json` (now also printed live by `runtime.ts` and by the
+  `analyze` bug oracle). The C-1 object-cache ceiling was chased for days off the truncated
+  framework string while that field read `Object runtime cached objects limit (1000 entries)
+  reached` all along — the trace's `errorTag` only kept its first 120 chars.
+- **`sui move test` does NOT enforce Sui execution-layer limits.** The object-runtime
+  cached-objects cap (1,000 dynamic-field children/tx), per-tx gas, and max object size are
+  full-node checks — a unit test loads 1,100+ children without aborting. Reproduce these on
+  localnet (a harness strategy), never in `sui move test`.
 - **Never blind-`rm` `.localnets/instances/` while a run may be live.** A bare `rm -rf` deletes a
   *running* campaign's dir out from under it — its keeper/updater then `ENOENT` on every write and
   the trace is lost. Check `python3 -m harness status` first (non-empty slots = a live run), then

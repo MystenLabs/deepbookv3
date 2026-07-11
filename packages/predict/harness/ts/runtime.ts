@@ -258,6 +258,14 @@ async function collectTransactionDebug(params: {
     const path = failedTransactionArtifactPath(params.label, params.attempt);
     writeJson(path, artifact);
     process.stderr.write(`[${ts()}]   Failed transaction artifact: ${path}\n`);
+    // Surface the REAL VM error, not just the artifact path. A framework-level MovePrimitiveRuntimeError
+    // (e.g. 0x2::dynamic_field::borrow_child_object) names only the framework fn, hiding the true cause;
+    // the dry-run's `executionErrorSource` states it in plain English (e.g. "Object runtime cached objects
+    // limit (1000 entries) reached"). This line is why: the C-1 flush ceiling was debugged for days off the
+    // truncated framework string while this exact message sat unsurfaced in the artifact. Always print it.
+    const dr = artifact.dry_run as any;
+    const vmError = dr?.executionErrorSource ?? dr?.effects?.status?.error ?? (artifact.status as any)?.error ?? null;
+    if (vmError) process.stderr.write(`[${ts()}]   VM error: ${String(vmError).slice(0, 300)}\n`);
     return path;
 }
 
@@ -1487,11 +1495,13 @@ export interface KeeperFeeds {
     bsSviFeedId: string;
 }
 
-// The keeper's flush+settle PTB. First inserts the exact-expiry Pyth observation for
-// each expired market (so `value_expiry`'s `ensure_settled` settles + sweeps it), then
-// runs ONE full-pool flush valuing EVERY active market between start and finish. A
-// settled market contributes 0 and is swept (cash back to pool); a live market is
-// rebalanced + valued. Relies on the running updater to keep live-market feeds fresh.
+// The keeper's pool-flush PTB: value EVERY active market between start and finish. The durable
+// settlement lane (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
+// are only the boundary-race STRAGGLERS that expired since — their exact-expiry observations are
+// inserted so `value_expiry` -> `ensure_settled` settles them inline instead of aborting on a missing
+// dynamic field. These inserts are race-avoidance, not the durable path: a BS outage aborts this whole
+// PTB (reverting them), but the settlement lane already settled durably, so no brick. Live-market
+// valuation reads the updater-maintained fresh BS feed.
 export function keeperFlushTx(params: {
     feeds: KeeperFeeds;
     marketIds: string[];
@@ -1501,9 +1511,6 @@ export function keeperFlushTx(params: {
     settlements: { expiryMs: bigint; price: bigint }[];
 }): Transaction {
     const tx = new Transaction();
-    // Insert each expired market's terminal observation so value_expiry's ensure_settled
-    // settles + sweeps it; live-market valuation reads the updater-maintained fresh feed.
-    // One atomic flush values EVERY active market.
     for (const s of params.settlements) {
         addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
     }
@@ -1540,6 +1547,36 @@ export function keeperFlushTx(params: {
             tx.object(params.protocolConfigId),
             tx.pure(bcs.option(bcs.u64()).serialize(null)),
             tx.pure(bcs.option(bcs.u64()).serialize(null)),
+        ],
+    });
+    return tx;
+}
+
+// Settle ONE expired market in its own PTB (decoupled from the flush): insert its exact-expiry Pyth
+// observation, then rebalance_expiry_cash — which for a past-expiry market runs ensure_settled ->
+// sweep_settled_expiry, removing it from active_expiry_markets. Needs only the exact Pyth spot, NOT
+// live BS pricing, so it proceeds even while the flush defers on a BS outage — no settlement backlog,
+// no beyond-retention brick. Mirrors the production keeper's settlement lane (deepbook-services
+// decision 0010). Per-market so one bad market's settle fails alone.
+export function keeperSettleTx(params: {
+    pythFeedId: string;
+    expiryMs: bigint;
+    price: bigint;
+    marketId: string;
+    poolVaultId: string;
+    protocolConfigId: string;
+}): Transaction {
+    const tx = new Transaction();
+    addPythFeedInsert(tx, params.pythFeedId, params.price, params.expiryMs);
+    tx.moveCall({
+        target: target("plp", "rebalance_expiry_cash"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.marketId),
+            tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;

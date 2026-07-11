@@ -26,6 +26,17 @@ from .run import _make_run_id, _publish_localnet
 # a pipe. Harmless on a terminal (already line-buffered).
 print = functools.partial(print, flush=True)
 
+# The keeper's per-tx gas budget (mirrors keeperService FLUSH_GAS_BUDGET). Set explicitly for the
+# keeper process so its cheap settle/liquidate/rebalance/roll txs don't inherit a large trader
+# SIM_GAS_BUDGET (batch strategies need 50e9) and each demand a 50e9 gas coin.
+KEEPER_GAS_BUDGET = 15_000_000_000
+# Refill an actor's gas below this floor. It MUST exceed the keeper's gas budget: signExecThreaded
+# pins ONE gas coin per sender, so the keeper's flush coin can't self-top-up and must be refilled
+# BEFORE it drops under budget (else it starves with no coin to gas-smash against). The old 2e9
+# floor << the 50e9 flush budget was exactly why the keeper starved (batch run 2026-07-06, 219
+# gas-starved flush submits).
+GAS_REFILL_FLOOR = 30_000_000_000
+
 
 def _raise_keyboard_interrupt(*_) -> None:
     raise KeyboardInterrupt()
@@ -154,7 +165,7 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
         def launch_keeper() -> subprocess.Popen:
             return subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs)},
+                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs), "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET)},
                 start_new_session=True,
             )
 
@@ -246,7 +257,7 @@ def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
             base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
             keeper = subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs)},
+                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs), "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET)},
                 start_new_session=True,
             )
             updater = subprocess.Popen(
@@ -276,7 +287,7 @@ def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
                 if now - last_gas >= 30:
                     last_gas = now
                     for rpc_port, faucet_port, addr in gas:
-                        if 0 <= localnet.balance(rpc_port, addr) < 2_000_000_000:
+                        if 0 <= localnet.balance(rpc_port, addr) < GAS_REFILL_FLOOR:
                             localnet.fund(faucet_port, addr, times=1)
                 time.sleep(2)
             else:
@@ -331,7 +342,7 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
             base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
             keeper = subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_DUSDC": strat_meta[s]["fund"], "TRADER_ADDRESSES": addr},
+                env={**base, "TRADER_DUSDC": strat_meta[s]["fund"], "TRADER_ADDRESSES": addr, "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET)},
                 start_new_session=True,
             )
             updater = subprocess.Popen(
@@ -365,7 +376,7 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
                 if now - last_gas >= 30:
                     last_gas = now
                     for rpc_port, faucet_port, addr in gas:
-                        if 0 <= localnet.balance(rpc_port, addr) < 2_000_000_000:
+                        if 0 <= localnet.balance(rpc_port, addr) < GAS_REFILL_FLOOR:
                             localnet.fund(faucet_port, addr, times=1)
                 time.sleep(2)
             done = [s for s, t in traders_procs if t.poll() is not None]
