@@ -59,6 +59,15 @@ public(package) macro fun min_withdraw_request(): u64 { 1_000_000 }
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
 
+/// Raw PLP units in one whole PLP.
+public(package) macro fun plp_price_unit(): u64 { 1_000_000 }
+
+/// Minimum executable frozen PLP mark: 0.01 DUSDC per whole PLP, in DUSDC raw units.
+public(package) macro fun min_executable_plp_price(): u64 { 10_000 }
+
+/// Maximum executable frozen PLP mark: 100 DUSDC per whole PLP, in DUSDC raw units.
+public(package) macro fun max_executable_plp_price(): u64 { 100_000_000 }
+
 /// Maximum active pre-expiry markets that can require live NAV valuation in one
 /// full-pool flush.
 public(package) macro fun max_live_expiry_markets(): u64 { 24 }

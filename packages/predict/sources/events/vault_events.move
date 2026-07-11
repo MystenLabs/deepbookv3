@@ -93,9 +93,10 @@ public struct WithdrawRequested has copy, drop, store {
     amount: u64,
 }
 
-/// Emitted when an LP cancels a still-pending request before it is flushed: the
-/// escrow (`amount` of DUSDC if `is_supply`, else PLP) is refunded straight into the
-/// requesting account.
+/// Emitted when a still-pending request is cancelled and the escrow (`amount` of
+/// DUSDC if `is_supply`, else PLP) is refunded straight into the requesting account.
+/// Cancellation can be user-requested before flush or protocol-triggered when the
+/// frozen mark makes the request non-executable.
 public struct RequestCancelled has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -134,9 +135,9 @@ public struct WithdrawFilled has copy, drop, store {
 /// valuation, so this single event carries the frozen mark every fill was priced at
 /// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
 /// plus `active_market_nav` over `market_count` active markets), how many of each
-/// kind filled (`requests_processed` is the derived sum of the two, kept for indexer
-/// convenience; the supply/withdraw queues run independent per-flush budgets), and
-/// the idle balance after the drain.
+/// kind filled, how many live requests were processed (filled or protocol-refunded;
+/// the supply/withdraw queues run independent per-flush budgets), and the idle
+/// balance after the drain.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,

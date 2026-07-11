@@ -285,10 +285,11 @@ public fun value_expiry(
 /// LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV, net of the
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
-/// `supply_budget` / `withdraw_budget` bound how many requests each queue may fill
-/// this flush (`None` = drain it fully); the operator sizes them to the gas left
-/// after valuing the snapshotted markets. The budgets are independent, so a supply
-/// backlog never starves withdrawals.
+/// `supply_budget` / `withdraw_budget` bound how many requests each queue may
+/// process this flush (`None` = drain it fully); processed requests are filled or
+/// protocol-refunded as non-executable at the frozen mark. The operator sizes the
+/// budgets to the gas left after valuing the snapshotted markets. The budgets are
+/// independent, so a supply backlog never starves withdrawals.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
@@ -321,7 +322,7 @@ public fun finish_flush(
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
     let mark = lp_book::new_flush_mark(pool_nav, total_supply);
-    let (supplies_filled, withdrawals_filled) = vault
+    let drain_summary = vault
         .lp
         .drain(
             &mut vault.expiry_accounting,
@@ -340,9 +341,9 @@ public fun finish_flush(
         total_nav,
         market_count,
         idle_balance_before,
-        supplies_filled,
-        withdrawals_filled,
-        supplies_filled + withdrawals_filled,
+        drain_summary.supplies_filled(),
+        drain_summary.withdrawals_filled(),
+        drain_summary.requests_processed(),
         vault.expiry_accounting.idle_balance(),
     );
     pool_nav
@@ -729,10 +730,8 @@ fun lp_pool_value(
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
     // exceed gross. LP value can never be negative, so floor it at 0 to keep the
-    // subtraction from underflow-aborting. NOTE this is not a full liveness guarantee:
-    // a 0/dust pool NAV with a non-empty LP queue still aborts in `lp_book::drain`
-    // when the head request would mint/pay zero. The request owner can cancel that
-    // degenerate head request; empty queues and executable marks still flush.
+    // subtraction from underflow-aborting. A 0/dust pool NAV makes non-executable
+    // LP queue heads refund inside `lp_book::drain`, rather than aborting the flush.
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 
