@@ -14,6 +14,7 @@
 /// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
 /// - normal_cdf(x): standard normal CDF for signed fixed-point inputs
+/// - normal_pdf(x): standard normal PDF for signed fixed-point inputs
 ///
 /// Public functions use `u64` for nonnegative values and `i64::I64` for signed
 /// fixed-point values. Internal math uses u128 to minimize truncation.
@@ -22,8 +23,9 @@
 ///
 /// These primitives trade exactness for cheap on-chain evaluation, so each is
 /// held to a documented error budget. The budgets are derived from downstream
-/// pricing sensitivity (`pricing.move` computes `up_price = Φ(d2)`, with `ln`
-/// and `sqrt` feeding `d2`), NOT measured from the implementation's own output.
+/// pricing sensitivity (`pricing.move` computes a skew-adjusted digital from
+/// `Φ(d2)` and `φ(d2)`, with `ln` and `sqrt` feeding `d2`), NOT measured from
+/// the implementation's own output.
 /// Quote impact is regime-dependent. Away from expiry (variance not small) the
 /// math layer moves any quote by at most ~1e-7 of full scale (~100 units on a
 /// 1e9 price): `normal_cdf` error reaches the quote 1:1 (the binding term there),
@@ -43,14 +45,19 @@
 /// | primitive  | budget                | rounding / bias                       |
 /// |------------|-----------------------|---------------------------------------|
 /// | normal_cdf | <= 2e-8 abs (20u @1e9)| sign-varying, <= 1 ULP at test points |
+/// | normal_pdf | <= 50 abs units @1e9 | sign-varying, rounds tails to 0        |
 /// | exp        | <= 1e-7 relative      | sign-varying, ~1e-9 over used range    |
 /// | ln         | <= 1e-7 relative      | sign-varying, ~1e-9                     |
 /// | sqrt       | <= 1 ULP (1e-9)       | floor (integer floor-sqrt, <= true)    |
 ///
-/// `exp` is invoked only internally by `normal_cdf` (the `exp(-x²/2)` tail
-/// factor) with moderate negative arguments, where its relative error is ~1e-9;
-/// the large-positive-argument path is unused on the pricing path. No primitive
-/// carries a systematic bias against the pool — the protocol's designed
+/// The `normal_pdf` absolute budget is `phi(0) * exp_rel_budget ≈ 0.399 * 1e-7`
+/// of full scale (~40 units @1e9), plus fixed-point exponent and final-mul floor
+/// dust; tests assert a 50-unit envelope.
+///
+/// `exp` is invoked by `normal_cdf` (the `exp(-x²/2)` tail factor) and
+/// `normal_pdf` with moderate negative arguments, where its relative error is
+/// ~1e-9; the large-positive-argument path is unused on the pricing path. No
+/// primitive carries a systematic bias against the pool — the protocol's designed
 /// floor-rounding direction lives in this module's `mul`/`div`, far above this
 /// resolution. Budgets are asserted in `math_tests.move` against an independent
 /// reference (`tests/helper/reference/generate_constants.py`).
@@ -66,6 +73,7 @@ const EExpOverflow: u64 = 3;
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
 const LN2_U128: u128 = 693_147_180;
+const INV_SQRT_2PI: u64 = 398_942_280;
 
 // Largest exp input guaranteed to keep the u64 result in range even at the 1e-7
 // precision ceiling: e^x * 1e9 * (1 + 1e-7) <= u64::MAX. Set ~100 units below the
@@ -184,7 +192,7 @@ public fun ln(x: u64): i64::I64 {
 
 /// Exponential function. Returns e^x in FLOAT_SCALING.
 /// Precision: relative error <= 1e-7 over the used (moderate, negative-argument)
-/// range; only invoked internally by `normal_cdf`. See module "Precision contract".
+/// range; invoked by `normal_cdf` and `normal_pdf`. See module "Precision contract".
 /// Aborts (`EExpOverflow`) when a positive input is too large for the u64 result.
 public fun exp(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
@@ -210,6 +218,17 @@ public fun normal_cdf(x: &i64::I64): u64 {
         return if (x_negative) { 0 } else { float_scaling!() }
     };
     (normal_cdf_u128((x_mag as u128), x_negative) as u64)
+}
+
+/// Standard normal PDF φ(x) = exp(-x²/2) / sqrt(2π).
+/// Returns a 1e9-scaled density; tails beyond |8| round to zero at this scale.
+public fun normal_pdf(x: &i64::I64): u64 {
+    let x_mag = x.magnitude();
+    if (x_mag > 8 * float_scaling!()) return 0;
+
+    let x_sq_half = (((x_mag as u128) * (x_mag as u128)) / (2 * F)) as u64;
+    let exponent = i64::from_parts(x_sq_half, true);
+    mul(exp(&exponent), INV_SQRT_2PI)
 }
 
 /// Fixed-point square root using a bit-length initial guess and

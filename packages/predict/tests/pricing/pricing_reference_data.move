@@ -8,14 +8,15 @@
 //
 // Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract
 // and NOT python_replay's fixed-point pricer) for Pricer.range_price.
-// Each point's `tolerance` is the analytic worst-case fixed-point error of UP=Phi(d2),
+// Each point's `tolerance` is the analytic worst-case fixed-point error of the
+// skew-adjusted UP=N(d2)-phi(d2)*w'(k)/(2*sqrt(w)),
 // propagated from math.move's documented per-primitive budgets at the TRUE values; see
 // the generator header for the full derivation. The forward priced is the fresh-Pyth
 // round-trip mul(spot, div(forward, spot)).
 //
-// Worst-case per-endpoint budget across all scenarios/strikes: 2_401 units (@1e9).
-// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w) is
-// ill-conditioned in w (w^-3/2), so a 1-ULP variance rounding moves the quote ~1e-6.
+// Worst-case per-endpoint budget across all scenarios/strikes: 3_129 units (@1e9).
+// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w)
+// and the skew term's 1/sqrt(w) denominator amplify fixed-point variance / slope dust.
 //
 // Provenance (svi_event_digest @ svi_timestamp, sqrt(w_atm)):
 //   [0] 5KbNiu2S7ULJcS1ryDtJ3DC2omTojjJoMFjmu7nYgTAF9  2026-05-27 08:00:18  sqrt_w_atm=0.017067
@@ -53,7 +54,7 @@ fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64): RefPoint {
 public fun scenario_count(): u64 { 3 }
 
 /// Worst-case per-endpoint precision budget (units @1e9) over all scenarios/strikes.
-public fun worst_case_budget(): u64 { 2_401 }
+public fun worst_case_budget(): u64 { 3_129 }
 
 /// Scenario spot seeded into the Propbook fixtures.
 public fun creation_spot(s: u64): u64 { spot(s) }
@@ -182,90 +183,90 @@ public fun svi_m_is_negative(s: u64): bool {
 public fun points(s: u64): vector<RefPoint> {
     if (s == 0) {
         vector[
-            // d2~+3.0 UP(K)=Phi(d2)
-            pt(68_488_000_000_000, constants::pos_inf!(), 998_650_400, 32),
-            // d2~+2.0 UP(K)=Phi(d2)
-            pt(71_901_000_000_000, constants::pos_inf!(), 977_251_761, 139),
-            // d2~+1.0 UP(K)=Phi(d2)
-            pt(74_265_000_000_000, constants::pos_inf!(), 841_378_954, 489),
-            // d2~+0.5 UP(K)=Phi(d2)
-            pt(75_100_000_000_000, constants::pos_inf!(), 691_591_293, 492),
-            // d2~+0.0 UP(K)=Phi(d2)
-            pt(75_788_000_000_000, constants::pos_inf!(), 500_105_501, 99),
-            // d2~-0.5 UP(K)=Phi(d2)
-            pt(76_433_000_000_000, constants::pos_inf!(), 308_762_488, 533),
-            // d2~-1.0 UP(K)=Phi(d2)
-            pt(77_136_000_000_000, constants::pos_inf!(), 158_705_775, 618),
-            // d2~-2.0 UP(K)=Phi(d2)
-            pt(78_942_000_000_000, constants::pos_inf!(), 22_760_736, 204),
-            // d2~-3.0 UP(K)=Phi(d2)
-            pt(81_484_000_000_000, constants::pos_inf!(), 1_351_185, 38),
+            // d2~+3.0 adjusted UP(K) skew=+6.045e-04
+            pt(68_488_000_000_000, constants::pos_inf!(), 999_254_898, 44),
+            // d2~+2.0 adjusted UP(K) skew=+9.224e-03
+            pt(71_901_000_000_000, constants::pos_inf!(), 986_475_283, 202),
+            // d2~+1.0 adjusted UP(K) skew=+4.679e-02
+            pt(74_265_000_000_000, constants::pos_inf!(), 888_173_139, 732),
+            // d2~+0.5 adjusted UP(K) skew=+5.726e-02
+            pt(75_100_000_000_000, constants::pos_inf!(), 748_850_555, 801),
+            // d2~+0.0 adjusted UP(K) skew=+2.822e-02
+            pt(75_788_000_000_000, constants::pos_inf!(), 528_329_906, 229),
+            // d2~-0.5 adjusted UP(K) skew=-1.336e-02
+            pt(76_433_000_000_000, constants::pos_inf!(), 295_405_051, 713),
+            // d2~-1.0 adjusted UP(K) skew=-2.440e-02
+            pt(77_136_000_000_000, constants::pos_inf!(), 134_304_459, 827),
+            // d2~-2.0 adjusted UP(K) skew=-6.758e-03
+            pt(78_942_000_000_000, constants::pos_inf!(), 16_002_241, 276),
+            // d2~-3.0 adjusted UP(K) skew=-5.006e-04
+            pt(81_484_000_000_000, constants::pos_inf!(), 850_622, 51),
             // clamp wing d2~+8
             pt(40_875_000_000_000, constants::pos_inf!(), 1_000_000_000, 2),
             // clamp wing d2~-8
             pt(111_541_000_000_000, constants::pos_inf!(), 0, 2),
-            // (-inf, K_atm] = 1 - Phi(d2)
-            pt(constants::neg_inf!(), 75_788_000_000_000, 499_894_499, 99),
-            // (K@d2=+1, K@d2=-1] = Phi(+1)-Phi(-1)
-            pt(74_265_000_000_000, 77_136_000_000_000, 682_673_179, 1_104),
+            // (-inf, K_atm] = 1 - adjusted UP(d2)
+            pt(constants::neg_inf!(), 75_788_000_000_000, 471_670_094, 229),
+            // (K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)
+            pt(74_265_000_000_000, 77_136_000_000_000, 753_868_680, 1_557),
         ]
     } else if (s == 1) {
         vector[
-            // d2~+3.0 UP(K)=Phi(d2)
-            pt(70_751_000_000_000, constants::pos_inf!(), 998_650_570, 44),
-            // d2~+2.0 UP(K)=Phi(d2)
-            pt(72_731_000_000_000, constants::pos_inf!(), 977_255_903, 307),
-            // d2~+1.0 UP(K)=Phi(d2)
-            pt(74_122_000_000_000, constants::pos_inf!(), 841_472_175, 1_205),
-            // d2~+0.5 UP(K)=Phi(d2)
-            pt(74_620_000_000_000, constants::pos_inf!(), 691_680_691, 1_234),
-            // d2~+0.0 UP(K)=Phi(d2)
-            pt(75_040_000_000_000, constants::pos_inf!(), 500_150_964, 143),
-            // d2~-0.5 UP(K)=Phi(d2)
-            pt(75_457_000_000_000, constants::pos_inf!(), 308_555_858, 1_068),
-            // d2~-1.0 UP(K)=Phi(d2)
-            pt(75_903_000_000_000, constants::pos_inf!(), 158_879_149, 1_247),
-            // d2~-2.0 UP(K)=Phi(d2)
-            pt(76_919_000_000_000, constants::pos_inf!(), 22_794_161, 456),
-            // d2~-3.0 UP(K)=Phi(d2)
-            pt(78_125_000_000_000, constants::pos_inf!(), 1_351_430, 67),
+            // d2~+3.0 adjusted UP(K) skew=+5.761e-04
+            pt(70_751_000_000_000, constants::pos_inf!(), 999_226_715, 62),
+            // d2~+2.0 adjusted UP(K) skew=+8.697e-03
+            pt(72_731_000_000_000, constants::pos_inf!(), 985_952_951, 440),
+            // d2~+1.0 adjusted UP(K) skew=+4.378e-02
+            pt(74_122_000_000_000, constants::pos_inf!(), 885_252_958, 1_886),
+            // d2~+0.5 adjusted UP(K) skew=+4.241e-02
+            pt(74_620_000_000_000, constants::pos_inf!(), 734_089_382, 1_988),
+            // d2~+0.0 adjusted UP(K) skew=-1.020e-03
+            pt(75_040_000_000_000, constants::pos_inf!(), 499_130_516, 777),
+            // d2~-0.5 adjusted UP(K) skew=-1.902e-02
+            pt(75_457_000_000_000, constants::pos_inf!(), 289_536_017, 1_603),
+            // d2~-1.0 adjusted UP(K) skew=-1.634e-02
+            pt(75_903_000_000_000, constants::pos_inf!(), 142_539_030, 1_559),
+            // d2~-2.0 adjusted UP(K) skew=-3.789e-03
+            pt(76_919_000_000_000, constants::pos_inf!(), 19_005_305, 548),
+            // d2~-3.0 adjusted UP(K) skew=-2.942e-04
+            pt(78_125_000_000_000, constants::pos_inf!(), 1_057_214, 81),
             // clamp wing d2~+8
             pt(53_193_000_000_000, constants::pos_inf!(), 1_000_000_000, 2),
             // clamp wing d2~-8
             pt(87_962_000_000_000, constants::pos_inf!(), 0, 2),
-            // (-inf, K_atm] = 1 - Phi(d2)
-            pt(constants::neg_inf!(), 75_040_000_000_000, 499_849_036, 143),
-            // (K@d2=+1, K@d2=-1] = Phi(+1)-Phi(-1)
-            pt(74_122_000_000_000, 75_903_000_000_000, 682_593_027, 2_450),
+            // (-inf, K_atm] = 1 - adjusted UP(d2)
+            pt(constants::neg_inf!(), 75_040_000_000_000, 500_869_484, 777),
+            // (K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)
+            pt(74_122_000_000_000, 75_903_000_000_000, 742_713_927, 3_443),
         ]
     } else if (s == 2) {
         vector[
-            // d2~+3.0 UP(K)=Phi(d2)
-            pt(71_198_000_000_000, constants::pos_inf!(), 998_653_015, 63),
-            // d2~+2.0 UP(K)=Phi(d2)
-            pt(72_504_000_000_000, constants::pos_inf!(), 977_259_630, 501),
-            // d2~+1.0 UP(K)=Phi(d2)
-            pt(73_490_000_000_000, constants::pos_inf!(), 841_495_316, 1_672),
-            // d2~+0.5 UP(K)=Phi(d2)
-            pt(73_878_000_000_000, constants::pos_inf!(), 691_495_970, 1_592),
-            // d2~+0.0 UP(K)=Phi(d2)
-            pt(74_210_000_000_000, constants::pos_inf!(), 500_012_216, 176),
-            // d2~-0.5 UP(K)=Phi(d2)
-            pt(74_514_000_000_000, constants::pos_inf!(), 308_719_128, 2_016),
-            // d2~-1.0 UP(K)=Phi(d2)
-            pt(74_831_000_000_000, constants::pos_inf!(), 158_940_840, 2_401),
-            // d2~-2.0 UP(K)=Phi(d2)
-            pt(75_576_000_000_000, constants::pos_inf!(), 22_784_057, 807),
-            // d2~-3.0 UP(K)=Phi(d2)
-            pt(76_497_000_000_000, constants::pos_inf!(), 1_353_149, 98),
+            // d2~+3.0 adjusted UP(K) skew=+4.899e-04
+            pt(71_198_000_000_000, constants::pos_inf!(), 999_142_870, 85),
+            // d2~+2.0 adjusted UP(K) skew=+7.022e-03
+            pt(72_504_000_000_000, constants::pos_inf!(), 984_281_878, 673),
+            // d2~+1.0 adjusted UP(K) skew=+3.565e-02
+            pt(73_490_000_000_000, constants::pos_inf!(), 877_147_807, 2_326),
+            // d2~+0.5 adjusted UP(K) skew=+5.049e-02
+            pt(73_878_000_000_000, constants::pos_inf!(), 741_986_661, 2_645),
+            // d2~+0.0 adjusted UP(K) skew=+3.948e-02
+            pt(74_210_000_000_000, constants::pos_inf!(), 539_490_779, 1_293),
+            // d2~-0.5 adjusted UP(K) skew=-4.576e-04
+            pt(74_514_000_000_000, constants::pos_inf!(), 308_261_559, 2_564),
+            // d2~-1.0 adjusted UP(K) skew=-1.534e-02
+            pt(74_831_000_000_000, constants::pos_inf!(), 143_600_509, 3_129),
+            // d2~-2.0 adjusted UP(K) skew=-4.552e-03
+            pt(75_576_000_000_000, constants::pos_inf!(), 18_232_347, 1_005),
+            // d2~-3.0 adjusted UP(K) skew=-3.550e-04
+            pt(76_497_000_000_000, constants::pos_inf!(), 998_121, 124),
             // clamp wing d2~+8
             pt(59_811_000_000_000, constants::pos_inf!(), 1_000_000_000, 2),
             // clamp wing d2~-8
             pt(84_603_000_000_000, constants::pos_inf!(), 0, 2),
-            // (-inf, K_atm] = 1 - Phi(d2)
-            pt(constants::neg_inf!(), 74_210_000_000_000, 499_987_784, 176),
-            // (K@d2=+1, K@d2=-1] = Phi(+1)-Phi(-1)
-            pt(73_490_000_000_000, 74_831_000_000_000, 682_554_476, 4_070),
+            // (-inf, K_atm] = 1 - adjusted UP(d2)
+            pt(constants::neg_inf!(), 74_210_000_000_000, 460_509_221, 1_293),
+            // (K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)
+            pt(73_490_000_000_000, 74_831_000_000_000, 733_547_298, 5_452),
         ]
     } else {
         abort ENoSuchScenario
