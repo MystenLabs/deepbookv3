@@ -290,7 +290,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **LP supply/withdraw is asynchronous; the daily flush values the pool exactly.**
   LPs queue escrowed `request_supply`/`request_withdraw` (cancellable for an
-  immediate refund), and a daily flush drains both queues at one frozen mark.
+  immediate refund, with request-time minimum-output limits), and a daily flush
+  fills eligible queued heads at one frozen mark.
   *Rationale:* moving valuation off the trading hot path lets the flush afford an
   exact brute-force NAV, which deletes the entire approximate-NAV mitigation stack;
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is

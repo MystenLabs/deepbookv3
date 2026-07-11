@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-07. **The single source of truth for open work.** Anything that
+Updated 2026-07-08. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -68,25 +68,6 @@ guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case. (audit 4d2a1e)
-
-### P-7: Async LP requests have no fill-price protection
-
-**Severity:** Medium.
-
-PLP supply and withdraw requests are queued and filled later at the next flush's
-frozen PLP mark. If the pool has a small amount of PLP capital and at least one
-live market, `current_nav` can be volatile. A large backlog of supply requests
-could all be filled at an unfavorable transient PLP price, and withdraw requests
-have the symmetric risk. Economically, queued supply/withdraw requests behave
-like limit orders to buy or sell PLP, but the request objects currently carry no
-per-request slippage bound.
-
-**Action:** Add request-time limit fields: `min_plp_out` for supply requests and
-`min_dusdc_out` for withdraw requests. `finish_flush` should fill only requests
-whose frozen-mark output satisfies the limit; requests that miss their limit
-should remain queued or be explicitly refundable/cancellable under a documented
-policy. Add tests for both pass and miss cases, including a volatile low-capital
-pool mark.
 
 ### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
 
