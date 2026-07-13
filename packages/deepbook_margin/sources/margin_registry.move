@@ -47,6 +47,7 @@ const EToleranceTooHigh: u64 = 20;
 const EMaxPriceAgeTooLow: u64 = 21;
 const EMaxPriceAgeTooHigh: u64 = 22;
 const EInvalidOrderTtl: u64 = 23;
+const EPriceToleranceExceedsLiquidationBuffer: u64 = 24;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -323,6 +324,23 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     pool_config: PoolConfig,
     clock: &Clock,
 ) {
+    // Lowering liquidation shrinks the buffer; re-check it still covers the effective
+    // price tolerance (the stored override if set, else the default a fresh price uses)
+    // so the pair can't drift into `buffer < tolerance` (see new_pool_config).
+    let price_key = CurrentPriceKey { pool_id: pool.id() };
+    let effective_tolerance = if (
+        self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(price_key)
+    ) {
+        self.id.borrow<CurrentPriceKey, CurrentPriceData>(price_key).tolerance
+    } else {
+        margin_constants::default_price_tolerance()
+    };
+    assert!(
+        effective_tolerance + constants::float_scaling()
+            <= pool_config.risk_ratios.liquidation_risk_ratio,
+        EPriceToleranceExceedsLiquidationBuffer,
+    );
+
     let inner = self.load_inner_mut();
     let pool_id = pool.id();
     assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
@@ -481,6 +499,14 @@ public fun set_price_tolerance<BaseAsset, QuoteAsset>(
 
     assert!(self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key), EPriceNotInitialized);
 
+    // Keep the tolerance within the liquidation buffer (see new_pool_config): a single
+    // self-fill can lower a danger-band short's ratio by ~tolerance, so require
+    // `tolerance + 1.0 <= liquidation_risk_ratio`.
+    assert!(
+        tolerance + constants::float_scaling() <= self.liquidation_risk_ratio(pool_id),
+        EPriceToleranceExceedsLiquidationBuffer,
+    );
+
     let price_data: &mut CurrentPriceData = self.id.borrow_mut(key);
     price_data.tolerance = tolerance;
 
@@ -617,6 +643,17 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         target_liquidation_risk_ratio >
         constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward,
         EInvalidRiskParam,
+    );
+
+    // Liquidation buffer must cover the price tolerance so a single self-fill (which
+    // overpays by up to the tolerance) can't drive a danger-band position to bad debt:
+    // `price_tolerance + 1.0 <= liquidation_risk_ratio` (buffer >= tolerance). A fresh
+    // pool uses `default_price_tolerance()` until `set_price_tolerance` overrides it, so
+    // gate on that here (`set_price_tolerance`/`update_risk_params` re-check the pair).
+    assert!(
+        margin_constants::default_price_tolerance() + constants::float_scaling()
+            <= liquidation_risk_ratio,
+        EPriceToleranceExceedsLiquidationBuffer,
     );
 
     PoolConfig {

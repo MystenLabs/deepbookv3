@@ -4491,6 +4491,48 @@ fun test_set_tolerance_too_high() {
     abort 0
 }
 
+#[test, expected_failure(abort_code = margin_registry::EPriceToleranceExceedsLiquidationBuffer)]
+// A price tolerance wider than the liquidation buffer is rejected: the default test
+// pool has liquidation 1.10 (buffer 10%), so a 20% tolerance would let a single
+// self-fill drive a danger-band short to bad debt.
+fun set_price_tolerance_exceeding_liquidation_buffer_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    initialize_pool_price<USDC, USDT>(pool_id, &mut registry, &clock, &mut scenario);
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // 20% exceeds the 10% buffer at liquidation 1.10 -> aborts.
+    registry.set_price_tolerance<USDC, USDT>(&admin_cap, &pool, 200_000_000, &clock);
+
+    abort 0
+}
+
 #[test]
 fun test_set_tolerance_within_bounds_ok() {
     // Test that setting tolerance within 1%-50% is allowed
