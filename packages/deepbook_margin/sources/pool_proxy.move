@@ -31,7 +31,7 @@ const EInsufficientRiskRatioAfterTrade: u64 = 6;
 /// tool (`place_market_order_and_repay_loan`) require the post-trade ratio to
 /// monotonically improve (or hold).
 const ERiskRatioMustNotWorsen: u64 = 7;
-const EReduceOnlyBelowLiquidation: u64 = 8;
+const EReduceOnlyBelowLiquidation: u64 = 9;
 /// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
 /// post-trade risk_ratio invariant.
 const EDeprecatedUseV2: u64 = 8;
