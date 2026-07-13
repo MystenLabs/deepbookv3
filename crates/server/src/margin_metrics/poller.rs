@@ -8,9 +8,8 @@ use diesel_async::RunQueryDsl;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_pg_db::Db;
-use sui_sdk::SuiClientBuilder;
+use sui_rpc::Client;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
 #[derive(Debug, Clone)]
 struct MarginPoolInfo {
@@ -21,7 +20,7 @@ struct MarginPoolInfo {
 
 pub struct MarginPoller {
     db: Db,
-    rpc_url: Url,
+    sui_client: Client,
     margin_package_id: String,
     metrics: Arc<MarginMetrics>,
     poll_interval: Duration,
@@ -31,7 +30,7 @@ pub struct MarginPoller {
 impl MarginPoller {
     pub fn new(
         db: Db,
-        rpc_url: Url,
+        sui_client: Client,
         margin_package_id: String,
         metrics: Arc<MarginMetrics>,
         poll_interval_secs: u64,
@@ -39,7 +38,7 @@ impl MarginPoller {
     ) -> Self {
         Self {
             db,
-            rpc_url,
+            sui_client,
             margin_package_id,
             metrics,
             poll_interval: Duration::from_secs(poll_interval_secs),
@@ -79,10 +78,7 @@ impl MarginPoller {
         }
 
         // 2. Create RPC client
-        let sui_client = SuiClientBuilder::default()
-            .build(self.rpc_url.as_str())
-            .await?;
-        let rpc_client = MarginRpcClient::new(sui_client, &self.margin_package_id)?;
+        let rpc_client = MarginRpcClient::new(self.sui_client.clone(), &self.margin_package_id);
 
         // 3. Query each pool and update metrics
         for pool_info in &pools {

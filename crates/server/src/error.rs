@@ -84,14 +84,8 @@ impl From<anyhow::Error> for DeepBookError {
     }
 }
 
-impl From<sui_sdk::error::Error> for DeepBookError {
-    fn from(err: sui_sdk::error::Error) -> Self {
+impl From<tonic::Status> for DeepBookError {
+    fn from(err: tonic::Status) -> Self {
         Self::Rpc(err.to_string())
-    }
-}
-
-impl From<sui_types::base_types::ObjectIDParseError> for DeepBookError {
-    fn from(err: sui_types::base_types::ObjectIDParseError) -> Self {
-        Self::BadRequest(err.to_string())
     }
 }

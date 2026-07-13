@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod error;
+pub mod grpc;
 pub mod margin_metrics;
 mod metrics;
 mod reader;

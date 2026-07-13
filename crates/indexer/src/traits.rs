@@ -36,9 +36,9 @@ pub trait MoveStruct: Serialize {
         // NOTE: We intentionally ignore type_params.len() because events may have phantom/generic type parameters
         // that don't affect the actual event structure (e.g., DeepBurned<BaseAsset, QuoteAsset>)
         all_struct_types.iter().any(|struct_type| {
-            event_type.address == AccountAddress::new(*struct_type.address.inner())
-                && event_type.module.as_str() == struct_type.module.as_str()
-                && event_type.name.as_str() == struct_type.name.as_str()
+            event_type.address == AccountAddress::new(*struct_type.address().inner())
+                && event_type.module.as_str() == struct_type.module().as_str()
+                && event_type.name.as_str() == struct_type.name().as_str()
         })
     }
 
@@ -51,22 +51,22 @@ pub trait MoveStruct: Serialize {
         let mut struct_types = Vec::new();
 
         for address in acceptable_addresses {
-            let struct_tag = StructTag {
-                address: (*address.inner()).into(),
-                module: Identifier::from_str(Self::MODULE).unwrap(),
-                name: Identifier::from_str(Self::NAME).unwrap(),
-                type_params: Self::TYPE_PARAMS
+            let struct_tag = StructTag::new(
+                (*address.inner()).into(),
+                Identifier::from_str(Self::MODULE).unwrap(),
+                Identifier::from_str(Self::NAME).unwrap(),
+                Self::TYPE_PARAMS
                     .iter()
                     .map(|param| {
-                        sui_sdk_types::TypeTag::Struct(Box::new(StructTag {
-                            address: (*address.inner()).into(),
-                            module: Identifier::from_str(Self::MODULE).unwrap(),
-                            name: Identifier::from_str(param).unwrap(),
-                            type_params: Vec::new(),
-                        }))
+                        sui_sdk_types::TypeTag::Struct(Box::new(StructTag::new(
+                            (*address.inner()).into(),
+                            Identifier::from_str(Self::MODULE).unwrap(),
+                            Identifier::from_str(param).unwrap(),
+                            Vec::new(),
+                        )))
                     })
                     .collect(),
-            };
+            );
             struct_types.push(struct_tag);
         }
 
