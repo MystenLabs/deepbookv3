@@ -321,8 +321,9 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
-    // inversion should price 0, not abort a legitimate mint/redeem.
+    // A range price cannot be negative. Floor at zero when fixed-point dust or an
+    // admitted butterfly-arbitrageable SVI surface inverts the boundary prices;
+    // predeploy P-11 tracks the material accounting case.
     lower_up_price.saturating_sub(higher_up_price)
 }
 

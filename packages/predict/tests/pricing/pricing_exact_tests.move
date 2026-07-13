@@ -44,6 +44,8 @@ const SKEW_CLAMP_SVI_B: u64 = 100_000_000_000;
 const SKEW_CLAMP_RHO_UNIT: u64 = 1_000_000_000;
 const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
+const FLAT_SVI_A: u64 = 1;
+const FLAT_SVI_B: u64 = 0;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
 /// spot/forward, and assert `Pricer.range_price` matches the independent
@@ -102,19 +104,27 @@ fun negative_svi_slope_clamps_adjusted_digital_to_one() {
     assert_eq!(skew_clamp_up_price(true), math::float_scaling!());
 }
 
-/// The single exact (`assert_eq!`) anchor. On the flat default fixture (degenerate
-/// SVI, spot == forward), the at-the-forward digital has `d2 == 0` exactly, so
-/// `Phi(d2) == 0.5 == 500_000_000`. Exactness also depends on the skew term
-/// vanishing: the fixture's tiny `b` floors `mul_scaled(b, slope)` to zero, so
-/// `compute_nd2` takes the `w' == 0` early return — a larger default `b` would
-/// break this anchor. This is the one point where the binary price is
-/// representable exactly; every real-scenario point above is an interior value that
-/// carries fundamental fixed-point error and so uses `assert_within`.
+/// The single exact (`assert_eq!`) anchor. With `a` at one fixed-point ulp, `b == 0`,
+/// and spot == forward, half the total variance truncates to zero, so `d2 == 0`;
+/// the flat surface makes `w' == 0`. Therefore `Phi(d2) == 0.5 == 500_000_000`
+/// exactly. This is the one point where the binary price is representable exactly;
+/// every real-scenario point above carries fixed-point error and uses `assert_within`.
 #[test]
 fun at_the_forward_is_exactly_one_half() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        FLAT_SVI_A,
+        FLAT_SVI_B,
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+    );
     let pricer = fx.load_pricer_bundle(&oracle);
 
     let up = pricer.range_price(

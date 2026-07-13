@@ -114,13 +114,11 @@ public(package) fun walk_linear(
         tick_size,
         memo,
     );
-    // For any mint-admitted book the start side dominates the end side by a wide
-    // margin: each order's min net premium forces P(lower) well above P(higher), so
-    // its start contribution exceeds its end contribution by >> the per-boundary
-    // rounding. saturating_sub floors the residual valuation ulp dust (<= ~1 ulp per
-    // shared higher boundary) that thin partial-close survivors clustered in a flat
-    // price region could otherwise drive negative — §8.4 dust, re-floored by the
-    // caller — instead of aborting the read.
+    // Range liability cannot be negative. Floor the aggregate once to keep valuation
+    // reads live when fixed-point dust or an admitted butterfly-arbitrageable SVI
+    // surface makes signed boundary netting invert. Predeploy P-11 tracks that the
+    // latter can materially diverge from per-order range pricing, which floors each
+    // order independently.
     (tree.base.quantity + start_total).saturating_sub(end_total)
 }
 
