@@ -47,24 +47,51 @@ const splitTypeArgs = (typeStr: string): [string, string] => {
 	return [inner.slice(0, splitIdx).trim(), inner.slice(splitIdx + 1).trim()];
 };
 
+const gql = async <T>(query: string): Promise<T> => {
+	const resp = await fetch(GRAPHQL_URL, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ query }),
+	});
+	if (!resp.ok) throw new Error(`graphql ${resp.status} ${resp.statusText}`);
+	const body = (await resp.json()) as any;
+	if (body.errors) throw new Error(`graphql errors: ${JSON.stringify(body.errors)}`);
+	return body.data as T;
+};
+
+// Read the Registry's live allowed_versions. `Registry.inner` is a `Versioned` whose UID is NOT a
+// top-level object (GraphQL `object(address:)` on it returns null), so the set lives in a dynamic
+// field hanging off it. The field object itself IS addressable, so: list the fields over gRPC to
+// get its id, then read the parsed contents over GraphQL.
+const fetchAllowedVersions = async (client: SuiGrpcClient): Promise<number[]> => {
+	const reg = await gql<any>(
+		`{ object(address: "${REGISTRY_ID}") { asMoveObject { contents { json } } } }`,
+	);
+	const innerId: string = reg.object.asMoveObject.contents.json.inner.id;
+
+	const { dynamicFields } = await client.core.listDynamicFields({ parentId: innerId });
+	const field = dynamicFields.find((f: any) => f.valueType?.endsWith('::registry::RegistryInner'));
+	if (!field) throw new Error(`no RegistryInner dynamic field on ${innerId}`);
+
+	const data = await gql<any>(
+		`{ object(address: "${field.fieldId}") { asMoveObject { contents { json } } } }`,
+	);
+	const contents: string[] = data.object.asMoveObject.contents.json.value.allowed_versions.contents;
+	return contents.map(Number).sort((a, b) => a - b);
+};
+
 // Enumerate every Pool object of the original package. The pool_created indexer
 // endpoint used by updateAllPoolAllowedVersions.ts is mainnet-only.
 const fetchPools = async (): Promise<{ id: string; base: string; quote: string }[]> => {
 	const pools: { id: string; base: string; quote: string }[] = [];
 	let after: string | null = null;
 	do {
-		const query = `{ objects(filter: {type: "${ORIGINAL_PACKAGE_ID}::pool::Pool"}, first: 50${
-			after ? `, after: "${after}"` : ''
-		}) { pageInfo { hasNextPage endCursor } nodes { address asMoveObject { contents { type { repr } } } } } }`;
-		const resp = await fetch(GRAPHQL_URL, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ query }),
-		});
-		if (!resp.ok) throw new Error(`graphql ${resp.status} ${resp.statusText}`);
-		const body = (await resp.json()) as any;
-		if (body.errors) throw new Error(`graphql errors: ${JSON.stringify(body.errors)}`);
-		const page = body.data.objects;
+		const data: any = await gql<any>(
+			`{ objects(filter: {type: "${ORIGINAL_PACKAGE_ID}::pool::Pool"}, first: 50${
+				after ? `, after: "${after}"` : ''
+			}) { pageInfo { hasNextPage endCursor } nodes { address asMoveObject { contents { type { repr } } } } } }`,
+		);
+		const page: any = data.objects;
 		for (const n of page.nodes) {
 			const [base, quote] = splitTypeArgs(n.asMoveObject.contents.type.repr);
 			pools.push({ id: n.address, base, quote });
@@ -86,8 +113,19 @@ const fetchPools = async (): Promise<{ id: string; base: string; quote: string }
 		);
 	}
 
+	// `enable_version` aborts with EVersionAlreadyEnabled (registry code 5) on a version that is
+	// already in the set, which would take the whole run down — including the pool refresh, which
+	// is idempotent and worth re-running on its own (e.g. after new pools are created).
+	const allowed = await fetchAllowedVersions(client);
+	const missing = VERSIONS_TO_ENABLE.filter((v) => !allowed.includes(v));
+	console.log(`registry allowed_versions: [${allowed}]`);
+
 	const pools = await fetchPools();
-	console.log(`enabling versions [${VERSIONS_TO_ENABLE}] and refreshing ${pools.length} pools`);
+	console.log(
+		missing.length
+			? `enabling [${missing}] and refreshing ${pools.length} pools`
+			: `versions [${VERSIONS_TO_ENABLE}] already enabled — refreshing ${pools.length} pools only`,
+	);
 
 	const execute = async (label: string, tx: Transaction) => {
 		tx.setSender(sender);
@@ -108,20 +146,21 @@ const fetchPools = async (): Promise<{ id: string; base: string; quote: string }
 		console.log(`${DRY_RUN ? '[dry-run] ' : ''}${label}: success${digest ? ` (${digest})` : ''}`);
 	};
 
-	// 1. Enable the versions on the Registry. `enable_version` asserts the version is not
-	// already present (EVersionAlreadyEnabled), so only pass versions that are missing.
-	const versionTx = new Transaction();
-	for (const version of VERSIONS_TO_ENABLE) {
-		versionTx.moveCall({
-			target: `${DEEPBOOK_PACKAGE_ID}::registry::enable_version`,
-			arguments: [
-				versionTx.object(REGISTRY_ID),
-				versionTx.pure.u64(version),
-				versionTx.object(adminCapID[env]),
-			],
-		});
+	// 1. Enable any missing versions on the Registry.
+	if (missing.length) {
+		const versionTx = new Transaction();
+		for (const version of missing) {
+			versionTx.moveCall({
+				target: `${DEEPBOOK_PACKAGE_ID}::registry::enable_version`,
+				arguments: [
+					versionTx.object(REGISTRY_ID),
+					versionTx.pure.u64(version),
+					versionTx.object(adminCapID[env]),
+				],
+			});
+		}
+		await execute(`enable_version ${missing}`, versionTx);
 	}
-	await execute(`enable_version ${VERSIONS_TO_ENABLE}`, versionTx);
 
 	// 2. Refresh each pool's cached allowed_versions from the Registry. Pools cache the set
 	// and never re-read it, so a pool that is not refreshed still rejects the new version.
