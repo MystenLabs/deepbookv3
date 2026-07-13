@@ -321,8 +321,9 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
-    // inversion should price 0, not abort a legitimate mint/redeem.
+    // A range price cannot be negative. Floor at zero when fixed-point dust or an
+    // admitted butterfly-arbitrageable SVI surface inverts the boundary prices;
+    // predeploy P-11 tracks the material accounting case.
     lower_up_price.saturating_sub(higher_up_price)
 }
 
@@ -342,6 +343,7 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
+/// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
@@ -389,5 +391,17 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
     let d2 = d2.neg();
 
-    math::normal_cdf(&d2)
+    let slope_ratio = k_minus_m.div_scaled(&sq_i64);
+    let slope = rho.add(&slope_ratio);
+    let w_prime = i64::from_u64(b).mul_scaled(&slope);
+    let nd2 = math::normal_cdf(&d2);
+    if (w_prime.is_zero()) return nd2;
+
+    let correction_magnitude =
+        math::mul_div_down(math::normal_pdf(&d2), w_prime.magnitude(), 2 * sqrt_var);
+    let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
+    let adjusted = i64::from_u64(nd2).sub(&correction);
+    if (adjusted.is_negative()) return 0;
+    if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
+    adjusted.magnitude()
 }
