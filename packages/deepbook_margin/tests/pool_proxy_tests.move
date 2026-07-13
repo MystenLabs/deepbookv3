@@ -2590,6 +2590,128 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
+#[test, expected_failure(abort_code = pool_proxy::EReduceOnlyBelowLiquidation)]
+// Security follow-up to H-1: a manager that has already drifted *below* the liquidation
+// floor (~1.02 < 1.10) is liquidatable, so it can no longer place a resting reduce-only
+// limit — whose deferred, ungated fill would otherwise self-match it under 1.0 into pool
+// bad debt. Placement aborts; the manager must close via the market `_and_repay_loan`
+// entry or be liquidated. Companion to resting_fill_from_danger_band_cannot_go_underwater
+// (which starts *at* liquidation, where the buffer invariant keeps it solvent).
+fun reduce_only_limit_below_liquidation_placement_aborts() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // M1 short: 2200 USDT collateral, owe 1000 USDC (ratio 2.2 at $1).
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(2200 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(withdrawn);
+    destroy(usdc_price);
+
+    // Drift USDC to $2.15 -> ratio ~2200/2.15/1000 = 1.023, below liquidation (1.10).
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+        &mut scenario,
+        215_000_000,
+        &clock,
+    );
+    pool_proxy::update_current_price<USDC, USDT>(
+        &mut registry,
+        &pool,
+        &usdc_drifted,
+        &usdt_price,
+        &clock,
+    );
+
+    let rr_before = mm.risk_ratio(
+        &registry,
+        &usdc_drifted,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+    // Sanity: the manager is genuinely below the liquidation floor.
+    assert!(rr_before < registry.liquidation_risk_ratio(pool.id()));
+
+    // Placing a resting reduce-only bid within the +5% band now aborts at placement.
+    let order_info = pool_proxy::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        &mut base_pool,
+        &mut quote_pool,
+        &usdc_drifted,
+        &usdt_price,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_200_000_000,
+        1000 * test_constants::usdc_multiplier(),
+        true,
+        false,
+        2_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_info);
+    abort 0
+}
+
 #[test, expected_failure(abort_code = pool_proxy::ENoLiquidityInOrderbook)]
 fun market_and_repay_empty_book_aborts() {
     // An empty book gives no execution surface: a market-and-repay aborts on

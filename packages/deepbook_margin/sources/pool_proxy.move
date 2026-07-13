@@ -31,6 +31,7 @@ const EInsufficientRiskRatioAfterTrade: u64 = 6;
 /// tool (`place_market_order_and_repay_loan`) require the post-trade ratio to
 /// monotonically improve (or hold).
 const ERiskRatioMustNotWorsen: u64 = 7;
+const EReduceOnlyBelowLiquidation: u64 = 8;
 /// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
 /// post-trade risk_ratio invariant.
 const EDeprecatedUseV2: u64 = 8;
@@ -328,6 +329,18 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
         clock,
+    );
+
+    // A manager already below the liquidation floor is liquidatable; it must not
+    // rest a reduce-only limit. A resting order fills later *ungated* (the monotonic
+    // check runs only here, at placement, where a resting order is ratio-neutral), so
+    // a band-edge self-match would leak value and push it under `risk_ratio` 1.0 (bad
+    // debt). Requiring `>= liquidation` here + the `buffer >= tolerance` config
+    // invariant keeps the deferred fill `>= 1.0`. Such a manager still closes via the
+    // *market* `_and_repay_loan` entry (immediate, gated) or is liquidated.
+    assert!(
+        risk_ratio_before >= registry.liquidation_risk_ratio(pool.id()),
+        EReduceOnlyBelowLiquidation,
     );
 
     let trade_proof = margin_manager.trade_proof(ctx);
@@ -630,6 +643,14 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
         clock,
+    );
+
+    // Same below-liquidation floor as place_reduce_only_limit_order_v2: a liquidatable
+    // manager must not rest a reduce-only limit whose deferred fill is ungated. It can
+    // still close via the market `_and_repay_loan` entry (gated) or be liquidated.
+    assert!(
+        risk_ratio_before >= registry.liquidation_risk_ratio(pool.id()),
+        EReduceOnlyBelowLiquidation,
     );
 
     let trade_proof = margin_manager.trade_proof(ctx);
