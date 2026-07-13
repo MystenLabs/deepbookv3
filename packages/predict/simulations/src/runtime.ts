@@ -612,7 +612,7 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
 // privileged `start_pool_valuation` (started via a market-deployer `MarketLifecycleCap`
 // proof — the sole flush authority) -> one `value_expiry` for our market ->
 // `finish_flush`, which drains the supply/withdraw request queues at the frozen mark.
-// The two `finish_flush` budgets are `None` (drain both queues fully). The harness has
+// The two `finish_flush` budgets are `None` (unbounded). The harness has
 // exactly one expiry market, so the snapshot covers one `value_expiry`. (Multi-market
 // topologies must call `value_expiry` once per active market between start and finish.)
 function addFlush(tx: Transaction, params: FlushParams): void {
@@ -645,8 +645,8 @@ function addFlush(tx: Transaction, params: FlushParams): void {
             valuation,
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (drain fully)
-            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (drain fully)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (unbounded)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (unbounded)
         ],
     });
 }
@@ -992,6 +992,7 @@ export function requestSupplyTx(params: {
     protocolConfigId: string;
     wrapperId: string;
     amount: bigint;
+    minPlpOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const dusdc = mintDusdc(tx, params.amount);
@@ -1016,6 +1017,7 @@ export function requestSupplyTx(params: {
             supplyAuth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.amount),
+            tx.pure.u64(params.minPlpOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1033,6 +1035,7 @@ export function requestWithdrawTx(params: {
     protocolConfigId: string;
     wrapperId: string;
     shares: bigint;
+    minDusdcOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const auth = generateAuth(tx);
@@ -1044,6 +1047,7 @@ export function requestWithdrawTx(params: {
             auth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.shares),
+            tx.pure.u64(params.minDusdcOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
