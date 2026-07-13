@@ -110,6 +110,36 @@ fun mul_div_down_uses_u128_intermediate() {
 }
 
 #[test]
+fun try_mul_div_down_returns_floor_when_result_fits() {
+    // floor(10 * 10 / 6) = 16, matching the aborting helper.
+    assert_eq!(math::try_mul_div_down(10, 10, 6), option::some(16));
+}
+
+#[test]
+fun try_mul_div_down_returns_zero_when_floor_is_zero() {
+    // floor(1 * 1 / 2) = 0; zero is a valid result, not a failed computation.
+    assert_eq!(math::try_mul_div_down(1, 1, 2), option::some(0));
+}
+
+#[test]
+fun try_mul_div_down_returns_max_u64_when_exactly_in_range() {
+    assert_eq!(
+        math::try_mul_div_down(std::u64::max_value!(), 1, 1),
+        option::some(std::u64::max_value!()),
+    );
+}
+
+#[test]
+fun try_mul_div_down_returns_none_on_zero_denominator() {
+    assert_eq!(math::try_mul_div_down(10, 10, 0), option::none());
+}
+
+#[test]
+fun try_mul_div_down_returns_none_when_result_exceeds_u64() {
+    assert_eq!(math::try_mul_div_down(std::u64::max_value!(), 2, 1), option::none());
+}
+
+#[test]
 fun mul_div_up_ceils_raw_integer_ratio() {
     // ceil(10 * 10 / 6) = ceil(16.666...) = 17 (mul_div_down gives 16).
     assert_eq!(math::mul_div_up(10, 10, 6), 17);
@@ -147,6 +177,41 @@ fun mul_div_up_uses_u128_intermediate() {
     // ceil(10_000_000_000 * 10_000_000_000 / 10_000_000_000) = 10_000_000_000.
     // The product is 1e20, above u64::MAX, so the helper must widen before multiplying.
     assert_eq!(math::mul_div_up(10_000_000_000, 10_000_000_000, 10_000_000_000), 10_000_000_000);
+}
+
+#[test]
+fun try_mul_div_up_returns_ceiling_when_result_fits() {
+    // ceil(10 * 10 / 6) = 17, matching the aborting helper.
+    assert_eq!(math::try_mul_div_up(10, 10, 6), option::some(17));
+}
+
+#[test]
+fun try_mul_div_up_exact_division_does_not_round() {
+    assert_eq!(math::try_mul_div_up(10, 10, 5), option::some(20));
+}
+
+#[test]
+fun try_mul_div_up_returns_zero_for_zero_numerator() {
+    // ceil(0 / 6) = 0; zero is a valid result, not a failed computation.
+    assert_eq!(math::try_mul_div_up(0, 1_000_000_000, 6), option::some(0));
+}
+
+#[test]
+fun try_mul_div_up_returns_max_u64_when_exactly_in_range() {
+    assert_eq!(
+        math::try_mul_div_up(std::u64::max_value!(), 2, 2),
+        option::some(std::u64::max_value!()),
+    );
+}
+
+#[test]
+fun try_mul_div_up_returns_none_on_zero_denominator() {
+    assert_eq!(math::try_mul_div_up(10, 10, 0), option::none());
+}
+
+#[test]
+fun try_mul_div_up_returns_none_when_result_exceeds_u64() {
+    assert_eq!(math::try_mul_div_up(std::u64::max_value!(), 2, 1), option::none());
 }
 
 #[test, expected_failure(abort_code = math::EInputZero)]

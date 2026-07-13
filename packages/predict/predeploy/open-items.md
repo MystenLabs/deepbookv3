@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-07. **The single source of truth for open work.** Anything that
+Updated 2026-07-08. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -68,25 +68,6 @@ guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case. (audit 4d2a1e)
-
-### P-7: Async LP requests have no fill-price protection
-
-**Severity:** Medium.
-
-PLP supply and withdraw requests are queued and filled later at the next flush's
-frozen PLP mark. If the pool has a small amount of PLP capital and at least one
-live market, `current_nav` can be volatile. A large backlog of supply requests
-could all be filled at an unfavorable transient PLP price, and withdraw requests
-have the symmetric risk. Economically, queued supply/withdraw requests behave
-like limit orders to buy or sell PLP, but the request objects currently carry no
-per-request slippage bound.
-
-**Action:** Add request-time limit fields: `min_plp_out` for supply requests and
-`min_dusdc_out` for withdraw requests. `finish_flush` should fill only requests
-whose frozen-mark output satisfies the limit; requests that miss their limit
-should remain queued or be explicitly refundable/cancellable under a documented
-policy. Add tests for both pass and miss cases, including a volatile low-capital
-pool mark.
 
 ### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
 
@@ -259,64 +240,6 @@ remains open is the FIX, not the measurement. Retained for context:
   gas does.
 - Any final cap change is followed by one run that reaches the new boundary
   and proves the flush stays under the safety target.
-
-### C-4: LP flush drain hard-aborts on a zero-value head request or a NAV==0 mark
-
-**Severity:** Medium.
-
-`lp_book::drain` asserts `shares > 0` / `payout > 0` per filled request and
-`pool_value > 0` / `total_supply > 0` in the share-pricing helpers, all under a
-single `EInvalidDrainMark`. A head request whose fill rounds to zero, or a
-reachable NAV==0 mark (sticky profit-basis exclusion exceeding gross — see the
-plp.move:735-740 comment), aborts the entire flush instead of skipping or
-refunding the degenerate request. The only unblock is the request owner
-voluntarily cancelling; a hostile or absent owner stalls the FIFO indefinitely,
-freezing all supply/withdraw behind it.
-
-**2026-07-02 extension — the opposite (overflow) boundary is also uncovered.**
-At a dust-but-nonzero mark (reachable via `lp_pool_value`'s zero-floor path), a
-large-enough queued supply request makes
-`supply_shares = mul_div_down(amount, total_supply, pool_value)` exceed u64 and
-the flush dies on `math::mul_div_down`'s raw u64 cast — an untracked arithmetic
-abort, not `EInvalidDrainMark`. A smaller request that fits mints ~1e18 shares;
-`total_supply` only shrinks via withdrawals, so the inflated supply persists
-after NAV recovers, permanently pinning PLP price at dust and progressively
-widening the overflow band (one dust fill converts a micro-DUSDC fragile window
-into a thousands-of-DUSDC one). The P-1 circuit breaker deleted in `cc67ed9f`
-was incidentally the only u64-headroom bound on this math. See
-`response-policies.md` RP-1/RP-2.
-
-**Action:** Treat zero-value fills as skip/auto-cancel-and-refund instead of
-aborting, and reserve `EInvalidDrainMark` for genuinely invalid marks (or split
-the error codes and add an eviction path for degenerate head requests). The fix
-must compute fills in u128 and classify "does not fit u64" the same as "rounds
-to zero" (skip, never abort), add boundary tests on both sides of each
-classification, and decide whether supply fills execute at all below an
-executable mark price (ratchet prevention — never mint into a degenerate
-ratio). Design this together with the P-7 limit-field policy, which already
-needs a stay-queued/skip decision for missed limits. (audit 11767b; overflow
-extension from the 2026-07-02 sweep)
-
-**Plan — harness measurement (decision rules pre-registered 2026-07-02; both
-blocked on the scripted-oracle harness extension — approach (a), designed
-against `oracleService.ts`, keeps the one-stream updater invariant):**
-
-- LP-adversary campaign (drives this item, RP-2/RP-3, and P-7's queued-request
-  mark exposure): drive the NAV mark with a scripted trajectory (inflate → LPs
-  withdraw idle → collapse → sticky exclusion exceeds gross → NAV=0) and
-  observe the queues; the `EInvalidDrainMark` abort is the brick signal. If a
-  degenerate flush sample is reachable with realistic oracle motion, RP-2's
-  risk profile flips BEST-GUESS → MEASURED and this fix escalates; a clean
-  campaign bounds (does not close) the organic-reachability estimate.
-- Dust-mark-window campaign (drives the overflow extension): measure the
-  fragile band's real width — how long `lp_pool_value` sits where a queued
-  fill would overflow u64 or mint ratchet-scale shares, and what the cheapest
-  (young, small-pool) entry looks like. If no sampled flush lands in the band
-  at mature-pool scale and the young-pool entry cannot be produced organically,
-  RP-2 keeps BEST-GUESS with a measured lower bound; if any flush samples
-  inside the band, this fix becomes a deploy gate. The Move boundary tests
-  (`lp_book_tests`) pin the exact edges; this measures reachability dynamics
-  only.
 
 ## Oracle Calibration
 

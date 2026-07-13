@@ -285,10 +285,13 @@ public fun value_expiry(
 /// LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV, net of the
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
-/// `supply_budget` / `withdraw_budget` bound how many requests each queue may fill
-/// this flush (`None` = drain it fully); the operator sizes them to the gas left
-/// after valuing the snapshotted markets. The budgets are independent, so a supply
-/// backlog never starves withdrawals.
+/// `supply_budget` / `withdraw_budget` bound how many requests each queue may
+/// process this flush (`None` = unbounded). Filled heads, protocol-refunded
+/// non-executable heads, and live limit misses count as processed; a live limit
+/// miss remains queued and stops that queue for the flush. A withdrawal whose
+/// quote is valid but exceeds idle carries without spending budget. The operator
+/// sizes the budgets to the gas left after valuing the snapshotted markets. The
+/// budgets are independent, so a supply backlog never starves withdrawals.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
@@ -321,7 +324,7 @@ public fun finish_flush(
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
     let mark = lp_book::new_flush_mark(pool_nav, total_supply);
-    let (supplies_filled, withdrawals_filled) = vault
+    let drain_summary = vault
         .lp
         .drain(
             &mut vault.expiry_accounting,
@@ -340,9 +343,9 @@ public fun finish_flush(
         total_nav,
         market_count,
         idle_balance_before,
-        supplies_filled,
-        withdrawals_filled,
-        supplies_filled + withdrawals_filled,
+        drain_summary.supplies_filled(),
+        drain_summary.withdrawals_filled(),
+        drain_summary.requests_processed(),
         vault.expiry_accounting.idle_balance(),
     );
     pool_nav
@@ -533,15 +536,17 @@ public fun lock_capital(
 
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
-/// auto-settles any flush-delivered DUSDC first. The account receives the minted PLP
-/// at the next flush. Returns the queue index, the handle used to cancel before
-/// the flush.
+/// auto-settles any flush-delivered DUSDC first. The account receives minted PLP
+/// only if a future flush can mint at least `min_plp_out`; after three limit misses
+/// the request is cancelled and refunded. Returns the queue index, the handle used
+/// to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
+    min_plp_out: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -555,21 +560,31 @@ public fun request_supply(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_supply(payment, account_id, recipient);
-    vault_events::emit_supply_requested(vault_id, account_id, recipient, index, amount);
+    let index = vault.lp.request_supply(payment, account_id, recipient, min_plp_out);
+    vault_events::emit_supply_requested(
+        vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        min_plp_out,
+    );
     index
 }
 
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
-/// The pull auto-settles any flush-delivered PLP first. Returns the queue index
-/// used to cancel before the flush.
+/// The pull auto-settles any flush-delivered PLP first. The request fills only if a
+/// future flush can pay at least `min_dusdc_out`; after three limit misses the
+/// request is cancelled and refunded. Returns the queue index used to cancel before
+/// the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
+    min_dusdc_out: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -583,8 +598,15 @@ public fun request_withdraw(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_withdraw(lp, account_id, recipient);
-    vault_events::emit_withdraw_requested(vault_id, account_id, recipient, index, amount);
+    let index = vault.lp.request_withdraw(lp, account_id, recipient, min_dusdc_out);
+    vault_events::emit_withdraw_requested(
+        vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        min_dusdc_out,
+    );
     index
 }
 
@@ -608,7 +630,15 @@ public fun cancel_supply_request(
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
     account.deposit<DUSDC>(refund.into_coin(ctx));
-    vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, true);
+    vault_events::emit_request_cancelled(
+        vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        true,
+        constants::request_cancel_reason_user!(),
+    );
 }
 
 /// Cancel a still-pending withdraw request, refunding its escrowed PLP straight into
@@ -631,7 +661,15 @@ public fun cancel_withdraw_request(
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
     account.deposit<PLP>(refund.into_coin(ctx));
-    vault_events::emit_request_cancelled(vault_id, account_id, recipient, index, amount, false);
+    vault_events::emit_request_cancelled(
+        vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        false,
+        constants::request_cancel_reason_user!(),
+    );
 }
 
 /// Register a freshly created expiry market with the pool as an accounting row.
@@ -729,10 +767,8 @@ fun lp_pool_value(
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
     // exceed gross. LP value can never be negative, so floor it at 0 to keep the
-    // subtraction from underflow-aborting. NOTE this is not a full liveness guarantee:
-    // a 0/dust pool NAV with a non-empty LP queue still aborts in `lp_book::drain`
-    // when the head request would mint/pay zero. The request owner can cancel that
-    // degenerate head request; empty queues and executable marks still flush.
+    // subtraction from underflow-aborting. A 0/dust pool NAV makes non-executable
+    // LP queue heads refund inside `lp_book::drain`, rather than aborting the flush.
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 

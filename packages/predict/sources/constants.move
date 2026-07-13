@@ -54,10 +54,29 @@ public(package) macro fun min_supply_request(): u64 { 10_000_000 }
 /// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
 public(package) macro fun min_withdraw_request(): u64 { 1_000_000 }
 
+/// Number of frozen-mark limit misses a queued LP request can survive before the
+/// protocol cancels and refunds it.
+public(package) macro fun lp_request_limit_flush_attempts(): u64 { 3 }
+
+public(package) macro fun request_cancel_reason_user(): u8 { 0 }
+
+public(package) macro fun request_cancel_reason_non_executable(): u8 { 1 }
+
+public(package) macro fun request_cancel_reason_limit_expired(): u8 { 2 }
+
 /// Permanent genesis liquidity locked at the one-time `plp::lock_capital` bootstrap:
 /// 10 DUSDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
+
+/// Raw PLP units in one whole PLP.
+public(package) macro fun plp_price_unit(): u64 { 1_000_000 }
+
+/// Minimum executable frozen PLP mark: 0.01 DUSDC per whole PLP, in DUSDC raw units.
+public(package) macro fun min_executable_plp_price(): u64 { 10_000 }
+
+/// Maximum executable frozen PLP mark: 100 DUSDC per whole PLP, in DUSDC raw units.
+public(package) macro fun max_executable_plp_price(): u64 { 100_000_000 }
 
 /// Maximum active pre-expiry markets that can require live NAV valuation in one
 /// full-pool flush.
