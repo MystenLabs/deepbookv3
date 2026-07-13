@@ -33,7 +33,6 @@ use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
-use tokio::sync::OnceCell;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
@@ -49,15 +48,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use sui_futures::service::Service;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
-use sui_json_rpc_types::{SuiObjectData, SuiObjectDataOptions, SuiObjectResponse};
-use sui_sdk::SuiClientBuilder;
-use sui_types::{
-    base_types::{ObjectID, SuiAddress},
-    programmable_transaction_builder::ProgrammableTransactionBuilder,
-    transaction::{Argument, CallArg, Command, ObjectArg, ProgrammableMoveCall, TransactionKind},
-    type_input::TypeInput,
-    TypeTag,
-};
+use sui_rpc::Client;
+use sui_sdk_types::TypeTag;
 use tokio::join;
 
 diesel::define_sql_function! {
@@ -148,8 +140,7 @@ pub struct AppState {
     reader: Reader,
     writer: Writer,
     metrics: Arc<RpcMetrics>,
-    rpc_url: Url,
-    sui_client: Arc<OnceCell<sui_sdk::SuiClient>>,
+    sui_client: Client,
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
@@ -205,8 +196,7 @@ impl AppState {
             reader,
             writer,
             metrics,
-            rpc_url,
-            sui_client: Arc::new(OnceCell::new()),
+            sui_client: Client::new(rpc_url.as_str())?,
             deepbook_package_id,
             deep_token_package_id,
             deep_treasury_id,
@@ -216,17 +206,10 @@ impl AppState {
         })
     }
 
-    /// Returns a reference to the shared SuiClient instance.
-    /// Lazily initializes the client on first access and caches it for subsequent calls
-    pub async fn sui_client(&self) -> Result<&sui_sdk::SuiClient, DeepBookError> {
-        self.sui_client
-            .get_or_try_init(|| async {
-                SuiClientBuilder::default()
-                    .build(self.rpc_url.as_str())
-                    .await
-            })
-            .await
-            .map_err(DeepBookError::from)
+    /// The shared full-node gRPC client. Cloning is cheap (it shares one channel), which is how
+    /// callers get the `&mut` receiver tonic's generated clients want.
+    pub fn sui_client(&self) -> &Client {
+        &self.sui_client
     }
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
@@ -309,7 +292,7 @@ pub async fn run_server(
         let margin_db = sui_pg_db::Db::for_write(database_url, db_arg).await?;
         let margin_poller = crate::margin_metrics::MarginPoller::new(
             margin_db,
-            rpc_url.clone(),
+            state.sui_client().clone(),
             margin_pkg_id,
             margin_metrics,
             margin_poll_interval_secs,
@@ -459,11 +442,8 @@ async fn status(
     // Get watermarks from the database
     let watermarks = state.reader.get_watermarks().await?;
 
-    // Get the latest checkpoint from Sui RPC
-    let sui_client = state.sui_client().await?;
-    let latest_checkpoint = sui_client
-        .read_api()
-        .get_latest_checkpoint_sequence_number()
+    // Get the latest checkpoint from the full node
+    let latest_checkpoint = crate::grpc::latest_checkpoint(state.sui_client())
         .await
         .map_err(|e| DeepBookError::rpc(format!("Failed to get latest checkpoint: {}", e)))?;
 
@@ -1561,121 +1541,46 @@ async fn orderbook(
     let base_decimals = base_decimals as u8;
     let quote_decimals = quote_decimals as u8;
 
-    let pool_address = ObjectID::from_hex_literal(&pool_id)?;
+    let client = state.sui_client();
+    let initial_shared_version = crate::grpc::initial_shared_version(client, &pool_id)
+        .await
+        .map_err(|e| DeepBookError::rpc(format!("Pool '{}': {}", pool_name, e)))?;
 
-    let sui_client = state.sui_client().await?;
-    let mut ptb = ProgrammableTransactionBuilder::new();
-
-    let pool_object: SuiObjectResponse = sui_client
-        .read_api()
-        .get_object_with_options(
-            pool_address,
-            SuiObjectDataOptions::full_content().with_owner(),
-        )
-        .await?;
-    let pool_data: &SuiObjectData = pool_object.data.as_ref().ok_or(DeepBookError::rpc(
-        format!("Missing data in pool object response for '{}'", pool_name),
-    ))?;
-
-    let initial_shared_version = match &pool_data.owner {
-        Some(sui_types::object::Owner::Shared {
-            initial_shared_version,
-        }) => *initial_shared_version,
-        _ => {
-            return Err(DeepBookError::rpc(format!(
-                "Pool '{}' is not a shared object or owner info missing",
-                pool_name
-            )));
-        }
-    };
-
-    let pool_input = CallArg::Object(ObjectArg::SharedObject {
-        id: pool_data.object_id,
-        initial_shared_version,
-        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-    });
-    ptb.input(pool_input)?;
-
-    let input_argument = CallArg::Pure(
-        bcs::to_bytes(&ticks_from_mid)
-            .map_err(|_| DeepBookError::internal("Failed to serialize ticks_from_mid"))?,
-    );
-    ptb.input(input_argument)?;
-
-    let sui_clock_object_id = ObjectID::from_hex_literal(
-        "0x0000000000000000000000000000000000000000000000000000000000000006",
-    )?;
-    let clock_input = CallArg::Object(ObjectArg::SharedObject {
-        id: sui_clock_object_id,
-        initial_shared_version: sui_types::base_types::SequenceNumber::from_u64(1),
-        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-    });
-    ptb.input(clock_input)?;
+    let mut ptb = crate::grpc::read_only_tx();
+    let pool = ptb.object(crate::grpc::shared_input(&pool_id, initial_shared_version)?);
+    let ticks = ptb.pure(&ticks_from_mid);
+    let clock = ptb.object(crate::grpc::clock_input());
 
     let base_coin_type = parse_type_input(&base_asset_id)?;
     let quote_coin_type = parse_type_input(&quote_asset_id)?;
 
-    let package = ObjectID::from_hex_literal(&state.deepbook_package_id)
-        .map_err(|e| DeepBookError::bad_request(format!("Invalid pool ID: {}", e)))?;
-    let module = LEVEL2_MODULE.to_string();
-    let function = LEVEL2_FUNCTION.to_string();
+    ptb.move_call(
+        crate::grpc::function(
+            &state.deepbook_package_id,
+            LEVEL2_MODULE,
+            LEVEL2_FUNCTION,
+            vec![base_coin_type, quote_coin_type],
+        )?,
+        vec![pool, ticks, clock],
+    );
 
-    ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-        package,
-        module,
-        function,
-        type_arguments: vec![base_coin_type, quote_coin_type],
-        arguments: vec![Argument::Input(0), Argument::Input(1), Argument::Input(2)],
-    })));
+    let results = crate::grpc::simulate_returns(client, ptb).await?;
 
-    let builder = ptb.finish();
-    let tx = TransactionKind::ProgrammableTransaction(builder);
-
-    let result = sui_client
-        .read_api()
-        .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
-        .await?;
-
-    let mut binding = result.results.ok_or(DeepBookError::rpc(
-        "No results from dev_inspect_transaction_block",
-    ))?;
-    let bid_prices = &binding
-        .first_mut()
-        .ok_or(DeepBookError::rpc("No return values for bid prices"))?
-        .return_values
-        .first_mut()
-        .ok_or(DeepBookError::rpc("No bid price data found"))?
-        .0;
-    let bid_parsed_prices: Vec<u64> = bcs::from_bytes(bid_prices)
-        .map_err(|_| DeepBookError::deserialization("Failed to deserialize bid prices"))?;
-    let bid_quantities = &binding
-        .first_mut()
-        .ok_or(DeepBookError::rpc("No return values for bid quantities"))?
-        .return_values
-        .get(1)
-        .ok_or(DeepBookError::rpc("No bid quantity data found"))?
-        .0;
-    let bid_parsed_quantities: Vec<u64> = bcs::from_bytes(bid_quantities)
-        .map_err(|_| DeepBookError::deserialization("Failed to deserialize bid quantities"))?;
-
-    let ask_prices = &binding
-        .first_mut()
-        .ok_or(DeepBookError::rpc("No return values for ask prices"))?
-        .return_values
-        .get(2)
-        .ok_or(DeepBookError::rpc("No ask price data found"))?
-        .0;
-    let ask_parsed_prices: Vec<u64> = bcs::from_bytes(ask_prices)
-        .map_err(|_| DeepBookError::deserialization("Failed to deserialize ask prices"))?;
-    let ask_quantities = &binding
-        .first_mut()
-        .ok_or(DeepBookError::rpc("No return values for ask quantities"))?
-        .return_values
-        .get(3)
-        .ok_or(DeepBookError::rpc("No ask quantity data found"))?
-        .0;
-    let ask_parsed_quantities: Vec<u64> = bcs::from_bytes(ask_quantities)
-        .map_err(|_| DeepBookError::deserialization("Failed to deserialize ask quantities"))?;
+    // One command returning four vectors: bid prices, bid quantities, ask prices, ask quantities.
+    let level2 = results
+        .first()
+        .ok_or(DeepBookError::rpc("No return values for level2 ticks"))?;
+    let decode = |index: usize, what: &str| -> Result<Vec<u64>, DeepBookError> {
+        let bytes = level2
+            .get(index)
+            .ok_or_else(|| DeepBookError::rpc(format!("No {} data found", what)))?;
+        bcs::from_bytes(bytes)
+            .map_err(|_| DeepBookError::deserialization(format!("Failed to deserialize {}", what)))
+    };
+    let bid_parsed_prices = decode(0, "bid prices")?;
+    let bid_parsed_quantities = decode(1, "bid quantities")?;
+    let ask_parsed_prices = decode(2, "ask prices")?;
+    let ask_parsed_quantities = decode(3, "ask quantities")?;
 
     let mut result = HashMap::new();
 
@@ -1720,69 +1625,32 @@ async fn orderbook(
 
 /// DEEP total supply
 async fn deep_supply(State(state): State<Arc<AppState>>) -> Result<Json<u64>, DeepBookError> {
-    let sui_client = state.sui_client().await?;
-    let mut ptb = ProgrammableTransactionBuilder::new();
+    let client = state.sui_client();
+    let initial_shared_version =
+        crate::grpc::initial_shared_version(client, &state.deep_treasury_id).await?;
 
-    let deep_treasury_object_id = ObjectID::from_hex_literal(&state.deep_treasury_id)?;
-    let deep_treasury_object: SuiObjectResponse = sui_client
-        .read_api()
-        .get_object_with_options(
-            deep_treasury_object_id,
-            SuiObjectDataOptions::full_content().with_owner(),
-        )
-        .await?;
-    let deep_treasury_data: &SuiObjectData = deep_treasury_object
-        .data
-        .as_ref()
-        .ok_or(DeepBookError::rpc("Incorrect Treasury ID"))?;
-
-    let initial_shared_version = match &deep_treasury_data.owner {
-        Some(sui_types::object::Owner::Shared {
-            initial_shared_version,
-        }) => *initial_shared_version,
-        _ => {
-            return Err(DeepBookError::rpc("Treasury is not a shared object"));
-        }
-    };
-    let deep_treasury_input = CallArg::Object(ObjectArg::SharedObject {
-        id: deep_treasury_data.object_id,
+    let mut ptb = crate::grpc::read_only_tx();
+    let treasury = ptb.object(crate::grpc::shared_input(
+        &state.deep_treasury_id,
         initial_shared_version,
-        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-    });
-    ptb.input(deep_treasury_input)?;
+    )?);
+    ptb.move_call(
+        crate::grpc::function(
+            &state.deep_token_package_id,
+            DEEP_SUPPLY_MODULE,
+            DEEP_SUPPLY_FUNCTION,
+            vec![],
+        )?,
+        vec![treasury],
+    );
 
-    let package = ObjectID::from_hex_literal(&state.deep_token_package_id)
-        .map_err(|e| DeepBookError::bad_request(format!("Invalid deep token package ID: {}", e)))?;
-    let module = DEEP_SUPPLY_MODULE.to_string();
-    let function = DEEP_SUPPLY_FUNCTION.to_string();
+    let results = crate::grpc::simulate_returns(client, ptb).await?;
 
-    ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-        package,
-        module,
-        function,
-        type_arguments: vec![],
-        arguments: vec![Argument::Input(0)],
-    })));
-
-    let builder = ptb.finish();
-    let tx = TransactionKind::ProgrammableTransaction(builder);
-
-    let result = sui_client
-        .read_api()
-        .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
-        .await?;
-
-    let mut binding = result.results.ok_or(DeepBookError::rpc(
-        "No results from dev_inspect_transaction_block",
-    ))?;
-
-    let total_supply = &binding
-        .first_mut()
+    let total_supply = results
+        .first()
         .ok_or(DeepBookError::rpc("No return values for total supply"))?
-        .return_values
-        .first_mut()
-        .ok_or(DeepBookError::rpc("No total supply data found"))?
-        .0;
+        .first()
+        .ok_or(DeepBookError::rpc("No total supply data found"))?;
 
     let total_supply_value: u64 = bcs::from_bytes(total_supply)
         .map_err(|_| DeepBookError::deserialization("Failed to deserialize total supply"))?;
@@ -1803,65 +1671,41 @@ async fn fees(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, PoolFees>>, DeepBookError> {
     let pools: Vec<Pools> = state.reader.get_pools().await?;
-    let sui_client = state.sui_client().await?;
-    let package = ObjectID::from_hex_literal(&state.deepbook_package_id)
-        .map_err(|e| DeepBookError::bad_request(format!("Invalid package ID: {}", e)))?;
+    let client = state.sui_client();
 
-    // Fetch all pool objects to get initial_shared_version
-    let pool_object_futures = pools.iter().map(|pool| {
-        let pool_id = pool.pool_id.clone();
-        async move {
-            let pool_address = ObjectID::from_hex_literal(&pool_id)?;
-            let pool_object: SuiObjectResponse = sui_client
-                .read_api()
-                .get_object_with_options(
-                    pool_address,
-                    SuiObjectDataOptions::full_content().with_owner(),
-                )
-                .await?;
-            Ok::<_, DeepBookError>(pool_object)
-        }
-    });
-    let pool_objects: Vec<Result<SuiObjectResponse, DeepBookError>> =
-        join_all(pool_object_futures).await;
+    // Fetch all pool objects in parallel to get initial_shared_version
+    let versions: Vec<Result<u64, DeepBookError>> = join_all(
+        pools
+            .iter()
+            .map(|pool| crate::grpc::initial_shared_version(client, &pool.pool_id)),
+    )
+    .await;
 
-    let mut ptb = ProgrammableTransactionBuilder::new();
+    let mut ptb = crate::grpc::read_only_tx();
     let mut valid_pools: Vec<&Pools> = Vec::new();
 
-    for (pool, pool_object_result) in pools.iter().zip(pool_objects.into_iter()) {
-        let pool_object = match pool_object_result {
-            Ok(obj) => obj,
-            Err(_) => continue,
-        };
-        let pool_data = match pool_object.data.as_ref() {
-            Some(data) => data,
-            None => continue,
-        };
-        let initial_shared_version = match &pool_data.owner {
-            Some(sui_types::object::Owner::Shared {
-                initial_shared_version,
-            }) => *initial_shared_version,
-            _ => continue,
+    for (pool, version) in pools.iter().zip(versions.into_iter()) {
+        let Ok(initial_shared_version) = version else {
+            continue;
         };
 
-        let input_idx = valid_pools.len() as u16;
-        let pool_input = CallArg::Object(ObjectArg::SharedObject {
-            id: pool_data.object_id,
+        let pool_input = ptb.object(crate::grpc::shared_input(
+            &pool.pool_id,
             initial_shared_version,
-            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-        });
-        ptb.input(pool_input)?;
+        )?);
 
         let base_coin_type = parse_type_input(&pool.base_asset_id)?;
         let quote_coin_type = parse_type_input(&pool.quote_asset_id)?;
 
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package,
-            module: FEES_MODULE.to_string(),
-            function: FEES_FUNCTION.to_string(),
-            type_arguments: vec![base_coin_type, quote_coin_type],
-            arguments: vec![Argument::Input(input_idx)],
-        })));
+        ptb.move_call(
+            crate::grpc::function(
+                &state.deepbook_package_id,
+                FEES_MODULE,
+                FEES_FUNCTION,
+                vec![base_coin_type, quote_coin_type],
+            )?,
+            vec![pool_input],
+        );
 
         valid_pools.push(pool);
     }
@@ -1870,46 +1714,32 @@ async fn fees(
         return Ok(Json(HashMap::new()));
     }
 
-    let builder = ptb.finish();
-    let tx = TransactionKind::ProgrammableTransaction(builder);
-
-    let result = sui_client
-        .read_api()
-        .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
-        .await?;
-
-    let results = result.results.ok_or(DeepBookError::rpc(
-        "No results from dev_inspect_transaction_block",
-    ))?;
+    let results = crate::grpc::simulate_returns(client, ptb).await?;
 
     let mut fees = HashMap::new();
     for (i, pool) in valid_pools.iter().enumerate() {
-        let return_values = &results
+        let return_values = results
             .get(i)
-            .ok_or(DeepBookError::rpc("Missing result for pool"))?
-            .return_values;
+            .ok_or(DeepBookError::rpc("Missing result for pool"))?;
 
         let taker_fee: u64 = bcs::from_bytes(
-            &return_values
+            return_values
                 .first()
-                .ok_or(DeepBookError::rpc("Missing taker_fee"))?
-                .0,
+                .ok_or(DeepBookError::rpc("Missing taker_fee"))?,
         )
         .map_err(|_| DeepBookError::deserialization("Failed to deserialize taker_fee"))?;
 
         let maker_fee: u64 = bcs::from_bytes(
-            &return_values
+            return_values
                 .get(1)
-                .ok_or(DeepBookError::rpc("Missing maker_fee"))?
-                .0,
+                .ok_or(DeepBookError::rpc("Missing maker_fee"))?,
         )
         .map_err(|_| DeepBookError::deserialization("Failed to deserialize maker_fee"))?;
 
         let stake_required: u64 = bcs::from_bytes(
-            &return_values
+            return_values
                 .get(2)
-                .ok_or(DeepBookError::rpc("Missing stake_required"))?
-                .0,
+                .ok_or(DeepBookError::rpc("Missing stake_required"))?,
         )
         .map_err(|_| DeepBookError::deserialization("Failed to deserialize stake_required"))?;
 
@@ -1947,37 +1777,16 @@ async fn margin_supply(
         return Ok(Json(HashMap::new()));
     }
 
-    let sui_client = state.sui_client().await?;
-    let package = ObjectID::from_hex_literal(margin_package_id)
-        .map_err(|e| DeepBookError::bad_request(format!("Invalid margin package ID: {}", e)))?;
+    let client = state.sui_client();
 
     let mut result: HashMap<String, u64> = HashMap::new();
 
     for (pool_id, asset_type) in pools {
-        let pool_object_id = ObjectID::from_hex_literal(&pool_id).map_err(|e| {
-            DeepBookError::bad_request(format!("Invalid pool ID '{}': {}", pool_id, e))
-        })?;
-
         // Get the pool object to find its initial_shared_version
-        let pool_object: SuiObjectResponse = sui_client
-            .read_api()
-            .get_object_with_options(
-                pool_object_id,
-                SuiObjectDataOptions::full_content().with_owner(),
-            )
-            .await?;
-
-        let pool_data: &SuiObjectData = pool_object.data.as_ref().ok_or(DeepBookError::rpc(
-            format!("Missing data in pool object response for '{}'", pool_id),
-        ))?;
-
-        let initial_shared_version = match &pool_data.owner {
-            Some(sui_types::object::Owner::Shared {
-                initial_shared_version,
-            }) => *initial_shared_version,
-            _ => {
-                continue;
-            }
+        let Ok(initial_shared_version) =
+            crate::grpc::initial_shared_version(client, &pool_id).await
+        else {
+            continue;
         };
 
         // Normalize asset type (ensure 0x prefix)
@@ -1992,46 +1801,30 @@ async fn margin_supply(
             Ok(t) => t,
             Err(_) => continue,
         };
-        let type_input = TypeInput::from(type_tag);
 
         // Build PTB for total_supply call
-        let mut ptb = ProgrammableTransactionBuilder::new();
+        let mut ptb = crate::grpc::read_only_tx();
+        let pool_input = ptb.object(crate::grpc::shared_input(&pool_id, initial_shared_version)?);
+        ptb.move_call(
+            crate::grpc::function(
+                margin_package_id,
+                MARGIN_POOL_MODULE,
+                "total_supply",
+                vec![type_tag],
+            )?,
+            vec![pool_input],
+        );
 
-        let pool_input = CallArg::Object(ObjectArg::SharedObject {
-            id: pool_data.object_id,
-            initial_shared_version,
-            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-        });
-        ptb.input(pool_input)?;
-
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "total_supply".to_string(),
-            type_arguments: vec![type_input],
-            arguments: vec![Argument::Input(0)],
-        })));
-
-        let builder = ptb.finish();
-        let tx = TransactionKind::ProgrammableTransaction(builder);
-
-        let inspect_result = sui_client
-            .read_api()
-            .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
-            .await?;
-
-        if let Some(mut results) = inspect_result.results {
-            if let Some(first_result) = results.first_mut() {
-                if let Some(return_value) = first_result.return_values.first() {
-                    if let Ok(total_supply) = bcs::from_bytes::<u64>(&return_value.0) {
-                        // Extract asset name from asset_type (e.g., "0x2::sui::SUI" -> "SUI")
-                        let asset_name = asset_type
-                            .rsplit("::")
-                            .next()
-                            .unwrap_or(&asset_type)
-                            .to_string();
-                        result.insert(asset_name, total_supply);
-                    }
+        if let Ok(results) = crate::grpc::simulate_returns(client, ptb).await {
+            if let Some(return_value) = results.first().and_then(|c| c.first()) {
+                if let Ok(total_supply) = bcs::from_bytes::<u64>(return_value) {
+                    // Extract asset name from asset_type (e.g., "0x2::sui::SUI" -> "SUI")
+                    let asset_name = asset_type
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(&asset_type)
+                        .to_string();
+                    result.insert(asset_name, total_supply);
                 }
             }
         }
@@ -2077,9 +1870,9 @@ async fn book_params_updated(
     Ok(Json(state.reader.get_book_params_updated(pool_id).await?))
 }
 
-fn parse_type_input(type_str: &str) -> Result<TypeInput, DeepBookError> {
-    let type_tag = TypeTag::from_str(type_str)?;
-    Ok(TypeInput::from(type_tag))
+fn parse_type_input(type_str: &str) -> Result<TypeTag, DeepBookError> {
+    TypeTag::from_str(type_str)
+        .map_err(|e| DeepBookError::bad_request(format!("Invalid type '{}': {}", type_str, e)))
 }
 
 trait ParameterUtil {

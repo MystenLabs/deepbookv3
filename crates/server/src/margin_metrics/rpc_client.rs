@@ -1,17 +1,10 @@
+use crate::grpc;
 use anyhow::{anyhow, Result};
 use std::str::FromStr;
-use sui_sdk::SuiClient;
-use sui_types::{
-    base_types::{ObjectID, SequenceNumber, SuiAddress},
-    programmable_transaction_builder::ProgrammableTransactionBuilder,
-    transaction::{Argument, CallArg, Command, ObjectArg, ProgrammableMoveCall, TransactionKind},
-    type_input::TypeInput,
-    TypeTag,
-};
+use sui_rpc::Client;
+use sui_sdk_types::TypeTag;
 
 const MARGIN_POOL_MODULE: &str = "margin_pool";
-const SUI_CLOCK_OBJECT_ID: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000006";
 
 /// Normalize asset type by ensuring the address has a 0x prefix.
 /// The DB stores types like "abc123::module::Type" but TypeTag parser needs "0xabc123::module::Type"
@@ -38,45 +31,22 @@ pub struct MarginPoolState {
 }
 
 pub struct MarginRpcClient {
-    sui_client: SuiClient,
-    margin_package_id: ObjectID,
+    sui_client: Client,
+    margin_package_id: String,
 }
 
 impl MarginRpcClient {
-    pub fn new(sui_client: SuiClient, margin_package_id: &str) -> Result<Self> {
-        let package_id = ObjectID::from_hex_literal(margin_package_id)
-            .map_err(|e| anyhow!("Invalid margin package ID: {}", e))?;
-        Ok(Self {
+    pub fn new(sui_client: Client, margin_package_id: &str) -> Self {
+        Self {
             sui_client,
-            margin_package_id: package_id,
-        })
+            margin_package_id: margin_package_id.to_string(),
+        }
     }
 
     pub async fn get_pool_state(&self, pool_id: &str, asset_type: &str) -> Result<MarginPoolState> {
-        let pool_object_id = ObjectID::from_hex_literal(pool_id)
-            .map_err(|e| anyhow!("Invalid pool ID '{}': {}", pool_id, e))?;
-
         // Get the pool object to find its initial_shared_version
-        let pool_object = self
-            .sui_client
-            .read_api()
-            .get_object_with_options(
-                pool_object_id,
-                sui_json_rpc_types::SuiObjectDataOptions::full_content().with_owner(),
-            )
-            .await?;
-
-        let pool_data = pool_object
-            .data
-            .as_ref()
-            .ok_or_else(|| anyhow!("Pool {} not found", pool_id))?;
-
-        let initial_shared_version = match &pool_data.owner {
-            Some(sui_types::object::Owner::Shared {
-                initial_shared_version,
-            }) => *initial_shared_version,
-            _ => return Err(anyhow!("Pool {} is not a shared object", pool_id)),
-        };
+        let initial_shared_version =
+            grpc::initial_shared_version(&self.sui_client, pool_id).await?;
 
         // Parse the asset type for type arguments
         // The asset_type from DB may be missing the 0x prefix, so normalize it
@@ -86,11 +56,11 @@ impl MarginRpcClient {
 
         // Query all the view functions in a single PTB
         let state = self
-            .query_pool_state(pool_object_id, initial_shared_version, &type_tag)
+            .query_pool_state(pool_id, initial_shared_version, &type_tag)
             .await?;
 
         Ok(MarginPoolState {
-            pool_id: pool_object_id.to_hex_literal(),
+            pool_id: pool_id.to_string(),
             asset_type: normalized_asset_type,
             total_supply: state.0,
             total_borrow: state.1,
@@ -105,126 +75,55 @@ impl MarginRpcClient {
 
     async fn query_pool_state(
         &self,
-        pool_id: ObjectID,
-        initial_shared_version: SequenceNumber,
+        pool_id: &str,
+        initial_shared_version: u64,
         type_tag: &TypeTag,
     ) -> Result<(u64, u64, u64, u64, u64, u64, u64, u64)> {
-        let mut ptb = ProgrammableTransactionBuilder::new();
+        let mut ptb = grpc::read_only_tx();
 
         // Input 0: Pool object
-        let pool_input = CallArg::Object(ObjectArg::SharedObject {
-            id: pool_id,
-            initial_shared_version,
-            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-        });
-        ptb.input(pool_input)?;
-
+        let pool = ptb.object(grpc::shared_input(pool_id, initial_shared_version)?);
         // Input 1: Clock object (for get_available_withdrawal)
-        let clock_id = ObjectID::from_hex_literal(SUI_CLOCK_OBJECT_ID)?;
-        let clock_input = CallArg::Object(ObjectArg::SharedObject {
-            id: clock_id,
-            initial_shared_version: SequenceNumber::from_u64(1),
-            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
-        });
-        ptb.input(clock_input)?;
+        let clock = ptb.object(grpc::clock_input());
 
-        let type_input = TypeInput::from(type_tag.clone());
-        let type_args = vec![type_input];
+        let type_args = vec![type_tag.clone()];
+        let call = |name: &str| {
+            grpc::function(
+                &self.margin_package_id,
+                MARGIN_POOL_MODULE,
+                name,
+                type_args.clone(),
+            )
+        };
 
         // Command 0: total_supply<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "total_supply".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0)],
-        })));
-
+        ptb.move_call(call("total_supply")?, vec![pool]);
         // Command 1: total_borrow<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "total_borrow".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0)],
-        })));
-
+        ptb.move_call(call("total_borrow")?, vec![pool]);
         // Command 2: vault_balance<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "vault_balance".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0)],
-        })));
-
+        ptb.move_call(call("vault_balance")?, vec![pool]);
         // Command 3: supply_cap<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "supply_cap".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0)],
-        })));
-
+        ptb.move_call(call("supply_cap")?, vec![pool]);
         // Command 4: interest_rate<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "interest_rate".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0)],
-        })));
-
+        ptb.move_call(call("interest_rate")?, vec![pool]);
         // Command 5: get_available_withdrawal<Asset>(pool, clock)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "get_available_withdrawal".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0), Argument::Input(1)],
-        })));
-
+        ptb.move_call(call("get_available_withdrawal")?, vec![pool, clock]);
         // Command 6: supply_ratio<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "supply_ratio".to_string(),
-            type_arguments: type_args.clone(),
-            arguments: vec![Argument::Input(0)],
-        })));
-
+        ptb.move_call(call("supply_ratio")?, vec![pool]);
         // Command 7: borrow_ratio<Asset>(pool)
-        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
-            package: self.margin_package_id,
-            module: MARGIN_POOL_MODULE.to_string(),
-            function: "borrow_ratio".to_string(),
-            type_arguments: type_args,
-            arguments: vec![Argument::Input(0)],
-        })));
+        ptb.move_call(call("borrow_ratio")?, vec![pool]);
 
-        let builder = ptb.finish();
-        let tx = TransactionKind::ProgrammableTransaction(builder);
-
-        let result = self
-            .sui_client
-            .read_api()
-            .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
-            .await?;
-
-        let results = result
-            .results
-            .ok_or_else(|| anyhow!("No results from dev_inspect_transaction_block"))?;
+        let results = grpc::simulate_returns(&self.sui_client, ptb).await?;
 
         // Extract each u64 result
-        let total_supply = self.extract_u64(&results, 0, "total_supply")?;
-        let total_borrow = self.extract_u64(&results, 1, "total_borrow")?;
-        let vault_balance = self.extract_u64(&results, 2, "vault_balance")?;
-        let supply_cap = self.extract_u64(&results, 3, "supply_cap")?;
-        let interest_rate = self.extract_u64(&results, 4, "interest_rate")?;
-        let available_withdrawal = self.extract_u64(&results, 5, "get_available_withdrawal")?;
-        let supply_share_price = self.extract_u64(&results, 6, "supply_ratio")?;
-        let borrow_share_price = self.extract_u64(&results, 7, "borrow_ratio")?;
+        let total_supply = extract_u64(&results, 0, "total_supply")?;
+        let total_borrow = extract_u64(&results, 1, "total_borrow")?;
+        let vault_balance = extract_u64(&results, 2, "vault_balance")?;
+        let supply_cap = extract_u64(&results, 3, "supply_cap")?;
+        let interest_rate = extract_u64(&results, 4, "interest_rate")?;
+        let available_withdrawal = extract_u64(&results, 5, "get_available_withdrawal")?;
+        let supply_share_price = extract_u64(&results, 6, "supply_ratio")?;
+        let borrow_share_price = extract_u64(&results, 7, "borrow_ratio")?;
 
         Ok((
             total_supply,
@@ -237,25 +136,14 @@ impl MarginRpcClient {
             borrow_share_price,
         ))
     }
+}
 
-    fn extract_u64(
-        &self,
-        results: &[sui_json_rpc_types::SuiExecutionResult],
-        index: usize,
-        func_name: &str,
-    ) -> Result<u64> {
-        let result = results
-            .get(index)
-            .ok_or_else(|| anyhow!("Missing result for {}", func_name))?;
+fn extract_u64(results: &[Vec<Vec<u8>>], index: usize, func_name: &str) -> Result<u64> {
+    let bytes = results
+        .get(index)
+        .ok_or_else(|| anyhow!("Missing result for {}", func_name))?
+        .first()
+        .ok_or_else(|| anyhow!("No return value for {}", func_name))?;
 
-        let bytes = result
-            .return_values
-            .first()
-            .ok_or_else(|| anyhow!("No return value for {}", func_name))?;
-
-        let value: u64 = bcs::from_bytes(&bytes.0)
-            .map_err(|e| anyhow!("Failed to deserialize {} result: {}", func_name, e))?;
-
-        Ok(value)
-    }
+    bcs::from_bytes(bytes).map_err(|e| anyhow!("Failed to deserialize {} result: {}", func_name, e))
 }
