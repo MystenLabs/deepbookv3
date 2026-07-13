@@ -371,8 +371,9 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
 /// `risk_ratio` while the debt is unchanged, so the swap-only monotonic check
 /// here rejects essentially every taker fill. The `_and_repay` variant
 /// deleverages with the proceeds so the net-state ratio actually improves. Kept
-/// callable for existing integrators; its quantity caps match the other
-/// reduce-only entries (gross-base ask, round-up-to-lot bid).
+/// callable for existing integrators; its reduce-only *direction* guard matches
+/// the other entries — a bid needs base (short-side) debt, the ask needs quote
+/// (long-side) debt and sells up to gross base held — with no size cap.
 public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -547,30 +548,20 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     );
 
     // place_market_order settles the taker fill into the manager's balance, so
-    // the proceeds are drawable. Repay the debt side with that balance.
-    if (margin_manager.has_base_debt()) {
-        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
-    } else {
-        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
-    };
-
-    // Net-state solvency: if debt remains, the close must not have worsened the
-    // ratio. A full repay clears the debt, so the check is skipped.
-    if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
-        let risk_ratio_after = margin_manager.risk_ratio(
-            registry,
-            base_oracle,
-            quote_oracle,
-            pool,
-            base_margin_pool,
-            quote_margin_pool,
-            clock,
-        );
-        assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
-    };
+    // the proceeds are drawable: repay the settled proceeds (+ idle balance) into
+    // the debt side, then gate on the net (post-repay) monotonic ratio.
+    repay_debt_then_assert_monotonic(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        risk_ratio_before,
+        clock,
+        ctx,
+    );
 
     order_info
 }
@@ -658,32 +649,21 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    // Repay the debt side with the settled taker fills before the monotonic
-    // check, so a crossing reduce-only limit deleverages instead of aborting. A
+    // Repay the settled taker fills (+ idle balance) before the monotonic gate,
+    // so a crossing reduce-only limit deleverages instead of aborting; a
     // fully-resting order has no taker proceeds, so this repays nothing.
-    if (margin_manager.has_base_debt()) {
-        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
-    } else {
-        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
-    };
-
-    // Net-state solvency: if debt remains, the order must not have worsened the
-    // ratio. A full repay clears the debt, so the check is skipped.
-    if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
-        let risk_ratio_after = margin_manager.risk_ratio(
-            registry,
-            base_oracle,
-            quote_oracle,
-            pool,
-            base_margin_pool,
-            quote_margin_pool,
-            clock,
-        );
-        assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
-    };
+    repay_debt_then_assert_monotonic(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        risk_ratio_before,
+        clock,
+        ctx,
+    );
 
     order_info
 }
@@ -769,34 +749,24 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    // Repay the debt side with the settled proceeds *before* the solvency check,
-    // so a deleveraging close passes where the bare swap would not. Skipped when
-    // the manager has no debt.
-    if (margin_manager.has_base_debt()) {
-        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
-    } else if (margin_manager.borrowed_quote_shares() > 0) {
-        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
-    };
-
-    // Net-state monotonic gate: if debt remains, the trade+repay must not have
-    // worsened the ratio. A full repay clears the debt (`risk_ratio` -> MAX), so
-    // the check is skipped. Debt only decreases here, so surviving debt implies
-    // there was debt before and `risk_ratio_before` is a real ratio.
-    if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
-        let risk_ratio_after = margin_manager.risk_ratio(
-            registry,
-            base_oracle,
-            quote_oracle,
-            pool,
-            base_margin_pool,
-            quote_margin_pool,
-            clock,
-        );
-        assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
-    };
+    // Repay the settled proceeds (+ idle balance) into the debt side *before* the
+    // solvency check, so a deleveraging close passes where the bare swap would
+    // not, then gate on the net (post-repay) monotonic ratio. Debt only decreases
+    // here, so surviving debt implies there was debt before (a real
+    // `risk_ratio_before`); the `0` placeholder from the no-debt case is never
+    // compared because the gate is skipped once debt is clear.
+    repay_debt_then_assert_monotonic(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        risk_ratio_before,
+        clock,
+        ctx,
+    );
 
     order_info
 }
@@ -1117,4 +1087,48 @@ fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
         clock,
     );
     assert!(risk_ratio_after >= risk_ratio_before, ERiskRatioMustNotWorsen);
+}
+
+/// Repays the manager's debt side with settled proceeds + idle balance
+/// (`amount: none`), then — only if debt remains — asserts the net (post-repay)
+/// `risk_ratio` did not worsen against `risk_ratio_before`. A full repay clears
+/// the debt (`risk_ratio` -> MAX), so the monotonic check is skipped. Shared by
+/// the three `…_and_repay_loan` close entries; the `else if` on quote debt is a
+/// harmless no-op for reduce-only callers (their direction guard already fixed
+/// the single debt side) and is what lets the non-reduce-only market close share
+/// the same body.
+fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    risk_ratio_before: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    if (margin_manager.has_base_debt()) {
+        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
+    } else if (margin_manager.borrowed_quote_shares() > 0) {
+        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
+    };
+
+    if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        assert_reduce_only_monotonic(
+            margin_manager,
+            registry,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            base_oracle,
+            quote_oracle,
+            clock,
+            risk_ratio_before,
+        );
+    };
 }

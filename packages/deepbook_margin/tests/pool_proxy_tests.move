@@ -6879,6 +6879,70 @@ fun set_min_open_risk_ratio_within_band_ok() {
     scenario.end();
 }
 
+#[test]
+// A stored `min_open` override that a later risk-param change strands *outside*
+// `(liquidation, min_borrow]` must self-heal to the midpoint default — never
+// return the now-unsafe stored value. Here `update_risk_params` lowers `min_borrow`
+// to 1.15, below the stored 1.20 override (an open floor above the borrow floor is
+// nonsensical), so the getter must fall back to the new midpoint (1.10 + 1.15)/2.
+fun min_open_risk_ratio_stranded_override_self_heals() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Override 1.20 is valid in the default band (liquidation 1.10, min_borrow 1.25].
+    registry.set_min_open_risk_ratio<USDC, USDT>(&admin_cap, &pool, 1_200_000_000, &clock);
+    assert_eq!(registry.min_open_risk_ratio(pool_id), 1_200_000_000);
+
+    // Lower min_borrow to 1.15 (below the stored 1.20), keeping liquidation at 1.10
+    // (update_risk_params forbids *raising* liquidation). This strands the override.
+    let new_config = registry.new_pool_config<USDC, USDT>(
+        2_000_000_000, // min_withdraw_risk_ratio: 2.0
+        1_150_000_000, // min_borrow_risk_ratio: 1.15
+        1_100_000_000, // liquidation_risk_ratio: 1.10
+        1_250_000_000, // target_liquidation_risk_ratio: 1.25
+        20_000_000, // user_liquidation_reward: 2%
+        30_000_000, // pool_liquidation_reward: 3%
+    );
+    registry.update_risk_params<USDC, USDT>(&admin_cap, &pool, new_config, &clock);
+
+    // Stored 1.20 is now > min_borrow 1.15 -> out of band -> getter self-heals to
+    // the midpoint default (1.10 + 1.15)/2 = 1.125, not the stranded 1.20.
+    assert_eq!(registry.min_open_risk_ratio(pool_id), 1_125_000_000);
+
+    return_shared_2!(registry, pool);
+    destroy(admin_cap);
+    destroy(maintainer_cap);
+    destroy(clock);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = margin_registry::EInvalidRiskParam)]
 fun set_min_open_risk_ratio_too_low_aborts() {
     let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();

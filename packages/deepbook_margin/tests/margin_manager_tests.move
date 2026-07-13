@@ -3896,7 +3896,7 @@ fun execute_conditional_orders_v2_post_loop_check_aborts() {
 
 // Fully one-sided position — user deposits base and borrows base, so the quote (USDC)
 // key is never created on the manager. Liquidation must still succeed: the
-// `liquidation_withdraw(0, USDC)` call against the missing key should pass through
+// `withdraw_without_owner_check(0, USDC)` call against the missing key should pass through
 // (zero amount, key absent) rather than abort.
 #[test]
 fun test_liquidate_one_sided_base_collateral_base_debt() {
@@ -3969,7 +3969,7 @@ fun test_liquidate_one_sided_base_collateral_base_debt() {
     let debt_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
 
     // Liquidate must not abort despite the missing USDC key — the in-function
-    // `liquidation_withdraw(0, USDC)` should pass through (zero amount, key absent).
+    // `withdraw_without_owner_check(0, USDC)` should pass through (zero amount, key absent).
     let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, BTC>(
         &registry,
         &btc_price_fresh,
