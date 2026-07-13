@@ -76,11 +76,21 @@ public struct FundsSettled has copy, drop {
     new_balance: u64,
 }
 
-public(package) fun emit_deposited(account_id: ID, coin_type: String, amount: u64, new_balance: u64) {
+public(package) fun emit_deposited(
+    account_id: ID,
+    coin_type: String,
+    amount: u64,
+    new_balance: u64,
+) {
     event::emit(Deposited { account_id, coin_type, amount, new_balance });
 }
 
-public(package) fun emit_withdrawn(account_id: ID, coin_type: String, amount: u64, new_balance: u64) {
+public(package) fun emit_withdrawn(
+    account_id: ID,
+    coin_type: String,
+    amount: u64,
+    new_balance: u64,
+) {
     event::emit(Withdrawn { account_id, coin_type, amount, new_balance });
 }
 

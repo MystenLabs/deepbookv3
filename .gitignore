@@ -33,7 +33,9 @@ predict_research/
 
 # Local agent artifacts
 /docs/
+/docs/superpowers/
 /web
+.worktrees/
 
 # misc
 .env

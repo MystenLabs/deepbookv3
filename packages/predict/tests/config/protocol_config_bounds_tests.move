@@ -3,13 +3,14 @@
 
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
-/// strike-exposure templates (base fee, min fee, ask prices, terminal floor
-/// index, expiry-fee ramp, liquidation LTV, backing buffer lambda), the
+/// strike-exposure templates (base fee, min fee, entry-probability bounds,
+/// expiry-fee ramp, liquidation LTV, max admission leverage, backing buffer lambda), the
 /// expiry-cash trading-loss rebate template. Every abort test drives the real
-/// admin setter on a shared `ProtocolConfig` with a value one unit outside the
-/// envelope; pass tests assert that boundary values round-trip through setter +
-/// getter. Codes whose envelope floor is 0
-/// (`EInvalidMinFee`, `EInvalidMinAskPrice`, `EInvalidMaxAskPrice`,
+/// admin setter on a shared
+/// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
+/// that boundary values round-trip through setter + getter. Codes whose envelope
+/// floor is 0
+/// (`EInvalidMinFee`, `EInvalidMinEntryProbability`, `EInvalidMaxEntryProbability`,
 /// `EInvalidTradingLossRebateRate`) have no reachable below-min case for a
 /// `u64`, so only the above-max side is exercised.
 #[test_only]
@@ -63,47 +64,30 @@ fun template_min_fee_above_max_aborts() {
     abort 999
 }
 
-// === Strike-exposure templates: ask prices ===
+// === Strike-exposure templates: entry-probability bounds ===
 
 // The `config_constants` envelope check fires before the setter's relational
-// `EInvalidAskBound` check, so the just-outside envelope value aborts with the
-// envelope code even though it also violates the relational bound.
-#[test, expected_failure(abort_code = config_constants::EInvalidMinAskPrice)]
-fun template_min_ask_price_above_max_aborts() {
+// `EInvalidEntryProbabilityBound` check, so the just-outside envelope value
+// aborts with the envelope code even though it also violates the relational
+// bound.
+#[test, expected_failure(abort_code = config_constants::EInvalidMinEntryProbability)]
+fun template_min_entry_probability_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_min_ask_price(&admin_cap, config_constants::max_min_ask_price!() + 1);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidMaxAskPrice)]
-fun template_max_ask_price_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_max_ask_price(&admin_cap, config_constants::max_max_ask_price!() + 1);
-    abort 999
-}
-
-// === Strike-exposure templates: terminal floor index ===
-
-#[test, expected_failure(abort_code = config_constants::EInvalidTerminalFloorIndex)]
-fun template_terminal_floor_index_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_terminal_floor_index(
+    config.set_template_min_entry_probability(
         &admin_cap,
-        config_constants::min_terminal_floor_index!() - 1,
+        config_constants::max_min_entry_probability!() + 1,
     );
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidTerminalFloorIndex)]
-fun template_terminal_floor_index_above_max_aborts() {
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxEntryProbability)]
+fun template_max_entry_probability_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_terminal_floor_index(
+    config.set_template_max_entry_probability(
         &admin_cap,
-        config_constants::max_terminal_floor_index!() + 1,
+        config_constants::max_max_entry_probability!() + 1,
     );
     abort 999
 }
@@ -172,6 +156,30 @@ fun template_liquidation_ltv_above_max_aborts() {
     abort 999
 }
 
+// === Strike-exposure templates: max admission leverage ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxAdmissionLeverage)]
+fun template_max_admission_leverage_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::min_max_admission_leverage!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxAdmissionLeverage)]
+fun template_max_admission_leverage_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::max_max_admission_leverage!() + 1,
+    );
+    abort 999
+}
+
 // === Strike-exposure templates: backing buffer lambda ===
 
 #[test, expected_failure(abort_code = config_constants::EInvalidBackingBufferLambda)]
@@ -197,16 +205,19 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    // Envelope floors. `max_ask_price`'s envelope floor (0) is relationally
-    // unreachable: the setter requires max > min and min's floor is 0, so the
-    // smallest settable max ask is 1. min_ask must drop to 0 first.
+    // Envelope floors. `max_entry_probability`'s envelope floor (0) is
+    // relationally unreachable: the setter requires max > min and min's floor
+    // is 0, so the smallest settable max entry probability is 1. min entry
+    // probability must drop to 0 first.
     config.set_template_base_fee(&admin_cap, config_constants::min_base_fee!());
     config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
-    config.set_template_min_ask_price(&admin_cap, config_constants::min_min_ask_price!());
-    config.set_template_max_ask_price(&admin_cap, config_constants::min_max_ask_price!() + 1);
-    config.set_template_terminal_floor_index(
+    config.set_template_min_entry_probability(
         &admin_cap,
-        config_constants::min_terminal_floor_index!(),
+        config_constants::min_min_entry_probability!(),
+    );
+    config.set_template_max_entry_probability(
+        &admin_cap,
+        config_constants::min_max_entry_probability!() + 1,
     );
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
@@ -217,6 +228,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::min_expiry_fee_max_multiplier!(),
     );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::min_liquidation_ltv!());
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::min_max_admission_leverage!(),
+    );
     config.set_template_backing_buffer_lambda(
         &admin_cap,
         config_constants::min_backing_buffer_lambda!(),
@@ -225,29 +240,35 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::min_base_fee!());
     assert_eq!(snapshot.min_fee(), config_constants::min_min_fee!());
-    assert_eq!(snapshot.min_ask_price(), config_constants::min_min_ask_price!());
-    assert_eq!(snapshot.max_ask_price(), config_constants::min_max_ask_price!() + 1);
-    assert_eq!(snapshot.terminal_floor_index(), config_constants::min_terminal_floor_index!());
+    assert_eq!(snapshot.min_entry_probability(), config_constants::min_min_entry_probability!());
+    assert_eq!(
+        snapshot.max_entry_probability(),
+        config_constants::min_max_entry_probability!() + 1,
+    );
     assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::min_expiry_fee_window_ms!());
     assert_eq!(
         snapshot.expiry_fee_max_multiplier(),
         config_constants::min_expiry_fee_max_multiplier!(),
     );
     assert_eq!(snapshot.liquidation_ltv(), config_constants::min_liquidation_ltv!());
+    assert_eq!(snapshot.max_admission_leverage(), config_constants::min_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
     destroy(snapshot);
 
-    // Envelope ceilings. max_ask goes up first so min_ask can follow; min_ask's
-    // envelope ceiling equals max_ask's, so the highest settable min ask is one
-    // unit below it (the setter requires min < max).
-    config.set_template_max_ask_price(&admin_cap, config_constants::max_max_ask_price!());
-    config.set_template_min_ask_price(&admin_cap, config_constants::max_min_ask_price!() - 1);
+    // Envelope ceilings. max entry probability goes up first so min entry
+    // probability can follow; min's envelope ceiling equals max's, so the
+    // highest settable min entry probability is one unit below it (the setter
+    // requires min < max).
+    config.set_template_max_entry_probability(
+        &admin_cap,
+        config_constants::max_max_entry_probability!(),
+    );
+    config.set_template_min_entry_probability(
+        &admin_cap,
+        config_constants::max_min_entry_probability!() - 1,
+    );
     config.set_template_base_fee(&admin_cap, config_constants::max_base_fee!());
     config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!());
-    config.set_template_terminal_floor_index(
-        &admin_cap,
-        config_constants::max_terminal_floor_index!(),
-    );
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
         config_constants::max_expiry_fee_window_ms!(),
@@ -257,6 +278,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::max_expiry_fee_max_multiplier!(),
     );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::max_liquidation_ltv!());
+    config.set_template_max_admission_leverage(
+        &admin_cap,
+        config_constants::max_max_admission_leverage!(),
+    );
     config.set_template_backing_buffer_lambda(
         &admin_cap,
         config_constants::max_backing_buffer_lambda!(),
@@ -265,15 +290,18 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::max_base_fee!());
     assert_eq!(snapshot.min_fee(), config_constants::max_min_fee!());
-    assert_eq!(snapshot.min_ask_price(), config_constants::max_min_ask_price!() - 1);
-    assert_eq!(snapshot.max_ask_price(), config_constants::max_max_ask_price!());
-    assert_eq!(snapshot.terminal_floor_index(), config_constants::max_terminal_floor_index!());
+    assert_eq!(
+        snapshot.min_entry_probability(),
+        config_constants::max_min_entry_probability!() - 1,
+    );
+    assert_eq!(snapshot.max_entry_probability(), config_constants::max_max_entry_probability!());
     assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::max_expiry_fee_window_ms!());
     assert_eq!(
         snapshot.expiry_fee_max_multiplier(),
         config_constants::max_expiry_fee_max_multiplier!(),
     );
     assert_eq!(snapshot.liquidation_ltv(), config_constants::max_liquidation_ltv!());
+    assert_eq!(snapshot.max_admission_leverage(), config_constants::max_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
     destroy(snapshot);
 
@@ -283,23 +311,56 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
 }
 
 #[test]
+fun max_admission_leverage_market_snapshot_freezes_at_creation() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_max_admission_leverage(config_constants::max_max_admission_leverage!());
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+
+    let market = fx.take_market_bundle(expiry_id);
+    assert_eq!(
+        helpers::market(&market).max_admission_leverage(),
+        config_constants::max_max_admission_leverage!(),
+    );
+    helpers::return_market_bundle(market);
+
+    fx.set_template_max_admission_leverage(config_constants::min_max_admission_leverage!());
+    let market = fx.take_market_bundle(expiry_id);
+    let snapshot = helpers::config(&market).strike_exposure_config_snapshot();
+    assert_eq!(snapshot.max_admission_leverage(), config_constants::min_max_admission_leverage!());
+    assert_eq!(
+        helpers::market(&market).max_admission_leverage(),
+        config_constants::max_max_admission_leverage!(),
+    );
+    destroy(snapshot);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
 fun backing_buffer_lambda_market_snapshot_freezes_at_creation() {
     let mut fx = helpers::setup_market_default();
     fx.set_template_backing_buffer_lambda(config_constants::max_backing_buffer_lambda!());
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
 
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
-    assert_eq!(market.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    let market = fx.take_market_bundle(expiry_id);
+    assert_eq!(
+        helpers::market(&market).backing_buffer_lambda(),
+        config_constants::max_backing_buffer_lambda!(),
+    );
+    helpers::return_market_bundle(market);
 
     fx.set_template_backing_buffer_lambda(config_constants::min_backing_buffer_lambda!());
-    let (pyth, bs, oracle_registry, vault, market, config) = fx.take_market(expiry_id);
-    let snapshot = config.strike_exposure_config_snapshot();
+    let market = fx.take_market_bundle(expiry_id);
+    let snapshot = helpers::config(&market).strike_exposure_config_snapshot();
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
-    assert_eq!(market.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
+    assert_eq!(
+        helpers::market(&market).backing_buffer_lambda(),
+        config_constants::max_backing_buffer_lambda!(),
+    );
     destroy(snapshot);
 
-    helpers::return_market(pyth, bs, oracle_registry, vault, market, config);
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 

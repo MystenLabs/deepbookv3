@@ -14,10 +14,10 @@ use fixed_math::math;
 use sui::{balance::{Self, Balance}, coin::{Coin, TreasuryCap}, table::{Self, Table}};
 
 const ERequestNotFound: u64 = 0;
-const EBelowMinSupplyRequest: u64 = 4;
-const EBelowMinWithdrawRequest: u64 = 5;
-const ENotRequestOwner: u64 = 6;
-const EInvalidDrainMark: u64 = 8;
+const EBelowMinSupplyRequest: u64 = 1;
+const EBelowMinWithdrawRequest: u64 = 2;
+const ENotRequestOwner: u64 = 3;
+const EInvalidDrainMark: u64 = 4;
 
 const PAGE_CAPACITY: u64 = 64;
 
@@ -33,6 +33,8 @@ public struct LpBook<phantom LP> has store {
     locked_lp: Balance<LP>,
 }
 
+/// One queued supply/withdraw request. `amount` is the escrowed value in the
+/// queue's asset — DUSDC for the supply queue, LP shares for the withdraw queue.
 public struct RequestEntry has copy, drop, store {
     index: u64,
     /// Owning account, carried so a fill can attribute to the account directly
@@ -61,6 +63,14 @@ public struct RequestQueue<phantom T> has store {
     next_index: u64,
     pending: u64,
     escrow: Balance<T>,
+}
+
+/// Frozen flush share-price mark: `pool_value` over `total_supply`. Carried as one
+/// value so the supply/withdraw pricing helpers read each term by name and cannot
+/// transpose the numerator and denominator.
+public struct FlushMark has drop {
+    pool_value: u64,
+    total_supply: u64,
 }
 
 // === Public-Package Functions ===
@@ -95,9 +105,9 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
 
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
+    payment: Coin<DUSDC>,
     account_id: ID,
     recipient: address,
-    payment: Coin<DUSDC>,
 ): u64 {
     assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
     book.supply_queue.enqueue(account_id, recipient, payment.into_balance())
@@ -105,9 +115,9 @@ public(package) fun request_supply<LP>(
 
 public(package) fun request_withdraw<LP>(
     book: &mut LpBook<LP>,
+    lp: Coin<LP>,
     account_id: ID,
     recipient: address,
-    lp: Coin<LP>,
 ): u64 {
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
     book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance())
@@ -131,6 +141,10 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
+public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
+    FlushMark { pool_value, total_supply }
+}
+
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
 /// supplies first then withdrawals. `supply_budget` / `withdraw_budget` bound how many
 /// live requests each queue may fill this flush; `None` drains that queue fully. The
@@ -139,10 +153,9 @@ public(package) fun cancel_withdraw_request<LP>(
 /// Cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
-    pool_vault_id: ID,
     ledger: &mut Ledger,
-    pool_value: u64,
-    total_supply: u64,
+    mark: FlushMark,
+    pool_vault_id: ID,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
@@ -152,7 +165,7 @@ public(package) fun drain<LP>(
 
     while (under_budget(&supply_budget, supplies_filled) && !book.supply_queue.is_empty()) {
         let (request, escrowed) = book.supply_queue.pop_front();
-        let shares = supply_shares(request.amount, total_supply, pool_value);
+        let shares = supply_shares(request.amount, &mark);
         assert!(shares > 0, EInvalidDrainMark);
         ledger.receive_idle(escrowed);
         let shares_minted = book.treasury_cap.mint_balance(shares);
@@ -170,7 +183,7 @@ public(package) fun drain<LP>(
 
     while (under_budget(&withdraw_budget, withdrawals_filled) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
-        let payout = withdraw_dusdc(request.amount, total_supply, pool_value);
+        let payout = withdraw_dusdc(request.amount, &mark);
         assert!(payout > 0, EInvalidDrainMark);
         if (ledger.idle_balance() < payout) {
             // FIFO-until-dry: idle can't cover the head request, so stop and carry
@@ -273,20 +286,10 @@ fun remove_for_recipient<T>(
 ): (RequestEntry, Balance<T>) {
     let page_id = page_id_for_index(index);
     assert!(queue.pages.contains(page_id), ERequestNotFound);
-    let (request, page_empty) = {
-        let page = queue.pages.borrow_mut(page_id);
-        let offset = entry_offset(&page.entries, index);
-        let request = page.entries[offset];
-        assert!(request.recipient == recipient, ENotRequestOwner);
-        let request = page.entries.remove(offset);
-        (request, page.entries.length() == 0)
-    };
-    if (page_empty) {
-        queue.unlink_empty_page(page_id);
-    };
-    queue.pending = queue.pending - 1;
-    let escrow = queue.escrow.split(request.amount);
-    (request, escrow)
+    let page = &queue.pages[page_id];
+    let offset = entry_offset(&page.entries, index);
+    assert!(page.entries[offset].recipient == recipient, ENotRequestOwner);
+    queue.remove(index)
 }
 
 fun ensure_tail_page_for_index<T>(queue: &mut RequestQueue<T>, index: u64): u64 {
@@ -337,14 +340,9 @@ fun page_id_for_index(index: u64): u64 {
 }
 
 fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
-    let mut offset = 0;
-    while (offset < entries.length()) {
-        if (entries[offset].index == index) {
-            return offset
-        };
-        offset = offset + 1;
-    };
-    abort ERequestNotFound
+    let offset = entries.find_index!(|e| e.index == index);
+    assert!(offset.is_some(), ERequestNotFound);
+    offset.destroy_some()
 }
 
 // === Pricing Helpers ===
@@ -352,14 +350,18 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// LP shares minted for `amount` DUSDC at the frozen flush mark. `total_supply > 0`
 /// is guaranteed by the genesis lock (`plp::lock_capital`), so there is no
 /// supply==0 bootstrap branch.
-fun supply_shares(amount: u64, total_supply: u64, pool_value: u64): u64 {
-    assert!(pool_value > 0, EInvalidDrainMark);
-    math::mul_div_down(amount, total_supply, pool_value)
+fun supply_shares(amount: u64, mark: &FlushMark): u64 {
+    assert!(mark.pool_value > 0, EInvalidDrainMark);
+    // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
+    // fewer shares; the pool keeps the dust).
+    math::mul_div_down(amount, mark.total_supply, mark.pool_value)
 }
 
 /// DUSDC owed for `shares` LP at the frozen flush mark.
-fun withdraw_dusdc(shares: u64, total_supply: u64, pool_value: u64): u64 {
-    assert!(total_supply > 0, EInvalidDrainMark);
-    assert!(pool_value > 0, EInvalidDrainMark);
-    math::mul_div_down(shares, pool_value, total_supply)
+fun withdraw_dusdc(shares: u64, mark: &FlushMark): u64 {
+    assert!(mark.total_supply > 0, EInvalidDrainMark);
+    assert!(mark.pool_value > 0, EInvalidDrainMark);
+    // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
+    // less; the pool keeps the dust).
+    math::mul_div_down(shares, mark.pool_value, mark.total_supply)
 }

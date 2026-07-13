@@ -1,28 +1,45 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// STUB Block Scholes signed-data payload. Stands in for the future BS verifier —
-/// mirroring how `pyth_lazer` mints a verified `Update` — but performs NO
-/// validation. Pure primitives, no dependencies; the real verifier will validate
-/// signatures before producing an `Update`. One `Update` carries one expiry's
-/// snapshot; a multi-expiry push is several Updates.
+/// STUB Block Scholes signed-data payloads. Stands in for the future BS verifier
+/// but performs NO validation. Pure primitives, no dependencies; the real
+/// verifier will validate signatures before producing these update values.
 ///
-/// WARNING: while this package is a stub, `Update` values are forgeable. Any
-/// downstream permissionless flow that treats an `Update` as verified source
-/// data is not production-safe until the real verifier lands.
+/// WARNING: while this package is a stub, update values are forgeable. Any
+/// downstream permissionless flow that treats an update as verified source data
+/// is not production-safe until the real verifier lands.
 module block_scholes_oracle::update;
 
-/// A verified BS snapshot for one source id at one expiry. SVI `rho`/`m` are
-/// signed, carried as magnitude + sign primitives so this package stays
-/// dependency-free.
-public struct Update has copy, drop {
+/// Operator-supplied BS spot update for one source id (signature verification
+/// arrives with the production verifier — see module doc; forgeable until then).
+public struct SpotUpdate has copy, drop {
+    source_id: u32,
+    /// Publisher snapshot timestamp, in milliseconds.
+    published_at_ms: u64,
+    /// Underlying spot, 1e9-scaled.
+    spot: u64,
+}
+
+/// Operator-supplied BS forward update for one source id and expiry (signature
+/// verification arrives with the production verifier — see module doc).
+public struct ForwardUpdate has copy, drop {
     source_id: u32,
     expiry_ms: u64,
     /// Publisher snapshot timestamp, in milliseconds.
     published_at_ms: u64,
-    /// Underlying spot and the expiry's forward, 1e9-scaled.
-    spot: u64,
+    /// Expiry forward, 1e9-scaled.
     forward: u64,
+}
+
+/// Operator-supplied BS SVI update for one source id and expiry (signature
+/// verification arrives with the production verifier — see module doc). SVI
+/// `rho`/`m` are signed, carried as magnitude + sign primitives so this package
+/// stays dependency-free.
+public struct SVIUpdate has copy, drop {
+    source_id: u32,
+    expiry_ms: u64,
+    /// Publisher snapshot timestamp, in milliseconds.
+    published_at_ms: u64,
     svi_a: u64,
     svi_b: u64,
     svi_sigma: u64,
@@ -32,13 +49,26 @@ public struct Update has copy, drop {
     svi_m_is_negative: bool,
 }
 
-// STUB: the production verifier validates BS signatures; this does not.
-public fun new_update(
+/// STUB: the production verifier validates BS signatures; this does not.
+public fun new_spot_update(source_id: u32, published_at_ms: u64, spot: u64): SpotUpdate {
+    SpotUpdate { source_id, published_at_ms, spot }
+}
+
+/// STUB: the production verifier validates BS signatures; this does not.
+public fun new_forward_update(
     source_id: u32,
     expiry_ms: u64,
     published_at_ms: u64,
-    spot: u64,
     forward: u64,
+): ForwardUpdate {
+    ForwardUpdate { source_id, expiry_ms, published_at_ms, forward }
+}
+
+/// STUB: the production verifier validates BS signatures; this does not.
+public fun new_svi_update(
+    source_id: u32,
+    expiry_ms: u64,
+    published_at_ms: u64,
     svi_a: u64,
     svi_b: u64,
     svi_sigma: u64,
@@ -46,13 +76,11 @@ public fun new_update(
     svi_rho_is_negative: bool,
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
-): Update {
-    Update {
+): SVIUpdate {
+    SVIUpdate {
         source_id,
         expiry_ms,
         published_at_ms,
-        spot,
-        forward,
         svi_a,
         svi_b,
         svi_sigma,
@@ -63,52 +91,76 @@ public fun new_update(
     }
 }
 
-// === Getters ===
+// === Spot Getters ===
 
-public fun source_id(update: &Update): u32 {
+public fun spot_source_id(update: &SpotUpdate): u32 {
     update.source_id
 }
 
-public fun expiry_ms(update: &Update): u64 {
-    update.expiry_ms
-}
-
-public fun published_at_ms(update: &Update): u64 {
+public fun spot_published_at_ms(update: &SpotUpdate): u64 {
     update.published_at_ms
 }
 
-public fun spot(update: &Update): u64 {
+public fun spot(update: &SpotUpdate): u64 {
     update.spot
 }
 
-public fun forward(update: &Update): u64 {
+// === Forward Getters ===
+
+public fun forward_source_id(update: &ForwardUpdate): u32 {
+    update.source_id
+}
+
+public fun forward_expiry_ms(update: &ForwardUpdate): u64 {
+    update.expiry_ms
+}
+
+public fun forward_published_at_ms(update: &ForwardUpdate): u64 {
+    update.published_at_ms
+}
+
+public fun forward(update: &ForwardUpdate): u64 {
     update.forward
 }
 
-public fun svi_a(update: &Update): u64 {
+// === SVI Getters ===
+
+public fun svi_source_id(update: &SVIUpdate): u32 {
+    update.source_id
+}
+
+public fun svi_expiry_ms(update: &SVIUpdate): u64 {
+    update.expiry_ms
+}
+
+public fun svi_published_at_ms(update: &SVIUpdate): u64 {
+    update.published_at_ms
+}
+
+public fun svi_a(update: &SVIUpdate): u64 {
     update.svi_a
 }
 
-public fun svi_b(update: &Update): u64 {
+public fun svi_b(update: &SVIUpdate): u64 {
     update.svi_b
 }
 
-public fun svi_sigma(update: &Update): u64 {
+public fun svi_sigma(update: &SVIUpdate): u64 {
     update.svi_sigma
 }
 
-public fun svi_rho_magnitude(update: &Update): u64 {
+public fun svi_rho_magnitude(update: &SVIUpdate): u64 {
     update.svi_rho_magnitude
 }
 
-public fun svi_rho_is_negative(update: &Update): bool {
+public fun svi_rho_is_negative(update: &SVIUpdate): bool {
     update.svi_rho_is_negative
 }
 
-public fun svi_m_magnitude(update: &Update): u64 {
+public fun svi_m_magnitude(update: &SVIUpdate): u64 {
     update.svi_m_magnitude
 }
 
-public fun svi_m_is_negative(update: &Update): bool {
+public fun svi_m_is_negative(update: &SVIUpdate): bool {
     update.svi_m_is_negative
 }

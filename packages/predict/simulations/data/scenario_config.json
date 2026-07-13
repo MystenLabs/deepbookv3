@@ -27,18 +27,19 @@
     "protocol": {
         "base_fee": "20000000",
         "min_fee": "5000000",
-        "min_ask_price": "10000000",
-        "max_ask_price": "990000000",
+        "min_entry_probability": "10000000",
+        "max_entry_probability": "990000000",
         "trade_liquidation_budget": "24",
         "valuation_liquidation_budget": "192",
         "liquidation_head_scan_divisor": "3",
         "curve_samples": "50",
         "protocol_reserve_profit_share": "400000000",
         "trading_loss_rebate_rate": "500000000",
+        "max_expiry_allocation": "250000000000",
+        "initial_expiry_cash": "50000000000",
         "expiry_fee_window_ms": "86400000",
         "expiry_fee_max_multiplier": "2000000000",
-        "leverage_floor_window_ms": "31536000000",
-        "max_expiry_floor_premium": "200000000",
+        "max_admission_leverage": "3000000000",
         "liquidation_ltv": "850000000",
         "backing_buffer_lambda": "250000000"
     }

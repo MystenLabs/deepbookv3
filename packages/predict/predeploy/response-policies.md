@@ -1,0 +1,463 @@
+# Predict Response-Policy Register
+
+Updated 2026-07-06. This is the tracked register of **settled response-policy
+decisions**: for each degenerate or adversarial state the protocol can reach,
+the behavior someone deliberately chose, why, and the tests that pin it.
+
+`open-items.md` tracks work that is still open; when an item closes, the
+*decision* it produced graduates into an entry here instead of surviving only
+in a commit message — this register is the pipeline's single terminal for
+judgment calls, and at most one entry resolves a given item. Measured evidence
+behind entries lives as dated records in `evidence/`. `docs/risks.md` is the
+public disclosure and must describe the behavior recorded here — a `risks.md`
+claim about failure behavior that has no register entry (or contradicts one)
+is a finding. The protocol-wide rounding policy (R1–R3) also lives here, at
+the end of the register.
+
+## The discipline
+
+- **Classify the violated variable by controller.** Protocol-controlled values
+  (supply, escrow, accounting) can carry hard invariants. Market-controlled
+  values (NAV, prices, post-loss balances) cannot — no assert forbids a loss
+  that already happened off-code. For market-controlled states the only design
+  freedom is the *response*.
+- **Pick the response from the blast-radius ladder:** `abort` (single-user,
+  user-recoverable actions only) → `skip/carry` (batch, keeper, and mandatory
+  paths — one degenerate element must not stall the machine) → `pause` (only
+  with an explicit recovery path) → `designed wind-down` (economically dead
+  states). A state-triggered abort in a shared/mandatory path over a
+  market-controlled variable is a liveness defect, not a safety feature.
+- **Accepting a risk is legitimate only as an artifact:** recorded here with
+  reasoning, a risk profile, pinning tests, and a reopen condition.
+- **Risk profiles are measured, not guessed, where possible.** Entries whose
+  reachability is asserted from intuition are tagged `BEST-GUESS`; the harness
+  (`packages/predict/harness/`) is the tool for replacing that tag with a
+  measured profile (reachability cost, window width, loss sequence).
+- **Deleting or weakening a guard requires a duty inventory.** A guard's stated
+  purpose is a claim, not an inventory — enumerate what else it incidentally
+  bounds (arithmetic headroom, ratio sanity, downstream cast safety) before
+  removal, and record the removal as an entry here. Precedent: the P-1 circuit
+  breaker was removed on a fairness argument and was silently also the only
+  u64-headroom bound on LP fill math (RP-1/RP-2).
+
+## Entry schema
+
+Each entry records: **Trigger state** / **Controller** / **Blast radius** /
+**Response** (ladder rung) / **Reasoning** / **Risk profile** (`MEASURED` or
+`BEST-GUESS`) / **Pinning tests** / **Reopen when**.
+
+---
+
+## RP-1: The flush executes at any exact NAV mark (price circuit breakers removed)
+
+- **Trigger state:** frozen flush mark implies a PLP price outside the former
+  `[0.01, 100]` DUSDC band, or a pool NAV below the former dust floor.
+- **Controller:** market — pool NAV is set by trading outcomes; supply by fill
+  history. `total_supply ≤ k × pool_value` is not a maintainable invariant.
+- **Blast radius:** the mark is computed inside `finish_flush`, the single
+  mandatory pool-wide PTB (valuation, sweeps, LP fills).
+- **Response:** proceed — no mark-level guard. Degeneracies are owned at the
+  fill site (RP-2). (Commit `cc67ed9f`, resolving P-1.)
+- **Reasoning:** the mark is the exact pool NAV, so any price it implies is
+  fair by construction; the deleted `assert_plp_price_in_bounds` was a
+  state-triggered abort over a market-controlled variable with no on-chain
+  recovery path — it bricked the flush in legitimate states (100x
+  appreciation, post-drawdown recapitalization) until package upgrade.
+- **Risk profile:** `BEST-GUESS`. Residual found 2026-07-02: the deleted guard
+  was incidentally the only u64-headroom bound on fill math; at a
+  dust-but-nonzero mark a supply fill can overflow u64 or ratchet
+  `total_supply` — reopened as the C-4 extension (see RP-2).
+- **Pinning tests:** `pool_valuation_flow_tests.move` —
+  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`,
+  `finish_flush_with_low_plp_price_and_empty_queues_succeeds`,
+  `finish_flush_with_high_plp_price_and_empty_queues_succeeds`.
+- **Reopen when:** the fill-site policy (RP-2 / C-4) turns out not to cover a
+  mark-level degeneracy.
+
+## RP-2: Degenerate LP fills at the drain — skip/refund (decided; implementation open, C-4)
+
+- **Trigger state:** at the frozen mark, the head request's fill is not
+  executable: supply mints zero shares, withdraw pays zero, `pool_value == 0`,
+  or (dust-but-nonzero mark) the share computation exceeds u64.
+- **Controller:** market (the mark) × user (request size). The one
+  protocol-controlled action in the loop is share issuance itself.
+- **Blast radius:** `lp_book::drain` runs inside `finish_flush`; an aborting
+  fill aborts the entire pool-wide flush until the request owner voluntarily
+  cancels. A hostile or absent owner stalls it indefinitely.
+- **Response — current code:** `abort` (`EInvalidDrainMark` for the zero/zero
+  cases; a raw untracked u64-cast abort in `math::mul_div_down` for the
+  overflow case). This rung is wrong for a mandatory path.
+- **Response — decided:** `skip/carry` (or auto-cancel-and-refund). Fills are
+  computed in u128 and classified before execution; "does not fit u64" is the
+  same outcome as "rounds to zero" — not executable this flush, flush
+  completes. Whether supply fills execute at all below an executable mark
+  price (ratchet prevention: never mint into a degenerate ratio) is decided
+  together with the P-7 limit-field policy. Implementation tracked as C-4.
+- **Reasoning:** the drain must be total over request content. Beyond the
+  stall, a fill that *fits* at a dust mark mints ~1e18 shares; `total_supply`
+  only shrinks via withdrawals, so the inflated supply persists after NAV
+  recovery, permanently pinning PLP price at dust and widening the overflow
+  band (one dust fill converts a micro-DUSDC fragile window into a
+  thousands-of-DUSDC one). Skipping fills at inexecutable marks enforces the
+  one maintainable direction of the old invariant: the protocol never
+  *manufactures* the degenerate ratio, even though it cannot forbid NAV
+  collapse.
+- **Risk profile:** `BEST-GUESS` — organic reachability requires near-total LP
+  wipeout (pool value in a micro-DUSDC band at the flush instant) and cannot
+  be cheaply forced (attacker must win oracle-priced bets). The asymmetry is
+  the ratchet: improbable per flush, irreversible once. Harness campaign
+  candidate: drive NAV collapse and measure the window width and ratchet
+  onset.
+- **Pinning tests (current abort behavior):** `lp_book_tests.move` —
+  `priced_supply_with_zero_pool_value_aborts`,
+  `priced_supply_that_rounds_to_zero_shares_aborts`,
+  `priced_withdraw_that_rounds_to_zero_payout_aborts`. The u64-overflow
+  boundary is untested; the C-4 fix must add boundary tests on both sides of
+  each classification.
+- **Reopen when:** C-4 lands (rewrite this entry to the implemented behavior)
+  or P-7 chooses stay-queued semantics that interact with skip.
+- **Note:** `docs/risks.md` claimed the skip/refund behavior as shipped from
+  PR #1071 until corrected on 2026-07-02 — a decision documented without a
+  pinning test un-decides itself.
+
+## RP-3: `lp_pool_value` floors at zero
+
+- **Trigger state:** the sticky held-out total (`exclusion +
+  pending_protocol_profit`) exceeds a collapsed gross pool value.
+- **Controller:** market (gross collapses via losses); the exclusion basis is
+  protocol accounting but intentionally does not shrink on withdrawals.
+- **Blast radius:** the NAV read feeding the mandatory flush.
+- **Response:** `skip/carry`-shaped clamp — `saturating_sub` to 0, never
+  abort. LP-attributable value reads as zero until marks recover; the
+  downstream consequence (zero-value fills) is RP-2's problem, not this
+  read's.
+- **Reasoning:** LP value cannot be negative; an abort here would brick the
+  flush on an exogenous state. NAV==0 is a real reachable state, not an
+  underflow guard.
+- **Risk profile:** `BEST-GUESS` (requires gross ≤ held-out, i.e. severe
+  drawdown after a profitable period).
+- **Pinning tests:** partial — `pool_valuation_flow_tests.move` ·
+  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds` proves the flush
+  survives a NAV==0 mark, but reaches it via an underwater market
+  (`setup_underwater_market(0)`, gross=0, exclusion=0), so it does **not**
+  exercise the sticky-exclusion clamp's own trigger (held-out total exceeding a
+  positive-then-collapsed gross). The clamp direction is therefore not directly
+  pinned — tracked as a test gap in open-items C-4-adjacent follow-up.
+- **Reopen when:** the exclusion basis becomes non-sticky, or RP-2's
+  implementation changes what a zero mark means for the queues.
+
+## RP-4: Past-expiry-but-unsettled market blocks the flush (no substitute mark)
+
+- **Trigger state:** an active market is past expiry but Propbook has no
+  normalized spot at the exact expiry millisecond yet.
+- **Controller:** external — resolution relayer liveness (Pyth Lazer
+  resolution endpoints supply the exact-timestamp print).
+- **Blast radius:** the whole flush aborts while the market is in the window.
+- **Response:** `pause`-with-recovery — abort and retry; the recovery path is
+  the permissionless exact-ms insert followed by passive settlement. The
+  keeper does not flush inside the window. Deliberately **no substitute
+  mark**: a settlement-dependent market has no well-defined true value, and
+  the single mark prices both queue directions — contribute-0 dilutes
+  incumbents on supply, free-cash overpays withdrawals.
+- **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` (accepted
+  operational assumption, testnet evidence); grid-snap at creation makes the
+  key representable, resolution endpoints make it producible.
+- **Risk profile:** `MEASURED` (testnet evidence in
+  `evidence/rp4-settlement-liveness.md`);
+  residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
+  `risks.md`.
+- **Pinning tests:** not yet catalogued — fill in when this entry is next
+  touched.
+- **Reopen when:** settlement-v2 introduces a valuation-safe representation
+  for unsettled past-expiry markets.
+
+## RP-5: BS-vs-Pyth basis/deviation circuit breakers removed
+
+- **Trigger state / threat:** a compromised or adversarial Block Scholes
+  operator steering live pricing away from the Pyth spot.
+- **Controller:** external (oracle operator).
+- **Blast radius:** every live price — entry prices, NAV marks, liquidation.
+- **Response:** accept + disclose (commit `057f9565`). The cross-feed
+  deviation guards are gone; the static pricing-safe envelope remains
+  (positive spot/forward, bounded basis, bounded SVI inputs, `|rho| ≤ 1`,
+  sigma band). A correct-but-adversarial source can steer prices anywhere
+  inside that envelope.
+- **Reasoning:** the deviation guards were a state-triggered abort over an
+  externally-controlled variable — a divergence event (or a legitimate fast
+  market) bricked pricing with no recovery path, and staleness-vs-authenticity
+  cannot be resolved by a consumer-side band. The real mitigation is the
+  verifier: permissionless BS pushes are not production-safe until the stub is
+  replaced (deploy gate S-4).
+- **Risk profile:** `BEST-GUESS`; bounded only by the envelope. Gated by S-4
+  before value-bearing deployment.
+- **Pinning tests:** not yet catalogued — fill in when this entry is next
+  touched.
+- **Reopen when:** the production verifier lands (S-4) — revisit whether any
+  cross-feed sanity band is then worth reintroducing as a skip, not an abort.
+
+## RP-6: The flush is privileged, not permissionless
+
+- **Trigger state / threat:** a permissionless flush would let anyone time the
+  valuation to a favorable oracle state and capture mispriced LP fills.
+- **Controller:** protocol (who may start a flush is protocol-controlled — so
+  this one *is* enforceable as an invariant).
+- **Response:** gate the flush behind the revocable `MarketLifecycleCap`; the
+  accepted cost is a trust assumption — the operator chooses the valuation
+  instant (never the price: the mark is the exact NAV at that instant) and
+  must run flushes for LP liveness.
+- **Reasoning + disclosure:** `docs/risks.md` "The privileged flush"; audit
+  lens L8 (NAV-timing manipulation closed by privilege).
+- **Risk profile:** `BEST-GUESS` — operator-timing abuse bounded by mark
+  exactness; liveness depends on flush cadence (disclosed).
+- **Pinning tests:** not yet catalogued — fill in when this entry is next
+  touched.
+- **Reopen when:** a continuous/permissionless valuation design (e.g.
+  commit-reveal or TWAP mark) is ever proposed.
+
+## RP-7: Trading pause blocks new risk creation only
+
+- **Trigger state:** `PauseCap` pauses trading (globally or per-market).
+- **Controller:** protocol (pause operator).
+- **Response:** mint paths abort; exits (redeem), settlement cleanup, and
+  valuation stay live and are governed only by the valuation lock. One-way
+  pause; recovery is admin-side.
+- **Reasoning:** blocking exits during an emergency converts a safety switch
+  into a user-fund trap; only new risk creation needs to stop.
+- **Risk profile:** n/a (semantics decision, not a probabilistic risk).
+- **Pinning tests:** not yet catalogued — fill in when this entry is next
+  touched.
+- **Reopen when:** pause semantics are intentionally changed.
+
+## RP-8: Deferred protocol profit — defer-and-carry (D033)
+
+- **Trigger state:** a recognized protocol cut is owed but the backing cash
+  has since been redeployed (`available < owed` at realization time).
+- **Controller:** market (cash moves with trading between recognition and
+  realization).
+- **Blast radius:** a bare `balance.split` would underflow-abort the
+  permissionless cleanup or the pool-wide flush that realizes the cut.
+- **Response:** `skip/carry` — accrue in `pending_protocol_profit`, split
+  `min(pending, available)`, carry the remainder to cash-abundant branches;
+  trader/principal backing outranks protocol revenue; the carried amount is
+  held out of NAV.
+- **Reasoning:** liveness class distinct from rounding-dust underflow
+  (Rounding policy § R1 below); seniority must be explicit so the deferred cut
+  never preempts funding.
+- **Risk profile:** n/a (accounting-liveness policy).
+- **Pinning tests:** not yet catalogued — fill in when this entry is next
+  touched.
+- **Reopen when:** profit-realization flow is redesigned.
+
+---
+
+## RP-9: Congestion surcharge charges against the pre-trade EWMA estimate
+
+- **Trigger state:** a trade lands at an outlier gas price (congestion spike or
+  trader-chosen gas) on either charging path — mint or live redeem.
+- **Controller:** market — gas price is trader/network-chosen; the protocol only
+  chooses the ordering of charge vs estimate update.
+- **Blast radius:** per-trade fee only (the surcharge is additive and
+  single-user); no shared-path liveness interaction.
+- **Response:** charge first, then fold the observation
+  (`expiry_market::ewma_penalty`) — a deliberate ordering divergence from
+  DeepBook core, which folds first and so tests each observation against a
+  distribution that already contains it.
+- **Reasoning:** detect-then-update is the standard anomaly-test order (the
+  spike is judged against the prior distribution, not diluted by itself), and
+  it makes the public quote surface exact: `quote_mint` /
+  `quote_mint_for_account` compute the same pre-fold penalty a same-state,
+  same-gas-price mint charges. Consequence: the surcharge fires more readily at
+  spike onset than under core's ordering; sustained spikes converge to the same
+  behavior. The first-observation variance-poisoning weakness
+  (`docs/concepts/fees-and-rebates.md` § 4) is unchanged.
+- **Risk profile:** `BEST-GUESS` — spike-onset firing frequency not measured
+  (the penalty is disabled by default).
+- **Pinning tests:** `extreme_first_observation_suppresses_penalty_for_later_trades`
+  (ewma_tests, charge-then-fold narrative),
+  `ewma_penalty_included_in_quote_and_mint_debits_exactly`
+  (quote_mint_tests, nonzero pre-fold penalty quoted and charged identically in
+  one transaction),
+  `quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost`
+  (quote_mint_tests, quote equals the debit with the penalty term at zero).
+- **Reopen when:** the penalty is enabled in production and measured firing
+  rates diverge materially from intent, or a redeem-side quote lands (DBU-513
+  scope) and wants different redeem semantics.
+
+---
+
+## RP-10: Large atomic PTBs are cost-amplified by transaction-level metering — accept + disclose (resolves C-3)
+
+- **Trigger state:** a router, keeper, or integrator builds a large
+  multi-command PTB of leveraged mints/redeems; per-command computation cost
+  grows with command position / accumulated transaction state, so the PTB hits
+  the 5M computation-unit wall far below N × standalone cost.
+- **Controller:** external — Sui's per-transaction metering, not a Predict code
+  path. No contract change alters it; raising the gas budget does not bypass
+  the computation wall.
+- **Blast radius:** the oversized transaction only — it aborts on OOG with no
+  state change; normal one-op user flows are unaffected. The same metering is
+  a cost term inside the mandatory flush PTB, tracked separately under C-1's
+  joint valuation budget.
+- **Response:** accept + disclose (`docs/risks.md` § Batched transactions).
+  Integrators chunk batches instead of assuming linear scaling. Scan-once
+  caching inside Predict was evaluated and rejected as low-yield: the
+  amplification is not primarily Predict's logical work.
+- **Reasoning:** the discriminator run was decisive — a leveraged mint appended
+  after twenty 1x mints (which never write the liquidation book) amplified
+  ~20.2×, ruling out liquidation-book page dirtying; the mechanism is
+  transaction-level command-position accumulation and applies to large
+  multi-command PTBs generally.
+- **Risk profile:** `MEASURED` on localnet (two replicated runs, harness E4):
+  ~110–150 leveraged mints/PTB atomic ceiling; a 100-mint PTB ≈ 68% of the
+  wall. Findings: `evidence/c3-mint-batch-2026-07-01.md`. Magnitude is
+  book- and transaction-shape-dependent — localnet gives mechanism and
+  direction, not a permanent production multiplier; flows designed near the
+  ceiling should measure, not assume.
+- **Pinning tests:** not yet catalogued — platform metering behavior, not
+  pinnable in Move unit tests by nature; the evidence is the harness finding
+  linked above (the `mint-batch` strategy, formerly experiments-ledger E4).
+- **Reopen when:** Sui's metering model changes materially, or a production
+  measurement diverges from the localnet ceiling enough to invalidate the
+  integrator guidance.
+
+---
+
+## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (resolves P-9)
+
+- **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
+  settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
+  `active_stake` read at CLAIM time (`expiry_market.move:763`), and expiry cash stays reserved
+  until each account is resolved.
+- **Controller:** protocol (the resolution path + the app-auth gate) × user (their standing stake
+  and whether they self-claim). The cleanup TRIGGER is permissionless.
+- **Blast radius:** per account (the rebate amount) plus the expiry's reserved cash, released to
+  the pool only as accounts resolve. No shared-path liveness: an unresolved account strands only
+  its own reserve, which is self-correcting (returns to the pool whenever a cleanout runs).
+- **Response:** accept — (a) the rebate is priced at claim-time active stake, and (b) resolution +
+  cash release rely on the permissionless `redeem_settled_permissionless` +
+  `claim_trading_loss_rebate_permissionless` cleanout, which is SELF-INCENTIVIZED (a keeper/MEV bot
+  is paid the storage rebate to run it) rather than on any protocol-run keeper. No contract change;
+  the mint-time stake-snapshot fix is deliberately NOT taken.
+- **Reasoning + evidence:**
+  - The claim-time-stake leak (P-9, now resolved) is structurally unreachable for every current-cadence market:
+    lazy stake activation (`roll_active_stake`, one epoch) means stake added mid-market cannot
+    activate before the promptly-swept claim inside a sub-epoch (1m/5m/1h) market. Even in a
+    hypothetical multi-epoch option the leak is bounded by `rate × fees`, captures at most the
+    discount half of staking (`rate = max_fee_discount = 0.5`), and needs a genuine 100k+ DEEP
+    commitment (retail-excluded). The permissionless claim-to-deny grief has zero payoff under the
+    same gate. `evidence/p9-stake-abuse-2026-07-07.md` (analytical, config-derived).
+  - The cleanout is self-incentivized: MEASURED on localnet, the one-PTB cleanout net gas is
+    negative at every account size (−6.3M MIST at N=1 → −66M MIST at N=20; `net(N) ≈ −3.43M −
+    3.14M·N`) — freeing the settled positions' storage rebates ~3.29M MIST/position against ~0.1M
+    compute. No up-front fee / summary padding needed (E3 min-fee = 0).
+    `evidence/p9-cleanout-gas-2026-07-07.md`.
+  - The self-incentive holds for LIQUIDATED accounts too — the archetypal loser, which takes the
+    `redeem_liquidated_order` path. MEASURED (two-marginal fit, R²=0.999):
+    `net = −3.02M − 4.47M·nLiquidated − 3.19M·nSurvived` MIST — both marginals strongly negative and
+    the per-**liquidated**-position refund (−4.47M) EXCEEDS the per-survivor (−3.19M), because a
+    liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
+    storage) while creating less new storage (zero/floor payout). So the accounts most owed rebates
+    are the most profitable to sweep. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
+  - The rebate CLAIM is self-incentivized on its OWN, not just inside the bundle — so a searcher
+    resolves it even for non-owed (winner) accounts whose owner has no self-claim incentive, releasing
+    their reserve to the pool. MEASURED: standalone `claim_trading_loss_rebate_permissionless` net
+    −0.95M MIST; its in-bundle marginal −2.5M. `evidence/p9-claim-marginal-2026-07-08.md`.
+- **Risk profile:** `MEASURED` — cleanout self-incentive measured on localnet for surviving (5-point
+  sweep), liquidated (two-marginal fit), AND the standalone/marginal rebate claim, 0 fails/retries;
+  the stake-abuse bound is analytical (config + the ~24 h epoch activation gate). Residual: a lagging
+  cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
+  `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
+  `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
+- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477)
+  and `rebate_claim_with_open_position_aborts` (:496) pin the claim preconditions (settled market,
+  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320) and
+  `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
+  over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
+  inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
+  stake read at claim, `expiry_market.move:763`) is not pinned by a dedicated Move assertion — it
+  rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
+  is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
+  Audit provenance: finding 8b5d5f.
+- **Reopen when:** a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
+  (re-measure the late-stake exposure; reconsider snapshotting benefit-relevant stake at mint); OR
+  the settled-redeem storage footprint shrinks / Sui storage pricing drops enough that the cleanout
+  net gas turns positive (re-run the sweep; apply the E3 up-front-fee formula); OR
+  `trading_loss_rebate_rate` is set materially above `max_fee_discount`.
+
+---
+
+## Rounding policy (R1–R3)
+
+Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
+sub-unit dust is economically negligible; the real risk is an off-by-one that
+aborts a transaction and strands funds. The protocol therefore optimizes for
+liveness and a protocol-favored dust bias, not bit-exactness for its own sake.
+
+### R1: Liveness first
+
+Dust must never abort a settlement, redeem, backing, or liability path. Every
+`available - requested` subtraction on those paths must be provably
+non-underflowing: the reserve or liability backing a payout must always be at
+least the amount paid against it. Preferred construction: compute the reserve
+and payout from the same expression; or remove and reinsert exact terms so the
+accounting atoms match bit-for-bit; or, where that is impossible, round the
+reserve up. A `>=` relation that can become `<` by one unit of precision is
+the bug class. R1 covers only dust/ulp underflow — deferred-realization
+shortfall uses defer-and-carry accounting (RP-8), and bootstrap /
+`total_supply == 0` issues need a minimum-liquidity or equivalent structural
+solution.
+
+### R2: Dust is biased to the protocol
+
+When a rounding choice exists, the protocol or LP pool keeps the dust; the
+user or LP counterparty receives at most one unit less. Concretely:
+user-facing outflows round down (redeem, withdraw, payout, rebate);
+protocol-held reserves and liabilities are greater than or equal to the
+corresponding outflow; use bit-equal reserve/payout pairing where possible,
+otherwise round reserves up. Net result: dust accrues to the pool, is never
+stranded, and never causes an abort.
+
+### R3: Document direction and owner
+
+Every money-moving expression names its rounding direction and who owns the
+dust when the expression is not obvious (e.g.
+`// = amount * p / S, round down (user eats <=1 ulp; pool never short).`);
+use `ceil(...)` terminology for round-up paths.
+
+**Applications.** Partial close to settled payout: derive reserve and payout
+from the same order atoms — remove old order terms and reinsert replacement
+terms exactly, so tree reserve equals settled payout with no dust buffer.
+Protocol reserve realization: never bare-split a balance for an amount
+recognized earlier if the backing cash can be redeployed before the split —
+realize `min(pending, available)`, carry the remainder, keep it out of LP
+value (RP-8). NAV and floor correction: round floor correction so it cannot
+overstate recoverable value; one-unit dust biases toward incumbents/the
+protocol, never toward overpaying a withdrawal.
+
+**Audit obligation.** Every money flow is checked against R1 and R2 — mint
+contribution, live redeem, settled payout, liquidation, fees and discounts,
+rebate reserve, LP supply/withdraw pricing, NAV floor correction. If a flow
+can underflow or round toward the user, fix it or document the accepted
+tradeoff explicitly.
+
+---
+
+## Update rules
+
+- New entries come from: closing an `open-items.md` item that embodied a
+  response decision; removing/weakening any guard (mandatory duty-inventory
+  entry); an audit or review finding an undecided state that is then decided.
+- At most one entry resolves a given open item; name the resolved item in the
+  entry title (e.g. "resolves C-3").
+- Every entry must link at least one pinning test, or carry an explicit
+  "not yet catalogued" / "untested — gap" marker. A decision with no pinning
+  test is not enforced and must not be described as shipped behavior in
+  `docs/risks.md`.
+- Audit runs (`predict-audit` skill) must re-verify entries at HEAD — the
+  pinning tests still exist, the code still matches the recorded response,
+  `risks.md` still cites reality — and must not re-flag a registered decision
+  whose reasoning still verifies. Drift between an entry and HEAD is itself a
+  finding.
+- `BEST-GUESS` risk profiles are standing candidates for harness measurement;
+  when a campaign measures one, replace the tag with `MEASURED` and link the
+  dated findings record under `evidence/`.

@@ -47,10 +47,9 @@ fun run_scenario(s: u64) {
         ref_data::tick_size(s),
         test_constants::default_expiry_ms(),
     );
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
-    fx.prepare_real_oracle(
-        &mut bs,
-        &mut pyth,
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
         ref_data::spot(s),
         ref_data::forward(s),
         ref_data::svi_a(s),
@@ -61,7 +60,7 @@ fun run_scenario(s: u64) {
         ref_data::svi_m_magnitude(s),
         ref_data::svi_m_is_negative(s),
     );
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    let pricer = fx.load_pricer_bundle(&oracle);
 
     let points = ref_data::points(s);
     let n = points.length();
@@ -73,7 +72,7 @@ fun run_scenario(s: u64) {
         i = i + 1;
     };
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }
 
@@ -94,9 +93,9 @@ fun real_scenario_small_variance() { run_scenario(2); }
 #[test]
 fun at_the_forward_is_exactly_one_half() {
     let mut fx = oracle_fixture::setup_oracle_default();
-    let (mut pyth, mut bs, oracle_registry, config) = fx.take_oracle();
-    fx.prepare_live_oracle(&mut bs, &mut pyth, test_constants::default_live_price());
-    let pricer = fx.load_pricer(&config, &oracle_registry, &pyth, &bs);
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
 
     let up = pricer.range_price(
         test_constants::default_live_price(),
@@ -105,6 +104,6 @@ fun at_the_forward_is_exactly_one_half() {
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
     assert_eq!(up, math::float_scaling!() / 2);
 
-    oracle_fixture::return_oracle(pyth, bs, oracle_registry, config);
+    oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }

@@ -111,8 +111,16 @@ CONFIG_DIR="$INSTANCE_DIR/localnet"
 CLIENT_CONFIG="$CONFIG_DIR/client.yaml"
 export INSTANCE_DIR
 
+# Per-instance localnet ports so multiple isolated localnets can run concurrently.
+# `sui genesis` randomizes validator/consensus/metrics ports per run; only the fullnode
+# JSON-RPC (9000) and faucet (9123) are fixed, so offsetting just those two isolates an
+# instance. Default offset 0 = the original single-instance ports.
+PORT_OFFSET="${SIM_PORT_OFFSET:-0}"
+RPC_PORT=$((9000 + PORT_OFFSET))
+FAUCET_PORT=$((9123 + PORT_OFFSET))
+
 echo ""
-echo "==> Instance: $INSTANCE_ID"
+echo "==> Instance: $INSTANCE_ID (rpc :$RPC_PORT, faucet :$FAUCET_PORT)"
 echo ""
 
 cleanup_generated() {
@@ -198,7 +206,7 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
+  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$DUSDC_DIR/Move.lock" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
   for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$FIXED_MATH_DIR/Published.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
@@ -319,14 +327,23 @@ rm -rf "$CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
 $SUI genesis --force --working-dir "$CONFIG_DIR"
 
+# Per-instance ports for concurrent localnets: set the fullnode RPC via --fullnode-rpc-port
+# (overrides the config's 9000) and the faucet via --with-faucet. The swarm/validator/
+# consensus ports are genesis-assigned and DISJOINT between runs, so nothing else needs
+# offsetting. Only client.yaml's RPC url must follow so the sui CLI talks to this instance.
+# (Confirmed: two localnets coexist this way; rewriting the swarm config / genesis .blob does NOT.)
+if [ "$PORT_OFFSET" -ne 0 ]; then
+  perl -i -pe "s/:9000/:${RPC_PORT}/g" "$CLIENT_CONFIG"
+fi
+
 # --- 2. Start localnet ---
 echo "==> Starting localnet..."
-$SUI start --network.config "$CONFIG_DIR" --with-faucet &
+$SUI start --network.config "$CONFIG_DIR" --fullnode-rpc-port $RPC_PORT --with-faucet=$FAUCET_PORT &
 SUI_PID=$!
 
 echo -n "    Waiting for RPC"
 for i in $(seq 1 30); do
-  if curl -s http://127.0.0.1:9000 -X POST -H 'Content-Type: application/json' \
+  if curl -s http://127.0.0.1:$RPC_PORT -X POST -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"sui_getLatestCheckpointSequenceNumber","params":[]}' \
     2>/dev/null | grep -q result; then
     echo " ready!"
@@ -343,7 +360,7 @@ done
 
   echo -n "    Waiting for faucet"
   for i in $(seq 1 30); do
-    curl -s http://127.0.0.1:9123/ >/dev/null 2>&1 && { echo " ready!"; break; }
+    curl -s http://127.0.0.1:$FAUCET_PORT/ >/dev/null 2>&1 && { echo " ready!"; break; }
     echo -n "."
     sleep 1
     [ "$i" -eq 30 ] && echo " TIMEOUT"
@@ -351,7 +368,7 @@ done
 
   echo "==> Requesting faucet (2x)..."
   for _ in 1 2; do
-    curl -s -X POST http://127.0.0.1:9123/v1/gas \
+    curl -s -X POST http://127.0.0.1:$FAUCET_PORT/v1/gas \
       -H 'Content-Type: application/json' \
       -d "{\"FixedAmountRequest\":{\"recipient\":\"$ACTIVE_ADDR\"}}" || true
     echo ""
@@ -359,7 +376,7 @@ done
   done
   sleep 1
 
-  CHAIN_ID=$(curl -s http://127.0.0.1:9000 -X POST -H 'Content-Type: application/json' \
+  CHAIN_ID=$(curl -s http://127.0.0.1:$RPC_PORT -X POST -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"sui_getChainIdentifier","params":[]}' | \
     python3 -c "import json,sys; print(json.load(sys.stdin)['result'])")
   echo "    Chain ID: $CHAIN_ID"
@@ -400,6 +417,7 @@ done
   # Publish dusdc
   echo "==> Phase 2: Publishing dusdc..."
   inject_env "$DUSDC_DIR/Move.toml" "$CHAIN_ID"
+  cp "$DUSDC_DIR/Move.lock" "$DUSDC_DIR/Move.lock.bak"
 
   DUSDC_OUTPUT=$(publish_package "$DUSDC_DIR" "DUSDC")
   check_publish "$DUSDC_OUTPUT" "DUSDC"
@@ -428,7 +446,7 @@ done
   mv "$FIXED_MATH_DIR/Move.toml.bak" "$FIXED_MATH_DIR/Move.toml"
 
   # Publish block_scholes_oracle (stub BS signed-data verifier; leaf, no deps).
-  # Consumed by both propbook (block_scholes_feed::update) and predict test fixtures.
+  # Consumed by propbook's split BS feed updates and predict test fixtures.
   echo "==> Phase 2a2: Publishing block_scholes_oracle..."
   inject_env "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$CHAIN_ID"
   cp "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock.bak"
@@ -684,7 +702,7 @@ LOCAL_PYTH_SIGNER_PRIVATE_KEY=$LOCAL_PYTH_SIGNER_PRIVATE_KEY
 LOCAL_PYTH_SIGNER_PUBLIC_KEY=$LOCAL_PYTH_SIGNER_PUBLIC_KEY
 LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS=$LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS
 ACTIVE_ADDRESS=$ACTIVE_ADDR
-RPC_URL=http://127.0.0.1:9000
+RPC_URL=http://127.0.0.1:$RPC_PORT
 KEYSTORE_PATH=$CONFIG_DIR/sui.keystore
 EOF
   echo "==> Wrote .env.localnet"

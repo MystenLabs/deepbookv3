@@ -23,6 +23,7 @@ use sui::table::{Self, Table};
 const EPositionAlreadyExists: u64 = 0;
 const EPositionNotFound: u64 = 1;
 const EInsufficientPosition: u64 = 2;
+const EExpirySummaryHasOpenPositions: u64 = 3;
 
 /// App witness that namespaces Predict's data slot on an `Account`. Only this
 /// module can construct it, so only Predict can write its own slot.
@@ -34,24 +35,44 @@ public struct PositionKey has copy, drop, store {
     order_id: u256,
 }
 
+/// Per-position state stored under a `PositionKey`.
+public struct Position has store {
+    /// Root order ID, carried forward unchanged across partial-close replacements.
+    root_id: u256,
+    /// On-chain time (`clock.timestamp_ms()`) the position was opened, carried
+    /// forward unchanged across partial-close replacements. A live redeem in the
+    /// same timestamp is rejected, blocking an atomic mint -> oracle-update ->
+    /// redeem in one transaction.
+    opened_at_ms: u64,
+}
+
 /// Aggregate trading cash flow and open-position count for one expiry market.
 public struct ExpiryTradingSummary has store {
     open_position_count: u64,
     trading_fees_paid: u64,
+    gross_paid_to_expiry: u64,
+    gross_received_from_expiry: u64,
+}
+
+/// Resolved trading-loss-rebate inputs for one fully-closed expiry: the fees the
+/// account paid into the expiry and its realized gross profit, returned together
+/// so the rebate flow reads them by name.
+public struct ResolvedExpirySummary has drop {
+    fees_paid: u64,
+    gross_profit: u64,
 }
 
 /// Predict's per-account state, attached to an `Account` under `PredictApp`.
 public struct PredictData has store {
-    /// Open positions scoped by expiry market; the value is the position's root
-    /// order ID, carried forward unchanged across partial-close replacements.
-    positions: Table<PositionKey, u256>,
+    /// Open positions scoped by expiry market.
+    positions: Table<PositionKey, Position>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// DEEP staked and active for trading benefits, in raw units. Custody is
     /// pooled in `PoolVault`; this is this account's active share.
     active_stake: u64,
     /// DEEP staked this epoch, not yet active; rolls into `active_stake` on the
-    /// first discount-bearing interaction in a later epoch (`active_stake_mut`).
+    /// first discount-bearing interaction in a later epoch (`roll_active_stake`).
     inactive_stake: u64,
     /// Epoch the active/inactive split was last reconciled in.
     stake_epoch: u64,
@@ -143,20 +164,36 @@ public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
     registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
 }
 
+/// Return the on-chain time (`clock.timestamp_ms()`) a held position was opened.
+/// Carried forward unchanged across partial-close replacements.
+public(package) fun position_opened_at_ms(
+    account: &Account,
+    expiry_market_id: ID,
+    order_id: u256,
+): u64 {
+    let d = data(account);
+    let key = position_key(expiry_market_id, order_id);
+    assert!(d.positions.contains(key), EPositionNotFound);
+    d.positions[key].opened_at_ms
+}
+
 /// Add an order position keyed to its root order ID. At mint the root equals the
 /// order's own ID; a partial-close replacement passes the parent's root forward.
+/// `opened_at_ms` is the original open time, also carried forward unchanged.
 public(package) fun add_position(
     account: &mut Account,
     expiry_market_id: ID,
     order_id: u256,
     position_root_id: u256,
+    opened_at_ms: u64,
     ctx: &mut TxContext,
 ) {
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(!d.positions.contains(key), EPositionAlreadyExists);
-    d.positions.add(key, position_root_id);
-    let summary = d.summary_mut(expiry_market_id);
+    d.positions.add(key, Position { root_id: position_root_id, opened_at_ms });
+    d.ensure_summary(expiry_market_id);
+    let summary = &mut d.expiry_summaries[expiry_market_id];
     summary.open_position_count = summary.open_position_count + 1;
 }
 
@@ -170,11 +207,12 @@ public(package) fun remove_position(
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
-    let position_root_id = d.positions.remove(key);
-    let summary = d.summary_mut(expiry_market_id);
+    let Position { root_id, opened_at_ms: _ } = d.positions.remove(key);
+    d.ensure_summary(expiry_market_id);
+    let summary = &mut d.expiry_summaries[expiry_market_id];
     assert!(summary.open_position_count > 0, EInsufficientPosition);
     summary.open_position_count = summary.open_position_count - 1;
-    position_root_id
+    root_id
 }
 
 /// Record pool trading fees paid by this account for one expiry market.
@@ -185,13 +223,77 @@ public(package) fun record_trading_fee_paid(
     ctx: &mut TxContext,
 ) {
     if (amount == 0) return;
-    let summary = data_mut(account, ctx).summary_mut(expiry_market_id);
+    let d = data_mut(account, ctx);
+    d.ensure_summary(expiry_market_id);
+    let summary = &mut d.expiry_summaries[expiry_market_id];
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
+}
+
+/// Record DUSDC paid for positions in one expiry, excluding trading and builder fees.
+public(package) fun record_gross_paid_to_expiry(
+    account: &mut Account,
+    expiry_market_id: ID,
+    amount: u64,
+    ctx: &mut TxContext,
+) {
+    if (amount == 0) return;
+    let d = data_mut(account, ctx);
+    d.ensure_summary(expiry_market_id);
+    let summary = &mut d.expiry_summaries[expiry_market_id];
+    summary.gross_paid_to_expiry = summary.gross_paid_to_expiry + amount;
+}
+
+/// Record gross DUSDC payout from one expiry before redeem fees are deducted.
+public(package) fun record_gross_received_from_expiry(
+    account: &mut Account,
+    expiry_market_id: ID,
+    amount: u64,
+    ctx: &mut TxContext,
+) {
+    if (amount == 0) return;
+    let d = data_mut(account, ctx);
+    d.ensure_summary(expiry_market_id);
+    let summary = &mut d.expiry_summaries[expiry_market_id];
+    summary.gross_received_from_expiry = summary.gross_received_from_expiry + amount;
+}
+
+/// Remove and return the resolved trading-loss-rebate inputs once all positions close.
+public(package) fun resolve_expiry_summary(
+    account: &mut Account,
+    expiry_market_id: ID,
+): ResolvedExpirySummary {
+    if (!account.has_data<PredictApp>()) {
+        return ResolvedExpirySummary { fees_paid: 0, gross_profit: 0 }
+    };
+    let d = account.borrow_data_mut<PredictApp, PredictData>(permit<PredictApp>());
+    if (!d.expiry_summaries.contains(expiry_market_id)) {
+        return ResolvedExpirySummary { fees_paid: 0, gross_profit: 0 }
+    };
+    assert!(
+        d.expiry_summaries[expiry_market_id].open_position_count == 0,
+        EExpirySummaryHasOpenPositions,
+    );
+    let ExpiryTradingSummary {
+        open_position_count: _,
+        trading_fees_paid,
+        gross_paid_to_expiry,
+        gross_received_from_expiry,
+    } = d.expiry_summaries.remove(expiry_market_id);
+    let gross_profit = gross_received_from_expiry.saturating_sub(gross_paid_to_expiry);
+    ResolvedExpirySummary { fees_paid: trading_fees_paid, gross_profit }
+}
+
+public(package) fun fees_paid(summary: &ResolvedExpirySummary): u64 {
+    summary.fees_paid
+}
+
+public(package) fun gross_profit(summary: &ResolvedExpirySummary): u64 {
+    summary.gross_profit
 }
 
 /// Roll inactive stake into active if needed, then return the active amount for
 /// protocol execution paths that apply stake discounts.
-public(package) fun active_stake_mut(account: &mut Account, ctx: &mut TxContext): u64 {
+public(package) fun roll_active_stake(account: &mut Account, ctx: &mut TxContext): u64 {
     let epoch = ctx.epoch();
     let d = data_mut(account, ctx);
     if (d.stake_epoch != epoch) {
@@ -245,14 +347,18 @@ fun position_key(expiry_market_id: ID, order_id: u256): PositionKey {
     PositionKey { expiry_market_id, order_id }
 }
 
-fun summary_mut(d: &mut PredictData, expiry_market_id: ID): &mut ExpiryTradingSummary {
+fun ensure_summary(d: &mut PredictData, expiry_market_id: ID) {
     if (!d.expiry_summaries.contains(expiry_market_id)) {
         d
             .expiry_summaries
             .add(
                 expiry_market_id,
-                ExpiryTradingSummary { open_position_count: 0, trading_fees_paid: 0 },
+                ExpiryTradingSummary {
+                    open_position_count: 0,
+                    trading_fees_paid: 0,
+                    gross_paid_to_expiry: 0,
+                    gross_received_from_expiry: 0,
+                },
             );
     };
-    &mut d.expiry_summaries[expiry_market_id]
 }

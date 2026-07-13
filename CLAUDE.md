@@ -21,37 +21,36 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 ## Context Routing
 
-**These rule files are NOT auto-loaded.** The `paths:` frontmatter on each rule file is a machine-readable map for a `UserPromptSubmit` hook — but unless that hook is configured in `.claude/settings.json`, nothing loads these for you. **Before editing a file under one of these globs, open and read the matching rule file yourself.** Manual-trigger rules must likewise be read when the request matches.
+**Do not assume these rule files are in your context.** Recent Claude Code versions natively inject a path-scoped rule file (via its `paths:` frontmatter) when you touch a matching file, but treat that as a best-effort assist — other agents (Codex) and older harnesses get no injection. **Before editing a file under one of these globs, make sure you have the matching rule file's content — read it yourself if it was not injected.** Manual-trigger rules must always be read explicitly when the request matches.
 
 ### Path-Scoped Rules — read before editing files under the glob
 
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
+- **Predict-cluster contracts** (`packages/{predict,propbook,block_scholes_oracle,account}/**/*.move`) → `.claude/rules/predict-contracts.md` *(also read `move.md`)*
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
-- **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
-- **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md`
-- **Predict indexer** (`crates/predict-{server,schema,indexer}/**`) → `.claude/rules/predict-indexer.md` *(also read `indexer.md` for shared operational gotchas)*
+- **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
+- **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md` *(thin stub — retires when the core crates migrate)*
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 
 ### Manual-Trigger Rules — read when the request matches
 
-- **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict protocol review it routes you on to the `.claude/predict-review/` lenses + `rule-auditor.md`)
+- **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict smart-contract audit, invoke the `predict-audit` skill — `.claude/skills/predict-audit/` — which fans the lenses out via `orchestrator.workflow.js`, with `ownership-walk.workflow.js` + `rule-sweep.workflow.js` for per-module + per-rule conformance audits)
 - **Wrap-up requests** → `.claude/rules/wrap-up.md`
+- **Add / build a harness strategy** → `.claude/rules/harness-strategy.md` (engage when the user wants to add a Predict harness strategy or test a scenario in the harness)
 
-When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`.
+When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`. When the user wants to add or build a harness strategy (e.g. "I want to add a harness strategy"), follow `.claude/rules/harness-strategy.md`.
 
 ## Predict Design State
 
 Predict (`packages/predict/**`) is the most design-heavy surface, and most decisions here are already settled. **Before proposing or changing any Predict economics** (NAV/backing, rounding, oracle trust, liquidation, order-id/tick encoding, floor/leverage, supply/withdraw):
 
-- **grep `.claude/predict-design/DECISION_JOURNAL.md` and `HISTORY.md`** for prior rulings first. Never re-open a `rejected` decision unless its `don't-revisit-unless` condition is met.
-- The **landed** state + the current settled-decision list live in `AGENTS.md` ("Predict Rework — LANDED" + "Settled design decisions") — read that block, since Claude does not auto-load `AGENTS.md`. The async NAV/LP + tick re-encode + oracle-extraction rework has shipped on this branch, so `DECISION_JOURNAL.md`'s pre-rework LP/NAV/backing entries (e.g. D024/D030 Σ/λ backing) are **superseded** by the landed exact-`current_nav` design — treat them as history. `.redesign/ASYNC_NAV_REDESIGN.md` is the design rationale for that landed system.
-- Design docs are **leads to verify against current HEAD**, not ground truth. Ground truth = Move source + git + `sui move test`.
-
-@.claude/predict-design/ROUNDING_POLICY.md
+- **Start at the system map** — `packages/predict/predeploy/README.md` (surfaces, authority order, lifecycle loops). The settled record is `AGENTS.md` ("Predict Rework — LANDED" + settled decisions + **rejected directions**) plus `packages/predict/predeploy/{open-items,response-policies,rounding-policy}.md`. Never re-litigate a rejected direction unless its stated condition is met; check `response-policies.md` before adding, removing, or weakening any guard.
+- **The floor model is static-floor knockout** (`floor_shares` = static `F`; no `floor_index`/`terminal_floor_index`; winner = `quantity - floor_shares`; knock-out at `floor_amount / liquidation_ltv`). The exact `current_nav` mark superseded the pre-rework NAV/valuation designs (band/haircut/fee/valuation-pass). The **backing reserve** (D030 floor + λ-buffer, `backing_buffer_lambda`) is a **separate axis** from NAV valuation. Any old text describing a rising / time-varying floor is stale.
+- `.claude/predict-design/` and `.redesign/` are **personal scratch only** (working logs, raw generated audit output) — nothing load-bearing lives there. Design docs anywhere are **leads to verify against current HEAD**, not ground truth. Ground truth = Move source + git + `sui move test`.
 
 ## Predict Build & Verify
 
-A hard guardrail (documented in DECISION_JOURNAL D004): run every `sui move build` / `sui move test` **in the main loop, never inside a subagent** — long tests trip the 600s watchdog and the run is lost. Check the **real** exit code via `${PIPESTATUS[0]}` or by grepping the output for `error` / `Test result:`; **never pipe build/test through `tail`** (it reports tail's exit code, masking a build failure). Build Predict with `sui move build --path packages/predict --warnings-are-errors`.
+A hard guardrail: run every `sui move build` / `sui move test` **in the main loop, never inside a subagent** — long tests trip the 600s watchdog and the run is lost. Check the **real** exit code via `${PIPESTATUS[0]}` or by grepping the output for `error` / `Test result:`; **never pipe build/test through `tail`** (it reports tail's exit code, masking a build failure). Build Predict with `sui move build --path packages/predict --warnings-are-errors`.
 
 **Important:** Update rule files when discovering new insights during sessions, including:
 - Bug fixes and their root causes
@@ -64,13 +63,17 @@ A hard guardrail (documented in DECISION_JOURNAL D004): run every `sui move buil
 ## PR Descriptions
 
 When asked for a PR summary/description, or when creating a PR, always use this format:
-- **Summary**: Bullet points describing what changed and why
+- **Summary**: Bullet points describing what changed
+- **Why**: Bullet points describing why the PR exists: the problem, pressure, or intent behind the change; do not repeat the summary
 - **Test plan**: Checklist of manual or automated verification steps
 
 When creating a PR with `gh pr create`, always ask the user for a branch name before creating the branch. Format the body as:
 ```
 ## Summary
 - <bullet points>
+
+## Why
+- <why this PR exists: problem, pressure, or intent>
 
 ## Key decisions
 - <decisions that teammates should know about: trade-offs, design choices, why something was done a certain way>

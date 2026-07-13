@@ -9,25 +9,27 @@ module deepbook_predict::config_constants;
 
 const EInvalidBaseFee: u64 = 0;
 const EInvalidMinFee: u64 = 1;
-const EInvalidMinAskPrice: u64 = 2;
-const EInvalidMaxAskPrice: u64 = 3;
+const EInvalidMinEntryProbability: u64 = 2;
+const EInvalidMaxEntryProbability: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
-const EInvalidBlockScholesSurfaceFreshnessMs: u64 = 5;
-const EInvalidProtocolReserveProfitShare: u64 = 7;
-const EInvalidTradingLossRebateRate: u64 = 14;
-const EInvalidTerminalFloorIndex: u64 = 15;
-const EInvalidExpiryFeeWindowMs: u64 = 16;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
-const EInvalidLowerBenefitPower: u64 = 18;
-const EInvalidUpperBenefitPower: u64 = 19;
-const EInvalidBenefitPowers: u64 = 20;
-const EInvalidTradeLiquidationBudget: u64 = 22;
-const EInvalidLiquidationLtv: u64 = 23;
-const EInvalidMarketTickSize: u64 = 24;
-const EInvalidEwmaAlpha: u64 = 26;
-const EInvalidEwmaZScoreThreshold: u64 = 27;
-const EInvalidEwmaPenaltyRate: u64 = 28;
-const EInvalidBackingBufferLambda: u64 = 29;
+const EInvalidBlockScholesPriceFreshnessMs: u64 = 5;
+const EInvalidProtocolReserveProfitShare: u64 = 6;
+const EInvalidTradingLossRebateRate: u64 = 7;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
+const EInvalidExpiryFeeWindowMs: u64 = 9;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
+const EInvalidLowerBenefitPower: u64 = 11;
+const EInvalidUpperBenefitPower: u64 = 12;
+const EInvalidTradeLiquidationBudget: u64 = 13;
+const EInvalidLiquidationLtv: u64 = 14;
+const EInvalidMarketTickSize: u64 = 15;
+const EInvalidEwmaAlpha: u64 = 16;
+const EInvalidEwmaZScoreThreshold: u64 = 17;
+const EInvalidEwmaPenaltyRate: u64 = 18;
+const EInvalidBackingBufferLambda: u64 = 19;
+const EInvalidMaxAdmissionLeverage: u64 = 20;
+const EInvalidCadenceWindowSize: u64 = 21;
+const EMarketTickSizeTooLarge: u64 = 22;
 
 // === Fees ===
 
@@ -62,22 +64,7 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     );
 }
 
-// === Floor Index, Backing, and Liquidation ===
-
-public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
-public(package) macro fun min_terminal_floor_index(): u64 {
-    fixed_math::math::float_scaling!()
-}
-public(package) macro fun max_terminal_floor_index(): u64 {
-    2 * fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_terminal_floor_index(value: u64) {
-    assert!(
-        value >= min_terminal_floor_index!() && value <= max_terminal_floor_index!(),
-        EInvalidTerminalFloorIndex,
-    );
-}
+// === Backing and Liquidation ===
 
 public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
 public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
@@ -89,6 +76,31 @@ public(package) fun assert_liquidation_ltv(value: u64) {
         EInvalidLiquidationLtv,
     );
 }
+
+/// Global admission-leverage cap snapshotted by future expiry markets. Mint
+/// admission scales this cap down for low-probability contracts.
+public(package) macro fun default_max_admission_leverage(): u64 {
+    3 * fixed_math::math::float_scaling!()
+}
+public(package) macro fun min_max_admission_leverage(): u64 {
+    fixed_math::math::float_scaling!()
+}
+public(package) macro fun max_max_admission_leverage(): u64 {
+    10 * fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_max_admission_leverage(value: u64) {
+    assert!(
+        value >= min_max_admission_leverage!()
+            && value <= max_max_admission_leverage!(),
+        EInvalidMaxAdmissionLeverage,
+    );
+}
+
+/// Shape parameter for the admission curve:
+/// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
+/// while still approaching the configured cap smoothly as probability rises.
+public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
@@ -123,10 +135,14 @@ public(package) fun assert_min_fee(value: u64) {
 
 /// Window before expiry over which trade fees ramp up to the per-expiry max
 /// multiplier. Five minutes is the shortest admin-tunable window.
-public(package) macro fun default_expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
-public(package) macro fun min_expiry_fee_window_ms(): u64 { 5 * 60 * 1000 }
+public(package) macro fun default_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::one_day_ms!()
+}
+public(package) macro fun min_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::five_minutes_ms!()
+}
 public(package) macro fun max_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::ms_per_year!()
+    deepbook_predict::constants::one_year_ms!()
 }
 
 public(package) fun assert_expiry_fee_window_ms(value: u64) {
@@ -165,33 +181,49 @@ public(package) fun assert_market_tick_size_bounds(value: u64) {
     // normal market tick sizes are far below it.
     assert!(
         value <= std::u64::max_value!() / deepbook_predict::constants::pos_inf_tick!(),
-        EInvalidMarketTickSize,
+        EMarketTickSizeTooLarge,
     );
 }
 
-public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
-public(package) macro fun min_min_ask_price(): u64 { 0 }
-public(package) macro fun max_min_ask_price(): u64 {
+public(package) macro fun max_cadence_window_size(): u64 { 10 }
+
+public(package) fun assert_cadence_window_size(value: u64) {
+    assert!(value <= max_cadence_window_size!(), EInvalidCadenceWindowSize);
+}
+
+public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
+public(package) macro fun min_min_entry_probability(): u64 { 0 }
+public(package) macro fun max_min_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun assert_min_ask_price(value: u64) {
-    assert!(value >= min_min_ask_price!() && value <= max_min_ask_price!(), EInvalidMinAskPrice);
+public(package) fun assert_min_entry_probability(value: u64) {
+    assert!(
+        value >= min_min_entry_probability!()
+            && value <= max_min_entry_probability!(),
+        EInvalidMinEntryProbability,
+    );
 }
 
-public(package) macro fun default_max_ask_price(): u64 { 990_000_000 }
-public(package) macro fun min_max_ask_price(): u64 { 0 }
-public(package) macro fun max_max_ask_price(): u64 {
+public(package) macro fun default_max_entry_probability(): u64 { 990_000_000 }
+public(package) macro fun min_max_entry_probability(): u64 { 0 }
+public(package) macro fun max_max_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun assert_max_ask_price(value: u64) {
-    assert!(value >= min_max_ask_price!() && value <= max_max_ask_price!(), EInvalidMaxAskPrice);
+public(package) fun assert_max_entry_probability(value: u64) {
+    assert!(
+        value >= min_max_entry_probability!()
+            && value <= max_max_entry_probability!(),
+        EInvalidMaxEntryProbability,
+    );
 }
 
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
-public(package) macro fun max_pyth_spot_freshness_ms(): u64 { 60_000 }
+public(package) macro fun max_pyth_spot_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
 
 public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     assert!(
@@ -200,18 +232,31 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-// One Block Scholes surface row carries spot + forward + SVI written together, so
-// a single freshness window covers the whole surface (was a separate price and
-// SVI window before the oracle moved to per-expiry surfaces).
-public(package) macro fun default_block_scholes_surface_freshness_ms(): u64 { 3_000 }
-public(package) macro fun min_block_scholes_surface_freshness_ms(): u64 { 1 }
-public(package) macro fun max_block_scholes_surface_freshness_ms(): u64 { 60_000 }
+public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 3_000 }
+public(package) macro fun min_block_scholes_price_freshness_ms(): u64 { 1 }
+public(package) macro fun max_block_scholes_price_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
 
-public(package) fun assert_block_scholes_surface_freshness_ms(value: u64) {
+public(package) fun assert_block_scholes_price_freshness_ms(value: u64) {
     assert!(
-        value >= min_block_scholes_surface_freshness_ms!()
-            && value <= max_block_scholes_surface_freshness_ms!(),
-        EInvalidBlockScholesSurfaceFreshnessMs,
+        value >= min_block_scholes_price_freshness_ms!()
+            && value <= max_block_scholes_price_freshness_ms!(),
+        EInvalidBlockScholesPriceFreshnessMs,
+    );
+}
+
+public(package) macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
+public(package) macro fun min_block_scholes_svi_freshness_ms(): u64 { 1 }
+public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
+
+public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
+    assert!(
+        value >= min_block_scholes_svi_freshness_ms!()
+            && value <= max_block_scholes_svi_freshness_ms!(),
+        EInvalidBlockScholesSVIFreshnessMs,
     );
 }
 
@@ -313,14 +358,4 @@ public(package) fun assert_upper_benefit_power(value: u64) {
         value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
         EInvalidUpperBenefitPower,
     );
-}
-
-/// Validate both benefit thresholds together. The upper segment must require
-/// strictly more stake than the lower one: `upper - lower > lower`, i.e.
-/// `upper > 2 * lower` (which also guarantees `upper > lower`, so the curve's
-/// `upper - lower` denominator is positive).
-public(package) fun assert_benefit_powers(lower: u64, upper: u64) {
-    assert_lower_benefit_power(lower);
-    assert_upper_benefit_power(upper);
-    assert!(upper > 2 * lower, EInvalidBenefitPowers);
 }

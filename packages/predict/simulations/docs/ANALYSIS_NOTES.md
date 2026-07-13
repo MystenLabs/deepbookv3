@@ -1,9 +1,7 @@
 # Predict Simulation Analysis Notes
 
 This document captures **economic** observations from local simulation runs. It is
-not a runner manual; operational details live in `README.md`. For
-**gas/performance** experiments (contract changes measured for gas, run-to-run
-comparisons, perf hypotheses), see `GAS_EXPERIMENTS.md`.
+not a runner manual; operational details live in `README.md`.
 
 ## Directional Accumulation
 
@@ -43,8 +41,8 @@ faster than accumulated fees.
 Random direction count is not the same as balanced economic exposure.
 
 -   Accepted mints are filtered. The generator retries failed rows, and failed
-    rows can depend on side, strike, fee bounds, leverage tier, liquidation entry
-    guard, terminal LTV guard, and available manager cash.
+    rows can depend on side, strike, fee bounds, dynamic admission leverage,
+    liquidation entry guard, and available manager cash.
 -   Spend-based sizing amplifies probability differences. For the same target
     spend, cheaper contracts receive more quantity.
 -   Redeems and liquidations are path-dependent. The final open book is the
@@ -79,11 +77,13 @@ skews became large exposure skews.
 `chart_market_overview.png` uses live pre-terminal vault PnL:
 
 ```text
-active expiry value - pending protocol profit exclusion - expiry funding basis
+active expiry value - protocol profit exclusion - expiry funding basis
 ```
 
-Fees and realized cash movements are included, but the chart is still a live
-mark. It can fall sharply when liability reprices faster than fees accumulate.
+The protocol profit exclusion includes both the unmaterialized reserve share and
+any carried pending protocol profit. Fees and realized cash movements are
+included, but the chart is still a live mark. It can fall sharply when liability
+reprices faster than fees accumulate.
 
 In the old split-balance `may29-1738` run, the hour 19-20 drop was mostly
 liability repricing:
@@ -134,8 +134,8 @@ The bounded liquidation scan sorts active leveraged orders by packed `order_id`.
 An offline priority search over the `may29-1738` long-run backlog samples found
 that a quantity-first packed layout captured more liquidatable value than the
 previous leverage-first layout. The current protocol layout is
-`quantity_lots desc > floor_shares desc > opened_at_ms asc >
-lower_boundary_index asc > higher_boundary_index asc > sequence asc`.
+`quantity_lots desc > floor_shares desc > lower_tick asc > higher_tick asc >
+sequence asc`.
 
 The useful interpretation is that order size was the strongest immutable proxy
 for value-at-risk in that run. Higher leverage still matters, but using it as the

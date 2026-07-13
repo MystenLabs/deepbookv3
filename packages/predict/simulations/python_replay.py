@@ -19,7 +19,7 @@ from python_indexes.strike_payout_tree import StrikePayoutTree
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v2"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 ORACLE_REFRESH_FIELDS = (
@@ -38,31 +38,32 @@ ORACLE_REFRESH_FIELDS = (
 # these only when the corresponding localnet setup is intentionally extended.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
-MIN_ASK_PRICE = 10_000_000
-MAX_ASK_PRICE = 990_000_000
+MIN_ENTRY_PROBABILITY = 10_000_000
+MAX_ENTRY_PROBABILITY = 990_000_000
 # Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
 # tick * tick_size`, no centered grid. Finite ticks occupy 1..POS_INF_TICK-1; tick
 # 0 is the neg-inf sentinel (lower side) and POS_INF_TICK is the pos-inf sentinel
 # (higher side). The on-chain pos-inf raw strike sentinel is u64::MAX.
 ORACLE_TICK_SIZE = FLOAT_SCALING
-TICK_BITS = 24
+ADMISSION_TICK_SIZE = ORACLE_TICK_SIZE
+TICK_BITS = 30
 POS_INF_TICK = (1 << TICK_BITS) - 1
 NEG_INF_STRIKE = 0
 POS_INF_STRIKE = (1 << 64) - 1  # constants::pos_inf!() == u64::MAX
 # The raw-strike bounds of the finite tick domain, used only to construct the
 # payout tree (which is keyed by raw strikes = tick*tick_size). These are fixed
 # constants now — there is NO centered grid derived from the first spot, so they
-# are known before any row runs (no configure_oracle_grid step).
+# are known before any row runs.
 ORACLE_MIN_STRIKE = 1 * ORACLE_TICK_SIZE
 ORACLE_MAX_STRIKE = (POS_INF_TICK - 1) * ORACLE_TICK_SIZE
-MIN_ORDER_PRINCIPAL = 1_000_000
+MIN_NET_PREMIUM = 1_000_000
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
 INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
-EXPIRY_CASH_FLOOR = 50_000 * DUSDC_DECIMALS
+INITIAL_EXPIRY_CASH = 50_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
-MAX_EXPIRY_FUNDING = 250_000 * DUSDC_DECIMALS
+MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
 TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
@@ -77,17 +78,11 @@ TERMINAL_REBATE_FRACTION = 0
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
-# Floor-index model for Python-only observability. Normal parity replay keeps a
-# flat index to match localnet's far-future expiry; long replay uses source
-# timestamps and settlement data from scenario_config.json.
-LEVERAGE_FLOOR_WINDOW_MS = 31_536_000_000  # 365 days, core/constants.move
-LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD = 100_000_000  # 0.10, core/constants.move
-LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD = 200_000_000  # 0.20, core/constants.move
-MAX_EXPIRY_FLOOR_PREMIUM = 200_000_000  # 0.20, default_max_expiry_floor_premium
+# Dynamic mint-admission cap. Actual liquidation still uses LIQUIDATION_LTV.
+MAX_ADMISSION_LEVERAGE = 3_000_000_000  # 3x, default_max_admission_leverage
+ADMISSION_LEVERAGE_CURVE_K = 200_000_000  # 0.20, admission_leverage_curve_k
 LIQUIDATION_LTV = 850_000_000  # 0.85, default_liquidation_ltv
-BORROW_STEP_DT_MS: int | None = None  # None => window / total_steps (a full 0->1 phase sweep)
 GLOBAL_OBSERVABILITY_INTERVAL = 10
-TERMINAL_FLOOR_INDEX = FLOAT_SCALING + MAX_EXPIRY_FLOOR_PREMIUM
 LEVERAGE_ONE_X = 1_000_000_000
 LEVERAGE_ONE_AND_HALF_X = 1_500_000_000
 LEVERAGE_TWO_X = 2_000_000_000
@@ -154,22 +149,22 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global INITIAL_TOTAL_PLP_SUPPLY
     global BASE_FEE
     global MIN_FEE
-    global MIN_ASK_PRICE
-    global MAX_ASK_PRICE
+    global MIN_ENTRY_PROBABILITY
+    global MAX_ENTRY_PROBABILITY
     global TRADE_LIQUIDATION_BUDGET
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
     global CURVE_SAMPLES
     global PROTOCOL_RESERVE_PROFIT_SHARE
     global TRADING_LOSS_REBATE_RATE
+    global MAX_EXPIRY_ALLOCATION
+    global INITIAL_EXPIRY_CASH
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global BACKING_BUFFER_LAMBDA
-    global LEVERAGE_FLOOR_WINDOW_MS
-    global MAX_EXPIRY_FLOOR_PREMIUM
+    global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
-    global TERMINAL_FLOOR_INDEX
 
     capital_mode = "long" if long_run else "normal"
     VAULT_SEED = _capital_int(config, capital_mode, "vault_seed", VAULT_SEED)
@@ -178,8 +173,18 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
 
     BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
     MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
-    MIN_ASK_PRICE = _config_int(config, "protocol", "min_ask_price", MIN_ASK_PRICE)
-    MAX_ASK_PRICE = _config_int(config, "protocol", "max_ask_price", MAX_ASK_PRICE)
+    MIN_ENTRY_PROBABILITY = _config_int(
+        config,
+        "protocol",
+        "min_entry_probability",
+        MIN_ENTRY_PROBABILITY,
+    )
+    MAX_ENTRY_PROBABILITY = _config_int(
+        config,
+        "protocol",
+        "max_entry_probability",
+        MAX_ENTRY_PROBABILITY,
+    )
     TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
     VALUATION_LIQUIDATION_BUDGET = _config_int(
         config,
@@ -206,6 +211,18 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
     )
+    MAX_EXPIRY_ALLOCATION = _config_int(
+        config,
+        "protocol",
+        "max_expiry_allocation",
+        MAX_EXPIRY_ALLOCATION,
+    )
+    INITIAL_EXPIRY_CASH = _config_int(
+        config,
+        "protocol",
+        "initial_expiry_cash",
+        INITIAL_EXPIRY_CASH,
+    )
     BACKING_BUFFER_LAMBDA = _config_int(
         config,
         "protocol",
@@ -225,20 +242,13 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "expiry_fee_max_multiplier",
         EXPIRY_FEE_MAX_MULTIPLIER,
     )
-    LEVERAGE_FLOOR_WINDOW_MS = _config_int(
+    MAX_ADMISSION_LEVERAGE = _config_int(
         config,
         "protocol",
-        "leverage_floor_window_ms",
-        LEVERAGE_FLOOR_WINDOW_MS,
-    )
-    MAX_EXPIRY_FLOOR_PREMIUM = _config_int(
-        config,
-        "protocol",
-        "max_expiry_floor_premium",
-        MAX_EXPIRY_FLOOR_PREMIUM,
+        "max_admission_leverage",
+        MAX_ADMISSION_LEVERAGE,
     )
     LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv", LIQUIDATION_LTV)
-    TERMINAL_FLOOR_INDEX = FLOAT_SCALING + MAX_EXPIRY_FLOOR_PREMIUM
 
 
 def config_source_value(config: dict[str, Any], key: str) -> int | None:
@@ -289,18 +299,19 @@ def signed_svi_value(magnitude: int, is_negative: bool) -> str:
 
 
 def align_strike_to_tick(strike: int) -> int:
-    # Snap a raw strike DOWN to its whole-tick multiple. The absolute-tick domain
-    # has no grid to center; alignment is just flooring. The tick must land in the
-    # finite domain 1..POS_INF_TICK-1.
+    # Snap a raw strike DOWN to its admission boundary. The absolute-tick domain has
+    # no grid to center; admission alignment is just flooring to the configured
+    # mint-entry multiple. The tick must land in the finite domain 1..POS_INF_TICK-1.
     if strike <= 0:
         raise ValueError("strike must be positive")
-    tick = strike // ORACLE_TICK_SIZE
+    aligned = (strike // ADMISSION_TICK_SIZE) * ADMISSION_TICK_SIZE
+    tick = aligned // ORACLE_TICK_SIZE
     if tick <= 0 or tick >= POS_INF_TICK:
         raise ValueError(
             "strike tick outside the finite tick domain (1..POS_INF_TICK-1); "
             "raise the oracle tick size to cover a higher strike"
         )
-    return tick * ORACLE_TICK_SIZE
+    return aligned
 
 
 def binary_range_bounds(strike: int, is_up: bool) -> tuple[int, int]:
@@ -502,6 +513,10 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
     return a * b // c
 
 
+def mul_div_round_up(a: int, b: int, c: int) -> int:
+    return (a * b + c - 1) // c
+
+
 def live_forward(spot: int, forward: int) -> int:
     # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
     # every live quote/valuation/liquidation is NOT the pushed forward, but is
@@ -514,13 +529,7 @@ def live_forward(spot: int, forward: int) -> int:
 
 
 def assert_valid_leverage(leverage: int) -> None:
-    if leverage not in (
-        LEVERAGE_ONE_X,
-        LEVERAGE_ONE_AND_HALF_X,
-        LEVERAGE_TWO_X,
-        LEVERAGE_TWO_AND_HALF_X,
-        LEVERAGE_THREE_X,
-    ):
+    if leverage < LEVERAGE_ONE_X:
         raise ValueError("invalid leverage multiplier")
 
 
@@ -529,34 +538,40 @@ def leverage_multiplier(leverage: int) -> int:
     return leverage
 
 
-def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
+def admission_leverage_cap(entry_probability: int) -> int:
+    risk_curve = mul_div_round_down(
+        entry_probability,
+        FLOAT_SCALING + ADMISSION_LEVERAGE_CURVE_K,
+        entry_probability + ADMISSION_LEVERAGE_CURVE_K,
+    )
+    return FLOAT_SCALING + deepbook_mul(MAX_ADMISSION_LEVERAGE - FLOAT_SCALING, risk_curve)
+
+
+def assert_admission_leverage_cap(entry_probability: int, leverage: int) -> None:
     assert_valid_leverage(leverage)
-    if entry_probability < LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
-        if leverage != LEVERAGE_ONE_X:
-            raise ValueError("entry probability below 10c allows only 1x leverage")
-    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > LEVERAGE_TWO_X:
-        raise ValueError("entry probability below 20c allows at most 2x leverage")
+    if leverage > admission_leverage_cap(entry_probability):
+        raise ValueError("leverage above admission cap")
 
 
 def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
     return deepbook_div(exposure_value, leverage_multiplier(leverage))
 
 
-def assert_mint_principal_above_min(contribution: int) -> None:
-    # Mirror strike_exposure.move: `user_contribution() >= min_order_principal!()`,
-    # so a contribution exactly equal to the minimum is allowed.
-    if contribution < MIN_ORDER_PRINCIPAL:
-        raise ValueError("order principal below minimum")
+def assert_net_premium_above_min(net_premium: int) -> None:
+    # Mirror strike_exposure_config.move: net_premium >= min_net_premium!(), so a
+    # net premium exactly equal to the minimum is allowed.
+    if net_premium < MIN_NET_PREMIUM:
+        raise ValueError("net premium below minimum")
 
 
 def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
-    assert_valid_leverage_tier(entry_probability, leverage)
+    assert_admission_leverage_cap(entry_probability, leverage)
     entry_exposure_value = deepbook_mul(entry_probability, quantity)
     contribution = user_contribution_from_exposure_value(entry_exposure_value, leverage)
     return {
         "entry_exposure_value": entry_exposure_value,
         "contribution": contribution,
-        "floor_seed_amount": entry_exposure_value - contribution,
+        "floor_shares": entry_exposure_value - contribution,
         "leverage_multiplier": leverage_multiplier(leverage),
     }
 
@@ -929,7 +944,6 @@ def build_curve(svi: dict[str, Any], forward: int, min_strike: int, max_strike: 
 
 def order_id_for_terms(order: dict[str, Any]) -> int:
     return encode_order_id(
-        opened_at_ms=order["opened_at_ms"],
         lower_tick=order["lower_tick"],
         higher_tick=order["higher_tick"],
         pos_inf_tick=POS_INF_TICK,
@@ -940,27 +954,8 @@ def order_id_for_terms(order: dict[str, Any]) -> int:
     )
 
 
-def floor_amount_for_index(floor_shares: int, floor_index: int) -> int:
-    return deepbook_mul(floor_shares, floor_index)
-
-
-def order_floor_shares_from_seed(floor_seed_amount: int, leverage: int, open_floor_index: int) -> int:
-    if leverage == LEVERAGE_ONE_X:
-        return 0
-    return deepbook_div(floor_seed_amount, open_floor_index)
-
-
-def assert_terminal_ltv_mint_allowed(
-    quantity: int,
-    leverage: int,
-    floor_seed_amount: int,
-    open_floor_index: int = FLOAT_SCALING,
-) -> None:
-    floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, open_floor_index)
-    terminal_floor = deepbook_mul(floor_shares, TERMINAL_FLOOR_INDEX)
-    max_terminal_floor_before_liquidation = mul_div_round_down(quantity, LIQUIDATION_LTV, FLOAT_SCALING)
-    if terminal_floor >= max_terminal_floor_before_liquidation:
-        raise ValueError("terminal floor exceeds liquidation LTV")
+def floor_amount(floor_shares: int) -> int:
+    return floor_shares
 
 
 def liquidation_threshold_value(floor_amount: int) -> int:
@@ -971,50 +966,22 @@ def assert_mint_above_liquidation_threshold(
     entry_probability: int,
     quantity: int,
     leverage: int,
-    floor_seed_amount: int,
-    open_floor_index: int = FLOAT_SCALING,
-    floor_shares: int | None = None,
+    floor_shares: int,
 ) -> None:
     if leverage == LEVERAGE_ONE_X:
         return
-    shares = (
-        floor_shares
-        if floor_shares is not None
-        else order_floor_shares_from_seed(floor_seed_amount, leverage, open_floor_index)
-    )
-    floor_amount = floor_amount_for_index(shares, open_floor_index)
-    threshold_value = liquidation_threshold_value(floor_amount)
+    threshold_value = liquidation_threshold_value(floor_amount(floor_shares))
     gross_value = deepbook_mul(entry_probability, quantity)
     if gross_value <= threshold_value:
         raise ValueError("order below liquidation threshold at entry")
 
 
-def model_floor_index(model: dict[str, Any], timestamp_ms: int | None = None) -> int:
-    if not model.get("exact_time"):
-        return FLOAT_SCALING
-    now_ms = model.get("now_ms") if timestamp_ms is None else timestamp_ms
-    expiry_ms = model.get("expiry_ms")
-    if now_ms is None or expiry_ms is None:
-        raise ValueError("exact-time replay requires now_ms and expiry_ms")
-    return floor_index_at_ms(now_ms, expiry_ms, LEVERAGE_FLOOR_WINDOW_MS, MAX_EXPIRY_FLOOR_PREMIUM)
-
-
 def order_floor_shares(order: dict[str, Any]) -> int:
-    if "floor_shares" in order:
-        return order["floor_shares"]
-    return order_floor_shares_from_seed(
-        order["floor_seed_amount"],
-        order["leverage"],
-        order.get("open_floor_index", FLOAT_SCALING),
-    )
-
-
-def order_floor_amount_at_index(order: dict[str, Any], floor_index: int) -> int:
-    return floor_amount_for_index(order_floor_shares(order), floor_index)
+    return order["floor_shares"]
 
 
 def current_order_floor_amount(model: dict[str, Any], order: dict[str, Any]) -> int:
-    return order_floor_amount_at_index(order, model_floor_index(model))
+    return floor_amount(order_floor_shares(order))
 
 
 def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int | None = None) -> int | None:
@@ -1027,17 +994,9 @@ def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int | None 
     return max(0, expiry_ms - now_ms)
 
 
-def order_index_update_terms(order: dict[str, Any]) -> tuple[int, int, int]:
+def order_index_update_terms(order: dict[str, Any]) -> tuple[int, int]:
     floor_shares = order_floor_shares(order)
-    assert_terminal_ltv_mint_allowed(
-        order["quantity"],
-        order["leverage"],
-        order["floor_seed_amount"],
-        order.get("open_floor_index", FLOAT_SCALING),
-    )
-    terminal_floor = floor_amount_for_index(floor_shares, TERMINAL_FLOOR_INDEX)
-    floor_at_open = floor_amount_for_index(floor_shares, order.get("open_floor_index", FLOAT_SCALING))
-    return (floor_shares, order["quantity"] - terminal_floor, order["quantity"] - floor_at_open)
+    return (order["quantity"], floor_shares)
 
 
 def invalidate_valuation_cache(model: dict[str, Any]) -> None:
@@ -1046,21 +1005,17 @@ def invalidate_valuation_cache(model: dict[str, Any]) -> None:
 
 
 def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
-    floor_shares, terminal_payout, live_backing_payout = order_index_update_terms(order)
+    quantity, floor_shares = order_index_update_terms(order)
     assert_mint_above_liquidation_threshold(
         order["entry_probability"],
         order["quantity"],
         order["leverage"],
-        order["floor_seed_amount"],
-        order.get("open_floor_index", FLOAT_SCALING),
         floor_shares,
     )
-    # The payout tree stays (it owns max_live_backing_payout + settled_payout
-    # aggregates). The dense StrikeNavMatrix is GONE: NAV is now the exact
-    # order-sum walk_linear - correction (see exact_live_liability), which reads
-    # model["orders"] directly and needs no per-order NAV index.
-    model["payout"].insert_range(order["lower"], order["higher"], terminal_payout, live_backing_payout)
-    model["live_backing_liability"] += live_backing_payout
+    # The payout tree owns both the linear quantity walk and max-point net payout
+    # reserve reads. NAV is the exact order-sum walk_linear - correction, which
+    # reads model["orders"] directly and needs no per-order NAV index.
+    model["payout"].insert_range(order["lower"], order["higher"], quantity, floor_shares)
     invalidate_valuation_cache(model)
     track_minted_boundaries(model, order["lower"], order["higher"])
     insert_active_order(model, order["ref"])
@@ -1072,29 +1027,24 @@ def remove_closed_live_order(
     close_quantity: int,
     resulting_order: dict[str, Any] | None,
 ) -> int:
-    old_floor_shares, old_terminal_payout, old_live_backing_payout = order_index_update_terms(order)
+    old_quantity, old_floor_shares = order_index_update_terms(order)
     if resulting_order is None:
         remaining_floor_shares = 0
-        remaining_terminal_payout = 0
-        remaining_live_backing_payout = 0
+        remaining_quantity = 0
     else:
-        remaining_floor_shares, remaining_terminal_payout, remaining_live_backing_payout = order_index_update_terms(
-            resulting_order
-        )
+        remaining_quantity, remaining_floor_shares = order_index_update_terms(resulting_order)
 
-    closed_floor_shares = old_floor_shares - remaining_floor_shares
-    model["payout"].remove_range(order["lower"], order["higher"], old_terminal_payout, old_live_backing_payout)
-    model["live_backing_liability"] -= old_live_backing_payout
+    model["payout"].remove_range(order["lower"], order["higher"], old_quantity, old_floor_shares)
     if resulting_order is not None:
         model["payout"].insert_range(
             resulting_order["lower"],
             resulting_order["higher"],
-            remaining_terminal_payout,
-            remaining_live_backing_payout,
+            remaining_quantity,
+            remaining_floor_shares,
         )
-        model["live_backing_liability"] += remaining_live_backing_payout
     invalidate_valuation_cache(model)
-    return floor_amount_for_index(closed_floor_shares, model_floor_index(model))
+    closed_floor_amount = mul_div_round_up(old_floor_shares, close_quantity, old_quantity)
+    return floor_amount(closed_floor_amount)
 
 
 def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
@@ -1142,7 +1092,7 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
 # not depend on the deleted grid/curve interpolation at all):
 #   linear     = Σ_active           quantity · range_price(lower, higher)
 #   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
-#                                       floor_shares · floor_index_now)
+#                                       floor_shares)
 #   exact_live_liability = max(0, linear - correction)
 # walk_linear over all orders equals Σ qty·range_price because each `(lower, higher]`
 # order contributes q·P(lower) - q·P(higher) = q·(up(lower) - up(higher)) =
@@ -1153,7 +1103,6 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
 def exact_live_liability(model: dict[str, Any]) -> int:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
-    floor_index = model_floor_index(model)
     linear = 0
     correction = 0
     for order in model["orders"].values():
@@ -1165,7 +1114,7 @@ def exact_live_liability(model: dict[str, Any]) -> int:
         )
         linear += range_value
         if order["leverage"] != LEVERAGE_ONE_X:
-            floor_value = floor_amount_for_index(order_floor_shares(order), floor_index)
+            floor_value = floor_amount(order_floor_shares(order))
             correction += min(range_value, floor_value)
     return max(0, linear - correction)
 
@@ -1192,15 +1141,16 @@ def compute_pool_value(
     curve: list[dict[str, int]] | None = None,
     position_liability: int | None = None,
 ) -> int:
-    # Pool NAV = lp_pool_value(idle, credits, debits, share, active), where the
-    # single active market's NAV is the EXACT `current_nav` above (settled markets
+    # Pool NAV = lp_pool_value(idle, credits, debits, share, active, pending), where
+    # the single active market's NAV is the EXACT `current_nav` above (settled markets
     # contribute 0 — not modelled here, settlement is stubbed). Mirrors
-    # plp::lp_pool_value's saturating exclusion of pending protocol profit.
+    # plp::lp_pool_value's saturating exclusion of unmaterialized and carried
+    # protocol profit.
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     active_expiry_value = current_nav(model, state)
-    pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
-    return max(0, state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit)
+    exclusion = unmaterialized_protocol_profit_exclusion(state, active_expiry_value)
+    return max(0, state["vault_idle_balance"] + active_expiry_value - exclusion - state["pending_protocol_profit"])
 
 
 def expiry_net_funding(state: dict[str, int]) -> int:
@@ -1208,15 +1158,15 @@ def expiry_net_funding(state: dict[str, int]) -> int:
 
 
 def available_expiry_funding(state: dict[str, int]) -> int:
-    return max(0, MAX_EXPIRY_FUNDING - expiry_net_funding(state))
+    return max(0, MAX_EXPIRY_ALLOCATION - expiry_net_funding(state))
 
 
-def live_backing_reserve(model: dict[str, Any]) -> int:
-    max_live = model["payout"].max_live_backing_payout()
-    gap = model["live_backing_liability"] - max_live
+def payout_reserve(model: dict[str, Any]) -> int:
+    max_net_payout, total_net_payout = model["payout"].net_payout_reserve_terms()
+    gap = total_net_payout - max_net_payout
     if gap < 0:
-        raise ValueError("live backing sum below payout-tree max")
-    return max_live + deepbook_mul(BACKING_BUFFER_LAMBDA, gap)
+        raise ValueError("net payout sum below payout-tree max")
+    return max_net_payout + deepbook_mul(BACKING_BUFFER_LAMBDA, gap)
 
 
 def record_sent_to_expiry(state: dict[str, int], amount: int) -> None:
@@ -1233,6 +1183,19 @@ def record_received_from_expiry(state: dict[str, int], amount: int) -> None:
         return
     state["expiry_received_from_expiry"] += amount
     state["profit_basis_credits"] += amount
+
+
+def realize_pending_protocol_profit(state: dict[str, int]) -> int:
+    draw = min(state["pending_protocol_profit"], state["vault_idle_balance"])
+    state["pending_protocol_profit"] -= draw
+    state["vault_idle_balance"] -= draw
+    state["vault_protocol_reserve_balance"] += draw
+    return draw
+
+
+def realize_protocol_profit(state: dict[str, int], amount: int) -> int:
+    state["pending_protocol_profit"] += amount
+    return realize_pending_protocol_profit(state)
 
 
 def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
@@ -1264,19 +1227,18 @@ def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
     state["profit_basis_debits"] += materialized_profit
     protocol_profit = deepbook_mul(materialized_profit, PROTOCOL_RESERVE_PROFIT_SHARE)
     lp_profit = materialized_profit - protocol_profit
-    state["vault_idle_balance"] -= protocol_profit
-    state["vault_protocol_reserve_balance"] += protocol_profit
+    realize_protocol_profit(state, protocol_profit)
     return (materialized_profit, lp_profit, protocol_profit)
 
 
 def expiry_rebalance_cash_terms(model: dict[str, Any], state: dict[str, int]) -> tuple[int, int, int]:
-    required_cash = live_backing_reserve(model) + deepbook_mul(
+    required_cash = payout_reserve(model) + deepbook_mul(
         state["expiry_unresolved_trading_fees"],
         TRADING_LOSS_REBATE_RATE,
     )
     target_buffer = deepbook_mul(required_cash, EXPIRY_REBALANCE_PCT)
-    target_cash = max(required_cash + target_buffer, EXPIRY_CASH_FLOOR)
-    sweep_threshold_cash = max(required_cash + target_buffer + target_buffer, EXPIRY_CASH_FLOOR)
+    target_cash = max(required_cash + target_buffer, INITIAL_EXPIRY_CASH)
+    sweep_threshold_cash = max(required_cash + target_buffer + target_buffer, INITIAL_EXPIRY_CASH)
     return state["expiry_cash_balance"], target_cash, sweep_threshold_cash
 
 
@@ -1295,10 +1257,7 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
                 "amount": str(top_up),
                 "to_expiry": True,
                 "target_cash": str(target_cash),
-                "expiry_cash_after": str(state["expiry_cash_balance"]),
-                "idle_balance_after": str(state["vault_idle_balance"]),
-                "sent_to_expiry_after": str(state["expiry_sent_to_expiry"]),
-                "received_from_expiry_after": str(state["expiry_received_from_expiry"]),
+                "protocol_profit_realized": "0",
             }
         ]
     if cash_balance <= sweep_threshold_cash:
@@ -1308,16 +1267,14 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
     state["expiry_cash_balance"] -= returned_cash
     state["vault_idle_balance"] += returned_cash
     record_received_from_expiry(state, returned_cash)
+    protocol_profit_realized = realize_pending_protocol_profit(state)
     return [
         {
             "type": "expiry_cash_rebalanced",
             "amount": str(returned_cash),
             "to_expiry": False,
             "target_cash": str(target_cash),
-            "expiry_cash_after": str(state["expiry_cash_balance"]),
-            "idle_balance_after": str(state["vault_idle_balance"]),
-            "sent_to_expiry_after": str(state["expiry_sent_to_expiry"]),
-            "received_from_expiry_after": str(state["expiry_received_from_expiry"]),
+            "protocol_profit_realized": str(protocol_profit_realized),
         }
     ]
 
@@ -1343,7 +1300,7 @@ def flush_valuation(
     return updates, pool_value, synced_state
 
 
-def pending_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
+def unmaterialized_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
     aggregate_credits = state["profit_basis_credits"] + active_expiry_value
     aggregate_debits = state["profit_basis_debits"]
     if aggregate_credits <= aggregate_debits:
@@ -1374,30 +1331,32 @@ def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
     return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
 
 
+def assert_entry_probability_bounds(probability: int) -> None:
+    if probability < MIN_ENTRY_PROBABILITY or probability > MAX_ENTRY_PROBABILITY:
+        raise ValueError("entry probability out of bounds")
+
+
 def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
-    rate = fee_rate(probability, time_to_expiry_ms)
-    ask_price = probability + rate
-    if ask_price < MIN_ASK_PRICE or ask_price > MAX_ASK_PRICE:
-        raise ValueError("ask price out of bounds")
-    return rate
+    return fee_rate(probability, time_to_expiry_ms)
 
 
 def initial_state() -> dict[str, int]:
-    if VAULT_SEED < EXPIRY_CASH_FLOOR:
+    if VAULT_SEED < INITIAL_EXPIRY_CASH:
         raise ValueError("vault seed is below the setup expiry cash floor")
 
     return {
         "manager_balance": MANAGER_SEED,
-        "expiry_cash_balance": EXPIRY_CASH_FLOOR,
+        "expiry_cash_balance": INITIAL_EXPIRY_CASH,
         "expiry_unresolved_trading_fees": 0,
-        "vault_idle_balance": VAULT_SEED - EXPIRY_CASH_FLOOR,
+        "vault_idle_balance": VAULT_SEED - INITIAL_EXPIRY_CASH,
         "vault_protocol_reserve_balance": 0,
-        "expiry_sent_to_expiry": EXPIRY_CASH_FLOOR,
+        "pending_protocol_profit": 0,
+        "expiry_sent_to_expiry": INITIAL_EXPIRY_CASH,
         "expiry_received_from_expiry": 0,
         "terminal_accounting_started": 0,
         "terminal_received_watermark": 0,
         "net_losses_to_fill": 0,
-        "profit_basis_debits": EXPIRY_CASH_FLOOR,
+        "profit_basis_debits": INITIAL_EXPIRY_CASH,
         "profit_basis_credits": 0,
         "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
         "open_order_count": 0,
@@ -1412,6 +1371,7 @@ CANONICAL_STATE_KEYS = (
     "expiry_unresolved_trading_fees",
     "vault_idle_balance",
     "vault_protocol_reserve_balance",
+    "pending_protocol_profit",
     "profit_basis_debits",
     "profit_basis_credits",
     "vault_total_plp_supply",
@@ -1423,11 +1383,6 @@ CANONICAL_STATE_KEYS = (
 
 def state_snapshot(state: dict[str, int]) -> dict[str, str]:
     return {key: str(state[key]) for key in CANONICAL_STATE_KEYS}
-
-
-def apply_expiry_flow_after(state: dict[str, int], update: dict[str, Any]) -> None:
-    state["expiry_sent_to_expiry"] = int(update["sent_to_expiry_after"])
-    state["expiry_received_from_expiry"] = int(update["received_from_expiry_after"])
 
 
 def svi_input(row: dict[str, Any]) -> dict[str, str]:
@@ -1494,9 +1449,9 @@ def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
     }
 
 
-# Propbook Block Scholes oracle_lane::ObservationRecorded normalized view: this
-# expiry's surface (spot + forward + SVI). `basis` is no longer an event field
-# (derived as forward/spot).
+# Synthetic normalized view collapsed from Propbook's split Block Scholes spot,
+# forward, and SVI feed events. `basis` is no longer an event field (derived as
+# forward/spot).
 def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
     return {
         "type": "block_scholes_surface_updated",
@@ -1525,9 +1480,10 @@ def order_minted_update(
     lower, higher = binary_range_bounds(strike, mint["isUp"])
     lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
+    assert_entry_probability_bounds(entry_probability)
     fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
-    assert_mint_principal_above_min(terms["contribution"])
+    assert_net_premium_above_min(terms["contribution"])
     return {
         "type": "order_minted",
         "order_ref": mint["orderRef"],
@@ -1592,23 +1548,30 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         state["open_order_quantity"] -= quantity_closed
     elif update["type"] == "expiry_cash_rebalanced":
         amount = int(update["amount"])
-        state["expiry_cash_balance"] = int(update["expiry_cash_after"])
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
         if update["to_expiry"]:
+            state["expiry_cash_balance"] += amount
+            state["vault_idle_balance"] -= amount
             record_sent_to_expiry(state, amount)
         else:
+            protocol_profit_realized = int(update.get("protocol_profit_realized", 0))
+            state["expiry_cash_balance"] -= amount
+            state["vault_idle_balance"] += amount - protocol_profit_realized
+            state["vault_protocol_reserve_balance"] += protocol_profit_realized
+            state["pending_protocol_profit"] -= protocol_profit_realized
             record_received_from_expiry(state, amount)
-        apply_expiry_flow_after(state, update)
     elif update["type"] == "expiry_cash_received":
         amount = int(update["amount"])
         state["expiry_cash_balance"] -= amount
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
+        state["vault_idle_balance"] += amount
         record_received_from_expiry(state, amount)
-        apply_expiry_flow_after(state, update)
     elif update["type"] == "expiry_profit_materialized":
         profit_basis_after = int(update["profit_basis_after"])
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
-        state["vault_protocol_reserve_balance"] = int(update["protocol_reserve_balance_after"])
+        reserve_after = int(update["protocol_reserve_balance_after"])
+        pending_after = int(update["pending_protocol_profit_after"])
+        protocol_profit_realized = reserve_after - state["vault_protocol_reserve_balance"]
+        state["vault_idle_balance"] -= protocol_profit_realized
+        state["vault_protocol_reserve_balance"] = reserve_after
+        state["pending_protocol_profit"] = pending_after
         state["profit_basis_debits"] = profit_basis_after
     elif update["type"] in ("supply_filled", "withdraw_filled"):
         state["vault_idle_balance"] = int(update["idle_balance_after"])
@@ -1735,7 +1698,7 @@ def track_minted_boundaries(model: dict[str, Any], lower: int, higher: int) -> N
             model["minted_max_strike"] = strike
 
 
-def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) -> dict[str, str]:
+def mint_order(model: dict[str, Any], row: dict[str, Any], timestamp_ms: int) -> dict[str, str]:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("mint requires prior price and SVI updates")
     if row["orderRef"] in model["orders"]:
@@ -1745,7 +1708,7 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         model["current_svi"],
         model["current_forward"],
         model["next_sequence"],
-        model_fee_time_to_expiry_ms(model, opened_at_ms),
+        model_fee_time_to_expiry_ms(model, timestamp_ms),
     )
     terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
     lower_tick = int(update["lower_tick"])
@@ -1762,12 +1725,9 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         "entry_probability": int(update["entry_probability"]),
         "quantity": row["quantity"],
         "contribution": int(update["contribution"]),
-        "floor_seed_amount": terms["floor_seed_amount"],
-        "opened_at_ms": opened_at_ms,
-        "open_floor_index": model_floor_index(model, opened_at_ms),
+        "floor_shares": terms["floor_shares"],
         "status": "active",
     }
-    order["floor_shares"] = order_floor_shares(order)
     order["order_id"] = order_id_for_terms(order)
     model["orders"][row["orderRef"]] = order
     model["next_sequence"] += 1
@@ -1822,7 +1782,6 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
             "sequence": model["next_sequence"],
             "quantity": remaining_quantity,
             "contribution": replacement_terms["contribution"],
-            "floor_seed_amount": replacement_terms["floor_seed_amount"],
             "floor_shares": remaining_floor_shares,
             "status": "active",
         }
@@ -1965,8 +1924,7 @@ def settled_order_payout(order: dict[str, Any], settlement_price: int) -> int:
     # cannot be localnet-parity-checked until settlement-v2 — confirm the
     # prefix_limit_tick equivalence then.
     if settlement_price > order["lower"] and settlement_price <= order["higher"]:
-        _, terminal_payout, _ = order_index_update_terms(order)
-        return terminal_payout
+        return order["quantity"] - order_floor_shares(order)
     return 0
 
 
@@ -1982,7 +1940,6 @@ def reset_terminal_model(model: dict[str, Any]) -> None:
         neg_inf=NEG_INF_STRIKE,
         pos_inf=POS_INF_STRIKE,
     )
-    model["live_backing_liability"] = 0
     invalidate_valuation_cache(model)
 
 
@@ -2110,6 +2067,7 @@ def terminal_closeout_update(
         "manager_balance_after": str(state["manager_balance"]),
         "vault_idle_balance_after": str(state["vault_idle_balance"]),
         "vault_protocol_reserve_balance_after": str(state["vault_protocol_reserve_balance"]),
+        "pending_protocol_profit_after": str(state["pending_protocol_profit"]),
         "profit_basis_debits_after": str(state["profit_basis_debits"]),
         "profit_basis_credits_after": str(state["profit_basis_credits"]),
         "expiry_cash_balance_after": str(state["expiry_cash_balance"]),
@@ -2175,12 +2133,8 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         leverage = int(update["leverage"])
         if leverage == LEVERAGE_ONE_X:
             return
-        borrow_index_open = floor_index_at_ms(
-            time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"]
-        )
         terms = compute_mint_terms(int(update["entry_probability"]), int(update["quantity"]), leverage)
-        floor_seed_amount = terms["floor_seed_amount"]
-        floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, borrow_index_open)
+        floor_shares = terms["floor_shares"]
         lower, higher = strikes_from_ticks(int(update["lower_tick"]), int(update["higher_tick"]))
         analytics_insert_order(
             analytics,
@@ -2192,11 +2146,8 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
-                "floor_seed_amount": floor_seed_amount,
                 "opened_ms": time_ctx["now_ms"],
-                "borrow_index_open": borrow_index_open,
                 "floor_shares": floor_shares,
-                "floor_at_open": floor_amount_for_index(floor_shares, borrow_index_open),
                 "status": "active",
             },
         )
@@ -2210,7 +2161,6 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         replacement_ref = update["replacement_order_ref"]
         if remaining_quantity == 0 or not replacement_ref:
             return
-        replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
         close_quantity = int(update["quantity_closed"])
         close_fraction = deepbook_div(close_quantity, order["quantity"])
         floor_shares = order["floor_shares"] - deepbook_mul(order["floor_shares"], close_fraction)
@@ -2221,11 +2171,8 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
                 "ref": replacement_ref,
                 "sequence": int(update["replacement_order_sequence"]),
                 "quantity": remaining_quantity,
-                "floor_seed_amount": replacement_terms["floor_seed_amount"],
                 "floor_shares": floor_shares,
-                "floor_at_open": floor_amount_for_index(floor_shares, order["borrow_index_open"]),
                 "opened_ms": order["opened_ms"],
-                "borrow_index_open": order["borrow_index_open"],
                 "status": "active",
             },
         )
@@ -2276,8 +2223,7 @@ def analytics_range_probability(model: dict[str, Any], analytics: dict[str, Any]
 
 
 def analytics_order_floor_amount(order: dict[str, Any], time_ctx: dict[str, int]) -> int:
-    floor_index = floor_index_at_ms(time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
-    return floor_amount_for_index(order["floor_shares"], floor_index)
+    return floor_amount(order["floor_shares"])
 
 
 def empty_liquidation_observability() -> dict[str, Any]:
@@ -2334,27 +2280,8 @@ def analytics_liquidation_observability(
     }
 
 
-def floor_index_at_ms(timestamp_ms: int, expiry_ms: int, window: int, max_premium: int) -> int:
-    """Deterministic floor index at a timestamp, mirroring strike_exposure.move.
-
-    The index sits at FLOAT_SCALING (1.0) until the final `window` before expiry,
-    then rises quadratically in phase to FLOAT_SCALING + max_premium at expiry.
-    """
-    remaining = 0 if timestamp_ms >= expiry_ms else expiry_ms - timestamp_ms
-    elapsed = 0 if remaining >= window else window - remaining
-    phase = mul_div_round_down(elapsed, FLOAT_SCALING, window)
-    phase_squared = mul_div_round_down(phase, phase, FLOAT_SCALING)
-    return FLOAT_SCALING + mul_div_round_down(max_premium, phase_squared, FLOAT_SCALING)
-
-
 def analytics_crystallized_borrow_fee(analytics: dict[str, Any], time_ctx: dict[str, int]) -> int:
-    index_now = floor_index_at_ms(time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
-    total = 0
-    for ref in analytics["active_refs"]:
-        order = analytics["orders"][ref]
-        floor_now = floor_amount_for_index(order["floor_shares"], index_now)
-        total += floor_now - order["floor_at_open"]
-    return total
+    return 0
 
 
 def step_trading_fee(updates: list[dict[str, Any]]) -> int:
@@ -2452,12 +2379,17 @@ def build_derived_record(
             vault_value = None
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
     active_expiry_value = None
-    pending_protocol_profit = None
+    unmaterialized_protocol_profit = None
+    protocol_profit_exclusion = None
     if liability is not None:
         reserved_cash = liability + rebate_reserve
         if state["expiry_cash_balance"] >= reserved_cash:
             active_expiry_value = state["expiry_cash_balance"] - reserved_cash
-            pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
+            unmaterialized_protocol_profit = unmaterialized_protocol_profit_exclusion(
+                state,
+                active_expiry_value,
+            )
+            protocol_profit_exclusion = unmaterialized_protocol_profit + state["pending_protocol_profit"]
 
     liquidation_observability: dict[str, Any] | None = None
     liquidatable_count: int | None = None
@@ -2546,8 +2478,8 @@ def build_derived_record(
     expiry_funding_basis = expiry_net_funding(state)
     lp_live_mtm_pnl = (
         None
-        if active_expiry_value is None or pending_protocol_profit is None
-        else active_expiry_value - pending_protocol_profit - expiry_funding_basis
+        if active_expiry_value is None or protocol_profit_exclusion is None
+        else active_expiry_value - protocol_profit_exclusion - expiry_funding_basis
     )
     active_book_live_pnl = None if liability is None else active_contribution - liability
     position_liability_over_funding = None if liability is None else ratio_scaled(liability, expiry_funding_basis)
@@ -2582,7 +2514,13 @@ def build_derived_record(
             "active_expiry_value": None if active_expiry_value is None else str(active_expiry_value),
             "position_liability": None if liability is None else str(liability),
             "rebate_reserve": str(rebate_reserve),
-            "pending_protocol_profit": None if pending_protocol_profit is None else str(pending_protocol_profit),
+            "unmaterialized_protocol_profit_exclusion": None
+            if unmaterialized_protocol_profit is None
+            else str(unmaterialized_protocol_profit),
+            "pending_protocol_profit": str(state["pending_protocol_profit"]),
+            "protocol_profit_exclusion": None
+            if protocol_profit_exclusion is None
+            else str(protocol_profit_exclusion),
             "active_open_contribution": str(active_contribution),
             "lp_live_mtm_pnl": None if lp_live_mtm_pnl is None else str(lp_live_mtm_pnl),
             "active_book_live_pnl": None if active_book_live_pnl is None else str(active_book_live_pnl),
@@ -2722,7 +2660,6 @@ def replay(
             neg_inf=NEG_INF_STRIKE,
             pos_inf=POS_INF_STRIKE,
         ),
-        "live_backing_liability": 0,
         "valuation_cache": {
             "curve_key": None,
             "curve": None,
@@ -2746,11 +2683,8 @@ def replay(
     }
     manager_summary = initial_manager_summary()
 
-    # Synthetic-time model for derived borrow fees (Python-only). Default dt
-    # spreads the run across the full floor window so phase sweeps 0 -> 1.
     total_steps = len(rows)
-    step_dt = BORROW_STEP_DT_MS if BORROW_STEP_DT_MS else max(1, LEVERAGE_FLOOR_WINDOW_MS // max(1, total_steps))
-    derived_expiry_ms = expiry_ms if exact_time and expiry_ms is not None else total_steps * step_dt
+    derived_expiry_ms = expiry_ms if exact_time and expiry_ms is not None else total_steps
     # Parity-path async-LP request bookkeeping (mirrors the localnet runner). Supply /
     # withdraw rows only ENQUEUE a request in the parity model; the flush (runner
     # machinery, not a CSV row) drains them later, so no fill/oracle-refresh update is
@@ -2852,12 +2786,10 @@ def replay(
         records.append(record)
 
         if collect_derived:
-            now_ms = row_timestamp_ms if exact_time else step_index * step_dt
+            now_ms = row_timestamp_ms if exact_time else step_index
             time_ctx = {
                 "now_ms": now_ms,
                 "expiry_ms": derived_expiry_ms,
-                "window": LEVERAGE_FLOOR_WINDOW_MS,
-                "max_premium": MAX_EXPIRY_FLOOR_PREMIUM,
                 "record_timestamp_ms": row_timestamp_ms if exact_time else None,
             }
             apply_analytics_updates(analytics, updates, time_ctx)

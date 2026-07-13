@@ -5,12 +5,12 @@ package. It simulates protocol behavior and economic activity, not client
 latency.
 
 The current topology is intentionally narrow: one pool vault, one expiry market,
-one oracle, one manager, and many orders. The generated CSV is the transaction
-ledger. Each row is one executable transaction, and only these row actions are
-supported:
+one Propbook source set, one manager, and many orders. The generated CSV is the
+transaction ledger. Each row is one executable transaction, and only these row
+actions are supported:
 
--   `oracle_mint_ptb`: update Block Scholes prices, update SVI, and mint one
-    order in one PTB.
+-   `oracle_mint_ptb`: update Pyth plus Block Scholes spot/forward/SVI data and
+    mint one order in one PTB.
 -   `redeem`: refresh oracle data and redeem one referenced order.
 -   `supply`: refresh oracle data, value the active expiry, and supply DUSDC.
 -   `withdraw`: refresh oracle data, value the active expiry, and withdraw one
@@ -58,21 +58,39 @@ same shape as `data/scenario_dataset.csv`; the runner still generates a
 temporary executable scenario before replay. This is not a manual simulation
 interface.
 
+For ad hoc localnet-only NAV stress runs, reuse the benchmark path:
+
+```bash
+SIM_STRESS_MINT_DUPLICATES=24000 SIM_GAS_BUDGET=5000000000 bash run.sh --skip-analysis
+```
+
+`SIM_STRESS_MINT_DUPLICATES=N` rewrites the in-memory workload to replay only
+generated mint rows, appending 100 duplicate mint calls to each stress mint PTB.
+The flag value is the target total mint count; the runner rounds it up to a full
+100-mint PTB. The generated CSV is left unchanged, so stress mode requires
+`--skip-analysis` and defaults its synthetic flush to the final mint PTB unless
+`SIM_FLUSH_AFTER` is set. To keep the run focused on mint growth plus the final
+NAV walk, stress mode scales normal capital from the rounded stress mint count,
+front-loads the scaled expiry allocation as initial expiry cash, and suppresses
+the normal every-100-row expiry-cash rebalances. Stress mint PTBs use a fixed
+high gas budget because this mode does not benchmark individual mint gas;
+`SIM_GAS_BUDGET` still controls the final NAV flush transaction.
+
 ## File Map
 
 -   `run.sh`: orchestrates fresh full runs and Python-only runs.
 -   `data/scenario_dataset.csv`: ignored local source data with paired SVI/price
     snapshots.
 -   `data/scenario_config.json`: source expiry/settlement values, normal/long
-    capital sizing, mint spend ranges, fee-ramp settings, and protocol knobs.
-    Localnet setup applies the normal capital sizing and Pyth fee-ramp settings;
-    other protocol values in this file mirror Move defaults for parity and are
-    consumed directly by the generator and Python replay.
+    capital sizing, mint spend ranges, fee-ramp settings, cadence allocation,
+    initial expiry cash, admission-leverage setup, and protocol knobs. Localnet
+    setup applies the normal capital sizing, cadence allocation, initial expiry
+    cash, Pyth fee-ramp settings, and max admission leverage; other protocol
+    values in this file mirror Move defaults for parity and are consumed directly
+    by the generator and Python replay.
 -   `data/generate_scenario.py`: random normal/long scenario generator.
 -   `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
     follow-up analysis questions (economics).
--   `docs/GAS_EXPERIMENTS.md`: running log of gas/performance experiments on the
-    Predict contracts — hypothesis, change, measurement, and keep/revert decision.
 -   `charts/chart_*.py`: standalone chart scripts; one script writes one chart
     file.
 -   `charts/chart_common.py`: shared chart styling and timeline helpers.
@@ -106,14 +124,19 @@ interface.
    publisher.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
    vault, registers the Propbook underlying + feeds, binds the feeds, applies
-   the expiry-fee template config, seeds the Propbook Pyth/Block Scholes feeds,
-   and creates the expiry market. Market creation reads no spot; a setup-only
-   rebalance then funds the expiry to the protocol cash floor before scenario
-   rows start.
+   the expiry-fee template config and max admission leverage, enables the
+   one-month market cadence, creates the next cadence expiry market, then seeds
+   the Propbook Pyth/Block Scholes feeds for the emitted market
+   expiry. Market creation reads no spot; a setup-only rebalance then funds the
+   expiry to the configured initial expiry cash target before scenario rows start.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
-7. Replays the same normal scenario against localnet.
+7. Replays the same normal scenario against localnet. The runner also
+   synthesizes privileged maintenance transactions: standalone expiry-cash
+   rebalances every 100 rows and LP flushes at the configured flush checkpoints.
+   These are real localnet transactions recorded in `local_trace.json`, but they
+   are not CSV row actions.
 8. Writes `local_trace.json` and `local_data.json`.
 9. Renders gas charts from `local_trace.json`.
 10. Compares `local_data.json` against `python_data.json`.
@@ -125,6 +148,20 @@ interface.
 The exit trap restores temporary Move manifest edits, removes generated
 `Pub.*.toml` files, removes generated scenarios, and stops localnet. If a
 transaction or chart step fails, the script exits and cleanup still runs.
+
+## Failure Debugging
+
+Every transaction helper writes a full failure artifact before surfacing the
+error. Artifacts live under `artifacts/failed_transactions/` and include the
+runner label, attempt number, gas budget, sender, raw RPC response or exception,
+effects status and gas when available, transaction bytes, a dry-run result or
+dry-run error, and the fetched transaction block when the failed response
+contains a digest.
+
+If localnet replay aborts after some rows have succeeded, the runner also writes
+`artifacts/local_trace.partial.json` and `artifacts/local_data.partial.json`.
+These contain the successful transaction prefix in the same schema as the final
+trace/data files.
 
 ## Scenario CSV
 
@@ -148,11 +185,14 @@ multiples. Leverage is the same 1e9-scaled multiplier used by the contracts:
 3_000_000_000 = 3x
 ```
 
-Leverage is tiered by entry probability. Rows with entry probability below
-`100_000_000` must use 1x. Rows from `100_000_000` up to but not including
-`200_000_000` may use at most 2x. Rows at or above `200_000_000` may use the
-protocol max of 3x. Leveraged mint rows must also be above their liquidation
-threshold at entry and below their terminal liquidation-LTV floor.
+Leverage is capped by a smooth admission curve over entry probability. With the
+default 3x max admission leverage and `k = 0.2`, the cap is:
+
+```text
+1x + (3x - 1x) * p * (1 + k) / (p + k)
+```
+
+Leveraged mint rows must also open strictly above their liquidation threshold.
 
 `order_ref` and `lp_ref` are local aliases. They keep packed on-chain order IDs
 and Sui object IDs out of comparable economic data while allowing later rows to
@@ -167,9 +207,9 @@ Mint quantities are spend-sized: the generator samples a target cash spend from
 probability, leverage contribution, and trading fee. This keeps cheap contracts
 economically represented without making the CSV runner infer anything after
 generation. Generated mint rows are checked against the Python replay mirror for
-lot sizing, fee bounds, leverage tier, entry liquidation threshold, and terminal
-floor LTV before they are written. Hand-authored illegal rows are not repaired
-by the runner; they fail loudly in localnet and Python.
+lot sizing, fee bounds, dynamic admission leverage, and entry liquidation
+threshold before they are written. Hand-authored illegal rows are not repaired by
+the runner; they fail loudly in localnet and Python.
 
 ## Timestamp Model
 
@@ -177,12 +217,12 @@ The harness intentionally uses two time models.
 
 Normal localnet/Python parity uses synthetic localnet time. The localnet runner
 cannot advance the Sui `Clock` through a 24-hour source window without waiting
-in real time, so it creates an expiry roughly 400 days after the run starts and
-submits oracle updates with monotonic source timestamps derived from the
-localnet `Clock`. It does not use CSV source timestamps for localnet oracle
-freshness. The normal Python replay matches this parity role by using CSV
-transaction order, not exact source timestamps, for floor-index and fee-ramp
-math.
+in real time, so it creates the next one-month cadence expiry and submits oracle
+updates with monotonic source timestamps derived from the localnet `Clock`. It
+does not use CSV source timestamps for localnet oracle freshness. Contract floors
+are static `floor_shares`, so normal replay does not need a separate floor-time
+model. The cadence expiry sits outside the normal fee-ramp window, so normal
+replay leaves the fee ramp inactive rather than using exact source timestamps.
 
 Long Python replay uses the source timestamps. The scenario generator writes
 `replay_timestamp_ms` from `price_checkpoint_timestamp_ms`,
@@ -191,8 +231,7 @@ Long Python replay uses the source timestamps. The scenario generator writes
 source data where the selected price timestamp is older than the SVI timestamp
 or where replay timestamps move backward. The long Python replay path then uses
 `replay_timestamp_ms`, `data/scenario_config.json` expiry/settlement values,
-exact-time floor indexes, exact-time fee ramps, and Python-only terminal
-closeout.
+exact-time fee ramps, and Python-only terminal closeout.
 
 The practical rule is:
 
@@ -201,13 +240,16 @@ normal localnet/Python = parity under synthetic localnet time
 long Python = real timestamp economic analysis
 ```
 
-Expiry market creation uses the Propbook underlying's approved minimum tick size
-and snapshots the concrete `tick_size`; it does not derive a centered grid from
-the first spot. The generator, Python replay, and localnet runner all use
-absolute ticks (`raw_strike = tick * tick_size`) and the finite tick domain
+Expiry market creation goes through the registry's cadence config. The localnet
+setup enables the one-month cadence with `tick_size`, `admission_tick_size`,
+`max_expiry_allocation`, `initial_expiry_cash`, and `window_size`, then snapshots
+the configured tick sizes, allocation, and initial cash target into the created
+market. It does not derive a centered grid from the first spot. The
+generator, Python replay, and localnet runner all use absolute ticks
+(`raw_strike = tick * tick_size`) and the finite tick domain
 `1..pos_inf_tick - 1`. To cover a higher spot or wider strike set, raise the
-market tick size in the underlying-registration setup and both replay mirrors
-together so the three layers stay on the same absolute tick scale.
+cadence tick size and admission tick size in localnet setup and both replay
+mirrors together so the three layers stay on the same absolute tick scale.
 
 ## Outputs
 
@@ -216,8 +258,15 @@ Full localnet runs can produce:
 -   `artifacts/normal_scenario.csv`: the exact generated normal scenario replayed
     by both localnet and Python.
 -   `artifacts/local_trace.json`: compact localnet transaction trace with digests,
-    gas, and normalized Move event payloads.
+    gas, and normalized Move event payloads, including runner-synthesized
+    maintenance transactions such as LP flushes and expiry-cash rebalances.
 -   `artifacts/local_data.json`: cleaned localnet economic projection.
+-   `artifacts/local_trace.partial.json`: successful localnet trace prefix
+    written when replay aborts.
+-   `artifacts/local_data.partial.json`: successful localnet economic projection
+    prefix written when replay aborts.
+-   `artifacts/failed_transactions/*.json`: full debug payloads for failed setup,
+    replay, flush, and rebalance transactions.
 -   `artifacts/python_data.json`: cleaned Python economic projection for parity.
 -   `artifacts/python_long_data.json`: long-run Python canonical data. Deleted by
     default after charts unless `--python-only --keep-derived` is used.
@@ -248,12 +297,14 @@ Localnet/Python parity is a confidence gate, not a proof of every possible
 terminal state. The normal replay validates that Python and localnet agree on
 canonical live economics for the same generated CSV rows: oracle refreshes,
 mints, redeems, passive liquidations, supply, withdraw, normalized event fields,
-and tracked state deltas.
+and tracked state deltas. Runner-synthesized maintenance transactions such as
+LP flushes and expiry-cash rebalances are traced for gas and to keep localnet
+flows executable under the configured cadence; they are not generated CSV rows.
 
-Live pool-sync sweeps increase aggregate pricing credits but do not materialize
-protocol profit. Protocol reserves move only when terminal expiry accounting
-materializes profit after that expiry's terminal losses and watermarks are
-applied.
+Live pool-sync sweeps increase aggregate pricing credits and can also realize
+previously carried protocol profit into the reserve when returned idle cash is
+available. Fresh protocol profit materializes only after terminal expiry
+accounting applies that expiry's terminal losses and watermarks.
 
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
@@ -287,14 +338,14 @@ never compared against localnet.
 
 Important fields:
 
--   `valuation.lp_live_mtm_pnl`: active expiry value after pending protocol-profit
-    exclusion, minus current expiry funding basis.
+-   `valuation.lp_live_mtm_pnl`: active expiry value after the protocol-profit
+    exclusion (unmaterialized reserve share plus carried pending protocol
+    profit), minus current expiry funding basis.
 -   `valuation.active_book_live_pnl`: open-order contribution minus current live
     liability.
 -   `flows.trading_fee`: trading fee collected in that transaction.
--   `flows.borrow_fee_accrued`: current open-order floor growth modeled with the
-    same floor-share rounding as Move; this is an MTM/accrual view, not realized
-    cash.
+-   `flows.borrow_fee_accrued`: retained for chart compatibility. It is always
+    zero under the current static-floor model.
 -   `flows.liquidation_gap`: bad debt, `max(floor - gross, 0)`.
 -   `flows.liquidation_surplus`: execution surplus above the liquidation floor.
 -   `liquidation.liquidatable_value`: standing liquidatable floor value after the
@@ -322,6 +373,34 @@ Important fields:
     divided by live liability.
 
 ## Maintenance Rules
+
+-   Do not add unit tests under `packages/predict/simulations/**`. Verify changes
+    with `npx tsc --noEmit`, `bash -n run.sh`, a Python replay, or a small
+    `bash run.sh --sim_max_rows=N --skip-analysis` smoke run instead.
+-   If a Move entrypoint used by the simulation changes generic parameters or its
+    signature, audit `src/runtime.ts` for stale `typeArguments` or argument
+    lists; otherwise benchmark CI fails only as an external
+    `sim exited with code 1`.
+-   Gas verdicts must respect run-to-run noise: different `run.sh` invocations
+    use different generated scenarios, so treat per-action deltas below the noise
+    floor (watch an untouched action like `supply`/`withdraw`) as neutral — only
+    a pinned-scenario A/B is a trustworthy signal. Per-op gas is also
+    data-dependent (`normal_cdf` has cheap and expensive branches by moneyness)
+    and multi-command PTBs amplify per-command cost, so sweep scenarios and
+    measure batched ops separately; measured capacity numbers live in
+    `../predeploy/evidence/` and the open-items C-1 capacity model.
+-   The capacity wall is per-tx computation (`max_gas_computation_bucket`), not
+    the gas budget: a tx over it fails `InsufficientGas` regardless of
+    `--gas-budget`.
+-   One localnet per git worktree: `run.sh` mutates `Move.toml` during publish,
+    so concurrent runs must not share a checkout. `SIM_PORT_OFFSET` gives each
+    run its own ports; never rewrite the genesis `.blob`/swarm ports (that
+    desyncs config from the baked committee). `stress/` holds the parallel
+    stress/fuzz infra (read `stress/README.md` first, including the
+    `SIM_STRESS_*` knobs in `src/sim.ts`); stress runs need `--skip-analysis`,
+    and `SIM_STRESS_LEVERAGE>1` aborting via
+    `assert_mint_probability_and_leverage_policy` is correct moneyness-capping,
+    not a harness bug.
 
 -   Keep `run.sh` limited to the four documented manual command forms. The hidden
     benchmark compatibility path exists only for the Docker benchmark worker and
@@ -362,7 +441,8 @@ Important fields:
     PLP pool-sync rebalancing.
 -   Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
     liquidation backlog. The runner default transaction gas budget is currently
-    `1_000_000_000` MIST.
+    `1_000_000_000` MIST; set `SIM_GAS_BUDGET` to override it for local stress
+    runs.
 -   Live leveraged NAV still depends on bounded liquidation plus aggregate floor
     accounting in the Move implementation. That is the core protocol risk being
     explored by this harness, not something the simulator hides.

@@ -8,7 +8,7 @@
 #[test_only]
 module deepbook_predict::test_constants;
 
-use deepbook_predict::constants;
+use deepbook_predict::{constants, market_manager};
 use fixed_math::math;
 
 // === Test Addresses ===
@@ -49,7 +49,7 @@ public fun quote_asset_id(): u32 { 840 }
 
 /// Wall-clock the fixture's `Clock` starts at. Grid-aligned (a multiple of
 /// `constants::resolution_period_ms!()`) so `now + N*period` expiries land on the
-/// settlement grid that `create_expiry_market` enforces.
+/// settlement grid that `create_and_share_expiry_market` enforces.
 public fun now_ms(): u64 { 120_000 }
 
 /// Source timestamp for the bootstrap/live oracle seed (< `now_ms`, within
@@ -61,35 +61,49 @@ public fun live_source_timestamp_ms(): u64 { 119_000 }
 /// Strikes are absolute ticks: `raw_strike = tick * tick_size`.
 public fun default_tick_size(): u64 { 1_000_000_000 }
 
+/// Default mint-admission raw strike step. This is coarser than `default_tick_size`
+/// so tests can distinguish the fine accounting grid from the public admission grid.
+public fun default_admission_tick_size(): u64 { 10 * default_tick_size() }
+
+/// Default cadence used by fixtures that need an exact explicit expiry. The test
+/// clock is positioned one period before the target expiry before creation.
+public fun default_cadence_id(): u8 { market_manager::cadence_one_minute!() }
+
+/// Period for `default_cadence_id`.
+public fun default_cadence_period_ms(): u64 { constants::one_minute_ms!() }
+
+/// Default cadence window. With the test clock positioned one period before the
+/// target expiry, a one-slot window admits exactly that next expiry.
+public fun default_cadence_window_size(): u64 { 1 }
+
+/// Default per-expiry allocation cap used by test market cadence configs.
+public fun default_max_expiry_allocation(): u64 { 250_000_000_000 }
+
+/// Default minimum DUSDC cash target used by test market cadence configs.
+public fun default_initial_expiry_cash(): u64 { constants::expiry_cash_floor!() }
+
 /// The canonical finite strike tick the flow tests mint against. With the default
 /// 1e9 tick size it maps to the raw strike `100e9` (`default_strike_tick *
 /// default_tick_size`), the strike of `default_live_price` (≈50% for a
 /// `(strike_tick, +inf)` UP range).
 public fun default_strike_tick(): u64 { 100 }
 
-/// A representative finite raw strike (`default_strike_tick * default_tick_size =
-/// 100e9`), used by the direct-pricing tests that take raw strikes.
-public fun min_finite_strike(): u64 { 100_000_000_000 }
-
 /// Default DUSDC cash seeded into expiry markets while pool funding is absent.
 public fun default_seeded_expiry_cash(): u64 { 300_000_000_000 }
-
-/// Back-compat alias for older fixture call sites.
-public fun default_initial_supply(): u64 { default_seeded_expiry_cash() }
 
 /// Protocol-reserve profit share the default fixture sets (40% in FLOAT_SCALING).
 public fun protocol_reserve_share(): u64 { 400_000_000 }
 
 // === Default expiry / trade flow (for `setup_everything`) ===
 
-/// Default expiry for the composite bring-up: exactly `now + 365d` (the floor
-/// window), so the floor schedule is flat and >1x mints are admissible — the
+/// Default expiry for the composite bring-up: exactly `now + 365d`, the
 /// broadly-useful default for flow tests. Grid-aligned (`now` + a multiple of the
-/// resolution period) so it satisfies `create_expiry_market`'s grid assert.
+/// resolution period) so exact settlement inserts are representable.
 public fun default_expiry_ms(): u64 { 31_536_120_000 }
 
 /// Default live price seeded by `prepare_live_oracle` in the composite bring-up;
-/// sits at `min_finite_strike` (≈50% for a `[min_strike, +inf)` range).
+/// sits at `default_strike_tick * default_tick_size` (≈50% for a
+/// `(default_strike_tick, +inf]` range).
 public fun default_live_price(): u64 { 100_000_000_000 }
 
 /// Default SVI `a` for live oracle test fixtures.
@@ -115,13 +129,13 @@ public fun default_manager_deposit(): u64 { 30_000_000_000 }
 
 // === Shared happy-path flow values (the short-expiry lifecycle tests) ===
 
-/// 1x leverage in FLOAT_SCALING (a flat floor schedule => zero floor shares).
+/// 1x leverage in FLOAT_SCALING (zero financed amount => zero floor shares).
 public fun leverage_one_x(): u64 { math::float_scaling!() }
 
 /// Short expiry (`now + 120s`) used by the lifecycle/payout flow tests: near
-/// enough that the leverage floor schedule is non-flat (a 2x order carries a real
-/// floor), unlike the far `default_expiry_ms`. Grid-aligned (`now` + 2 resolution
-/// periods) so it satisfies `create_expiry_market`'s grid assert.
+/// enough for compact lifecycle scenarios. A >1x order carries a real static
+/// floor regardless of expiry. Grid-aligned (`now` + 2 resolution periods) so
+/// exact settlement inserts are representable.
 public fun short_expiry_ms(): u64 { 240_000 }
 
 /// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).

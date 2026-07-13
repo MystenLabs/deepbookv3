@@ -1,0 +1,34 @@
+{
+    "name": "@mysten/predict",
+    "version": "0.0.1",
+    "private": false,
+    "description": "TypeScript SDK for DeepBook Predict",
+    "license": "Apache-2.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "prepare": "pnpm run build",
+        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "test": "vitest run",
+        "test:testnet": "PREDICT_SDK_TESTNET=1 vitest run tests/testnet"
+    },
+    "peerDependencies": {
+        "@mysten/sui": "^2.16.0"
+    },
+    "devDependencies": {
+        "@mysten/sui": "^2.16.0",
+        "@types/node": "^20.17.6",
+        "tsup": "^8.3.5",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.8"
+    }
+}

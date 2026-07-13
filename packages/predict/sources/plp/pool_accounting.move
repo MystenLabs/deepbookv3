@@ -12,7 +12,6 @@
 /// protocol reserve transfers.
 module deepbook_predict::pool_accounting;
 
-use deepbook_predict::constants;
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
@@ -20,14 +19,13 @@ const EUnknownRegisteredExpiry: u64 = 0;
 const ERegisteredExpiryAlreadyExists: u64 = 1;
 const EMaxExpiryFundingExceeded: u64 = 2;
 const ETerminalAccountingStarted: u64 = 3;
-const EMaxActiveExpiryMarkets: u64 = 4;
 
 /// Aggregate and per-expiry DUSDC accounting ledger.
 public struct Ledger has store {
     /// Idle LP-owned DUSDC available for withdrawals and expiry funding.
     idle_balance: Balance<DUSDC>,
     /// Expiry markets that still contribute active pool valuation/risk.
-    active_expiry_markets: vector<ID>,
+    active_expiry_markets: vector<ActiveExpiry>,
     /// Permanent per-expiry accounting rows. Presence means the expiry belongs to this pool.
     registered_expiries: Table<ID, RegisteredExpiry>,
     /// Pricing debit basis: DUSDC sent to expiries plus materialized terminal profit.
@@ -42,8 +40,18 @@ public struct Ledger has store {
     pending_protocol_profit: u64,
 }
 
+/// Active valuation entry with the expiry timestamp needed to classify live NAV cost.
+public struct ActiveExpiry has copy, drop, store {
+    expiry_market_id: ID,
+    expiry_ms: u64,
+}
+
 /// Durable accounting row for one registered expiry market.
 public struct RegisteredExpiry has store {
+    /// DUSDC pool allocation cap snapshotted when this expiry was created.
+    max_expiry_allocation: u64,
+    /// Minimum DUSDC cash target snapshotted when this expiry was created.
+    initial_expiry_cash: u64,
     /// DUSDC sent from the main pool into this expiry.
     sent_to_expiry: u64,
     /// DUSDC returned from this expiry to the main pool.
@@ -72,9 +80,15 @@ public(package) fun idle_balance(ledger: &Ledger): u64 {
     ledger.idle_balance.value()
 }
 
-/// Return the expiry markets still contributing active pool valuation/risk.
-public(package) fun active_expiry_markets(ledger: &Ledger): &vector<ID> {
-    &ledger.active_expiry_markets
+/// Return the expiry market IDs still contributing active pool valuation/risk.
+public(package) fun active_expiry_markets(ledger: &Ledger): vector<ID> {
+    ledger.active_expiry_markets.map_ref!(|m| m.expiry_market_id)
+}
+
+/// Count active markets whose expiry is still in the future and therefore need
+/// live NAV valuation rather than terminal settlement/sweep handling.
+public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 {
+    ledger.active_expiry_markets.count!(|m| m.expiry_ms > now_ms)
 }
 
 public(package) fun profit_basis_debits(ledger: &Ledger): u64 {
@@ -89,21 +103,24 @@ public(package) fun pending_protocol_profit(ledger: &Ledger): u64 {
     ledger.pending_protocol_profit
 }
 
-/// Return DUSDC sent to and received from one expiry market.
-public(package) fun expiry_flow_amounts(ledger: &Ledger, expiry_market_id: ID): (u64, u64) {
+/// Return the DUSDC pool allocation cap snapshotted for one expiry.
+public(package) fun max_expiry_allocation(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
-    let flow = ledger.registered_expiries.borrow(expiry_market_id);
-    (flow.sent_to_expiry, flow.received_from_expiry)
+    ledger.registered_expiries.borrow(expiry_market_id).max_expiry_allocation
 }
 
-/// Return remaining net DUSDC the pool may fund into one expiry under the
-/// caller-supplied current max-funding cap.
-public(package) fun available_expiry_funding(
-    ledger: &Ledger,
-    expiry_market_id: ID,
-    max_expiry_funding: u64,
-): u64 {
-    max_expiry_funding.saturating_sub(ledger.net_expiry_funding(expiry_market_id))
+/// Return the minimum DUSDC cash target snapshotted for one expiry.
+public(package) fun initial_expiry_cash(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    ledger.registered_expiries.borrow(expiry_market_id).initial_expiry_cash
+}
+
+/// Return remaining net DUSDC the pool may fund into one expiry under its
+/// snapshotted allocation cap.
+public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    let flow = ledger.registered_expiries.borrow(expiry_market_id);
+    flow.max_expiry_allocation.saturating_sub(flow_net_funding(flow))
 }
 
 /// Abort unless this expiry is registered to the pool.
@@ -113,18 +130,22 @@ public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: 
 
 /// Register an expiry as active pool risk. Records an accounting row only; no
 /// cash moves, so the expiry is not yet funded.
-public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
+public(package) fun register_expiry(
+    ledger: &mut Ledger,
+    expiry_market_id: ID,
+    expiry_ms: u64,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
-    assert!(
-        ledger.active_expiry_markets.length() < constants::max_active_expiry_markets!(),
-        EMaxActiveExpiryMarkets,
-    );
-    ledger.active_expiry_markets.push_back(expiry_market_id);
+    ledger.active_expiry_markets.push_back(ActiveExpiry { expiry_market_id, expiry_ms });
     ledger
         .registered_expiries
         .add(
             expiry_market_id,
             RegisteredExpiry {
+                max_expiry_allocation,
+                initial_expiry_cash,
                 sent_to_expiry: 0,
                 received_from_expiry: 0,
                 fee_incentives_allocated: 0,
@@ -137,15 +158,9 @@ public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
 /// Remove an expiry from active valuation if present, returning whether it was active.
 public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_market_id: ID): bool {
     ledger.assert_registered_expiry(expiry_market_id);
-    let mut i = 0;
-    let len = ledger.active_expiry_markets.length();
-    while (i < len && ledger.active_expiry_markets[i] != expiry_market_id) {
-        i = i + 1;
-    };
-    if (i == len) {
-        return false
-    };
-    ledger.active_expiry_markets.swap_remove(i);
+    let idx = ledger.active_expiry_markets.find_index!(|m| m.expiry_market_id == expiry_market_id);
+    if (idx.is_none()) return false;
+    ledger.active_expiry_markets.swap_remove(idx.destroy_some());
     true
 }
 
@@ -160,15 +175,14 @@ public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<DUS
 }
 
 /// Split idle DUSDC into an expiry while recording the funding flow and enforcing
-/// the caller-supplied current max-funding cap.
+/// the expiry's snapshotted allocation cap.
 public(package) fun send_expiry_cash(
     ledger: &mut Ledger,
     expiry_market_id: ID,
-    max_expiry_funding: u64,
     amount: u64,
 ): Balance<DUSDC> {
     if (amount == 0) return balance::zero();
-    ledger.record_sent_to_expiry(expiry_market_id, max_expiry_funding, amount);
+    ledger.record_sent_to_expiry(expiry_market_id, amount);
     ledger.idle_balance.split(amount)
 }
 
@@ -184,9 +198,7 @@ public(package) fun record_fee_incentives_allocated_up_to(
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
-    let amount = requested_amount.min(
-        max_fee_incentives.saturating_sub(flow.fee_incentives_allocated),
-    );
+    let amount = requested_amount.min(max_fee_incentives.saturating_sub(flow.fee_incentives_allocated));
     flow.fee_incentives_allocated = flow.fee_incentives_allocated + amount;
     (amount, flow.fee_incentives_allocated)
 }
@@ -194,8 +206,8 @@ public(package) fun record_fee_incentives_allocated_up_to(
 /// Receive DUSDC returned from an expiry.
 public(package) fun receive_expiry_cash(
     ledger: &mut Ledger,
-    expiry_market_id: ID,
     cash: Balance<DUSDC>,
+    expiry_market_id: ID,
 ): u64 {
     let amount = cash.value();
     if (amount == 0) {
@@ -259,24 +271,13 @@ public(package) fun realize_protocol_profit(ledger: &mut Ledger, amount: u64): B
     ledger.realize_pending_protocol_profit()
 }
 
-/// Return current net DUSDC funded into an expiry (sent minus received, floored).
-fun net_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
-    flow_net_funding(ledger.registered_expiries.borrow(expiry_market_id))
-}
-
-fun record_sent_to_expiry(
-    ledger: &mut Ledger,
-    expiry_market_id: ID,
-    max_expiry_funding: u64,
-    amount: u64,
-) {
+fun record_sent_to_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
     if (amount == 0) return;
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
     let current_net_funding = flow_net_funding(flow);
-    assert!(current_net_funding + amount <= max_expiry_funding, EMaxExpiryFundingExceeded);
+    assert!(current_net_funding + amount <= flow.max_expiry_allocation, EMaxExpiryFundingExceeded);
     flow.sent_to_expiry = flow.sent_to_expiry + amount;
     ledger.profit_basis_debits = ledger.profit_basis_debits + amount;
 }

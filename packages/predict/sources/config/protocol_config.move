@@ -5,7 +5,7 @@
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
 /// gate, and the transaction-local full-pool valuation lock. Flow modules decide
-/// which gates apply before they mutate expiry, oracle, pool, or manager state.
+/// which gates apply before they mutate expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -68,20 +68,12 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 public fun set_template_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_version();
     config.strike_exposure_template_config.set_base_fee(fee);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
 }
 
 /// Set the minimum fee floor snapshotted by future expiry markets.
 public fun set_template_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_version();
     config.strike_exposure_template_config.set_min_fee(fee);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
 }
 
 /// Set the expiry-fee ramp window snapshotted by future expiry markets.
@@ -92,10 +84,6 @@ public fun set_template_expiry_fee_window_ms(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
 }
 
 /// Set the expiry-fee max multiplier snapshotted by future expiry markets.
@@ -106,24 +94,6 @@ public fun set_template_expiry_fee_max_multiplier(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
-}
-
-/// Set the terminal floor index snapshotted by future expiry markets.
-public fun set_template_terminal_floor_index(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_terminal_floor_index(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
 }
 
 /// Set the liquidation LTV snapshotted by future expiry markets.
@@ -134,10 +104,16 @@ public fun set_template_liquidation_ltv(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_liquidation_ltv(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
+}
+
+/// Set the max admission leverage snapshotted by future expiry markets.
+public fun set_template_max_admission_leverage(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_max_admission_leverage(value);
 }
 
 /// Set the backing-buffer lambda snapshotted by future expiry markets.
@@ -148,10 +124,6 @@ public fun set_template_backing_buffer_lambda(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
 }
 
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
@@ -164,35 +136,26 @@ public fun set_benefit_powers(
 ) {
     config.assert_version();
     config.stake_config.set_benefit_powers(lower, upper);
-    config_events::emit_stake_config_updated(config.id(), &config.stake_config);
 }
 
-/// Set the minimum all-in mint price snapshotted by future expiry markets.
-public fun set_template_min_ask_price(
+/// Set the minimum raw entry probability snapshotted by future expiry markets.
+public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_version();
-    config.strike_exposure_template_config.set_min_ask_price(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
+    config.strike_exposure_template_config.set_min_entry_probability(value);
 }
 
-/// Set the maximum all-in mint price snapshotted by future expiry markets.
-public fun set_template_max_ask_price(
+/// Set the maximum raw entry probability snapshotted by future expiry markets.
+public fun set_template_max_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_version();
-    config.strike_exposure_template_config.set_max_ask_price(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        config.id(),
-        &config.strike_exposure_template_config,
-    );
+    config.strike_exposure_template_config.set_max_entry_probability(value);
 }
 
 /// Set the live Pyth spot freshness threshold.
@@ -202,19 +165,30 @@ public fun set_pyth_spot_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
-/// Set the live Block Scholes surface (spot/forward/SVI) freshness threshold.
-public fun set_block_scholes_surface_freshness_ms(
+/// Set the live Block Scholes spot/forward freshness threshold.
+public fun set_block_scholes_price_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_version();
-    config.pricing_config.set_block_scholes_surface_freshness_ms(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_block_scholes_price_freshness_ms(value);
+}
+
+/// Set the live Block Scholes SVI freshness threshold.
+public fun set_block_scholes_svi_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -225,10 +199,6 @@ public fun set_template_trading_loss_rebate_rate(
 ) {
     config.assert_version();
     config.expiry_cash_template_config.set_trading_loss_rebate_rate(value);
-    config_events::emit_expiry_cash_template_config_updated(
-        config.id(),
-        &config.expiry_cash_template_config,
-    );
 }
 
 /// Set the total liquidation candidate budget used before mint and redeem flows.
@@ -240,11 +210,6 @@ public fun set_trade_liquidation_budget(
     config.assert_version();
     config_constants::assert_trade_liquidation_budget(budget);
     config.trade_liquidation_budget = budget;
-    config_events::emit_risk_config_updated(
-        config.id(),
-        config.trade_liquidation_budget,
-        config.protocol_reserve_profit_share,
-    );
 }
 
 /// Set the EWMA gas-price penalty parameters.
@@ -257,14 +222,12 @@ public fun set_ewma_params(
 ) {
     config.assert_version();
     config.ewma_config.set_params(alpha, z_score_threshold, penalty_rate);
-    config_events::emit_ewma_config_updated(config.id(), &config.ewma_config);
 }
 
 /// Enable or disable the EWMA gas-price penalty.
 public fun set_ewma_enabled(config: &mut ProtocolConfig, _admin_cap: &AdminCap, enabled: bool) {
     config.assert_version();
     config.ewma_config.set_enabled(enabled);
-    config_events::emit_ewma_config_updated(config.id(), &config.ewma_config);
 }
 
 /// Set whether trading is paused.
@@ -289,6 +252,19 @@ public fun bump_version_watermark(config: &mut ProtocolConfig, _admin_cap: &Admi
     config.version_watermark = version;
 }
 
+/// Set the protocol reserve profit share used when materializing aggregate
+/// expiry profit. Admin-gated; validated against its config-constants envelope.
+public fun set_protocol_reserve_profit_share(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    protocol_reserve_profit_share: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
+    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -301,6 +277,16 @@ public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 
 
 public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
     config.trade_liquidation_budget
+}
+
+public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
+    &config.expiry_cash_template_config
+}
+
+public(package) fun strike_exposure_template_config(
+    config: &ProtocolConfig,
+): &StrikeExposureConfig {
+    &config.strike_exposure_template_config
 }
 
 public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {
@@ -360,24 +346,6 @@ public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
 }
 
-/// Set the protocol reserve profit share used when materializing aggregate
-/// expiry profit. Admin-gated; validated against its config-constants envelope.
-public fun set_protocol_reserve_profit_share(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    protocol_reserve_profit_share: u64,
-) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
-    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
-    config_events::emit_risk_config_updated(
-        config.id(),
-        config.trade_liquidation_budget,
-        config.protocol_reserve_profit_share,
-    );
-}
-
 /// Begin a transaction-local full-pool valuation lock.
 public(package) fun begin_valuation(config: &mut ProtocolConfig) {
     config.assert_not_valuation_in_progress();
@@ -416,15 +384,5 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
     }
 }
 
-// `new_for_testing` removed: tests obtain the ProtocolConfig that
-// `registry::init_for_testing` shares via `create_and_share`, taken with
-// `take_shared<ProtocolConfig>()`.
-
-#[test_only]
-/// Force the version watermark to an arbitrary value. Irreducible test seam: the
-/// production `bump_version_watermark` can only advance the floor to the running
-/// `current_version!()`, never above it, so the `assert_version` disabled-version
-/// path (a running version below the floor) is otherwise unreachable from a test.
-public fun set_version_watermark_for_testing(config: &mut ProtocolConfig, watermark: u64) {
-    config.version_watermark = watermark;
-}
+// Tests obtain the ProtocolConfig that `registry::init_for_testing` shares via
+// `create_and_share`, taken with `take_shared<ProtocolConfig>()`.

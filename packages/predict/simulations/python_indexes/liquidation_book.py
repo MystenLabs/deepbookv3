@@ -11,19 +11,17 @@ from bisect import bisect_left, bisect_right
 
 PAGE_CAPACITY = 64
 
-QUANTITY_LOTS_OFFSET = 200
-FLOOR_SHARES_OFFSET = 136
-OPENED_AT_OFFSET = 88
-# Absolute u24 ticks pack at these offsets (order.move LOWER_TICK_OFFSET /
+QUANTITY_LOTS_OFFSET = 164
+FLOOR_SHARES_OFFSET = 100
+# Absolute u30 ticks pack at these offsets (order.move LOWER_TICK_OFFSET /
 # HIGHER_TICK_OFFSET). The grid-relative boundary-index encoding is gone: the
 # order now stores absolute ticks directly.
-LOWER_TICK_OFFSET = 64
+LOWER_TICK_OFFSET = 70
 HIGHER_TICK_OFFSET = 40
 
-U24_MASK = (1 << 24) - 1
+U30_MASK = (1 << 30) - 1
 U32_MASK = (1 << 32) - 1
 U40_MASK = (1 << 40) - 1
-U48_MASK = (1 << 48) - 1
 U64_MASK = (1 << 64) - 1
 
 
@@ -52,7 +50,6 @@ def tick_for_order_side(
 
 def encode_order_id(
     *,
-    opened_at_ms: int,
     lower_tick: int,
     higher_tick: int,
     pos_inf_tick: int,
@@ -61,15 +58,13 @@ def encode_order_id(
     sequence: int,
     position_lot_size: int,
 ) -> int:
-    # Mirrors order::new / assert_valid_order_shape exactly (absolute u24 ticks).
+    # Mirrors order::new / assert_valid_order_shape exactly (absolute u30 ticks).
     quantity_lots = quantity // position_lot_size
     if quantity_lots <= 0 or quantity_lots > U32_MASK or quantity % position_lot_size != 0:
         raise ValueError("invalid order quantity")
     if floor_shares < 0 or floor_shares > U64_MASK or floor_shares > quantity:
         raise ValueError("invalid floor shares")
-    if opened_at_ms > U48_MASK:
-        raise ValueError("opened_at_ms does not fit in order id")
-    if lower_tick > U24_MASK or higher_tick > U24_MASK:
+    if lower_tick > U30_MASK or higher_tick > U30_MASK:
         raise ValueError("tick does not fit in order id")
     if lower_tick > pos_inf_tick or higher_tick > pos_inf_tick:
         raise ValueError("tick outside protocol domain")
@@ -79,17 +74,11 @@ def encode_order_id(
         raise ValueError("full-open tick range is invalid")
     if sequence > U40_MASK:
         raise ValueError("sequence does not fit in order id")
-    # Leveraged orders must have one open boundary (lower == neg-inf OR higher ==
-    # pos-inf), so the floor is one-sided.
-    if floor_shares > 0 and lower_tick != 0 and higher_tick != pos_inf_tick:
-        raise ValueError("leveraged orders must have one open boundary")
-
     quantity_lots_key = U32_MASK - quantity_lots
     floor_shares_key = U64_MASK - floor_shares
     return (
         (quantity_lots_key << QUANTITY_LOTS_OFFSET)
         | (floor_shares_key << FLOOR_SHARES_OFFSET)
-        | (opened_at_ms << OPENED_AT_OFFSET)
         | (lower_tick << LOWER_TICK_OFFSET)
         | (higher_tick << HIGHER_TICK_OFFSET)
         | sequence

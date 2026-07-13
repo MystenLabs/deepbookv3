@@ -11,7 +11,7 @@ The pool is a single shared object, `PoolVault`. It owns:
 - **idle DUSDC** (custodied in the accounting ledger) — LP-owned cash available for withdrawal fills and for funding expiries;
 - a **protocol reserve** of DUSDC, excluded from PLP redemption (the protocol's share of materialized profit accumulates here);
 - the **PLP treasury cap**, which mints PLP on supply fills and burns it on withdrawal fills during the flush;
-- **staked DEEP** held in custody on behalf of managers (custodial, not LP-owned, not redeemable as PLP);
+- **staked DEEP** held in custody on behalf of accounts (custodial, not LP-owned, not redeemable as PLP);
 - the **expiry accounting ledger** (`Ledger`), which custodies idle DUSDC, records the active-expiry set, the cash flow to and from each expiry, and the aggregate profit basis;
 - the **async LP request queues** — a supply queue escrowing DUSDC and a withdraw queue escrowing PLP — drained by the flush.
 
@@ -25,9 +25,9 @@ PLP is registered as a 6-decimal currency, matching DUSDC's 6 decimals. Fixed-po
 
 LPs do not mint or burn PLP synchronously against a live valuation. Instead they **queue a request** that a later flush prices and fills at one pool-wide mark. This decouples the LP's transaction from the (privileged, oracle-reading) valuation, so an LP can never time their entry or exit against a self-supplied oracle snapshot.
 
-- **`request_supply`** escrows a DUSDC payment and records the requesting `PredictManager` as the fill recipient. It is routed through the manager — not the tx signer — so a composing vault's own manager receives the minted PLP. It returns a queue index.
-- **`request_withdraw`** escrows PLP and likewise records the manager recipient, returning a queue index.
-- **`cancel_supply_request` / `cancel_withdraw_request`** let the manager owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
+- **`request_supply`** escrows a DUSDC payment and records the requesting account's receive address as the fill recipient. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
+- **`request_withdraw`** escrows PLP and likewise records the account recipient, returning a queue index.
+- **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
 
 Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush drains them or the LP cancels.
 
@@ -41,6 +41,8 @@ A daily **flush** values the whole pool once and drains both queues against that
 
 The potato has no abilities, so the sequence cannot be left half-finished: the only way to release the lock is to finish.
 
+PLP bounds live NAV work separately from the flush itself: each active expiry is stored with its expiry timestamp, and market registration rejects a new future market once the active pre-expiry count reaches the upgrade-required live-market cap. Expired or settled markets may still sit in the pool's active-expiry set until a rebalance or valuation pass sweeps them, but they no longer count against the live NAV cap because they do not use a live `current_nav` walk.
+
 ### The flush is privileged, not permissionless
 
 Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`), and the hot potato can be created **only** by starting one, so gating the start gates the whole flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
@@ -53,7 +55,7 @@ This is a deliberate audit decision (L8): the flush prices supply and withdraw a
 
 ```
 gross_pool_value = idle_DUSDC + Σ active_expiry current_nav
-exclusion        = protocol_reserve_profit_share × max(0, (profit_credits + Σ current_nav) − profit_debits)
+exclusion        = protocol_reserve_profit_share × max(0, (profit_basis_credits + Σ current_nav) − profit_basis_debits)
 pool_nav         = max(0, gross_pool_value − exclusion − pending_protocol_profit)
 ```
 
@@ -62,7 +64,7 @@ Both subtracted terms are protocol profit not yet sitting in the reserve, in two
 - **`exclusion`** — the protocol's share of *unmaterialized* profit: gain NAV has priced in (via `current_nav`) but that has not yet terminally materialized into the reserve.
 - **`pending_protocol_profit`** — a cut that *has* materialized but whose cash could not yet be moved to the reserve because idle was deployed in other markets; it is carried and realized on a later sweep (see [Profit materialization](#profit-materialization-at-settlement)).
 
-The two are disjoint: the moment a cut materializes it leaves `exclusion` (its profit enters `profit_debits`) and, if not immediately movable, enters `pending_protocol_profit`. Incentive value is not part of this figure (incentives are out of the pool entirely).
+The two are disjoint: the moment a cut materializes it leaves `exclusion` (its profit enters `profit_basis_debits`) and, if not immediately movable, enters `pending_protocol_profit`. Incentive value is not part of this figure (incentives are out of the pool entirely).
 
 `pool_nav` and the PLP `total_supply` are snapshotted **once** and passed to the drain for both queues. This single mark prices supply and withdraw identically:
 
@@ -73,7 +75,7 @@ There is **no band, no separate supply/withdraw pricing, and no optimistic/conse
 
 ```mermaid
 flowchart TD
-  CAP[AdminCap / MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
+  CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
   LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
   EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
   NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]
@@ -83,14 +85,14 @@ flowchart TD
 
 ### Draining the queues
 
-`drain_lp_requests` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` drains that queue fully. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
+`lp_book::drain` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` drains that queue fully. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
 
-- **Supplies pass (FIFO from the head).** Each request mints `supply_shares(amount, total_supply, pool_nav)` PLP and joins the escrowed DUSDC into idle. A request whose shares round to **zero** (dust) is refunded its DUSDC instead of minting — per-request failure isolation, not an abort that would revert the whole flush.
-- **Withdrawals pass (FIFO until idle is dry).** Each request burns its escrowed PLP and pays `withdraw_dusdc(shares, total_supply, pool_nav)` DUSDC out of idle. A dust request that rounds to zero is refunded its PLP. If idle cannot cover the head request's payout, the drain **stops** and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.
+- **Supplies pass (FIFO from the head).** Each request mints `supply_shares(amount, total_supply, pool_nav)` PLP and joins the escrowed DUSDC into idle. A request whose shares round to **zero** (dust, reachable only at a near-zero pool NAV) currently aborts the whole flush with `EInvalidDrainMark`; it is unblocked only by the request owner cancelling. Skipping or refunding the degenerate head instead is intended but not yet implemented (tracked as open item C-4).
+- **Withdrawals pass (FIFO until idle is dry).** Each request burns its escrowed PLP and pays `withdraw_dusdc(shares, total_supply, pool_nav)` DUSDC out of idle. A dust request that rounds to zero payout has the same current abort behavior as a dust supply (C-4). If idle cannot cover the head request's payout, the drain **stops** and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.
 
 Because supplies run before withdrawals, the DUSDC supplied this flush is available to pay this flush's withdrawals. Cash funded into expiries is not directly redeemable until it returns through rebalance or settlement, so a large exit can be bounded by idle and deferred — it cannot force-drain a live market.
 
-Fills and refunds are delivered to each recipient manager through the **balance accumulator** (`send_funds`): the minted PLP, paid DUSDC, or refunded escrow accumulates against the manager's address balance, and the manager absorbs it lazily on its next capital operation. The flush never holds a manager reference; it only needs the recipient address recorded at request time.
+Fills and refunds are delivered to each recipient account through the **balance accumulator** (`send_funds`): the minted PLP, paid DUSDC, or refunded escrow accumulates against the account's receive address, and the account absorbs it lazily on its next capital operation. The flush never holds an account reference; it only needs the recipient address recorded at request time.
 
 ## Full-pool NAV is exact, per expiry
 
@@ -108,8 +110,8 @@ where:
 
 - **`free_cash = cash_balance − rebate_reserve`** — the expiry's DUSDC net of the rebate it still owes.
 - **`exact_live_liability = walk_linear − correction_value`**, floored at zero, is the exact mark-to-model liability of every open order:
-  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer (no piecewise-linear curve, no sampling band; the interpolation tolerance is fixed at 0).
-  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares × floor_index(now))` — the floor offset, scanned exactly over the active leveraged book.
+  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer and caching those boundary prices in a transaction-local memo.
+  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book using the memo populated by `walk_linear`.
 
 Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The leftover after the floor is the order's recoverable equity, and `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 
@@ -136,9 +138,9 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle DUSDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
-- **Settled sweep:** a settled expiry is deactivated, its free cash returned, and its terminal profit materialized (see [Profit materialization](#profit-materialization-at-settlement)).
+- **Settled sweep:** a settled expiry is deactivated, cash above settled payout liability plus unresolved rebate reserve is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)). Later rebate claims pay owed rebates and return residual reserve through the same pool accounting path.
 
-Funding room is bounded by a **per-expiry funding cap** (`expiry_max_funding`). The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
+Funding room is bounded by the **per-expiry allocation cap** snapshotted from cadence config when the market is created. The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
 
 A freshly created expiry holds zero cash and is not mintable until its first top-up funds it — `mint` asserts backing but never pulls pool cash, so `rebalance_expiry_cash` is what makes a market mintable. The pool holds **no standing earmark** against the caps: each expiry's own cash covers its reserve, so a market never depends on a future top-up to pay what it already owes (settlement is fully funded from the market's floor — see the solvency guarantee below).
 
@@ -155,20 +157,20 @@ cash_balance ≥ payout_liability + rebate_reserve
 For a live market, `payout_liability` is a **settlement floor plus a liquidity buffer**:
 
 ```
-payout_liability = max_live_backing + backing_buffer_lambda × (Σ live_backing − max_live_backing)
+payout_liability = max_net_payout + backing_buffer_lambda × (Σ net_payout − max_net_payout)
 ```
 
-The floor is `max_live_backing` — the maximum summed payout at any *single* settlement price (the payout tree's O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum live payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A `backing_buffer_lambda` of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. After settlement, `payout_liability` becomes the exact terminal payout at the settlement price, which is always at or below the floor.
+The floor is `max_net_payout` — the maximum summed net payout at any *single* settlement price (the payout tree's O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum net payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A `backing_buffer_lambda` of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. After settlement, `payout_liability` becomes the exact settled payout at the settlement price, which is always at or below the floor.
 
 - **Receiving cash** joins the funds without re-checking backing (receiving cash can only improve it).
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
-The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and its owed rebates. No flow lets cash drop below this line.
+The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and unresolved rebate claims. A claim first shrinks the unresolved basis for the resolved account, then pays the rebate and returns any residual reserve; no flow lets cash drop below the post-claim backing line.
 
 ## Profit materialization at settlement
 
-Profit is recognized only when it is **cash-backed and irreversible** — when an expiry settles and cash actually flows back to the pool — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
+Profit is recognized only when it is **cash-backed and irreversible** — when terminal cash actually flows back to the pool from a settled expiry, either during the settled sweep or as residual reserve from a rebate claim — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
 
 The ledger tracks profit per expiry against a **watermark**:
 
@@ -186,9 +188,9 @@ LP profit stays in idle DUSDC (raising NAV for all holders). The protocol cut is
 
 ## DEEP staking custody
 
-Managers stake DEEP for trading benefits (fee discounts and a higher rebate share — see [fees and rebates](./fees-and-rebates.md)). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
+Accounts stake DEEP for trading benefits (fee discounts and a higher rebate share — see [fees and rebates](./fees-and-rebates.md)). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
 
-- Staking records the amount as inactive on the manager; it activates on the next epoch (lazily rolled by the trade/claim flows).
+- Staking records the amount as inactive on the account; it activates on the next epoch (lazily rolled by the trade/claim flows).
 - Unstaking returns all staked DEEP (active and inactive) at any time with no penalty.
 
 This is the only DEEP the vault holds; there is no LP-owned DEEP incentive balance (incentives moved to a separate staking contract).

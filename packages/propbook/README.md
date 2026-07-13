@@ -48,9 +48,10 @@ exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
 
-For Block Scholes, raw surface reads expose the source spot, forward, and SVI
-payload. Normalized surface reads return `none` when the requested observation is
-absent or the surface has zero spot or zero forward.
+For Block Scholes, raw reads expose source spot plus per-expiry forward and SVI
+payloads from permanent source-level feed objects. Normalized spot and forward
+reads return `none` when the requested observation is absent or zero; normalized
+SVI reads expose the stored SVI parameters directly.
 
 ## Exact Timestamp Inserts
 
@@ -60,7 +61,8 @@ source timestamp derived from the update:
 
 - Pyth uses the Lazer source timestamp in microseconds, rounded up to
   milliseconds.
-- Block Scholes uses the update's published millisecond timestamp directly.
+- Block Scholes spot, forward, and SVI use each update's published millisecond
+  timestamp directly.
 
 A read for `timestamp_ms` succeeds only if a source observation was inserted or
 latest-updated at exactly that timestamp and exposed by the source module's
@@ -85,43 +87,50 @@ a non-aborting normalized view for consumers.
 Pyth Lazer `Update` values are produced by the Pyth verifier package, so the Move
 type system provides provenance for normal Pyth ingestion.
 
-## Block Scholes Feed
+## Block Scholes Feeds
 
-`block_scholes_feed::BlockScholesFeed` is one shared object for one Block Scholes
-source id. It stores a table of per-expiry lanes. At the individual expiry level,
-BS and Pyth use the same mutation pattern: latest update, exact timestamp insert,
-and generic events all come from `OracleLane`.
+Block Scholes data is split across three shared-object types:
 
-The BS payload stores raw source fields:
+- `block_scholes_spot_feed::BlockScholesSpotFeed`: one source-level spot stream
+  per Block Scholes source id.
+- `block_scholes_forward_feed::BlockScholesForwardFeed`: one source-level
+  forward object per Block Scholes source id, with per-expiry lanes.
+- `block_scholes_svi_feed::BlockScholesSVIFeed`: one source-level SVI object per
+  Block Scholes source id, with per-expiry lanes.
+
+The spot feed wraps one `OracleLane`; the forward and SVI feeds keep a table of
+`expiry_ms -> OracleLane`. Every BS value still uses the same mutation pattern as
+Pyth: latest update, exact timestamp insert, and generic lane events.
+
+The BS payloads store raw source fields:
 
 - `bs_source_id`
-- `expiry_ms`
-- spot
-- forward
-- SVI params
+- `expiry_ms` for forward and SVI feeds
+- spot, forward, or SVI params, depending on the feed
 
 Propbook intentionally does not enforce Predict's pricing-safe numeric envelope
 on BS ingestion. Consumers such as Predict must validate spot, forward, basis,
-SVI bounds, and liveness before using the surface in pricing math.
+SVI bounds, and liveness before using the values in pricing math.
 
 Important caveat: `block_scholes_oracle::update` is currently a stub verifier.
 Its `Update` values are forgeable until the real BS signature verifier replaces
 the stub. Permissionless BS live updates and exact inserts are not production-safe
 while this is true.
 
-Throughput caveat: one BS shared object stores all expiries for a source, so all
-BS writes for that source serialize on that object. The intended high-frequency
-path is to use PTBs that update multiple expiries together. If a future source
-needs independent parallel writes across expiries, the next design would shard BS
-into one shared object per `(source_id, expiry_ms)` and move the per-expiry
-mapping into the registry.
+Binding caveat: Propbook binds the source-level BS spot feed first, then binds
+the permanent forward/SVI surface pair with
+`registry::bind_block_scholes_surface_to_underlying`. That function asserts that
+the forward feed, SVI feed, and already-bound spot feed all share the same
+`bs_source_id`, so consumers do not accidentally combine BS spot/basis data from
+different sources for one underlying.
 
 ## Registry And Identifiers
 
 `registry::OracleRegistry` owns source discovery and canonical Propbook bindings.
 It keeps two namespaces:
 
-- Source catalog: one Propbook oracle object per `(oracle_kind, source_id)`.
+- Source catalog: one Propbook oracle object per source key, keyed by
+  `(oracle_kind, source_id)`.
 - Canonical binding: one active oracle per
   `(propbook_underlying_id, oracle_kind, value_kind)`.
 
@@ -130,7 +139,7 @@ Identifier pattern:
 - Source id: source-native identifier, such as `pyth_source_id` or
   `bs_source_id`.
 - Propbook oracle object id: shared object id for the Propbook wrapper, such as
-  `propbook_pyth_id` or `propbook_block_scholes_id`.
+  `propbook_pyth_id` or `propbook_block_scholes_spot_id`.
 - Propbook underlying id: canonical underlying identifier chosen by Propbook
   governance, such as the id used to mean BTC.
 - Source underlying id: source-specific representation of the same underlying,
@@ -142,20 +151,53 @@ Source wrapper creation is permissionless and only records the source catalog.
 Canonical binding is admin-gated because it is the trust claim that a source id
 represents a Propbook underlying.
 
-Admin trust model: package init mints one `RegistryAdminCap`, and canonical bind
-or rebind is immediate for whoever holds that cap. Propbook does not implement
-on-chain multisig, rotation, timelock, or two-step rebinds. Production deployments
-should treat the cap as governance custody and enforce multisig/timelock
-operationally, or add an on-chain governance layer before relying on registry
-bindings as an irreversible trust anchor.
+Admin trust model: package init mints one `RegistryAdminCap`, and canonical
+bindings are controlled by whoever holds that cap. Propbook does not implement
+on-chain multisig, rotation, or timelock. Production deployments should treat the
+cap as governance custody and enforce multisig/timelock operationally, or add an
+on-chain governance layer before relying on registry bindings as a trust anchor.
+
+Canonical bindings are current accepted bindings, not historical snapshots. The
+initial `bind_*` calls require an unbound canonical key and abort on duplicates.
+Admin replacement APIs update an already-bound canonical key without creating an
+unbound intermediate state:
+
+- `replace_pyth_binding_for_underlying` replaces the active Pyth feed for one
+  Propbook underlying.
+- `replace_block_scholes_bindings_for_underlying` replaces BS spot, forward, and
+  SVI atomically. All three replacement feeds must share one `bs_source_id`, so
+  consumers never read a mixed-source BS surface through the canonical lookup.
+
+If an underlying has only a BS spot binding and no forward/SVI surface yet, the
+atomic BS replacement call aborts because there is no complete surface to replace.
+Recover by creating the missing forward/SVI wrappers for the current spot source,
+binding that surface, then replacing all three BS bindings atomically. Predict
+market creation requires the full Pyth + BS set, so no Predict market can already
+depend on a spot-only Propbook state.
+
+Source assignment remains sticky: once a source key has been assigned to an
+underlying, that source key can only be reused for the same underlying. Replacing
+BTC's Pyth feed from source A to source B does not free source A for another
+underlying. There is deliberately no unbind path; if a binding is wrong or a
+source dies, governance should replace it with the corrected current feed.
+
+Operational caveat for Pyth replacement: consumers such as Predict may need exact
+historical rows from `normalized_spot_at(timestamp_ms)` for unsettled markets.
+Before replacing a Pyth binding for an underlying with unsettled past expiries,
+backfill every required exact millisecond row into the replacement feed via
+`insert_at`, then replace the binding.
 
 Typical discovery question:
 
 > What is the Propbook Pyth oracle object for BTC?
 
 Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
-equivalent BS lookup is
-`propbook_block_scholes_id_for_underlying(registry, propbook_underlying_id)`.
+equivalent BS spot lookup is
+`propbook_block_scholes_spot_id_for_underlying(registry, propbook_underlying_id)`.
+The BS surface lookups are
+`propbook_block_scholes_forward_id_for_underlying(registry, propbook_underlying_id)`
+and
+`propbook_block_scholes_svi_id_for_underlying(registry, propbook_underlying_id)`.
 
 ## Events
 
@@ -163,9 +205,13 @@ Propbook emits generic oracle events:
 
 - `ObservationRecorded<OracleRead<Payload>>`
 - `ObservationInserted<OracleRead<Payload>>`
+- `OracleSourceRegistered`
+- `OracleBound`
+- `OracleRebound`
 
-For BS, the payload includes the expiry, so the generic event is enough to index
-per-expiry writes. Exact-insert events include the source timestamp in the
+For BS forward and SVI rows, the payload includes the expiry, so the
+generic event is enough to index per-expiry writes. BS spot is source-level and
+does not carry an expiry. Exact-insert events include the source timestamp in the
 `OracleRead` envelope.
 
 High-frequency cost caveats:
@@ -173,10 +219,11 @@ High-frequency cost caveats:
 - `ObservationRecorded` emits for every accepted live update.
 - `exact_reads` are unbounded tables. Storage growth is paid by writers; a
   permissionless prune flow can be added later if long-run retention needs it.
-- Pyth source timestamps are ceil-rounded from microseconds to milliseconds, so
-  two source updates inside the same millisecond collide at the Propbook freshness
-  key and the second live update is a no-op. The expected source cadence is below
-  1 kHz per feed.
+- Pyth latest updates are ceil-rounded from microseconds to milliseconds, so two
+  source updates inside the same millisecond can collide at the Propbook
+  freshness key and the second live update is a no-op. Exact-history inserts are
+  stricter: `pyth_feed::insert_at` accepts only source timestamps that are
+  already exact whole milliseconds.
 
 ## Consumer Responsibilities
 
@@ -191,5 +238,5 @@ Propbook does not own:
 Consumers should read Propbook as a source-data substrate and apply their own
 policy at the point of use. For Predict, the reference pricing-safe envelope
 lives in `packages/predict/sources/pricing/pricing.move` around
-`assert_surface_pricing_safe`: it validates spot, forward, basis, SVI bounds, and
+`assert_inputs_pricing_safe`: it validates spot, forward, basis, SVI bounds, and
 freshness after reading Propbook data.

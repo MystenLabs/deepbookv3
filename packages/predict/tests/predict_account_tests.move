@@ -26,6 +26,8 @@ const ORDER_A: u256 = 42;
 const ORDER_B: u256 = 99;
 const ROOT_A: u256 = 42;
 const ROOT_PARENT: u256 = 7;
+const OPENED_AT_MS: u64 = 1_700_000_000_000;
+const REPLACEMENT_OPENED_AT_MS: u64 = 1_700_000_500_000;
 const STAKE_1: u64 = 1_000;
 const STAKE_2: u64 = 2_500;
 
@@ -45,13 +47,35 @@ fun add_then_remove_position_round_trips_root_id() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
     // At mint the root equals the order's own id.
-    predict_account::add_position(account, eid(EXPIRY_A), ORDER_A, ORDER_A, scenario.ctx());
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_A),
+        ORDER_A,
+        ORDER_A,
+        OPENED_AT_MS,
+        scenario.ctx(),
+    );
     assert!(predict_account::has_position(account, eid(EXPIRY_A), ORDER_A));
     assert_eq!(predict_account::expiry_position_count(account, eid(EXPIRY_A)), 1);
+    assert_eq!(
+        predict_account::position_opened_at_ms(account, eid(EXPIRY_A), ORDER_A),
+        OPENED_AT_MS,
+    );
 
-    // A partial-close replacement carries the parent root forward.
-    predict_account::add_position(account, eid(EXPIRY_A), ORDER_B, ROOT_PARENT, scenario.ctx());
+    // A partial-close replacement carries the parent root (and its own open time) forward.
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_A),
+        ORDER_B,
+        ROOT_PARENT,
+        REPLACEMENT_OPENED_AT_MS,
+        scenario.ctx(),
+    );
     assert_eq!(predict_account::expiry_position_count(account, eid(EXPIRY_A)), 2);
+    assert_eq!(
+        predict_account::position_opened_at_ms(account, eid(EXPIRY_A), ORDER_B),
+        REPLACEMENT_OPENED_AT_MS,
+    );
 
     let root = predict_account::remove_position(account, eid(EXPIRY_A), ORDER_B, scenario.ctx());
     assert_eq!(root, ROOT_PARENT);
@@ -64,8 +88,22 @@ fun add_then_remove_position_round_trips_root_id() {
 fun positions_are_scoped_per_expiry() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    predict_account::add_position(account, eid(EXPIRY_A), ORDER_A, ORDER_A, scenario.ctx());
-    predict_account::add_position(account, eid(EXPIRY_B), ORDER_A, ORDER_A, scenario.ctx());
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_A),
+        ORDER_A,
+        ORDER_A,
+        OPENED_AT_MS,
+        scenario.ctx(),
+    );
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_B),
+        ORDER_A,
+        ORDER_A,
+        OPENED_AT_MS,
+        scenario.ctx(),
+    );
 
     // The same order id in two markets is two distinct positions.
     assert!(predict_account::has_position(account, eid(EXPIRY_A), ORDER_A));
@@ -80,8 +118,22 @@ fun positions_are_scoped_per_expiry() {
 fun add_duplicate_position_aborts() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    predict_account::add_position(account, eid(EXPIRY_A), ORDER_A, ORDER_A, scenario.ctx());
-    predict_account::add_position(account, eid(EXPIRY_A), ORDER_A, ROOT_A, scenario.ctx());
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_A),
+        ORDER_A,
+        ORDER_A,
+        OPENED_AT_MS,
+        scenario.ctx(),
+    );
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_A),
+        ORDER_A,
+        ROOT_A,
+        OPENED_AT_MS,
+        scenario.ctx(),
+    );
     abort 999
 }
 
@@ -90,6 +142,24 @@ fun remove_unknown_position_aborts() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
     predict_account::remove_position(account, eid(EXPIRY_A), ORDER_A, scenario.ctx());
+    abort 999
+}
+
+#[test, expected_failure(abort_code = predict_account::EPositionNotFound)]
+fun opened_at_ms_unknown_position_aborts() {
+    let (mut scenario, mut wrapper) = new_account();
+    let account = wrapper.load_account_mut(auth(&mut scenario));
+    // Attach the slot with one position so the getter reaches the missing-row guard
+    // rather than the empty-app-data path.
+    predict_account::add_position(
+        account,
+        eid(EXPIRY_A),
+        ORDER_A,
+        ORDER_A,
+        OPENED_AT_MS,
+        scenario.ctx(),
+    );
+    predict_account::position_opened_at_ms(account, eid(EXPIRY_A), ORDER_B);
     abort 999
 }
 
@@ -137,19 +207,19 @@ fun add_inactive_stake_goes_to_inactive() {
 }
 
 #[test]
-fun active_stake_mut_is_noop_within_epoch() {
+fun roll_active_stake_is_noop_within_epoch() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
     predict_account::add_inactive_stake(account, STAKE_1, scenario.ctx());
     // Same epoch as the slot's creation: no roll.
-    assert_eq!(predict_account::active_stake_mut(account, scenario.ctx()), 0);
+    assert_eq!(predict_account::roll_active_stake(account, scenario.ctx()), 0);
     assert_eq!(predict_account::inactive_stake(account), STAKE_1);
     assert_eq!(predict_account::active_stake(account), 0);
     finish(scenario, wrapper);
 }
 
 #[test]
-fun active_stake_mut_activates_inactive_next_epoch() {
+fun roll_active_stake_activates_inactive_next_epoch() {
     let (mut scenario, mut wrapper) = new_account();
     {
         let account = wrapper.load_account_mut(auth(&mut scenario));
@@ -157,7 +227,7 @@ fun active_stake_mut_activates_inactive_next_epoch() {
     };
     scenario.next_epoch(ALICE);
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    assert_eq!(predict_account::active_stake_mut(account, scenario.ctx()), STAKE_1);
+    assert_eq!(predict_account::roll_active_stake(account, scenario.ctx()), STAKE_1);
     assert_eq!(predict_account::active_stake(account), STAKE_1);
     assert_eq!(predict_account::inactive_stake(account), 0);
 
@@ -177,7 +247,7 @@ fun remove_all_stake_sums_active_plus_inactive_and_zeroes() {
     };
     scenario.next_epoch(ALICE);
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    predict_account::active_stake_mut(account, scenario.ctx()); // STAKE_1 now active
+    predict_account::roll_active_stake(account, scenario.ctx()); // STAKE_1 now active
     predict_account::add_inactive_stake(account, STAKE_2, scenario.ctx()); // plus inactive
 
     assert_eq!(predict_account::remove_all_stake(account, scenario.ctx()), STAKE_1 + STAKE_2);

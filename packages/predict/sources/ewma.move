@@ -31,8 +31,7 @@ public struct EwmaState has copy, drop, store {
 /// can fire until observations accumulate.
 public(package) fun new(ctx: &TxContext): EwmaState {
     EwmaState {
-        // Gas price must exceed 18_446_744_073 MIST to overflow scaling; realistic Sui gas is far lower, and the VM abort is the backstop.
-        mean: ctx.gas_price() * math::float_scaling!(),
+        mean: scaled_gas_price(ctx),
         variance: 0,
         last_updated_timestamp_ms: 0,
     }
@@ -49,14 +48,14 @@ public(package) fun penalty_fee(
     ctx: &TxContext,
 ): u64 {
     if (!config.enabled() || self.variance == 0) return 0;
-    // Gas price must exceed 18_446_744_073 MIST to overflow scaling; realistic Sui gas is far lower, and the VM abort is the backstop.
-    let gas_price = ctx.gas_price() * math::float_scaling!();
+    let gas_price = scaled_gas_price(ctx);
     if (gas_price <= self.mean) return 0;
 
     let std_dev = math::sqrt(self.variance, math::float_scaling!());
     let z_score = math::div(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 
+    // penalty_rate * quantity / float_scaling, round down
     math::mul(config.penalty_rate(), quantity)
 }
 
@@ -80,12 +79,11 @@ public(package) fun update(
 
     let alpha = config.alpha();
     let one_minus_alpha = math::float_scaling!() - alpha;
-    // Gas price must exceed 18_446_744_073 MIST to overflow scaling; realistic Sui gas is far lower, and the VM abort is the backstop.
-    let gas_price = ctx.gas_price() * math::float_scaling!();
+    let gas_price = scaled_gas_price(ctx);
 
     let mean_new = math::mul(alpha, gas_price) + math::mul(one_minus_alpha, self.mean);
 
-    let diff = if (gas_price > self.mean) gas_price - self.mean else self.mean - gas_price;
+    let diff = gas_price.diff(self.mean);
     let diff_squared = math::mul(diff, diff);
     let variance_new = if (self.variance == 0) {
         diff_squared
@@ -95,4 +93,13 @@ public(package) fun update(
 
     self.mean = mean_new;
     self.variance = variance_new;
+}
+
+// === Private Functions ===
+
+/// The transaction's gas price in FLOAT_SCALING. Gas price must exceed
+/// 18_446_744_073 MIST to overflow the scaling; realistic Sui gas is far lower,
+/// and the VM abort is the backstop.
+fun scaled_gas_price(ctx: &TxContext): u64 {
+    ctx.gas_price() * math::float_scaling!()
 }

@@ -38,6 +38,8 @@ use fun df::remove as UID.remove;
 const EInvalidOwner: u64 = 0;
 const EBalanceTooLow: u64 = 1;
 const EInvalidAuth: u64 = 2;
+
+// === Auth Kinds ===
 const AUTH_OWNER: u8 = 0;
 const AUTH_APP: u8 = 1;
 
@@ -48,8 +50,9 @@ public struct AccountWrapper has key {
     account: Account,
 }
 
-/// Wrapped account state and custody. Its ID is the canonical account identity,
-/// receive address, and app-data storage root.
+/// Wrapped account state and custody. Its ID is the canonical account identity
+/// and app-data storage root; funds delivery uses `receive_address` (the wrapper
+/// object's address), never this ID's address.
 public struct Account has store {
     account_id: UID,
     /// EOA address or object-ID-as-address that owns this account.
@@ -68,7 +71,7 @@ public struct Account has store {
 public struct DataKey<phantom App>() has copy, drop, store;
 
 /// Per-coin bag key.
-public struct CoinKey<phantom T> has copy, drop, store {}
+public struct CoinKey<phantom T>() has copy, drop, store;
 
 /// Hot-potato authority to mutably open an `AccountWrapper`.
 public struct Auth {
@@ -77,40 +80,14 @@ public struct Auth {
 }
 
 // === Public Functions ===
-/// Share a newly created account object.
-public fun share(self: AccountWrapper) {
-    transfer::share_object(self);
-}
-
 /// Returns the wrapper object ID.
 public fun id(self: &AccountWrapper): ID {
     self.id.to_inner()
 }
 
-/// Generate owner authority from the transaction sender.
-public fun generate_auth(ctx: &TxContext): Auth {
-    Auth { kind: AUTH_OWNER, owner: ctx.sender() }
-}
-
-/// Generate owner authority from an owning object's UID.
-public fun generate_auth_as_object(uid: &mut UID): Auth {
-    Auth { kind: AUTH_OWNER, owner: uid.to_inner().to_address() }
-}
-
 /// Borrow the wrapped account for read-only use.
 public fun load_account(self: &AccountWrapper): &Account {
     &self.account
-}
-
-/// Borrow the wrapped account mutably by consuming an `Auth` hot potato.
-public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account {
-    let Auth { kind, owner } = auth;
-    if (kind == AUTH_OWNER) {
-        self.assert_owner(owner);
-    } else {
-        assert!(kind == AUTH_APP, EInvalidAuth);
-    };
-    &mut self.account
 }
 
 /// Returns the total balance of `T` available to the account, including funds
@@ -135,6 +112,32 @@ public fun receive_address(self: &Account): address {
     self.receive_address
 }
 
+/// Generate owner authority from the transaction sender.
+public fun generate_auth(ctx: &TxContext): Auth {
+    Auth { kind: AUTH_OWNER, owner: ctx.sender() }
+}
+
+/// Generate owner authority from an owning object's UID.
+public fun generate_auth_as_object(uid: &mut UID): Auth {
+    Auth { kind: AUTH_OWNER, owner: uid.to_inner().to_address() }
+}
+
+/// Share a newly created account object.
+public fun share(self: AccountWrapper) {
+    transfer::share_object(self);
+}
+
+/// Borrow the wrapped account mutably by consuming an `Auth` hot potato.
+public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account {
+    let Auth { kind, owner } = auth;
+    if (kind == AUTH_OWNER) {
+        self.assert_owner(owner);
+    } else {
+        assert!(kind == AUTH_APP, EInvalidAuth);
+    };
+    &mut self.account
+}
+
 /// Fold any accumulator-delivered funds for `T` (sent to this account's receive
 /// address) into stored balance. Withdrawing the address balance uses `&mut wrapper.id`
 /// — a real shared object the runtime authenticates as a transaction input. Each
@@ -144,8 +147,8 @@ public fun receive_address(self: &Account): address {
 /// Permissionless: it only consolidates the account's own funds and moves nothing out,
 /// so it needs no `Auth`; pulling funds out still requires `load_account_mut(auth)`.
 public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock: &Clock) {
+    if (wrapper.account.settled_this_timestamp<T>(clock)) return;
     let now = clock.timestamp_ms();
-    if (now == wrapper.account.last_settlement_ms<T>()) return;
     wrapper.account.set_last_settlement_ms<T>(now);
 
     let amount = balance::settled_funds_value<T>(root, wrapper.id.to_address());
@@ -285,7 +288,7 @@ fun assert_owner(self: &AccountWrapper, owner: address) {
 }
 
 fun stored_balance<T>(self: &Account): u64 {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.balances.contains(key)) {
         let bal: &Balance<T> = &self.balances[key];
         bal.value()
@@ -295,15 +298,23 @@ fun stored_balance<T>(self: &Account): u64 {
 }
 
 fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock): u64 {
-    if (clock.timestamp_ms() == self.last_settlement_ms<T>()) {
+    if (self.settled_this_timestamp<T>(clock)) {
         0
     } else {
         balance::settled_funds_value<T>(root, self.receive_address)
     }
 }
 
+/// The settlement timestamp is both the duplicate-withdraw latch and the read-side
+/// accumulator suppression. `settled_funds_value` observes beginning-of-commit
+/// funds, so same-timestamp balance reads after `settle` must not add that
+/// accumulator view on top of the newly stored balance.
+fun settled_this_timestamp<T>(self: &Account, clock: &Clock): bool {
+    clock.timestamp_ms() == self.last_settlement_ms<T>()
+}
+
 fun last_settlement_ms<T>(self: &Account): u64 {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.settlements.contains(key)) {
         let timestamp: &u64 = &self.settlements[key];
         *timestamp
@@ -313,7 +324,7 @@ fun last_settlement_ms<T>(self: &Account): u64 {
 }
 
 fun set_last_settlement_ms<T>(self: &mut Account, timestamp: u64) {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.settlements.contains(key)) {
         let last_settlement_ms: &mut u64 = &mut self.settlements[key];
         *last_settlement_ms = timestamp;
@@ -323,7 +334,7 @@ fun set_last_settlement_ms<T>(self: &mut Account, timestamp: u64) {
 }
 
 fun deposit_balance<T>(self: &mut Account, balance: Balance<T>) {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     if (self.balances.contains(key)) {
         let bal: &mut Balance<T> = &mut self.balances[key];
         bal.join(balance);
@@ -333,7 +344,7 @@ fun deposit_balance<T>(self: &mut Account, balance: Balance<T>) {
 }
 
 fun withdraw_balance<T>(self: &mut Account, amount: u64): Balance<T> {
-    let key = CoinKey<T> {};
+    let key = CoinKey<T>();
     assert!(self.balances.contains(key), EBalanceTooLow);
     let bal: &mut Balance<T> = &mut self.balances[key];
     assert!(bal.value() >= amount, EBalanceTooLow);
