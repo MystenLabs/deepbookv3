@@ -2712,6 +2712,122 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
     abort 0
 }
 
+#[test, expected_failure(abort_code = pool_proxy::EReduceOnlyBelowLiquidation)]
+// Same below-liquidation floor on the *plain* reduce-only limit entry
+// (place_reduce_only_limit_order_v2), the sibling of the _and_repay entry above.
+// Pins the floor on both limit entries so a regression can't remove it from one.
+fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(2200 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        1000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(withdrawn);
+    destroy(usdc_price);
+
+    // Drift USDC to $2.15 -> ratio ~1.023, below liquidation (1.10).
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+        &mut scenario,
+        215_000_000,
+        &clock,
+    );
+    pool_proxy::update_current_price<USDC, USDT>(
+        &mut registry,
+        &pool,
+        &usdc_drifted,
+        &usdt_price,
+        &clock,
+    );
+
+    let rr_before = mm.risk_ratio(
+        &registry,
+        &usdc_drifted,
+        &usdt_price,
+        &pool,
+        &base_pool,
+        &quote_pool,
+        &clock,
+    );
+    assert!(rr_before < registry.liquidation_risk_ratio(pool.id()));
+
+    let order_info = pool_proxy::place_reduce_only_limit_order_v2<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        &base_pool,
+        &quote_pool,
+        &usdc_drifted,
+        &usdt_price,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_200_000_000,
+        1000 * test_constants::usdc_multiplier(),
+        true,
+        false,
+        2_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_info);
+    abort 0
+}
+
 #[test, expected_failure(abort_code = pool_proxy::ENoLiquidityInOrderbook)]
 fun market_and_repay_empty_book_aborts() {
     // An empty book gives no execution surface: a market-and-repay aborts on
@@ -4651,6 +4767,62 @@ fun set_price_tolerance_exceeding_liquidation_buffer_aborts() {
 
     // 20% exceeds the 10% buffer at liquidation 1.10 -> aborts.
     registry.set_price_tolerance<USDC, USDT>(&admin_cap, &pool, 200_000_000, &clock);
+
+    abort 0
+}
+
+#[test, expected_failure(abort_code = margin_registry::EPriceToleranceExceedsLiquidationBuffer)]
+// update_risk_params must re-check buffer >= tolerance when it *lowers* liquidation.
+// Store a 10% tolerance (== the buffer at liquidation 1.10, so it passes), then lower
+// liquidation to 1.05: the stored-tolerance read (10%) now exceeds the shrunk buffer
+// (5%) and aborts. Exercises the CurrentPriceData tolerance-read branch — the one that
+// distinguishes this site from new_pool_config / set_price_tolerance.
+fun update_risk_params_shrinking_buffer_below_tolerance_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    initialize_pool_price<USDC, USDT>(pool_id, &mut registry, &clock, &mut scenario);
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Store a 10% tolerance (== the buffer at liquidation 1.10, so this passes).
+    registry.set_price_tolerance<USDC, USDT>(&admin_cap, &pool, 100_000_000, &clock);
+
+    // Lower liquidation to 1.05 -> buffer 5% < stored tolerance 10% -> aborts. The
+    // config itself is valid under new_pool_config's default-5% check (5% <= 5%).
+    let new_config = registry.new_pool_config<USDC, USDT>(
+        2_000_000_000, // min_withdraw 2.0
+        1_060_000_000, // min_borrow 1.06
+        1_050_000_000, // liquidation 1.05
+        1_100_000_000, // target 1.10
+        20_000_000, // user 2%
+        30_000_000, // pool 3%
+    );
+    registry.update_risk_params<USDC, USDT>(&admin_cap, &pool, new_config, &clock);
 
     abort 0
 }
