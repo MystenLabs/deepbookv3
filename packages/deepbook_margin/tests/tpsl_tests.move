@@ -4816,3 +4816,152 @@ fun execute_conditional_orders_v3_limit_stop_loss_rests_in_danger_band() {
     return_shared_2!(mm, pool);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+// Security follow-up: the direct reduce-only limit entries floor placement at
+// `>= liquidation` (EReduceOnlyBelowLiquidation), but the permissionless v3
+// conditional executor must not offer an alternative route to rest a self-fillable
+// limit below liquidation. Same setup as the danger-band limit v3 test, but SUI
+// drifts to $0.70 so the ratio is ~1.09 (BELOW liquidation 1.10) — v3 now cancels
+// the limit conditional (out-of-bounds) instead of resting it. A market conditional
+// would still fire (it deleverages). v2 blocked this via its min_borrow gate.
+fun execute_conditional_orders_v3_limit_below_liquidation_cancelled() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        usdc_pool_id,
+        sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    setup_orderbook_liquidity_low_bids<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(1000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<SUI, USDC>(
+        &margin_registry,
+        &mut usdc_pool,
+        &sui_price_high,
+        &usdc_price,
+        &pool,
+        8000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let condition = tpsl::new_condition(true, 1_500_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        960_000,
+        150 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared_2!(mm, pool);
+    return_shared(usdc_pool);
+    return_shared(margin_registry);
+
+    scenario.next_tx(test_constants::user2());
+    // $0.70 -> ratio (1000*0.70 + 8000)/8000 = 1.0875, below liquidation (1.10).
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 70, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &clock,
+    );
+
+    let mut sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // Sanity: the manager is genuinely below the liquidation floor.
+    let rr_before = mm.risk_ratio(
+        &margin_registry,
+        &sui_price_low,
+        &usdc_price,
+        &pool,
+        &sui_pool,
+        &usdc_pool,
+        &clock,
+    );
+    assert!(rr_before < margin_registry.liquidation_risk_ratio(pool.id()));
+
+    let debt_before = mm.borrowed_quote_shares();
+
+    let order_infos = test_helpers::execute_conditional_orders_v3_for_test<SUI, USDC>(
+        &mut scenario,
+        &mut sui_pool,
+        &mut usdc_pool,
+        &mut mm,
+        &mut pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+    );
+
+    // The limit conditional was NOT placed (below liquidation → out-of-bounds skip),
+    // debt is unchanged, and the conditional was cancelled off the queue.
+    assert!(order_infos.length() == 0);
+    assert!(mm.borrowed_quote_shares() == debt_before);
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy(order_infos);
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
+    destroy_2!(sui_price_low, usdc_price);
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}

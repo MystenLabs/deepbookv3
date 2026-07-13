@@ -1795,6 +1795,7 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
     insufficient_funds_ids: &mut vector<u64>,
     out_of_bounds_ids: &mut vector<u64>,
     max_orders_to_execute: u64,
+    below_liquidation: bool,
     clock: &Clock,
     ctx: &TxContext,
 ): bool {
@@ -1833,7 +1834,20 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
             let is_bid = pending_order.is_bid();
             if (pending_order.is_limit_order()) {
                 let price = *pending_order.price().borrow();
-                if ((is_bid && price > upper_bound) || (!is_bid && price < lower_bound)) {
+                // A below-liquidation manager must not rest a conditional limit: the
+                // resting remainder fills later *ungated* and a band-edge self-match
+                // could push it under `risk_ratio` 1.0 (bad debt) — the same reason
+                // the direct reduce-only limit entries carry the `>= liquidation`
+                // floor (`EReduceOnlyBelowLiquidation`). Cancel it (out-of-bounds); a
+                // *market* conditional still fires here since it deleverages and the
+                // net monotonic gate in the v3 executor covers it. (v2 passes
+                // `below_liquidation = false`: its `min_borrow` post-gate already
+                // aborts a below-floor resting limit.)
+                if (
+                    below_liquidation
+                        || (is_bid && price > upper_bound)
+                        || (!is_bid && price < lower_bound)
+                ) {
                     out_of_bounds_ids.push_back(conditional_order_id);
                     i = i + 1;
                     continue
@@ -1999,6 +2013,9 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
         insufficient_funds_ids,
         out_of_bounds_ids,
         max_orders_to_execute,
+        // v2's post-loop `min_borrow` gate already reverts a below-floor resting
+        // limit, so no separate below-liquidation skip is needed here.
+        false,
         clock,
         ctx,
     );
@@ -2065,6 +2082,14 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
         0
     };
 
+    // A below-liquidation manager (liquidatable, pre-liquidation window) must not
+    // rest a conditional limit — the executor cancels it (see place_triggered_orders).
+    // Market conditionals still fire (they deleverage, gated by the net monotonic
+    // check below). The `has_debt` guard: a no-debt manager has no bad-debt risk, and
+    // `risk_ratio_before` is a `0` placeholder there, not a real ratio.
+    let below_liquidation =
+        has_debt && risk_ratio_before < registry.liquidation_risk_ratio(pool.id());
+
     let market_filled = self.place_triggered_orders(
         pool,
         registry,
@@ -2075,6 +2100,7 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
         insufficient_funds_ids,
         out_of_bounds_ids,
         max_orders_to_execute,
+        below_liquidation,
         clock,
         ctx,
     );
