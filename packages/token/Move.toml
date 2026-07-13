@@ -3,7 +3,7 @@ name = "token"
 edition = "2024.beta"
 
 [dependencies]
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/mainnet" }
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "62b9f371e37e618b7048417e2d232d6cd678c967" }
 
 [addresses]
 token = "0x0"
