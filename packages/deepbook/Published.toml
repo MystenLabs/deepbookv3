@@ -7,6 +7,8 @@ chain-id = "35834a8a"
 published-at = "0x0e735f8c93a95722efd73521aca7a7652c0bb71ed1daf41b26dfd7d1ff71f748"
 original-id = "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809"
 version = 8
+toolchain-version = "1.71.1"
+build-config = { flavor = "sui", edition = "2024" }
 
 [published.testnet]
 chain-id = "4c78adac"
