@@ -147,6 +147,79 @@ band in `docs/risks.md` (reconciling the "exact NAV" framing), or run a
 pre-valuation liquidation pass so the flush marks liquidatable orders at their
 liquidated value. (2026-07-07 holistic audit)
 
+### P-11: The pricing-safe envelope does not bound the value it is trusted to bound
+
+**Severity:** Low (liveness hardening; enabled by S-4, adjacent to P-5).
+
+RP-5 describes the surviving static envelope as guaranteeing "positive
+spot/forward, bounded basis, bounded SVI inputs". That guarantee does not hold
+for the number actually priced. `assert_inputs_pricing_safe`
+(pricing/pricing.move:300-316) validates the **raw** `bs_spot`/`bs_forward` at
+the call site on :267 — but when a fresh Pyth spot is present, `live_inputs`
+then *recomputes* the forward as `math::mul(spot, math::div(bs_forward,
+bs_spot))` (:287) and returns it with **no re-validation**. A `bs_forward` small
+enough that the fixed-point `div` floors to zero yields `forward == 0`, which
+the envelope swore was impossible, and pricing aborts downstream at
+`EZeroForward` (:346).
+
+The envelope is also one-sided on variance: `a` and `b` are bounded only from
+above (:308-309) and the only floor is on `sigma` (:312-315), which never enters
+`total_var`. So an in-envelope `a = 0, b = 0` gives `total_var = a + wing_var =
+0` (:382) → `EZeroVariance` (:383).
+
+Neither is a standalone exploit: the enabler is the S-4 stub (BS pushes are
+permissionless while the verifier is a stub), and recovery is permissionless —
+any strictly-newer valid push unbricks it. But `value_expiry` prices every live
+market in one PTB with no per-market skip, so one degenerate market aborts the
+whole pool flush. Distinct code path from P-5's zero-blanking.
+
+Note the *ceiling* asymmetry here is deliberate and must not be "fixed": the
+comment at :281-286 explains that re-bounding the re-anchored forward to
+`max_pricing_spot` would abort legitimate high-contango reads (R1 liveness).
+That reasoning addresses the upper bound only and never considered the lower
+bound.
+
+**Action:** Close the gap with a clamp, not an assert. RP-5's reasoning rules out
+the obvious fix — a state-triggered abort over an externally-controlled variable
+is exactly the guard class it removed, and a new abort on this shared/mandatory
+path (every mint/redeem/NAV read) would need its own `response-policies.md`
+entry. Floor the re-anchored forward to a minimum basis and `total_var` to a
+positive minimum, so the `EZeroForward`/`EZeroVariance` asserts become genuinely
+unreachable from in-envelope inputs as RP-5 already claims. Then either way,
+correct RP-5's envelope description to match what the code enforces. Add
+boundary tests for `a = b = 0` and for a `bs_forward`/`bs_spot` ratio that floors
+the re-anchored forward. (audit 2026-07-02, re-verified at `7911100b`)
+
+### P-12: BS forward re-anchor has no cross-feed observation coherence
+
+**Severity:** Low; accept-and-disclose candidate under RP-5.
+
+`live_inputs` reads the shared per-underlying `bs_spot` and the per-expiry
+`bs_forward` from two independent feeds, each carrying only its own freshness
+check (pricing/pricing.move:229-253), then reconstructs the basis from the pair
+at :287 with no check that the two describe the same observation. The oracle
+split turned what was a per-expiry structural coherence guarantee into an
+operator-discipline requirement: an operator that advances `bs_spot` without
+re-pushing an expiry's still-fresh `bs_forward` produces an incoherent basis and
+a mispriced forward, with both feeds passing every check.
+
+No trader can induce this, and an adversarial operator can already steer price
+anywhere inside the envelope by construction (RP-5), so this adds no attack
+surface — it is operator-trust residual only. A stronger "atomic (spot, forward)"
+fund-loss framing was **refuted** during the audit: the `mul(spot, div(bs_forward,
+bs_spot))` reconstruction predates the oracle split, so the split introduced no
+new exploit.
+
+**Action:** This is precisely the "cross-feed sanity band" RP-5 defers, so honor
+its reopen condition rather than re-litigating it: revisit once the production
+verifier lands (S-4), and if a check is then worth having, implement it as a
+**skip, not an abort**. The abort-free alternative available today is to remove
+the coherence question at the source — store the basis *ratio* atomically at push
+time so `bs_spot` and `bs_forward` cannot disagree. Otherwise, accept and
+document the operator's atomic-push requirement (a coherent `bs_spot` plus all
+per-expiry forwards each cadence tick) as a register entry.
+(audit 2026-07-02, re-verified at `7911100b`)
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
@@ -352,6 +425,12 @@ hygiene-speed changes.
 
 - Pyth canonical-binding check re-implemented in `expiry_market` (:776-783)
   instead of owned by `pricing` — re-home behind one owner. (audit 0622da)
+- Same re-home question one altitude up: `market_manager::next_deployable_market`
+  runs the four propbook feed-binding asserts itself
+  (registry/market_manager.move:191-216). Ownership only — gas is *not* a motive
+  here: the `else` branch returns immediately (:218), so the asserts evaluate at
+  most once per call (an earlier loop-invariant-hoist framing was refuted).
+  (audit 2026-07-02, re-verified at `7911100b`)
 - `mint_exact_amount` prices and admission-validates the same range twice per
   call — verify the second validation is not a distinct fact, then dedupe.
   (audit fb3ec8)

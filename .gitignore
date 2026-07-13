@@ -36,6 +36,10 @@ predict_research/
 /docs/superpowers/
 /web
 .worktrees/
+.claude/worktrees/
+
+# Generated Move package summaries (sui move build output)
+**/package_summaries/
 
 # misc
 .env
