@@ -77,13 +77,23 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // max slope times its d2 move; 0.4 rounds 1/sqrt(2*pi) up so the fixed-point
 // round-down stays a bound.
 macro fun drift_phi_max(): u64 { 400_000_000 }
-// Beyond |d2| = 4 both snapshots pin a strike's price to the same side of 0/1
-// within 2*N(-4) ~ 6.3e-5 of face; padded for fixed-point dust.
-macro fun drift_tail_pad(): u64 { 100_000 }
+// The normal density's own slope never exceeds phi(1) ~ 0.242; 0.25 rounds up.
+macro fun drift_phi_prime_max(): u64 { 250_000_000 }
+// Tail allowance outside the banded strike region: 2*N(-4) ~ 6.3e-5 of face
+// from the pinned digitals, plus the skew-correction tail held under
+// 2 * drift_ctail_target by the dynamic band threshold, plus fixed-point dust.
+macro fun drift_tail_pad(): u64 { 150_000 }
+// Per-snapshot skew-correction tail target: the band widens until
+// phi(D) * (max wing slope / (2 * variance floor)) <= this.
+macro fun drift_ctail_target(): u64 { 25_000 }
 macro fun drift_band_d(): u64 { 4 * math::float_scaling!() }
 // No real strike ladder sits e^100 away from the forward; a wider computed
 // band means degenerate params, so the envelope fails closed instead.
 macro fun drift_band_cap(): u64 { 100 * math::float_scaling!() }
+// Variance floors below 1e-4 mean sub-seconds-to-expiry or a degenerate
+// surface: marks there are unusable at any tolerance, so fail closed early
+// (this also keeps every division below inside u64/u128 headroom).
+macro fun drift_min_floor(): u64 { 100_000 }
 
 // === Public Functions ===
 
@@ -134,21 +144,30 @@ public(package) fun svi_params(pricer: &Pricer): SVIParams {
 ///
 /// Deliberately conservative: the terms stack worst cases that cannot all
 /// happen at the same strike, so benign moves are overstated (costing
-/// re-refreshes, never understating drift). NOT yet charged: the skew
-/// correction term's own drift (small and mostly cancelling between snapshots;
-/// to be priced by the envelope-validation measurements) and fixed-point ulps
-/// (absorbed by the tail pad).
+/// re-refreshes, never understating drift). The implemented price also
+/// subtracts a skew correction `phi(d2) * w'(k) / (2 sqrt(w))`; its own drift
+/// is charged by the three skew legs below (the price clamp is 1-Lipschitz, so
+/// `|dP| <= |dN(d2)| + |d correction|`), and the band threshold widens
+/// dynamically until the correction's tails die under the tail allowance —
+/// without that, deep-wing corrections can pull prices off their 0/1 pins (the
+/// P-11 mechanism) outside a fixed band. Residual: fixed-point round-down in
+/// the term arithmetic (absorbed by the tail pad; the envelope-validation
+/// measurements adversarially attack the whole bound).
 public(package) fun drift_envelope(
     pricer: &Pricer,
     anchor_forward: u64,
     anchor_svi: &SVIParams,
 ): u64 {
     let full = math::float_scaling!();
+    let scale = full as u128;
     let s0 = sqrt_min_total_variance(anchor_svi);
     let s1 = sqrt_min_total_variance(&pricer.svi);
-    if (s0 == 0 || s1 == 0 || anchor_forward == 0) return full;
+    let s_lo = s0.min(s1);
+    if (s_lo < drift_min_floor!() || anchor_forward == 0) return full;
     let s_product = math::mul(s0, s1);
     if (s_product == 0) return full;
+    let sigma_lo = anchor_svi.sigma().min(pricer.svi.sigma());
+    if (sigma_lo == 0) return full;
 
     // Forward leg: a forward move shifts every strike's log-moneyness by
     // |ln(F1/F0)|, and d2 divides that by at least the variance floor.
@@ -156,11 +175,27 @@ public(package) fun drift_envelope(
     if (forward_ratio == 0) return full;
     let delta_forward = math::ln(forward_ratio).magnitude();
 
-    // Strike band where prices are not pinned to 0/1 on either surface; beyond
-    // it both snapshots agree to within the tail pad. Degenerate/absurd bands
-    // fail closed.
-    let band0 = unpinned_band(anchor_svi);
-    let band1 = unpinned_band(&pricer.svi);
+    // Band threshold: |d2| = 4 pins the digitals, but the skew correction's
+    // tail dies only once phi(D) has decayed past the correction's maximum
+    // height r_max = max wing slope / (2 * variance floor) — widen D until
+    // phi(D) * r_max fits the per-snapshot tail target.
+    let slope0_max = math::mul(anchor_svi.b(), full + anchor_svi.rho().magnitude());
+    let slope1_max = math::mul(pricer.svi.b(), full + pricer.svi.rho().magnitude());
+    let r0 = math::div(slope0_max, 2 * s0);
+    let r1 = math::div(slope1_max, 2 * s1);
+    let r_max = r0.max(r1);
+    let mut d_threshold = drift_band_d!();
+    if (r_max > drift_ctail_target!()) {
+        let decay_needed = math::div(math::div(drift_ctail_target!(), r_max), drift_phi_max!());
+        if (decay_needed == 0) return full;
+        let d_ctail = math::sqrt(2 * math::ln(decay_needed).magnitude(), full);
+        d_threshold = d_threshold.max(d_ctail);
+    };
+
+    // Strike band where neither snapshot prices any strike away from its 0/1
+    // pin by more than the tail allowance. Degenerate/absurd bands fail closed.
+    let band0 = unpinned_band(anchor_svi, d_threshold);
+    let band1 = unpinned_band(&pricer.svi, d_threshold);
     if (band0.is_none() || band1.is_none()) return full;
     let k_band = band0.destroy_some().max(band1.destroy_some());
     if (k_band > drift_band_cap!()) return full;
@@ -179,19 +214,42 @@ public(package) fun drift_envelope(
     let sup_wing_gap =
         math::mul(delta_rho, k_band + m1_abs) + math::mul(anchor_svi.rho().magnitude(), delta_m)
             + delta_m + delta_sigma;
-    let slope1_max = math::mul(
-        pricer.svi.b(),
-        math::float_scaling!() + pricer.svi.rho().magnitude(),
-    );
     let sup_delta_w =
         delta_a + math::mul(delta_b, g1_max) + math::mul(anchor_svi.b(), sup_wing_gap)
             + math::mul(slope1_max, delta_forward);
-    let sup_delta_sqrt_w = math::div(sup_delta_w, s0 + s1);
+    let sup_delta_sqrt_w =
+        ((sup_delta_w as u128) * scale / ((s0 + s1) as u128)).min(100 * scale) as u64;
 
+    // Everything below assembles in u128 with a single cap at full face:
+    // fail-closed saturation, never an arithmetic abort in the flush path.
+    let half = (full / 2) as u128;
+    let moneyness_ratio = (k_band as u128) * scale / (s_product as u128);
     let d2_bound =
-        math::div(delta_forward, s1)
-            + math::mul(sup_delta_sqrt_w, math::div(k_band, s_product) + full / 2);
-    (math::mul(drift_phi_max!(), d2_bound) + drift_tail_pad!()).min(full)
+        (delta_forward as u128) * scale / (s1 as u128)
+        + (sup_delta_sqrt_w as u128) * (moneyness_ratio + half) / scale;
+    let n_leg = (drift_phi_max!() as u128) * d2_bound / scale;
+    if (n_leg >= scale) return full;
+
+    // Skew legs. The correction is phi(d2) * R(k) with R = w' / (2 sqrt(w)):
+    // charge phi_max times R's change (split into the w' change and the
+    // sqrt(w) change), plus R's height times the density's own move (the
+    // density's slope never exceeds ~0.25, and d2's move is already bounded).
+    let delta_u = math::div(delta_m + delta_sigma, sigma_lo);
+    let sup_delta_w_prime =
+        2 * delta_b + math::mul(anchor_svi.b(), delta_rho + delta_u)
+            + math::mul(pricer.svi.b(), math::div(delta_forward, pricer.svi.sigma()));
+    let skew_w_prime_leg =
+        (drift_phi_max!() as u128) * (sup_delta_w_prime as u128) / ((2 * s_lo) as u128);
+    let skew_sqrt_w_leg =
+        (drift_phi_max!() as u128) * ((r_max as u128) * (sup_delta_sqrt_w as u128) / (s_lo as u128))
+            / scale;
+    let skew_density_leg =
+        (drift_phi_prime_max!() as u128) * ((r0 as u128) * d2_bound / scale) / scale;
+
+    let total =
+        n_leg + skew_w_prime_leg + skew_sqrt_w_leg + skew_density_leg
+        + (drift_tail_pad!() as u128);
+    total.min(scale) as u64
 }
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
@@ -297,9 +355,8 @@ fun sqrt_min_total_variance(svi: &SVIParams): u64 {
 /// `w(k) <= A + B|k|`), so the band covers every strike the surface can price
 /// away from the pins. `None` when the surface is too degenerate to band
 /// (wing slope at/above ~1, or a band past the cap) — the caller fails closed.
-fun unpinned_band(svi: &SVIParams): Option<u64> {
+fun unpinned_band(svi: &SVIParams, d: u64): Option<u64> {
     let one = math::float_scaling!();
-    let d = drift_band_d!();
     let cap = drift_band_cap!();
     let a_overshoot = svi.a() + math::mul(svi.b(), 2 * svi.m().magnitude() + svi.sigma());
     let b_slope = svi.b();
