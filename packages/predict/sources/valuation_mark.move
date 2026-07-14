@@ -5,15 +5,10 @@
 ///
 /// A mark memoizes one market's exact oracle-priced per-order liability (the
 /// payout-tree walk) so the pool flush can read the market without walking any
-/// tree. This module owns the mark's data discipline: construction at refresh,
-/// accumulating the anchor-priced write-through values `strike_exposure`
-/// maintains as its book mutates, and measuring `drift` — the potential dollar
-/// impact of oracle movement since the walk, against a fresh `Pricer`. It
-/// deliberately owns NO acceptance policy (whether a mark is fresh enough is
-/// decided downstream by `plp`, which aggregates across markets) and NO order
-/// valuation (the walk-consistent per-order formula is `strike_exposure`'s;
-/// this component hands back its anchors as a `Pricer` and accumulates what
-/// the owner valued).
+/// tree. This module owns only the mark's data discipline; acceptance policy
+/// (freshness) is `plp`'s, and order valuation is `strike_exposure`'s — the
+/// mark hands back its anchors as a `Pricer` and accumulates what the owner
+/// valued.
 module deepbook_predict::valuation_mark;
 
 use deepbook_predict::pricing::{Self, Pricer};
@@ -69,9 +64,7 @@ public(package) fun computed_at_ms(mark: &ValuationMark): u64 {
 /// have moved since the walk, as a fraction of full payout in FLOAT_SCALING
 /// (`pricing::drift_envelope` between the stored anchors and the live
 /// snapshot). Oracle movement only — trade deltas are already inside
-/// `liability`, in the anchor basis this envelope re-values from. The caller
-/// converts to dollars and judges in aggregate; this component measures, it
-/// does not accept or reject.
+/// `liability`.
 public(package) fun drift(mark: &ValuationMark, pricer: &Pricer): u64 {
     pricer.drift_envelope(mark.anchor_forward, &mark.anchor_svi)
 }

@@ -118,12 +118,6 @@ public(package) fun range_probability(quote: &CloseQuote): u64 {
     quote.range_probability
 }
 
-/// Return the total face quantity of this book's live orders (O(1), from the
-/// payout tree's maintained aggregates). The drift dollarization multiplier.
-public(package) fun total_live_quantity(exposure: &StrikeExposure): u64 {
-    exposure.payout.total_quantity()
-}
-
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
 ///
 /// Live reserve is the settlement floor (max single-point net payout) plus a
@@ -166,36 +160,29 @@ public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pri
 }
 
 /// Return the stored mark's current liability: the refresh walk's number plus
-/// anchor-priced trade write-through since. The payout tree is never walked
-/// here — that is the point: the walk ran in the refresh that stored the mark,
-/// and this read loads no per-order objects. Deliberately unclamped against
-/// cash — a market can legitimately owe more than it holds (a backing lambda
-/// below 1 admits transient shortfalls backstopped by pool rebalancing) — and
-/// deliberately a dumb fact: whether the mark is fresh enough is judged by
-/// `plp`, which aggregates across markets.
+/// anchor-priced trade write-through since. Never walks the payout tree — the
+/// walk ran in the refresh that stored the mark, so this read loads no
+/// per-order objects. Deliberately unclamped against cash: a market can
+/// legitimately owe more than it holds (a backing lambda below 1 admits
+/// transient shortfalls backstopped by pool rebalancing); `plp::lp_pool_value`
+/// owns the single pool-level floor, and `plp` judges freshness.
 public(package) fun marked_liability(exposure: &StrikeExposure): u64 {
-    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
-    exposure.valuation_mark.borrow().liability()
+    exposure.mark().liability()
 }
 
 /// Return the landing time of the refresh that computed the stored mark.
 public(package) fun mark_computed_at_ms(exposure: &StrikeExposure): u64 {
-    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
-    exposure.valuation_mark.borrow().computed_at_ms()
+    exposure.mark().computed_at_ms()
 }
 
-/// Measure the stored mark's potential oracle drift against the live inputs
-/// in `pricer`, in DUSDC base units: the worst-case single-contract price move
-/// since the walk (`valuation_mark::drift`, a fraction of full payout) times
-/// the book's live face quantity — per-order value is quantity-Lipschitz in
-/// price, so this bounds how far this book's liability can have drifted. The
-/// quantity is read live and the write-through deltas are valued at the mark's
-/// own anchors, so the whole current book shares one valuation time and this
-/// endpoint bound covers it. A measurement, not a judgment — `plp` sums across
-/// markets and prices the total into the flush mark's bid/ask spread.
+/// The stored mark's worst-case oracle drift against the live inputs in
+/// `pricer`, in DUSDC base units: the endpoint envelope
+/// (`valuation_mark::drift`, a fraction of full payout) times the book's live
+/// face quantity — per-order value is quantity-Lipschitz in price, so this
+/// bounds how far this book's liability can have drifted. `plp` sums it
+/// across markets into the flush mark's bid/ask half-spread.
 public(package) fun mark_drift(exposure: &StrikeExposure, pricer: &Pricer): u64 {
-    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
-    math::mul(exposure.payout.total_quantity(), exposure.valuation_mark.borrow().drift(pricer))
+    math::mul(exposure.payout.total_quantity(), exposure.mark().drift(pricer))
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.
@@ -554,6 +541,12 @@ fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
     math::mul(range_probability, order.quantity())
 }
 
+/// Borrow the stored valuation mark; aborts before the first refresh.
+fun mark(exposure: &StrikeExposure): &ValuationMark {
+    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
+    exposure.valuation_mark.borrow()
+}
+
 /// Value one order exactly as the liability walk counts it: anchor-priced
 /// range value net of the static floor, floored at zero (this order's
 /// `walk_linear` minus `correction_value` contribution). Deliberately no
@@ -561,23 +554,21 @@ fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
 /// walk carries a liquidatable-yet-unliquidated order's `gross - floor` until
 /// an actual knock-out removes it.
 fun mark_order_value(exposure: &StrikeExposure, order: &Order): u64 {
-    let anchor_pricer = exposure.valuation_mark.borrow().anchor_pricer(exposure.expiry_market_id);
+    let anchor_pricer = exposure.mark().anchor_pricer(exposure.expiry_market_id);
     exposure.gross_order_value(&anchor_pricer, order).saturating_sub(order.floor_shares())
 }
 
-/// Write an added order through to the stored mark, valued at the mark's own
-/// anchors — never at the op's oracle — so the marked liability stays a
-/// single-anchor valuation of the current book and the endpoint drift envelope
-/// bounds it. No-op until the first refresh establishes a mark.
+/// Write an added order through to the stored mark at the mark's own anchors
+/// (one valuation basis — see `ValuationMark`). No-op until the first refresh
+/// establishes a mark.
 fun mark_order_added(exposure: &mut StrikeExposure, order: &Order) {
     if (exposure.valuation_mark.is_none()) return;
     let value = exposure.mark_order_value(order);
     exposure.valuation_mark.borrow_mut().add_value(value);
 }
 
-/// Write a removed order (live redeem or liquidation) through to the stored
-/// mark, valued at the mark's own anchors. No-op until the first refresh
-/// establishes a mark.
+/// Counterpart of `mark_order_added` for removals (live redeems and
+/// liquidations).
 fun mark_order_removed(exposure: &mut StrikeExposure, order: &Order) {
     if (exposure.valuation_mark.is_none()) return;
     let value = exposure.mark_order_value(order);

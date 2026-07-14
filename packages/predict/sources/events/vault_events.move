@@ -157,9 +157,7 @@ public struct WithdrawFilled has copy, drop, store {
 public struct NavRefreshed has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
-    /// Exact oracle-priced per-order liability stored in the mark.
     liability: u64,
-    /// On-chain landing time of the refresh that computed the mark.
     computed_at_ms: u64,
 }
 
@@ -179,15 +177,13 @@ public struct FlushExecuted has copy, drop, store {
     /// floored once at zero.
     pool_value: u64,
     total_supply: u64,
-    /// Σ of each counted market's live free cash at the flush (raw, unfloored).
-    /// Together with `total_liability` this exposes aggregate-underwater
-    /// conditions that a netted NAV would hide.
+    /// Σ of each counted market's live free cash at the flush (raw, unfloored;
+    /// with `total_liability` this exposes aggregate-underwater conditions).
     total_free_cash: u64,
     /// Σ of each counted market's marked liability at the flush (raw, unfloored).
     total_liability: u64,
-    /// Σ of each counted market's worst-case dollar drift accepted by this
-    /// flush — the budget headroom signal (compare against the configured
-    /// fraction of `pool_value`).
+    /// Σ of each counted market's worst-case dollar drift, applied at
+    /// `finish_flush` as the flush mark's bid/ask half-spread.
     total_drift: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,

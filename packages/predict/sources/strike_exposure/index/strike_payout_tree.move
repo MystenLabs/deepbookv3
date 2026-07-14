@@ -63,9 +63,7 @@ public struct PayoutNode has copy, drop, store {
 /// contributes its quantity to exactly one start side (`base` for `-inf`
 /// lower boundaries, a node otherwise), so the root summary's start total plus
 /// the base is the whole book's face outstanding — an O(1) read of state the
-/// treap already maintains. This is the book's price-sensitivity constant:
-/// per-order value is quantity-Lipschitz in price, so the worst dollar NAV
-/// drift for a price move `d` is `total_quantity * d`.
+/// treap already maintains.
 public(package) fun total_quantity(tree: &StrikePayoutTree): u64 {
     let mut total = tree.base.quantity;
     if (tree.root.is_some()) {

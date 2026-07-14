@@ -17,8 +17,7 @@ use deepbook_predict::{
     expiry_cash_config::{Self, ExpiryCashConfig},
     pricing_config::{Self, PricingConfig},
     stake_config::{Self, StakeConfig},
-    strike_exposure_config::{Self, StrikeExposureConfig},
-    valuation_config::{Self, ValuationConfig}
+    strike_exposure_config::{Self, StrikeExposureConfig}
 };
 
 const ETradingPaused: u64 = 0;
@@ -46,7 +45,10 @@ public struct ProtocolConfig has key {
     version_watermark: u64,
     /// Blocks new risk creation while true.
     trading_paused: bool,
-    valuation_config: ValuationConfig,
+    /// Hard ceiling on stored valuation-mark age at the pool flush, in
+    /// milliseconds — the backstop against a stalled feed, which shows zero
+    /// measured drift and so cannot be caught by the drift spread.
+    nav_mark_freshness_ms: u64,
 }
 
 // === Public Functions ===
@@ -192,7 +194,8 @@ public fun set_nav_mark_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
-    config.valuation_config.set_nav_mark_freshness_ms(value);
+    config_constants::assert_nav_mark_freshness_ms(value);
+    config.nav_mark_freshness_ms = value;
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -308,8 +311,8 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
 
-public(package) fun valuation_config(config: &ProtocolConfig): &ValuationConfig {
-    &config.valuation_config
+public(package) fun nav_mark_freshness_ms(config: &ProtocolConfig): u64 {
+    config.nav_mark_freshness_ms
 }
 
 /// Abort unless the running package version is at or above the watermark floor.
@@ -365,7 +368,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),
         trading_paused: false,
-        valuation_config: valuation_config::new(),
+        nav_mark_freshness_ms: config_constants::default_nav_mark_freshness_ms!(),
     }
 }
 

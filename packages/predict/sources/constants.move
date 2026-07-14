@@ -160,10 +160,10 @@ public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
 /// resolution relayer sources that key from Pyth Lazer's exact-timestamp
 /// resolution endpoints and inserts it on this millisecond grid.
 /// Cadence periods are multiples of this value, so cadence-created expiries stay
-/// on a settling key the relayer can produce. An off-grid expiry could never settle
-/// and would block the pool flush indefinitely
-/// (`plp::value_expiry` aborts on a past-expiry market that has no settling
-/// observation yet).
+/// on a settling key the relayer can produce. An off-grid expiry could never
+/// settle and would block the pool flush indefinitely (a past-expiry market
+/// cannot refresh its valuation mark — `pricing::load_live_pricer` rejects it —
+/// so `plp::collect_expiry_nav` aborts stale until settlement sweeps it).
 public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 
 // === Strike Tick Domain ===

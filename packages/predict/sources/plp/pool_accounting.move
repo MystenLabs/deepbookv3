@@ -39,10 +39,8 @@ public struct Ledger has store {
     /// markets at materialization. Excluded from LP value until drained.
     pending_protocol_profit: u64,
     /// Bumped on every internal cash move (idle<->expiry transfers and
-    /// protocol-profit draws from idle). The flush potato snapshots it at start
-    /// and `finish_flush` asserts it unchanged: the potato reads each market's
-    /// cash at its collect and idle at finish, so a move between those reads
-    /// would double- or under-count the moved amount in the priced NAV.
+    /// protocol-profit draws from idle). Snapshotted and re-checked by the
+    /// flush potato (`PoolValuation.cash_revision`).
     cash_revision: u64,
 }
 

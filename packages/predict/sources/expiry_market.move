@@ -237,22 +237,18 @@ public fun load_live_pricer(
 /// negative. `load_live_pricer` binds the propbook feeds to this market's current
 /// Propbook registry mapping, rejects a past-expiry market, and gates oracle freshness.
 ///
-/// A past-expiry market that has not settled cannot produce this pricer. There is
-/// no solvency-safe NAV for an unsettled past-expiry market: the flush uses one
-/// mark for both supply and withdraw, so the mark must equal the
-/// settlement-dependent true value. Flows that branch on settlement call
-/// `ensure_settled` first, using Propbook's exact Pyth timestamp at expiry; if no
-/// exact spot exists yet, the live-pricing liveness abort remains the correct
-/// failure mode.
+/// A past-expiry market that has not settled cannot produce this pricer: its
+/// true value is settlement-dependent, so it has no solvency-safe live NAV.
+/// Flows that branch on settlement call `ensure_settled` first, using
+/// Propbook's exact Pyth timestamp at expiry; if no exact spot exists yet, the
+/// live-pricing liveness abort remains the correct failure mode.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.exact_live_liability(pricer);
-    // Floor at 0 for this single-market READ only. A market can legitimately owe
-    // more than it holds (a backing lambda below 1 admits transient shortfalls
-    // that pool rebalancing later refills), so an unfloored per-market value is
-    // meaningful — which is why the flush no longer consumes this function: it
-    // aggregates raw `flushable_atoms` and nets shortfalls at the pool level.
-    // Here the floor only keeps a devInspect/SDK read total-ordered at zero.
+    // Floor at 0: a devInspect/SDK read of one market's limited-recourse value
+    // is never negative. The flush does not read this — it sums each market's
+    // unfloored free cash and marked liability and floors once at the pool
+    // (`plp::lp_pool_value`).
     market.cash.free_cash().saturating_sub(liability)
 }
 
@@ -747,7 +743,7 @@ public(package) fun mark_drift(market: &ExpiryMarket, pricer: &Pricer): u64 {
 /// Recompute this market's exact per-order live liability and store it as the
 /// valuation mark the pool flush reads, replacing any prior mark. Returns the
 /// stored liability.
-public(package) fun record_valuation_mark(
+public(package) fun refresh_valuation_mark(
     market: &mut ExpiryMarket,
     pricer: &Pricer,
     clock: &Clock,

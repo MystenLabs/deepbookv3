@@ -91,17 +91,14 @@ public struct PoolValuation {
     expected_expiry_markets: vector<ID>,
     /// Markets counted so far this flow; folded against `expected` at finish.
     valued_expiry_markets: vector<ID>,
-    /// Running Σ of each counted market's live free cash. Kept separate from the
-    /// liability sum (raw atoms, no per-market netting or floor) so underwater
-    /// markets net against the whole pool and the single zero floor is applied
-    /// once, in `lp_pool_value`.
+    /// Running Σ of each counted market's live free cash — raw and unfloored,
+    /// so underwater markets net against the whole pool; the single zero floor
+    /// is `lp_pool_value`'s.
     total_free_cash: u64,
     /// Running Σ of each counted market's marked liability.
     total_liability: u64,
-    /// Running Σ of each counted market's measured worst-case drift, in DUSDC —
-    /// the dollar amount pool NAV could be off by from marks aging against
-    /// moving feeds. Becomes the flush mark's half-spread at `finish_flush`:
-    /// supplies price at the mid NAV plus it, withdrawals at the mid minus it.
+    /// Running Σ of each counted market's measured worst-case dollar drift;
+    /// becomes the flush mark's bid/ask half-spread at `finish_flush`.
     total_drift: u64,
     /// The vault ledger's cash revision at `start_pool_valuation`. `finish_flush`
     /// asserts it unchanged: the potato reads each market's cash at its collect
@@ -249,7 +246,7 @@ public fun refresh_expiry_nav(
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     vault.rebalance_live_expiry(market, expiry_market_id);
-    let liability = market.record_valuation_mark(pricer, clock);
+    let liability = market.refresh_valuation_mark(pricer, clock);
     vault_events::emit_nav_refreshed(
         vault.id(),
         expiry_market_id,
@@ -320,7 +317,7 @@ public fun collect_expiry_nav(
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     assert!(
         clock.timestamp_ms() - market.mark_computed_at_ms()
-            <= config.valuation_config().nav_mark_freshness_ms(),
+            <= config.nav_mark_freshness_ms(),
         EValuationMarkStale,
     );
     valuation.valued_expiry_markets.push_back(expiry_market_id);
@@ -333,8 +330,8 @@ public fun collect_expiry_nav(
 /// was counted exactly once, price the pool NAV, then drain the supply/withdraw queues
 /// at that frozen mark (mint PLP for supplies, burn PLP and pay DUSDC for
 /// withdrawals), consume the potato, and return the LP-attributable pool-wide DUSDC
-/// NAV (idle + Σ active NAV, net of the pending-protocol-profit exclusion priced
-/// from the aggregate profit basis).
+/// NAV (idle + Σ free cash − Σ marked liability, net of the pending-protocol-profit
+/// exclusion priced from the aggregate profit basis).
 ///
 /// `supply_budget` / `withdraw_budget` bound how many requests each queue may
 /// process this flush (`None` = unbounded). Filled heads, protocol-refunded
@@ -379,13 +376,9 @@ public fun finish_flush(
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Price the two-sided mark: the counted marks' combined worst-case drift is
-    // the half-spread — supplies price the pool at the mid plus it, withdrawals
-    // at the mid minus it — so the true pool value provably sits between the
-    // sides and the transacting party bears the marks' staleness. No drift
-    // threshold: a wide spread self-resolves through each request's own
-    // min-out limit (miss, carry, refund), and fully fresh marks collapse the
-    // spread to an exact single mark.
+    // Two-sided mark: total_drift is the bid/ask half-spread; no drift
+    // threshold — a wide spread self-resolves through each request's own
+    // min-out limit (see `FlushMark`).
     let vault_id = vault.id();
     let mark = lp_book::new_flush_mark(
         pool_nav + total_drift,
@@ -802,7 +795,7 @@ fun claim_trading_loss_rebate_internal(
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
 ///
 /// Assets and liabilities arrive as raw per-market sums (no per-market netting or
-/// floor — see `FlushAtoms`): `gross = idle_balance + Σ free_cash`, owing
+/// floor — see `PoolValuation`): `gross = idle_balance + Σ free_cash`, owing
 /// `Σ liability`. NAV prices the protocol's not-yet-materialized profit share
 /// before terminal materialization and excludes it from LP value:
 /// `exclusion = share * max(0, (credits + Σ free_cash) - (debits + Σ liability))`
