@@ -74,15 +74,17 @@ public struct RequestQueue<phantom T> has store {
 /// pool were worth the end least favorable to them — the party moving bears
 /// the marks' staleness, incumbents can be neither diluted nor drained, and a
 /// same-flush round trip strictly loses the spread. Fully fresh marks collapse
-/// the spread to a single exact mark. Each side carries its own executability
-/// (one side can refund while the other fills). Terms are read by name so the
-/// pricing helpers cannot transpose numerator and denominator.
+/// the spread to a single exact mark. Executability is per side, in the type:
+/// a side's value is `None` when that side is not executable this flush (one
+/// side can refund while the other fills), so no consumer can price off a
+/// degenerate mark. Terms are read by name so the pricing helpers cannot
+/// transpose numerator and denominator.
 public struct FlushMark has drop {
-    supply_value: u64,
-    withdraw_value: u64,
+    /// Mid NAV plus the flush's measured worst-case drift.
+    executable_supply_value: Option<u64>,
+    /// Mid NAV minus the flush's measured worst-case drift.
+    executable_withdraw_value: Option<u64>,
     total_supply: u64,
-    supply_executable: bool,
-    withdraw_executable: bool,
 }
 
 /// Result of draining both LP queues at one frozen mark.
@@ -168,11 +170,9 @@ public(package) fun new_flush_mark(
     total_supply: u64,
 ): FlushMark {
     FlushMark {
-        supply_value,
-        withdraw_value,
+        executable_supply_value: executable_mark_value(supply_value, total_supply),
+        executable_withdraw_value: executable_mark_value(withdraw_value, total_supply),
         total_supply,
-        supply_executable: is_executable_mark(supply_value, total_supply),
-        withdraw_executable: is_executable_mark(withdraw_value, total_supply),
     }
 }
 
@@ -597,27 +597,33 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// LP shares minted for `amount` DUSDC at the mark's supply side. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
 fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<u64> {
-    if (!mark.supply_executable) return option::none();
-    // = amount * total_supply / supply_value, round down (supplier mints ≤1 ulp
-    // fewer shares; the pool keeps the dust).
-    math::try_mul_div_down(amount, mark.total_supply, mark.supply_value).and!(|shares| {
-        if (shares == 0) option::none() else option::some(shares)
+    mark.executable_supply_value.and_ref!(|supply_value| {
+        // = amount * total_supply / supply_value, round down (supplier mints ≤1 ulp
+        // fewer shares; the pool keeps the dust).
+        math::try_mul_div_down(amount, mark.total_supply, *supply_value).and!(|shares| {
+            if (shares == 0) option::none() else option::some(shares)
+        })
     })
 }
 
 /// DUSDC owed for `shares` LP at the mark's withdraw side. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
 fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
-    if (!mark.withdraw_executable) return option::none();
-    // = shares * withdraw_value / total_supply, round down (withdrawer is paid
-    // ≤1 ulp less; the pool keeps the dust).
-    math::try_mul_div_down(shares, mark.withdraw_value, mark.total_supply).and!(|payout| {
-        if (payout == 0) option::none() else option::some(payout)
+    mark.executable_withdraw_value.and_ref!(|withdraw_value| {
+        // = shares * withdraw_value / total_supply, round down (withdrawer is paid
+        // ≤1 ulp less; the pool keeps the dust).
+        math::try_mul_div_down(shares, *withdraw_value, mark.total_supply).and!(|payout| {
+            if (payout == 0) option::none() else option::some(payout)
+        })
     })
 }
 
-fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
-    if (total_supply == 0) return false;
+/// `Some(pool_value)` when a queue side may execute at this value: a non-empty
+/// supply whose per-share price computes cleanly on both rounding sides and
+/// stays inside the executable price envelope; `None` marks the side
+/// non-executable for the whole flush.
+fun executable_mark_value(pool_value: u64, total_supply: u64): Option<u64> {
+    if (total_supply == 0) return option::none();
     let price_floor = math::try_mul_div_down(
         pool_value,
         constants::plp_price_unit!(),
@@ -628,8 +634,10 @@ fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
         constants::plp_price_unit!(),
         total_supply,
     );
-    price_floor.is_some()
+    let executable =
+        price_floor.is_some()
         && price_ceil.is_some()
         && *price_floor.borrow() >= constants::min_executable_plp_price!()
-        && *price_ceil.borrow() <= constants::max_executable_plp_price!()
+        && *price_ceil.borrow() <= constants::max_executable_plp_price!();
+    if (executable) option::some(pool_value) else option::none()
 }
