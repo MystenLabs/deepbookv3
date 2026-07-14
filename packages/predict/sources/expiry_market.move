@@ -24,7 +24,7 @@ use deepbook_predict::{
     predict_account,
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
-    strike_exposure::{Self, MintTerms, StrikeExposure},
+    strike_exposure::{Self, LiveCloseTerms, MintTerms, StrikeExposure},
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
@@ -515,15 +515,25 @@ public fun redeem_live(
 
     let redeemed_order = order::from_order_id(order_id);
     market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget());
-    market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
+        return (redeemed_order.id(), option::none())
+    };
+    let terms = market.strike_exposure.quote_live_close_terms(pricer, &redeemed_order);
+    if (terms.is_knocked_out()) {
+        // Same zero-payout full close as a pre-existing tombstone, in one
+        // transaction: the knock-out and the holder's cleanup are atomic, so no
+        // tombstone persists. The slippage floors and same-timestamp guard only
+        // gate the live-priced path.
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+        market.strike_exposure.close_live_order(terms, close_quantity);
+        market.close_position_at_zero_payout(account, &redeemed_order, ctx);
         return (redeemed_order.id(), option::none())
     };
     let replacement_order_id = market.redeem_live_internal(
         account,
         config,
-        pricer,
+        terms,
         &redeemed_order,
         close_quantity,
         min_probability,
@@ -881,13 +891,24 @@ fun redeem_liquidated_order(
     ctx: &mut TxContext,
 ) {
     assert!(close_quantity == order.quantity(), EFullCloseRequired);
+    market.strike_exposure.clear_liquidated_order(order);
+    market.close_position_at_zero_payout(account, order, ctx);
+}
+
+/// Account-side tail shared by the tombstone and immediate-knock-out closes:
+/// remove the position and report the zero-payout close.
+fun close_position_at_zero_payout(
+    market: &ExpiryMarket,
+    account: &mut Account,
+    order: &Order,
+    ctx: &mut TxContext,
+) {
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
         order.id(),
         ctx,
     );
-    market.strike_exposure.clear_liquidated_order(order);
     order_events::emit_liquidated_order_redeemed(
         market.id(),
         account.account_id(),
@@ -1063,7 +1084,7 @@ fun redeem_live_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
-    pricer: &Pricer,
+    terms: LiveCloseTerms,
     order: &Order,
     close_quantity: u64,
     min_probability: u64,
@@ -1086,9 +1107,7 @@ fun redeem_live_internal(
         ctx,
     );
 
-    let close_quote = market
-        .strike_exposure
-        .close_and_quote_live_order(pricer, order, close_quantity);
+    let close_quote = market.strike_exposure.close_live_order(terms, close_quantity);
     let resulting_order = close_quote.resulting_order();
     let redeem_amount = close_quote.redeem_amount();
     let range_probability = close_quote.range_probability();
