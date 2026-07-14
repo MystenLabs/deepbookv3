@@ -311,7 +311,7 @@ fun resolve_live_pricer(
     if (
         pyth_spot.is_some()
             && timestamp_is_fresh(
-                pyth_spot.borrow().read_source_timestamp_ms(),
+                pyth_spot_source_timestamp_ms,
                 config.pyth_spot_freshness_ms(),
                 clock,
             )
