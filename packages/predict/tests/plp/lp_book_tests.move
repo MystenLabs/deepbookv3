@@ -16,9 +16,8 @@ module deepbook_predict::lp_book_tests;
 
 use deepbook_predict::{
     constants::{
+        executable_price_band_factor as price_band,
         lp_request_limit_flush_attempts as limit_attempts,
-        max_executable_plp_price as max_plp_price,
-        min_executable_plp_price as min_plp_price,
         min_supply_request as min_supply,
         min_withdraw_request as min_withdraw,
         plp_price_unit as plp_unit
@@ -662,7 +661,7 @@ fun supply_at_min_executable_plp_price_fills() {
     // At 0.01 DUSDC/PLP, 10 DUSDC mints 1,000 PLP = 1_000_000_000 raw shares.
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_plp_price!(), plp_unit!()),
+        lp_book::new_flush_mark((plp_unit!() / price_band!()), plp_unit!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -685,7 +684,7 @@ fun supply_below_min_executable_plp_price_refunds() {
 
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_plp_price!() - 1, plp_unit!()),
+        lp_book::new_flush_mark((plp_unit!() / price_band!()) - 1, plp_unit!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -710,7 +709,7 @@ fun supply_at_max_executable_plp_price_fills() {
     // At 100 DUSDC/PLP, 10 DUSDC mints 0.1 PLP = 100_000 raw shares.
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(max_plp_price!(), plp_unit!()),
+        lp_book::new_flush_mark((plp_unit!() * price_band!()), plp_unit!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -733,7 +732,7 @@ fun supply_above_max_executable_plp_price_refunds() {
 
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(max_plp_price!() + 1, plp_unit!()),
+        lp_book::new_flush_mark((plp_unit!() * price_band!()) + 1, plp_unit!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -759,7 +758,7 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
     // raw PLP shares, which does not fit in u64 and is therefore non-executable.
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_plp_price!(), plp_unit!()),
+        lp_book::new_flush_mark((plp_unit!() / price_band!()), plp_unit!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -814,7 +813,7 @@ fun non_executable_supply_refunds_spend_supply_budget() {
 
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_plp_price!() - 1, plp_unit!()),
+        lp_book::new_flush_mark((plp_unit!() / price_band!()) - 1, plp_unit!()),
         vault_id(),
         option::some(2),
         option::none(),

@@ -72,11 +72,11 @@ public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
 /// Raw PLP units in one whole PLP.
 public(package) macro fun plp_price_unit(): u64 { 1_000_000 }
 
-/// Minimum executable frozen PLP mark: 0.01 DUSDC per whole PLP, in DUSDC raw units.
-public(package) macro fun min_executable_plp_price(): u64 { 10_000 }
-
-/// Maximum executable frozen PLP mark: 100 DUSDC per whole PLP, in DUSDC raw units.
-public(package) macro fun max_executable_plp_price(): u64 { 100_000_000 }
+/// Executable frozen-mark band: the PLP price must be within this factor of unit
+/// parity (1 DUSDC per whole PLP) in both directions — [0.01, 100] DUSDC. dUSDC
+/// and PLP both use 6 decimals, so unit parity is raw-unit parity and the band
+/// test needs no price unit.
+public(package) macro fun executable_price_band_factor(): u64 { 100 }
 
 /// Maximum active pre-expiry markets that can require live NAV valuation in one
 /// full-pool flush.
