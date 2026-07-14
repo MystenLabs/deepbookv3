@@ -67,13 +67,22 @@ public struct RequestQueue<phantom T> has store {
     escrow: Balance<T>,
 }
 
-/// Frozen flush share-price mark: `pool_value` over `total_supply`. Carried as one
-/// value so the supply/withdraw pricing helpers read each term by name and cannot
-/// transpose the numerator and denominator.
+/// Frozen flush share-price mark, two-sided: supplies price the pool at
+/// `supply_value` (the mid NAV plus the flush's measured worst-case drift) and
+/// withdrawals at `withdraw_value` (the mid minus it). The true pool value
+/// provably sits inside that interval, so each transactor prices as if the
+/// pool were worth the end least favorable to them — the party moving bears
+/// the marks' staleness, incumbents can be neither diluted nor drained, and a
+/// same-flush round trip strictly loses the spread. Fully fresh marks collapse
+/// the spread to a single exact mark. Each side carries its own executability
+/// (one side can refund while the other fills). Terms are read by name so the
+/// pricing helpers cannot transpose numerator and denominator.
 public struct FlushMark has drop {
-    pool_value: u64,
+    supply_value: u64,
+    withdraw_value: u64,
     total_supply: u64,
-    executable: bool,
+    supply_executable: bool,
+    withdraw_executable: bool,
 }
 
 /// Result of draining both LP queues at one frozen mark.
@@ -153,11 +162,17 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
-public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
+public(package) fun new_flush_mark(
+    supply_value: u64,
+    withdraw_value: u64,
+    total_supply: u64,
+): FlushMark {
     FlushMark {
-        pool_value,
+        supply_value,
+        withdraw_value,
         total_supply,
-        executable: is_executable_mark(pool_value, total_supply),
+        supply_executable: is_executable_mark(supply_value, total_supply),
+        withdraw_executable: is_executable_mark(withdraw_value, total_supply),
     }
 }
 
@@ -579,24 +594,24 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 
 // === Pricing Helpers ===
 
-/// LP shares minted for `amount` DUSDC at the frozen flush mark. `None` means the
+/// LP shares minted for `amount` DUSDC at the mark's supply side. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
 fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<u64> {
-    if (!mark.executable) return option::none();
-    // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
+    if (!mark.supply_executable) return option::none();
+    // = amount * total_supply / supply_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
-    math::try_mul_div_down(amount, mark.total_supply, mark.pool_value).and!(|shares| {
+    math::try_mul_div_down(amount, mark.total_supply, mark.supply_value).and!(|shares| {
         if (shares == 0) option::none() else option::some(shares)
     })
 }
 
-/// DUSDC owed for `shares` LP at the frozen flush mark. `None` means the
+/// DUSDC owed for `shares` LP at the mark's withdraw side. `None` means the
 /// mark/request pair is not executable and the queued request must be refunded.
 fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
-    if (!mark.executable) return option::none();
-    // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
-    // less; the pool keeps the dust).
-    math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|payout| {
+    if (!mark.withdraw_executable) return option::none();
+    // = shares * withdraw_value / total_supply, round down (withdrawer is paid
+    // ≤1 ulp less; the pool keeps the dust).
+    math::try_mul_div_down(shares, mark.withdraw_value, mark.total_supply).and!(|payout| {
         if (payout == 0) option::none() else option::some(payout)
     })
 }

@@ -195,16 +195,6 @@ public fun set_nav_mark_freshness_ms(
     config.valuation_config.set_nav_mark_freshness_ms(value);
 }
 
-/// Set the oracle-drift tolerance for stored valuation marks at the pool flush.
-public fun set_nav_mark_drift_epsilon(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.valuation_config.set_nav_mark_drift_epsilon(value);
-}
-
 /// Set the trading loss rebate rate template used by future expiry markets.
 public fun set_template_trading_loss_rebate_rate(
     config: &mut ProtocolConfig,

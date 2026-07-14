@@ -54,7 +54,6 @@ const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
 const EValuationMarkStale: u64 = 10;
-const EAggregateDriftExceeded: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -100,8 +99,8 @@ public struct PoolValuation {
     total_liability: u64,
     /// Running Σ of each counted market's measured worst-case drift, in DUSDC —
     /// the dollar amount pool NAV could be off by from marks aging against
-    /// moving feeds. Judged in aggregate at `finish_flush`, where the PLP-price
-    /// error it implies has its denominator.
+    /// moving feeds. Becomes the flush mark's half-spread at `finish_flush`:
+    /// supplies price at the mid NAV plus it, withdrawals at the mid minus it.
     total_drift: u64,
 }
 
@@ -364,19 +363,22 @@ public fun finish_flush(
         total_free_cash,
         total_liability,
     );
-    assert_aggregate_drift_acceptable(
-        total_drift,
-        config.valuation_config().nav_mark_drift_epsilon(),
-        pool_nav,
-    );
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Snapshot the share price once (frozen pair), then drain both queues against
-    // it. The flush IS the full-pool valuation, so the single FlushExecuted event
-    // carries the priced mark and its idle + active-NAV breakdown.
+    // Price the two-sided mark: the counted marks' combined worst-case drift is
+    // the half-spread — supplies price the pool at the mid plus it, withdrawals
+    // at the mid minus it — so the true pool value provably sits between the
+    // sides and the transacting party bears the marks' staleness. No drift
+    // threshold: a wide spread self-resolves through each request's own
+    // min-out limit (miss, carry, refund), and fully fresh marks collapse the
+    // spread to an exact single mark.
     let vault_id = vault.id();
-    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
+    let mark = lp_book::new_flush_mark(
+        pool_nav + total_drift,
+        pool_nav.saturating_sub(total_drift),
+        total_supply,
+    );
     let drain_summary = vault
         .lp
         .drain(
@@ -1025,20 +1027,6 @@ fun materialize_expiry_profit(
         vault.expiry_accounting.profit_basis_debits(),
         vault.expiry_accounting.pending_protocol_profit(),
     );
-}
-
-/// The pool-level drift acceptance: the flush rejects itself when the counted
-/// marks' combined worst-case dollar drift could move the PLP price by more
-/// than the configured fraction of pool NAV — the guarantee lives directly in
-/// PLP-price units, which no per-market check can express (the per-contract to
-/// PLP translation floats with book size over pool equity). On rejection the
-/// operator re-refreshes the largest-drift markets and retries.
-///
-/// Open edge (deliberate, undecided): at `pool_nav == 0` the budget is zero,
-/// so any nonzero measured drift blocks the flush even though a zero mark only
-/// refunds queue heads rather than pricing fills.
-fun assert_aggregate_drift_acceptable(total_drift: u64, drift_budget: u64, pool_nav: u64) {
-    assert!(total_drift <= math::mul(drift_budget, pool_nav), EAggregateDriftExceeded);
 }
 
 /// Abort unless this valuation belongs to `vault`.
