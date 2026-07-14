@@ -132,7 +132,6 @@ const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
 interface SimulationCapital {
     vaultSeed: bigint;
     managerSeed: bigint;
-    initialTotalPlpSupply: bigint;
 }
 
 interface EconomicState {
@@ -268,12 +267,12 @@ function initialEconomicState(
         managerBalance: capital.managerSeed,
         expiryCashBalance: initialExpiryCash,
         expiryUnresolvedTradingFees: 0n,
-        vaultIdleBalance: capital.vaultSeed - initialExpiryCash,
+        vaultIdleBalance: capital.vaultSeed + MIN_BOOTSTRAP_LIQUIDITY - initialExpiryCash,
         vaultProtocolReserveBalance: 0n,
         vaultPendingProtocolProfit: 0n,
         profitBasisDebits: initialExpiryCash,
         profitBasisCredits: 0n,
-        vaultTotalPlpSupply: capital.initialTotalPlpSupply,
+        vaultTotalPlpSupply: capital.vaultSeed + MIN_BOOTSTRAP_LIQUIDITY,
         supplyRequestsPending: 0n,
         withdrawRequestsPending: 0n,
         openOrderCount: 0n,
@@ -957,12 +956,9 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     // NOTE: supply_requested / withdraw_requested escrow funds OUTSIDE the tracked
     // vault/account balances (the request queue holds them); they move balances only
     // at the flush. They carry no state delta here.
-    // TODO(sim-parity): the async request -> flush split changes WHEN PLP supply and
-    // account balances move relative to the old synchronous supply/withdraw. The
-    // account-side credit of a supply fill / withdraw payout now lands via the
+    // The account-side credit of a supply fill / withdraw payout lands via the
     // balance accumulator (send_funds) and is absorbed lazily on the account's next
-    // capital op, NOT in this tx. Confirm the exact manager_balance + PLP-supply
-    // timing against a localnet run before trusting LP-row parity.
+    // capital op, so it does not change manager_balance in the flush record.
 }
 
 function stateSnapshot(state: EconomicState): Record<string, string> {
@@ -1000,6 +996,31 @@ function economicRecord(
         step: row.step,
         action: row.action,
         input: rowInput(row),
+        updates,
+        state: stateSnapshot(state),
+    };
+}
+
+function economicMaintenanceRecord(
+    afterRow: number,
+    action: "flush" | "rebalance_expiry_cash",
+    row: ScenarioRow,
+    receipt: ExecutionReceipt,
+    state: EconomicState,
+    aliases: AliasState,
+): EconomicRecord {
+    const updates = normalizeUpdates(row, receipt, aliases, []);
+    for (const update of updates) {
+        applyUpdate(state, update);
+    }
+    if (action === "flush" && !updates.some((update) => update.type === "flush_executed")) {
+        throw new Error(`flush after row ${afterRow} emitted no FlushExecuted event`);
+    }
+
+    return {
+        step: row.step,
+        action,
+        input: { after_row: afterRow },
         updates,
         state: stateSnapshot(state),
     };
@@ -1179,7 +1200,6 @@ function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapi
     return {
         vaultSeed,
         managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
-        initialTotalPlpSupply: vaultSeed,
     };
 }
 
@@ -1190,7 +1210,6 @@ function scaleSimulationCapital(
     return {
         vaultSeed: capital.vaultSeed * multiplier,
         managerSeed: capital.managerSeed * multiplier,
-        initialTotalPlpSupply: capital.initialTotalPlpSupply * multiplier,
     };
 }
 
@@ -1729,12 +1748,22 @@ async function executeScenario(
                 parsedJson: event.parsedJson ?? {},
             })),
         });
+        records.push(
+            economicMaintenanceRecord(
+                afterRow,
+                "flush",
+                row,
+                receipt,
+                economicState,
+                aliases,
+            ),
+        );
         process.stdout.write(
             `[${ts()}]   -- flush after row ${afterRow} (drained LP queues, gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
         );
     };
 
-    const runCashRebalance = async (afterRow: number) => {
+    const runCashRebalance = async (afterRow: number, row: ScenarioRow) => {
         const startedAt = performance.now();
         const receipt = await execute(
             () =>
@@ -1759,6 +1788,16 @@ async function executeScenario(
                 parsedJson: event.parsedJson ?? {},
             })),
         });
+        records.push(
+            economicMaintenanceRecord(
+                afterRow,
+                "rebalance_expiry_cash",
+                row,
+                receipt,
+                economicState,
+                aliases,
+            ),
+        );
         process.stdout.write(
             `[${ts()}]   -- rebalance expiry cash after row ${afterRow} (gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
         );
@@ -1768,7 +1807,7 @@ async function executeScenario(
         if (flushAfter.has(afterRow)) {
             await runFlush(afterRow, row);
         } else if (rebalanceAfter.has(afterRow)) {
-            await runCashRebalance(afterRow);
+            await runCashRebalance(afterRow, row);
         }
     };
 

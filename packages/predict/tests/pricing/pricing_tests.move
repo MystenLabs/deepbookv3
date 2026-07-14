@@ -41,22 +41,39 @@ const DIVERGED_PYTH_SPOT: u64 = 102_000_000_000;
 /// Scholes surface window, so the post-staleness fallback is observable rather than
 /// aborting on a stale surface.
 const DIVERGED_PYTH_SOURCE_MS: u64 = 119_500;
+const PYTH_SOURCE_MS: u64 = 119_001;
+const BLOCK_SCHOLES_SPOT_SOURCE_MS: u64 = 119_002;
+const BLOCK_SCHOLES_FORWARD_SOURCE_MS: u64 = 119_003;
 /// A strictly newer Pyth row whose zero price cannot produce a normalized spot.
 const UNUSABLE_PYTH_SOURCE_MS: u64 = 119_001;
 const UNUSABLE_PYTH_SPOT: u64 = 0;
+const NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS: u64 = 0;
 
 #[test]
 fun pricer_snapshots_all_oracle_source_timestamps() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.set_pyth_bundle(&mut oracle, test_constants::default_live_price(), PYTH_SOURCE_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        BLOCK_SCHOLES_SPOT_SOURCE_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        BLOCK_SCHOLES_FORWARD_SOURCE_MS,
+        test_constants::default_live_price(),
+    );
     let pricer = fx.load_pricer_bundle(&oracle);
-    let expected = test_constants::live_source_timestamp_ms();
 
-    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), expected);
-    assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), expected);
-    assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), expected);
-    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), expected);
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), PYTH_SOURCE_MS);
+    assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
+    assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), BLOCK_SCHOLES_FORWARD_SOURCE_MS);
+    assert_eq!(
+        pricer.block_scholes_svi_source_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -70,7 +87,7 @@ fun unusable_pyth_observation_uses_zero_timestamp_sentinel() {
     fx.set_pyth_bundle(&mut oracle, UNUSABLE_PYTH_SPOT, UNUSABLE_PYTH_SOURCE_MS);
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), UNUSABLE_PYTH_SPOT);
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS);
     assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
 
     oracle_fixture::return_oracle_bundle(oracle);
