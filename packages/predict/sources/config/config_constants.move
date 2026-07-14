@@ -374,8 +374,10 @@ public(package) fun assert_nav_mark_freshness_ms(value: u64) {
 }
 
 public(package) macro fun default_nav_mark_drift_epsilon(): u64 { 20_000_000 }
-// Floor: epsilon = 0 would reject every stored mark and brick the flush; ceiling:
-// 0.1 keeps the tolerated per-order price drift within ~4% of face.
+// Floor: epsilon = 0 would reject every stored mark and brick the flush (the
+// floor setting is de-facto "always re-refresh" but stays fail-closed); ceiling:
+// 0.1 keeps the tolerated per-order price drift within ~8% of face (measured
+// worst case ~0.8 * epsilon over shape-preserving moves).
 public(package) macro fun min_nav_mark_drift_epsilon(): u64 { 1_000_000 }
 public(package) macro fun max_nav_mark_drift_epsilon(): u64 { 100_000_000 }
 

@@ -131,7 +131,8 @@ public(package) fun sqrt_min_total_variance(pricer: &Pricer): u64 {
 /// (`epsilon * anchor_sqrt_min_total_variance`), and that expected-move level
 /// itself may shift at most `epsilon` relative. For oracle moves these checks
 /// see, any single order's price drift since the mark is bounded to roughly
-/// `0.4 * epsilon` of its full payout. Known blind spot: both checks key on the
+/// `0.8 * epsilon` of its full payout (measured worst case over
+/// shape-preserving moves: `0.77-0.79 * epsilon`). Known blind spot: both checks key on the
 /// surface's variance FLOOR, so a wing reshape that leaves the floor and the
 /// forward unchanged passes unexamined — an open pre-deploy item on whether a
 /// strike-range leg is needed. `|ΔF|/F` stands in for `|Δln F|` (they agree to

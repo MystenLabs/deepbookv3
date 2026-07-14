@@ -23,7 +23,8 @@ public struct ValuationConfig has store {
     /// itself may shift at most `epsilon` relative. Near expiry the expected
     /// move is small, so the allowed forward drift tightens automatically.
     /// Within tolerance, no contract's fair value can have drifted by more
-    /// than about `0.4 * epsilon` of its full payout (~0.8% at the default) —
+    /// than about `0.8 * epsilon` of its full payout (~1.5% at the default;
+    /// measured worst case over shape-preserving moves, `0.77-0.79 * epsilon`) —
     /// for the moves these checks see; a wing reshape at a fixed variance floor
     /// passes unexamined (`pricing::assert_mark_drift_within`, known blind spot).
     nav_mark_drift_epsilon: u64,
