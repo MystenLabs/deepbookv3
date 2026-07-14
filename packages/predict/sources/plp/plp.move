@@ -54,6 +54,7 @@ const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
 const EValuationMarkStale: u64 = 10;
+const ECashMovedDuringValuation: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -102,6 +103,12 @@ public struct PoolValuation {
     /// moving feeds. Becomes the flush mark's half-spread at `finish_flush`:
     /// supplies price at the mid NAV plus it, withdrawals at the mid minus it.
     total_drift: u64,
+    /// The vault ledger's cash revision at `start_pool_valuation`. `finish_flush`
+    /// asserts it unchanged: the potato reads each market's cash at its collect
+    /// and idle at finish, so an internal cash move interleaved between those
+    /// reads (only the flush PTB's own commands can do this — PTBs are atomic)
+    /// would double- or under-count the moved amount in the priced NAV.
+    cash_revision: u64,
 }
 
 // === Package Initializer ===
@@ -281,6 +288,7 @@ public fun start_pool_valuation(
         total_free_cash: 0,
         total_liability: 0,
         total_drift: 0,
+        cash_revision: vault.expiry_accounting.cash_revision(),
     }
 }
 
@@ -347,6 +355,10 @@ public fun finish_flush(
     assert_all_expected_valued(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
+    );
+    assert!(
+        vault.expiry_accounting.cash_revision() == valuation.cash_revision,
+        ECashMovedDuringValuation,
     );
     let PoolValuation {
         total_free_cash,

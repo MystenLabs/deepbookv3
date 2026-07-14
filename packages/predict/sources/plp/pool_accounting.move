@@ -38,6 +38,12 @@ public struct Ledger has store {
     /// physically moved to the reserve because idle was deployed in other active
     /// markets at materialization. Excluded from LP value until drained.
     pending_protocol_profit: u64,
+    /// Bumped on every internal cash move (idle<->expiry transfers and
+    /// protocol-profit draws from idle). The flush potato snapshots it at start
+    /// and `finish_flush` asserts it unchanged: the potato reads each market's
+    /// cash at its collect and idle at finish, so a move between those reads
+    /// would double- or under-count the moved amount in the priced NAV.
+    cash_revision: u64,
 }
 
 /// Active valuation entry with the expiry timestamp needed to classify live NAV cost.
@@ -73,11 +79,16 @@ public(package) fun new(ctx: &mut TxContext): Ledger {
         profit_basis_credits: 0,
         net_losses_to_fill: 0,
         pending_protocol_profit: 0,
+        cash_revision: 0,
     }
 }
 
 public(package) fun idle_balance(ledger: &Ledger): u64 {
     ledger.idle_balance.value()
+}
+
+public(package) fun cash_revision(ledger: &Ledger): u64 {
+    ledger.cash_revision
 }
 
 /// Return the expiry market IDs still contributing active pool valuation/risk.
@@ -183,6 +194,7 @@ public(package) fun send_expiry_cash(
 ): Balance<DUSDC> {
     if (amount == 0) return balance::zero();
     ledger.record_sent_to_expiry(expiry_market_id, amount);
+    ledger.cash_revision = ledger.cash_revision + 1;
     ledger.idle_balance.split(amount)
 }
 
@@ -216,6 +228,7 @@ public(package) fun receive_expiry_cash(
     };
     ledger.idle_balance.join(cash);
     ledger.record_received_from_expiry(expiry_market_id, amount);
+    ledger.cash_revision = ledger.cash_revision + 1;
     amount
 }
 
@@ -260,6 +273,7 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
 public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balance<DUSDC> {
     let draw = ledger.pending_protocol_profit.min(ledger.idle_balance.value());
     ledger.pending_protocol_profit = ledger.pending_protocol_profit - draw;
+    if (draw > 0) ledger.cash_revision = ledger.cash_revision + 1;
     ledger.idle_balance.split(draw)
 }
 
