@@ -61,7 +61,6 @@ const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
 const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
-const EMarkPriceDrifted: u64 = 16;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -91,67 +90,6 @@ public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
-}
-
-/// Sample seven probe contracts for the drift guard: strikes fanned around the
-/// forward at {-4, -2, -1, 0, +1, +2, +4} expected-moves-to-expiry, each with
-/// its current fair UP price. Stored in a market's valuation mark at refresh;
-/// the flush reprices the same strikes on the live surface and rejects the mark
-/// when any probe price moved more than the configured fraction of full payout
-/// — one check that catches forward moves, expiry decay, and wing reshapes
-/// alike, because any oracle change that matters to contract prices moves a
-/// probe. Residual accepted: reshapes confined strictly between probes; deep
-/// wings beyond the outermost probes self-limit because prices there sit
-/// pinned near 0 or 1. Returns `(strikes, prices)`, parallel.
-public(package) fun price_probes(pricer: &Pricer): (vector<u64>, vector<u64>) {
-    let scale = sqrt_min_total_variance(pricer);
-    let multipliers = vector[
-        i64::from_parts(4, true),
-        i64::from_parts(2, true),
-        i64::from_parts(1, true),
-        i64::from_u64(0),
-        i64::from_u64(1),
-        i64::from_u64(2),
-        i64::from_u64(4),
-    ];
-    let mut strikes = vector[];
-    let mut prices = vector[];
-    multipliers.do!(|multiplier| {
-        // Cap the exponent so a max-envelope surface (sqrt variance up to ~10)
-        // cannot abort the refresh through EExpOverflow: strikes past
-        // e^±2 x forward are deep wings whose probe prices pin near 0/1 anyway.
-        let exponent_magnitude = (multiplier.magnitude() * scale).min(
-            2 * math::float_scaling!(),
-        );
-        let exponent = i64::from_parts(exponent_magnitude, multiplier.is_negative());
-        let strike = math::mul(pricer.forward, math::exp(&exponent));
-        strikes.push_back(strike);
-        prices.push_back(up_price(pricer, strike));
-    });
-    (strikes, prices)
-}
-
-/// Abort unless every stored probe contract still prices within `epsilon` of
-/// its anchored fair price on the live surface. `epsilon` is a fraction of
-/// full payout in FLOAT_SCALING, so this check IS the guard's face-error bound
-/// at the probes: a mark the flush accepts cannot have drifted by more than
-/// `epsilon` of face there, whatever mix of forward move, variance decay, or
-/// surface reshape produced the drift. Near expiry a given oracle move
-/// produces larger price moves, so the guard tightens automatically in the
-/// only units that matter.
-public(package) fun assert_probe_prices_within(
-    pricer: &Pricer,
-    probe_strikes: &vector<u64>,
-    probe_prices: &vector<u64>,
-    epsilon: u64,
-) {
-    let probe_count = probe_strikes.length();
-    let mut i = 0;
-    while (i < probe_count) {
-        let live_price = up_price(pricer, probe_strikes[i]);
-        assert!(live_price.diff(probe_prices[i]) <= epsilon, EMarkPriceDrifted);
-        i = i + 1;
-    };
 }
 
 // === Public-Package Functions ===
@@ -469,21 +407,4 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
-}
-
-/// The size of one standard deviation of the price move this surface still
-/// expects before expiry, at the strike where that expectation is smallest —
-/// `sqrt(a + b * sigma * sqrt(1 - rho^2))`, the global minimum of SVI total
-/// variance over strikes. Sets the probe-grid spacing so the drift guard's
-/// probe contracts span the price-relevant strike range at every expiry.
-fun sqrt_min_total_variance(pricer: &Pricer): u64 {
-    let rho = pricer.svi.rho();
-    let rho_squared = rho.mul_scaled(&rho).magnitude();
-    // |rho| <= 1 inside the pricing-safe envelope; saturate the complement against
-    // fixed-point rounding dust at the |rho| = 1 corner.
-    let one_minus_rho_squared = math::float_scaling!().saturating_sub(rho_squared);
-    let root = math::sqrt(one_minus_rho_squared, math::float_scaling!());
-    let min_total_var =
-        pricer.svi.a() + math::mul(pricer.svi.b(), math::mul(pricer.svi.sigma(), root));
-    math::sqrt(min_total_var, math::float_scaling!())
 }

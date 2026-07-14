@@ -26,7 +26,6 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config,
-    valuation_config::ValuationConfig,
     valuation_mark::{Self, ValuationMark}
 };
 use dusdc::dusdc::DUSDC;
@@ -737,25 +736,32 @@ public(package) fun free_cash(market: &ExpiryMarket): u64 {
     market.cash.free_cash()
 }
 
-/// Read the stored marked liability for the pool flush: assert the mark exists,
-/// then delegate the freshness/drift acceptance to the mark. The payout tree is
-/// never walked here — that is the point: the walk ran in the refresh that
-/// stored the mark, and this read loads no per-order objects. Deliberately
-/// unclamped against cash — a market can legitimately owe more than it holds (a
-/// backing lambda below 1 admits transient shortfalls backstopped by pool
-/// rebalancing), so netting across markets and the single zero floor happen at
-/// the pool level in `plp`, the policy owner.
-public(package) fun flushable_marked_liability(
-    market: &ExpiryMarket,
-    valuation_config: &ValuationConfig,
-    pricer: &Pricer,
-    clock: &Clock,
-): u64 {
+/// Return the stored mark's current liability: the refresh walk's number plus
+/// trade write-through since. The payout tree is never walked here — that is
+/// the point: the walk ran in the refresh that stored the mark, and this read
+/// loads no per-order objects. Deliberately unclamped against cash — a market
+/// can legitimately owe more than it holds (a backing lambda below 1 admits
+/// transient shortfalls backstopped by pool rebalancing) — and deliberately a
+/// dumb fact: whether the mark is fresh enough and its drift acceptable is
+/// judged by `plp`, which aggregates across markets.
+public(package) fun marked_liability(market: &ExpiryMarket): u64 {
+    assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
+    market.valuation_mark.borrow().liability()
+}
+
+/// Return the landing time of the refresh that computed the stored mark.
+public(package) fun mark_computed_at_ms(market: &ExpiryMarket): u64 {
+    assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
+    market.valuation_mark.borrow().computed_at_ms()
+}
+
+/// Measure the stored mark's potential oracle drift against the live inputs in
+/// `pricer`, in DUSDC base units (`valuation_mark::drift`). A measurement, not
+/// a judgment — `plp` aggregates drift across markets and enforces the bound.
+public(package) fun mark_drift(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
-    let mark = market.valuation_mark.borrow();
-    mark.assert_flushable(valuation_config, pricer, clock);
-    mark.liability()
+    market.valuation_mark.borrow().drift(pricer)
 }
 
 /// Recompute this market's exact per-order live liability and store it as the

@@ -53,6 +53,7 @@ const EBelowMinBootstrapLiquidity: u64 = 6;
 const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
+const EValuationMarkStale: u64 = 10;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -96,6 +97,11 @@ public struct PoolValuation {
     total_free_cash: u64,
     /// Running Σ of each counted market's marked liability.
     total_liability: u64,
+    /// Running Σ of each counted market's measured oracle drift, in DUSDC —
+    /// the dollar amount pool NAV could be off by from marks aging against
+    /// moving feeds. Judged in aggregate at `finish_flush`, where the PLP-price
+    /// error it implies has its denominator.
+    total_drift: u64,
 }
 
 // === Package Initializer ===
@@ -274,17 +280,19 @@ public fun start_pool_valuation(
         valued_expiry_markets: vector[],
         total_free_cash: 0,
         total_liability: 0,
+        total_drift: 0,
     }
 }
 
-/// Fold one snapshotted market's stored valuation mark into the running pool NAV,
-/// using a `Pricer` loaded in this transaction (its live oracle inputs are what
-/// the drift guard compares the mark's anchors against). The market must be in
-/// the snapshot and not already counted (the exactly-once proof), and is a
-/// READ-ONLY input: no cash moves, no settlement, no tree walk — the mark must
-/// exist, be within the freshness ceiling, and within the drift tolerance
-/// (`expiry_market::read_flushable_nav`), else this aborts and the operator
-/// re-refreshes the market and retries the flush.
+/// Fold one snapshotted market's flush facts into the running pool aggregates,
+/// using a `Pricer` loaded in this transaction (the live oracle inputs its
+/// drift is measured against). The market must be in the snapshot and not
+/// already counted (the exactly-once proof), and is a READ-ONLY input: no cash
+/// moves, no settlement, no tree walk. Three facts are collected — live free
+/// cash, the stored marked liability, and the mark's measured dollar drift —
+/// and only one gate applies here: the mark must be younger than the freshness
+/// ceiling (the sole guard a stalled feed cannot fool). Drift is judged in
+/// aggregate at `finish_flush`, not per market.
 ///
 /// A settled or past-expiry market cannot produce the pricer this read requires
 /// (`load_live_pricer` rejects past-expiry): sweep it via `rebalance_expiry_cash`
@@ -301,14 +309,15 @@ public fun collect_expiry_nav(
     config.assert_version();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    let marked_liability = market.flushable_marked_liability(
-        config.valuation_config(),
-        pricer,
-        clock,
+    assert!(
+        clock.timestamp_ms() - market.mark_computed_at_ms()
+            <= config.valuation_config().nav_mark_freshness_ms(),
+        EValuationMarkStale,
     );
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_free_cash = valuation.total_free_cash + market.free_cash();
-    valuation.total_liability = valuation.total_liability + marked_liability;
+    valuation.total_liability = valuation.total_liability + market.marked_liability();
+    valuation.total_drift = valuation.total_drift + market.mark_drift(pricer);
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -339,7 +348,13 @@ public fun finish_flush(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
     );
-    let PoolValuation { total_free_cash, total_liability, valued_expiry_markets, .. } = valuation;
+    let PoolValuation {
+        total_free_cash,
+        total_liability,
+        total_drift,
+        valued_expiry_markets,
+        ..,
+    } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
@@ -348,6 +363,7 @@ public fun finish_flush(
         total_free_cash,
         total_liability,
     );
+    assert_aggregate_drift_acceptable(total_drift, pool_nav);
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
@@ -1004,6 +1020,16 @@ fun materialize_expiry_profit(
         vault.expiry_accounting.pending_protocol_profit(),
     );
 }
+
+/// The pool-level drift acceptance: the flush must reject itself when the
+/// counted marks' combined measured drift could move the PLP price by more
+/// than an acceptable bound — shape: `total_drift <= threshold * pool_nav`,
+/// putting the guarantee directly in PLP-price units (the per-market
+/// measurements have no denominator to judge against).
+///
+/// PLACEHOLDER: accepts everything until the drift model
+/// (`valuation_mark::drift`) and the threshold interpretation land.
+fun assert_aggregate_drift_acceptable(_total_drift: u64, _pool_nav: u64) {}
 
 /// Abort unless this valuation belongs to `vault`.
 fun assert_pool_vault(valuation: &PoolValuation, vault: &PoolVault) {

@@ -14,16 +14,12 @@ use deepbook_predict::config_constants;
 public struct ValuationConfig has store {
     /// Hard ceiling on stored-mark age in milliseconds, regardless of oracle drift.
     nav_mark_freshness_ms: u64,
-    /// How far any probe contract's fair price may move before a stored mark
-    /// is rejected, as a fraction of full payout in FLOAT_SCALING (0.02 = 2%
-    /// of face). Feeds keep moving after a market's refresh, so the flush
-    /// reprices the mark's seven stored probe contracts on the live surface
-    /// and rejects the mark when any moved more than this — one check that
-    /// catches forward moves, expiry decay, and surface reshaping alike. The
-    /// bound is literal: a mark the flush accepts cannot have drifted more
-    /// than `epsilon` of face at the probes; reshapes confined strictly
-    /// between probes are the accepted sampling residual
-    /// (`pricing::price_probes`).
+    /// Acceptance threshold for aggregate mark drift at the flush, in
+    /// FLOAT_SCALING. Intended interpretation: the counted marks' combined
+    /// measured dollar drift may not exceed this fraction of pool NAV, putting
+    /// the bound directly in PLP-price units
+    /// (`plp::assert_aggregate_drift_acceptable`). PLACEHOLDER semantics while
+    /// the drift model (`valuation_mark::drift`) is stubbed.
     nav_mark_drift_epsilon: u64,
 }
 

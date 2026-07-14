@@ -1,22 +1,23 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored per-market valuation mark and its flush-acceptance policy.
+/// Stored per-market valuation mark: a dumb measurement component.
 ///
 /// A mark memoizes one market's exact oracle-priced per-order liability (the
-/// payout-tree walk) plus the pricing anchors it was computed at, so the pool
-/// flush can read the market without walking any tree. This module owns the
-/// mark's lifecycle: construction at refresh, the freshness/drift acceptance
-/// checks, and the write-through maintenance trade flows apply (mint adds its
-/// `net_premium`, live redeem subtracts its `redeem_amount`, liquidation
-/// subtracts the knocked-out order's live value). It does not own the walk or
-/// the market's cash — `expiry_market` composes those.
+/// payout-tree walk) so the pool flush can read the market without walking any
+/// tree. This module owns the mark's lifecycle: construction at refresh, the
+/// write-through maintenance trade flows apply (mint adds its `net_premium`,
+/// live redeem subtracts its `redeem_amount`, liquidation subtracts the
+/// knocked-out order's live value), and measuring `drift` — the potential
+/// dollar impact of oracle movement since the walk, against a fresh `Pricer`.
+/// It deliberately owns NO acceptance policy: whether a mark is fresh enough or
+/// the measured drift acceptable is decided downstream by `plp`, which
+/// aggregates across markets. It does not own the walk or the market's cash —
+/// `expiry_market` composes those.
 module deepbook_predict::valuation_mark;
 
-use deepbook_predict::{pricing::Pricer, valuation_config::ValuationConfig};
+use deepbook_predict::pricing::Pricer;
 use sui::clock::Clock;
-
-const EValuationMarkStale: u64 = 0;
 
 /// One market's stored valuation mark. Free cash is never stored — the flush
 /// reads it live, so cash moves need no mark maintenance. Trade write-through
@@ -37,11 +38,6 @@ public struct ValuationMark has copy, drop, store {
     removed_since_compute: u64,
     /// On-chain landing time of the refresh that computed this mark.
     computed_at_ms: u64,
-    /// Probe contract strikes fanned around the refresh-time forward
-    /// (drift-guard anchors; `pricing::price_probes`).
-    probe_strikes: vector<u64>,
-    /// Fair UP price of each probe at refresh, parallel to `probe_strikes`.
-    probe_prices: vector<u64>,
 }
 
 // === Public-Package Functions ===
@@ -59,38 +55,25 @@ public(package) fun computed_at_ms(mark: &ValuationMark): u64 {
     mark.computed_at_ms
 }
 
-/// Snapshot a fresh mark: the just-walked liability plus the pricer's probe
-/// anchors, with zeroed trade deltas.
-public(package) fun new(liability: u64, pricer: &Pricer, clock: &Clock): ValuationMark {
-    let (probe_strikes, probe_prices) = pricer.price_probes();
+/// Measure this mark's potential oracle drift against the live inputs in
+/// `pricer`: the dollar amount (DUSDC base units) by which this market's NAV
+/// could have moved since the walk, from oracle movement alone (trade deltas
+/// are already inside `liability`). The caller aggregates and judges — this
+/// component measures, it does not accept or reject.
+///
+/// PLACEHOLDER: the drift model is pending; returns 0 until it lands.
+public(package) fun drift(_mark: &ValuationMark, _pricer: &Pricer): u64 {
+    0
+}
+
+/// Snapshot a fresh mark: the just-walked liability with zeroed trade deltas.
+public(package) fun new(liability: u64, _pricer: &Pricer, clock: &Clock): ValuationMark {
     ValuationMark {
         computed_liability: liability,
         added_since_compute: 0,
         removed_since_compute: 0,
         computed_at_ms: clock.timestamp_ms(),
-        probe_strikes,
-        probe_prices,
     }
-}
-
-/// Abort unless this mark is still usable by the flush: younger than the
-/// freshness ceiling, and every stored probe contract still pricing within the
-/// drift tolerance on the live surface in `pricer`.
-public(package) fun assert_flushable(
-    mark: &ValuationMark,
-    valuation_config: &ValuationConfig,
-    pricer: &Pricer,
-    clock: &Clock,
-) {
-    assert!(
-        clock.timestamp_ms() - mark.computed_at_ms <= valuation_config.nav_mark_freshness_ms(),
-        EValuationMarkStale,
-    );
-    pricer.assert_probe_prices_within(
-        &mark.probe_strikes,
-        &mark.probe_prices,
-        valuation_config.nav_mark_drift_epsilon(),
-    );
 }
 
 /// Write a trade's liability increase through to the mark's delta accumulator.
