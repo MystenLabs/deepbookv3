@@ -1601,7 +1601,13 @@ export function keeperLiquidateTx(params: {
         const pricer = loadLivePricer(tx, { expiryMarketId: marketId, protocolConfigId: params.protocolConfigId, ...params.feeds });
         tx.moveCall({
             target: target("expiry_market", "liquidate"),
-            arguments: [tx.object(marketId), tx.object(params.protocolConfigId), pricer, tx.pure.u64(params.budget)],
+            arguments: [
+                tx.object(marketId),
+                tx.object(params.protocolConfigId),
+                pricer,
+                tx.pure.u64(params.budget),
+                tx.object(CLOCK_ID),
+            ],
         });
     }
     return tx;

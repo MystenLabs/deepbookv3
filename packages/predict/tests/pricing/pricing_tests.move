@@ -11,7 +11,9 @@
 ///   - monotonicity: the digital "above X" probability is non-increasing in X;
 ///   - forward-source selection: the live forward is Pyth-spot-based exactly
 ///     while Pyth is fresh (inclusive boundary) and falls back to the stored
-///     Block Scholes forward one millisecond later.
+///     Block Scholes forward one millisecond later;
+///   - oracle provenance: every source timestamp is retained independently of
+///     forward selection, with `0` reserved for an unusable normalized Pyth read.
 /// The interior binary value (Φ(d2)) carries fixed-point approximation error and
 /// is intentionally NOT asserted here (that needs the documented precision budget
 /// against an independent scipy reference — a separate, careful pass).
@@ -39,6 +41,41 @@ const DIVERGED_PYTH_SPOT: u64 = 102_000_000_000;
 /// Scholes surface window, so the post-staleness fallback is observable rather than
 /// aborting on a stale surface.
 const DIVERGED_PYTH_SOURCE_MS: u64 = 119_500;
+/// A strictly newer Pyth row whose zero price cannot produce a normalized spot.
+const UNUSABLE_PYTH_SOURCE_MS: u64 = 119_001;
+const UNUSABLE_PYTH_SPOT: u64 = 0;
+
+#[test]
+fun pricer_snapshots_all_oracle_source_timestamps() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let expected = test_constants::live_source_timestamp_ms();
+
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), expected);
+    assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), expected);
+    assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), expected);
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), expected);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test]
+fun unusable_pyth_observation_uses_zero_timestamp_sentinel() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.set_pyth_bundle(&mut oracle, UNUSABLE_PYTH_SPOT, UNUSABLE_PYTH_SOURCE_MS);
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), UNUSABLE_PYTH_SPOT);
+    assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
 
 #[test]
 fun complementary_ranges_sum_to_one_at_the_forward() {
@@ -141,6 +178,7 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     let pricer = fx.load_pricer_bundle(&oracle);
     assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
     assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), 0);
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
