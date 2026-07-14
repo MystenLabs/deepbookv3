@@ -756,8 +756,10 @@ public(package) fun mark_computed_at_ms(market: &ExpiryMarket): u64 {
 }
 
 /// Measure the stored mark's potential oracle drift against the live inputs in
-/// `pricer`, in DUSDC base units (`valuation_mark::drift`). A measurement, not
-/// a judgment — `plp` aggregates drift across markets and enforces the bound.
+/// `pricer`: the worst-case single-contract price move since the walk, as a
+/// fraction of full payout in FLOAT_SCALING (`valuation_mark::drift`). A
+/// measurement, not a judgment — dollarization by this market's open interest
+/// and the aggregate enforcement land with the `plp` aggregation fill-in.
 public(package) fun mark_drift(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     assert!(market.valuation_mark.is_some(), EValuationMarkMissing);

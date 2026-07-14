@@ -73,6 +73,18 @@ macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+// Drift-envelope constants. A price never moves more than the normal curve's
+// max slope times its d2 move; 0.4 rounds 1/sqrt(2*pi) up so the fixed-point
+// round-down stays a bound.
+macro fun drift_phi_max(): u64 { 400_000_000 }
+// Beyond |d2| = 4 both snapshots pin a strike's price to the same side of 0/1
+// within 2*N(-4) ~ 6.3e-5 of face; padded for fixed-point dust.
+macro fun drift_tail_pad(): u64 { 100_000 }
+macro fun drift_band_d(): u64 { 4 * math::float_scaling!() }
+// No real strike ladder sits e^100 away from the forward; a wider computed
+// band means degenerate params, so the envelope fails closed instead.
+macro fun drift_band_cap(): u64 { 100 * math::float_scaling!() }
+
 // === Public Functions ===
 
 /// Return the current UP tail price for one strike. Public read for
@@ -92,7 +104,95 @@ public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
-// === Public-Package Functions ===
+/// Return the forward this pricer snapshotted (stored as a drift anchor).
+public(package) fun forward(pricer: &Pricer): u64 {
+    pricer.forward
+}
+
+/// Return a copy of the SVI params this pricer snapshotted (stored as a drift anchor).
+public(package) fun svi_params(pricer: &Pricer): SVIParams {
+    pricer.svi
+}
+
+/// Worst-case repricing between two oracle snapshots: an upper bound on how far
+/// ANY contract's fair price can have moved between the anchor oracle state and
+/// the live one, as a fraction of full payout in FLOAT_SCALING (capped at 1.0).
+///
+/// This is a bound by construction, not a sample: an SVI surface IS five
+/// numbers plus the forward, and every term below charges one of them, so a
+/// surface change large enough to move some price somewhere must show up in at
+/// least one charged term — there is no strike "between probes" to hide in.
+/// The chain: a contract's price can never move more than ~0.4 x its move in
+/// d2 (the normal curve's maximum slope — a property of the pricing function,
+/// not of the oracle); the worst d2 move over all strikes is then bounded
+/// term-by-term — the forward shift scaled by the surface's variance floor,
+/// and the surface reshape (each SVI parameter's delta, Lipschitz-bounded over
+/// the strike band where prices are not pinned to 0/1). Every term is zero
+/// when nothing moved, and degenerate inputs (zero variance floor, wing slope
+/// at/above 1, an absurd strike band) return full face — fail-closed, the mark
+/// just needs a re-refresh.
+///
+/// Deliberately conservative: the terms stack worst cases that cannot all
+/// happen at the same strike, so benign moves are overstated (costing
+/// re-refreshes, never understating drift). NOT yet charged: the skew
+/// correction term's own drift (small and mostly cancelling between snapshots;
+/// to be priced by the envelope-validation measurements) and fixed-point ulps
+/// (absorbed by the tail pad).
+public(package) fun drift_envelope(
+    pricer: &Pricer,
+    anchor_forward: u64,
+    anchor_svi: &SVIParams,
+): u64 {
+    let full = math::float_scaling!();
+    let s0 = sqrt_min_total_variance(anchor_svi);
+    let s1 = sqrt_min_total_variance(&pricer.svi);
+    if (s0 == 0 || s1 == 0 || anchor_forward == 0) return full;
+    let s_product = math::mul(s0, s1);
+    if (s_product == 0) return full;
+
+    // Forward leg: a forward move shifts every strike's log-moneyness by
+    // |ln(F1/F0)|, and d2 divides that by at least the variance floor.
+    let forward_ratio = math::div(pricer.forward, anchor_forward);
+    if (forward_ratio == 0) return full;
+    let delta_forward = math::ln(forward_ratio).magnitude();
+
+    // Strike band where prices are not pinned to 0/1 on either surface; beyond
+    // it both snapshots agree to within the tail pad. Degenerate/absurd bands
+    // fail closed.
+    let band0 = unpinned_band(anchor_svi);
+    let band1 = unpinned_band(&pricer.svi);
+    if (band0.is_none() || band1.is_none()) return full;
+    let k_band = band0.destroy_some().max(band1.destroy_some());
+    if (k_band > drift_band_cap!()) return full;
+
+    // Surface leg: the worst total-variance gap between the snapshots over the
+    // band, one Lipschitz charge per SVI parameter delta (plus the band shift
+    // the forward move causes), converted to a sqrt-variance gap and then to a
+    // d2 move.
+    let m1_abs = pricer.svi.m().magnitude();
+    let g1_max = 2 * (k_band + m1_abs) + pricer.svi.sigma();
+    let delta_rho = pricer.svi.rho().sub(&anchor_svi.rho()).magnitude();
+    let delta_m = pricer.svi.m().sub(&anchor_svi.m()).magnitude();
+    let delta_sigma = pricer.svi.sigma().diff(anchor_svi.sigma());
+    let delta_a = pricer.svi.a().diff(anchor_svi.a());
+    let delta_b = pricer.svi.b().diff(anchor_svi.b());
+    let sup_wing_gap =
+        math::mul(delta_rho, k_band + m1_abs) + math::mul(anchor_svi.rho().magnitude(), delta_m)
+            + delta_m + delta_sigma;
+    let slope1_max = math::mul(
+        pricer.svi.b(),
+        math::float_scaling!() + pricer.svi.rho().magnitude(),
+    );
+    let sup_delta_w =
+        delta_a + math::mul(delta_b, g1_max) + math::mul(anchor_svi.b(), sup_wing_gap)
+            + math::mul(slope1_max, delta_forward);
+    let sup_delta_sqrt_w = math::div(sup_delta_w, s0 + s1);
+
+    let d2_bound =
+        math::div(delta_forward, s1)
+            + math::mul(sup_delta_sqrt_w, math::div(k_band, s_product) + full / 2);
+    (math::mul(drift_phi_max!(), d2_bound) + drift_tail_pad!()).min(full)
+}
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
@@ -174,6 +274,58 @@ fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
         if (mid_tick < tick) lo = mid + 1 else hi = mid;
     };
     abort ETickNotInPriceMemo
+}
+
+/// The size of one standard deviation of the price move this surface still
+/// expects before expiry, at the strike where that expectation is smallest —
+/// `sqrt(a + b * sigma * sqrt(1 - rho^2))`, the global minimum of SVI total
+/// variance over strikes. The drift envelope's forward leg divides by it.
+fun sqrt_min_total_variance(svi: &SVIParams): u64 {
+    let rho_squared = svi.rho().mul_scaled(&svi.rho()).magnitude();
+    // |rho| <= 1 inside the pricing-safe envelope; saturate the complement against
+    // fixed-point rounding dust at the |rho| = 1 corner.
+    let one_minus_rho_squared = math::float_scaling!().saturating_sub(rho_squared);
+    let root = math::sqrt(one_minus_rho_squared, math::float_scaling!());
+    let min_total_var = svi.a() + math::mul(svi.b(), math::mul(svi.sigma(), root));
+    math::sqrt(min_total_var, math::float_scaling!())
+}
+
+/// Log-moneyness band `K` outside which this surface pins every price within
+/// the tail pad of 0 or 1 (|d2| > D on both tails). Solves
+/// `K = D * sqrt(W) + W / 2` against the surface's own linear overshoot
+/// `W = A + B * K` (with `A = a + b * (2|m| + sigma)`, `B = 2b`, from
+/// `w(k) <= A + B|k|`), so the band covers every strike the surface can price
+/// away from the pins. `None` when the surface is too degenerate to band
+/// (wing slope at/above ~1, or a band past the cap) — the caller fails closed.
+fun unpinned_band(svi: &SVIParams): Option<u64> {
+    let one = math::float_scaling!();
+    let d = drift_band_d!();
+    let cap = drift_band_cap!();
+    let a_overshoot = svi.a() + math::mul(svi.b(), 2 * svi.m().magnitude() + svi.sigma());
+    let b_slope = svi.b();
+    // Near/above slope 1 the quadratic degenerates (denominator -> 0); no real
+    // surface is close (observed b <= ~0.03), so fail closed rather than solve.
+    if (b_slope > 999_000_000) return option::none();
+
+    if (b_slope < 1_000) {
+        // Slope negligible: W ~ A. The 10% headroom covers the ignored slope.
+        let k = math::mul(d, math::sqrt(a_overshoot, one)) + a_overshoot / 2;
+        let k = k + k / 10;
+        if (k > cap) return option::none();
+        return option::some(k)
+    };
+
+    let b_coeff = 2 * b_slope;
+    let bd = math::mul(b_coeff, d);
+    let discriminant = math::mul(bd, bd) + 4 * math::mul(a_overshoot, one - b_slope);
+    let sqrt_w = math::div(bd + math::sqrt(discriminant, one), 2 * (one - b_slope));
+    let w = math::mul(sqrt_w, sqrt_w);
+    let w_minus_a = w.saturating_sub(a_overshoot);
+    // K = (W - A) / B; refuse before dividing when K would exceed the cap.
+    if (w_minus_a > math::mul(b_coeff, cap)) return option::none();
+    let k = math::div(w_minus_a, b_coeff);
+    if (k > cap) return option::none();
+    option::some(k)
 }
 
 fun assert_current_oracles(

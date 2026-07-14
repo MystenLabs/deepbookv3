@@ -16,7 +16,8 @@
 /// `expiry_market` composes those.
 module deepbook_predict::valuation_mark;
 
-use deepbook_predict::pricing::Pricer;
+use deepbook_predict::pricing::{Self, Pricer};
+use propbook::block_scholes_svi_feed::SVIParams;
 use sui::clock::Clock;
 
 /// One market's stored valuation mark. Free cash is never stored — the flush
@@ -38,6 +39,12 @@ public struct ValuationMark has copy, drop, store {
     removed_since_compute: u64,
     /// On-chain landing time of the refresh that computed this mark.
     computed_at_ms: u64,
+    /// Forward the walk priced at (drift anchor). Raw snapshot, not derived
+    /// terms: `drift` derives both sides with the same code at read time, so
+    /// the envelope formula can change without stored state aging.
+    anchor_forward: u64,
+    /// SVI params the walk priced at (drift anchor).
+    anchor_svi: SVIParams,
 }
 
 // === Public-Package Functions ===
@@ -56,23 +63,26 @@ public(package) fun computed_at_ms(mark: &ValuationMark): u64 {
 }
 
 /// Measure this mark's potential oracle drift against the live inputs in
-/// `pricer`: the dollar amount (DUSDC base units) by which this market's NAV
-/// could have moved since the walk, from oracle movement alone (trade deltas
-/// are already inside `liability`). The caller aggregates and judges — this
+/// `pricer`: an upper bound on how far ANY single contract's fair price can
+/// have moved since the walk, as a fraction of full payout in FLOAT_SCALING
+/// (`pricing::drift_envelope` between the stored anchors and the live
+/// snapshot). Oracle movement only — trade deltas are already inside
+/// `liability`. The caller converts to dollars and judges in aggregate; this
 /// component measures, it does not accept or reject.
-///
-/// PLACEHOLDER: the drift model is pending; returns 0 until it lands.
-public(package) fun drift(_mark: &ValuationMark, _pricer: &Pricer): u64 {
-    0
+public(package) fun drift(mark: &ValuationMark, pricer: &Pricer): u64 {
+    pricer.drift_envelope(mark.anchor_forward, &mark.anchor_svi)
 }
 
-/// Snapshot a fresh mark: the just-walked liability with zeroed trade deltas.
-public(package) fun new(liability: u64, _pricer: &Pricer, clock: &Clock): ValuationMark {
+/// Snapshot a fresh mark: the just-walked liability with zeroed trade deltas,
+/// anchored to the oracle inputs the walk priced at.
+public(package) fun new(liability: u64, pricer: &Pricer, clock: &Clock): ValuationMark {
     ValuationMark {
         computed_liability: liability,
         added_since_compute: 0,
         removed_since_compute: 0,
         computed_at_ms: clock.timestamp_ms(),
+        anchor_forward: pricer.forward(),
+        anchor_svi: pricer.svi_params(),
     }
 }
 
