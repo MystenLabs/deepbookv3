@@ -435,14 +435,16 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   single-user action.
 - **Blast radius:** the single mint transaction; no shared or mandatory path.
 - **Response:** proceed — `max_quantity_for_net_premium` inverts the mint math
-  by composing the same floor-rounded fixed_math primitives in reverse
-  (`div(mul(net_premium, leverage), entry_probability)`), whose u128 interiors
-  remove the intermediate-width ceilings; the caller's `order::max_quantity_lots`
-  clamp bounds the result. The former u64-native guard aborted at ordinary
-  budgets (~$18,446 at 1x, ~$6,148 at 3x, ~$1,844 at 10x leverage in 6-decimal
-  dUSDC) — an intermediate-width artifact, not a product bound. The far backstop
-  is the primitive u64 result cast (entry values above ~$1.8T), a VM abort by
-  design per the move.md no-redundant-overflow-assert rule.
+  as one exact floor ratio, `mul_div_down(net_premium, leverage,
+  entry_probability)`, whose u128 interior removes the intermediate-width
+  ceilings entirely (the inverse's intermediate entry value is observed by
+  nothing — the mint recomputes the real entry value forward from the returned
+  quantity); the caller's `order::max_quantity_lots` clamp bounds the result.
+  The former u64-native guard aborted at ordinary budgets (~$18,446 at 1x,
+  ~$6,148 at 3x, ~$1,844 at 10x leverage in 6-decimal dUSDC) — an
+  intermediate-width artifact, not a product bound. The far backstop is the
+  primitive u64 result cast (quantities beyond any representable order size), a
+  VM abort by design per the move.md no-redundant-overflow-assert rule.
 - **Reasoning / duty inventory:** the audit had tracked these asserts as the
   "four cascading asserts" bullet under the H-5 batch (removed from that batch
   with this entry) without spotting the reachable ceiling. The four removed
@@ -452,11 +454,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   downstream consumer read the abort: the caller lot-clamps the returned
   quantity, and mint admission independently re-validates entry probability,
   leverage, and minimum net premium on the actual mint.
-- **Risk profile:** exact in the safe direction — both floors round down, so the
-  derived net premium of the returned quantity never exceeds the budget (R2
-  direction: dust favors the pool). The double floor undershoots the theoretical
-  maximum quantity by at most ~`(leverage + 1e9) / entry_probability` raw units —
-  sub-lot at admitted entry probabilities — and callers consume the result at
+- **Risk profile:** exact in the safe direction — the single floor rounds down
+  (`Q <= np·L/p` implies the forward-derived net premium `<= np`), so the
+  returned quantity can never exceed the budget (R2 direction: dust favors the
+  pool). The floor undershoots the theoretical unit-exact maximum by sub-lot
+  amounts at admitted entry probabilities, and callers consume the result at
   lot granularity, so unit-exactness is not a product property.
 - **Pinning tests:** `strike_exposure_config_tests.move` —
   `max_quantity_for_net_premium_exact_lot_boundary`,

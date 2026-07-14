@@ -167,10 +167,11 @@ public(package) fun floor_shares(admission: &MintAdmission): u64 {
     admission.floor_shares
 }
 
-/// Return a quantity whose derived net premium is at most `net_premium`, inverting
-/// the mint math with the same floor-rounded `mul`/`div` it runs forward. The double
-/// floor can sit a few raw units below the theoretical maximum; callers consume the
-/// result at lot granularity (RP-13).
+/// Return a quantity whose derived net premium is at most `net_premium`:
+/// the exact floor of budget * leverage / probability, so `mul(p, Q)` then
+/// `div(entry, L)` forward can never exceed the budget. Sits at most a few raw
+/// units below the theoretical maximum; callers consume the result at lot
+/// granularity (RP-13).
 public(package) fun max_quantity_for_net_premium(
     entry_probability: u64,
     net_premium: u64,
@@ -178,8 +179,7 @@ public(package) fun max_quantity_for_net_premium(
 ): u64 {
     if (entry_probability == 0 || net_premium == 0) return 0;
 
-    let entry_value = math::mul(net_premium, leverage);
-    math::div(entry_value, entry_probability)
+    math::mul_div_down(net_premium, leverage, entry_probability)
 }
 
 public(package) fun new(): StrikeExposureConfig {
