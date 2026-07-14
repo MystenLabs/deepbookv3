@@ -14,21 +14,16 @@ use deepbook_predict::config_constants;
 public struct ValuationConfig has store {
     /// Hard ceiling on stored-mark age in milliseconds, regardless of oracle drift.
     nav_mark_freshness_ms: u64,
-    /// How far the oracle may move before a stored mark is rejected, in
-    /// FLOAT_SCALING (0.02 = 2%). Feeds keep moving after a market's refresh,
-    /// so the flush re-reads them and rejects the mark when contract prices
-    /// could have moved materially since it was computed. Three checks, one
-    /// knob: the forward may move at most `epsilon` of one standard deviation
-    /// of the price move still expected before expiry, that expected-move level
-    /// itself may shift at most `epsilon` relative, and the surface's shape —
-    /// sampled at seven stored probe strikes — may shift at most `epsilon`
-    /// relative per probe. Near expiry the expected move is small, so the
-    /// allowed forward drift tightens automatically. Within tolerance, no
-    /// contract's fair value at the probes can have drifted by more than about
-    /// `0.8 * epsilon` of its full payout (~1.5% at the default; measured
-    /// shape-preserving worst case `0.77-0.79 * epsilon`); reshapes confined
-    /// strictly between probes are the accepted sampling residual
-    /// (`pricing::VarianceProbes`).
+    /// How far any probe contract's fair price may move before a stored mark
+    /// is rejected, as a fraction of full payout in FLOAT_SCALING (0.02 = 2%
+    /// of face). Feeds keep moving after a market's refresh, so the flush
+    /// reprices the mark's seven stored probe contracts on the live surface
+    /// and rejects the mark when any moved more than this — one check that
+    /// catches forward moves, expiry decay, and surface reshaping alike. The
+    /// bound is literal: a mark the flush accepts cannot have drifted more
+    /// than `epsilon` of face at the probes; reshapes confined strictly
+    /// between probes are the accepted sampling residual
+    /// (`pricing::price_probes`).
     nav_mark_drift_epsilon: u64,
 }
 
