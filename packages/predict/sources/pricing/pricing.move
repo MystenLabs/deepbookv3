@@ -27,10 +27,12 @@ public struct Pricer has copy, drop {
     expiry_market_id: ID,
     forward: u64,
     svi: SVIParams,
-    /// Pyth spot observation used to anchor `forward`; both are `0` when live
-    /// pricing fell back to the Block Scholes forward.
-    pyth_spot_update_timestamp_ms: u64,
-    pyth_spot_source_timestamp_ms: u64,
+    /// Source timestamps of the oracle observations present when this snapshot
+    /// was loaded. Pyth is `none` when no usable normalized observation exists.
+    pyth_spot_source_timestamp_ms: Option<u64>,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
 }
 
 /// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
@@ -96,12 +98,20 @@ public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
-public(package) fun pyth_spot_update_timestamp_ms(pricer: &Pricer): u64 {
-    pricer.pyth_spot_update_timestamp_ms
+public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): Option<u64> {
+    pricer.pyth_spot_source_timestamp_ms
 }
 
-public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
-    pricer.pyth_spot_source_timestamp_ms
+public(package) fun block_scholes_spot_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_spot_source_timestamp_ms
+}
+
+public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_forward_source_timestamp_ms
+}
+
+public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_svi_source_timestamp_ms
 }
 
 // === Public-Package Functions ===
@@ -230,8 +240,8 @@ fun assert_current_oracles(
     );
 }
 
-/// Resolve the live forward/SVI inputs and selected Pyth spot provenance into the
-/// immutable snapshot used by all live pricing paths.
+/// Resolve the live forward/SVI inputs and snapshot each oracle source timestamp
+/// independently of pricing-source selection.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from this
 /// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
@@ -251,9 +261,10 @@ fun resolve_live_pricer(
     let bs_spot_read = bs_spot.normalized_spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
+    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
-            bs_spot_read.read_source_timestamp_ms(),
+            block_scholes_spot_source_timestamp_ms,
             config.block_scholes_price_freshness_ms(),
             clock,
         ),
@@ -264,9 +275,10 @@ fun resolve_live_pricer(
     let bs_forward_read = bs_forward.normalized_forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
+    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
-            bs_forward_read.read_source_timestamp_ms(),
+            block_scholes_forward_source_timestamp_ms,
             config.block_scholes_price_freshness_ms(),
             clock,
         ),
@@ -277,9 +289,10 @@ fun resolve_live_pricer(
     let svi_read = bs_svi.normalized_svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
+    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
-            svi_read.read_source_timestamp_ms(),
+            block_scholes_svi_source_timestamp_ms,
             config.block_scholes_svi_freshness_ms(),
             clock,
         ),
@@ -289,9 +302,12 @@ fun resolve_live_pricer(
     assert_inputs_pricing_safe(bs_spot, bs_forward, &svi);
 
     let pyth_spot = pyth.normalized_spot();
+    let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
+        option::some(pyth_spot.borrow().read_source_timestamp_ms())
+    } else {
+        option::none()
+    };
     let mut forward = bs_forward;
-    let mut pyth_spot_update_timestamp_ms = 0;
-    let mut pyth_spot_source_timestamp_ms = 0;
     if (
         pyth_spot.is_some()
             && timestamp_is_fresh(
@@ -311,16 +327,16 @@ fun resolve_live_pricer(
         // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
         // reads (R1 liveness).
         forward = math::mul(spot, math::div(bs_forward, bs_spot));
-        pyth_spot_update_timestamp_ms = pyth_spot.read_update_timestamp_ms();
-        pyth_spot_source_timestamp_ms = pyth_spot.read_source_timestamp_ms();
     };
 
     Pricer {
         expiry_market_id,
         forward,
         svi,
-        pyth_spot_update_timestamp_ms,
         pyth_spot_source_timestamp_ms,
+        block_scholes_spot_source_timestamp_ms,
+        block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms,
     }
 }
 

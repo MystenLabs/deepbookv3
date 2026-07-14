@@ -1035,6 +1035,7 @@ fun mint_prepared_exact_quantity(
         account.owner(),
         builder_code_id,
         &minted_order,
+        pricer,
         leverage,
         quote.entry_probability,
         quote.net_premium,
@@ -1043,8 +1044,6 @@ fun mint_prepared_exact_quantity(
         quote.builder_fee,
         quote.penalty_fee,
         clock.timestamp_ms(),
-        pricer.pyth_spot_update_timestamp_ms(),
-        pricer.pyth_spot_source_timestamp_ms(),
     );
     minted_order.id()
 }
@@ -1161,6 +1160,7 @@ fun redeem_live_internal(
         account.owner(),
         builder_code_id,
         order,
+        pricer,
         position_root_id,
         close_quantity,
         replacement_order_id,
@@ -1169,8 +1169,6 @@ fun redeem_live_internal(
         builder_fee_amount,
         penalty_amount,
         clock.timestamp_ms(),
-        pricer.pyth_spot_update_timestamp_ms(),
-        pricer.pyth_spot_source_timestamp_ms(),
     );
     replacement_order_id
 }
