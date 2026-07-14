@@ -299,8 +299,9 @@ public fun start_pool_valuation(
 /// moves, no settlement, no tree walk. Three facts are collected — live free
 /// cash, the stored marked liability, and the mark's measured dollar drift —
 /// and only one gate applies here: the mark must be younger than the freshness
-/// ceiling (the sole guard a stalled feed cannot fool). Drift is judged in
-/// aggregate at `finish_flush`, not per market.
+/// ceiling (the sole guard a stalled feed cannot fool). Drift is never
+/// rejected — `finish_flush` prices the aggregate as the flush mark's bid/ask
+/// half-spread, borne by the transacting party.
 ///
 /// A settled or past-expiry market cannot produce the pricer this read requires
 /// (`load_live_pricer` rejects past-expiry): sweep it via `rebalance_expiry_cash`

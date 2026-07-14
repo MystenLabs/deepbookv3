@@ -166,6 +166,11 @@ public(package) fun drift_envelope(
     anchor_forward: u64,
     anchor_svi: &SVIParams,
 ): u64 {
+    // Identical snapshots price identically — exactly zero drift, no tail pad
+    // (the pad covers tails between DIFFERENT snapshots). This also lets an
+    // atomic refresh-and-flush PTB reproduce the exact single-mark behavior.
+    if (anchor_forward == pricer.forward && *anchor_svi == pricer.svi) return 0;
+
     let full = math::float_scaling!();
     let scale = full as u128;
     let s0 = sqrt_min_total_variance(anchor_svi);
@@ -178,7 +183,11 @@ public(package) fun drift_envelope(
     if (sigma_lo == 0) return full;
 
     // Forward leg: a forward move shifts every strike's log-moneyness by
-    // |ln(F1/F0)|, and d2 divides that by at least the variance floor.
+    // |ln(F1/F0)|, and d2 divides that by at least the variance floor. Guard
+    // the ratio in plain integer division first: a ratio this size is
+    // full-face drift regardless, and `math::div` would overflow-abort near
+    // u64::MAX rather than fail closed.
+    if (pricer.forward / anchor_forward >= 100) return full;
     let forward_ratio = math::div(pricer.forward, anchor_forward);
     if (forward_ratio == 0) return full;
     let delta_forward = math::ln(forward_ratio).magnitude();
