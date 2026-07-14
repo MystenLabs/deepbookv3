@@ -108,8 +108,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   onset.
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
-  `priced_supply_that_rounds_to_zero_shares_refunds`,
-  `priced_withdraw_that_rounds_to_zero_payout_refunds`,
+  `supply_at_mark_far_above_band_refunds`,
+  `withdraw_at_mark_far_below_band_refunds`,
   `supply_at_min_executable_plp_price_fills`,
   `supply_below_min_executable_plp_price_refunds`,
   `supply_at_max_executable_plp_price_fills`,
@@ -119,6 +119,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `non_executable_withdraw_refunds_spend_withdraw_budget`, and
   `withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
+  The zero-quote branch itself (zero shares or zero payout at an *executable*
+  mark) is structurally unreachable under the current band factor plus the
+  upgrade-required request minimums — inside the band a min-sized supply mints
+  at least one share and a min-sized withdraw pays at least one unit — so it
+  carries no pinning test (unit-tests Rule 4); the in-code zero postfilters
+  are retained as the structural guard should either bound change.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, or a new LP request type adds another
   non-executable fill mode.

@@ -33,10 +33,12 @@ public struct LP_BOOK_TESTS has drop {}
 
 const ALICE: address = @0xA;
 const BOB: address = @0xB0B;
-/// `min_supply * min_supply + 1`: a min-sized supply against this mark mints 0 shares.
-const ZERO_SHARE_SUPPLY_POOL_VALUE: u64 = 100_000_000_000_001;
-/// `min_withdraw + 1`: a min-sized withdrawal against pool value 1 pays 0 DUSDC.
-const ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY: u64 = 1_000_001;
+/// Against `min_supply` supply this mark prices ~1e7 DUSDC per whole PLP —
+/// far above the executable band, so the mark gate refunds.
+const FAR_ABOVE_BAND_POOL_VALUE: u64 = 100_000_000_000_001;
+/// Against pool value 1 this supply prices ~1e-6 DUSDC per whole PLP —
+/// far below the executable band, so the mark gate refunds.
+const FAR_BELOW_BAND_TOTAL_SUPPLY: u64 = 1_000_001;
 const NEAR_MAX_SUPPLY_HEADROOM: u64 = 5_000_000;
 const NO_SUPPLIES_FILLED: u64 = 0;
 const NO_WITHDRAWALS_FILLED: u64 = 0;
@@ -603,16 +605,17 @@ fun priced_supply_with_zero_pool_value_refunds() {
 }
 
 #[test]
-fun priced_supply_that_rounds_to_zero_shares_refunds() {
+fun supply_at_mark_far_above_band_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(min_supply!());
     let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    // shares = floor(min_supply * min_supply / (min_supply^2 + 1)) = 0.
+    // Mark price ~1e7 DUSDC/PLP, far above the band: refunded at the mark gate
+    // (the zero-quote branch itself is unreachable at an executable mark; RP-2).
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
+        lp_book::new_flush_mark(FAR_ABOVE_BAND_POOL_VALUE, min_supply!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -628,15 +631,16 @@ fun priced_supply_that_rounds_to_zero_shares_refunds() {
 }
 
 #[test]
-fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
+fun withdraw_at_mark_far_below_band_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    book.mint_locked_liquidity(FAR_BELOW_BAND_TOTAL_SUPPLY);
     enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
 
-    // payout = floor(min_withdraw * 1 / (min_withdraw + 1)) = 0.
+    // Mark price ~1e-6 DUSDC/PLP, far below the band: refunded at the mark gate
+    // (the zero-quote branch itself is unreachable at an executable mark; RP-2).
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
+        lp_book::new_flush_mark(1, FAR_BELOW_BAND_TOTAL_SUPPLY),
         vault_id(),
         option::none(),
         option::none(),
@@ -645,7 +649,7 @@ fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
 
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.withdraw_requests_pending(), 0);
-    assert_eq!(book.total_supply(), ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    assert_eq!(book.total_supply(), FAR_BELOW_BAND_TOTAL_SUPPLY);
     assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);
@@ -831,13 +835,13 @@ fun non_executable_supply_refunds_spend_supply_budget() {
 #[test]
 fun non_executable_withdraw_refunds_spend_withdraw_budget() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    book.mint_locked_liquidity(FAR_BELOW_BAND_TOTAL_SUPPLY);
     enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
     enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
 
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
+        lp_book::new_flush_mark(1, FAR_BELOW_BAND_TOTAL_SUPPLY),
         vault_id(),
         option::none(),
         option::some(1),
@@ -846,7 +850,7 @@ fun non_executable_withdraw_refunds_spend_withdraw_budget() {
 
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.withdraw_requests_pending(), 1);
-    assert_eq!(book.total_supply(), ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    assert_eq!(book.total_supply(), FAR_BELOW_BAND_TOTAL_SUPPLY);
     assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);

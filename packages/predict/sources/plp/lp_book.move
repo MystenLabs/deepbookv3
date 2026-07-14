@@ -586,6 +586,9 @@ fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<u64> {
     // = amount * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
     math::try_mul_div_down(amount, mark.total_supply, mark.pool_value).and!(|shares| {
+        // RP-2: a zero-output quote is a non-executable head (protocol-cancel).
+        // Unreachable inside the executable band at the request minimums; retained
+        // as the structural guard should either bound change.
         if (shares == 0) option::none() else option::some(shares)
     })
 }
@@ -597,6 +600,7 @@ fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
     math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|payout| {
+        // RP-2 zero-output guard — see quote_supply_shares.
         if (payout == 0) option::none() else option::some(payout)
     })
 }

@@ -655,6 +655,10 @@ public fun set_reference_tick(
     let read = pyth.normalized_spot_at(source_timestamp_ms);
     assert!(read.is_some(), EReferenceTickObservationMissing);
     let read = read.destroy_some();
+    // Deliberate cross-package defense: oracle_lane keys exact-history reads by the
+    // read's own source_timestamp_ms, so this equality holds by construction today.
+    // Kept because a wrong-timestamp read would silently anchor the reference tick;
+    // structurally unreachable, so it carries no expected_failure test.
     assert!(
         read.read_source_timestamp_ms() == source_timestamp_ms,
         EReferenceTickTimestampMismatch,

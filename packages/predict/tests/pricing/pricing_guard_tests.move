@@ -23,10 +23,10 @@
 /// leaving every other input default so only the targeted branch fires. The
 /// `spot == 0` / `forward == 0` branch of that assert is unreachable through
 /// `load_live_pricer`: the split Block Scholes feed reads drop a zero spot or zero
-/// forward upstream (-> `EBlockScholesPriceStale`), so those two conditions are
-/// defensive-only and not tested here. `EZeroForward` is reached
-/// via a tiny-forward / large-spot surface (no LOWER basis bound), where the
-/// re-anchored `spot * (forward/spot)` rounds to 0. `EZeroVariance` is reached by a
+/// forward upstream (-> `EBlockScholesPriceUnavailable`), so those two conditions
+/// are defensive-only and not tested here. `EZeroForward` is reached
+/// via a pyth spot far below the BS spot (no LOWER basis bound), where the
+/// re-anchored `spot * bs_forward / bs_spot` floors to 0. `EZeroVariance` is reached by a
 /// degenerate-but-in-envelope surface (`a == 0, b == 0`, so total variance
 /// `a + b*inner == 0`): a/b are bounded only from above, and the `sigma >= 1e-3`
 /// floor bounds the SVI wing parameter, NOT the total variance, so it does not
