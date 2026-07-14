@@ -408,13 +408,13 @@ public fun mint_exact_quantity(
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let swept_orders = market
+    let removed_live_value = market
         .strike_exposure
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
         );
-    market.mark_orders_removed(&swept_orders);
+    market.mark_liability_removed(removed_live_value);
 
     market.mint_prepared_exact_quantity(
         account,
@@ -460,13 +460,13 @@ public fun mint_exact_amount(
     let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let swept_orders = market
+    let removed_live_value = market
         .strike_exposure
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
         );
-    market.mark_orders_removed(&swept_orders);
+    market.mark_liability_removed(removed_live_value);
 
     let quantity = market.max_mint_quantity_for_amount(
         pricer,
@@ -528,14 +528,11 @@ public fun redeem_live(
     let account = wrapper.load_account_mut(auth);
 
     let redeemed_order = order::from_order_id(order_id);
-    let swept_orders = market
+    let swept_live_value = market
         .strike_exposure
         .liquidate_live_orders(pricer, config.trade_liquidation_budget());
-    market.mark_orders_removed(&swept_orders);
     let knocked_out = market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
-    if (knocked_out.is_some()) {
-        market.mark_order_removed(&knocked_out.destroy_some());
-    };
+    market.mark_liability_removed(swept_live_value + knocked_out.get_with_default(0));
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
         return (redeemed_order.id(), option::none())
@@ -633,8 +630,8 @@ public fun liquidate(
     budget: u64,
 ) {
     market.assert_live_flow_allowed(config, pricer);
-    let swept_orders = market.strike_exposure.liquidate_live_orders(pricer, budget);
-    market.mark_orders_removed(&swept_orders);
+    let removed_live_value = market.strike_exposure.liquidate_live_orders(pricer, budget);
+    market.mark_liability_removed(removed_live_value);
 }
 
 /// Try to liquidate one active leveraged order by ID; a knock-out emits an
@@ -649,9 +646,7 @@ public fun liquidate_order(
 
     let order = order::from_order_id(order_id);
     let removed = market.strike_exposure.liquidate_live_order(pricer, &order);
-    if (removed.is_some()) {
-        market.mark_order_removed(&removed.destroy_some());
-    };
+    market.mark_liability_removed(removed.get_with_default(0));
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -765,10 +760,9 @@ public(package) fun mark_computed_at_ms(market: &ExpiryMarket): u64 {
 /// since the walk (`valuation_mark::drift`, a fraction of full payout) times
 /// the book's live face quantity — per-order value is quantity-Lipschitz in
 /// price, so this bounds how far this market's NAV can have drifted. The
-/// quantity is read live and the write-through deltas are valued at the mark's
-/// own anchors, so the whole current book shares one valuation time and this
-/// endpoint bound covers it. A measurement, not a judgment — `plp` sums across
-/// markets and prices the total into the flush mark's bid/ask spread.
+/// quantity is read live, so orders minted after the walk (whose write-through
+/// deltas also sit on drifting prices) are covered. A measurement, not a
+/// judgment — `plp` aggregates across markets and enforces the budget.
 public(package) fun mark_drift(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
@@ -1004,36 +998,23 @@ fun assert_pricer_bound(market: &ExpiryMarket, pricer: &Pricer) {
     assert!(pricer.expiry_market_id() == market.id(), EWrongPricer);
 }
 
-/// Write an added order through to the stored valuation mark, valued at the
-/// mark's own anchors — never at the op's oracle, so the marked liability stays
-/// a single-anchor valuation of the current book and the endpoint drift
-/// envelope bounds it. No-op until the first refresh establishes a mark.
-fun mark_order_added(market: &mut ExpiryMarket, order: &Order) {
+/// Write a mint's bit-exact liability delta through to the stored valuation mark.
+/// The marginal live liability of a freshly admitted order at its own pricer is
+/// exactly `net_premium` (`entry_value - floor`); no-op until the first refresh
+/// establishes a mark.
+fun mark_liability_added(market: &mut ExpiryMarket, amount: u64) {
     if (market.valuation_mark.is_some()) {
-        let (lower, higher) = market.strike_exposure.order_boundaries(order);
-        market
-            .valuation_mark
-            .borrow_mut()
-            .add_order(lower, higher, order.quantity(), order.floor_shares());
+        market.valuation_mark.borrow_mut().add_liability(amount);
     };
 }
 
-/// Write a removed order (live redeem or liquidation) through to the stored
-/// valuation mark, valued at the mark's own anchors. No-op until the first
-/// refresh establishes a mark.
-fun mark_order_removed(market: &mut ExpiryMarket, order: &Order) {
+/// Write a liability decrease through to the stored valuation mark: a live
+/// redeem's `redeem_amount`, or the live value a liquidation pass removed.
+/// No-op until the first refresh establishes a mark.
+fun mark_liability_removed(market: &mut ExpiryMarket, amount: u64) {
     if (market.valuation_mark.is_some()) {
-        let (lower, higher) = market.strike_exposure.order_boundaries(order);
-        market
-            .valuation_mark
-            .borrow_mut()
-            .remove_order(lower, higher, order.quantity(), order.floor_shares());
+        market.valuation_mark.borrow_mut().remove_liability(amount);
     };
-}
-
-/// Write a liquidation sweep's knocked-out orders through to the stored mark.
-fun mark_orders_removed(market: &mut ExpiryMarket, orders: &vector<Order>) {
-    orders.do_ref!(|order| market.mark_order_removed(order));
 }
 
 /// Return the congestion surcharge (in DUSDC) for `quantity` from the pre-trade
@@ -1125,7 +1106,7 @@ fun mint_prepared_exact_quantity(
     let leverage = terms.leverage();
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
     market.settle_mint_payment(account, &minted_order, &quote, builder_code_id, clock, ctx);
-    market.mark_order_added(&minted_order);
+    market.mark_liability_added(quote.net_premium);
     order_events::emit_order_minted(
         market.id(),
         account.account_id(),
@@ -1248,12 +1229,7 @@ fun redeem_live_internal(
         redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
         ERedeemProceedsBelowMin,
     );
-    // Anchor-priced write-through: remove the original order and re-add any
-    // partial-close remainder, both valued at the mark's stored anchors.
-    market.mark_order_removed(order);
-    if (resulting_order.id() != order.id()) {
-        market.mark_order_added(&resulting_order);
-    };
+    market.mark_liability_removed(redeem_amount);
 
     order_events::emit_live_order_redeemed(
         market.id(),

@@ -17,7 +17,6 @@
 module deepbook_predict::valuation_mark;
 
 use deepbook_predict::pricing::{Self, Pricer};
-use fixed_math::math;
 use propbook::block_scholes_svi_feed::SVIParams;
 use sui::clock::Clock;
 
@@ -31,16 +30,12 @@ public struct ValuationMark has copy, drop, store {
     /// Exact oracle-priced per-order liability the refresh walk computed at
     /// `computed_at_ms`. Never mutated between refreshes.
     computed_liability: u64,
-    /// Σ liability added by trades since the walk: each added order's value
-    /// priced at THIS MARK'S STORED ANCHORS, never at the op's own oracle —
-    /// so every component of `liability` shares one valuation time and the
-    /// anchor-to-live drift envelope bounds the whole current book. (Op-priced
-    /// deltas would be path-dependent: an oracle round trip between refresh
-    /// and flush leaves endpoint drift near zero while an op priced at the
-    /// peak stays in the sum.)
+    /// Σ liability added by trades since the walk (mint `net_premium`s), each
+    /// priced at its own op's oracle.
     added_since_compute: u64,
-    /// Σ liability removed by trades since the walk (live redeems and
-    /// liquidated orders), each priced at this mark's stored anchors.
+    /// Σ liability removed by trades since the walk (live-redeem
+    /// `redeem_amount`s and liquidated orders' live values), each priced at its
+    /// own op's oracle.
     removed_since_compute: u64,
     /// On-chain landing time of the refresh that computed this mark.
     computed_at_ms: u64,
@@ -91,42 +86,13 @@ public(package) fun new(liability: u64, pricer: &Pricer, clock: &Clock): Valuati
     }
 }
 
-/// Write an added order through to the mark, valued at the stored anchors.
-public(package) fun add_order(
-    mark: &mut ValuationMark,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-    floor_amount: u64,
-) {
-    let value = mark.order_value_at_anchor(lower, higher, quantity, floor_amount);
-    mark.added_since_compute = mark.added_since_compute + value;
+/// Write a trade's liability increase through to the mark's delta accumulator.
+public(package) fun add_liability(mark: &mut ValuationMark, amount: u64) {
+    mark.added_since_compute = mark.added_since_compute + amount;
 }
 
-/// Write a removed order (live redeem or liquidation) through to the mark,
-/// valued at the stored anchors. Never clamps here — the residual netting
-/// happens once, in `liability`.
-public(package) fun remove_order(
-    mark: &mut ValuationMark,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-    floor_amount: u64,
-) {
-    let value = mark.order_value_at_anchor(lower, higher, quantity, floor_amount);
-    mark.removed_since_compute = mark.removed_since_compute + value;
-}
-
-/// One order's live value under this mark's anchors: the anchor-priced range
-/// value net of the static floor, floored at zero (the same per-order shape the
-/// walk aggregates).
-fun order_value_at_anchor(
-    mark: &ValuationMark,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-    floor_amount: u64,
-): u64 {
-    let price = pricing::range_price_at(&mark.anchor_svi, mark.anchor_forward, lower, higher);
-    math::mul(quantity, price).saturating_sub(floor_amount)
+/// Write a trade's liability decrease through to the mark's delta accumulator.
+/// Never clamps here — the mixed-anchor netting happens once, in `liability`.
+public(package) fun remove_liability(mark: &mut ValuationMark, amount: u64) {
+    mark.removed_since_compute = mark.removed_since_compute + amount;
 }

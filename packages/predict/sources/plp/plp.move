@@ -54,7 +54,6 @@ const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
 const EValuationMarkStale: u64 = 10;
-const EVaultMutatedDuringValuation: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -103,11 +102,6 @@ public struct PoolValuation {
     /// moving feeds. Becomes the flush mark's half-spread at `finish_flush`:
     /// supplies price at the mid NAV plus it, withdrawals at the mid minus it.
     total_drift: u64,
-    /// Vault cash-accounting revision at start. `finish_flush` asserts it
-    /// unchanged, so no vault-cash op (rebalance, sweep, claim) can be composed
-    /// into the flush PTB between collection and pricing to desynchronize the
-    /// collected atoms from live idle.
-    vault_revision: u64,
 }
 
 // === Package Initializer ===
@@ -287,7 +281,6 @@ public fun start_pool_valuation(
         total_free_cash: 0,
         total_liability: 0,
         total_drift: 0,
-        vault_revision: vault.expiry_accounting.revision(),
     }
 }
 
@@ -298,9 +291,8 @@ public fun start_pool_valuation(
 /// moves, no settlement, no tree walk. Three facts are collected — live free
 /// cash, the stored marked liability, and the mark's measured dollar drift —
 /// and only one gate applies here: the mark must be younger than the freshness
-/// ceiling (the sole guard a stalled feed cannot fool). Drift is never
-/// rejected — `finish_flush` prices the aggregate as the flush mark's
-/// bid/ask half-spread, borne by the transacting party.
+/// ceiling (the sole guard a stalled feed cannot fool). Drift is judged in
+/// aggregate at `finish_flush`, not per market.
 ///
 /// A settled or past-expiry market cannot produce the pricer this read requires
 /// (`load_live_pricer` rejects past-expiry): sweep it via `rebalance_expiry_cash`
@@ -361,13 +353,8 @@ public fun finish_flush(
         total_liability,
         total_drift,
         valued_expiry_markets,
-        vault_revision,
         ..,
     } = valuation;
-    // No vault-cash op may interleave between start and here — otherwise the
-    // collected market atoms and the live idle read below describe different
-    // states and the mark double- or under-counts moved cash.
-    assert!(vault.expiry_accounting.revision() == vault_revision, EVaultMutatedDuringValuation);
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(

@@ -152,6 +152,13 @@ public struct WithdrawFilled has copy, drop, store {
     dusdc_amount: u64,
 }
 
+/// Emitted once per flush after both queues drain. The flush IS the full-pool
+/// valuation, so this single event carries the frozen mark every fill was priced at
+/// (`pool_value` over `total_supply`), its raw valuation breakdown
+/// (`idle_balance_before` plus `total_free_cash` owing `total_liability` over
+/// `market_count` active markets), how many of each kind filled, how many queue
+/// heads spent per-flush budget (filled, protocol-refunded, or live limit-missed),
+/// and the idle balance after the drain.
 /// Emitted when a live market's valuation mark is refreshed: the exact
 /// per-order liability stored for the pool flush to read, at its landing time.
 public struct NavRefreshed has copy, drop, store {
@@ -163,14 +170,6 @@ public struct NavRefreshed has copy, drop, store {
     computed_at_ms: u64,
 }
 
-/// Emitted once per flush after both queues drain. The flush IS the full-pool
-/// valuation, so this single event carries the mid mark every fill was spread
-/// around (`pool_value` over `total_supply`, with `total_drift` as the bid/ask
-/// half-spread), its raw valuation breakdown (`idle_balance_before` plus
-/// `total_free_cash` owing `total_liability` over `market_count` active
-/// markets), how many of each kind filled, how many queue heads spent per-flush
-/// budget (filled, protocol-refunded, or live limit-missed), and the idle
-/// balance after the drain.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,

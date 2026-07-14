@@ -124,14 +124,6 @@ public(package) fun svi_params(pricer: &Pricer): SVIParams {
     pricer.svi
 }
 
-/// Price a live range at EXPLICIT oracle inputs rather than a loaded pricer.
-/// Used by the valuation mark to value trade write-through at its stored
-/// anchors, so every component of the marked liability shares one valuation
-/// time and the endpoint drift envelope bounds the whole book.
-public(package) fun range_price_at(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
-    compute_range_price(svi, forward, lower, higher)
-}
-
 /// Worst-case repricing between two oracle snapshots: an upper bound on how far
 /// ANY contract's fair price can have moved between the anchor oracle state and
 /// the live one, as a fraction of full payout in FLOAT_SCALING (capped at 1.0).
@@ -168,10 +160,6 @@ public(package) fun drift_envelope(
 ): u64 {
     let full = math::float_scaling!();
     let scale = full as u128;
-    // Identical snapshots price identically — exactly zero drift, no tail pad
-    // (the pad covers tails between DIFFERENT snapshots). This also lets an
-    // atomic refresh-and-flush PTB reproduce the exact single-mark behavior.
-    if (anchor_forward == pricer.forward && *anchor_svi == pricer.svi) return 0;
     let s0 = sqrt_min_total_variance(anchor_svi);
     let s1 = sqrt_min_total_variance(&pricer.svi);
     let s_lo = s0.min(s1);
@@ -182,11 +170,7 @@ public(package) fun drift_envelope(
     if (sigma_lo == 0) return full;
 
     // Forward leg: a forward move shifts every strike's log-moneyness by
-    // |ln(F1/F0)|, and d2 divides that by at least the variance floor. Guard the
-    // ratio in plain integer division first: a ratio this size is full-face
-    // drift regardless, and `math::div` would overflow-abort near u64::MAX
-    // rather than fail closed.
-    if (pricer.forward / anchor_forward >= 100) return full;
+    // |ln(F1/F0)|, and d2 divides that by at least the variance floor.
     let forward_ratio = math::div(pricer.forward, anchor_forward);
     if (forward_ratio == 0) return full;
     let delta_forward = math::ln(forward_ratio).magnitude();
@@ -380,20 +364,12 @@ fun unpinned_band(svi: &SVIParams, d: u64): Option<u64> {
     // surface is close (observed b <= ~0.03), so fail closed rather than solve.
     if (b_slope > 999_000_000) return option::none();
 
-    // Analytic floor on the true band: with any slope, w(k) >= the slope-free
-    // case, so K >= D * sqrt(A) + A / 2. Every step below rounds DOWN, and at
-    // low variance the rounding can swallow the whole band (review
-    // counterexample: the quadratic collapsed to W <= A, returning K = 0 and
-    // understating drift ~13.6x) — so the floor plus generous headroom is
-    // load-bearing for soundness, not a nicety. Over-covering only makes the
-    // envelope more conservative.
-    let k_floor = math::mul(d, math::sqrt(a_overshoot, one)) + a_overshoot / 2;
-    let k_floor = k_floor + k_floor / 10 + 1_000_000;
-
     if (b_slope < 1_000) {
-        // Slope negligible: W ~ A; the floor's headroom covers the ignored slope.
-        if (k_floor > cap) return option::none();
-        return option::some(k_floor)
+        // Slope negligible: W ~ A. The 10% headroom covers the ignored slope.
+        let k = math::mul(d, math::sqrt(a_overshoot, one)) + a_overshoot / 2;
+        let k = k + k / 10;
+        if (k > cap) return option::none();
+        return option::some(k)
     };
 
     let b_coeff = 2 * b_slope;
@@ -404,8 +380,7 @@ fun unpinned_band(svi: &SVIParams, d: u64): Option<u64> {
     let w_minus_a = w.saturating_sub(a_overshoot);
     // K = (W - A) / B; refuse before dividing when K would exceed the cap.
     if (w_minus_a > math::mul(b_coeff, cap)) return option::none();
-    let k_quadratic = math::div(w_minus_a, b_coeff);
-    let k = (k_quadratic + k_quadratic / 10 + 1_000_000).max(k_floor);
+    let k = math::div(w_minus_a, b_coeff);
     if (k > cap) return option::none();
     option::some(k)
 }

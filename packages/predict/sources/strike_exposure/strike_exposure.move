@@ -442,34 +442,35 @@ public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
-): Option<Order> {
+): Option<u64> {
     if (!exposure.liquidation.contains_active_order(order)) return option::none();
     let liquidation_ltv = exposure.config.liquidation_ltv();
     exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
 }
 
 /// Run one bounded liquidation pass using exact per-candidate pricing. Returns
-/// the knocked-out orders so the caller can write each removal through to the
-/// market's stored valuation mark at the mark's own anchors. Per-order details
-/// are on the `OrderLiquidated` events.
+/// the total live value the knocked-out orders carried at removal (each order's
+/// floor-capped `gross - floor`), so the caller can write the liability removal
+/// through to the market's stored valuation mark. Per-order details are on the
+/// `OrderLiquidated` events.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     budget: u64,
-): vector<Order> {
+): u64 {
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
-    let mut removed_orders = vector[];
-    if (candidates.is_empty()) return removed_orders;
+    if (candidates.is_empty()) return 0;
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
+    let mut removed_live_value = 0;
     candidates.do!(|candidate| {
         let order = order::from_order_id(candidate);
         let removed = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
         if (removed.is_some()) {
-            removed_orders.push_back(removed.destroy_some());
+            removed_live_value = removed_live_value + removed.destroy_some();
         };
     });
-    removed_orders
+    removed_live_value
 }
 
 /// Cache terminal settled payout liability.
@@ -510,7 +511,7 @@ fun liquidate_order_if_under_floor(
     pricer: &Pricer,
     order: &Order,
     liquidation_ltv: u64,
-): Option<Order> {
+): Option<u64> {
     let quantity = order.quantity();
     let floor_amount = order.floor_shares();
     let gross_value = exposure.gross_order_value(pricer, order);
@@ -537,16 +538,16 @@ fun liquidate_order_if_under_floor(
         liquidation_ltv,
     );
 
-    // Return the removed order itself: the caller values it at the stored
-    // valuation-mark anchors (not at this op's pricer) so the mark stays
-    // single-anchor.
-    option::some(*order)
+    // The knocked-out order's live value under the floor cap: an order between
+    // its floor and floor/ltv still carries `gross - floor`; one at or below the
+    // floor carries zero. Returned so the caller can write the removal through
+    // to the market's stored valuation mark.
+    option::some(gross_value.saturating_sub(floor_amount))
 }
 
 /// Decode an order into `(lower, higher)` raw strike boundaries for pricing and
-/// settlement comparison, mapping the open-ended sentinels. Package-visible so
-/// the market can value orders at the stored valuation-mark anchors.
-public(package) fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
+/// settlement comparison, mapping the open-ended sentinels.
+fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
     range_codec::strikes_from_ticks(order.lower_tick(), order.higher_tick(), exposure.tick_size)
 }
 
