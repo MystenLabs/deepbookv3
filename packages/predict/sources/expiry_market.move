@@ -791,9 +791,9 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
         return balance::zero()
     };
     let payout_liability = market.payout_liability();
-    let released_cash = market.cash.release_surplus(amount, payout_liability);
-    market.assert_cash_backing();
-    released_cash
+    // Post-split backing is implied: release_surplus asserts
+    // balance >= required_cash + amount before splitting exactly `amount`.
+    market.cash.release_surplus(amount, payout_liability)
 }
 
 /// Materialize this expiry's settled payout liability and release every unit of

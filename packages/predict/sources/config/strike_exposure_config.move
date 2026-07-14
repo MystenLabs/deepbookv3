@@ -151,10 +151,10 @@ public(package) fun assert_mint_admission(
     assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
     let floor_shares = entry_value - net_premium;
 
-    if (floor_shares > 0) {
-        let liquidation_threshold_at_open = math::div(floor_shares, config.liquidation_ltv);
-        assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
-    };
+    // Unconditional: at floor_shares == 0 the threshold is 0 and entry_value > 0
+    // holds by the min-net-premium assert above (net_premium <= entry_value).
+    let liquidation_threshold_at_open = math::div(floor_shares, config.liquidation_ltv);
+    assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
 
     MintAdmission { net_premium, floor_shares }
 }

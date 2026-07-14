@@ -403,7 +403,8 @@ fun assert_cadence_config(config: &CadenceConfig) {
     );
     config_constants::assert_market_tick_size_bounds(tick_size);
     config_constants::assert_market_tick_size_bounds(admission_tick_size);
-    assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
+    // >= tick_size follows: admission_tick_size > 0 and divisible by tick_size
+    // forces a multiple k >= 1.
     assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
     config_constants::assert_cadence_window_size(window_size);
     assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);

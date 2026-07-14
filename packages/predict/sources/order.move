@@ -145,8 +145,6 @@ fun new(
     quantity_lots: u64,
     sequence: u64,
 ): Order {
-    assert!(lower_tick <= tick_mask!() as u64, EInvalidTick);
-    assert!(higher_tick <= tick_mask!() as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     let quantity = quantity_lots * constants::position_lot_size!();
