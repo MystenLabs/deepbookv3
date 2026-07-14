@@ -5,11 +5,13 @@
 ///
 /// PoolVault owns the PLP treasury cap, the pooled DEEP staked by accounts, idle
 /// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
-/// accounting, and the async LP supply/withdraw queues. It coordinates the
-/// full-pool NAV valuation (a hot-potato aggregation over every active market) and
+/// accounting, and the async LP supply/withdraw queues. It coordinates per-market
+/// NAV refreshes (`refresh_expiry_nav` walks one market's payout tree and stores a
+/// valuation mark on it), the full-pool flush (a hot-potato completeness proof
+/// that reads every active market's stored mark without walking any tree), and
 /// the unified per-market cash flow (initial funding, live rebalance/sweep, and
 /// settled-market sweep with terminal profit materialization). LPs queue
-/// supply/withdraw requests routed through a loaded Account; the daily flush
+/// supply/withdraw requests routed through a loaded Account; the flush
 /// (`finish_flush`) drains them at the frozen pool NAV, minting/burning PLP and
 /// delivering fills to each account via the balance accumulator. PLP incentives
 /// moved to a separate staking contract; DEEP staking is an unrelated trading
@@ -77,20 +79,22 @@ public struct PoolVault has key {
     expiry_accounting: Ledger,
 }
 
-/// Transaction-local full-pool NAV valuation hot potato.
+/// Transaction-local full-pool flush completeness proof.
 ///
-/// `start_pool_valuation` snapshots the active expiry set; each `value_expiry`
-/// runs the per-market cash flush then folds that market's NAV into `total_nav`
-/// exactly once (a swept settled market contributes 0); `finish_flush` proves every
-/// snapshotted market was valued, returns the LP-attributable pool NAV, and drains
-/// the LP queues against it. Has no abilities, so it must be consumed by the finisher.
+/// `start_pool_valuation` snapshots the active expiry set; each `collect_expiry_nav`
+/// folds one market's stored valuation mark into `total_nav` exactly once, reading
+/// the market read-only (the payout-tree walk ran in that market's
+/// `refresh_expiry_nav`, so the flush loads no per-order objects and stays under
+/// the per-transaction object budget); `finish_flush` proves every snapshotted
+/// market was counted, returns the LP-attributable pool NAV, and drains the LP
+/// queues against it. Has no abilities, so it must be consumed by the finisher.
 public struct PoolValuation {
     pool_vault_id: ID,
-    /// Active expiry markets snapshotted at start; every one must be valued.
+    /// Active expiry markets snapshotted at start; every one must be counted.
     expected_expiry_markets: vector<ID>,
-    /// Markets valued so far this flow; folded against `expected` at finish.
+    /// Markets counted so far this flow; folded against `expected` at finish.
     valued_expiry_markets: vector<ID>,
-    /// Running Σ of each valued market's NAV (settled markets contribute 0).
+    /// Running Σ of each counted market's mark-derived NAV.
     total_nav: u64,
 }
 
@@ -203,48 +207,22 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Begin a full-pool flush (NAV valuation + LP queue drain) as a market deployer,
-/// using a registry-generated `MarketLifecycleProof`. This is the sole flush start:
-/// it is cron-driven and PRIVILEGED, not permissionless (audit L8). Engages the
-/// protocol valuation lock — so no NAV-changing op can interleave between value
-/// steps — and snapshots the active expiry set every `value_expiry` must cover. The
-/// hot potato can only be created here, so gating the start gates the whole flush.
+/// Refresh one market's stored valuation mark as a market deployer, using a
+/// registry-generated `MarketLifecycleProof`. A settled market is swept
+/// (deactivated, cash returned, profit materialized — it leaves the active set
+/// and needs no mark); a live market is rebalanced to target, its exact per-order
+/// liability recomputed at the live oracle, and the mark stored for
+/// `collect_expiry_nav` to read. Several markets may be refreshed in one PTB
+/// subject to the per-transaction object budget (each refresh walks its market's
+/// payout tree).
 ///
-/// The flush prices the pool NAV off the live oracle and `finish_flush` drains the
-/// LP queues at that mark, and Pyth updates (`pyth_feed::update`) are permissionless
-/// — so a flush-capable cap-holder who manipulates the live oracle in a preceding
-/// tx, then flushes, could fill their own queued supply/withdraw request at a mark
-/// they chose. The start is therefore gated on both current registry allowlisting
-/// and trust in every flush-capable holder not to manipulate the live oracle. The
-/// revocable `MarketLifecycleCap` (not the root `AdminCap`) carries this authority;
-/// admin retains a break-glass route by minting itself a lifecycle cap.
-public fun start_pool_valuation(
-    config: &mut ProtocolConfig,
-    vault: &PoolVault,
-    lifecycle_proof: MarketLifecycleProof,
-): PoolValuation {
-    config.assert_version();
-    lifecycle_proof.destroy_proof();
-    start_pool_valuation_internal(config, vault)
-}
-
-/// Run the per-market cash flow for one snapshotted market, then fold its NAV into
-/// the running total. The market must be in the snapshot and not already valued
-/// (the exactly-once proof). The flush IS the valuation: a settled market is swept
-/// (deactivated, cash returned, profit materialized) and contributes 0; a live
-/// market is rebalanced to target and valued on its current cash.
-///
-/// Before branching, this passively records terminal settlement from Propbook's
-/// exact Pyth timestamp if available: a past-expiry market is normally settled here
-/// and swept (contributing 0), so `current_nav` is only reached for a still-live
-/// market. Only in the bounded pending-settlement window (past expiry but the
-/// exact-expiry spot not yet inserted) does the live branch still abort through
-/// `current_nav`; there is no solvency-safe substitute mark for an unsettled expired
-/// market, and the abort clears once anyone lands the exact spot.
-public fun value_expiry(
-    valuation: &mut PoolValuation,
+/// PRIVILEGED like the flush start (audit L8): the mark's refresh instant prices
+/// the pool NAV the queues later drain at, and Pyth updates are permissionless —
+/// so refresh authority carries the same oracle-timing trust as the flush itself.
+public fun refresh_expiry_nav(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
+    lifecycle_proof: MarketLifecycleProof,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -254,36 +232,108 @@ public fun value_expiry(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_valuation_in_progress();
+    lifecycle_proof.destroy_proof();
+    let expiry_market_id = market.id();
+    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    if (vault.settle_or_rebalance_expiry(market, config, propbook_registry, pyth, clock)) {
+        return
+    };
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
+    let liability = market.record_valuation_mark(&pricer, clock);
+    vault_events::emit_nav_refreshed(
+        vault.id(),
+        expiry_market_id,
+        liability,
+        clock.timestamp_ms(),
+    );
+}
+
+/// Begin a full-pool flush (stored-mark aggregation + LP queue drain) as a market
+/// deployer, using a registry-generated `MarketLifecycleProof`. This is the sole
+/// flush start: it is cron-driven and PRIVILEGED, not permissionless (audit L8).
+/// Snapshots the active expiry set every `collect_expiry_nav` must cover; the hot
+/// potato can only be created here, so gating the start gates the whole flush.
+///
+/// The flush prices the pool NAV off marks refreshed at operator-chosen instants
+/// and `finish_flush` drains the LP queues at that mark, and Pyth updates
+/// (`pyth_feed::update`) are permissionless — so a cap-holder who manipulates the
+/// live oracle before refreshing, then flushes, could fill their own queued
+/// supply/withdraw request at a mark they chose. The start is therefore gated on
+/// both current registry allowlisting and trust in every flush-capable holder not
+/// to manipulate the live oracle. The revocable `MarketLifecycleCap` (not the root
+/// `AdminCap`) carries this authority; admin retains a break-glass route by
+/// minting itself a lifecycle cap.
+public fun start_pool_valuation(
+    config: &ProtocolConfig,
+    vault: &PoolVault,
+    lifecycle_proof: MarketLifecycleProof,
+): PoolValuation {
+    config.assert_version();
+    lifecycle_proof.destroy_proof();
+    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    PoolValuation {
+        pool_vault_id: vault.id(),
+        expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
+        valued_expiry_markets: vector[],
+        total_nav: 0,
+    }
+}
+
+/// Fold one snapshotted market's stored valuation mark into the running pool NAV.
+/// The market must be in the snapshot and not already counted (the exactly-once
+/// proof), and is a READ-ONLY input: no cash moves, no settlement, no tree walk —
+/// the mark must exist, be within the freshness ceiling, and its oracle anchors
+/// must be within the drift tolerance of the live feeds
+/// (`expiry_market::read_flushable_nav`), else this aborts and the operator
+/// re-refreshes the market and retries the flush.
+///
+/// A settled or past-expiry market cannot produce the fresh pricer this read
+/// requires (`load_live_pricer` rejects past-expiry): sweep it via
+/// `refresh_expiry_nav` or `rebalance_expiry_cash` so it leaves the active set,
+/// then start a new flush. There is still no solvency-safe substitute mark for an
+/// unsettled expired market; the abort clears once anyone lands the exact spot.
+public fun collect_expiry_nav(
+    valuation: &mut PoolValuation,
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_spot: &BlockScholesSpotFeed,
+    bs_forward: &BlockScholesForwardFeed,
+    bs_svi: &BlockScholesSVIFeed,
+    clock: &Clock,
+) {
+    config.assert_version();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    let nav = if (
-        vault.settle_or_rebalance_expiry(market, config, propbook_registry, pyth, clock)
-    ) {
-        0
-    } else {
-        let pricer = market.load_live_pricer(
-            config,
-            propbook_registry,
-            pyth,
-            bs_spot,
-            bs_forward,
-            bs_svi,
-            clock,
-        );
-        market.current_nav(&pricer)
-    };
+    let pricer = market.load_live_pricer(
+        config,
+        propbook_registry,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        clock,
+    );
+    let nav = market.read_flushable_nav(config.valuation_config(), &pricer, clock);
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
-/// was valued exactly once, price the pool NAV, then drain the supply/withdraw queues
+/// was counted exactly once, price the pool NAV, then drain the supply/withdraw queues
 /// at that frozen mark (mint PLP for supplies, burn PLP and pay DUSDC for
-/// withdrawals), release the valuation lock, consume the potato, and return the
-/// LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV, net of the
-/// pending-protocol-profit exclusion priced from the aggregate profit basis).
+/// withdrawals), consume the potato, and return the LP-attributable pool-wide DUSDC
+/// NAV (idle + Σ active NAV, net of the pending-protocol-profit exclusion priced
+/// from the aggregate profit basis).
 ///
 /// `supply_budget` / `withdraw_budget` bound how many requests each queue may
 /// process this flush (`None` = unbounded). Filled heads, protocol-refunded
@@ -295,13 +345,12 @@ public fun value_expiry(
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
-    config: &mut ProtocolConfig,
+    config: &ProtocolConfig,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
 ): u64 {
     config.assert_version();
-    config.assert_valuation_in_progress();
     valuation.assert_pool_vault(vault);
     assert_all_expected_valued(
         &valuation.expected_expiry_markets,
@@ -318,10 +367,9 @@ public fun finish_flush(
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Snapshot the share price once (frozen pair), drain both queues against it, then
-    // release the valuation lock at the very end. The flush IS the full-pool
-    // valuation, so the single FlushExecuted event carries the priced mark and its
-    // idle + active-NAV breakdown.
+    // Snapshot the share price once (frozen pair), then drain both queues against
+    // it. The flush IS the full-pool valuation, so the single FlushExecuted event
+    // carries the priced mark and its idle + active-NAV breakdown.
     let vault_id = vault.id();
     let mark = lp_book::new_flush_mark(pool_nav, total_supply);
     let drain_summary = vault
@@ -334,7 +382,6 @@ public fun finish_flush(
             withdraw_budget,
             ctx,
         );
-    config.end_valuation();
     vault_events::emit_flush_executed(
         vault_id,
         ctx.epoch(),
@@ -410,8 +457,8 @@ public fun unstake_deep(
 /// settled-market sweep (deactivate, return all free cash, materialize profit).
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
 /// mintable. The market must already be registered to this vault
-/// (`registry::create_and_share_expiry_market`). Blocked while a full-pool valuation is in
-/// progress.
+/// (`registry::create_and_share_expiry_market`). Cash moves need no valuation-mark
+/// maintenance: the flush reads free cash live.
 public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -421,7 +468,6 @@ public fun rebalance_expiry_cash(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     vault.settle_or_rebalance_expiry(market, config, propbook_registry, pyth, clock);
@@ -441,7 +487,6 @@ public fun claim_trading_loss_rebate(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     vault.claim_trading_loss_rebate_internal(
@@ -471,7 +516,6 @@ public fun claim_trading_loss_rebate_permissionless(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
     let account = wrapper.load_account_mut(auth);
@@ -496,7 +540,6 @@ public fun sponsor_fee_incentives(
     ctx: &TxContext,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     let amount = payment.value();
     assert!(
         amount >= constants::min_fee_incentive_sponsorship!(),
@@ -552,7 +595,6 @@ public fun request_supply(
     ctx: &mut TxContext,
 ): u64 {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
@@ -590,7 +632,6 @@ public fun request_withdraw(
     ctx: &mut TxContext,
 ): u64 {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     wrapper.settle<PLP>(root, clock);
     let account = wrapper.load_account_mut(auth);
@@ -623,7 +664,6 @@ public fun cancel_supply_request(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
@@ -654,7 +694,6 @@ public fun cancel_withdraw_request(
     ctx: &mut TxContext,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
     wrapper.settle<PLP>(root, clock);
     let account = wrapper.load_account_mut(auth);
@@ -974,21 +1013,6 @@ fun materialize_expiry_profit(
     );
 }
 
-/// Engage the valuation lock and snapshot the active expiry set for the single
-/// flush entrypoint, `start_pool_valuation` (lifecycle-cap-gated; the root-AdminCap
-/// flush path was removed — admin's break-glass is minting itself a lifecycle cap).
-/// Gated on a bootstrapped pool so the flush mark always has nonzero PLP supply.
-fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
-    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    config.begin_valuation();
-    PoolValuation {
-        pool_vault_id: vault.id(),
-        expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
-        valued_expiry_markets: vector[],
-        total_nav: 0,
-    }
-}
-
 /// Abort unless this valuation belongs to `vault`.
 fun assert_pool_vault(valuation: &PoolValuation, vault: &PoolVault) {
     assert!(valuation.pool_vault_id == vault.id(), EWrongPoolVault);
@@ -1003,8 +1027,8 @@ fun assert_expiry_ready_to_value(valuation: &PoolValuation, expiry_market_id: ID
     );
 }
 
-/// The exactly-once completeness proof: the valued set must equal the snapshot
-/// (a missed market means a wrong pool NAV). `value_expiry` already rejects
+/// The exactly-once completeness proof: the counted set must equal the snapshot
+/// (a missed market means a wrong pool NAV). `collect_expiry_nav` already rejects
 /// non-snapshot and duplicate ids, so equal lengths plus full coverage suffice.
 fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
     assert!(valued.length() == expected.length(), EMissingExpiryValuation);

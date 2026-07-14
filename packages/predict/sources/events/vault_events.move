@@ -158,6 +158,17 @@ public struct WithdrawFilled has copy, drop, store {
 /// plus `active_market_nav` over `market_count` active markets), how many of each
 /// kind filled, how many queue heads spent per-flush budget (filled,
 /// protocol-refunded, or live limit-missed), and the idle balance after the drain.
+/// Emitted when a live market's valuation mark is refreshed: the exact
+/// per-order liability stored for the pool flush to read, at its landing time.
+public struct NavRefreshed has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    /// Exact oracle-priced per-order liability stored in the mark.
+    liability: u64,
+    /// On-chain landing time of the refresh that computed the mark.
+    computed_at_ms: u64,
+}
+
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
@@ -422,6 +433,20 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
+    });
+}
+
+public(package) fun emit_nav_refreshed(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    liability: u64,
+    computed_at_ms: u64,
+) {
+    event::emit(NavRefreshed {
+        pool_vault_id,
+        expiry_market_id,
+        liability,
+        computed_at_ms,
     });
 }
 

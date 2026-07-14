@@ -61,6 +61,8 @@ const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
 const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
+const EMarkForwardDrifted: u64 = 16;
+const EMarkVarianceDrifted: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -90,6 +92,65 @@ public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
+}
+
+/// Return the forward this pricer snapshotted (drift-guard anchor).
+public(package) fun forward(pricer: &Pricer): u64 {
+    pricer.forward
+}
+
+/// Return sqrt of this pricer's SVI minimum total variance,
+/// `sqrt(a + b * sigma * sqrt(1 - rho^2))`, in FLOAT_SCALING.
+///
+/// This is the surface's global variance floor over all strikes. The drift guard
+/// uses it as the tolerance scale for forward moves: a digital's price sensitivity
+/// to log-forward moves is ~`phi(d2)/sqrt(w)`, so bounding `|Δln F|` by a multiple
+/// of the minimum `sqrt(w)` bounds every order's price drift uniformly — and the
+/// tolerance auto-tightens as expiry approaches and variance decays.
+public(package) fun sqrt_min_total_variance(pricer: &Pricer): u64 {
+    let rho = pricer.svi.rho();
+    let rho_squared = rho.mul_scaled(&rho).magnitude();
+    // |rho| <= 1 inside the pricing-safe envelope; saturate the complement against
+    // fixed-point rounding dust at the |rho| = 1 corner.
+    let one_minus_rho_squared = math::float_scaling!().saturating_sub(rho_squared);
+    let root = math::sqrt(one_minus_rho_squared, math::float_scaling!());
+    let min_total_var =
+        pricer.svi.a() + math::mul(pricer.svi.b(), math::mul(pricer.svi.sigma(), root));
+    math::sqrt(min_total_var, math::float_scaling!())
+}
+
+/// Abort unless this pricer's oracle inputs are still within `epsilon` of the
+/// anchors a stored valuation mark was computed at.
+///
+/// Two legs, one tolerance: the relative forward move must stay within
+/// `epsilon * anchor_sqrt_min_total_variance` (log-forward drift scaled by the
+/// surface's variance floor), and the relative sqrt-min-variance move must stay
+/// within `epsilon` (surface reshaping). Together they bound any single order's
+/// price drift since the mark to roughly `0.4 * epsilon` of face. `|ΔF|/F` stands
+/// in for `|Δln F|`: the two agree to second order at the small moves epsilon
+/// admits. A degenerate zero anchor variance rejects every forward move — the
+/// mark simply requires a re-refresh (fail-closed).
+public(package) fun assert_mark_drift_within(
+    pricer: &Pricer,
+    anchor_forward: u64,
+    anchor_sqrt_min_total_variance: u64,
+    epsilon: u64,
+) {
+    let forward_move = math::mul_div_down(
+        pricer.forward.diff(anchor_forward),
+        math::float_scaling!(),
+        anchor_forward,
+    );
+    assert!(
+        forward_move <= math::mul(epsilon, anchor_sqrt_min_total_variance),
+        EMarkForwardDrifted,
+    );
+    let sqrt_min_total_variance = sqrt_min_total_variance(pricer);
+    assert!(
+        sqrt_min_total_variance.diff(anchor_sqrt_min_total_variance)
+            <= math::mul(epsilon, anchor_sqrt_min_total_variance),
+        EMarkVarianceDrifted,
+    );
 }
 
 // === Public-Package Functions ===
@@ -397,8 +458,11 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let nd2 = math::normal_cdf(&d2);
     if (w_prime.is_zero()) return nd2;
 
-    let correction_magnitude =
-        math::mul_div_down(math::normal_pdf(&d2), w_prime.magnitude(), 2 * sqrt_var);
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        2 * sqrt_var,
+    );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;

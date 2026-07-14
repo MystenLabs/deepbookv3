@@ -235,7 +235,6 @@ public fun create_and_share_expiry_market(
     config.assert_version();
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
-    config.assert_not_valuation_in_progress();
     let deployable = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);

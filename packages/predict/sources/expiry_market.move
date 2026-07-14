@@ -25,7 +25,8 @@ use deepbook_predict::{
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, MintTerms, StrikeExposure},
-    strike_exposure_config
+    strike_exposure_config,
+    valuation_config::ValuationConfig
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
@@ -51,6 +52,8 @@ const EReferenceTickTimestampMismatch: u64 = 9;
 const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
+const EValuationMarkMissing: u64 = 13;
+const EValuationMarkStale: u64 = 14;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -72,6 +75,25 @@ public struct ExpiryMarket has key {
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
+    /// Stored valuation mark the pool flush reads (`None` until first refresh).
+    valuation_mark: Option<ValuationMark>,
+}
+
+/// Stored valuation mark for the pool flush: this market's exact oracle-priced
+/// per-order liability as of `computed_at_ms`, plus the pricing anchors the flush
+/// compares against live feeds to bound oracle drift. Trade flows write their
+/// bit-exact liability delta through (mint adds `net_premium`, live redeem
+/// subtracts `redeem_amount`); liquidation removes only orders whose live value
+/// already nets to zero, so it leaves the mark unchanged. Free cash is never
+/// stored — the flush reads it live, so cash moves need no mark maintenance.
+public struct ValuationMark has copy, drop, store {
+    liability: u64,
+    /// On-chain landing time of the refresh that computed this mark.
+    computed_at_ms: u64,
+    /// Forward the mark was priced at (drift-guard anchor).
+    forward: u64,
+    /// sqrt of the SVI minimum total variance at refresh (drift-guard tolerance scale).
+    sqrt_min_total_variance: u64,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -648,7 +670,6 @@ public fun set_reference_tick(
     pyth: &PythFeed,
 ): u64 {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     market.assert_pyth_bound(propbook_registry, pyth);
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
@@ -717,6 +738,55 @@ public(package) fun ensure_settled(
         clock.timestamp_ms(),
     );
     true
+}
+
+/// Read the flush-consumable NAV off the stored valuation mark: assert the mark
+/// exists, is within the freshness ceiling, and that the live oracle inputs in
+/// `pricer` have not drifted beyond the configured tolerance since it was
+/// computed; then return live free cash minus the marked liability. The payout
+/// tree is never walked here — that is the point: the walk ran in the refresh
+/// that stored the mark, and this read loads no per-order objects.
+public(package) fun read_flushable_nav(
+    market: &ExpiryMarket,
+    valuation_config: &ValuationConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+): u64 {
+    market.assert_pricer_bound(pricer);
+    assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
+    let mark = market.valuation_mark.borrow();
+    assert!(
+        clock.timestamp_ms() - mark.computed_at_ms <= valuation_config.nav_mark_freshness_ms(),
+        EValuationMarkStale,
+    );
+    pricer.assert_mark_drift_within(
+        mark.forward,
+        mark.sqrt_min_total_variance,
+        valuation_config.nav_mark_drift_epsilon(),
+    );
+    // Same degenerate-underwater / ulp-dust clamp as `current_nav`: a market whose
+    // marked liability exceeds free cash has zero limited-recourse value.
+    market.cash.free_cash().saturating_sub(mark.liability)
+}
+
+/// Recompute this market's exact per-order live liability and store it as the
+/// valuation mark the pool flush reads, replacing any prior mark. Returns the
+/// stored liability.
+public(package) fun record_valuation_mark(
+    market: &mut ExpiryMarket,
+    pricer: &Pricer,
+    clock: &Clock,
+): u64 {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.exact_live_liability(pricer);
+    market.valuation_mark =
+        option::some(ValuationMark {
+            liability,
+            computed_at_ms: clock.timestamp_ms(),
+            forward: pricer.forward(),
+            sqrt_min_total_variance: pricer.sqrt_min_total_variance(),
+        });
+    liability
 }
 
 /// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
@@ -848,6 +918,7 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
+        valuation_mark: option::none(),
     };
     transfer::share_object(market);
     expiry_market_id
@@ -916,13 +987,11 @@ fun assert_pyth_bound(market: &ExpiryMarket, propbook_registry: &OracleRegistry,
 
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     market.assert_pricer_bound(pricer);
 }
 
 fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     market.assert_pricer_bound(pricer);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
@@ -930,6 +999,28 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 
 fun assert_pricer_bound(market: &ExpiryMarket, pricer: &Pricer) {
     assert!(pricer.expiry_market_id() == market.id(), EWrongPricer);
+}
+
+/// Write a mint's bit-exact liability delta through to the stored valuation mark.
+/// The marginal live liability of a freshly admitted order at its own pricer is
+/// exactly `net_premium` (`entry_value - floor`); no-op until the first refresh
+/// establishes a mark.
+fun mark_liability_added(market: &mut ExpiryMarket, amount: u64) {
+    if (market.valuation_mark.is_some()) {
+        let mark = market.valuation_mark.borrow_mut();
+        mark.liability = mark.liability + amount;
+    };
+}
+
+/// Write a live redeem's liability delta through to the stored valuation mark.
+/// The delta is priced at the op's oracle while the mark's sum is anchored at its
+/// refresh oracle (drift-bounded), so clamp the mixed-anchor residual rather than
+/// abort a user exit.
+fun mark_liability_removed(market: &mut ExpiryMarket, amount: u64) {
+    if (market.valuation_mark.is_some()) {
+        let mark = market.valuation_mark.borrow_mut();
+        mark.liability = mark.liability.saturating_sub(amount);
+    };
 }
 
 /// Return the congestion surcharge (in DUSDC) for `quantity` from the pre-trade
@@ -1021,6 +1112,7 @@ fun mint_prepared_exact_quantity(
     let leverage = terms.leverage();
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
     market.settle_mint_payment(account, &minted_order, &quote, builder_code_id, clock, ctx);
+    market.mark_liability_added(quote.net_premium);
     order_events::emit_order_minted(
         market.id(),
         account.account_id(),
@@ -1143,6 +1235,7 @@ fun redeem_live_internal(
         redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
         ERedeemProceedsBelowMin,
     );
+    market.mark_liability_removed(redeem_amount);
 
     order_events::emit_live_order_redeemed(
         market.id(),
@@ -1173,7 +1266,6 @@ fun redeem_settled_internal(
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     let redeemed_order = order::from_order_id(order_id);
     assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
     assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);

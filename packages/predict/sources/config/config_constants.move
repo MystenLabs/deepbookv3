@@ -30,6 +30,8 @@ const EInvalidBackingBufferLambda: u64 = 19;
 const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
+const EInvalidNavMarkFreshnessMs: u64 = 23;
+const EInvalidNavMarkDriftEpsilon: u64 = 24;
 
 // === Fees ===
 
@@ -357,5 +359,29 @@ public(package) fun assert_upper_benefit_power(value: u64) {
     assert!(
         value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
         EInvalidUpperBenefitPower,
+    );
+}
+
+public(package) macro fun default_nav_mark_freshness_ms(): u64 { 60_000 }
+public(package) macro fun min_nav_mark_freshness_ms(): u64 { 1_000 }
+public(package) macro fun max_nav_mark_freshness_ms(): u64 { 600_000 }
+
+public(package) fun assert_nav_mark_freshness_ms(value: u64) {
+    assert!(
+        value >= min_nav_mark_freshness_ms!() && value <= max_nav_mark_freshness_ms!(),
+        EInvalidNavMarkFreshnessMs,
+    );
+}
+
+public(package) macro fun default_nav_mark_drift_epsilon(): u64 { 20_000_000 }
+// Floor: epsilon = 0 would reject every stored mark and brick the flush; ceiling:
+// 0.1 keeps the tolerated per-order price drift within ~4% of face.
+public(package) macro fun min_nav_mark_drift_epsilon(): u64 { 1_000_000 }
+public(package) macro fun max_nav_mark_drift_epsilon(): u64 { 100_000_000 }
+
+public(package) fun assert_nav_mark_drift_epsilon(value: u64) {
+    assert!(
+        value >= min_nav_mark_drift_epsilon!() && value <= max_nav_mark_drift_epsilon!(),
+        EInvalidNavMarkDriftEpsilon,
     );
 }
