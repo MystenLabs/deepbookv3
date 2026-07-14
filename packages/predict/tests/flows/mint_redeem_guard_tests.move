@@ -32,7 +32,9 @@ const MAX_COST_BELOW_QUOTE: u64 = 1;
 /// are zero. Total = 505_000_000.
 const ALL_IN_MINT_COST: u64 = 505_000_000;
 const MAX_PROBABILITY_ZERO: u64 = 0;
-const ZERO_NET_PREMIUM_AMOUNT: u64 = 0;
+/// 10 DUSDC: sizes an admissible quantity at the fixture mark (well above the
+/// 1-DUSDC minimum net premium), so only a caller-side floor can reject it.
+const SMALL_MINT_BUDGET: u64 = 10_000_000;
 const MIN_PROBABILITY_CERTAIN: u64 = 1_000_000_000;
 const MIN_PROBABILITY_DISABLED: u64 = 0;
 const MIN_PROCEEDS_DISABLED: u64 = 0;
@@ -184,13 +186,16 @@ fun mint_exact_amount_below_min_quantity_aborts() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    // A real budget sizes an admissible quantity; the caller's min_quantity floor
+    // then rejects it. (Admission now runs inside the terms gate before the floor —
+    // a dust budget aborts ENetPremiumBelowMinimum there instead.)
     fx.mint_exact_amount_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ZERO_NET_PREMIUM_AMOUNT,
-        constants::position_lot_size!(),
+        SMALL_MINT_BUDGET,
+        std::u64::max_value!(),
         LEVERAGE_ONE_X,
     );
 

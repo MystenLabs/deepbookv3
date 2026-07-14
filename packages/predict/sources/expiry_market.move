@@ -462,23 +462,15 @@ public fun mint_exact_amount(
             config.trade_liquidation_budget(),
         );
 
-    let quantity = market.max_mint_quantity_for_amount(
-        pricer,
-        lower_tick,
-        higher_tick,
-        amount,
-        leverage,
-    );
-    assert!(quantity >= min_quantity, EMintQuantityBelowMin);
-    market.mint_prepared_exact_quantity(
+    let terms = market
+        .strike_exposure
+        .quote_mint_terms_for_amount(pricer, lower_tick, higher_tick, amount, leverage);
+    assert!(terms.quantity() >= min_quantity, EMintQuantityBelowMin);
+    market.mint_prepared_terms(
         account,
         config,
-        pricer,
         active_stake,
-        lower_tick,
-        higher_tick,
-        quantity,
-        leverage,
+        terms,
         std::u64::max_value!(),
         std::u64::max_value!(),
         clock,
@@ -1008,9 +1000,34 @@ fun mint_prepared_exact_quantity(
     let terms = market
         .strike_exposure
         .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+    market.mint_prepared_terms(
+        account,
+        config,
+        active_stake,
+        terms,
+        max_cost,
+        max_probability,
+        clock,
+        ctx,
+    )
+}
+
+/// Shared mint funnel from priced terms: slippage bounds, EWMA penalty, quote,
+/// allocation, payment, event.
+fun mint_prepared_terms(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    active_stake: u64,
+    terms: MintTerms,
+    max_cost: u64,
+    max_probability: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
     let quote = market.compute_mint_quote(
         config,
@@ -1040,31 +1057,6 @@ fun mint_prepared_exact_quantity(
         quote.penalty_fee,
     );
     minted_order.id()
-}
-
-fun max_mint_quantity_for_amount(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    amount: u64,
-    leverage: u64,
-): u64 {
-    let entry_probability = market
-        .strike_exposure
-        .quote_mint_entry_probability(
-            pricer,
-            lower_tick,
-            higher_tick,
-            leverage,
-        );
-    let quantity = strike_exposure_config::max_quantity_for_net_premium(
-        entry_probability,
-        amount,
-        leverage,
-    );
-    let lots = (quantity / constants::position_lot_size!()).min(order::max_quantity_lots());
-    lots * constants::position_lot_size!()
 }
 
 fun redeem_live_internal(

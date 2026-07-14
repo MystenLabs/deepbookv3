@@ -325,9 +325,6 @@ hygiene-speed changes.
 
 - Pyth canonical-binding check re-implemented in `expiry_market` (:776-783)
   instead of owned by `pricing` — re-home behind one owner. (audit 0622da)
-- `mint_exact_amount` prices and admission-validates the same range twice per
-  call — verify the second validation is not a distinct fact, then dedupe.
-  (audit fb3ec8)
 - `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
   returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
 - `mint_exact_amount` disables BOTH slippage guards (`max_cost` and
