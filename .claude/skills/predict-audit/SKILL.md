@@ -53,6 +53,8 @@ Three complementary review *shapes*, all sharing this `primer.md`, the report fo
 
 Axis split: lenses = perspective × whole codebase; ownership walk = per-module (deep context); rule sweep = per-rule × whole codebase (mechanical).
 
+**Selection principle (measured, DBU-566 session 2026-07-14):** fan-out harnesses are for COVERAGE-class work — enumeration with provable completeness (site inventories, per-module walks, per-rule sweeps). Judgment-class work — converting findings into dispositions, choosing between design shapes — uses single-session INTERROGATION (§ Disposition below) instead of a fleet: in the measured session it cost ~1/4 the tokens of the finding sweep and produced nearly all of the decisions, including both architecture-level redesigns. Never convert findings into fixes without the disposition pass.
+
 ## Launching a run (copyable)
 **Step 1 — ground truth, MAIN LOOP only** (feeds every subagent via `args.groundTruth`; a wrong command starts the run from a false "all green"):
 ```
@@ -96,6 +98,15 @@ It emits ONE `consolidated-report.md` (a per-run snapshot under `reports/<run>/`
   python3 .claude/skills/predict-audit/check_curation.py reports/<run>/findings.json packages/predict/predeploy/open-items.md [dispositions.json]
   ```
   It fails unless every `open` finding (and every panel-dead `unverified-panel` finding) is EITHER referenced by its 6-char id in `open-items.md` OR listed in an optional `dispositions.json` (`{ "<id>": "reason" }`) as a conscious merge/refute/duplicate/accept. Write a disposition for anything you curated by substance without pasting the id.
+
+### Disposition — findings are not fixes (mandatory before landing)
+
+Every finding that is about to become a code change first passes a **rule-corpus interrogation** — one focused session (Claude, Codex, or both), never a fan-out. Per finding:
+1. **Governing rule** — which rule licenses or constrains this change? Cite file + section. If none exists, that is itself the finding (a convention gap; the fix lands WITH its rule).
+2. **Patterns maintained vs broken** — what does keeping the current code preserve; what does the change preserve; check the register (`response-policies.md`), `docs/risks.md`, `decisions.md` (incl. rejected directions), and the deliberate annotations before flagging anything they own.
+3. **Missed duties** — what does the touched guard/value incidentally bound (error codes, abort ORDER on compound-failure inputs, cross-package invariants, TS PTB callers, register pinning tests, doc claims)?
+4. **Disposition + confidence** — do-now / do-later-with-trigger / do-not-do / keep-with-deliberate-annotation, with the design shape if do.
+For architecture-class findings add the **gate interrogation**: what is the component's STATED intention; what must be true for that intention to be a structural invariant (intent-space coverage, outcome-space coverage, no raw-fact peepholes, consumption discipline); where is it bypassed today and why. Measured precedent: in the 2026-07-14 session this pass narrowed or overturned machine findings every time it ran (2 of 9 deletions were rule-forbidden; 2 of 5 ARCH findings were refuted; both landed redesigns came from the interrogation, not the sweep). **Dual-run-and-diff** (run the same interrogation on Codex via `codex-companion.mjs task --background`, read-only, from the target checkout's cwd, then diff dispositions) costs ~4–8 min per run and caught register citations and vacuous pinning tests the single pass missed — use it for judgment-heavy batches.
 
 ### Incremental & delta runs (the everyday mode)
 The whole-codebase last-line-of-defense run is the exception, not the default. For a per-PR or since-last-time audit, scope the run — marginal whole-codebase rounds are the lowest-yield tokens; diff-focused rounds are the highest.
