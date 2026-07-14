@@ -378,6 +378,12 @@ fun unpinned_band(svi: &SVIParams, d: u64): Option<u64> {
     let sqrt_w = math::div(bd + math::sqrt(discriminant, one), 2 * (one - b_slope));
     let w = math::mul(sqrt_w, sqrt_w);
     let w_minus_a = w.saturating_sub(a_overshoot);
+    // With a real slope the true W strictly exceeds A; a computed zero means
+    // the round-down chain swallowed the band (ill-conditioned at low
+    // variance — reviewed counterexample understated drift ~13.6x). No tight
+    // bound exists here, so fail closed: the caller charges full face and the
+    // market prices at its worst case until a refresh re-anchors it.
+    if (w_minus_a == 0) return option::none();
     // K = (W - A) / B; refuse before dividing when K would exceed the cap.
     if (w_minus_a > math::mul(b_coeff, cap)) return option::none();
     let k = math::div(w_minus_a, b_coeff);
