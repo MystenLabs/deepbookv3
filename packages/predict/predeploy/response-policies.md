@@ -434,12 +434,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Controller:** user — the budget is a caller-chosen primitive on a
   single-user action.
 - **Blast radius:** the single mint transaction; no shared or mandatory path.
-- **Response:** proceed — `max_quantity_for_net_premium` computes the inverse in
-  u128 (`try_mul_div_up`) and saturates to `u64::MAX` when the exact result does
-  not fit; the caller's `order::max_quantity_lots` clamp then applies. The
-  former u64-native guard aborted at ordinary budgets (~$18,446 at 1x, ~$6,148
-  at 3x, ~$1,844 at 10x leverage in 6-decimal dUSDC) — an intermediate-width
-  artifact, not a product bound.
+- **Response:** proceed — `max_quantity_for_net_premium` inverts the mint math
+  by composing the same floor-rounded fixed_math primitives in reverse
+  (`div(mul(net_premium, leverage), entry_probability)`), whose u128 interiors
+  remove the intermediate-width ceilings; the caller's `order::max_quantity_lots`
+  clamp bounds the result. The former u64-native guard aborted at ordinary
+  budgets (~$18,446 at 1x, ~$6,148 at 3x, ~$1,844 at 10x leverage in 6-decimal
+  dUSDC) — an intermediate-width artifact, not a product bound. The far backstop
+  is the primitive u64 result cast (entry values above ~$1.8T), a VM abort by
+  design per the move.md no-redundant-overflow-assert rule.
 - **Reasoning / duty inventory:** the audit had tracked these asserts as the
   "four cascading asserts" bullet under the H-5 batch (removed from that batch
   with this entry) without spotting the reachable ceiling. The four removed
@@ -449,16 +452,18 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   downstream consumer read the abort: the caller lot-clamps the returned
   quantity, and mint admission independently re-validates entry probability,
   leverage, and minimum net premium on the actual mint.
-- **Risk profile:** exact by construction — the two `try_mul_div_up` steps are
-  the identity `((a + 1) * b - 1) / c = ceil((a + 1) * b / c) - 1`, and
-  saturation is reachable only for budgets whose exact answer exceeds any
-  representable order size.
+- **Risk profile:** exact in the safe direction — both floors round down, so the
+  derived net premium of the returned quantity never exceeds the budget (R2
+  direction: dust favors the pool). The double floor undershoots the theoretical
+  maximum quantity by at most ~`(leverage + 1e9) / entry_probability` raw units —
+  sub-lot at admitted entry probabilities — and callers consume the result at
+  lot granularity, so unit-exactness is not a product property.
 - **Pinning tests:** `strike_exposure_config_tests.move` —
   `max_quantity_for_net_premium_exact_lot_boundary`,
   `max_quantity_for_net_premium_one_x_unit_neighbors`,
-  `max_quantity_for_net_premium_two_x_unit_boundary` (exact inverse boundaries
-  unchanged). Saturation boundary: untested — gap; boundary tests at the former
-  abort inputs land with DBU-566's test follow-up.
+  `max_quantity_for_net_premium_two_x_scales_entry_value` (hand-derived
+  mul/div values). Former-abort-input boundary tests land with DBU-566's test
+  follow-up.
 - **Reopen when:** a product-level maximum mint budget is introduced — that
   bound belongs in mint admission, not in the inverse arithmetic.
 

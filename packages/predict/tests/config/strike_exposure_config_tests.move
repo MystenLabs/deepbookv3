@@ -158,17 +158,18 @@ fun max_quantity_for_net_premium_exact_lot_boundary() {
 
 #[test]
 fun max_quantity_for_net_premium_one_x_unit_neighbors() {
-    // With p = 3 / 1e9 and 1x leverage:
-    //   N=4 admits floor(4.999999998e9 / 3) = 1_666_666_666
-    //   N=5 admits floor(5.999999999e9 / 3) = 1_999_999_999
-    //   N=6 admits floor(6.999999999e9 / 3) = 2_333_333_333
+    // With p = 3 / 1e9 and 1x leverage, entry value equals the budget and
+    // quantity is floor(N * 1e9 / 3):
+    //   N=4 -> floor(4e9 / 3) = 1_333_333_333
+    //   N=5 -> floor(5e9 / 3) = 1_666_666_666
+    //   N=6 -> floor(6e9 / 3) = 2_000_000_000
     assert_eq!(
         strike_exposure_config::max_quantity_for_net_premium(
             3,
             4,
             test_constants::leverage_one_x(),
         ),
-        1_666_666_666,
+        1_333_333_333,
     );
     assert_eq!(
         strike_exposure_config::max_quantity_for_net_premium(
@@ -176,7 +177,7 @@ fun max_quantity_for_net_premium_one_x_unit_neighbors() {
             5,
             test_constants::leverage_one_x(),
         ),
-        1_999_999_999,
+        1_666_666_666,
     );
     assert_eq!(
         strike_exposure_config::max_quantity_for_net_premium(
@@ -184,17 +185,17 @@ fun max_quantity_for_net_premium_one_x_unit_neighbors() {
             6,
             test_constants::leverage_one_x(),
         ),
-        2_333_333_333,
+        2_000_000_000,
     );
 }
 
 #[test]
-fun max_quantity_for_net_premium_two_x_unit_boundary() {
-    // Same p = 3 / 1e9 at 2x leverage. Net premium N=5 permits entry value 11
-    // but not 12, so quantity is floor(11.999999999e9 / 3).
+fun max_quantity_for_net_premium_two_x_scales_entry_value() {
+    // Same p = 3 / 1e9 at 2x leverage. Entry value = floor(5 * 2e9 / 1e9) = 10,
+    // so quantity is floor(10 * 1e9 / 3) = 3_333_333_333 — double the 1x answer.
     assert_eq!(
         strike_exposure_config::max_quantity_for_net_premium(3, 5, LEVERAGE_TWO_X),
-        3_999_999_999,
+        3_333_333_333,
     );
 }
 
