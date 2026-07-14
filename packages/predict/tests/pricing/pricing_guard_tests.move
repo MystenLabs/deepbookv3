@@ -340,19 +340,19 @@ fun surface_with_svi_sigma_above_max_aborts() {
 
 // === Deep-math abort (EZeroForward) ===
 
-/// A surface whose forward is tiny relative to spot has basis 0 (no LOWER basis
-/// bound), so it passes the envelope, but the re-anchored live forward
-/// `mul(spot, div(forward, spot))` rounds to 0 and `compute_nd2` aborts on the first
-/// finite-strike quote.
+/// A surface whose forward is tiny relative to the BS spot passes the envelope
+/// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
+/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
+/// the first finite-strike quote.
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    let spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
+    let bs_spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
     fx.prepare_real_oracle_bundle(
         &mut oracle,
-        spot,
-        1, // forward == 1: div(1, 1e17) == 0, so spot * 0 == 0
+        bs_spot,
+        1, // bs_forward == 1
         default_svi_a(),
         default_svi_b(),
         default_svi_sigma(),
@@ -361,6 +361,8 @@ fun re_anchored_zero_forward_aborts() {
         default_svi_m_magnitude(),
         false,
     );
+    // Re-anchor at a pyth spot far below the BS spot: 1e9 * 1 / 1e17 floors to 0.
+    fx.set_pyth_bundle(&mut oracle, 1_000_000_000, fx.clock().timestamp_ms());
     let pricer = fx.load_pricer_bundle(&oracle);
 
     pricer.up_price(test_constants::default_live_price());

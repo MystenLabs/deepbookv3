@@ -1128,6 +1128,7 @@ fun redeem_live_internal(
     let builder_code_id = predict_account::builder_code_id(account);
     let (builder_fee_amount, penalty_amount) = market.settle_live_redeem_payment(
         account,
+        copy builder_code_id,
         redeem_amount,
         fee_amount,
         penalty_amount,
@@ -1256,13 +1257,13 @@ fun settle_mint_payment(
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
+    builder_code_id: Option<ID>,
     redeem_amount: u64,
     fee_amount: u64,
     penalty_amount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
 ): (u64, u64) {
-    let builder_code_id = predict_account::builder_code_id(account);
     let builder_fee_amount = builder_fee_amount(
         &builder_code_id,
         fee_amount,

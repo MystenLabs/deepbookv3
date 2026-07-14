@@ -66,10 +66,11 @@ const EBlockScholesSVIUnavailable: u64 = 15;
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
 /// tightly enough that Predict's fixed-point pricing math remains live and
 /// meaningful.
-macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
-// max_pricing_spot * max_pricing_basis / float_scaling <= u64::max by
-// construction: the re-anchored forward (spot * basis) can't overflow u64.
-macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+macro fun max_pricing_basis_factor(): u64 { 100 }
+// Co-designed with the basis factor: forward <= factor * spot (envelope) and
+// spot <= u64::max / factor, so the re-anchored forward spot * bs_forward /
+// bs_spot <= factor * spot can't overflow u64.
+macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
@@ -277,14 +278,14 @@ fun live_inputs(
     ) {
         let spot = pyth_spot.destroy_some().read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
-        // Re-anchored forward = spot * (bs_forward / bs_spot) is intentionally
-        // NOT re-bounded to max_pricing_spot: with basis up to max_pricing_basis
-        // (100x), a legitimate contango forward exceeds the spot ceiling. The two
-        // envelope ceilings are co-designed so spot * basis <= u64::max (no
-        // overflow), and compute_nd2's deep-tail saturations keep pricing live
-        // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
-        // reads (R1 liveness).
-        math::mul(spot, math::div(bs_forward, bs_spot))
+        // Re-anchored forward = spot * bs_forward / bs_spot (one floor) is
+        // intentionally NOT re-bounded to max_pricing_spot: with basis up to
+        // max_pricing_basis_factor (100x), a legitimate contango forward exceeds
+        // the spot ceiling. The envelope ceilings are co-designed so the result
+        // <= factor * spot <= u64::max (no overflow), and compute_nd2's deep-tail
+        // saturations keep pricing live (P->1) there. A forward ceiling here
+        // would abort valid mint/redeem/NAV reads (R1 liveness).
+        math::mul_div_down(spot, bs_forward, bs_spot)
     } else {
         bs_forward
     };
@@ -300,11 +301,9 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    assert!(
-        ((forward as u128) * (math::float_scaling!() as u128)) / (spot as u128)
-            <= (max_pricing_basis!() as u128),
-        EBlockScholesInputsInvalid,
-    );
+    // Basis cap: forward <= factor * spot  <=>  ceil(forward / factor) <= spot,
+    // exact in u64 with no widening.
+    assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
