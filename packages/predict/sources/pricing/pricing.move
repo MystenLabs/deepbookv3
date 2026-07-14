@@ -347,18 +347,17 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // strike / forward in 1e9 fixed point, computed in u128 so both deep tails
-    // saturate instead of underflowing to 0 (which would abort) or wrapping the u64
-    // cast. Reaching either tail needs the forward to leave the entire encodable
-    // strike ladder by orders of magnitude; saturating keeps NAV / redeem /
-    // liquidation reads live there rather than aborting the whole market.
-    let strike_ratio_scaled =
-        ((strike as u128) * (math::float_scaling!() as u128)) / (forward as u128);
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio_scaled == 0) return math::float_scaling!();
+    // strike / forward in 1e9 fixed point; both deep tails saturate instead of
+    // underflowing to 0 (which would abort) or wrapping the u64 cast. Reaching
+    // either tail needs the forward to leave the entire encodable strike ladder by
+    // orders of magnitude; saturating keeps NAV / redeem / liquidation reads live
+    // there rather than aborting the whole market.
+    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_scaled > (std::u64::max_value!() as u128)) return 0;
-    let strike_ratio = strike_ratio_scaled as u64;
+    if (strike_ratio_opt.is_none()) return 0;
+    let strike_ratio = strike_ratio_opt.destroy_some();
+    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
+    if (strike_ratio == 0) return math::float_scaling!();
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
@@ -397,8 +396,11 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let nd2 = math::normal_cdf(&d2);
     if (w_prime.is_zero()) return nd2;
 
-    let correction_magnitude =
-        math::mul_div_down(math::normal_pdf(&d2), w_prime.magnitude(), 2 * sqrt_var);
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        2 * sqrt_var,
+    );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;

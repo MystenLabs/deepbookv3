@@ -122,9 +122,11 @@ public(package) fun select_liquidation_candidates(
 
     let tail_budget = budget / constants::liquidation_tail_scan_divisor!();
     let head_budget = budget - tail_budget;
+    // A live tail_start implies the head walk collected exactly head_budget
+    // entries (it pushes every visited entry), so the remaining scan budget is
+    // tail_budget by construction; on an exhausted cursor the passive scan no-ops.
     let tail_start = book.collect_head_candidates(&mut candidates, head_budget);
-    let scan_budget = budget - candidates.length();
-    book.collect_passive_candidates(&mut candidates, scan_budget, tail_start);
+    book.collect_passive_candidates(&mut candidates, tail_budget, tail_start);
     candidates
 }
 

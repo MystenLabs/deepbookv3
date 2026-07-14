@@ -1272,14 +1272,13 @@ fun settle_live_redeem_payment(
     );
     let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
 
-    let mut payout = market.cash.pay_authorized(redeem_amount);
+    // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
+    let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     predict_account::record_gross_received_from_expiry(account, market.id(), redeem_amount, ctx);
     market.collect_trade_fee(account, fee, fee_amount, ctx);
     send_builder_fee(copy builder_code_id, builder_fee);
-    // Penalty surplus stays in expiry cash rather than flowing to the redeemer.
-    market.cash.receive(payout.split(penalty_amount));
 
     market.assert_cash_backing();
     account.deposit<DUSDC>(payout.into_coin(ctx));

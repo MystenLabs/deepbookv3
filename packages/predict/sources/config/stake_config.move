@@ -78,14 +78,15 @@ fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
     let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;
+    // Each segment is half * progress / span, round down (single rounding; the
+    // earned benefit never exceeds the true line).
     if (active_stake <= config.lower_benefit_power) {
-        let lower_fraction = math::div(active_stake, config.lower_benefit_power);
-        math::mul(half, lower_fraction)
+        math::mul_div_down(half, active_stake, config.lower_benefit_power)
     } else {
-        let upper_fraction = math::div(
+        half + math::mul_div_down(
+            half,
             active_stake - config.lower_benefit_power,
             config.upper_benefit_power - config.lower_benefit_power,
-        );
-        half + math::mul(half, upper_fraction)
+        )
     }
 }

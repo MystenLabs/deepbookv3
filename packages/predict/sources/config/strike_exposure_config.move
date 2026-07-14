@@ -299,10 +299,12 @@ fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64)
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
-    let phase = math::div(
+    // = (max_multiplier - 1) * elapsed / window, round down (single rounding;
+    // the ramp shaves <= 1 ulp off the true line).
+    let ramp = math::mul_div_down(
+        config.expiry_fee_max_multiplier - math::float_scaling!(),
         config.expiry_fee_window_ms - time_to_expiry_ms,
         config.expiry_fee_window_ms,
     );
-    let ramp = math::mul(config.expiry_fee_max_multiplier - math::float_scaling!(), phase);
     math::float_scaling!() + ramp
 }
