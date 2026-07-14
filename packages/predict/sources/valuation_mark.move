@@ -13,7 +13,7 @@
 /// the market's cash — `expiry_market` composes those.
 module deepbook_predict::valuation_mark;
 
-use deepbook_predict::{pricing::Pricer, valuation_config::ValuationConfig};
+use deepbook_predict::{pricing::{Pricer, VarianceProbes}, valuation_config::ValuationConfig};
 use sui::clock::Clock;
 
 const EValuationMarkStale: u64 = 0;
@@ -30,6 +30,8 @@ public struct ValuationMark has copy, drop, store {
     forward: u64,
     /// sqrt of the SVI minimum total variance at refresh (drift-guard tolerance scale).
     sqrt_min_total_variance: u64,
+    /// Surface-shape samples at fixed log-moneyness probes (drift-guard third leg).
+    probes: VarianceProbes,
 }
 
 // === Public-Package Functions ===
@@ -49,6 +51,7 @@ public(package) fun new(liability: u64, pricer: &Pricer, clock: &Clock): Valuati
         computed_at_ms: clock.timestamp_ms(),
         forward: pricer.forward(),
         sqrt_min_total_variance: pricer.sqrt_min_total_variance(),
+        probes: pricer.variance_probes(),
     }
 }
 
@@ -68,6 +71,7 @@ public(package) fun assert_flushable(
     pricer.assert_mark_drift_within(
         mark.forward,
         mark.sqrt_min_total_variance,
+        &mark.probes,
         valuation_config.nav_mark_drift_epsilon(),
     );
 }

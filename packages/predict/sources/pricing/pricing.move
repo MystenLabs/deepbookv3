@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig};
-use fixed_math::{i64, math};
+use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -27,6 +27,26 @@ public struct Pricer has copy, drop {
     expiry_market_id: ID,
     forward: u64,
     svi: SVIParams,
+}
+
+/// Surface-shape anchors for the drift guard's third leg: sqrt of SVI total
+/// variance sampled at fixed log-moneyness probes around the anchor forward.
+/// Stored in a market's valuation mark at refresh; the flush re-samples the live
+/// surface at the same positions and rejects the mark when any probe moved more
+/// than epsilon relative. This closes the hole the two scalar legs cannot see —
+/// a wing reshape at fixed variance floor and fixed forward (measured repricing
+/// ATM strikes 84-89% of face with both scalar legs passing). Residual accepted:
+/// probes sample the curve, so a reshape confined strictly between probe
+/// positions passes; deep wings beyond the outermost probes self-limit because
+/// prices there are pinned near 0 or 1.
+public struct VarianceProbes has copy, drop, store {
+    /// Probe positions as log-moneyness relative to the anchor forward, at
+    /// {-4, -2, -1, 0, +1, +2, +4} times the anchor's sqrt-min-variance
+    /// (0 covers the floor region; ±1/±2 the measured worst-damage band;
+    /// ±4 the inner wings).
+    log_moneyness: vector<I64>,
+    /// sqrt of SVI total variance at each probe, parallel to `log_moneyness`.
+    sqrt_total_variance: vector<u64>,
 }
 
 /// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
@@ -63,6 +83,7 @@ const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
 const EMarkForwardDrifted: u64 = 16;
 const EMarkVarianceDrifted: u64 = 17;
+const EMarkProbeVarianceDrifted: u64 = 18;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -122,27 +143,55 @@ public(package) fun sqrt_min_total_variance(pricer: &Pricer): u64 {
     math::sqrt(min_total_var, math::float_scaling!())
 }
 
+/// Sample this pricer's surface at the drift-guard probe grid (see
+/// `VarianceProbes`). Computed at refresh and stored in the valuation mark.
+public(package) fun variance_probes(pricer: &Pricer): VarianceProbes {
+    let scale = sqrt_min_total_variance(pricer);
+    let multipliers = vector[
+        i64::from_parts(4, true),
+        i64::from_parts(2, true),
+        i64::from_parts(1, true),
+        i64::from_u64(0),
+        i64::from_u64(1),
+        i64::from_u64(2),
+        i64::from_u64(4),
+    ];
+    let mut log_moneyness = vector[];
+    let mut sqrt_total_variance = vector[];
+    multipliers.do!(|multiplier| {
+        let k = i64::from_parts(multiplier.magnitude() * scale, multiplier.is_negative());
+        log_moneyness.push_back(k);
+        sqrt_total_variance.push_back(
+            math::sqrt(svi_total_variance_at(&pricer.svi, &k), math::float_scaling!()),
+        );
+    });
+    VarianceProbes { log_moneyness, sqrt_total_variance }
+}
+
 /// Abort unless the oracle has stayed close enough to where it was when a stored
 /// valuation mark was computed — "close enough" meaning contract prices cannot
 /// have moved materially in between.
 ///
-/// Two checks, one `epsilon` knob: the forward may move at most `epsilon` of one
+/// Three checks, one `epsilon` knob. Forward: may move at most `epsilon` of one
 /// standard deviation of the price move still expected before expiry
-/// (`epsilon * anchor_sqrt_min_total_variance`), and that expected-move level
-/// itself may shift at most `epsilon` relative. For oracle moves these checks
-/// see, any single order's price drift since the mark is bounded to roughly
-/// `0.8 * epsilon` of its full payout (measured worst case over
-/// shape-preserving moves: `0.77-0.79 * epsilon`). Known blind spot: both checks key on the
-/// surface's variance FLOOR, so a wing reshape that leaves the floor and the
-/// forward unchanged passes unexamined — an open pre-deploy item on whether a
-/// strike-range leg is needed. `|ΔF|/F` stands in for `|Δln F|` (they agree to
-/// second order at these move sizes), and a degenerate zero anchor variance
-/// rejects every forward move — the mark simply requires a re-refresh
-/// (fail-closed).
+/// (`epsilon * anchor_sqrt_min_total_variance`). Variance floor: that
+/// expected-move level itself may shift at most `epsilon` relative. Surface
+/// shape: the live surface is re-sampled at the anchor's stored probe positions
+/// and every probe's sqrt-variance must be within `epsilon` relative of its
+/// anchor — without this leg, a wing reshape at fixed floor and fixed forward
+/// passed unexamined while repricing ATM strikes by most of their face. For
+/// moves within all three, a single order's price drift since the mark is
+/// bounded to roughly `0.8 * epsilon` of its full payout at the probes
+/// (measured shape-preserving worst case `0.77-0.79 * epsilon`), with
+/// between-probe reshapes as the sampling residual. `|ΔF|/F` stands in for
+/// `|Δln F|` (they agree to second order at these move sizes), and a degenerate
+/// zero anchor value rejects any move at that anchor — the mark simply requires
+/// a re-refresh (fail-closed).
 public(package) fun assert_mark_drift_within(
     pricer: &Pricer,
     anchor_forward: u64,
     anchor_sqrt_min_total_variance: u64,
+    anchor_probes: &VarianceProbes,
     epsilon: u64,
 ) {
     let forward_move = math::mul_div_down(
@@ -160,6 +209,20 @@ public(package) fun assert_mark_drift_within(
             <= math::mul(epsilon, anchor_sqrt_min_total_variance),
         EMarkVarianceDrifted,
     );
+    let probe_count = anchor_probes.log_moneyness.length();
+    let mut i = 0;
+    while (i < probe_count) {
+        let anchor_sqrt = anchor_probes.sqrt_total_variance[i];
+        let live_sqrt = math::sqrt(
+            svi_total_variance_at(&pricer.svi, &anchor_probes.log_moneyness[i]),
+            math::float_scaling!(),
+        );
+        assert!(
+            live_sqrt.diff(anchor_sqrt) <= math::mul(epsilon, anchor_sqrt),
+            EMarkProbeVarianceDrifted,
+        );
+        i = i + 1;
+    };
 }
 
 // === Public-Package Functions ===
@@ -477,4 +540,20 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
+}
+
+/// SVI total variance at log-moneyness `k`:
+/// `w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))`.
+///
+/// Probe evaluator for the drift guard; unlike `compute_nd2` it must never abort
+/// (it runs inside refresh and the mandatory flush), so the analytically
+/// non-negative wing term is clamped against |rho| = 1 rounding dust instead of
+/// asserted.
+fun svi_total_variance_at(svi: &SVIParams, k: &I64): u64 {
+    let k_minus_m = k.sub(&svi.m());
+    let sqrt_input = k_minus_m.square_scaled() + math::mul(svi.sigma(), svi.sigma());
+    let sq = math::sqrt(sqrt_input, math::float_scaling!());
+    let inner = svi.rho().mul_scaled(&k_minus_m).add(&i64::from_u64(sq));
+    if (inner.is_negative()) return svi.a();
+    svi.a() + math::mul(svi.b(), inner.magnitude())
 }

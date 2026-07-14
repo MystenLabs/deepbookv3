@@ -17,16 +17,18 @@ public struct ValuationConfig has store {
     /// How far the oracle may move before a stored mark is rejected, in
     /// FLOAT_SCALING (0.02 = 2%). Feeds keep moving after a market's refresh,
     /// so the flush re-reads them and rejects the mark when contract prices
-    /// could have moved materially since it was computed. Two checks, one knob:
-    /// the forward may move at most `epsilon` of one standard deviation of the
-    /// price move still expected before expiry, and that expected-move level
-    /// itself may shift at most `epsilon` relative. Near expiry the expected
-    /// move is small, so the allowed forward drift tightens automatically.
-    /// Within tolerance, no contract's fair value can have drifted by more
-    /// than about `0.8 * epsilon` of its full payout (~1.5% at the default;
-    /// measured worst case over shape-preserving moves, `0.77-0.79 * epsilon`) —
-    /// for the moves these checks see; a wing reshape at a fixed variance floor
-    /// passes unexamined (`pricing::assert_mark_drift_within`, known blind spot).
+    /// could have moved materially since it was computed. Three checks, one
+    /// knob: the forward may move at most `epsilon` of one standard deviation
+    /// of the price move still expected before expiry, that expected-move level
+    /// itself may shift at most `epsilon` relative, and the surface's shape —
+    /// sampled at seven stored probe strikes — may shift at most `epsilon`
+    /// relative per probe. Near expiry the expected move is small, so the
+    /// allowed forward drift tightens automatically. Within tolerance, no
+    /// contract's fair value at the probes can have drifted by more than about
+    /// `0.8 * epsilon` of its full payout (~1.5% at the default; measured
+    /// shape-preserving worst case `0.77-0.79 * epsilon`); reshapes confined
+    /// strictly between probes are the accepted sampling residual
+    /// (`pricing::VarianceProbes`).
     nav_mark_drift_epsilon: u64,
 }
 
