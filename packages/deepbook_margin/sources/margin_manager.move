@@ -294,6 +294,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     let mut expired_ids = vector[];
     let mut insufficient_funds_ids = vector[];
     let mut out_of_bounds_ids = vector[];
+    let mut below_liquidation_ids = vector[];
 
     self.process_collected_orders_v2(
         pool,
@@ -308,6 +309,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
         &mut expired_ids,
         &mut insufficient_funds_ids,
         &mut out_of_bounds_ids,
+        &mut below_liquidation_ids,
         max_orders_to_execute,
         clock,
         ctx,
@@ -318,6 +320,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
         expired_ids,
         insufficient_funds_ids,
         out_of_bounds_ids,
+        below_liquidation_ids,
         executed_ids,
         clock,
     );
@@ -364,6 +367,7 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     let mut expired_ids = vector[];
     let mut insufficient_funds_ids = vector[];
     let mut out_of_bounds_ids = vector[];
+    let mut below_liquidation_ids = vector[];
 
     self.process_collected_orders_v3(
         pool,
@@ -378,6 +382,7 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
         &mut expired_ids,
         &mut insufficient_funds_ids,
         &mut out_of_bounds_ids,
+        &mut below_liquidation_ids,
         max_orders_to_execute,
         clock,
         ctx,
@@ -388,6 +393,7 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
         expired_ids,
         insufficient_funds_ids,
         out_of_bounds_ids,
+        below_liquidation_ids,
         executed_ids,
         clock,
     );
@@ -1794,6 +1800,7 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
     expired_ids: &mut vector<u64>,
     insufficient_funds_ids: &mut vector<u64>,
     out_of_bounds_ids: &mut vector<u64>,
+    below_liquidation_ids: &mut vector<u64>,
     max_orders_to_execute: u64,
     below_liquidation: bool,
     clock: &Clock,
@@ -1837,17 +1844,18 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
                 // A below-liquidation manager must not rest a conditional limit: the
                 // resting remainder fills later *ungated* and a band-edge self-match
                 // could push it under `risk_ratio` 1.0 (bad debt) — the same reason
-                // the direct reduce-only limit entries carry the `>= liquidation`
-                // floor (`EReduceOnlyBelowLiquidation`). Cancel it (out-of-bounds); a
-                // *market* conditional still fires here since it deleverages and the
-                // net monotonic gate in the v3 executor covers it. (v2 passes
-                // `below_liquidation = false`: its `min_borrow` post-gate already
-                // aborts a below-floor resting limit.)
-                if (
-                    below_liquidation
-                        || (is_bid && price > upper_bound)
-                        || (!is_bid && price < lower_bound)
-                ) {
+                // the direct reduce-only limit entries carry the `>= liquidation` floor
+                // (`EReduceOnlyBelowLiquidation`). Cancel it under a *distinct* bucket so
+                // its event is `BelowLiquidation`, not the misleading `PriceOutOfBounds`.
+                // A *market* conditional still fires here (it deleverages; the net
+                // monotonic gate in v3 covers it). (v2 passes `below_liquidation = false`:
+                // its `min_borrow` post-gate already aborts a below-floor resting limit.)
+                if (below_liquidation) {
+                    below_liquidation_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
+                if ((is_bid && price > upper_bound) || (!is_bid && price < lower_bound)) {
                     out_of_bounds_ids.push_back(conditional_order_id);
                     i = i + 1;
                     continue
@@ -1950,6 +1958,7 @@ fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
     expired_ids: vector<u64>,
     insufficient_funds_ids: vector<u64>,
     out_of_bounds_ids: vector<u64>,
+    below_liquidation_ids: vector<u64>,
     executed_ids: vector<u64>,
     clock: &Clock,
 ) {
@@ -1963,9 +1972,14 @@ fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
         self.take_profit_stop_loss.emit_price_out_of_bounds_event(manager_id, id, clock);
     });
 
+    below_liquidation_ids.do!(|id| {
+        self.take_profit_stop_loss.emit_below_liquidation_event(manager_id, id, clock);
+    });
+
     let mut cancelled_ids = expired_ids;
     cancelled_ids.append(insufficient_funds_ids);
     cancelled_ids.append(out_of_bounds_ids);
+    cancelled_ids.append(below_liquidation_ids);
     cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
@@ -1999,6 +2013,7 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
     expired_ids: &mut vector<u64>,
     insufficient_funds_ids: &mut vector<u64>,
     out_of_bounds_ids: &mut vector<u64>,
+    below_liquidation_ids: &mut vector<u64>,
     max_orders_to_execute: u64,
     clock: &Clock,
     ctx: &TxContext,
@@ -2012,6 +2027,7 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
         expired_ids,
         insufficient_funds_ids,
         out_of_bounds_ids,
+        below_liquidation_ids,
         max_orders_to_execute,
         // v2's post-loop `min_borrow` gate already reverts a below-floor resting
         // limit, so no separate below-liquidation skip is needed here.
@@ -2063,6 +2079,7 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
     expired_ids: &mut vector<u64>,
     insufficient_funds_ids: &mut vector<u64>,
     out_of_bounds_ids: &mut vector<u64>,
+    below_liquidation_ids: &mut vector<u64>,
     max_orders_to_execute: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -2099,6 +2116,7 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
         expired_ids,
         insufficient_funds_ids,
         out_of_bounds_ids,
+        below_liquidation_ids,
         max_orders_to_execute,
         below_liquidation,
         clock,
