@@ -19,11 +19,22 @@ use sui::clock::Clock;
 const EValuationMarkStale: u64 = 0;
 
 /// One market's stored valuation mark. Free cash is never stored — the flush
-/// reads it live, so cash moves need no mark maintenance.
+/// reads it live, so cash moves need no mark maintenance. Trade write-through
+/// accumulates in the two delta fields rather than mutating the walked number:
+/// the walk's output stays auditable against a fresh walk at the same anchors,
+/// and the mixed-anchor netting is applied once at read time, order-independent,
+/// instead of destructively clamping op by op.
 public struct ValuationMark has copy, drop, store {
-    /// Exact oracle-priced per-order liability as of `computed_at_ms`, kept
-    /// current by trade write-through between refreshes.
-    liability: u64,
+    /// Exact oracle-priced per-order liability the refresh walk computed at
+    /// `computed_at_ms`. Never mutated between refreshes.
+    computed_liability: u64,
+    /// Σ liability added by trades since the walk (mint `net_premium`s), each
+    /// priced at its own op's oracle.
+    added_since_compute: u64,
+    /// Σ liability removed by trades since the walk (live-redeem
+    /// `redeem_amount`s and liquidated orders' live values), each priced at its
+    /// own op's oracle.
+    removed_since_compute: u64,
     /// On-chain landing time of the refresh that computed this mark.
     computed_at_ms: u64,
     /// Forward the mark was priced at (drift-guard anchor).
@@ -36,18 +47,26 @@ public struct ValuationMark has copy, drop, store {
 
 // === Public-Package Functions ===
 
+/// The mark's current liability: the walked number plus all trade deltas since,
+/// netted once here. The deltas are priced at their ops' oracles while the
+/// walked sum is anchored at the refresh oracle (drift-bounded), so the netting
+/// can exceed the sum by that bounded residual — clamp it rather than abort a
+/// read in the mandatory flush path.
 public(package) fun liability(mark: &ValuationMark): u64 {
-    mark.liability
+    (mark.computed_liability + mark.added_since_compute).saturating_sub(mark.removed_since_compute)
 }
 
 public(package) fun computed_at_ms(mark: &ValuationMark): u64 {
     mark.computed_at_ms
 }
 
-/// Snapshot a fresh mark: the just-walked liability plus the pricer's anchors.
+/// Snapshot a fresh mark: the just-walked liability plus the pricer's anchors,
+/// with zeroed trade deltas.
 public(package) fun new(liability: u64, pricer: &Pricer, clock: &Clock): ValuationMark {
     ValuationMark {
-        liability,
+        computed_liability: liability,
+        added_since_compute: 0,
+        removed_since_compute: 0,
         computed_at_ms: clock.timestamp_ms(),
         forward: pricer.forward(),
         sqrt_min_total_variance: pricer.sqrt_min_total_variance(),
@@ -76,15 +95,13 @@ public(package) fun assert_flushable(
     );
 }
 
-/// Write a trade's exact liability increase through to the mark.
+/// Write a trade's liability increase through to the mark's delta accumulator.
 public(package) fun add_liability(mark: &mut ValuationMark, amount: u64) {
-    mark.liability = mark.liability + amount;
+    mark.added_since_compute = mark.added_since_compute + amount;
 }
 
-/// Write a trade's liability decrease through to the mark. The delta is priced
-/// at the op's oracle while the mark's sum is anchored at its refresh oracle
-/// (drift-bounded), so clamp the mixed-anchor residual rather than abort a user
-/// exit or liquidation pass.
+/// Write a trade's liability decrease through to the mark's delta accumulator.
+/// Never clamps here — the mixed-anchor netting happens once, in `liability`.
 public(package) fun remove_liability(mark: &mut ValuationMark, amount: u64) {
-    mark.liability = mark.liability.saturating_sub(amount);
+    mark.removed_since_compute = mark.removed_since_compute + amount;
 }

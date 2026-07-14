@@ -301,10 +301,14 @@ public fun collect_expiry_nav(
     config.assert_version();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    let atoms = market.flushable_atoms(config.valuation_config(), pricer, clock);
+    let marked_liability = market.flushable_marked_liability(
+        config.valuation_config(),
+        pricer,
+        clock,
+    );
     valuation.valued_expiry_markets.push_back(expiry_market_id);
-    valuation.total_free_cash = valuation.total_free_cash + atoms.free_cash();
-    valuation.total_liability = valuation.total_liability + atoms.marked_liability();
+    valuation.total_free_cash = valuation.total_free_cash + market.free_cash();
+    valuation.total_liability = valuation.total_liability + marked_liability;
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market

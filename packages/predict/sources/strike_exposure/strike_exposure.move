@@ -112,23 +112,6 @@ public(package) fun range_probability(quote: &CloseQuote): u64 {
     quote.range_probability
 }
 
-/// Result of one bounded liquidation pass: how many orders were knocked out and
-/// the total live value they carried at the moment of removal (each order's
-/// floor-capped `gross - floor`). The value total exists so callers can write the
-/// liability removal through to the market's stored valuation mark.
-public struct LiquidationSweep has copy, drop {
-    liquidated_count: u64,
-    removed_live_value: u64,
-}
-
-public(package) fun liquidated_count(sweep: &LiquidationSweep): u64 {
-    sweep.liquidated_count
-}
-
-public(package) fun removed_live_value(sweep: &LiquidationSweep): u64 {
-    sweep.removed_live_value
-}
-
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
 ///
 /// Live reserve is the settlement floor (max single-point net payout) plus a
@@ -459,29 +442,29 @@ public(package) fun liquidate_live_order(
     exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
 }
 
-/// Run one bounded liquidation pass using exact per-candidate pricing.
+/// Run one bounded liquidation pass using exact per-candidate pricing. Returns
+/// the total live value the knocked-out orders carried at removal (each order's
+/// floor-capped `gross - floor`), so the caller can write the liability removal
+/// through to the market's stored valuation mark. Per-order details are on the
+/// `OrderLiquidated` events.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     budget: u64,
-): LiquidationSweep {
+): u64 {
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
-    if (candidates.is_empty()) {
-        return LiquidationSweep { liquidated_count: 0, removed_live_value: 0 }
-    };
+    if (candidates.is_empty()) return 0;
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
-    let mut liquidated_count = 0;
     let mut removed_live_value = 0;
     candidates.do!(|candidate| {
         let order = order::from_order_id(candidate);
         let removed = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
         if (removed.is_some()) {
-            liquidated_count = liquidated_count + 1;
             removed_live_value = removed_live_value + removed.destroy_some();
         };
     });
-    LiquidationSweep { liquidated_count, removed_live_value }
+    removed_live_value
 }
 
 /// Cache terminal settled payout liability.

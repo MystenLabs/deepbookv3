@@ -79,16 +79,6 @@ public struct ExpiryMarket has key {
     valuation_mark: Option<ValuationMark>,
 }
 
-/// One market's raw flush inputs: live free cash and the stored marked
-/// liability. Deliberately unclamped — a market can legitimately owe more than
-/// it holds (a backing lambda below 1 admits transient shortfalls backstopped by
-/// pool rebalancing), so netting across markets and the single zero floor happen
-/// at the pool level in `plp`, the policy owner.
-public struct FlushAtoms has copy, drop {
-    free_cash: u64,
-    marked_liability: u64,
-}
-
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
 /// `trading_fee` is the post-stake-discount fee before the sponsor subsidy, and
 /// `all_in_cost` is the exact account withdrawal the same-state mint would make:
@@ -419,13 +409,13 @@ public fun mint_exact_quantity(
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let sweep = market
+    let removed_live_value = market
         .strike_exposure
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
         );
-    market.mark_liability_removed(sweep.removed_live_value());
+    market.mark_liability_removed(removed_live_value);
 
     market.mint_prepared_exact_quantity(
         account,
@@ -471,13 +461,13 @@ public fun mint_exact_amount(
     let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let sweep = market
+    let removed_live_value = market
         .strike_exposure
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
         );
-    market.mark_liability_removed(sweep.removed_live_value());
+    market.mark_liability_removed(removed_live_value);
 
     let quantity = market.max_mint_quantity_for_amount(
         pricer,
@@ -539,13 +529,11 @@ public fun redeem_live(
     let account = wrapper.load_account_mut(auth);
 
     let redeemed_order = order::from_order_id(order_id);
-    let sweep = market
+    let swept_live_value = market
         .strike_exposure
         .liquidate_live_orders(pricer, config.trade_liquidation_budget());
     let knocked_out = market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
-    market.mark_liability_removed(
-        sweep.removed_live_value() + knocked_out.get_with_default(0),
-    );
+    market.mark_liability_removed(swept_live_value + knocked_out.get_with_default(0));
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
         return (redeemed_order.id(), option::none())
@@ -632,35 +620,34 @@ public fun redeem_settled_permissionless(
 
 /// Run one bounded liquidation pass over active leveraged orders.
 ///
-/// The liquidation book selects up to `budget` candidates and returns the
-/// number of orders liquidated. It does not touch accounts; users clear
-/// their liquidated position later through `redeem_live` or `redeem_settled`,
+/// The liquidation book selects up to `budget` candidates; each knock-out emits
+/// an `OrderLiquidated` event. It does not touch accounts; users clear their
+/// liquidated position later through `redeem_live` or `redeem_settled`,
 /// receiving no payout.
 public fun liquidate(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     pricer: &Pricer,
     budget: u64,
-): u64 {
+) {
     market.assert_live_flow_allowed(config, pricer);
-    let sweep = market.strike_exposure.liquidate_live_orders(pricer, budget);
-    market.mark_liability_removed(sweep.removed_live_value());
-    sweep.liquidated_count()
+    let removed_live_value = market.strike_exposure.liquidate_live_orders(pricer, budget);
+    market.mark_liability_removed(removed_live_value);
 }
 
-/// Try to liquidate one active leveraged order by ID.
+/// Try to liquidate one active leveraged order by ID; a knock-out emits an
+/// `OrderLiquidated` event, and an ineligible order is a no-op.
 public fun liquidate_order(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     pricer: &Pricer,
     order_id: u256,
-): bool {
+) {
     market.assert_live_flow_allowed(config, pricer);
 
     let order = order::from_order_id(order_id);
     let removed = market.strike_exposure.liquidate_live_order(pricer, &order);
     market.mark_liability_removed(removed.get_with_default(0));
-    removed.is_some()
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -744,34 +731,31 @@ public(package) fun ensure_settled(
     true
 }
 
-/// Read one market's flush inputs off the stored valuation mark: assert the mark
-/// exists, delegate the freshness/drift acceptance to the mark, and return live
-/// free cash plus the marked liability as raw atoms. The payout tree is never
-/// walked here — that is the point: the walk ran in the refresh that stored the
-/// mark, and this read loads no per-order objects. No clamp either — see
-/// `FlushAtoms` for why the floor lives at the pool level.
-public(package) fun flushable_atoms(
+/// Return this market's live free cash (DUSDC custody net of the rebate
+/// reserve) — always current, no gate needed; cash moves never stale it.
+public(package) fun free_cash(market: &ExpiryMarket): u64 {
+    market.cash.free_cash()
+}
+
+/// Read the stored marked liability for the pool flush: assert the mark exists,
+/// then delegate the freshness/drift acceptance to the mark. The payout tree is
+/// never walked here — that is the point: the walk ran in the refresh that
+/// stored the mark, and this read loads no per-order objects. Deliberately
+/// unclamped against cash — a market can legitimately owe more than it holds (a
+/// backing lambda below 1 admits transient shortfalls backstopped by pool
+/// rebalancing), so netting across markets and the single zero floor happen at
+/// the pool level in `plp`, the policy owner.
+public(package) fun flushable_marked_liability(
     market: &ExpiryMarket,
     valuation_config: &ValuationConfig,
     pricer: &Pricer,
     clock: &Clock,
-): FlushAtoms {
+): u64 {
     market.assert_pricer_bound(pricer);
     assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
     let mark = market.valuation_mark.borrow();
     mark.assert_flushable(valuation_config, pricer, clock);
-    FlushAtoms {
-        free_cash: market.cash.free_cash(),
-        marked_liability: mark.liability(),
-    }
-}
-
-public(package) fun free_cash(atoms: &FlushAtoms): u64 {
-    atoms.free_cash
-}
-
-public(package) fun marked_liability(atoms: &FlushAtoms): u64 {
-    atoms.marked_liability
+    mark.liability()
 }
 
 /// Recompute this market's exact per-order live liability and store it as the
