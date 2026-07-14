@@ -14,10 +14,16 @@ use deepbook_predict::config_constants;
 public struct ValuationConfig has store {
     /// Hard ceiling on stored-mark age in milliseconds, regardless of oracle drift.
     nav_mark_freshness_ms: u64,
-    /// Oracle-drift tolerance in FLOAT_SCALING. A mark is rejected when the
-    /// relative forward move exceeds `epsilon * sqrt(min total variance)` or the
-    /// relative sqrt-min-variance move exceeds `epsilon`, bounding any single
-    /// order's price drift to roughly `0.4 * epsilon` of face at every expiry.
+    /// How far the oracle may move before a stored mark is rejected, in
+    /// FLOAT_SCALING (0.02 = 2%). Feeds keep moving after a market's refresh,
+    /// so the flush re-reads them and rejects the mark when contract prices
+    /// could have moved materially since it was computed. Two checks, one knob:
+    /// the forward may move at most `epsilon` of one standard deviation of the
+    /// price move still expected before expiry, and that expected-move level
+    /// itself may shift at most `epsilon` relative. Near expiry the expected
+    /// move is small, so the allowed forward drift tightens automatically.
+    /// Within tolerance, no contract's fair value can have drifted by more
+    /// than about `0.4 * epsilon` of its full payout (~0.8% at the default).
     nav_mark_drift_epsilon: u64,
 }
 
