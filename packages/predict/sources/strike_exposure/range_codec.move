@@ -45,3 +45,23 @@ public(package) fun strikes_from_ticks(
 public(package) fun prefix_limit_tick(settlement: u64, tick_size: u64): u64 {
     settlement.div_ceil(tick_size)
 }
+
+/// The settlement win predicate for one order range — the single owner of the
+/// half-open `(lower, higher]` membership test that both settlement surfaces
+/// derive from: the payout side calls this directly, and the reserve side's
+/// prefix walk counts exactly the boundaries below the same `prefix_limit_tick`,
+/// so reserve and payout agree by construction (R1). Equivalent to the raw test
+/// `settlement > lower && settlement <= higher` under the sentinel mapping:
+/// `lower_tick < limit` <=> `settlement > lower_tick * tick_size` (tick 0 is
+/// neg-inf), and `limit <= higher_tick` <=> `settlement <= higher_tick *
+/// tick_size` (`pos_inf_tick` short-circuits — every settlement is inside an
+/// open upper end).
+public(package) fun settlement_in_range(
+    lower_tick: u64,
+    higher_tick: u64,
+    settlement: u64,
+    tick_size: u64,
+): bool {
+    let limit = prefix_limit_tick(settlement, tick_size);
+    lower_tick < limit && (higher_tick == constants::pos_inf_tick!() || limit <= higher_tick)
+}

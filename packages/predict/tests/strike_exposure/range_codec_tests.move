@@ -61,3 +61,52 @@ fun prefix_limit_tick_can_exceed_the_encodable_tick_domain() {
     let settlement = (POS_INF_TICK + 5) * TICK_SIZE;
     assert_eq!(range_codec::prefix_limit_tick(settlement, TICK_SIZE), POS_INF_TICK + 5);
 }
+
+// === settlement_in_range (the half-open (lower, higher] winner test) ===
+
+#[test]
+fun settlement_in_range_finite_boundaries_are_half_open() {
+    // Range (100, 200] in ticks = (100e9, 200e9] raw. Hand-derived from the
+    // half-open payoff: a settlement AT the lower boundary loses (open end), AT
+    // the higher boundary wins (closed end).
+    assert!(!range_codec::settlement_in_range(100, 200, 99_999_999_999, TICK_SIZE));
+    assert!(!range_codec::settlement_in_range(100, 200, 100_000_000_000, TICK_SIZE));
+    assert!(range_codec::settlement_in_range(100, 200, 100_000_000_001, TICK_SIZE));
+    assert!(range_codec::settlement_in_range(100, 200, 199_999_999_999, TICK_SIZE));
+    assert!(range_codec::settlement_in_range(100, 200, 200_000_000_000, TICK_SIZE));
+    assert!(!range_codec::settlement_in_range(100, 200, 200_000_000_001, TICK_SIZE));
+}
+
+#[test]
+fun settlement_in_range_neg_inf_lower_admits_any_positive_settlement() {
+    // (neg_inf, 200]: lower tick 0 is the open negative-infinity end.
+    assert!(range_codec::settlement_in_range(0, 200, 1, TICK_SIZE));
+    assert!(range_codec::settlement_in_range(0, 200, 200_000_000_000, TICK_SIZE));
+    assert!(!range_codec::settlement_in_range(0, 200, 200_000_000_001, TICK_SIZE));
+    // Zero settlement is below every range, including a neg-inf lower end.
+    assert!(!range_codec::settlement_in_range(0, 200, 0, TICK_SIZE));
+}
+
+#[test]
+fun settlement_in_range_pos_inf_higher_admits_any_settlement_above_lower() {
+    // (100, pos_inf): the open upper end wins for every settlement above lower,
+    // including one whose prefix limit exceeds the encodable tick domain.
+    assert!(!range_codec::settlement_in_range(100, POS_INF_TICK, 100_000_000_000, TICK_SIZE));
+    assert!(range_codec::settlement_in_range(100, POS_INF_TICK, 100_000_000_001, TICK_SIZE));
+    assert!(
+        range_codec::settlement_in_range(
+            100,
+            POS_INF_TICK,
+            std::u64::max_value!(),
+            TICK_SIZE,
+        ),
+    );
+}
+
+#[test]
+fun settlement_beyond_ladder_loses_against_finite_higher() {
+    // A settlement whose prefix limit exceeds pos_inf_tick is above every finite
+    // higher boundary: not in range.
+    let settlement = (POS_INF_TICK + 5) * TICK_SIZE;
+    assert!(!range_codec::settlement_in_range(100, POS_INF_TICK - 1, settlement, TICK_SIZE));
+}

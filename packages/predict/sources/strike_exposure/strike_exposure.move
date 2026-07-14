@@ -245,9 +245,14 @@ public(package) fun close_settled_order(
     order: &Order,
     settlement: u64,
 ): u64 {
-    let (lower, higher) = exposure.order_boundaries(order);
     exposure.liquidation.remove_order(order);
-    if (settlement <= lower || settlement > higher) {
+    let won = range_codec::settlement_in_range(
+        order.lower_tick(),
+        order.higher_tick(),
+        settlement,
+        exposure.tick_size,
+    );
+    if (!won) {
         return 0
     };
     // payout = quantity - floor_shares (= Q - F). The settled liability was derived
