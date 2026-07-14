@@ -124,6 +124,14 @@ public(package) fun svi_params(pricer: &Pricer): SVIParams {
     pricer.svi
 }
 
+/// Rebuild a `Pricer` from a valuation mark's stored anchors. Deliberately
+/// bypasses `load_live_pricer`'s feed-freshness and binding guards: the
+/// anchors were validated by the refresh that stored them, and this pricer
+/// exists to value orders AT that stored snapshot, never at live state.
+public(package) fun from_anchors(expiry_market_id: ID, forward: u64, svi: SVIParams): Pricer {
+    Pricer { expiry_market_id, forward, svi }
+}
+
 /// Worst-case repricing between two oracle snapshots: an upper bound on how far
 /// ANY contract's fair price can have moved between the anchor oracle state and
 /// the live one, as a fraction of full payout in FLOAT_SCALING (capped at 1.0).

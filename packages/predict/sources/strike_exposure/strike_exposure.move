@@ -21,7 +21,8 @@ use deepbook_predict::{
     pricing::{Self, Pricer},
     range_codec,
     strike_exposure_config::StrikeExposureConfig,
-    strike_payout_tree::{Self, StrikePayoutTree}
+    strike_payout_tree::{Self, StrikePayoutTree},
+    valuation_mark::{Self, ValuationMark}
 };
 use fixed_math::math;
 use sui::clock::Clock;
@@ -31,6 +32,7 @@ const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
+const EValuationMarkMissing: u64 = 5;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -56,6 +58,10 @@ public struct StrikeExposure has store {
     liquidation: LiquidationBook,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
+    /// Stored valuation mark the pool flush reads (`None` until first refresh).
+    /// Owned here so every book mutation writes its anchor-priced value
+    /// through in the same module — a trade path cannot forget the mark.
+    valuation_mark: Option<ValuationMark>,
 }
 
 /// Pure mint terms for one prospective live mint: the priced tick range,
@@ -159,6 +165,39 @@ public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pri
     linear.saturating_sub(correction)
 }
 
+/// Return the stored mark's current liability: the refresh walk's number plus
+/// anchor-priced trade write-through since. The payout tree is never walked
+/// here — that is the point: the walk ran in the refresh that stored the mark,
+/// and this read loads no per-order objects. Deliberately unclamped against
+/// cash — a market can legitimately owe more than it holds (a backing lambda
+/// below 1 admits transient shortfalls backstopped by pool rebalancing) — and
+/// deliberately a dumb fact: whether the mark is fresh enough is judged by
+/// `plp`, which aggregates across markets.
+public(package) fun marked_liability(exposure: &StrikeExposure): u64 {
+    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
+    exposure.valuation_mark.borrow().liability()
+}
+
+/// Return the landing time of the refresh that computed the stored mark.
+public(package) fun mark_computed_at_ms(exposure: &StrikeExposure): u64 {
+    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
+    exposure.valuation_mark.borrow().computed_at_ms()
+}
+
+/// Measure the stored mark's potential oracle drift against the live inputs
+/// in `pricer`, in DUSDC base units: the worst-case single-contract price move
+/// since the walk (`valuation_mark::drift`, a fraction of full payout) times
+/// the book's live face quantity — per-order value is quantity-Lipschitz in
+/// price, so this bounds how far this book's liability can have drifted. The
+/// quantity is read live and the write-through deltas are valued at the mark's
+/// own anchors, so the whole current book shares one valuation time and this
+/// endpoint bound covers it. A measurement, not a judgment — `plp` sums across
+/// markets and prices the total into the flush mark's bid/ask spread.
+public(package) fun mark_drift(exposure: &StrikeExposure, pricer: &Pricer): u64 {
+    assert!(exposure.valuation_mark.is_some(), EValuationMarkMissing);
+    math::mul(exposure.payout.total_quantity(), exposure.valuation_mark.borrow().drift(pricer))
+}
+
 /// Return the liquidation LTV snapshotted for this exposure book.
 public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.config.liquidation_ltv()
@@ -246,6 +285,7 @@ public(package) fun new(
         settled_liability_materialized: false,
         liquidation: liquidation_book::new(ctx),
         payout: strike_payout_tree::new(ctx),
+        valuation_mark: option::none(),
     }
 }
 
@@ -327,6 +367,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 
     exposure.liquidation.insert_order(&allocated_order);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
+    exposure.mark_order_added(&allocated_order);
 
     allocated_order
 }
@@ -411,6 +452,9 @@ public(package) fun close_and_quote_live_order(
             remove_floor_shares,
         );
     exposure.liquidation.remove_order(order);
+    // Anchor-priced write-through: remove the original order and (below)
+    // re-add any partial-close remainder, both at the mark's stored anchors.
+    exposure.mark_order_removed(order);
 
     let range_probability = pricer.range_price(lower, higher);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
@@ -428,6 +472,7 @@ public(package) fun close_and_quote_live_order(
     );
     exposure.liquidation.insert_order(&replacement_order);
     exposure.next_order_sequence = exposure.next_order_sequence + 1;
+    exposure.mark_order_added(&replacement_order);
 
     CloseQuote { resulting_order: replacement_order, redeem_amount, range_probability }
 }
@@ -437,40 +482,35 @@ public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order:
     exposure.liquidation.clear_liquidated(order);
 }
 
-/// Try to liquidate one active leveraged order using exact live pricing.
+/// Try to liquidate one active leveraged order using exact live pricing; a
+/// knock-out is written through to the stored valuation mark and emits an
+/// `OrderLiquidated` event, and an ineligible order is a no-op.
 public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
-): Option<u64> {
-    if (!exposure.liquidation.contains_active_order(order)) return option::none();
+) {
+    if (!exposure.liquidation.contains_active_order(order)) return;
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
+    exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv);
 }
 
-/// Run one bounded liquidation pass using exact per-candidate pricing. Returns
-/// the total live value the knocked-out orders carried at removal (each order's
-/// floor-capped `gross - floor`), so the caller can write the liability removal
-/// through to the market's stored valuation mark. Per-order details are on the
-/// `OrderLiquidated` events.
+/// Run one bounded liquidation pass using exact per-candidate pricing. Each
+/// knock-out is written through to the stored valuation mark; per-order
+/// details are on the `OrderLiquidated` events.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     budget: u64,
-): u64 {
+) {
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
-    if (candidates.is_empty()) return 0;
+    if (candidates.is_empty()) return;
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
-    let mut removed_live_value = 0;
     candidates.do!(|candidate| {
         let order = order::from_order_id(candidate);
-        let removed = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
-        if (removed.is_some()) {
-            removed_live_value = removed_live_value + removed.destroy_some();
-        };
+        exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
     });
-    removed_live_value
 }
 
 /// Cache terminal settled payout liability.
@@ -495,10 +535,53 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
+/// Recompute this book's exact live liability and store it as the valuation
+/// mark the pool flush reads, replacing any prior mark. Returns the stored
+/// liability.
+public(package) fun refresh_valuation_mark(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    clock: &Clock,
+): u64 {
+    let liability = exposure.exact_live_liability(pricer);
+    exposure.valuation_mark = option::some(valuation_mark::new(liability, pricer, clock));
+    liability
+}
+
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricer.range_price(lower, higher);
     math::mul(range_probability, order.quantity())
+}
+
+/// Value one order exactly as the liability walk counts it: anchor-priced
+/// range value net of the static floor, floored at zero (this order's
+/// `walk_linear` minus `correction_value` contribution). Deliberately no
+/// liquidation-state zeroing — unlike `order_value`'s holder-close policy, the
+/// walk carries a liquidatable-yet-unliquidated order's `gross - floor` until
+/// an actual knock-out removes it.
+fun mark_order_value(exposure: &StrikeExposure, order: &Order): u64 {
+    let anchor_pricer = exposure.valuation_mark.borrow().anchor_pricer(exposure.expiry_market_id);
+    exposure.gross_order_value(&anchor_pricer, order).saturating_sub(order.floor_shares())
+}
+
+/// Write an added order through to the stored mark, valued at the mark's own
+/// anchors — never at the op's oracle — so the marked liability stays a
+/// single-anchor valuation of the current book and the endpoint drift envelope
+/// bounds it. No-op until the first refresh establishes a mark.
+fun mark_order_added(exposure: &mut StrikeExposure, order: &Order) {
+    if (exposure.valuation_mark.is_none()) return;
+    let value = exposure.mark_order_value(order);
+    exposure.valuation_mark.borrow_mut().add_value(value);
+}
+
+/// Write a removed order (live redeem or liquidation) through to the stored
+/// mark, valued at the mark's own anchors. No-op until the first refresh
+/// establishes a mark.
+fun mark_order_removed(exposure: &mut StrikeExposure, order: &Order) {
+    if (exposure.valuation_mark.is_none()) return;
+    let value = exposure.mark_order_value(order);
+    exposure.valuation_mark.borrow_mut().remove_value(value);
 }
 
 /// Liquidate (knock out) `order` when its live value has reached the static floor:
@@ -511,13 +594,12 @@ fun liquidate_order_if_under_floor(
     pricer: &Pricer,
     order: &Order,
     liquidation_ltv: u64,
-): Option<u64> {
+) {
     let quantity = order.quantity();
     let floor_amount = order.floor_shares();
     let gross_value = exposure.gross_order_value(pricer, order);
     let liquidation_threshold = math::div(floor_amount, liquidation_ltv);
-    let can_liquidate = gross_value <= liquidation_threshold;
-    if (!can_liquidate) return option::none();
+    if (gross_value > liquidation_threshold) return;
 
     exposure.liquidation.mark_liquidated(order);
     exposure
@@ -528,6 +610,7 @@ fun liquidate_order_if_under_floor(
             quantity,
             floor_amount,
         );
+    exposure.mark_order_removed(order);
 
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
@@ -537,12 +620,6 @@ fun liquidate_order_if_under_floor(
         floor_amount,
         liquidation_ltv,
     );
-
-    // The knocked-out order's live value under the floor cap: an order between
-    // its floor and floor/ltv still carries `gross - floor`; one at or below the
-    // floor carries zero. Returned so the caller can write the removal through
-    // to the market's stored valuation mark.
-    option::some(gross_value.saturating_sub(floor_amount))
 }
 
 /// Decode an order into `(lower, higher)` raw strike boundaries for pricing and
