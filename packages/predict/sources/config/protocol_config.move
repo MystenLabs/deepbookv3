@@ -3,9 +3,9 @@
 
 /// Protocol-wide configuration and flow gates for Predict.
 ///
-/// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, and the transaction-local full-pool valuation lock. Flow modules decide
-/// which gates apply before they mutate expiry, oracle, pool, or account state.
+/// This shared object owns the admin-tunable config structs and the trading pause
+/// gate. Flow modules decide which gates apply before they mutate expiry, oracle,
+/// pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -17,14 +17,13 @@ use deepbook_predict::{
     expiry_cash_config::{Self, ExpiryCashConfig},
     pricing_config::{Self, PricingConfig},
     stake_config::{Self, StakeConfig},
-    strike_exposure_config::{Self, StrikeExposureConfig}
+    strike_exposure_config::{Self, StrikeExposureConfig},
+    valuation_config::{Self, ValuationConfig}
 };
 
 const ETradingPaused: u64 = 0;
-const EValuationInProgress: u64 = 1;
-const EValuationNotInProgress: u64 = 2;
-const EPackageVersionDisabled: u64 = 3;
-const EVersionWatermarkNotAdvanced: u64 = 4;
+const EPackageVersionDisabled: u64 = 1;
+const EVersionWatermarkNotAdvanced: u64 = 2;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -47,9 +46,7 @@ public struct ProtocolConfig has key {
     version_watermark: u64,
     /// Blocks new risk creation while true.
     trading_paused: bool,
-    /// Transaction-local lock held while a full-pool valuation is assembled, so no
-    /// NAV-changing op can interleave between per-market value steps in the PTB.
-    valuation_in_progress: bool,
+    valuation_config: ValuationConfig,
 }
 
 // === Public Functions ===
@@ -165,7 +162,6 @@ public fun set_pyth_spot_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
 }
 
@@ -176,7 +172,6 @@ public fun set_block_scholes_price_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_price_freshness_ms(value);
 }
 
@@ -187,8 +182,17 @@ public fun set_block_scholes_svi_freshness_ms(
     value: u64,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
+}
+
+/// Set the hard freshness ceiling on stored valuation marks at the pool flush.
+public fun set_nav_mark_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.valuation_config.set_nav_mark_freshness_ms(value);
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -260,7 +264,6 @@ public fun set_protocol_reserve_profit_share(
     protocol_reserve_profit_share: u64,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
@@ -305,6 +308,10 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
 
+public(package) fun valuation_config(config: &ProtocolConfig): &ValuationConfig {
+    &config.valuation_config
+}
+
 /// Abort unless the running package version is at or above the watermark floor.
 ///
 /// The single version gate for the package: every version-gated flow threads the
@@ -322,16 +329,6 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
 }
 
-/// Abort unless a valuation lock is currently active.
-public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
-    assert!(config.valuation_in_progress, EValuationNotInProgress);
-}
-
-/// Abort unless no valuation lock is currently active.
-public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
-    assert!(!config.valuation_in_progress, EValuationInProgress);
-}
-
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = new(ctx);
@@ -344,18 +341,6 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
 /// `PauseCap` holders going through the registry; cannot be used to unpause.
 public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
-}
-
-/// Begin a transaction-local full-pool valuation lock.
-public(package) fun begin_valuation(config: &mut ProtocolConfig) {
-    config.assert_not_valuation_in_progress();
-    config.valuation_in_progress = true;
-}
-
-/// End a transaction-local full-pool valuation lock.
-public(package) fun end_valuation(config: &mut ProtocolConfig) {
-    config.assert_valuation_in_progress();
-    config.valuation_in_progress = false;
 }
 
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
@@ -380,7 +365,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),
         trading_paused: false,
-        valuation_in_progress: false,
+        valuation_config: valuation_config::new(),
     }
 }
 

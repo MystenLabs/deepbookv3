@@ -154,19 +154,40 @@ public struct WithdrawFilled has copy, drop, store {
 
 /// Emitted once per flush after both queues drain. The flush IS the full-pool
 /// valuation, so this single event carries the frozen mark every fill was priced at
-/// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
-/// plus `active_market_nav` over `market_count` active markets), how many of each
-/// kind filled, how many queue heads spent per-flush budget (filled,
-/// protocol-refunded, or live limit-missed), and the idle balance after the drain.
+/// (`pool_value` over `total_supply`), its raw valuation breakdown
+/// (`idle_balance_before` plus `total_free_cash` owing `total_liability` over
+/// `market_count` active markets), how many of each kind filled, how many queue
+/// heads spent per-flush budget (filled, protocol-refunded, or live limit-missed),
+/// and the idle balance after the drain.
+/// Emitted when a live market's valuation mark is refreshed: the exact
+/// per-order liability stored for the pool flush to read, at its landing time.
+public struct NavRefreshed has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    /// Exact oracle-priced per-order liability stored in the mark.
+    liability: u64,
+    /// On-chain landing time of the refresh that computed the mark.
+    computed_at_ms: u64,
+}
+
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
-    /// LP-attributable pool NAV every fill was priced at: idle plus
-    /// `active_market_nav`, excluding unrealized and pending protocol profit.
+    /// LP-attributable pool NAV every fill was priced at: idle plus the raw
+    /// market sums below, excluding unrealized and pending protocol profit,
+    /// floored once at zero.
     pool_value: u64,
     total_supply: u64,
-    /// Σ of each active market's exact NAV at valuation (settled markets contribute 0).
-    active_market_nav: u64,
+    /// Σ of each counted market's live free cash at the flush (raw, unfloored).
+    /// Together with `total_liability` this exposes aggregate-underwater
+    /// conditions that a netted NAV would hide.
+    total_free_cash: u64,
+    /// Σ of each counted market's marked liability at the flush (raw, unfloored).
+    total_liability: u64,
+    /// Σ of each counted market's worst-case dollar drift accepted by this
+    /// flush — the budget headroom signal (compare against the configured
+    /// fraction of `pool_value`).
+    total_drift: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
     /// Idle DUSDC held by the pool at valuation time, before the drain.
@@ -425,12 +446,28 @@ public(package) fun emit_withdraw_filled(
     });
 }
 
+public(package) fun emit_nav_refreshed(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    liability: u64,
+    computed_at_ms: u64,
+) {
+    event::emit(NavRefreshed {
+        pool_vault_id,
+        expiry_market_id,
+        liability,
+        computed_at_ms,
+    });
+}
+
 public(package) fun emit_flush_executed(
     pool_vault_id: ID,
     epoch: u64,
     pool_value: u64,
     total_supply: u64,
-    active_market_nav: u64,
+    total_free_cash: u64,
+    total_liability: u64,
+    total_drift: u64,
     market_count: u64,
     idle_balance_before: u64,
     supplies_filled: u64,
@@ -443,7 +480,9 @@ public(package) fun emit_flush_executed(
         epoch,
         pool_value,
         total_supply,
-        active_market_nav,
+        total_free_cash,
+        total_liability,
+        total_drift,
         market_count,
         idle_balance_before,
         supplies_filled,

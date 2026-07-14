@@ -30,6 +30,7 @@ const EInvalidBackingBufferLambda: u64 = 19;
 const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
+const EInvalidNavMarkFreshnessMs: u64 = 23;
 
 // === Fees ===
 
@@ -357,5 +358,16 @@ public(package) fun assert_upper_benefit_power(value: u64) {
     assert!(
         value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
         EInvalidUpperBenefitPower,
+    );
+}
+
+public(package) macro fun default_nav_mark_freshness_ms(): u64 { 60_000 }
+public(package) macro fun min_nav_mark_freshness_ms(): u64 { 1_000 }
+public(package) macro fun max_nav_mark_freshness_ms(): u64 { 600_000 }
+
+public(package) fun assert_nav_mark_freshness_ms(value: u64) {
+    assert!(
+        value >= min_nav_mark_freshness_ms!() && value <= max_nav_mark_freshness_ms!(),
+        EInvalidNavMarkFreshnessMs,
     );
 }

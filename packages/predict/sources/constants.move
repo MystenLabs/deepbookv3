@@ -83,7 +83,10 @@ public(package) macro fun max_executable_plp_price(): u64 { 100_000_000 }
 public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
-public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
+/// Held below Sui's ~1,000 cached-object per-transaction wall (measured single-market
+/// crossing ~982 nodes, `predeploy/evidence/c1-object-cache-flush-2026-07-07.md`) so
+/// one market's refresh walk always fits its own transaction.
+public(package) macro fun max_payout_tree_nodes(): u64 { 950 }
 
 /// Maximum active leveraged orders one expiry market may carry into NAV.
 public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }

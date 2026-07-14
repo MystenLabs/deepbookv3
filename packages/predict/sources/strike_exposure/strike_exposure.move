@@ -112,6 +112,12 @@ public(package) fun range_probability(quote: &CloseQuote): u64 {
     quote.range_probability
 }
 
+/// Return the total face quantity of this book's live orders (O(1), from the
+/// payout tree's maintained aggregates). The drift dollarization multiplier.
+public(package) fun total_live_quantity(exposure: &StrikeExposure): u64 {
+    exposure.payout.total_quantity()
+}
+
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
 ///
 /// Live reserve is the settlement floor (max single-point net payout) plus a
@@ -131,8 +137,12 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// Value this book's exact live liability for one live price snapshot:
 /// `linear - correction`, where `linear = Σ_orders qty·P` is the full payout-tree
 /// walk and `correction = Σ_leveraged min(qty·P, floor_shares)` is the static-floor
-/// scan over the active leveraged set. The per-order floor cap makes a knocked-out
-/// leveraged order net to zero, so no liquidation pass is needed for an exact mark.
+/// scan over the active leveraged set. The per-order floor cap zeroes any order
+/// priced at or below its floor, so the walk needs no liquidation pass to stay
+/// exact — but note a liquidatable-yet-unliquidated order between `floor` and
+/// `floor / ltv` still carries `gross - floor` of value here (the P-10 band), and
+/// actually liquidating it removes that value (which is why liquidation writes its
+/// removal through to the stored valuation mark).
 /// `correction <= linear` for any mint-admitted book (each leveraged order's `min`
 /// is capped at its own linear contribution), so the saturating_sub floors only the
 /// bounded valuation ulp dust the linear walk can carry, rather than aborting. A
@@ -353,11 +363,7 @@ public(package) fun quote_mint_entry_probability(
 ///
 /// Already-liquidated and currently-liquidatable orders have zero holder value;
 /// otherwise this returns the order's current range value net of its static floor.
-public(package) fun order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     if (exposure.is_liquidated_order(order)) return 0;
 
     let gross_value = exposure.gross_order_value(pricer, order);
@@ -436,13 +442,17 @@ public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
-): bool {
-    if (!exposure.liquidation.contains_active_order(order)) return false;
+): Option<u64> {
+    if (!exposure.liquidation.contains_active_order(order)) return option::none();
     let liquidation_ltv = exposure.config.liquidation_ltv();
     exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
 }
 
-/// Run one bounded liquidation pass using exact per-candidate pricing.
+/// Run one bounded liquidation pass using exact per-candidate pricing. Returns
+/// the total live value the knocked-out orders carried at removal (each order's
+/// floor-capped `gross - floor`), so the caller can write the liability removal
+/// through to the market's stored valuation mark. Per-order details are on the
+/// `OrderLiquidated` events.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -452,15 +462,15 @@ public(package) fun liquidate_live_orders(
     if (candidates.is_empty()) return 0;
     let liquidation_ltv = exposure.config.liquidation_ltv();
 
-    let mut liquidated_count = 0;
+    let mut removed_live_value = 0;
     candidates.do!(|candidate| {
         let order = order::from_order_id(candidate);
-        let liquidated = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
-        if (liquidated) {
-            liquidated_count = liquidated_count + 1;
+        let removed = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
+        if (removed.is_some()) {
+            removed_live_value = removed_live_value + removed.destroy_some();
         };
     });
-    liquidated_count
+    removed_live_value
 }
 
 /// Cache terminal settled payout liability.
@@ -485,11 +495,7 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
-fun gross_order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricer.range_price(lower, higher);
     math::mul(range_probability, order.quantity())
@@ -505,13 +511,13 @@ fun liquidate_order_if_under_floor(
     pricer: &Pricer,
     order: &Order,
     liquidation_ltv: u64,
-): bool {
+): Option<u64> {
     let quantity = order.quantity();
     let floor_amount = order.floor_shares();
     let gross_value = exposure.gross_order_value(pricer, order);
     let liquidation_threshold = math::div(floor_amount, liquidation_ltv);
     let can_liquidate = gross_value <= liquidation_threshold;
-    if (!can_liquidate) return false;
+    if (!can_liquidate) return option::none();
 
     exposure.liquidation.mark_liquidated(order);
     exposure
@@ -532,7 +538,11 @@ fun liquidate_order_if_under_floor(
         liquidation_ltv,
     );
 
-    true
+    // The knocked-out order's live value under the floor cap: an order between
+    // its floor and floor/ltv still carries `gross - floor`; one at or below the
+    // floor carries zero. Returned so the caller can write the removal through
+    // to the market's stored valuation mark.
+    option::some(gross_value.saturating_sub(floor_amount))
 }
 
 /// Decode an order into `(lower, higher)` raw strike boundaries for pricing and
