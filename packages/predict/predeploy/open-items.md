@@ -328,8 +328,6 @@ hygiene-speed changes.
 - `mint_exact_amount` prices and admission-validates the same range twice per
   call — verify the second validation is not a distinct fact, then dedupe.
   (audit fb3ec8)
-- Four cascading asserts under one `ENetPremiumBudgetTooHigh` exist only to
-  pre-empt +1 overflow — verify and collapse. (audit a68338)
 - `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
   returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
 - `mint_exact_amount` disables BOTH slippage guards (`max_cost` and

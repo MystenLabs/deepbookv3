@@ -33,9 +33,6 @@ const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
 const LEVERAGE_BELOW_ONE_X: u64 = 999_999_999;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
-const LEVERAGE_THREE_X: u64 = 3_000_000_000;
-/// Smallest 3x net-premium budget where `(budget + 1) * leverage` exceeds u64.
-const THREE_X_FIRST_OVERFLOW_NET_PREMIUM: u64 = 6_148_914_691;
 const HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM: u64 = 200_000_000;
 const HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES: u64 = 300_000_000;
 const UNLEVERAGED_FLOOR_SHARES: u64 = 0;
@@ -219,26 +216,6 @@ fun max_quantity_for_net_premium_zero_guards() {
         ),
         0,
     );
-}
-
-#[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBudgetTooHigh)]
-fun max_quantity_for_net_premium_max_budget_aborts() {
-    strike_exposure_config::max_quantity_for_net_premium(
-        float!(),
-        std::u64::max_value!(),
-        test_constants::leverage_one_x(),
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBudgetTooHigh)]
-fun max_quantity_for_net_premium_budget_leverage_product_overflow_aborts() {
-    strike_exposure_config::max_quantity_for_net_premium(
-        float!(),
-        THREE_X_FIRST_OVERFLOW_NET_PREMIUM,
-        LEVERAGE_THREE_X,
-    );
-    abort 999
 }
 
 // === EEntryProbabilityOutOfBounds (mint admission) ===

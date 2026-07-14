@@ -19,7 +19,6 @@ const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
 const ELeverageAboveAdmissionCap: u64 = 6;
-const ENetPremiumBudgetTooHigh: u64 = 7;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -169,20 +168,31 @@ public(package) fun floor_shares(admission: &MintAdmission): u64 {
 }
 
 /// Return the largest raw quantity whose derived net premium is at most `net_premium`.
+/// Saturates to `u64::MAX` when the budget admits more quantity than u64 can
+/// represent; the mint flow clamps the result to `order::max_quantity_lots` (RP-13).
 public(package) fun max_quantity_for_net_premium(
     entry_probability: u64,
     net_premium: u64,
     leverage: u64,
 ): u64 {
     if (entry_probability == 0 || net_premium == 0) return 0;
+    if (net_premium == std::u64::max_value!()) return std::u64::max_value!();
 
     let scaling = math::float_scaling!();
-    assert!(net_premium < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
-    assert!(net_premium + 1 <= std::u64::max_value!() / leverage, ENetPremiumBudgetTooHigh);
-    let max_entry_value = ((net_premium + 1) * leverage - 1) / scaling;
-    assert!(max_entry_value < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
-    assert!(max_entry_value + 1 <= std::u64::max_value!() / scaling, ENetPremiumBudgetTooHigh);
-    ((max_entry_value + 1) * scaling - 1) / entry_probability
+    // Largest entry value whose derived net premium stays <= net_premium is
+    // ceil((net_premium + 1) * leverage / scaling) - 1; carry the +1 form so the
+    // quantity step below can reuse it directly.
+    let max_entry_value_plus_one = math::try_mul_div_up(net_premium + 1, leverage, scaling);
+    if (max_entry_value_plus_one.is_none()) return std::u64::max_value!();
+    // Same inverse one level down: largest quantity whose entry value stays
+    // <= max_entry_value is ceil((max_entry_value + 1) * scaling / entry_probability) - 1.
+    let quantity_plus_one = math::try_mul_div_up(
+        max_entry_value_plus_one.destroy_some(),
+        scaling,
+        entry_probability,
+    );
+    if (quantity_plus_one.is_none()) return std::u64::max_value!();
+    quantity_plus_one.destroy_some() - 1
 }
 
 public(package) fun new(): StrikeExposureConfig {

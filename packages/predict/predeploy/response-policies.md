@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-08. This is the tracked register of **settled response-policy
+Updated 2026-07-14. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -423,6 +423,44 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `withdraw_limit_expires_after_three_misses`.
 - **Reopen when:** flush cadence changes materially, the retry count becomes
   user-configurable, or LP request limits become mutable in-place.
+
+---
+
+## RP-13: Oversized mint budgets saturate the quantity inverse (`ENetPremiumBudgetTooHigh` removed; resolves DBU-566)
+
+- **Trigger state:** a `mint_exact_amount` net-premium budget large enough that
+  the exact inverse quantity (or, formerly, a u64 intermediate of the inverse
+  computation) exceeds u64.
+- **Controller:** user — the budget is a caller-chosen primitive on a
+  single-user action.
+- **Blast radius:** the single mint transaction; no shared or mandatory path.
+- **Response:** proceed — `max_quantity_for_net_premium` computes the inverse in
+  u128 (`try_mul_div_up`) and saturates to `u64::MAX` when the exact result does
+  not fit; the caller's `order::max_quantity_lots` clamp then applies. The
+  former u64-native guard aborted at ordinary budgets (~$18,446 at 1x, ~$6,148
+  at 3x, ~$1,844 at 10x leverage in 6-decimal dUSDC) — an intermediate-width
+  artifact, not a product bound.
+- **Reasoning / duty inventory:** the audit had tracked these asserts as the
+  "four cascading asserts" bullet under the H-5 batch (removed from that batch
+  with this entry) without spotting the reachable ceiling. The four removed
+  `ENetPremiumBudgetTooHigh`
+  asserts bounded only the intermediate u64 products of the hand-rolled inverse;
+  the u128 interior of `try_mul_div_up` absorbs that duty entirely. No
+  downstream consumer read the abort: the caller lot-clamps the returned
+  quantity, and mint admission independently re-validates entry probability,
+  leverage, and minimum net premium on the actual mint.
+- **Risk profile:** exact by construction — the two `try_mul_div_up` steps are
+  the identity `((a + 1) * b - 1) / c = ceil((a + 1) * b / c) - 1`, and
+  saturation is reachable only for budgets whose exact answer exceeds any
+  representable order size.
+- **Pinning tests:** `strike_exposure_config_tests.move` —
+  `max_quantity_for_net_premium_exact_lot_boundary`,
+  `max_quantity_for_net_premium_one_x_unit_neighbors`,
+  `max_quantity_for_net_premium_two_x_unit_boundary` (exact inverse boundaries
+  unchanged). Saturation boundary: untested — gap; boundary tests at the former
+  abort inputs land with DBU-566's test follow-up.
+- **Reopen when:** a product-level maximum mint budget is introduced — that
+  bound belongs in mint admission, not in the inverse arithmetic.
 
 ---
 

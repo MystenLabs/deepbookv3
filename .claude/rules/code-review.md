@@ -23,6 +23,7 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - Two rule-corpus checks need diff-level evidence, not just code shape: a removed or weakened guard must carry its duty inventory and `packages/predict/predeploy/response-policies.md` entry IN THE DIFF (precedent: the P-1 circuit-breaker removal `cc67ed9f`), and a new abort over a market-controlled variable in a shared/mandatory path is an undecided response policy unless registered there.
 - Doc claims about failure behavior (`docs/risks.md`, module docs) must match code at HEAD. A doc describing intended-but-unimplemented behavior as shipped is a finding (precedent: risks.md claimed the LP drain refunds degenerate requests while the code hard-aborted, C-4).
 - When the diff touches `packages/predict/predeploy/`, Predict guards, or tests named in the register, run `python3 packages/predict/predeploy/check.py` — it verifies register pinning tests exist, tracker cross-references resolve, MEASURED claims link evidence, and named paths are live. A FATAL is a review finding.
+- When the diff makes a convention-level choice — scaling or rounding, clamp-vs-abort, event shape, visibility, timestamp source, naming, storage shape — that no rule in the corpus pins, say so in the review output and prompt the author: add the rule in the same change (naming the failure it prevents) or state why the choice is a one-off.
 
 ## Comments and Documentation
 
