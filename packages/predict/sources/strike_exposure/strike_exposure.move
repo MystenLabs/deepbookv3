@@ -112,6 +112,12 @@ public(package) fun range_probability(quote: &CloseQuote): u64 {
     quote.range_probability
 }
 
+/// Return the total face quantity of this book's live orders (O(1), from the
+/// payout tree's maintained aggregates). The drift dollarization multiplier.
+public(package) fun total_live_quantity(exposure: &StrikeExposure): u64 {
+    exposure.payout.total_quantity()
+}
+
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
 ///
 /// Live reserve is the settlement floor (max single-point net payout) plus a

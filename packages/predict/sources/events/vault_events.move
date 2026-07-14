@@ -184,6 +184,10 @@ public struct FlushExecuted has copy, drop, store {
     total_free_cash: u64,
     /// Σ of each counted market's marked liability at the flush (raw, unfloored).
     total_liability: u64,
+    /// Σ of each counted market's worst-case dollar drift accepted by this
+    /// flush — the budget headroom signal (compare against the configured
+    /// fraction of `pool_value`).
+    total_drift: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
     /// Idle DUSDC held by the pool at valuation time, before the drain.
@@ -463,6 +467,7 @@ public(package) fun emit_flush_executed(
     total_supply: u64,
     total_free_cash: u64,
     total_liability: u64,
+    total_drift: u64,
     market_count: u64,
     idle_balance_before: u64,
     supplies_filled: u64,
@@ -477,6 +482,7 @@ public(package) fun emit_flush_executed(
         total_supply,
         total_free_cash,
         total_liability,
+        total_drift,
         market_count,
         idle_balance_before,
         supplies_filled,

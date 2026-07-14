@@ -14,12 +14,13 @@ use deepbook_predict::config_constants;
 public struct ValuationConfig has store {
     /// Hard ceiling on stored-mark age in milliseconds, regardless of oracle drift.
     nav_mark_freshness_ms: u64,
-    /// Acceptance threshold for aggregate mark drift at the flush, in
-    /// FLOAT_SCALING. Intended interpretation: the counted marks' combined
-    /// measured dollar drift may not exceed this fraction of pool NAV, putting
-    /// the bound directly in PLP-price units
-    /// (`plp::assert_aggregate_drift_acceptable`). PLACEHOLDER semantics while
-    /// the drift model (`valuation_mark::drift`) is stubbed.
+    /// The flush's aggregate drift budget, in FLOAT_SCALING: the counted
+    /// marks' combined worst-case dollar drift may not exceed this fraction of
+    /// pool NAV (`plp::assert_aggregate_drift_acceptable`), so the PLP price
+    /// the queues fill at is guaranteed within this bound of the
+    /// fresh-recalculation price (plus the envelope's documented residuals).
+    /// The current default predates the aggregate semantics and is re-derived
+    /// by the envelope-validation measurements before deploy.
     nav_mark_drift_epsilon: u64,
 }
 

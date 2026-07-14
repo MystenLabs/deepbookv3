@@ -54,6 +54,7 @@ const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
 const EValuationMarkStale: u64 = 10;
+const EAggregateDriftExceeded: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -97,7 +98,7 @@ public struct PoolValuation {
     total_free_cash: u64,
     /// Running Σ of each counted market's marked liability.
     total_liability: u64,
-    /// Running Σ of each counted market's measured oracle drift, in DUSDC —
+    /// Running Σ of each counted market's measured worst-case drift, in DUSDC —
     /// the dollar amount pool NAV could be off by from marks aging against
     /// moving feeds. Judged in aggregate at `finish_flush`, where the PLP-price
     /// error it implies has its denominator.
@@ -363,7 +364,11 @@ public fun finish_flush(
         total_free_cash,
         total_liability,
     );
-    assert_aggregate_drift_acceptable(total_drift, pool_nav);
+    assert_aggregate_drift_acceptable(
+        total_drift,
+        config.valuation_config().nav_mark_drift_epsilon(),
+        pool_nav,
+    );
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
@@ -389,6 +394,7 @@ public fun finish_flush(
         total_supply,
         total_free_cash,
         total_liability,
+        total_drift,
         market_count,
         idle_balance_before,
         drain_summary.supplies_filled(),
@@ -1021,15 +1027,19 @@ fun materialize_expiry_profit(
     );
 }
 
-/// The pool-level drift acceptance: the flush must reject itself when the
-/// counted marks' combined measured drift could move the PLP price by more
-/// than an acceptable bound — shape: `total_drift <= threshold * pool_nav`,
-/// putting the guarantee directly in PLP-price units (the per-market
-/// measurements have no denominator to judge against).
+/// The pool-level drift acceptance: the flush rejects itself when the counted
+/// marks' combined worst-case dollar drift could move the PLP price by more
+/// than the configured fraction of pool NAV — the guarantee lives directly in
+/// PLP-price units, which no per-market check can express (the per-contract to
+/// PLP translation floats with book size over pool equity). On rejection the
+/// operator re-refreshes the largest-drift markets and retries.
 ///
-/// PLACEHOLDER: accepts everything until the drift model
-/// (`valuation_mark::drift`) and the threshold interpretation land.
-fun assert_aggregate_drift_acceptable(_total_drift: u64, _pool_nav: u64) {}
+/// Open edge (deliberate, undecided): at `pool_nav == 0` the budget is zero,
+/// so any nonzero measured drift blocks the flush even though a zero mark only
+/// refunds queue heads rather than pricing fills.
+fun assert_aggregate_drift_acceptable(total_drift: u64, drift_budget: u64, pool_nav: u64) {
+    assert!(total_drift <= math::mul(drift_budget, pool_nav), EAggregateDriftExceeded);
+}
 
 /// Abort unless this valuation belongs to `vault`.
 fun assert_pool_vault(valuation: &PoolValuation, vault: &PoolVault) {

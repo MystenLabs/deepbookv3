@@ -756,14 +756,20 @@ public(package) fun mark_computed_at_ms(market: &ExpiryMarket): u64 {
 }
 
 /// Measure the stored mark's potential oracle drift against the live inputs in
-/// `pricer`: the worst-case single-contract price move since the walk, as a
-/// fraction of full payout in FLOAT_SCALING (`valuation_mark::drift`). A
-/// measurement, not a judgment — dollarization by this market's open interest
-/// and the aggregate enforcement land with the `plp` aggregation fill-in.
+/// `pricer`, in DUSDC base units: the worst-case single-contract price move
+/// since the walk (`valuation_mark::drift`, a fraction of full payout) times
+/// the book's live face quantity — per-order value is quantity-Lipschitz in
+/// price, so this bounds how far this market's NAV can have drifted. The
+/// quantity is read live, so orders minted after the walk (whose write-through
+/// deltas also sit on drifting prices) are covered. A measurement, not a
+/// judgment — `plp` aggregates across markets and enforces the budget.
 public(package) fun mark_drift(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
-    market.valuation_mark.borrow().drift(pricer)
+    math::mul(
+        market.strike_exposure.total_live_quantity(),
+        market.valuation_mark.borrow().drift(pricer),
+    )
 }
 
 /// Recompute this market's exact per-order live liability and store it as the
