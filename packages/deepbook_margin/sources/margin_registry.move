@@ -263,6 +263,20 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     let pool_id = pool.id();
     assert!(!inner.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
 
+    // A fresh pool runs at `default_price_tolerance()` until `set_price_tolerance`
+    // overrides it, so its liquidation buffer must cover that default: a single
+    // self-fill overpays by up to the tolerance, and `buffer >= tolerance` keeps a
+    // danger-band position off bad debt. This is gated here (admission), NOT in the
+    // `new_pool_config` builder — `set_price_tolerance` / `update_risk_params` re-check
+    // against the pool's *actual* tolerance, so a higher-leverage pool (liquidation
+    // below `1 + default_tolerance`) is reachable by tightening the tolerance first and
+    // then lowering liquidation via `update_risk_params`.
+    assert!(
+        margin_constants::default_price_tolerance() + constants::float_scaling()
+            <= pool_config.risk_ratios.liquidation_risk_ratio,
+        EPriceToleranceExceedsLiquidationBuffer,
+    );
+
     inner.pool_registry.add(pool_id, pool_config);
 
     event::emit(DeepbookPoolRegistered {
@@ -643,17 +657,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         target_liquidation_risk_ratio >
         constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward,
         EInvalidRiskParam,
-    );
-
-    // Liquidation buffer must cover the price tolerance so a single self-fill (which
-    // overpays by up to the tolerance) can't drive a danger-band position to bad debt:
-    // `price_tolerance + 1.0 <= liquidation_risk_ratio` (buffer >= tolerance). A fresh
-    // pool uses `default_price_tolerance()` until `set_price_tolerance` overrides it, so
-    // gate on that here (`set_price_tolerance`/`update_risk_params` re-check the pair).
-    assert!(
-        margin_constants::default_price_tolerance() + constants::float_scaling()
-            <= liquidation_risk_ratio,
-        EPriceToleranceExceedsLiquidationBuffer,
     );
 
     PoolConfig {

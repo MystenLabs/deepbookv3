@@ -4827,6 +4827,98 @@ fun update_risk_params_shrinking_buffer_below_tolerance_aborts() {
     abort 0
 }
 
+#[test, expected_failure(abort_code = margin_registry::EPriceToleranceExceedsLiquidationBuffer)]
+// A fresh pool runs at the default 5% tolerance until overridden, so registering a
+// config whose liquidation buffer is below 5% (20x -> buffer ~2.6%) is rejected at
+// admission (register_deepbook_pool) — NOT at new_pool_config construction, which now
+// builds high-leverage configs freely.
+fun register_high_leverage_pool_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // new_pool_config_with_leverage(20x) now *builds* fine (buffer check moved off the
+    // builder); registration against the default 5% tolerance rejects it.
+    let config = registry.new_pool_config_with_leverage<USDC, USDT>(20_000_000_000);
+    registry.register_deepbook_pool<USDC, USDT>(&admin_cap, &pool, config, &clock);
+
+    abort 0
+}
+
+#[test]
+// A 20x pool (liquidation ~1.0263, buffer ~2.6% < the default 5% tolerance) IS
+// reachable by first tightening the pool's price tolerance, then lowering liquidation
+// via update_risk_params — because the buffer check re-runs against the pool's
+// *actual* tolerance (1%), not the default. Pins the reviewer's reconfigure path and
+// that MAX_LEVERAGE (20x) is genuinely reachable.
+fun high_leverage_pool_reachable_via_tighter_tolerance() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let _base_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let _quote_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let (pool_id, _registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    initialize_pool_price<USDC, USDT>(pool_id, &mut registry, &clock, &mut scenario);
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Tighten tolerance to the 1% minimum (1% + 1 = 1.01 <= the 1.10 buffer, ok).
+    registry.set_price_tolerance<USDC, USDT>(&admin_cap, &pool, 10_000_000, &clock);
+
+    // Now lower liquidation to a 20x config (~1.0263). update_risk_params checks the
+    // *actual* 1% tolerance (1% + 1 = 1.01 <= 1.0263 -> ok) — this would fail against
+    // the default 5%, which is exactly the reviewer's blocked case, now unblocked.
+    let config = registry.new_pool_config_with_leverage<USDC, USDT>(20_000_000_000);
+    registry.update_risk_params<USDC, USDT>(&admin_cap, &pool, config, &clock);
+
+    // 20x liquidation (hand-derived): factor = 1e9/19 = 52_631_578 (trunc);
+    // liquidation = 1e9 + factor/2 = 1e9 + 26_315_789 = 1_026_315_789 — below 1.05, the
+    // default-tolerance floor, so the reconfigure genuinely produced a >11x pool.
+    assert_eq!(registry.liquidation_risk_ratio(pool.id()), 1_026_315_789);
+
+    return_shared_2!(registry, pool);
+    destroy(admin_cap);
+    destroy(maintainer_cap);
+    destroy(clock);
+    scenario.end();
+}
+
 #[test]
 fun test_set_tolerance_within_bounds_ok() {
     // Test that setting tolerance within 1%-50% is allowed

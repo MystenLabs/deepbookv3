@@ -485,30 +485,6 @@ fun test_new_pool_config_with_leverage_too_high() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_registry::EPriceToleranceExceedsLiquidationBuffer)]
-// Leverage high enough that the liquidation buffer falls below the default 5% price
-// tolerance is rejected at construction: at 15x the buffer is ~3.6% < 5%, so a single
-// self-fill could drive a danger-band short to bad debt.
-fun test_new_pool_config_leverage_buffer_below_tolerance() {
-    let (
-        mut scenario,
-        clock,
-        admin_cap,
-        maintainer_cap,
-        _usdc_pool_id,
-        _usdt_pool_id,
-    ) = setup_test_with_margin_pools();
-
-    scenario.next_tx(test_constants::admin());
-    let registry = scenario.take_shared<MarginRegistry>();
-
-    // 15x -> liquidation ~1.0357 (buffer ~3.6%) < default 5% tolerance.
-    let pool_config = registry.new_pool_config_with_leverage<USDC, USDT>(15_000_000_000);
-
-    destroy(pool_config);
-    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
-}
-
 #[test, expected_failure(abort_code = pyth::pyth::E_STALE_PRICE_UPDATE)]
 fun test_oracle_max_age_exceeded() {
     let (
