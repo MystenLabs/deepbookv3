@@ -38,6 +38,13 @@ public struct Ledger has store {
     /// physically moved to the reserve because idle was deployed in other active
     /// markets at materialization. Excluded from LP value until drained.
     pending_protocol_profit: u64,
+    /// Bumped on every cash movement through this ledger. The flush snapshots
+    /// it at start and asserts it unchanged at finish, so no vault-cash
+    /// operation can be composed between collection and pricing inside the
+    /// flush PTB to desynchronize the collected atoms from live idle (the one
+    /// duty the removed pool-wide valuation lock covered that stored marks do
+    /// not).
+    revision: u64,
 }
 
 /// Active valuation entry with the expiry timestamp needed to classify live NAV cost.
@@ -73,7 +80,12 @@ public(package) fun new(ctx: &mut TxContext): Ledger {
         profit_basis_credits: 0,
         net_losses_to_fill: 0,
         pending_protocol_profit: 0,
+        revision: 0,
     }
+}
+
+public(package) fun revision(ledger: &Ledger): u64 {
+    ledger.revision
 }
 
 public(package) fun idle_balance(ledger: &Ledger): u64 {
@@ -166,11 +178,13 @@ public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_mar
 
 /// Join idle DUSDC; the LP-supply flush drains filled supply requests here.
 public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<DUSDC>) {
+    ledger.revision = ledger.revision + 1;
     ledger.idle_balance.join(cash);
 }
 
 /// Split idle DUSDC.
 public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<DUSDC> {
+    ledger.revision = ledger.revision + 1;
     ledger.idle_balance.split(amount)
 }
 
@@ -182,6 +196,7 @@ public(package) fun send_expiry_cash(
     amount: u64,
 ): Balance<DUSDC> {
     if (amount == 0) return balance::zero();
+    ledger.revision = ledger.revision + 1;
     ledger.record_sent_to_expiry(expiry_market_id, amount);
     ledger.idle_balance.split(amount)
 }
@@ -214,6 +229,7 @@ public(package) fun receive_expiry_cash(
         cash.destroy_zero();
         return 0
     };
+    ledger.revision = ledger.revision + 1;
     ledger.idle_balance.join(cash);
     ledger.record_received_from_expiry(expiry_market_id, amount);
     amount
@@ -258,6 +274,7 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
 /// temporarily deployed in other active markets; the uncovered remainder stays in
 /// `pending_protocol_profit` and is realized on a later sweep that refills idle.
 public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balance<DUSDC> {
+    ledger.revision = ledger.revision + 1;
     let draw = ledger.pending_protocol_profit.min(ledger.idle_balance.value());
     ledger.pending_protocol_profit = ledger.pending_protocol_profit - draw;
     ledger.idle_balance.split(draw)
