@@ -541,6 +541,8 @@ fun liquidate_order_if_under_floor(
         floor_amount,
         liquidation_ltv,
         liquidated_at_ms,
+        pricer.pyth_spot_update_timestamp_ms(),
+        pricer.pyth_spot_source_timestamp_ms(),
     );
 
     true

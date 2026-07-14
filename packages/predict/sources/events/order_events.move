@@ -73,6 +73,10 @@ public struct LiveOrderRedeemed has copy, drop, store {
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
     redeemed_at_ms: u64,
+    /// Pyth spot provenance carried by the `Pricer` used for this redemption.
+    /// Both are `0` when pricing used the Block Scholes forward fallback.
+    pyth_spot_update_timestamp_ms: u64,
+    pyth_spot_source_timestamp_ms: u64,
 }
 
 /// Emitted when a settled position is redeemed for terminal payout.
@@ -116,6 +120,10 @@ public struct OrderLiquidated has copy, drop, store {
     /// 1e9-scaled floor-to-live-value threshold used for this expiry.
     liquidation_ltv: u64,
     liquidated_at_ms: u64,
+    /// Pyth spot provenance carried by the `Pricer` used for this liquidation.
+    /// Both are `0` when pricing used the Block Scholes forward fallback.
+    pyth_spot_update_timestamp_ms: u64,
+    pyth_spot_source_timestamp_ms: u64,
 }
 
 // === Public-Package Functions ===
@@ -174,6 +182,8 @@ public(package) fun emit_live_order_redeemed(
     builder_fee: u64,
     penalty_fee: u64,
     redeemed_at_ms: u64,
+    pyth_spot_update_timestamp_ms: u64,
+    pyth_spot_source_timestamp_ms: u64,
 ) {
     event::emit(LiveOrderRedeemed {
         expiry_market_id,
@@ -190,6 +200,8 @@ public(package) fun emit_live_order_redeemed(
         penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         redeemed_at_ms,
+        pyth_spot_update_timestamp_ms,
+        pyth_spot_source_timestamp_ms,
     });
 }
 
@@ -243,6 +255,8 @@ public(package) fun emit_order_liquidated(
     floor_amount: u64,
     liquidation_ltv: u64,
     liquidated_at_ms: u64,
+    pyth_spot_update_timestamp_ms: u64,
+    pyth_spot_source_timestamp_ms: u64,
 ) {
     event::emit(OrderLiquidated {
         expiry_market_id,
@@ -252,5 +266,7 @@ public(package) fun emit_order_liquidated(
         floor_amount,
         liquidation_ltv,
         liquidated_at_ms,
+        pyth_spot_update_timestamp_ms,
+        pyth_spot_source_timestamp_ms,
     });
 }

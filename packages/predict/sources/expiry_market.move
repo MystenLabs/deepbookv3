@@ -1169,6 +1169,8 @@ fun redeem_live_internal(
         builder_fee_amount,
         penalty_amount,
         clock.timestamp_ms(),
+        pricer.pyth_spot_update_timestamp_ms(),
+        pricer.pyth_spot_source_timestamp_ms(),
     );
     replacement_order_id
 }
