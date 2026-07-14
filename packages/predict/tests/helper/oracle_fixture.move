@@ -495,6 +495,68 @@ public fun set_bs_forward_for_testing_bundle(
     self.set_bs_forward_for_testing(&mut oracle.bs, source_timestamp_ms, forward);
 }
 
+/// Overwrite only the BS SVI row for this fixture's expiry through the real
+/// ingest path. Lets a test seed a SECOND surface snapshot: the oracle lane
+/// keeps the newest source timestamp, so re-seeding requires advancing it.
+public fun set_bs_svi_for_testing(
+    self: &mut OracleFixture,
+    bs: &mut BlockScholesFeed,
+    source_timestamp_ms: u64,
+    svi_a: u64,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    let bs_source_id = bs.svi().bs_source_id();
+    bs
+        .svi_mut()
+        .update(
+            update::new_svi_update(
+                bs_source_id,
+                self.expiry,
+                source_timestamp_ms,
+                svi_a,
+                svi_b,
+                svi_sigma,
+                svi_rho_magnitude,
+                svi_rho_is_negative,
+                svi_m_magnitude,
+                svi_m_is_negative,
+            ),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Overwrite only the BS SVI row through an oracle bundle.
+public fun set_bs_svi_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    svi_a: u64,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    self.set_bs_svi_for_testing(
+        &mut oracle.bs,
+        source_timestamp_ms,
+        svi_a,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
+}
+
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
 /// the fixture clock as the on-chain landing timestamp.
 public fun set_pyth(
