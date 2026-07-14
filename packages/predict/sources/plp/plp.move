@@ -27,18 +27,13 @@ use deepbook_predict::{
     market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
     predict_account,
+    pricing::Pricer,
     protocol_config::ProtocolConfig,
     vault_events
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
-use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::{
     accumulator::AccumulatorRoot,
     balance::{Self, Balance},
@@ -207,14 +202,18 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Refresh one market's stored valuation mark as a market deployer, using a
-/// registry-generated `MarketLifecycleProof`. A settled market is swept
-/// (deactivated, cash returned, profit materialized — it leaves the active set
-/// and needs no mark); a live market is rebalanced to target, its exact per-order
-/// liability recomputed at the live oracle, and the mark stored for
-/// `collect_expiry_nav` to read. Several markets may be refreshed in one PTB
-/// subject to the per-transaction object budget (each refresh walks its market's
-/// payout tree).
+/// Refresh one live market's stored valuation mark as a market deployer, using a
+/// registry-generated `MarketLifecycleProof` and a `Pricer` loaded in this
+/// transaction (`expiry_market::load_live_pricer`, like every priced flow). The
+/// market is rebalanced to target, its exact per-order liability recomputed at
+/// the pricer's oracle inputs, and the mark stored for `collect_expiry_nav` to
+/// read. Several markets may be refreshed in one PTB subject to the
+/// per-transaction object budget (each refresh walks its market's payout tree).
+///
+/// Live-markets-only by construction: a `Pricer` cannot outlive its transaction
+/// and `load_live_pricer` rejects past-expiry markets, so holding one proves the
+/// market is pre-expiry here — no settle branch needed. Terminal markets are
+/// settled and swept out of the active set by `rebalance_expiry_cash`.
 ///
 /// PRIVILEGED like the flush start (audit L8): the mark's refresh instant prices
 /// the pool NAV the queues later drain at, and Pyth updates are permissionless —
@@ -224,30 +223,15 @@ public fun refresh_expiry_nav(
     market: &mut ExpiryMarket,
     lifecycle_proof: MarketLifecycleProof,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    pricer: &Pricer,
     clock: &Clock,
 ) {
     config.assert_version();
     lifecycle_proof.destroy_proof();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    if (vault.settle_or_rebalance_expiry(market, config, propbook_registry, pyth, clock)) {
-        return
-    };
-    let pricer = market.load_live_pricer(
-        config,
-        propbook_registry,
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        clock,
-    );
-    let liability = market.record_valuation_mark(&pricer, clock);
+    vault.rebalance_live_expiry(market, expiry_market_id);
+    let liability = market.record_valuation_mark(pricer, clock);
     vault_events::emit_nav_refreshed(
         vault.id(),
         expiry_market_id,
@@ -287,43 +271,31 @@ public fun start_pool_valuation(
     }
 }
 
-/// Fold one snapshotted market's stored valuation mark into the running pool NAV.
-/// The market must be in the snapshot and not already counted (the exactly-once
-/// proof), and is a READ-ONLY input: no cash moves, no settlement, no tree walk —
-/// the mark must exist, be within the freshness ceiling, and its oracle anchors
-/// must be within the drift tolerance of the live feeds
+/// Fold one snapshotted market's stored valuation mark into the running pool NAV,
+/// using a `Pricer` loaded in this transaction (its live oracle inputs are what
+/// the drift guard compares the mark's anchors against). The market must be in
+/// the snapshot and not already counted (the exactly-once proof), and is a
+/// READ-ONLY input: no cash moves, no settlement, no tree walk — the mark must
+/// exist, be within the freshness ceiling, and within the drift tolerance
 /// (`expiry_market::read_flushable_nav`), else this aborts and the operator
 /// re-refreshes the market and retries the flush.
 ///
-/// A settled or past-expiry market cannot produce the fresh pricer this read
-/// requires (`load_live_pricer` rejects past-expiry): sweep it via
-/// `refresh_expiry_nav` or `rebalance_expiry_cash` so it leaves the active set,
-/// then start a new flush. There is still no solvency-safe substitute mark for an
-/// unsettled expired market; the abort clears once anyone lands the exact spot.
+/// A settled or past-expiry market cannot produce the pricer this read requires
+/// (`load_live_pricer` rejects past-expiry): sweep it via `rebalance_expiry_cash`
+/// so it leaves the active set, then start a new flush. There is still no
+/// solvency-safe substitute mark for an unsettled expired market; the abort
+/// clears once anyone lands the exact spot.
 public fun collect_expiry_nav(
     valuation: &mut PoolValuation,
     market: &ExpiryMarket,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    pricer: &Pricer,
     clock: &Clock,
 ) {
     config.assert_version();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    let pricer = market.load_live_pricer(
-        config,
-        propbook_registry,
-        pyth,
-        bs_spot,
-        bs_forward,
-        bs_svi,
-        clock,
-    );
-    let nav = market.read_flushable_nav(config.valuation_config(), &pricer, clock);
+    let nav = market.read_flushable_nav(config.valuation_config(), pricer, clock);
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;
 }
