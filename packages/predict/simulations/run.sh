@@ -772,7 +772,7 @@ python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
 
 echo ""
 echo "==> Checking localnet/Python parity..."
-if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); sys.exit(0 if a==b else 1)' \
+if python3 compare_parity.py \
      "$INSTANCE_DIR/artifacts/local_data.json" "$INSTANCE_DIR/artifacts/python_data.json"; then
   LONG_SCENARIO="$SCRIPT_DIR/data/generated/long_scenario.csv"
   PYTHON_LONG_DATA="$INSTANCE_DIR/artifacts/python_long_data.json"

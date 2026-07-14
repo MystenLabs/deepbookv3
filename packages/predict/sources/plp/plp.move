@@ -334,6 +334,7 @@ public fun finish_flush(
             withdraw_budget,
             ctx,
         );
+    let total_supply_after = vault.lp.total_supply();
     config.end_valuation();
     vault_events::emit_flush_executed(
         vault_id,
@@ -347,6 +348,7 @@ public fun finish_flush(
         drain_summary.withdrawals_filled(),
         drain_summary.requests_processed(),
         vault.expiry_accounting.idle_balance(),
+        total_supply_after,
     );
     pool_nav
 }
@@ -568,6 +570,7 @@ public fun request_supply(
         index,
         amount,
         min_plp_out,
+        vault.lp.supply_requests_pending(),
     );
     index
 }
@@ -606,6 +609,7 @@ public fun request_withdraw(
         index,
         amount,
         min_dusdc_out,
+        vault.lp.withdraw_requests_pending(),
     );
     index
 }
@@ -638,6 +642,7 @@ public fun cancel_supply_request(
         amount,
         true,
         constants::request_cancel_reason_user!(),
+        vault.lp.supply_requests_pending(),
     );
 }
 
@@ -669,6 +674,7 @@ public fun cancel_withdraw_request(
         amount,
         false,
         constants::request_cancel_reason_user!(),
+        vault.lp.withdraw_requests_pending(),
     );
 }
 
@@ -715,7 +721,15 @@ fun claim_trading_loss_rebate_internal(
     assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
     let settlement_price = market.settlement_price();
     let account_id = account.account_id();
-    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(account, config, ctx);
+    let summary = predict_account::resolve_expiry_summary(account, expiry_market_id);
+    let trading_fees_paid = summary.fees_paid();
+    let gross_profit = summary.gross_profit();
+    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(
+        account,
+        &summary,
+        config,
+        ctx,
+    );
     let residual_returned = residual_cash.value();
     let returned_cash_amount = vault
         .expiry_accounting
@@ -735,6 +749,8 @@ fun claim_trading_loss_rebate_internal(
         account_id,
         rebate_amount,
         residual_returned,
+        trading_fees_paid,
+        gross_profit,
     );
 }
 

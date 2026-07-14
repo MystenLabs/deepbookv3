@@ -237,6 +237,7 @@ fun drain_supply_queue<LP>(
                 request,
                 escrowed,
                 constants::request_cancel_reason_non_executable!(),
+                book.supply_queue.pending,
             );
         } else {
             let shares = shares.destroy_some();
@@ -247,6 +248,7 @@ fun drain_supply_queue<LP>(
                     request,
                     escrowed,
                     constants::request_cancel_reason_non_executable!(),
+                    book.supply_queue.pending,
                 );
             } else if (shares < request.min_output) {
                 let missed_flushes = book.supply_queue.record_front_limit_miss();
@@ -257,6 +259,7 @@ fun drain_supply_queue<LP>(
                         request,
                         escrowed,
                         constants::request_cancel_reason_limit_expired!(),
+                        book.supply_queue.pending,
                     );
                 } else {
                     emit_request_limit_missed(
@@ -281,6 +284,7 @@ fun drain_supply_queue<LP>(
                     request.index,
                     request.amount,
                     shares,
+                    book.supply_queue.pending,
                 );
                 filled = filled + 1;
             };
@@ -315,6 +319,7 @@ fun drain_withdraw_queue<LP>(
                 request,
                 escrowed_lp,
                 constants::request_cancel_reason_non_executable!(),
+                book.withdraw_queue.pending,
             );
         } else {
             let payout = payout.destroy_some();
@@ -328,6 +333,7 @@ fun drain_withdraw_queue<LP>(
                         request,
                         escrowed_lp,
                         constants::request_cancel_reason_limit_expired!(),
+                        book.withdraw_queue.pending,
                     );
                 } else {
                     emit_request_limit_missed(
@@ -356,6 +362,7 @@ fun drain_withdraw_queue<LP>(
                     request.index,
                     request.amount,
                     payout,
+                    book.withdraw_queue.pending,
                 );
                 processed = processed + 1;
                 filled = filled + 1;
@@ -377,6 +384,7 @@ fun refund_supply_request(
     request: RequestEntry,
     escrowed: Balance<DUSDC>,
     reason: u8,
+    requests_pending_after: u64,
 ) {
     balance::send_funds(escrowed, request.recipient);
     vault_events::emit_request_cancelled(
@@ -387,6 +395,7 @@ fun refund_supply_request(
         request.amount,
         true,
         reason,
+        requests_pending_after,
     );
 }
 
@@ -395,6 +404,7 @@ fun refund_withdraw_request<LP>(
     request: RequestEntry,
     escrowed_lp: Balance<LP>,
     reason: u8,
+    requests_pending_after: u64,
 ) {
     balance::send_funds(escrowed_lp, request.recipient);
     vault_events::emit_request_cancelled(
@@ -405,6 +415,7 @@ fun refund_withdraw_request<LP>(
         request.amount,
         false,
         reason,
+        requests_pending_after,
     );
 }
 

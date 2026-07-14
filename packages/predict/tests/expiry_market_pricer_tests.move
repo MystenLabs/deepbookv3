@@ -56,7 +56,7 @@ fun liquidate_rejects_pricer_loaded_for_another_market() {
     );
 
     let mut market = fx.take_expiry_market();
-    market.liquidate(oracle_fixture::config(&oracle), &wrong_pricer, 1);
+    market.liquidate(oracle_fixture::config(&oracle), &wrong_pricer, 1, fx.clock());
     abort 999
 }
 

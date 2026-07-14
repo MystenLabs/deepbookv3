@@ -436,10 +436,12 @@ public(package) fun liquidate_live_order(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
+    clock: &Clock,
 ): bool {
     if (!exposure.liquidation.contains_active_order(order)) return false;
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv)
+    let liquidated_at_ms = clock.timestamp_ms();
+    exposure.liquidate_order_if_under_floor(pricer, order, liquidation_ltv, liquidated_at_ms)
 }
 
 /// Run one bounded liquidation pass using exact per-candidate pricing.
@@ -447,15 +449,22 @@ public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     budget: u64,
+    clock: &Clock,
 ): u64 {
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
     if (candidates.is_empty()) return 0;
     let liquidation_ltv = exposure.config.liquidation_ltv();
+    let liquidated_at_ms = clock.timestamp_ms();
 
     let mut liquidated_count = 0;
     candidates.do!(|candidate| {
         let order = order::from_order_id(candidate);
-        let liquidated = exposure.liquidate_order_if_under_floor(pricer, &order, liquidation_ltv);
+        let liquidated = exposure.liquidate_order_if_under_floor(
+            pricer,
+            &order,
+            liquidation_ltv,
+            liquidated_at_ms,
+        );
         if (liquidated) {
             liquidated_count = liquidated_count + 1;
         };
@@ -505,6 +514,7 @@ fun liquidate_order_if_under_floor(
     pricer: &Pricer,
     order: &Order,
     liquidation_ltv: u64,
+    liquidated_at_ms: u64,
 ): bool {
     let quantity = order.quantity();
     let floor_amount = order.floor_shares();
@@ -526,10 +536,12 @@ fun liquidate_order_if_under_floor(
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
         order,
+        pricer,
         quantity,
         gross_value,
         floor_amount,
         liquidation_ltv,
+        liquidated_at_ms,
     );
 
     true

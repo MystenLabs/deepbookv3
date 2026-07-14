@@ -52,6 +52,7 @@ fun set_reference_tick_missing_exact_history_aborts() {
         oracle_fixture::config(&oracle),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
+        fx.clock(),
     );
     abort EUnexpectedSuccess
 }
@@ -74,7 +75,7 @@ fun set_reference_tick_wrong_pyth_feed_aborts() {
     let config = fx.scenario_mut().take_shared<deepbook_predict::protocol_config::ProtocolConfig>();
     let mut market = fx.take_expiry_market();
 
-    market.set_reference_tick(&config, &oracle_registry, &rogue_pyth);
+    market.set_reference_tick(&config, &oracle_registry, &rogue_pyth, fx.clock());
     abort EUnexpectedSuccess
 }
 
@@ -94,11 +95,13 @@ fun set_reference_tick_floors_spot_and_is_idempotent() {
         oracle_fixture::config(&oracle),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
+        fx.clock(),
     );
     let second_tick = market.set_reference_tick(
         oracle_fixture::config(&oracle),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
+        fx.clock(),
     );
 
     assert_eq!(first_tick, REFERENCE_TICK);
@@ -126,6 +129,7 @@ fun set_reference_tick_conflicting_value_after_rebind_aborts() {
         oracle_fixture::config(&oracle),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
+        fx.clock(),
     );
     oracle_fixture::return_oracle_bundle(oracle);
 
@@ -136,6 +140,7 @@ fun set_reference_tick_conflicting_value_after_rebind_aborts() {
         oracle_fixture::config(&rebound),
         oracle_fixture::oracle_registry(&rebound),
         oracle_fixture::pyth(&rebound),
+        fx.clock(),
     );
 
     abort EUnexpectedSuccess
@@ -153,6 +158,7 @@ fun set_reference_tick_floor_to_zero_aborts() {
         oracle_fixture::config(&oracle),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
+        fx.clock(),
     );
     abort EUnexpectedSuccess
 }

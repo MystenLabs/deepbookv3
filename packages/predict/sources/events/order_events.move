@@ -5,11 +5,11 @@
 ///
 /// Hot-path events stay lean: each carries the deltas and identities a consumer
 /// needs to reconstruct money flows off-chain, with no absolute balances.
-/// `order_id` joins minted, redeemed, and liquidated rows for one position;
-/// the network envelope supplies timestamp and sender, so neither is a field.
+/// `order_id` joins minted, redeemed, and liquidated rows for one position. The
+/// lifecycle timestamps are the chain clock sampled during the transition.
 module deepbook_predict::order_events;
 
-use deepbook_predict::order::Order;
+use deepbook_predict::{order::Order, pricing::Pricer};
 use sui::event;
 
 /// Emitted when a live position interval is minted.
@@ -42,6 +42,13 @@ public struct OrderMinted has copy, drop, store {
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
+    minted_at_ms: u64,
+    /// Source timestamps of the oracle observations present when this mint was
+    /// priced. Pyth is `0` only when no usable normalized observation existed.
+    pyth_spot_source_timestamp_ms: u64,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
 }
 
 /// Emitted when a live position is closed fully or partially.
@@ -67,6 +74,13 @@ public struct LiveOrderRedeemed has copy, drop, store {
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
+    redeemed_at_ms: u64,
+    /// Source timestamps of the oracle observations present when this redemption
+    /// was priced. Pyth is `0` only when no usable normalized observation existed.
+    pyth_spot_source_timestamp_ms: u64,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
 }
 
 /// Emitted when a settled position is redeemed for terminal payout.
@@ -80,6 +94,7 @@ public struct SettledOrderRedeemed has copy, drop, store {
     quantity_closed: u64,
     settlement_price: u64,
     payout_amount: u64,
+    redeemed_at_ms: u64,
 }
 
 /// Emitted when an account clears a liquidated position with zero payout.
@@ -91,6 +106,7 @@ public struct LiquidatedOrderRedeemed has copy, drop, store {
     position_root_id: u256,
     owner: address,
     quantity_closed: u64,
+    redeemed_at_ms: u64,
 }
 
 /// Emitted once per order removed by liquidation.
@@ -107,6 +123,13 @@ public struct OrderLiquidated has copy, drop, store {
     floor_amount: u64,
     /// 1e9-scaled floor-to-live-value threshold used for this expiry.
     liquidation_ltv: u64,
+    liquidated_at_ms: u64,
+    /// Source timestamps of the oracle observations present when this liquidation
+    /// was priced. Pyth is `0` only when no usable normalized observation existed.
+    pyth_spot_source_timestamp_ms: u64,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
 }
 
 // === Public-Package Functions ===
@@ -117,6 +140,7 @@ public(package) fun emit_order_minted(
     owner: address,
     builder_code_id: Option<ID>,
     order: &Order,
+    pricer: &Pricer,
     leverage: u64,
     entry_probability: u64,
     net_premium: u64,
@@ -124,6 +148,7 @@ public(package) fun emit_order_minted(
     fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
+    minted_at_ms: u64,
 ) {
     event::emit(OrderMinted {
         expiry_market_id,
@@ -142,6 +167,11 @@ public(package) fun emit_order_minted(
         builder_fee,
         penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
+        minted_at_ms,
+        pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }
 
@@ -151,6 +181,7 @@ public(package) fun emit_live_order_redeemed(
     owner: address,
     builder_code_id: Option<ID>,
     order: &Order,
+    pricer: &Pricer,
     position_root_id: u256,
     quantity_closed: u64,
     replacement_order_id: Option<u256>,
@@ -158,6 +189,7 @@ public(package) fun emit_live_order_redeemed(
     trading_fee: u64,
     builder_fee: u64,
     penalty_fee: u64,
+    redeemed_at_ms: u64,
 ) {
     event::emit(LiveOrderRedeemed {
         expiry_market_id,
@@ -173,6 +205,11 @@ public(package) fun emit_live_order_redeemed(
         builder_fee,
         penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
+        redeemed_at_ms,
+        pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }
 
@@ -184,6 +221,7 @@ public(package) fun emit_settled_order_redeemed(
     position_root_id: u256,
     settlement_price: u64,
     payout_amount: u64,
+    redeemed_at_ms: u64,
 ) {
     event::emit(SettledOrderRedeemed {
         expiry_market_id,
@@ -194,6 +232,7 @@ public(package) fun emit_settled_order_redeemed(
         quantity_closed: order.quantity(),
         settlement_price,
         payout_amount,
+        redeemed_at_ms,
     });
 }
 
@@ -203,6 +242,7 @@ public(package) fun emit_liquidated_order_redeemed(
     owner: address,
     order: &Order,
     position_root_id: u256,
+    redeemed_at_ms: u64,
 ) {
     event::emit(LiquidatedOrderRedeemed {
         expiry_market_id,
@@ -211,16 +251,19 @@ public(package) fun emit_liquidated_order_redeemed(
         position_root_id,
         owner,
         quantity_closed: order.quantity(),
+        redeemed_at_ms,
     });
 }
 
 public(package) fun emit_order_liquidated(
     expiry_market_id: ID,
     order: &Order,
+    pricer: &Pricer,
     quantity: u64,
     gross_value: u64,
     floor_amount: u64,
     liquidation_ltv: u64,
+    liquidated_at_ms: u64,
 ) {
     event::emit(OrderLiquidated {
         expiry_market_id,
@@ -229,5 +272,10 @@ public(package) fun emit_order_liquidated(
         gross_value,
         floor_amount,
         liquidation_ltv,
+        liquidated_at_ms,
+        pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }
