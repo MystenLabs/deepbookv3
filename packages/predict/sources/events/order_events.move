@@ -43,8 +43,9 @@ public struct OrderMinted has copy, drop, store {
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
     minted_at_ms: u64,
-    /// Source timestamps of the oracle observations present when this mint was priced.
-    pyth_spot_source_timestamp_ms: Option<u64>,
+    /// Source timestamps of the oracle observations present when this mint was
+    /// priced. Pyth is `0` only when no usable normalized observation existed.
+    pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
@@ -74,8 +75,9 @@ public struct LiveOrderRedeemed has copy, drop, store {
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
     redeemed_at_ms: u64,
-    /// Source timestamps of the oracle observations present when this redemption was priced.
-    pyth_spot_source_timestamp_ms: Option<u64>,
+    /// Source timestamps of the oracle observations present when this redemption
+    /// was priced. Pyth is `0` only when no usable normalized observation existed.
+    pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
@@ -122,8 +124,9 @@ public struct OrderLiquidated has copy, drop, store {
     /// 1e9-scaled floor-to-live-value threshold used for this expiry.
     liquidation_ltv: u64,
     liquidated_at_ms: u64,
-    /// Source timestamps of the oracle observations present when this liquidation was priced.
-    pyth_spot_source_timestamp_ms: Option<u64>,
+    /// Source timestamps of the oracle observations present when this liquidation
+    /// was priced. Pyth is `0` only when no usable normalized observation existed.
+    pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,

@@ -28,8 +28,8 @@ public struct Pricer has copy, drop {
     forward: u64,
     svi: SVIParams,
     /// Source timestamps of the oracle observations present when this snapshot
-    /// was loaded. Pyth is `none` when no usable normalized observation exists.
-    pyth_spot_source_timestamp_ms: Option<u64>,
+    /// was loaded. Pyth is `0` only when no usable normalized observation exists.
+    pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
@@ -98,7 +98,7 @@ public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
-public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): Option<u64> {
+public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.pyth_spot_source_timestamp_ms
 }
 
@@ -303,9 +303,9 @@ fun resolve_live_pricer(
 
     let pyth_spot = pyth.normalized_spot();
     let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
-        option::some(pyth_spot.borrow().read_source_timestamp_ms())
+        pyth_spot.borrow().read_source_timestamp_ms()
     } else {
-        option::none()
+        0
     };
     let mut forward = bs_forward;
     if (
