@@ -88,6 +88,15 @@ public struct MintQuote has copy, drop {
     all_in_cost: u64,
 }
 
+/// Completed trading-loss rebate claim, carrying the consumed account-expiry
+/// summary to the pool-owned event emitter.
+public struct TradingLossRebateOutcome {
+    residual_cash: Balance<DUSDC>,
+    rebate_amount: u64,
+    trading_fees_paid: u64,
+    gross_profit: u64,
+}
+
 // === Public Functions ===
 
 /// Return the expiry market object ID.
@@ -744,14 +753,40 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
+public(package) fun rebate_amount(outcome: &TradingLossRebateOutcome): u64 {
+    outcome.rebate_amount
+}
+
+public(package) fun residual_returned(outcome: &TradingLossRebateOutcome): u64 {
+    outcome.residual_cash.value()
+}
+
+public(package) fun trading_fees_paid(outcome: &TradingLossRebateOutcome): u64 {
+    outcome.trading_fees_paid
+}
+
+public(package) fun gross_profit(outcome: &TradingLossRebateOutcome): u64 {
+    outcome.gross_profit
+}
+
+public(package) fun into_residual_cash(outcome: TradingLossRebateOutcome): Balance<DUSDC> {
+    let TradingLossRebateOutcome {
+        residual_cash,
+        rebate_amount: _,
+        trading_fees_paid: _,
+        gross_profit: _,
+    } = outcome;
+    residual_cash
+}
+
 /// Resolve one account's settled trading-loss rebate. Returns the unearned residual
-/// rebate-reserve cash and the rebate amount paid to the account.
+/// rebate-reserve cash, the amount paid, and the consumed account-expiry summary.
 public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
     ctx: &mut TxContext,
-): (Balance<DUSDC>, u64) {
+): TradingLossRebateOutcome {
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
@@ -759,7 +794,12 @@ public(package) fun claim_trading_loss_rebate(
     let trading_fees_paid = summary.fees_paid();
     let gross_profit = summary.gross_profit();
     if (trading_fees_paid == 0) {
-        return (balance::zero(), 0)
+        return TradingLossRebateOutcome {
+            residual_cash: balance::zero(),
+            rebate_amount: 0,
+            trading_fees_paid,
+            gross_profit,
+        }
     };
 
     let resolved_rebate_reserve = market
@@ -781,7 +821,12 @@ public(package) fun claim_trading_loss_rebate(
         balance::zero()
     };
     market.assert_cash_backing();
-    (residual_cash, rebate_amount)
+    TradingLossRebateOutcome {
+        residual_cash,
+        rebate_amount,
+        trading_fees_paid,
+        gross_profit,
+    }
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
