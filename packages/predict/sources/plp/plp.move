@@ -721,12 +721,16 @@ fun claim_trading_loss_rebate_internal(
     assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
     let settlement_price = market.settlement_price();
     let account_id = account.account_id();
-    let outcome = market.claim_trading_loss_rebate(account, config, ctx);
-    let rebate_amount = outcome.rebate_amount();
-    let residual_returned = outcome.residual_returned();
-    let trading_fees_paid = outcome.trading_fees_paid();
-    let gross_profit = outcome.gross_profit();
-    let residual_cash = outcome.into_residual_cash();
+    let summary = predict_account::resolve_expiry_summary(account, expiry_market_id);
+    let trading_fees_paid = summary.fees_paid();
+    let gross_profit = summary.gross_profit();
+    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(
+        account,
+        &summary,
+        config,
+        ctx,
+    );
+    let residual_returned = residual_cash.value();
     let returned_cash_amount = vault
         .expiry_accounting
         .receive_expiry_cash(residual_cash, expiry_market_id);

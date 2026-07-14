@@ -21,7 +21,7 @@ use deepbook_predict::{
     expiry_cash::{Self, ExpiryCash},
     order::{Self, Order},
     order_events,
-    predict_account,
+    predict_account::{Self, ResolvedExpirySummary},
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, MintTerms, StrikeExposure},
@@ -86,15 +86,6 @@ public struct MintQuote has copy, drop {
     builder_fee: u64,
     penalty_fee: u64,
     all_in_cost: u64,
-}
-
-/// Completed trading-loss rebate claim, carrying the consumed account-expiry
-/// summary to the pool-owned event emitter.
-public struct TradingLossRebateOutcome {
-    residual_cash: Balance<DUSDC>,
-    rebate_amount: u64,
-    trading_fees_paid: u64,
-    gross_profit: u64,
 }
 
 // === Public Functions ===
@@ -753,53 +744,22 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
-public(package) fun rebate_amount(outcome: &TradingLossRebateOutcome): u64 {
-    outcome.rebate_amount
-}
-
-public(package) fun residual_returned(outcome: &TradingLossRebateOutcome): u64 {
-    outcome.residual_cash.value()
-}
-
-public(package) fun trading_fees_paid(outcome: &TradingLossRebateOutcome): u64 {
-    outcome.trading_fees_paid
-}
-
-public(package) fun gross_profit(outcome: &TradingLossRebateOutcome): u64 {
-    outcome.gross_profit
-}
-
-public(package) fun into_residual_cash(outcome: TradingLossRebateOutcome): Balance<DUSDC> {
-    let TradingLossRebateOutcome {
-        residual_cash,
-        rebate_amount: _,
-        trading_fees_paid: _,
-        gross_profit: _,
-    } = outcome;
-    residual_cash
-}
-
 /// Resolve one account's settled trading-loss rebate. Returns the unearned residual
-/// rebate-reserve cash, the amount paid, and the consumed account-expiry summary.
+/// rebate-reserve cash and the amount paid.
 public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
+    summary: &ResolvedExpirySummary,
     config: &ProtocolConfig,
     ctx: &mut TxContext,
-): TradingLossRebateOutcome {
+): (Balance<DUSDC>, u64) {
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
-    let summary = predict_account::resolve_expiry_summary(account, market.id());
     let trading_fees_paid = summary.fees_paid();
     let gross_profit = summary.gross_profit();
     if (trading_fees_paid == 0) {
-        return TradingLossRebateOutcome {
-            residual_cash: balance::zero(),
-            rebate_amount: 0,
-            trading_fees_paid,
-            gross_profit,
-        }
+        return (balance::zero(), 0)
     };
 
     let resolved_rebate_reserve = market
@@ -821,12 +781,7 @@ public(package) fun claim_trading_loss_rebate(
         balance::zero()
     };
     market.assert_cash_backing();
-    TradingLossRebateOutcome {
-        residual_cash,
-        rebate_amount,
-        trading_fees_paid,
-        gross_profit,
-    }
+    (residual_cash, rebate_amount)
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
