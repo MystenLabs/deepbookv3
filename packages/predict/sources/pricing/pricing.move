@@ -99,14 +99,17 @@ public(package) fun forward(pricer: &Pricer): u64 {
     pricer.forward
 }
 
-/// Return sqrt of this pricer's SVI minimum total variance,
-/// `sqrt(a + b * sigma * sqrt(1 - rho^2))`, in FLOAT_SCALING.
+/// Return the size of one standard deviation of the price move this surface
+/// still expects before expiry, at the strike where that expectation is
+/// smallest — the surface's variance floor. In FLOAT_SCALING; the formula is
+/// `sqrt(a + b * sigma * sqrt(1 - rho^2))`, the global minimum of SVI total
+/// variance over strikes.
 ///
-/// This is the surface's global variance floor over all strikes. The drift guard
-/// uses it as the tolerance scale for forward moves: a digital's price sensitivity
-/// to log-forward moves is ~`phi(d2)/sqrt(w)`, so bounding `|Δln F|` by a multiple
-/// of the minimum `sqrt(w)` bounds every order's price drift uniformly — and the
-/// tolerance auto-tightens as expiry approaches and variance decays.
+/// The drift guard scales its forward tolerance by this number: contract prices
+/// react to forward moves roughly in units of "expected move remaining", so a
+/// tolerance expressed in those units bounds every order's price drift the same
+/// amount whether expiry is a month or a minute away — near expiry the expected
+/// move shrinks and the allowed forward drift tightens with it automatically.
 public(package) fun sqrt_min_total_variance(pricer: &Pricer): u64 {
     let rho = pricer.svi.rho();
     let rho_squared = rho.mul_scaled(&rho).magnitude();
@@ -119,17 +122,22 @@ public(package) fun sqrt_min_total_variance(pricer: &Pricer): u64 {
     math::sqrt(min_total_var, math::float_scaling!())
 }
 
-/// Abort unless this pricer's oracle inputs are still within `epsilon` of the
-/// anchors a stored valuation mark was computed at.
+/// Abort unless the oracle has stayed close enough to where it was when a stored
+/// valuation mark was computed — "close enough" meaning contract prices cannot
+/// have moved materially in between.
 ///
-/// Two legs, one tolerance: the relative forward move must stay within
-/// `epsilon * anchor_sqrt_min_total_variance` (log-forward drift scaled by the
-/// surface's variance floor), and the relative sqrt-min-variance move must stay
-/// within `epsilon` (surface reshaping). Together they bound any single order's
-/// price drift since the mark to roughly `0.4 * epsilon` of face. `|ΔF|/F` stands
-/// in for `|Δln F|`: the two agree to second order at the small moves epsilon
-/// admits. A degenerate zero anchor variance rejects every forward move — the
-/// mark simply requires a re-refresh (fail-closed).
+/// Two checks, one `epsilon` knob: the forward may move at most `epsilon` of one
+/// standard deviation of the price move still expected before expiry
+/// (`epsilon * anchor_sqrt_min_total_variance`), and that expected-move level
+/// itself may shift at most `epsilon` relative. For oracle moves these checks
+/// see, any single order's price drift since the mark is bounded to roughly
+/// `0.4 * epsilon` of its full payout. Known blind spot: both checks key on the
+/// surface's variance FLOOR, so a wing reshape that leaves the floor and the
+/// forward unchanged passes unexamined — an open pre-deploy item on whether a
+/// strike-range leg is needed. `|ΔF|/F` stands in for `|Δln F|` (they agree to
+/// second order at these move sizes), and a degenerate zero anchor variance
+/// rejects every forward move — the mark simply requires a re-refresh
+/// (fail-closed).
 public(package) fun assert_mark_drift_within(
     pricer: &Pricer,
     anchor_forward: u64,

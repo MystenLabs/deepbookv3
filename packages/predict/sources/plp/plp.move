@@ -89,8 +89,13 @@ public struct PoolValuation {
     expected_expiry_markets: vector<ID>,
     /// Markets counted so far this flow; folded against `expected` at finish.
     valued_expiry_markets: vector<ID>,
-    /// Running Σ of each counted market's mark-derived NAV.
-    total_nav: u64,
+    /// Running Σ of each counted market's live free cash. Kept separate from the
+    /// liability sum (raw atoms, no per-market netting or floor) so underwater
+    /// markets net against the whole pool and the single zero floor is applied
+    /// once, in `lp_pool_value`.
+    total_free_cash: u64,
+    /// Running Σ of each counted market's marked liability.
+    total_liability: u64,
 }
 
 // === Package Initializer ===
@@ -267,7 +272,8 @@ public fun start_pool_valuation(
         pool_vault_id: vault.id(),
         expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
-        total_nav: 0,
+        total_free_cash: 0,
+        total_liability: 0,
     }
 }
 
@@ -295,9 +301,10 @@ public fun collect_expiry_nav(
     config.assert_version();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    let nav = market.read_flushable_nav(config.valuation_config(), pricer, clock);
+    let atoms = market.flushable_atoms(config.valuation_config(), pricer, clock);
     valuation.valued_expiry_markets.push_back(expiry_market_id);
-    valuation.total_nav = valuation.total_nav + nav;
+    valuation.total_free_cash = valuation.total_free_cash + atoms.free_cash();
+    valuation.total_liability = valuation.total_liability + atoms.marked_liability();
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -328,13 +335,14 @@ public fun finish_flush(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
     );
-    let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
+    let PoolValuation { total_free_cash, total_liability, valued_expiry_markets, .. } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
         vault,
         config.protocol_reserve_profit_share(),
-        total_nav,
+        total_free_cash,
+        total_liability,
     );
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
@@ -359,7 +367,8 @@ public fun finish_flush(
         ctx.epoch(),
         pool_nav,
         total_supply,
-        total_nav,
+        total_free_cash,
+        total_liability,
         market_count,
         idle_balance_before,
         drain_summary.supplies_filled(),
@@ -751,9 +760,11 @@ fun claim_trading_loss_rebate_internal(
 
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
 ///
-/// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
-/// not-yet-materialized profit share before terminal materialization and excludes
-/// it from LP value: `exclusion = share * max(0, (credits + active) - debits)`
+/// Assets and liabilities arrive as raw per-market sums (no per-market netting or
+/// floor — see `FlushAtoms`): `gross = idle_balance + Σ free_cash`, owing
+/// `Σ liability`. NAV prices the protocol's not-yet-materialized profit share
+/// before terminal materialization and excludes it from LP value:
+/// `exclusion = share * max(0, (credits + Σ free_cash) - (debits + Σ liability))`
 /// (live cash returns update credits, but reserve custody waits for terminal
 /// profit). A cut already materialized but not yet physically moved (idle was
 /// deployed elsewhere) has left that debit-basis exclusion, so the carried
@@ -762,25 +773,30 @@ fun claim_trading_loss_rebate_internal(
 fun lp_pool_value(
     vault: &PoolVault,
     protocol_reserve_profit_share: u64,
-    active_expiry_value: u64,
+    total_free_cash: u64,
+    total_liability: u64,
 ): u64 {
     let idle_balance = vault.expiry_accounting.idle_balance();
     let profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
     let profit_basis_debits = vault.expiry_accounting.profit_basis_debits();
     let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
-    let gross_pool_value = idle_balance + active_expiry_value;
-    let aggregate_credits = profit_basis_credits + active_expiry_value;
+    let gross_pool_value = idle_balance + total_free_cash;
+    let aggregate_credits = profit_basis_credits + total_free_cash;
+    let aggregate_debits = profit_basis_debits + total_liability;
     let exclusion = math::mul(
-        aggregate_credits.saturating_sub(profit_basis_debits),
+        aggregate_credits.saturating_sub(aggregate_debits),
         protocol_reserve_profit_share,
     );
-    // The realized `credits - debits` term is sticky: it does not shrink when LPs
-    // withdraw idle cash, so when an active mark they withdrew against later
-    // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
-    // exceed gross. LP value can never be negative, so floor it at 0 to keep the
-    // subtraction from underflow-aborting. A 0/dust pool NAV makes non-executable
-    // LP queue heads refund inside `lp_book::drain`, rather than aborting the flush.
-    gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
+    // THE single policy floor for pool NAV — per-market values are deliberately
+    // never floored (an underwater market at backing lambda < 1 is a legitimate
+    // transient that must net against the rest of the pool). Two ways the
+    // subtraction can exceed gross: an aggregate-underwater book, and the sticky
+    // realized `credits - debits` term (it does not shrink when LPs withdraw idle
+    // cash, so a later mark collapse can push the held-out total past gross). LP
+    // value can never be negative, so floor at 0; a 0/dust pool NAV makes
+    // non-executable LP queue heads refund inside `lp_book::drain`, rather than
+    // aborting the flush.
+    gross_pool_value.saturating_sub(total_liability + exclusion + pending_protocol_profit)
 }
 
 /// Shared settle-or-rebalance dispatch: passively settle the market off Propbook's

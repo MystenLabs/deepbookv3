@@ -26,7 +26,8 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config,
-    valuation_config::ValuationConfig
+    valuation_config::ValuationConfig,
+    valuation_mark::{Self, ValuationMark}
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
@@ -53,7 +54,6 @@ const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
 const EValuationMarkMissing: u64 = 13;
-const EValuationMarkStale: u64 = 14;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -79,21 +79,14 @@ public struct ExpiryMarket has key {
     valuation_mark: Option<ValuationMark>,
 }
 
-/// Stored valuation mark for the pool flush: this market's exact oracle-priced
-/// per-order liability as of `computed_at_ms`, plus the pricing anchors the flush
-/// compares against live feeds to bound oracle drift. Trade flows write their
-/// bit-exact liability delta through (mint adds `net_premium`, live redeem
-/// subtracts `redeem_amount`); liquidation removes only orders whose live value
-/// already nets to zero, so it leaves the mark unchanged. Free cash is never
-/// stored — the flush reads it live, so cash moves need no mark maintenance.
-public struct ValuationMark has copy, drop, store {
-    liability: u64,
-    /// On-chain landing time of the refresh that computed this mark.
-    computed_at_ms: u64,
-    /// Forward the mark was priced at (drift-guard anchor).
-    forward: u64,
-    /// sqrt of the SVI minimum total variance at refresh (drift-guard tolerance scale).
-    sqrt_min_total_variance: u64,
+/// One market's raw flush inputs: live free cash and the stored marked
+/// liability. Deliberately unclamped — a market can legitimately owe more than
+/// it holds (a backing lambda below 1 admits transient shortfalls backstopped by
+/// pool rebalancing), so netting across markets and the single zero floor happen
+/// at the pool level in `plp`, the policy owner.
+public struct FlushAtoms has copy, drop {
+    free_cash: u64,
+    marked_liability: u64,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -269,12 +262,12 @@ public fun load_live_pricer(
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.exact_live_liability(pricer);
-    // Floor at 0 rather than abort: a degenerate underwater market has zero
-    // limited-recourse value, and partial-close `walk_linear` survivors can leave
-    // residual ulp dust that makes liability exceed free cash by ~1-2 ulp/order.
-    // This is a ROUNDING_POLICY R1/R2 liveness/dust clamp, not a conservative
-    // supply mark: a lower pool mark would mint more PLP to new suppliers, so the
-    // exact-mark invariant remains the governing safety property.
+    // Floor at 0 for this single-market READ only. A market can legitimately owe
+    // more than it holds (a backing lambda below 1 admits transient shortfalls
+    // that pool rebalancing later refills), so an unfloored per-market value is
+    // meaningful — which is why the flush no longer consumes this function: it
+    // aggregates raw `flushable_atoms` and nets shortfalls at the pool level.
+    // Here the floor only keeps a devInspect/SDK read total-ordered at zero.
     market.cash.free_cash().saturating_sub(liability)
 }
 
@@ -426,12 +419,13 @@ public fun mint_exact_quantity(
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    market
+    let sweep = market
         .strike_exposure
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
         );
+    market.mark_liability_removed(sweep.removed_live_value());
 
     market.mint_prepared_exact_quantity(
         account,
@@ -477,12 +471,13 @@ public fun mint_exact_amount(
     let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    market
+    let sweep = market
         .strike_exposure
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
         );
+    market.mark_liability_removed(sweep.removed_live_value());
 
     let quantity = market.max_mint_quantity_for_amount(
         pricer,
@@ -544,8 +539,13 @@ public fun redeem_live(
     let account = wrapper.load_account_mut(auth);
 
     let redeemed_order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget());
-    market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
+    let sweep = market
+        .strike_exposure
+        .liquidate_live_orders(pricer, config.trade_liquidation_budget());
+    let knocked_out = market.strike_exposure.liquidate_live_order(pricer, &redeemed_order);
+    market.mark_liability_removed(
+        sweep.removed_live_value() + knocked_out.get_with_default(0),
+    );
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
         return (redeemed_order.id(), option::none())
@@ -643,7 +643,9 @@ public fun liquidate(
     budget: u64,
 ): u64 {
     market.assert_live_flow_allowed(config, pricer);
-    market.strike_exposure.liquidate_live_orders(pricer, budget)
+    let sweep = market.strike_exposure.liquidate_live_orders(pricer, budget);
+    market.mark_liability_removed(sweep.removed_live_value());
+    sweep.liquidated_count()
 }
 
 /// Try to liquidate one active leveraged order by ID.
@@ -656,7 +658,9 @@ public fun liquidate_order(
     market.assert_live_flow_allowed(config, pricer);
 
     let order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_order(pricer, &order)
+    let removed = market.strike_exposure.liquidate_live_order(pricer, &order);
+    market.mark_liability_removed(removed.get_with_default(0));
+    removed.is_some()
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -740,33 +744,34 @@ public(package) fun ensure_settled(
     true
 }
 
-/// Read the flush-consumable NAV off the stored valuation mark: assert the mark
-/// exists, is within the freshness ceiling, and that the live oracle inputs in
-/// `pricer` have not drifted beyond the configured tolerance since it was
-/// computed; then return live free cash minus the marked liability. The payout
-/// tree is never walked here — that is the point: the walk ran in the refresh
-/// that stored the mark, and this read loads no per-order objects.
-public(package) fun read_flushable_nav(
+/// Read one market's flush inputs off the stored valuation mark: assert the mark
+/// exists, delegate the freshness/drift acceptance to the mark, and return live
+/// free cash plus the marked liability as raw atoms. The payout tree is never
+/// walked here — that is the point: the walk ran in the refresh that stored the
+/// mark, and this read loads no per-order objects. No clamp either — see
+/// `FlushAtoms` for why the floor lives at the pool level.
+public(package) fun flushable_atoms(
     market: &ExpiryMarket,
     valuation_config: &ValuationConfig,
     pricer: &Pricer,
     clock: &Clock,
-): u64 {
+): FlushAtoms {
     market.assert_pricer_bound(pricer);
     assert!(market.valuation_mark.is_some(), EValuationMarkMissing);
     let mark = market.valuation_mark.borrow();
-    assert!(
-        clock.timestamp_ms() - mark.computed_at_ms <= valuation_config.nav_mark_freshness_ms(),
-        EValuationMarkStale,
-    );
-    pricer.assert_mark_drift_within(
-        mark.forward,
-        mark.sqrt_min_total_variance,
-        valuation_config.nav_mark_drift_epsilon(),
-    );
-    // Same degenerate-underwater / ulp-dust clamp as `current_nav`: a market whose
-    // marked liability exceeds free cash has zero limited-recourse value.
-    market.cash.free_cash().saturating_sub(mark.liability)
+    mark.assert_flushable(valuation_config, pricer, clock);
+    FlushAtoms {
+        free_cash: market.cash.free_cash(),
+        marked_liability: mark.liability(),
+    }
+}
+
+public(package) fun free_cash(atoms: &FlushAtoms): u64 {
+    atoms.free_cash
+}
+
+public(package) fun marked_liability(atoms: &FlushAtoms): u64 {
+    atoms.marked_liability
 }
 
 /// Recompute this market's exact per-order live liability and store it as the
@@ -779,13 +784,7 @@ public(package) fun record_valuation_mark(
 ): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.exact_live_liability(pricer);
-    market.valuation_mark =
-        option::some(ValuationMark {
-            liability,
-            computed_at_ms: clock.timestamp_ms(),
-            forward: pricer.forward(),
-            sqrt_min_total_variance: pricer.sqrt_min_total_variance(),
-        });
+    market.valuation_mark = option::some(valuation_mark::new(liability, pricer, clock));
     liability
 }
 
@@ -1007,19 +1006,16 @@ fun assert_pricer_bound(market: &ExpiryMarket, pricer: &Pricer) {
 /// establishes a mark.
 fun mark_liability_added(market: &mut ExpiryMarket, amount: u64) {
     if (market.valuation_mark.is_some()) {
-        let mark = market.valuation_mark.borrow_mut();
-        mark.liability = mark.liability + amount;
+        market.valuation_mark.borrow_mut().add_liability(amount);
     };
 }
 
-/// Write a live redeem's liability delta through to the stored valuation mark.
-/// The delta is priced at the op's oracle while the mark's sum is anchored at its
-/// refresh oracle (drift-bounded), so clamp the mixed-anchor residual rather than
-/// abort a user exit.
+/// Write a liability decrease through to the stored valuation mark: a live
+/// redeem's `redeem_amount`, or the live value a liquidation pass removed.
+/// No-op until the first refresh establishes a mark.
 fun mark_liability_removed(market: &mut ExpiryMarket, amount: u64) {
     if (market.valuation_mark.is_some()) {
-        let mark = market.valuation_mark.borrow_mut();
-        mark.liability = mark.liability.saturating_sub(amount);
+        market.valuation_mark.borrow_mut().remove_liability(amount);
     };
 }
 
