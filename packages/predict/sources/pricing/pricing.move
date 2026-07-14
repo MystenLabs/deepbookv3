@@ -27,6 +27,10 @@ public struct Pricer has copy, drop {
     expiry_market_id: ID,
     forward: u64,
     svi: SVIParams,
+    /// Pyth spot observation used to anchor `forward`; both are `0` when live
+    /// pricing fell back to the Block Scholes forward.
+    pyth_spot_update_timestamp_ms: u64,
+    pyth_spot_source_timestamp_ms: u64,
 }
 
 /// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
@@ -92,6 +96,14 @@ public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
+public(package) fun pyth_spot_update_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.pyth_spot_update_timestamp_ms
+}
+
+public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.pyth_spot_source_timestamp_ms
+}
+
 // === Public-Package Functions ===
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
@@ -123,8 +135,22 @@ public(package) fun load_live_pricer(
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    let (forward, svi) = live_inputs(config, pyth, bs_spot, bs_forward, bs_svi, expiry, clock);
-    Pricer { expiry_market_id, forward, svi }
+    let (forward, svi, pyth_spot_update_timestamp_ms, pyth_spot_source_timestamp_ms) = live_inputs(
+        config,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        expiry,
+        clock,
+    );
+    Pricer {
+        expiry_market_id,
+        forward,
+        svi,
+        pyth_spot_update_timestamp_ms,
+        pyth_spot_source_timestamp_ms,
+    }
 }
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
@@ -210,7 +236,8 @@ fun assert_current_oracles(
     );
 }
 
-/// Resolve the live forward/SVI tuple used by all live pricing paths.
+/// Resolve the live forward/SVI inputs and selected Pyth spot provenance used by
+/// all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from this
 /// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
@@ -225,7 +252,7 @@ fun live_inputs(
     bs_svi: &BlockScholesSVIFeed,
     expiry: u64,
     clock: &Clock,
-): (u64, SVIParams) {
+): (u64, SVIParams, u64, u64) {
     let bs_spot_read = bs_spot.normalized_spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
@@ -267,7 +294,7 @@ fun live_inputs(
     assert_inputs_pricing_safe(bs_spot, bs_forward, &svi);
 
     let pyth_spot = pyth.normalized_spot();
-    let forward = if (
+    let (forward, pyth_spot_update_timestamp_ms, pyth_spot_source_timestamp_ms) = if (
         pyth_spot.is_some()
             && timestamp_is_fresh(
                 pyth_spot.borrow().read_source_timestamp_ms(),
@@ -275,7 +302,8 @@ fun live_inputs(
                 clock,
             )
     ) {
-        let spot = pyth_spot.destroy_some().read_value();
+        let pyth_spot = pyth_spot.destroy_some();
+        let spot = pyth_spot.read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
         // Re-anchored forward = spot * (bs_forward / bs_spot) is intentionally
         // NOT re-bounded to max_pricing_spot: with basis up to max_pricing_basis
@@ -284,12 +312,16 @@ fun live_inputs(
         // overflow), and compute_nd2's deep-tail saturations keep pricing live
         // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
         // reads (R1 liveness).
-        math::mul(spot, math::div(bs_forward, bs_spot))
+        (
+            math::mul(spot, math::div(bs_forward, bs_spot)),
+            pyth_spot.read_update_timestamp_ms(),
+            pyth_spot.read_source_timestamp_ms(),
+        )
     } else {
-        bs_forward
+        (bs_forward, 0, 0)
     };
 
-    (forward, svi)
+    (forward, svi, pyth_spot_update_timestamp_ms, pyth_spot_source_timestamp_ms)
 }
 
 fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
