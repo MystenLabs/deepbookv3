@@ -135,22 +135,16 @@ public(package) fun load_live_pricer(
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    let (forward, svi, pyth_spot_update_timestamp_ms, pyth_spot_source_timestamp_ms) = live_inputs(
+    resolve_live_pricer(
         config,
         pyth,
         bs_spot,
         bs_forward,
         bs_svi,
+        expiry_market_id,
         expiry,
         clock,
-    );
-    Pricer {
-        expiry_market_id,
-        forward,
-        svi,
-        pyth_spot_update_timestamp_ms,
-        pyth_spot_source_timestamp_ms,
-    }
+    )
 }
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
@@ -236,23 +230,24 @@ fun assert_current_oracles(
     );
 }
 
-/// Resolve the live forward/SVI inputs and selected Pyth spot provenance used by
-/// all live pricing paths.
+/// Resolve the live forward/SVI inputs and selected Pyth spot provenance into the
+/// immutable snapshot used by all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from this
 /// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
 /// spot, pricing falls back to the Block Scholes forward. The Block Scholes
 /// spot/forward pair must be fresh enough for basis math; SVI has its own looser
 /// freshness threshold. All inputs must be inside Predict's pricing-safe envelope.
-fun live_inputs(
+fun resolve_live_pricer(
     config: &PricingConfig,
     pyth: &PythFeed,
     bs_spot: &BlockScholesSpotFeed,
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
+    expiry_market_id: ID,
     expiry: u64,
     clock: &Clock,
-): (u64, SVIParams, u64, u64) {
+): Pricer {
     let bs_spot_read = bs_spot.normalized_spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
@@ -294,7 +289,10 @@ fun live_inputs(
     assert_inputs_pricing_safe(bs_spot, bs_forward, &svi);
 
     let pyth_spot = pyth.normalized_spot();
-    let (forward, pyth_spot_update_timestamp_ms, pyth_spot_source_timestamp_ms) = if (
+    let mut forward = bs_forward;
+    let mut pyth_spot_update_timestamp_ms = 0;
+    let mut pyth_spot_source_timestamp_ms = 0;
+    if (
         pyth_spot.is_some()
             && timestamp_is_fresh(
                 pyth_spot.borrow().read_source_timestamp_ms(),
@@ -312,16 +310,18 @@ fun live_inputs(
         // overflow), and compute_nd2's deep-tail saturations keep pricing live
         // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
         // reads (R1 liveness).
-        (
-            math::mul(spot, math::div(bs_forward, bs_spot)),
-            pyth_spot.read_update_timestamp_ms(),
-            pyth_spot.read_source_timestamp_ms(),
-        )
-    } else {
-        (bs_forward, 0, 0)
+        forward = math::mul(spot, math::div(bs_forward, bs_spot));
+        pyth_spot_update_timestamp_ms = pyth_spot.read_update_timestamp_ms();
+        pyth_spot_source_timestamp_ms = pyth_spot.read_source_timestamp_ms();
     };
 
-    (forward, svi, pyth_spot_update_timestamp_ms, pyth_spot_source_timestamp_ms)
+    Pricer {
+        expiry_market_id,
+        forward,
+        svi,
+        pyth_spot_update_timestamp_ms,
+        pyth_spot_source_timestamp_ms,
+    }
 }
 
 fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
