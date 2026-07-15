@@ -19,7 +19,6 @@ const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
 const ELeverageAboveAdmissionCap: u64 = 6;
-const ENetPremiumBudgetTooHigh: u64 = 7;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -175,14 +174,18 @@ public(package) fun max_quantity_for_net_premium(
     leverage: u64,
 ): u64 {
     if (entry_probability == 0 || net_premium == 0) return 0;
+    if (net_premium == std::u64::max_value!()) return std::u64::max_value!();
 
     let scaling = math::float_scaling!();
-    assert!(net_premium < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
-    assert!(net_premium + 1 <= std::u64::max_value!() / leverage, ENetPremiumBudgetTooHigh);
-    let max_entry_value = ((net_premium + 1) * leverage - 1) / scaling;
-    assert!(max_entry_value < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
-    assert!(max_entry_value + 1 <= std::u64::max_value!() / scaling, ENetPremiumBudgetTooHigh);
-    ((max_entry_value + 1) * scaling - 1) / entry_probability
+    let max_entry_value_plus_one = math::try_mul_div_up(net_premium + 1, leverage, scaling);
+    if (max_entry_value_plus_one.is_none()) return std::u64::max_value!();
+    let quantity_plus_one = math::try_mul_div_up(
+        max_entry_value_plus_one.destroy_some(),
+        scaling,
+        entry_probability,
+    );
+    if (quantity_plus_one.is_none()) return std::u64::max_value!();
+    quantity_plus_one.destroy_some() - 1
 }
 
 public(package) fun new(): StrikeExposureConfig {
@@ -302,10 +305,11 @@ fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64)
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
-    let phase = math::div(
+    // = (max_multiplier - 1) * elapsed / window, round down; the dust is pool-favored.
+    let ramp = math::mul_div_down(
+        config.expiry_fee_max_multiplier - math::float_scaling!(),
         config.expiry_fee_window_ms - time_to_expiry_ms,
         config.expiry_fee_window_ms,
     );
-    let ramp = math::mul(config.expiry_fee_max_multiplier - math::float_scaling!(), phase);
     math::float_scaling!() + ramp
 }
