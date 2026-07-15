@@ -428,8 +428,11 @@ public fun mint_exact_quantity(
     )
 }
 
-/// Mint the largest lot-rounded live position whose net premium fits inside
-/// `amount`, aborting if the resulting quantity is below `min_quantity`.
+/// Mint a lot-rounded live position whose net premium fits inside `amount`,
+/// aborting if the resulting quantity is below `min_quantity`. The quantity is
+/// the exact lot-clamped maximum at every admitted entry probability; it can
+/// fall a few lots short of the true maximum only if `min_entry_probability` is
+/// lowered far below its default (RP-13).
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
 /// `amount`. The sizing budget is first capped to the account's available DUSDC

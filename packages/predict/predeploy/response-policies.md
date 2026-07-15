@@ -460,20 +460,37 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   downstream consumer read the abort: the caller lot-clamps the returned
   quantity, and mint admission independently re-validates entry probability,
   leverage, and minimum net premium on the actual mint.
-- **Risk profile:** exact in the safe direction — the single floor rounds down
+- **Risk profile:** safe in direction, approximate in magnitude, and the
+  magnitude bound is probability-dependent. The single floor rounds down
   (`Q <= np·L/p` implies the forward-derived net premium `<= np`), so the
   returned quantity can never exceed the budget (R2 direction: dust favors the
-  pool). The floor undershoots the theoretical unit-exact maximum by sub-lot
-  amounts at admitted entry probabilities, and callers consume the result at
-  lot granularity, so unit-exactness is not a product property.
+  pool). But the forward math floors TWICE (`net_premium =
+  floor(entry_value/L)` over `entry_value = floor(p·Q/1e9)`) while this inverse
+  inverts with ONE floor, so it undershoots the theoretical unit-exact maximum
+  by ~`(L + 1e9)/entry_probability` raw units. That is sub-lot (<10_000) for
+  every entry probability the protocol admits today — at the default
+  `min_entry_probability` 1e7 it is ~200 units — so `mint_exact_amount` returns
+  the exact lot-clamped maximum at HEAD. It is NOT sub-lot if
+  `min_entry_probability` is lowered toward its config floor of 0: below
+  `p ≈ 2e5` the undershoot exceeds one lot and `mint_exact_amount` can return a
+  few lots short of the largest budget-fitting quantity (a user-set
+  `min_quantity` at that true max would then abort `EMintQuantityBelowMin`).
+  Structural root: the forward (admission, `assert_mint_admission`) and this
+  inverse are two separate expressions of the one Q↔premium relationship, so the
+  inverse approximates rather than mirrors — the single-homed fix (the inverse as
+  a bounded monotone search over the same mint-terms evaluator the forward uses)
+  is tracked as a structural follow-up (ledger `0015`), not an inverse-arithmetic
+  patch.
 - **Pinning tests:** `strike_exposure_config_tests.move` —
   `max_quantity_for_net_premium_exact_lot_boundary`,
   `max_quantity_for_net_premium_one_x_unit_neighbors`,
   `max_quantity_for_net_premium_two_x_scales_entry_value` (hand-derived
   mul/div values). Former-abort-input boundary tests land with DBU-566's test
   follow-up.
-- **Reopen when:** a product-level maximum mint budget is introduced — that
-  bound belongs in mint admission, not in the inverse arithmetic.
+- **Reopen when:** a product-level maximum mint budget is introduced (that bound
+  belongs in mint admission, not the inverse arithmetic), OR
+  `min_entry_probability` is lowered below ~`2e5` (the undershoot crosses one lot
+  and the "largest lot-rounded" contract needs the single-homed exact inverse).
 
 ---
 
