@@ -82,6 +82,7 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             LEVERAGE_TWO_X,
+            fx.clock(),
         );
     let order = harness.exposure.allocate_mint_order(terms);
 
@@ -97,13 +98,19 @@ fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let expiry_ms = fx.expiry();
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
+    // Short-expiry harness for leverage-liquidation mechanics: disable the
+    // near-expiry leverage taper so the 2x order is admissible (a valid
+    // `window == 0` config). The taper is covered by the config unit tests and a
+    // dedicated flow test.
+    let mut config = strike_exposure_config::new();
+    config.set_leverage_taper_window_ms(0);
     let exposure = strike_exposure::new(
         expiry_market_id,
         expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
-        strike_exposure_config::new(),
+        config,
         fx.scenario_mut().ctx(),
     );
     transfer::share_object(ExposureHarness { id, exposure });

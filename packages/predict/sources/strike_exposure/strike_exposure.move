@@ -272,6 +272,7 @@ public(package) fun quote_mint_terms(
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
+    clock: &Clock,
 ): MintTerms {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
     let admission = exposure
@@ -280,6 +281,7 @@ public(package) fun quote_mint_terms(
             entry_probability,
             quantity,
             leverage,
+            exposure.expiry_ms - clock.timestamp_ms(),
         );
     // Runs after admission so the quote path keeps mint's abort order (mint hits
     // this check inside order construction, after admission).
@@ -343,9 +345,16 @@ public(package) fun quote_mint_entry_probability(
     lower_tick: u64,
     higher_tick: u64,
     leverage: u64,
+    clock: &Clock,
 ): u64 {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
-    exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+    exposure
+        .config
+        .assert_mint_probability_and_leverage_policy(
+            entry_probability,
+            leverage,
+            exposure.expiry_ms - clock.timestamp_ms(),
+        );
     entry_probability
 }
 
@@ -353,11 +362,7 @@ public(package) fun quote_mint_entry_probability(
 ///
 /// Already-liquidated and currently-liquidatable orders have zero holder value;
 /// otherwise this returns the order's current range value net of its static floor.
-public(package) fun order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     if (exposure.is_liquidated_order(order)) return 0;
 
     let gross_value = exposure.gross_order_value(pricer, order);
@@ -494,11 +499,7 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
-fun gross_order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricer.range_price(lower, higher);
     math::mul(range_probability, order.quantity())

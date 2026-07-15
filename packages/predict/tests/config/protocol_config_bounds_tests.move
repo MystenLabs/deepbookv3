@@ -116,6 +116,19 @@ fun template_expiry_fee_window_above_max_aborts() {
     abort 999
 }
 
+// The taper window's minimum is 0 (0 disables the taper), so only the upper
+// bound can be violated.
+#[test, expected_failure(abort_code = config_constants::EInvalidLeverageTaperWindowMs)]
+fun template_leverage_taper_window_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_leverage_taper_window_ms(
+        &admin_cap,
+        config_constants::max_leverage_taper_window_ms!() + 1,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
 fun template_expiry_fee_max_multiplier_below_min_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();

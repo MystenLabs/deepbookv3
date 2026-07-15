@@ -30,6 +30,7 @@ const EInvalidBackingBufferLambda: u64 = 19;
 const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
+const EInvalidLeverageTaperWindowMs: u64 = 23;
 
 // === Fees ===
 
@@ -101,6 +102,26 @@ public(package) fun assert_max_admission_leverage(value: u64) {
 /// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
 /// while still approaching the configured cap smoothly as probability rises.
 public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
+
+/// Window before expiry over which admissible leverage tapers linearly from the
+/// probability-derived cap down to 1x (no leverage) at expiry. Shrinking leverage
+/// as expiry nears bounds LP exposure to single-tick probability jumps (gamma)
+/// that can leap an order past its knockout before liquidation fires. `0` disables
+/// the taper; one hour by default.
+public(package) macro fun default_leverage_taper_window_ms(): u64 {
+    deepbook_predict::constants::one_hour_ms!()
+}
+public(package) macro fun min_leverage_taper_window_ms(): u64 { 0 }
+public(package) macro fun max_leverage_taper_window_ms(): u64 {
+    deepbook_predict::constants::one_year_ms!()
+}
+
+public(package) fun assert_leverage_taper_window_ms(value: u64) {
+    assert!(
+        value >= min_leverage_taper_window_ms!() && value <= max_leverage_taper_window_ms!(),
+        EInvalidLeverageTaperWindowMs,
+    );
+}
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }

@@ -21,7 +21,13 @@
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
+use deepbook_predict::{
+    constants,
+    flow_test_helpers as helpers,
+    order,
+    strike_exposure_config,
+    test_constants
+};
 use std::unit_test::assert_eq;
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
@@ -52,6 +58,33 @@ fun partial_close_survivor_stays_backed() {
 #[test]
 fun double_partial_close_survivor_reinsertion_stays_backed() {
     run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE]);
+}
+
+/// End-to-end coverage of the near-expiry leverage taper through the real mint
+/// entrypoint: with the taper re-enabled at its 1h default, a 2x mint on a market
+/// only ~2 minutes from expiry (`short_expiry_ms - now_ms`) is rejected at
+/// admission. This proves the mint flow threads the clock into the leverage cap;
+/// the taper math itself is covered in `config/strike_exposure_config_tests.move`.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun near_expiry_leverage_mint_rejected_by_taper() {
+    let mut fx = helpers::setup_market_default();
+    // Re-enable the taper (flow fixtures disable it) BEFORE market creation so the
+    // market snapshots the 1h window.
+    fx.set_template_leverage_taper_window_ms(constants::one_hour_ms!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_X,
+    );
+    abort 999
 }
 
 /// Closing a max-sized 6x ATM order down to one lot must leave a valid replacement.

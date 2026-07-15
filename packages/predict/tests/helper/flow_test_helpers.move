@@ -194,12 +194,17 @@ public fun setup_market(tick: u64): Fixture {
         bs_svi_id,
     );
     let mut registry = scenario.take_shared<Registry>();
-    let config = scenario.take_shared<ProtocolConfig>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
     );
+    // Flow fixtures exercise leverage / close / liquidation mechanics on short-lived
+    // markets, so disable the near-expiry leverage taper by default (a valid
+    // `window == 0` admin config). The taper is covered by the config unit tests and
+    // a dedicated flow test that re-enables it.
+    config.set_template_leverage_taper_window_ms(&admin_cap, 0);
     return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
@@ -408,6 +413,14 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_max_admission_leverage(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+public fun set_template_leverage_taper_window_ms(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_leverage_taper_window_ms(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }

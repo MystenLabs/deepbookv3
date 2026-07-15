@@ -39,6 +39,19 @@ const THREE_X_FIRST_OVERFLOW_NET_PREMIUM: u64 = 6_148_914_691;
 const HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM: u64 = 200_000_000;
 const HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES: u64 = 300_000_000;
 const UNLEVERAGED_FLOOR_SHARES: u64 = 0;
+const LEVERAGE_ONE_POINT_EIGHT_X: u64 = 1_800_000_000;
+/// Time-to-expiry far beyond the default 1h leverage-taper window, so the taper
+/// is inactive and admission behaves at the full probability-derived cap (1 week).
+const FAR_FROM_EXPIRY_MS: u64 = 604_800_000;
+/// Half of the default 1h leverage-taper window (30 minutes). At half the window
+/// the taper multiplier is exactly 0.5.
+const HALF_TAPER_WINDOW_MS: u64 = 1_800_000;
+/// p = 0.5, 1.8x, quantity 1e9: entry value 500_000_000; net premium
+/// 500_000_000 / 1.8 = 277_777_777 (floor); floor shares 500_000_000 - 277_777_777.
+const HALF_PROBABILITY_ONE_POINT_EIGHT_X_NET_PREMIUM: u64 = 277_777_777;
+const HALF_PROBABILITY_ONE_POINT_EIGHT_X_FLOOR_SHARES: u64 = 222_222_223;
+/// p = 0.5 at 1x: net premium equals the full entry value 500_000_000, floor 0.
+const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -251,6 +264,7 @@ fun mint_admission_probability_one_above_max_entry_probability_aborts() {
         float!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -265,6 +279,7 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
         ENTRY_PROBABILITY_BELOW_MIN,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -278,6 +293,7 @@ fun mint_admission_leverage_below_one_x_aborts() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_BELOW_ONE_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -290,6 +306,7 @@ fun mint_admission_low_probability_two_x_above_curve_aborts() {
         ENTRY_PROBABILITY_LOW,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -303,6 +320,7 @@ fun mint_admission_template_cap_scales_curve_aborts() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -318,6 +336,7 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
+        FAR_FROM_EXPIRY_MS,
     );
     assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
     assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
@@ -335,6 +354,7 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!() - constants::position_lot_size!(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -347,6 +367,7 @@ fun mint_admission_net_premium_at_minimum_succeeds() {
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     assert_eq!(admission.net_premium(), constants::min_net_premium!());
     assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
@@ -366,6 +387,87 @@ fun mint_admission_liquidation_ltv_still_controls_open_threshold() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
+}
+
+// === Near-expiry leverage taper (ELeverageAboveAdmissionCap via time) ===
+
+// Far from expiry the taper is inactive and 2x at p = 0.5 clears the full cap
+// 2.714285714x. Inside the window the cap shrinks: at half the window the taper
+// multiplier is 0.5, giving cap 1 + 2 * 0.857142857 * 0.5 = 1.857142857x, so the
+// same 2x order is now rejected.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun taper_rejects_leverage_admitted_far_from_expiry() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_X,
+        HALF_TAPER_WINDOW_MS,
+    );
+    abort 999
+}
+
+// At half the window (taper 0.5) the reduced cap is 1.857142857x, so 1.8x is
+// still admitted; the taper only gates admission and does not reprice the terms.
+#[test]
+fun taper_admits_reduced_leverage_within_window() {
+    let config = strike_exposure_config::new();
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_POINT_EIGHT_X,
+        HALF_TAPER_WINDOW_MS,
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_ONE_POINT_EIGHT_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), HALF_PROBABILITY_ONE_POINT_EIGHT_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+// At expiry (time_to_expiry_ms = 0) the taper multiplier is 0, so the cap
+// collapses to exactly 1x: an unleveraged order is admitted with a zero floor.
+#[test]
+fun taper_at_expiry_admits_one_x() {
+    let config = strike_exposure_config::new();
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+        0,
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_ONE_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
+    destroy(config);
+}
+
+// At expiry the cap is exactly 1x, so any leverage above 1x is rejected.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun taper_at_expiry_rejects_leverage_above_one_x() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_X,
+        0,
+    );
+    abort 999
+}
+
+// A zero window disables the taper: full leverage is admitted even at expiry.
+// 2.5x at p = 0.5 is inside the full cap 2.714285714x.
+#[test]
+fun taper_disabled_admits_full_leverage_at_expiry() {
+    let mut config = strike_exposure_config::new();
+    config.set_leverage_taper_window_ms(0);
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_AND_HALF_X,
+        0,
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
+    destroy(config);
 }
