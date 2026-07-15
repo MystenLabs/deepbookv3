@@ -50,6 +50,14 @@ const EBelowMinBootstrapLiquidity: u64 = 6;
 const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
+const ENavMarkMissing: u64 = 10;
+const ENavMarkStale: u64 = 11;
+const ENavMarkExpired: u64 = 12;
+
+/// Oldest liability mark this pool's flush accepts as a market's NAV input.
+macro fun nav_mark_max_age_ms(): u64 {
+    3_000
+}
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -228,7 +236,15 @@ public fun value_expiry(
     config.assert_valuation_in_progress();
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
-    let nav = market.marked_nav(clock);
+    let now_ms = clock.timestamp_ms();
+    assert!(now_ms < market.expiry(), ENavMarkExpired);
+    let mark = market.nav_mark();
+    assert!(mark.is_some(), ENavMarkMissing);
+    let mark = mark.destroy_some();
+    assert!(now_ms - mark.computed_at_ms() <= nav_mark_max_age_ms!(), ENavMarkStale);
+    // Floor at 0, not abort: an underwater market has zero limited-recourse value
+    // (full rationale on `expiry_market::current_nav`).
+    let nav = market.free_cash().saturating_sub(mark.liability());
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;
 }

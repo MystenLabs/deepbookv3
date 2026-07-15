@@ -51,13 +51,6 @@ const EReferenceTickTimestampMismatch: u64 = 9;
 const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
-const ENavMarkMissing: u64 = 13;
-const ENavMarkStale: u64 = 14;
-const ENavMarkExpired: u64 = 15;
-
-macro fun nav_mark_max_age_ms(): u64 {
-    3_000
-}
 
 /// Exact live liability recorded by a full exposure walk.
 public struct NavMark has copy, drop, store {
@@ -725,16 +718,25 @@ public fun set_mint_paused(
 
 // === Public-Package Functions ===
 
-/// Return current free cash minus the most recent exact marked liability, floored
-/// at zero. Aborts when no mark exists, the mark is older than three seconds, or
-/// the market has reached expiry and must be settled and swept before the flush.
-public(package) fun marked_nav(market: &ExpiryMarket, clock: &Clock): u64 {
-    let now_ms = clock.timestamp_ms();
-    assert!(now_ms < market.expiry, ENavMarkExpired);
-    assert!(market.nav_mark.is_some(), ENavMarkMissing);
-    let mark = market.nav_mark.borrow();
-    assert!(now_ms - mark.computed_at_ms <= nav_mark_max_age_ms!(), ENavMarkStale);
-    market.cash.free_cash().saturating_sub(mark.liability)
+/// Return the most recent stored liability mark, if this market has been refreshed.
+/// Acceptance policy (mark age, expiry handling) is owned by the consumer.
+public(package) fun nav_mark(market: &ExpiryMarket): Option<NavMark> {
+    market.nav_mark
+}
+
+/// Return DUSDC free cash currently held by this expiry.
+public(package) fun free_cash(market: &ExpiryMarket): u64 {
+    market.cash.free_cash()
+}
+
+/// Return the marked exact live liability.
+public(package) fun liability(mark: &NavMark): u64 {
+    mark.liability
+}
+
+/// Return when the marked liability walk ran, in `clock.timestamp_ms()` time.
+public(package) fun computed_at_ms(mark: &NavMark): u64 {
+    mark.computed_at_ms
 }
 
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
