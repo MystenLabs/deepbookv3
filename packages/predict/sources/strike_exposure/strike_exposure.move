@@ -31,6 +31,7 @@ const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
+const EMintQuantityBelowMin: u64 = 5;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -260,42 +261,6 @@ public(package) fun close_settled_order(
     payout
 }
 
-/// Quote the pure mint terms for the tick range `(lower_tick, higher_tick]`
-/// without touching the exposure book: entry pricing, mint admission, and the
-/// derived premium/floor. Shares every admission abort with the mint path,
-/// including lot-size validity, so a quote aborts exactly when the mint-side
-/// terms computation would.
-public(package) fun quote_mint_terms(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    leverage: u64,
-): MintTerms {
-    let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
-    let admission = exposure
-        .config
-        .assert_mint_admission(
-            entry_probability,
-            quantity,
-            leverage,
-        );
-    // Runs after admission so the quote path keeps mint's abort order (mint hits
-    // this check inside order construction, after admission).
-    order::assert_valid_quantity(quantity);
-    MintTerms {
-        expiry_market_id: exposure.expiry_market_id,
-        lower_tick,
-        higher_tick,
-        quantity,
-        leverage,
-        entry_probability,
-        net_premium: admission.net_premium(),
-        floor_shares: admission.floor_shares(),
-    }
-}
-
 /// Allocate a live mint order from priced terms: consume the expiry-local
 /// sequence and insert the order into the liquidation and payout indexes.
 /// Taking `terms` by value ties each allocation to exactly one admission
@@ -334,30 +299,76 @@ public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64)
     true
 }
 
-/// Quote immutable mint entry probability without mutating the exposure book.
-/// Quantity-free sibling of `quote_mint_terms` for sizing flows that price
-/// before the quantity is known; policy asserts only, no full admission.
-public(package) fun quote_mint_entry_probability(
+/// Quote the mint terms for one request: price the range, choose the quantity
+/// per the request bias, and run full mint admission on the result. Quantity
+/// bias (`exact_quantity = true`) takes `min_quantity` verbatim; budget
+/// bias sizes the largest lot-rounded quantity whose net premium fits
+/// `max_premium`, with `min_quantity` as the fill floor. Shares every admission
+/// abort with the mint path, including lot-size validity and the fill floor,
+/// so a quote aborts exactly when the mint-side terms computation would.
+public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
     leverage: u64,
-): u64 {
+): MintTerms {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
-    exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
-    entry_probability
+
+    let quantity = if (exact_quantity) {
+        min_quantity
+    } else {
+        // Largest lot count whose net premium fits the budget: binary search on
+        // the monotone premium relation. The single-floor probe over-estimates
+        // admission's two-floor charge (`assert_mint_admission`) by at most one
+        // unit, so sizing is conservative: the charged premium never exceeds the
+        // budget, and the fill can be one lot short of exact at fractional
+        // leverage edges.
+        let lot = constants::position_lot_size!();
+        let mut lo = 0;
+        let mut hi = order::max_quantity_lots();
+        while (lo < hi) {
+            let mid = (lo + hi + 1) / 2;
+            if (math::mul_div_down(entry_probability, mid * lot, leverage) <= max_premium) {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        };
+        lo * lot
+    };
+    assert!(quantity >= min_quantity, EMintQuantityBelowMin);
+
+    let admission = exposure
+        .config
+        .assert_mint_admission(
+            entry_probability,
+            quantity,
+            leverage,
+        );
+    // Runs after admission so the quote path keeps mint's abort order (mint hits
+    // this check inside order construction, after admission).
+    order::assert_valid_quantity(quantity);
+    MintTerms {
+        expiry_market_id: exposure.expiry_market_id,
+        lower_tick,
+        higher_tick,
+        quantity,
+        leverage,
+        entry_probability,
+        net_premium: admission.net_premium(),
+        floor_shares: admission.floor_shares(),
+    }
 }
 
 /// Return the live holder value of a full order close, gross of fees.
 ///
 /// Already-liquidated and currently-liquidatable orders have zero holder value;
 /// otherwise this returns the order's current range value net of its static floor.
-public(package) fun order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     if (exposure.is_liquidated_order(order)) return 0;
 
     let gross_value = exposure.gross_order_value(pricer, order);
@@ -494,11 +505,7 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
-fun gross_order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricer.range_price(lower, higher);
     math::mul(range_probability, order.quantity())
