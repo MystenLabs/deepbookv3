@@ -51,6 +51,19 @@ const EReferenceTickTimestampMismatch: u64 = 9;
 const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
+const ENavMarkMissing: u64 = 13;
+const ENavMarkStale: u64 = 14;
+const ENavMarkExpired: u64 = 15;
+
+macro fun nav_mark_max_age_ms(): u64 {
+    3_000
+}
+
+/// Exact live liability recorded by a full exposure walk.
+public struct NavMark has copy, drop, store {
+    liability: u64,
+    computed_at_ms: u64,
+}
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -66,21 +79,14 @@ public struct ExpiryMarket has key {
     fee_incentive_balance: Balance<DUSDC>,
     /// Exposure lifecycle state for this expiry's strike ticks.
     strike_exposure: StrikeExposure,
+    /// Most recent exact live-liability walk, if this market has been refreshed.
+    nav_mark: Option<NavMark>,
     /// Smoothed gas-price stats backing the congestion trade penalty.
     ewma: EwmaState,
     /// When true, new mints on this expiry abort. Other flows stay available.
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
-}
-
-/// Market-owned facts used to value one expiry independently.
-/// `liability_uncertainty` is the absolute error allowance around
-/// `estimated_liability`; it is zero while liability is computed exactly.
-public struct ExpiryValuation has copy, drop {
-    free_cash: u64,
-    estimated_liability: u64,
-    liability_uncertainty: u64,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -254,14 +260,15 @@ public fun load_live_pricer(
 /// exact spot exists yet, the live-pricing liveness abort remains the correct
 /// failure mode.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
-    let valuation = market.current_valuation(pricer);
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.exact_live_liability(pricer);
     // Floor at 0 rather than abort: a degenerate underwater market has zero
     // limited-recourse value, and partial-close `walk_linear` survivors can leave
     // residual ulp dust that makes liability exceed free cash by ~1-2 ulp/order.
     // This is a ROUNDING_POLICY R1/R2 liveness/dust clamp, not a conservative
     // supply mark: a lower pool mark would mint more PLP to new suppliers, so the
     // exact-mark invariant remains the governing safety property.
-    valuation.free_cash.saturating_sub(valuation.estimated_liability)
+    market.cash.free_cash().saturating_sub(liability)
 }
 
 /// Return the live holder value of one order, gross of fees.
@@ -374,6 +381,19 @@ public fun penalty_fee(quote: &MintQuote): u64 {
 
 public fun all_in_cost(quote: &MintQuote): u64 {
     quote.all_in_cost
+}
+
+/// Walk every live exposure and replace this market's exact liability mark.
+/// Later market activity does not invalidate the mark; flush consumers bound its
+/// age and knowingly accept activity and oracle movement inside that window.
+public fun refresh_nav(market: &mut ExpiryMarket, pricer: &Pricer, clock: &Clock) {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.exact_live_liability(pricer);
+    market.nav_mark =
+        option::some(NavMark {
+            liability,
+            computed_at_ms: clock.timestamp_ms(),
+        });
 }
 
 /// Mint an exact live position quantity against this expiry market.
@@ -705,28 +725,16 @@ public fun set_mint_paused(
 
 // === Public-Package Functions ===
 
-/// Return this market's current valuation facts. Liability is exact and
-/// uncertainty is zero. Introducing an estimate requires migrating
-/// `current_nav` and its PLP consumer in the same change.
-public(package) fun current_valuation(market: &ExpiryMarket, pricer: &Pricer): ExpiryValuation {
-    market.assert_pricer_bound(pricer);
-    ExpiryValuation {
-        free_cash: market.cash.free_cash(),
-        estimated_liability: market.strike_exposure.exact_live_liability(pricer),
-        liability_uncertainty: 0,
-    }
-}
-
-public(package) fun free_cash(valuation: &ExpiryValuation): u64 {
-    valuation.free_cash
-}
-
-public(package) fun estimated_liability(valuation: &ExpiryValuation): u64 {
-    valuation.estimated_liability
-}
-
-public(package) fun liability_uncertainty(valuation: &ExpiryValuation): u64 {
-    valuation.liability_uncertainty
+/// Return current free cash minus the most recent exact marked liability, floored
+/// at zero. Aborts when no mark exists, the mark is older than three seconds, or
+/// the market has reached expiry and must be settled and swept before the flush.
+public(package) fun marked_nav(market: &ExpiryMarket, clock: &Clock): u64 {
+    let now_ms = clock.timestamp_ms();
+    assert!(now_ms < market.expiry, ENavMarkExpired);
+    assert!(market.nav_mark.is_some(), ENavMarkMissing);
+    let mark = market.nav_mark.borrow();
+    assert!(now_ms - mark.computed_at_ms <= nav_mark_max_age_ms!(), ENavMarkStale);
+    market.cash.free_cash().saturating_sub(mark.liability)
 }
 
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
@@ -884,6 +892,7 @@ public(package) fun create_and_share(
             strike_exposure_config,
             ctx,
         ),
+        nav_mark: option::none(),
         ewma: ewma::new(ctx),
         mint_paused: false,
     };
