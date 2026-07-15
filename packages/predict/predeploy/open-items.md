@@ -202,6 +202,28 @@ multisig custody of each root cap, an allowlist-revocation for authorized apps
 (as the derived caps already have), and/or documented acceptance of the
 cross-package admin trust coupling. (2026-07-07 holistic audit)
 
+### G-2: `Auth` erases authorization provenance at the fund-exit callee
+
+**Severity:** Low / latent — no live bug at HEAD (verified 2026-07-15).
+
+`account::Auth` carries a private `kind` (`AUTH_OWNER` vs `AUTH_APP`), but
+`load_account_mut` validates it and returns a plain `&mut Account` with no getter
+exposing which kind authorized the borrow (account.move:130-139); `Account.owner()`
+reports account ownership, not borrow provenance. So the move.md invariant "a
+terminal fund-exit must be owner-reachable, not solely revocable app-auth" cannot
+be enforced at the exit callee — it holds only as a property of the public
+entrypoint set. Verified: exactly two exits use app-auth (settled redeem, rebate
+claim), both currently paired with owner twins and pinned by tests; every other
+terminal exit is natively owner-reachable, so no funds are strandable today.
+Deauthorize is visible, not silent (`deauthorize_app` emits an event and a later
+`generate_auth_as_app` aborts `EAppNotAuthorized`, account_registry.move:103-120).
+
+**Action:** decide whether owner and app authority split into distinct types so a
+terminal-claim definition must expose an owner-typed path and an app-auth-only exit
+cannot compile — turning the enumeration-only invariant into a structural one before
+the surface grows. Chokepoint-tier (ledger 0015 audit); the fix is a design session,
+not a merge gate. (2026-07-14 chokepoint audit, verified 2026-07-15)
+
 ## Capacity and Liveness Findings
 
 ### C-1: Full-pool flush has no joint valuation budget
