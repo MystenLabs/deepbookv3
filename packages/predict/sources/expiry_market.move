@@ -522,6 +522,11 @@ public fun redeem_live(
         market.redeem_liquidated_order(account, &redeemed_order, close_quantity, clock, ctx);
         return (redeemed_order.id(), option::none())
     };
+    // Prices once and classifies the close outcome, including for 1x orders (which
+    // the batch pass skips). This runs before close-quantity validation in the
+    // consuming close, so a degenerate surface aborts here (e.g. EZeroForward) ahead
+    // of an invalid close_quantity — a compound-failure precedence change vs the
+    // pre-gate targeted-liquidation path, both aborts, no fund effect.
     let terms = market.strike_exposure.quote_live_close_terms(pricer, &redeemed_order);
     if (terms.is_knocked_out()) {
         // Same zero-payout full close as a pre-existing tombstone, in one

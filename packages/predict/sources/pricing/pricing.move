@@ -349,8 +349,12 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    // Basis cap: forward <= factor * spot  <=>  ceil(forward / factor) <= spot,
-    // exact in u64 with no widening.
+    // Basis cap at exactly `factor`: forward <= factor * spot <=> ceil(forward /
+    // factor) <= spot, u64-native with no widening. Deliberately one ulp tighter
+    // than the former `floor(forward*1e9/spot) <= factor*1e9`, which admitted a
+    // 1e-9 basis sliver above `factor`; closing it is what keeps the re-anchored
+    // forward `mul_div_down(spot, forward, spot')` inside u64 (fail-safe: an input
+    // gate rejects the sliver, never a fund path).
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);

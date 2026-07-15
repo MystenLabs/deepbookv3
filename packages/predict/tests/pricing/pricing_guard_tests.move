@@ -285,6 +285,45 @@ fun surface_with_basis_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
+#[test]
+fun surface_at_exactly_max_basis_is_admitted() {
+    // forward = 100 * spot is basis exactly at the factor and passes: the cap is
+    // `ceil(forward / 100) <= spot`, and here ceil(100*spot / 100) = spot.
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let spot = test_constants::float();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        spot,
+        spot * 100,
+        default_svi_a(),
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+    // Loads without aborting on the basis branch (deep-OTM strike saturates to 0).
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.up_price(DEEP_OTM_STRIKE), 0);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_one_atom_above_max_basis_aborts() {
+    // Deliberate exact-envelope tightening (DBU-566). At spot = 2e9, forward =
+    // 100*spot + 1: the former `floor(forward*1e9/spot) <= 100e9` floored to 100e9
+    // and ADMITTED this basis sliver; the current `ceil(forward/100) <= spot` gives
+    // ceil(2e9 + 0.01) = 2e9 + 1 > spot and rejects it, keeping the re-anchored
+    // forward inside u64. spot = 2e9 is the smallest spot whose /spot floor opens
+    // the one-atom gap the old form admitted.
+    let spot = 2 * test_constants::float();
+    load_pricer_with_spot_forward(spot, spot * 100 + 1);
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_a_above_max_aborts() {
     load_pricer_with_invalid_svi(MAX_SVI_INPUT + 1, default_svi_b(), default_svi_sigma());

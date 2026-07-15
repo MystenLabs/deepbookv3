@@ -110,3 +110,14 @@ fun settlement_beyond_ladder_loses_against_finite_higher() {
     let settlement = (POS_INF_TICK + 5) * TICK_SIZE;
     assert!(!range_codec::settlement_in_range(100, POS_INF_TICK - 1, settlement, TICK_SIZE));
 }
+
+#[test]
+fun settlement_zero_is_below_a_neg_inf_lower_end() {
+    // The predicate is the half-open (lower, higher] winner test, so settlement 0
+    // is below even a neg-inf lower end. This is the one point where it diverges
+    // from the reserve side (the tree always counts an l_tick==0 base term), so the
+    // reserve==payout identity is stated for settlement > 0. Unreachable in
+    // production: Propbook normalization drops a zero settlement price.
+    assert!(!range_codec::settlement_in_range(0, 200, 0, TICK_SIZE));
+    assert!(!range_codec::settlement_in_range(0, POS_INF_TICK, 0, TICK_SIZE));
+}

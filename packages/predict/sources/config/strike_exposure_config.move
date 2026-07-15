@@ -299,8 +299,11 @@ fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64)
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
-    // = (max_multiplier - 1) * elapsed / window, round down (single rounding;
-    // the ramp shaves <= 1 ulp off the true line).
+    // = (max_multiplier - 1) * elapsed / window, round down (single rounding vs
+    // the former div-then-mul double floor). The multiplier differs by <= 1 ulp of
+    // 1e9 scale, pool-favored; that amplifies through `mul(rate, quantity)` to a
+    // bounded per-order fee delta (<= a few hundred thousand DUSDC atoms at max
+    // order size), never toward the trader.
     let ramp = math::mul_div_down(
         config.expiry_fee_max_multiplier - math::float_scaling!(),
         config.expiry_fee_window_ms - time_to_expiry_ms,

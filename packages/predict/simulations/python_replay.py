@@ -1967,8 +1967,9 @@ def settled_order_payout(order: dict[str, Any], settlement_price: int) -> int:
     # owner both settlement surfaces derive from): for integer boundaries at exact
     # tick multiples, settlement > l*ts <=> l < ceil(settlement/ts) and
     # settlement <= h*ts <=> ceil(settlement/ts) <= h, with sentinel ends mapping to
-    # 0 / u64::MAX — so the raw and tick thresholds agree for EVERY settlement,
-    # whole-tick multiple or not.
+    # 0 / u64::MAX — so the raw and tick thresholds agree for every POSITIVE
+    # settlement, whole-tick multiple or not (settlement 0 is unreachable: Propbook
+    # drops a zero price, and there the tree's l_tick==0 base term disagrees).
     if settlement_price > order["lower"] and settlement_price <= order["higher"]:
         return order["quantity"] - order_floor_shares(order)
     return 0
