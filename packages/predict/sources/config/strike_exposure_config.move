@@ -151,8 +151,8 @@ public(package) fun assert_mint_admission(
     assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
     let floor_shares = entry_value - net_premium;
 
-    // Unconditional: at floor_shares == 0 the threshold is 0 and entry_value > 0
-    // holds by the min-net-premium assert above (net_premium <= entry_value).
+    // At floor_shares == 0 the threshold is 0 and entry_value > 0 by the
+    // min-net-premium assert above, so this holds for the 1x case too.
     let liquidation_threshold_at_open = math::div(floor_shares, config.liquidation_ltv);
     assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
 
@@ -299,11 +299,7 @@ fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64)
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
-    // = (max_multiplier - 1) * elapsed / window, round down (single rounding vs
-    // the former div-then-mul double floor). The multiplier differs by <= 1 ulp of
-    // 1e9 scale, pool-favored; that amplifies through `mul(rate, quantity)` to a
-    // bounded per-order fee delta (<= a few hundred thousand DUSDC atoms at max
-    // order size), never toward the trader.
+    // = (max_multiplier - 1) * elapsed / window, round down; the dust is pool-favored.
     let ramp = math::mul_div_down(
         config.expiry_fee_max_multiplier - math::float_scaling!(),
         config.expiry_fee_window_ms - time_to_expiry_ms,
