@@ -411,15 +411,14 @@ public fun mint_exact_quantity(
             config.trade_liquidation_budget(),
         );
 
-    market.mint_prepared_exact_quantity(
+    let terms = market
+        .strike_exposure
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+    market.mint_prepared_terms(
         account,
         config,
-        pricer,
         active_stake,
-        lower_tick,
-        higher_tick,
-        quantity,
-        leverage,
+        terms,
         max_cost,
         max_probability,
         clock,
@@ -534,7 +533,6 @@ public fun redeem_live(
         account,
         config,
         terms,
-        &redeemed_order,
         close_quantity,
         min_probability,
         min_proceeds,
@@ -1003,36 +1001,6 @@ fun compute_mint_quote(
     }
 }
 
-fun mint_prepared_exact_quantity(
-    market: &mut ExpiryMarket,
-    account: &mut Account,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    active_stake: u64,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    leverage: u64,
-    max_cost: u64,
-    max_probability: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): u256 {
-    let terms = market
-        .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
-    market.mint_prepared_terms(
-        account,
-        config,
-        active_stake,
-        terms,
-        max_cost,
-        max_probability,
-        clock,
-        ctx,
-    )
-}
-
 /// Shared mint funnel from priced terms: slippage bounds, EWMA penalty, quote,
 /// allocation, payment, event.
 fun mint_prepared_terms(
@@ -1085,13 +1053,14 @@ fun redeem_live_internal(
     account: &mut Account,
     config: &ProtocolConfig,
     terms: LiveCloseTerms,
-    order: &Order,
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
+    // The terms are the single authority for the order being closed.
+    let order = *terms.order();
     // Block an atomic mint -> oracle-update -> redeem: reject closing a position in
     // the same timestamp it was opened. A single transaction reads one `Clock`, so
     // equal timestamps mean the mint and redeem are in the same tx. The open time is
@@ -1107,7 +1076,8 @@ fun redeem_live_internal(
         ctx,
     );
 
-    let close_quote = market.strike_exposure.close_live_order(terms, close_quantity);
+    // The caller branched on `is_knocked_out`, so this is always the live outcome.
+    let close_quote = market.strike_exposure.close_live_order(terms, close_quantity).destroy_some();
     let resulting_order = close_quote.resulting_order();
     let redeem_amount = close_quote.redeem_amount();
     let range_probability = close_quote.range_probability();
@@ -1165,7 +1135,7 @@ fun redeem_live_internal(
         account.account_id(),
         account.owner(),
         builder_code_id,
-        order,
+        &order,
         position_root_id,
         close_quantity,
         replacement_order_id,

@@ -92,13 +92,24 @@ public(package) fun new_from_ticks(
     quantity: u64,
     sequence: u64,
 ): Order {
-    new(
-        lower_tick,
-        higher_tick,
-        floor_shares,
-        quantity_lots_from_quantity(quantity),
-        sequence,
-    )
+    // assert_valid_quantity proves positive lot alignment and a quotient within
+    // U32_MASK, so the lots value needs no further bound.
+    assert_valid_quantity(quantity);
+    let quantity_lots = quantity / constants::position_lot_size!();
+    assert!(sequence <= U40_MASK as u64, EInvalidSequence);
+    assert!(floor_shares <= quantity, EInvalidFloorShares);
+    assert_valid_order_shape(lower_tick, higher_tick);
+
+    let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
+    let floor_shares_key = encode_floor_shares_key(floor_shares);
+    let id =
+        (quantity_lots_key << QUANTITY_LOTS_OFFSET)
+        | (floor_shares_key << FLOOR_SHARES_OFFSET)
+        | ((lower_tick as u256) << LOWER_TICK_OFFSET)
+        | ((higher_tick as u256) << HIGHER_TICK_OFFSET)
+        | (sequence as u256);
+
+    Order { id }
 }
 
 /// Construct a lower-quantity order that inherits the original floor coverage invariant.
@@ -138,31 +149,6 @@ public(package) fun floor_shares(order: &Order): u64 {
     decode_floor_shares(order.id)
 }
 
-fun new(
-    lower_tick: u64,
-    higher_tick: u64,
-    floor_shares: u64,
-    quantity_lots: u64,
-    sequence: u64,
-): Order {
-    assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
-    assert!(sequence <= U40_MASK as u64, EInvalidSequence);
-    let quantity = quantity_lots * constants::position_lot_size!();
-    assert!(floor_shares <= quantity, EInvalidFloorShares);
-    assert_valid_order_shape(lower_tick, higher_tick);
-
-    let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
-    let floor_shares_key = encode_floor_shares_key(floor_shares);
-    let id =
-        (quantity_lots_key << QUANTITY_LOTS_OFFSET)
-        | (floor_shares_key << FLOOR_SHARES_OFFSET)
-        | ((lower_tick as u256) << LOWER_TICK_OFFSET)
-        | ((higher_tick as u256) << HIGHER_TICK_OFFSET)
-        | (sequence as u256);
-
-    Order { id }
-}
-
 // === Private Functions ===
 
 fun decode_tick(id: u256, offset: u8): u64 {
@@ -183,11 +169,6 @@ fun decode_u64(id: u256, offset: u8): u64 {
 
 fun decode_floor_shares(id: u256): u64 {
     (U64_MASK as u64) - decode_u64(id, FLOOR_SHARES_OFFSET)
-}
-
-fun quantity_lots_from_quantity(quantity: u64): u64 {
-    assert_valid_quantity(quantity);
-    quantity / constants::position_lot_size!()
 }
 
 fun encode_quantity_lots_key(quantity_lots: u64): u256 {

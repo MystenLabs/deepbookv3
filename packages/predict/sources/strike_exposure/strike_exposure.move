@@ -20,7 +20,7 @@ use deepbook_predict::{
     order_events,
     pricing::{Self, Pricer},
     range_codec,
-    strike_exposure_config::{Self, StrikeExposureConfig},
+    strike_exposure_config::{Self, MintAdmission, StrikeExposureConfig},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use fixed_math::math;
@@ -73,8 +73,7 @@ public struct MintTerms has drop {
     quantity: u64,
     leverage: u64,
     entry_probability: u64,
-    net_premium: u64,
-    floor_shares: u64,
+    admission: MintAdmission,
 }
 
 /// Redeem terms from closing live indexed quantity. `resulting_order` is the
@@ -107,12 +106,21 @@ public(package) fun is_knocked_out(terms: &LiveCloseTerms): bool {
     }
 }
 
+/// The order these terms were priced for — the single authority the flow reads
+/// instead of carrying the order beside the terms.
+public(package) fun order(terms: &LiveCloseTerms): &Order {
+    match (terms) {
+        LiveCloseTerms::KnockedOut { order, .. } => order,
+        LiveCloseTerms::LiveClose { order, .. } => order,
+    }
+}
+
 public(package) fun entry_probability(terms: &MintTerms): u64 {
     terms.entry_probability
 }
 
 public(package) fun net_premium(terms: &MintTerms): u64 {
-    terms.net_premium
+    terms.admission.net_premium()
 }
 
 public(package) fun quantity(terms: &MintTerms): u64 {
@@ -335,8 +343,9 @@ public(package) fun quote_mint_terms_for_amount(
 /// result, so the order's contract fields are always the ones that were priced,
 /// and the market-identity assert rejects terms priced on another exposure.
 public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
-    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, floor_shares, .. } = terms;
+    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, admission, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
+    let floor_shares = admission.floor_shares();
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_ticks(
@@ -415,17 +424,17 @@ public(package) fun quote_live_close_terms(
     }
 }
 
-/// Apply one priced close outcome and return the redeem terms. A knock-out
-/// removes the full order at zero payout and emits `OrderLiquidated` with no
-/// tombstone — the holder is redeeming in this same transaction, so the
-/// tombstone would be cleared immediately; a live close removes the closed
-/// slice at the quoted probability. Consuming by value ties each priced
-/// outcome to at most one applied transition.
+/// Apply one priced close outcome. A knock-out removes the full order at zero
+/// payout, emits `OrderLiquidated`, and returns `None` — no tombstone, since
+/// the holder is redeeming in this same transaction and no quote exists at a
+/// knocked-out price; a live close removes the closed slice at the quoted
+/// probability and returns its `CloseQuote`. Consuming by value ties each
+/// priced outcome to at most one applied transition.
 public(package) fun close_live_order(
     exposure: &mut StrikeExposure,
     terms: LiveCloseTerms,
     close_quantity: u64,
-): CloseQuote {
+): Option<CloseQuote> {
     match (terms) {
         LiveCloseTerms::KnockedOut { expiry_market_id, order, gross_value } => {
             assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
@@ -445,11 +454,15 @@ public(package) fun close_live_order(
                 gross_value,
                 liquidation_ltv,
             );
-            CloseQuote { resulting_order: order, redeem_amount: 0, range_probability: 0 }
+            option::none()
         },
         LiveCloseTerms::LiveClose { expiry_market_id, order, range_probability } => {
             assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
-            exposure.close_priced_live_order(&order, close_quantity, range_probability)
+            option::some(exposure.close_priced_live_order(
+                &order,
+                close_quantity,
+                range_probability,
+            ))
         },
     }
 }
@@ -667,8 +680,7 @@ fun priced_mint_terms(
         quantity,
         leverage,
         entry_probability,
-        net_premium: admission.net_premium(),
-        floor_shares: admission.floor_shares(),
+        admission,
     }
 }
 
