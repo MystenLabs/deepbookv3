@@ -3,6 +3,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 export type ScenarioActionName = "oracle_mint_ptb" | "redeem" | "supply" | "withdraw";
+export type SimulationActionName =
+    | ScenarioActionName
+    | "flush"
+    | "rebalance_expiry_cash";
 
 export interface OracleRefreshData {
     spot: bigint;
@@ -67,9 +71,7 @@ export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
     step: number;
-    // Synthetic runner maintenance txs are not CSV row actions, so they widen
-    // the trace action set without touching `ScenarioActionName`.
-    action: ScenarioActionName | "flush" | "rebalance_expiry_cash";
+    action: SimulationActionName;
     digest: string;
     wallMs: number;
     gas: GasLike;
@@ -104,7 +106,7 @@ export interface EconomicDataFile {
 
 export interface EconomicRecord {
     step: number;
-    action: ScenarioActionName;
+    action: SimulationActionName;
     input: Record<string, unknown>;
     updates: Record<string, unknown>[];
     state: Record<string, string>;

@@ -74,6 +74,7 @@ public struct ReferenceTickSet has copy, drop, store {
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
+    recorded_at_ms: u64,
 }
 
 /// Emitted once when a market crosses into terminal settlement: `ensure_settled`
@@ -169,6 +170,7 @@ public(package) fun emit_reference_tick_set(
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
+    recorded_at_ms: u64,
 ) {
     event::emit(ReferenceTickSet {
         expiry_market_id,
@@ -176,6 +178,7 @@ public(package) fun emit_reference_tick_set(
         source_timestamp_ms,
         spot,
         tick,
+        recorded_at_ms,
     });
 }
 

@@ -87,7 +87,7 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
 
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);
-    assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order));
+    assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order, fx.clock()));
 
     (fx, oracle, harness, order)
 }

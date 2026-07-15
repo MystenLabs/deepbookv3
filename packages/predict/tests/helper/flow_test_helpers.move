@@ -1346,7 +1346,7 @@ public fun liquidate(
         bs.svi(),
         &self.clock,
     );
-    market.liquidate(config, &pricer, budget)
+    market.liquidate(config, &pricer, budget, &self.clock)
 }
 
 /// Run a budgeted liquidation pass through a market bundle.
@@ -1385,6 +1385,7 @@ public fun liquidate_order(
         config,
         &pricer,
         order_id,
+        &self.clock,
     )
 }
 

@@ -21,7 +21,7 @@ use deepbook_predict::{
     expiry_cash::{Self, ExpiryCash},
     order::{Self, Order},
     order_events,
-    predict_account,
+    predict_account::{Self, ResolvedExpirySummary},
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     strike_exposure::{Self, LiveCloseTerms, MintTerms, StrikeExposure},
@@ -409,6 +409,7 @@ public fun mint_exact_quantity(
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
+            clock,
         );
 
     let terms = market
@@ -417,6 +418,7 @@ public fun mint_exact_quantity(
     market.mint_prepared_terms(
         account,
         config,
+        pricer,
         active_stake,
         terms,
         max_cost,
@@ -459,6 +461,7 @@ public fun mint_exact_amount(
         .liquidate_live_orders(
             pricer,
             config.trade_liquidation_budget(),
+            clock,
         );
 
     let terms = market
@@ -468,6 +471,7 @@ public fun mint_exact_amount(
     market.mint_prepared_terms(
         account,
         config,
+        pricer,
         active_stake,
         terms,
         std::u64::max_value!(),
@@ -513,9 +517,9 @@ public fun redeem_live(
     let account = wrapper.load_account_mut(auth);
 
     let redeemed_order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget());
+    market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget(), clock);
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, ctx);
+        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, clock, ctx);
         return (redeemed_order.id(), option::none())
     };
     let terms = market.strike_exposure.quote_live_close_terms(pricer, &redeemed_order);
@@ -525,13 +529,14 @@ public fun redeem_live(
         // tombstone persists. The slippage floors and same-timestamp guard only
         // gate the live-priced path.
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-        market.strike_exposure.close_live_order(terms, close_quantity);
-        market.close_position_at_zero_payout(account, &redeemed_order, ctx);
+        market.strike_exposure.close_live_order(terms, close_quantity, pricer, clock);
+        market.close_position_at_zero_payout(account, &redeemed_order, clock, ctx);
         return (redeemed_order.id(), option::none())
     };
     let replacement_order_id = market.redeem_live_internal(
         account,
         config,
+        pricer,
         terms,
         close_quantity,
         min_probability,
@@ -619,9 +624,10 @@ public fun liquidate(
     config: &ProtocolConfig,
     pricer: &Pricer,
     budget: u64,
+    clock: &Clock,
 ): u64 {
     market.assert_live_flow_allowed(config, pricer);
-    market.strike_exposure.liquidate_live_orders(pricer, budget)
+    market.strike_exposure.liquidate_live_orders(pricer, budget, clock)
 }
 
 /// Try to liquidate one active leveraged order by ID.
@@ -630,11 +636,12 @@ public fun liquidate_order(
     config: &ProtocolConfig,
     pricer: &Pricer,
     order_id: u256,
+    clock: &Clock,
 ): bool {
     market.assert_live_flow_allowed(config, pricer);
 
     let order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_order(pricer, &order)
+    market.strike_exposure.liquidate_live_order(pricer, &order, clock)
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -646,6 +653,7 @@ public fun set_reference_tick(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
+    clock: &Clock,
 ): u64 {
     config.assert_version();
     config.assert_not_valuation_in_progress();
@@ -674,6 +682,7 @@ public fun set_reference_tick(
             source_timestamp_ms,
             spot,
             tick,
+            clock.timestamp_ms(),
         );
     };
     tick
@@ -743,17 +752,17 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
 }
 
 /// Resolve one account's settled trading-loss rebate. Returns the unearned residual
-/// rebate-reserve cash and the rebate amount paid to the account.
+/// rebate-reserve cash and the amount paid.
 public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
+    summary: &ResolvedExpirySummary,
     config: &ProtocolConfig,
     ctx: &mut TxContext,
 ): (Balance<DUSDC>, u64) {
     assert!(market.is_settled(), EMarketNotSettled);
     market.materialize_settled_liability();
 
-    let summary = predict_account::resolve_expiry_summary(account, market.id());
     let trading_fees_paid = summary.fees_paid();
     let gross_profit = summary.gross_profit();
     if (trading_fees_paid == 0) {
@@ -886,11 +895,12 @@ fun redeem_liquidated_order(
     account: &mut Account,
     order: &Order,
     close_quantity: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(close_quantity == order.quantity(), EFullCloseRequired);
     market.strike_exposure.clear_liquidated_order(order);
-    market.close_position_at_zero_payout(account, order, ctx);
+    market.close_position_at_zero_payout(account, order, clock, ctx);
 }
 
 /// Account-side tail shared by the tombstone and immediate-knock-out closes:
@@ -899,6 +909,7 @@ fun close_position_at_zero_payout(
     market: &ExpiryMarket,
     account: &mut Account,
     order: &Order,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     let position_root_id = predict_account::remove_position(
@@ -913,6 +924,7 @@ fun close_position_at_zero_payout(
         account.owner(),
         order,
         position_root_id,
+        clock.timestamp_ms(),
     );
 }
 
@@ -1007,6 +1019,7 @@ fun mint_prepared_terms(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
+    pricer: &Pricer,
     active_stake: u64,
     terms: MintTerms,
     max_cost: u64,
@@ -1037,6 +1050,7 @@ fun mint_prepared_terms(
         account.owner(),
         builder_code_id,
         &minted_order,
+        pricer,
         leverage,
         quote.entry_probability,
         quote.net_premium,
@@ -1044,6 +1058,7 @@ fun mint_prepared_terms(
         quote.fee_incentive_subsidy,
         quote.builder_fee,
         quote.penalty_fee,
+        clock.timestamp_ms(),
     );
     minted_order.id()
 }
@@ -1052,6 +1067,7 @@ fun redeem_live_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
+    pricer: &Pricer,
     terms: LiveCloseTerms,
     close_quantity: u64,
     min_probability: u64,
@@ -1077,7 +1093,10 @@ fun redeem_live_internal(
     );
 
     // The caller branched on `is_knocked_out`, so this is always the live outcome.
-    let close_quote = market.strike_exposure.close_live_order(terms, close_quantity).destroy_some();
+    let close_quote = market
+        .strike_exposure
+        .close_live_order(terms, close_quantity, pricer, clock)
+        .destroy_some();
     let resulting_order = close_quote.resulting_order();
     let redeem_amount = close_quote.redeem_amount();
     let range_probability = close_quote.range_probability();
@@ -1136,6 +1155,7 @@ fun redeem_live_internal(
         account.owner(),
         builder_code_id,
         &order,
+        pricer,
         position_root_id,
         close_quantity,
         replacement_order_id,
@@ -1143,6 +1163,7 @@ fun redeem_live_internal(
         fee_amount,
         builder_fee_amount,
         penalty_amount,
+        clock.timestamp_ms(),
     );
     replacement_order_id
 }
@@ -1165,7 +1186,13 @@ fun redeem_settled_internal(
     assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
 
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(account, &redeemed_order, redeemed_order.quantity(), ctx);
+        market.redeem_liquidated_order(
+            account,
+            &redeemed_order,
+            redeemed_order.quantity(),
+            clock,
+            ctx,
+        );
         return (redeemed_order.id(), option::none())
     };
 
@@ -1189,6 +1216,7 @@ fun redeem_settled_internal(
         position_root_id,
         settlement,
         payout_amount,
+        clock.timestamp_ms(),
     );
     (redeemed_order.id(), option::none())
 }
