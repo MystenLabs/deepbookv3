@@ -426,6 +426,54 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-13: Budget-bias mint sizing searches the premium relation; oversized budgets saturate at the lot cap (`ENetPremiumBudgetTooHigh` removed; resolves DBU-566)
+
+- **Trigger state:** a `mint_exact_amount` (or budget-bias quote) net-premium
+  budget large enough that the fitting quantity exceeds the lot cap — or, in
+  the removed design, large enough that a u64 intermediate of the algebraic
+  inverse overflowed (~$18,446 / leverage).
+- **Controller:** user — the budget is a caller-chosen primitive on a
+  single-user action; the read-only quotes accept any u64 budget.
+- **Blast radius:** the single mint transaction or quote; no shared or
+  mandatory path.
+- **Response:** proceed — sizing is a binary search over lot counts against the
+  premium relation, with the lot cap (`order::max_quantity_lots`) as the search
+  domain, so an oversized budget converges to the largest legal order instead
+  of aborting. Every probe quantity is a legal order quantity and the premium
+  relation only shrinks its input, so no intermediate can leave u64: the former
+  guard's abort state is unrepresentable, not tolerated.
+- **Duty inventory (guard removal):** the three `ENetPremiumBudgetTooHigh`
+  asserts bounded only the removed algebraic inverse's own `(budget+1) *
+  leverage` and `entry_value * scaling` u64 intermediates; those expressions
+  were deleted with the inverse, and no downstream consumer read its raw
+  (pre-lot-cap) result. Nothing else was incidentally bounded.
+- **Accepted inaccuracy:** the search probes the single-floor fused premium
+  `mul_div_down(p, Q, L)`, which over-estimates admission's two-floor charge by
+  at most one unit, so sizing is conservative: the charged premium never
+  exceeds the budget, and the fill can be one lot short of the exact maximum at
+  fractional-leverage rounding edges. The dependency is one-sided (probe >=
+  charge) and is documented at the probe site in
+  `strike_exposure::quote_mint_terms`.
+- **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
+  dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
+  the BS pricing in the same call.
+- **Pinning tests:** `mint_exact_amount_tests.move` —
+  `oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
+  quotes the lot-cap premium, the former abort domain),
+  `budget_mints_largest_fitting_quantity_and_debits_its_exact_cost` and
+  `budget_at_next_lot_premium_mints_the_next_lot` (sizing pinned from both
+  sides at the exact ATM probability),
+  `budget_fill_below_min_quantity_aborts` (fill floor);
+  `mint_redeem_guard_tests::mint_exact_amount_below_min_quantity_aborts`
+  (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
+  edge needs a rounding-lossy probability no current fixture pins.
+- **Reopen when:** the premium relation changes shape (a fee folded into the
+  budget, a rounding flip — the probe must move with it or the one-sided bound
+  breaks), a measured gas profile shows the search matters, or a consumer needs
+  the exact maximum fill at fractional leverage.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
