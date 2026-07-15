@@ -325,8 +325,6 @@ hygiene-speed changes.
 
 - Pyth canonical-binding check re-implemented in `expiry_market` (:776-783)
   instead of owned by `pricing` — re-home behind one owner. (audit 0622da)
-- `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
-  returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
 - `mint_exact_amount` disables BOTH slippage guards (`max_cost` and
   `max_probability` hardcoded to `u64::max`, expiry_market.move:482-483),
   asymmetric with `mint_exact_quantity` — decide whether a premium-budget mint
@@ -347,6 +345,16 @@ hygiene-speed changes.
 - Public `liquidate()` takes an unbounded caller budget — low-priority self-DoS
   probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
   (from the retired experiments backlog)
+- Single-home the mint Q↔premium relationship: `max_quantity_for_net_premium`
+  (the budget inverse) is a second expression of the forward
+  `assert_mint_admission` mapping, so it approximates rather than mirrors — the
+  forward floors twice, the inverse inverts with one floor. Exact after lot-clamp
+  at every admitted entry probability; undershoots by >1 lot only if
+  `min_entry_probability` drops below ~2e5 (RP-13 reopen condition). Structural
+  fix: the inverse as a bounded monotone search over the same mint-terms
+  evaluator the forward uses, so it agrees by construction. Same "one
+  relationship, two expressions" class as the settlement predicate (now
+  single-homed in `range_codec::settlement_in_range`). (DBU-566 review)
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 
@@ -372,3 +380,13 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   (zero builder fee / subsidy). Strengthen each to assert the passing boundary.
   (`unstake_deep` receiving-side assertion — that the account received the DEEP —
   added on PR #1106.)
+- **DBU-566 mint/redeem behavior-change coverage.** Two batches owed on the
+  DBU-566 branch's landed changes: (a) the budget-inverse former-abort inputs
+  (RP-13 promises these) — assert the budgets that used to abort
+  `ENetPremiumBudgetTooHigh` now return the lot-clamped quantity; (b) the
+  `LiveCloseTerms` immediate-knockout path — partial redeem that discovers
+  knockout aborts `EFullCloseRequired`, same-timestamp knockout preserves the
+  zero-payout bypass, knockout bypasses nonzero `min_probability`/`min_proceeds`,
+  and both `OrderLiquidated` + `LiquidatedOrderRedeemed` fire in one transaction.
+  (DBU-566 review; the source lands as an intentional intermediate per
+  unit-tests.md § Predict public flow coverage)
