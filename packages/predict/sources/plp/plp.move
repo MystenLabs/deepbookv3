@@ -272,7 +272,8 @@ public fun value_expiry(
             bs_svi,
             clock,
         );
-        market.current_nav(&pricer)
+        let market_valuation = market.current_valuation(&pricer);
+        market_valuation.free_cash().saturating_sub(market_valuation.estimated_liability())
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;
