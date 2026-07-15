@@ -87,6 +87,30 @@ fun near_expiry_leverage_mint_rejected_by_taper() {
     abort 999
 }
 
+/// The sizing path (`mint_exact_amount`) applies the same taper via a second
+/// admission entry (`quote_mint_entry_probability`): a 2x sized mint ~2 minutes
+/// from expiry is rejected at admission through the real entrypoint.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun near_expiry_leverage_exact_amount_mint_rejected_by_taper() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_leverage_taper_window_ms(constants::one_hour_ms!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        constants::position_lot_size!(),
+        LEVERAGE_TWO_X,
+    );
+    abort 999
+}
+
 /// Closing a max-sized 6x ATM order down to one lot must leave a valid replacement.
 ///
 /// The old two-step split left `ceil(floor_shares / 1e9) = 17_896` floor shares on

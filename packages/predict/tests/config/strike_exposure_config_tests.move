@@ -52,6 +52,15 @@ const HALF_PROBABILITY_ONE_POINT_EIGHT_X_NET_PREMIUM: u64 = 277_777_777;
 const HALF_PROBABILITY_ONE_POINT_EIGHT_X_FLOOR_SHARES: u64 = 222_222_223;
 /// p = 0.5 at 1x: net premium equals the full entry value 500_000_000, floor 0.
 const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
+const LEVERAGE_ONE_POINT_FIVE_X: u64 = 1_500_000_000;
+const LEVERAGE_TWO_POINT_SEVEN_X: u64 = 2_700_000_000;
+/// A quarter of the default 1h leverage-taper window (15 minutes); the taper
+/// multiplier is exactly 0.25.
+const QUARTER_TAPER_WINDOW_MS: u64 = 900_000;
+/// p = 0.5, 2.7x, quantity 1e9: net premium 500_000_000 / 2.7 = 185_185_185
+/// (floor); floor shares 500_000_000 - 185_185_185.
+const HALF_PROBABILITY_TWO_POINT_SEVEN_X_NET_PREMIUM: u64 = 185_185_185;
+const HALF_PROBABILITY_TWO_POINT_SEVEN_X_FLOOR_SHARES: u64 = 314_814_815;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -470,4 +479,53 @@ fun taper_disabled_admits_full_leverage_at_expiry() {
     assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
     assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
     destroy(config);
+}
+
+// At exactly the window boundary (time_to_expiry == window) the taper is full, so
+// the cap is the untapered 2.714285714x and 2.7x is admitted. Pins the `>=` edge
+// (the far-from-expiry tests only exercise time >> window).
+#[test]
+fun taper_at_window_boundary_admits_full_leverage() {
+    let config = strike_exposure_config::new();
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_POINT_SEVEN_X,
+        constants::one_hour_ms!(),
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_POINT_SEVEN_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_POINT_SEVEN_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+// The taper is linear: at a quarter of the window the multiplier is 0.25, giving
+// cap 1 + 2 * 0.857142857 * 0.25 = 1.428571428x, so 1.5x is rejected — even though
+// the same 1.5x clears the 1.857142857x cap at half the window (a second point on
+// the taper line).
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun taper_quarter_window_rejects_leverage_admitted_at_half_window() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_POINT_FIVE_X,
+        QUARTER_TAPER_WINDOW_MS,
+    );
+    abort 999
+}
+
+// The near-expiry taper multiplies the low-probability risk curve. At p = 0.1 the
+// full cap is 1.8x; at half the window the taper halves the excess to give
+// 1 + 2 * 0.4 * 0.5 = 1.4x, so 1.5x is rejected here even though it would be
+// admitted far from expiry.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun taper_composes_with_low_probability_curve() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_LOW,
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_POINT_FIVE_X,
+        HALF_TAPER_WINDOW_MS,
+    );
+    abort 999
 }
