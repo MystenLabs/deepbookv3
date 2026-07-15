@@ -13,7 +13,13 @@
 #[test_only]
 module deepbook_predict::mint_exact_amount_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, strike_exposure, test_constants};
+use deepbook_predict::{
+    constants,
+    flow_test_helpers as helpers,
+    strike_exposure,
+    strike_exposure_config,
+    test_constants
+};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
@@ -119,6 +125,31 @@ fun budget_fill_below_min_quantity_aborts() {
         BUDGET_BELOW_NEXT_LOT,
         TEN_THOUSAND_LOTS + constants::position_lot_size!(),
         test_constants::leverage_one_x(),
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EInvalidLeverage)]
+fun budget_mint_with_leverage_below_one_x_aborts_with_domain_code() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Policy runs before the sizing search, so an invalid leverage aborts with
+    // its domain code — never the math module's zero-input abort.
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        BUDGET_BELOW_NEXT_LOT,
+        TEN_THOUSAND_LOTS,
+        999_999_999,
     );
 
     abort 999

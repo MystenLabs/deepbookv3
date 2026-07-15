@@ -321,6 +321,10 @@ public(package) fun quote_mint_terms(
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
+        // Policy first: the search divides by `leverage`, so a policy-invalid
+        // request must abort with its domain code before the first probe (also
+        // the pre-unification abort order of the budget path).
+        exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
         // Largest lot count whose net premium fits the budget: binary search on
         // the monotone premium relation. The single-floor probe over-estimates
         // admission's two-floor charge (`assert_mint_admission`) by at most one

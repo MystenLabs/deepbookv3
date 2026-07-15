@@ -285,6 +285,46 @@ fun surface_with_basis_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
+/// The basis envelope is exact: `forward == factor * spot` is the largest
+/// admitted forward. The old widening compare admitted a `floor(spot/1e9)`-unit
+/// sliver above it; the `div_ceil` form deliberately tightens that away, so the
+/// very next unit must reject (companion admit case below pins the boundary
+/// from the other side).
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_with_basis_one_above_exact_factor_aborts() {
+    let spot = 100 * test_constants::float();
+    let forward = spot * 100 + 1;
+    load_pricer_with_spot_forward(spot, forward);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun surface_with_basis_at_exact_factor_admits() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let spot = 100 * test_constants::float();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        spot,
+        spot * 100, // basis exactly at the factor: the largest admitted forward
+        default_svi_a(),
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    // Envelope admitted: the pricer loads and quotes a probability.
+    let price = pricer.up_price(test_constants::default_live_price());
+    assert!(price <= float!());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_a_above_max_aborts() {
     load_pricer_with_invalid_svi(MAX_SVI_INPUT + 1, default_svi_b(), default_svi_sigma());

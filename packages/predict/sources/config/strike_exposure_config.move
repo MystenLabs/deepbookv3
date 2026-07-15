@@ -109,6 +109,29 @@ public(package) fun trading_fee(
     math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
+/// Assert entry probability and leverage policy without deriving quantity-dependent
+/// mint terms. Budget-bias sizing runs this before searching so a policy-invalid
+/// request aborts with its domain code before any division by `leverage`, in the
+/// same order the mint admission itself would report it.
+public(package) fun assert_mint_probability_and_leverage_policy(
+    config: &StrikeExposureConfig,
+    entry_probability: u64,
+    leverage: u64,
+) {
+    assert!(
+        entry_probability >= config.min_entry_probability
+            && entry_probability <= config.max_entry_probability,
+        EEntryProbabilityOutOfBounds,
+    );
+
+    // Leverage is continuous, with the protocol cap scaled down for low prices.
+    assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
+    assert!(
+        leverage <= config.admitted_leverage_cap(entry_probability),
+        ELeverageAboveAdmissionCap,
+    );
+}
+
 /// Assert entry probability, leverage, net-premium, and barrier policy; return a
 /// `MintAdmission` carrying the net premium and the static floor `F`.
 ///
@@ -123,18 +146,7 @@ public(package) fun assert_mint_admission(
     quantity: u64,
     leverage: u64,
 ): MintAdmission {
-    assert!(
-        entry_probability >= config.min_entry_probability
-            && entry_probability <= config.max_entry_probability,
-        EEntryProbabilityOutOfBounds,
-    );
-
-    // Leverage is continuous, with the protocol cap scaled down for low prices.
-    assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
-    assert!(
-        leverage <= config.admitted_leverage_cap(entry_probability),
-        ELeverageAboveAdmissionCap,
-    );
+    config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
 
     let entry_value = math::mul(entry_probability, quantity);
     let net_premium = math::div(entry_value, leverage);
