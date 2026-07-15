@@ -74,6 +74,15 @@ public struct ExpiryMarket has key {
     mint_paused: bool,
 }
 
+/// Market-owned facts used to value one expiry independently.
+/// `liability_uncertainty` is the absolute error allowance around
+/// `estimated_liability`; it is zero while liability is computed exactly.
+public struct ExpiryValuation has copy, drop {
+    free_cash: u64,
+    estimated_liability: u64,
+    liability_uncertainty: u64,
+}
+
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
 /// `trading_fee` is the post-stake-discount fee before the sponsor subsidy, and
 /// `all_in_cost` is the exact account withdrawal the same-state mint would make:
@@ -245,15 +254,14 @@ public fun load_live_pricer(
 /// exact spot exists yet, the live-pricing liveness abort remains the correct
 /// failure mode.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
-    market.assert_pricer_bound(pricer);
-    let liability = market.strike_exposure.exact_live_liability(pricer);
+    let valuation = market.current_valuation(pricer);
     // Floor at 0 rather than abort: a degenerate underwater market has zero
     // limited-recourse value, and partial-close `walk_linear` survivors can leave
     // residual ulp dust that makes liability exceed free cash by ~1-2 ulp/order.
     // This is a ROUNDING_POLICY R1/R2 liveness/dust clamp, not a conservative
     // supply mark: a lower pool mark would mint more PLP to new suppliers, so the
     // exact-mark invariant remains the governing safety property.
-    market.cash.free_cash().saturating_sub(liability)
+    valuation.free_cash.saturating_sub(valuation.estimated_liability)
 }
 
 /// Return the live holder value of one order, gross of fees.
@@ -696,6 +704,30 @@ public fun set_mint_paused(
 }
 
 // === Public-Package Functions ===
+
+/// Return this market's current valuation facts. Liability is exact and
+/// uncertainty is zero. Introducing an estimate requires migrating
+/// `current_nav` and its PLP consumer in the same change.
+public(package) fun current_valuation(market: &ExpiryMarket, pricer: &Pricer): ExpiryValuation {
+    market.assert_pricer_bound(pricer);
+    ExpiryValuation {
+        free_cash: market.cash.free_cash(),
+        estimated_liability: market.strike_exposure.exact_live_liability(pricer),
+        liability_uncertainty: 0,
+    }
+}
+
+public(package) fun free_cash(valuation: &ExpiryValuation): u64 {
+    valuation.free_cash
+}
+
+public(package) fun estimated_liability(valuation: &ExpiryValuation): u64 {
+    valuation.estimated_liability
+}
+
+public(package) fun liability_uncertainty(valuation: &ExpiryValuation): u64 {
+    valuation.liability_uncertainty
+}
 
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
