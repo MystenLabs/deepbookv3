@@ -9,7 +9,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const versionToEnable = 2;
+  const versionToEnable = 6;
 
   const client = new SuiGrpcClient({
     baseUrl: "https://sui-mainnet.mystenlabs.com",
