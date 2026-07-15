@@ -3,7 +3,10 @@
 
 module deepbook_margin::margin_constants;
 
-const MARGIN_VERSION: u64 = 5;
+// Bump ahead of EVERY on-chain package upgrade. After the upgrade the admin must
+// also call `enable_version(N)` on the live `MarginRegistry` (and later
+// `disable_version(N-1)`), or all entries abort `EPackageVersionDisabled`.
+const MARGIN_VERSION: u64 = 6;
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000
 const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%
 const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
