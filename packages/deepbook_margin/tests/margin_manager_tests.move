@@ -890,6 +890,55 @@ fun test_repay_fails_wrong_pool() {
     abort
 }
 
+#[test, expected_failure(abort_code = margin_manager::EInvalidMarginManagerOwner)]
+fun test_repay_base_fails_non_owner() {
+    // The owner gate that backstops withdraw_without_owner_check: a non-owner
+    // cannot reach `repay` (and the underlying withdraw) through the public
+    // repay_base wrapper — validate_owner aborts first. The only owner-unchecked
+    // callers of withdraw_without_owner_check are the internal permissionless
+    // paths (liquidation, conditional execution), which route funds into the
+    // manager's own debt or to a liquidator under the reward formula, never to an
+    // arbitrary caller.
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _usdc_pool_id,
+        usdt_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_usdc_usdt_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<USDT, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    // A different account (not the manager owner) attempts to repay.
+    scenario.next_tx(test_constants::user2());
+    let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+
+    mm.repay_base<USDT, USDC>(
+        &registry,
+        &mut usdt_pool,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
 #[test]
 fun test_repay_full_with_none() {
     let (
@@ -3847,7 +3896,7 @@ fun execute_conditional_orders_v2_post_loop_check_aborts() {
 
 // Fully one-sided position — user deposits base and borrows base, so the quote (USDC)
 // key is never created on the manager. Liquidation must still succeed: the
-// `liquidation_withdraw(0, USDC)` call against the missing key should pass through
+// `withdraw_without_owner_check(0, USDC)` call against the missing key should pass through
 // (zero amount, key absent) rather than abort.
 #[test]
 fun test_liquidate_one_sided_base_collateral_base_debt() {
@@ -3920,7 +3969,7 @@ fun test_liquidate_one_sided_base_collateral_base_debt() {
     let debt_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
 
     // Liquidate must not abort despite the missing USDC key — the in-function
-    // `liquidation_withdraw(0, USDC)` should pass through (zero amount, key absent).
+    // `withdraw_without_owner_check(0, USDC)` should pass through (zero amount, key absent).
     let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, BTC>(
         &registry,
         &btc_price_fresh,
