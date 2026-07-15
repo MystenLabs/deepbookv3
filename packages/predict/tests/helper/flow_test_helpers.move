@@ -939,7 +939,47 @@ public fun quote_mint_bundle(
             &pricer,
             lower_tick,
             higher_tick,
+            0,
             quantity,
+            true,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Anonymous read-only budget-bias mint quote through a market bundle: quotes
+/// the largest lot-rounded quantity whose net premium fits `max_premium`.
+public fun quote_mint_amount_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint(
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            false,
             leverage,
             &self.clock,
             self.scenario.ctx(),
@@ -975,7 +1015,9 @@ public fun quote_mint_for_account_bundle(
             &pricer,
             lower_tick,
             higher_tick,
+            0,
             quantity,
+            true,
             leverage,
             &self.clock,
             self.scenario.ctx(),
