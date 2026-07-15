@@ -4823,7 +4823,7 @@ fun execute_conditional_orders_v3_limit_stop_loss_rests_in_danger_band() {
 // conditional executor must not offer an alternative route to rest a self-fillable
 // limit below liquidation. Same setup as the danger-band limit v3 test, but SUI
 // drifts to $0.70 so the ratio is ~1.09 (BELOW liquidation 1.10) — v3 now cancels
-// the limit conditional (out-of-bounds) instead of resting it. A market conditional
+// the limit conditional (below-liquidation skip) instead of resting it. A market conditional
 // would still fire (it deleverages). v2 blocked this via its min_borrow gate.
 fun execute_conditional_orders_v3_limit_below_liquidation_cancelled() {
     let (
@@ -4952,7 +4952,7 @@ fun execute_conditional_orders_v3_limit_below_liquidation_cancelled() {
         &clock,
     );
 
-    // The limit conditional was NOT placed (below liquidation → out-of-bounds skip),
+    // The limit conditional was NOT placed (below-liquidation skip),
     // debt is unchanged, and the conditional was cancelled off the queue.
     assert!(order_infos.length() == 0);
     assert!(mm.borrowed_quote_shares() == debt_before);

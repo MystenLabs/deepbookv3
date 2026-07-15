@@ -265,8 +265,9 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
 
     // A fresh pool runs at `default_price_tolerance()` until `set_price_tolerance`
     // overrides it, so its liquidation buffer must cover that default: a single
-    // self-fill overpays by up to the tolerance, and `buffer >= tolerance` keeps a
-    // danger-band position off bad debt. This is gated here (admission), NOT in the
+    // self-fill overpays by up to the tolerance, and `buffer >= tolerance` bounds the
+    // worst-case deferred fill to `1 - tolerance^2` (a `tolerance^2` sliver, negligible
+    // at sane tolerances; see move.md). This is gated here (admission), NOT in the
     // `new_pool_config` builder — `set_price_tolerance` / `update_risk_params` re-check
     // against the pool's *actual* tolerance, so a higher-leverage pool (liquidation
     // below `1 + default_tolerance`) is reachable by tightening the tolerance first and
@@ -340,7 +341,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
 ) {
     // Lowering liquidation shrinks the buffer; re-check it still covers the effective
     // price tolerance (the stored override if set, else the default a fresh price uses)
-    // so the pair can't drift into `buffer < tolerance` (see new_pool_config).
+    // so the pair can't drift into `buffer < tolerance` (see register_deepbook_pool).
     let price_key = CurrentPriceKey { pool_id: pool.id() };
     let effective_tolerance = if (
         self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(price_key)
@@ -513,7 +514,7 @@ public fun set_price_tolerance<BaseAsset, QuoteAsset>(
 
     assert!(self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key), EPriceNotInitialized);
 
-    // Keep the tolerance within the liquidation buffer (see new_pool_config): a single
+    // Keep the tolerance within the liquidation buffer (see register_deepbook_pool): a single
     // self-fill can lower a danger-band short's ratio by ~tolerance, so require
     // `tolerance + 1.0 <= liquidation_risk_ratio`.
     assert!(

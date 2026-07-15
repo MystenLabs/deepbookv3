@@ -338,8 +338,11 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     // check runs only here, at placement, where a resting order is ratio-neutral), so
     // a band-edge self-match would leak value and push it under `risk_ratio` 1.0 (bad
     // debt). Requiring `>= liquidation` here + the `buffer >= tolerance` config
-    // invariant keeps the deferred fill `>= 1.0`. Such a manager still closes via the
-    // *market* `_and_repay_loan` entry (immediate, gated) or is liquidated.
+    // invariant bounds the worst deferred self-fill to `1 - tolerance^2`: a maximal
+    // *bid* lands at exactly `1.0`, a maximal *ask* a `tolerance^2` sliver below (the
+    // band is symmetric in price but not in ratio; see move.md). Negligible at sane
+    // tolerances. Such a manager still closes via the *market* `_and_repay_loan` entry
+    // (immediate, gated) or is liquidated.
     assert!(
         risk_ratio_before >= registry.liquidation_risk_ratio(pool.id()),
         EReduceOnlyBelowLiquidation,
@@ -1116,10 +1119,10 @@ fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
 /// (`amount: none`), then — only if debt remains — asserts the net (post-repay)
 /// `risk_ratio` did not worsen against `risk_ratio_before`. A full repay clears
 /// the debt (`risk_ratio` -> MAX), so the monotonic check is skipped. Shared by
-/// the three `…_and_repay_loan` close entries; the `else if` on quote debt is a
-/// harmless no-op for reduce-only callers (their direction guard already fixed
-/// the single debt side) and is what lets the non-reduce-only market close share
-/// the same body.
+/// the three `…_and_repay_loan` close entries; a manager holds at most one debt
+/// side, so exactly one of the two repay branches fires per call and the other is
+/// a no-op — both branches exist so the non-reduce-only market close can share the
+/// same body.
 fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
