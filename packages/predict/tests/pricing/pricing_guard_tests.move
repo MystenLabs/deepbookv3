@@ -317,9 +317,14 @@ fun surface_with_basis_at_exact_factor_admits() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    // Envelope admitted: the pricer loads and quotes a probability.
-    let price = pricer.up_price(test_constants::default_live_price());
-    assert!(price <= float!());
+    // Envelope admitted: quote at the re-anchored forward itself (pyth spot
+    // equals the BS spot here, so the live forward is spot * 100), where the
+    // at-the-forward digital is strictly interior — neither the zero-forward
+    // abort nor a saturated tail. Exact pricing values are owned by the oracle
+    // scenario tests; this test pins that the exact-boundary basis is admitted
+    // and priceable.
+    let price = pricer.up_price(spot * 100);
+    assert!(0 < price && price < float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

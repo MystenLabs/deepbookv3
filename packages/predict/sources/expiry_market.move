@@ -74,10 +74,13 @@ public struct ExpiryMarket has key {
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
-/// `trading_fee` is the post-stake-discount fee before the sponsor subsidy, and
+/// `quantity` is the sized fill the quote priced — the request's exact quantity,
+/// or the budget-sized largest fitting fill. `trading_fee` is the
+/// post-stake-discount fee before the sponsor subsidy, and
 /// `all_in_cost` is the exact account withdrawal the same-state mint would make:
 /// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
 public struct MintQuote has copy, drop {
+    quantity: u64,
     entry_probability: u64,
     net_premium: u64,
     trading_fee: u64,
@@ -317,9 +320,12 @@ public fun quote_mint(
 /// Quote the all-in cost of a mint request for one account, reading the
 /// account's builder code and current `active_stake` as-is. An un-rolled stake
 /// from a prior epoch quotes a smaller discount than the mint (which rolls
-/// first) would apply, so the quote can only overstate cost. Same gates,
-/// admission aborts, request-bias semantics, and EWMA-peek semantics as
-/// `quote_mint`. Public read for SDK/devInspect pre-trade pricing.
+/// first) would apply, so the quote can only overstate cost. A budget request
+/// is capped to the account's current balance exactly as `mint_exact_amount`
+/// caps it — read without settling, and a mint settles first, so the quote can
+/// only understate the fill. Same gates, admission aborts, request-bias
+/// semantics, and EWMA-peek semantics as `quote_mint`. Public read for
+/// SDK/devInspect pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -331,11 +337,13 @@ public fun quote_mint_for_account(
     min_quantity: u64,
     exact_quantity: bool,
     leverage: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &TxContext,
 ): MintQuote {
     market.assert_live_mint_allowed(config, pricer);
     let account = wrapper.load_account();
+    let max_premium = max_premium.min(account.balance<DUSDC>(root, clock));
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -360,6 +368,10 @@ public fun quote_mint_for_account(
 }
 
 // === MintQuote Getters ===
+
+public fun quantity(quote: &MintQuote): u64 {
+    quote.quantity
+}
 
 public fun entry_probability(quote: &MintQuote): u64 {
     quote.entry_probability
@@ -452,7 +464,9 @@ public fun mint_exact_quantity(
 }
 
 /// Mint the largest lot-rounded live position whose net premium fits inside
-/// `max_premium`, aborting if the resulting quantity is below `min_quantity`.
+/// `max_premium` (sized within one lot of the exact maximum; the charged
+/// premium never exceeds the budget), aborting if the resulting quantity is
+/// below `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
 /// `max_premium`. The sizing budget is first capped to the account's available
@@ -1000,6 +1014,7 @@ fun compute_mint_quote(
         net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee;
 
     MintQuote {
+        quantity,
         entry_probability,
         net_premium,
         trading_fee,

@@ -328,9 +328,13 @@ public(package) fun quote_mint_terms(
         // Largest lot count whose net premium fits the budget: binary search on
         // the monotone premium relation. The single-floor probe over-estimates
         // admission's two-floor charge (`assert_mint_admission`) by at most one
-        // unit, so sizing is conservative: the charged premium never exceeds the
-        // budget, and the fill can be one lot short of exact at fractional
-        // leverage edges.
+        // premium unit, so sizing is conservative: the charged premium never
+        // exceeds the budget, and the fill is at most one lot short of the
+        // exact maximum. One premium unit spans `leverage / entry_probability`
+        // raw quantity units, which stays sub-lot only because the config
+        // envelope floors entry probability at 1%
+        // (`config_constants::min_min_entry_probability`) — worst reachable
+        // case ~152 raw units vs the 10_000-unit lot.
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();

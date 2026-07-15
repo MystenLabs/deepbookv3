@@ -449,11 +449,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (pre-lot-cap) result. Nothing else was incidentally bounded.
 - **Accepted inaccuracy:** the search probes the single-floor fused premium
   `mul_div_down(p, Q, L)`, which over-estimates admission's two-floor charge by
-  at most one unit, so sizing is conservative: the charged premium never
-  exceeds the budget, and the fill can be one lot short of the exact maximum at
-  fractional-leverage rounding edges. The dependency is one-sided (probe >=
-  charge) and is documented at the probe site in
-  `strike_exposure::quote_mint_terms`.
+  at most one premium unit, so sizing is conservative: the charged premium
+  never exceeds the budget, and the fill is at most one lot short of the exact
+  maximum. The lot bound is envelope-dependent, not intrinsic: one premium unit
+  spans `leverage / entry_probability` raw quantity units, so it stays sub-lot
+  only because `config_constants::min_min_entry_probability` floors the
+  admissible entry band at 1% (worst reachable case ~152 raw units against the
+  10_000-unit lot, at the 1% floor under the probability-scaled cap of the 10x
+  template-leverage envelope). The probe >= charge dependency is one-sided and
+  documented at the probe site in `strike_exposure::quote_mint_terms`.
 - **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
   dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
   the BS pricing in the same call.
@@ -469,8 +473,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   edge needs a rounding-lossy probability no current fixture pins.
 - **Reopen when:** the premium relation changes shape (a fee folded into the
   budget, a rounding flip — the probe must move with it or the one-sided bound
-  breaks), a measured gas profile shows the search matters, or a consumer needs
-  the exact maximum fill at fractional leverage.
+  breaks), the `min_min_entry_probability` envelope floor is lowered (the
+  one-lot fill bound dies with it), a measured gas profile shows the search
+  matters, or a consumer needs the exact maximum fill at fractional leverage.
 
 ---
 

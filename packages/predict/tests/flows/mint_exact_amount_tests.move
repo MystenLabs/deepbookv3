@@ -42,6 +42,9 @@ const NEXT_LOT_DEBIT: u64 = 50_505_050;
 /// * lot 10_000, and its net premium at p = 0.5, 1x leverage.
 const LOT_CAP_QUANTITY: u64 = 42_949_672_950_000;
 const LOT_CAP_NET_PREMIUM: u64 = 21_474_836_475_000;
+/// Fill for a balance-capped budget: deposit 1e9 / one-lot premium 5_000 =
+/// 200_000 lots of 10_000 raw units.
+const BALANCE_CAPPED_QUANTITY: u64 = 2_000_000_000;
 
 #[test]
 fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
@@ -176,8 +179,40 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
         test_constants::leverage_one_x(),
     );
 
+    assert_eq!(quote.quantity(), LOT_CAP_QUANTITY);
     assert_eq!(quote.net_premium(), LOT_CAP_NET_PREMIUM);
 
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun account_quote_caps_the_budget_to_the_account_balance() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+
+    // A u64-max budget is capped to the deposit (1e9): at p = 0.5 and 1x the
+    // fill is 1e9 / 5_000 = 200_000 lots = 2e9 raw units, whose net premium is
+    // exactly the balance — the same sizing a mint would perform.
+    let quote = fx.quote_mint_for_account_amount_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        BALANCE_CAPPED_QUANTITY,
+        test_constants::leverage_one_x(),
+    );
+
+    assert_eq!(quote.quantity(), BALANCE_CAPPED_QUANTITY);
+    assert_eq!(quote.net_premium(), test_constants::mint_deposit());
+
+    helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
 }
@@ -207,6 +242,7 @@ fun budget_quote_matches_quantity_quote_for_the_sized_fill() {
         test_constants::leverage_one_x(),
     );
 
+    assert_eq!(budget_quote.quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(budget_quote.net_premium(), quantity_quote.net_premium());
     assert_eq!(budget_quote.all_in_cost(), quantity_quote.all_in_cost());
     assert_eq!(budget_quote.entry_probability(), quantity_quote.entry_probability());
