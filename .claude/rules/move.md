@@ -13,6 +13,8 @@ Predict-specific rules (package architecture, config/capability shapes, API shap
 
 - Do not add comments that restate a function name, narrate obvious code, explain Move syntax, describe simple assignments, or repeat names already clear from types. If deleting a comment would not make the code harder to use or safely modify, delete it.
 
+- A comment states what is true of the code NOW, never how it got there. No evolution narration (`formerly`, `the former`, `the old form`, `used to`, `superseded`, `no longer`, `now uses`, `changed to`), before/after contrast, correction trail, dated attribution (`added 2026-…`, `<name> approved`), or reviewer-talk arguing the change is correct — that voice is addressed to the reviewer of the diff, not the reader of the merged code. Git owns the history; the ledger and `packages/predict/predeploy/response-policies.md` own the decision and its why. Replace a was-X-now-Y clause or an inlined rationale with the present fact plus a pointer to its anchor (an `RP-n`, an evidence file). Test: a clause that is only true relative to a past version of this code belongs in the commit that changed it, not in the code that now reads clean without it.
+
 - For struct fields, comment selectively. Config structs are strong candidates for field comments because they encode policy, units, and economic meaning. Non-config structs should only comment fields with non-obvious mapping semantics, custody/ownership, timestamps, lifecycle state, sentinel values, units, or invariants.
 
 - A struct-level doc can cover a group of obvious fields that share one convention. Do not duplicate the same explanation above every field.
