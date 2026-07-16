@@ -172,6 +172,10 @@ public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
     exposure.config.expiry_fee_max_multiplier()
 }
 
+public(package) fun no_leverage_window_ms(exposure: &StrikeExposure): u64 {
+    exposure.config.no_leverage_window_ms()
+}
+
 public(package) fun tick_size(exposure: &StrikeExposure): u64 {
     exposure.tick_size
 }

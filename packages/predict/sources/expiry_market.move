@@ -167,6 +167,14 @@ public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
 }
 
+/// Return the near-expiry no-leverage window snapshotted for this expiry, in ms.
+/// Within this much time of expiry the market admits no leverage above 1x; `0`
+/// disables the block. Read by devInspect (SDK/UI) to size a leverage selector
+/// against the market's own snapshotted terms rather than the live template.
+public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.no_leverage_window_ms()
+}
+
 /// Return the strike tick size snapshotted for this expiry. Raw strikes are
 /// derived off-chain / by the SDK as `tick * tick_size`.
 public fun tick_size(market: &ExpiryMarket): u64 {
