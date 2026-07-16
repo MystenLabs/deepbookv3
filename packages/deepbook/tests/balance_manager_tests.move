@@ -11,7 +11,7 @@ use deepbook::{
         TradeCap,
         DepositCap,
         WithdrawCap,
-        DeepBookPoolReferral
+        DeepBookPoolReferral,
     },
     registry
 };

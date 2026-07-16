@@ -36,7 +36,9 @@ const EMarketTickSizeTooLarge: u64 = 22;
 /// Merged protocol + insurance reserve share of materialized terminal profit, in
 /// FLOAT_SCALING. The complement accrues to LPs.
 public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+
 public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
+
 public(package) macro fun max_protocol_reserve_profit_share(): u64 {
     fixed_math::math::float_scaling!()
 }
@@ -52,7 +54,9 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
 // === Trade Liquidation ===
 
 public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
+
 public(package) macro fun min_trade_liquidation_budget(): u64 { 24 }
+
 public(package) macro fun max_trade_liquidation_budget(): u64 {
     3_000
 }
@@ -67,7 +71,9 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
 // === Backing and Liquidation ===
 
 public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
+
 public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
+
 public(package) macro fun max_liquidation_ltv(): u64 { 950_000_000 }
 
 public(package) fun assert_liquidation_ltv(value: u64) {
@@ -82,9 +88,11 @@ public(package) fun assert_liquidation_ltv(value: u64) {
 public(package) macro fun default_max_admission_leverage(): u64 {
     3 * fixed_math::math::float_scaling!()
 }
+
 public(package) macro fun min_max_admission_leverage(): u64 {
     fixed_math::math::float_scaling!()
 }
+
 public(package) macro fun max_max_admission_leverage(): u64 {
     10 * fixed_math::math::float_scaling!()
 }
@@ -103,7 +111,9 @@ public(package) fun assert_max_admission_leverage(value: u64) {
 public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
+
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
+
 public(package) macro fun max_backing_buffer_lambda(): u64 {
     fixed_math::math::float_scaling!()
 }
@@ -118,7 +128,9 @@ public(package) fun assert_backing_buffer_lambda(value: u64) {
 // === Pricing ===
 
 public(package) macro fun default_base_fee(): u64 { 20_000_000 }
+
 public(package) macro fun min_base_fee(): u64 { 1 }
+
 public(package) macro fun max_base_fee(): u64 { fixed_math::math::float_scaling!() }
 
 public(package) fun assert_base_fee(value: u64) {
@@ -126,7 +138,9 @@ public(package) fun assert_base_fee(value: u64) {
 }
 
 public(package) macro fun default_min_fee(): u64 { 5_000_000 }
+
 public(package) macro fun min_min_fee(): u64 { 0 }
+
 public(package) macro fun max_min_fee(): u64 { fixed_math::math::float_scaling!() }
 
 public(package) fun assert_min_fee(value: u64) {
@@ -138,9 +152,11 @@ public(package) fun assert_min_fee(value: u64) {
 public(package) macro fun default_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::one_day_ms!()
 }
+
 public(package) macro fun min_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::five_minutes_ms!()
 }
+
 public(package) macro fun max_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::one_year_ms!()
 }
@@ -157,9 +173,11 @@ public(package) fun assert_expiry_fee_window_ms(value: u64) {
 public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
     fixed_math::math::float_scaling!()
 }
+
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
     fixed_math::math::float_scaling!()
 }
+
 public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
     10 * fixed_math::math::float_scaling!()
 }
@@ -192,7 +210,14 @@ public(package) fun assert_cadence_window_size(value: u64) {
 }
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
-public(package) macro fun min_min_entry_probability(): u64 { 0 }
+
+// The envelope floors the admissible entry band at 1% (one cent per contract):
+// budget-bias mint sizing is conservative by at most one premium unit, and one
+// unit stays sub-lot only while entry probability cannot be configured below
+// this floor (worst reachable case ~152 raw units per unit at the 10x template
+// leverage envelope, vs the 10_000-unit lot).
+public(package) macro fun min_min_entry_probability(): u64 { 10_000_000 }
+
 public(package) macro fun max_min_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
@@ -206,7 +231,9 @@ public(package) fun assert_min_entry_probability(value: u64) {
 }
 
 public(package) macro fun default_max_entry_probability(): u64 { 990_000_000 }
+
 public(package) macro fun min_max_entry_probability(): u64 { 0 }
+
 public(package) macro fun max_max_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
@@ -220,7 +247,9 @@ public(package) fun assert_max_entry_probability(value: u64) {
 }
 
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
+
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
+
 public(package) macro fun max_pyth_spot_freshness_ms(): u64 {
     deepbook_predict::constants::one_minute_ms!()
 }
@@ -233,7 +262,9 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
 }
 
 public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 3_000 }
+
 public(package) macro fun min_block_scholes_price_freshness_ms(): u64 { 1 }
+
 public(package) macro fun max_block_scholes_price_freshness_ms(): u64 {
     deepbook_predict::constants::one_minute_ms!()
 }
@@ -247,7 +278,9 @@ public(package) fun assert_block_scholes_price_freshness_ms(value: u64) {
 }
 
 public(package) macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
+
 public(package) macro fun min_block_scholes_svi_freshness_ms(): u64 { 1 }
+
 public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 {
     deepbook_predict::constants::one_minute_ms!()
 }
@@ -265,7 +298,9 @@ public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
 /// Smoothing factor for the gas-price EWMA in FLOAT_SCALING. ~1% reacts slowly,
 /// mirroring DeepBook core. Bounded below float_scaling so `1 - alpha` stays positive.
 public(package) macro fun default_ewma_alpha(): u64 { 10_000_000 }
+
 public(package) macro fun min_ewma_alpha(): u64 { 1 }
+
 public(package) macro fun max_ewma_alpha(): u64 { 100_000_000 }
 
 public(package) fun assert_ewma_alpha(value: u64) {
@@ -277,9 +312,11 @@ public(package) fun assert_ewma_alpha(value: u64) {
 /// cannot be tuned to surcharge near-average gas; the max keeps a single admin
 /// call from raising the bar so high the penalty can never trigger.
 public(package) macro fun default_ewma_z_score_threshold(): u64 { 3_000_000_000 }
+
 public(package) macro fun min_ewma_z_score_threshold(): u64 {
     fixed_math::math::float_scaling!()
 }
+
 public(package) macro fun max_ewma_z_score_threshold(): u64 { 10_000_000_000 }
 
 public(package) fun assert_ewma_z_score_threshold(value: u64) {
@@ -292,7 +329,9 @@ public(package) fun assert_ewma_z_score_threshold(value: u64) {
 /// Per-unit fee added to a penalized trade, in FLOAT_SCALING (10 bps by default,
 /// capped at 20 bps to bound how punitive the surcharge can be made).
 public(package) macro fun default_ewma_penalty_rate(): u64 { 1_000_000 }
+
 public(package) macro fun min_ewma_penalty_rate(): u64 { 0 }
+
 public(package) macro fun max_ewma_penalty_rate(): u64 { 2_000_000 }
 
 public(package) fun assert_ewma_penalty_rate(value: u64) {
@@ -307,7 +346,9 @@ public(package) fun assert_ewma_penalty_rate(value: u64) {
 public(package) macro fun default_trading_loss_rebate_rate(): u64 {
     500_000_000
 }
+
 public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
+
 public(package) macro fun max_trading_loss_rebate_rate(): u64 {
     fixed_math::math::float_scaling!()
 }
@@ -327,9 +368,11 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
 public(package) macro fun default_lower_benefit_power(): u64 {
     100_000 * deepbook_predict::constants::deep_decimals!()
 }
+
 public(package) macro fun min_lower_benefit_power(): u64 {
     10_000 * deepbook_predict::constants::deep_decimals!()
 }
+
 public(package) macro fun max_lower_benefit_power(): u64 {
     1_000_000 * deepbook_predict::constants::deep_decimals!()
 }
@@ -339,9 +382,11 @@ public(package) macro fun max_lower_benefit_power(): u64 {
 public(package) macro fun default_upper_benefit_power(): u64 {
     1_100_000 * deepbook_predict::constants::deep_decimals!()
 }
+
 public(package) macro fun min_upper_benefit_power(): u64 {
     100_000 * deepbook_predict::constants::deep_decimals!()
 }
+
 public(package) macro fun max_upper_benefit_power(): u64 {
     50_000_000 * deepbook_predict::constants::deep_decimals!()
 }

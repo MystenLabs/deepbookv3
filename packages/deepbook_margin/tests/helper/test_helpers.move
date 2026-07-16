@@ -14,7 +14,7 @@ use deepbook_margin::{
         MarginAdminCap,
         MaintainerCap,
         PoolConfig,
-        MarginPoolCap
+        MarginPoolCap,
     },
     oracle::{Self, PythConfig},
     pool_proxy,
