@@ -400,12 +400,13 @@ jobs:
           CODEX_RESULT: ${{ steps.codex-review.outputs.final-message }}
           HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
           PR_NUMBER: ${{ steps.authorize.outputs.number }}
+          RUN_ID: ${{ github.run_id }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { owner, repo } = context.repo;
             const pullNumber = Number(process.env.PR_NUMBER);
-            const marker = `<!-- codex-advisory:${process.env.HEAD_SHA} -->`;
+            const marker = `<!-- codex-advisory:${process.env.HEAD_SHA}:${process.env.RUN_ID} -->`;
             const shortSha = process.env.HEAD_SHA.slice(0, 12);
             const safeMarkdown = (value, limit = 2000) => String(value || "")
               .slice(0, limit)
@@ -455,8 +456,14 @@ jobs:
             });
             const existing = comments.find((comment) => comment.body?.includes(marker));
             if (existing) {
-              core.info(`Codex advisory comment already exists for ${shortSha}`);
-              core.setOutput("comment_url", existing.html_url);
+              const { data: comment } = await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: body.slice(0, 65000),
+              });
+              core.info(`Updated Codex advisory comment for ${shortSha} in run ${process.env.RUN_ID}`);
+              core.setOutput("comment_url", comment.html_url);
               return;
             }
 
@@ -578,13 +585,15 @@ jobs:
               pull_number: pullNumber,
               per_page: 100,
             });
-            const existingApproval = reviews.find(
-              (review) => review.user?.login === botLogin
-                && review.commit_id === process.env.HEAD_SHA
-                && review.state === "APPROVED",
-            );
+            const latestBotReview = reviews
+              .filter(
+                (review) => review.user?.login === botLogin
+                  && review.commit_id === process.env.HEAD_SHA,
+              )
+              .sort((left, right) => left.id - right.id)
+              .at(-1);
 
-            if (existingApproval) {
+            if (latestBotReview?.state === "APPROVED") {
               core.info(`Commit ${shortSha} is already approved by ${botLogin}`);
               core.setOutput("created", "false");
             } else {

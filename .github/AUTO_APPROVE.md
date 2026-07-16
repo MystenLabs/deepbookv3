@@ -24,10 +24,15 @@ Slack.
 - Codex output is validated against the complete expected schema before it can
   authorize approval.
 - The Codex review comment must be published successfully before approval.
+- Each label-triggered run publishes its own Codex review comment, even when
+  the head commit is unchanged. Rerunning the same Actions run updates that
+  run's comment instead of creating a duplicate.
 - Minor Codex findings do not prevent bot approval.
 - If a retry on the same commit finds significant issues after the App already
   approved it, the workflow dismisses that approval. If GitHub refuses the
   dismissal, the workflow replaces it with `REQUEST_CHANGES`.
+- If a later clean retry follows `REQUEST_CHANGES`, the App submits a new
+  approval because decisions use its latest review for that commit.
 - Significant Codex findings, Codex failures, and approval failures send a
   top-level `@here` notification in Slack.
 - Pull request text is escaped before it is copied to Slack so it cannot inject
@@ -131,11 +136,15 @@ Use a small test pull request authored by a `defi-eng` member:
    unapproved and sends an `@here` Slack alert.
 5. Reapply the label to an already approved commit and confirm a significant
    retry dismisses or replaces the existing App approval.
-6. Confirm a comment publication failure does not submit bot approval.
-7. Confirm Slack gets one request message and one final result message.
-8. Push another commit and confirm it is not automatically re-approved.
+6. Reapply the label without changing the commit and confirm the new Codex
+   result is published in a new comment.
+7. Confirm a clean retry after fallback `REQUEST_CHANGES` submits a newer App
+   approval.
+8. Confirm a comment publication failure does not submit bot approval.
+9. Confirm Slack gets one request message and one final result message.
+10. Push another commit and confirm it is not automatically re-approved.
    Confirm the old approval is dismissed or replaced with `REQUEST_CHANGES`.
-9. Apply the label to a PR from a non-member and confirm authorization fails.
+11. Apply the label to a PR from a non-member and confirm authorization fails.
 
 The GitHub Actions workflow uses `pull_request_target` so it can access secrets.
 It must continue checking out only the trusted base commit and must never run
