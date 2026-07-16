@@ -19,7 +19,7 @@ use deepbook_predict::{
     order::{Self, Order},
     order_events,
     pricing::{Self, Pricer},
-    range_codec::{Self, Strike},
+    range_codec,
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
@@ -358,11 +358,7 @@ public(package) fun quote_mint_entry_probability(
 ///
 /// Already-liquidated and currently-liquidatable orders have zero holder value;
 /// otherwise this returns the order's current range value net of its static floor.
-public(package) fun order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     if (exposure.is_liquidated_order(order)) return 0;
 
     let gross_value = exposure.gross_order_value(pricer, order);
@@ -388,8 +384,6 @@ public(package) fun close_and_quote_live_order(
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
 
-    let (lower, higher) = exposure.order_boundaries(order);
-
     let old_floor_shares = order.floor_shares();
     let remaining_quantity = old_quantity - close_quantity;
     let remaining_floor_shares = math::mul_div_down(
@@ -411,7 +405,7 @@ public(package) fun close_and_quote_live_order(
         );
     exposure.liquidation.remove_order(order);
 
-    let range_probability = pricer.range_price(lower, higher);
+    let range_probability = exposure.order_range_price(pricer, order);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
 
@@ -499,14 +493,8 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
-fun gross_order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
-    let (lower, higher) = exposure.order_boundaries(order);
-    let range_probability = pricer.range_price(lower, higher);
-    math::mul(range_probability, order.quantity())
+fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
+    math::mul(exposure.order_range_price(pricer, order), order.quantity())
 }
 
 /// Liquidate (knock out) `order` when its live value has reached the static floor:
@@ -552,10 +540,8 @@ fun liquidate_order_if_under_floor(
     true
 }
 
-/// Decode an order into `(lower, higher)` raw strike boundaries for pricing,
-/// mapping the open-ended sentinels.
-fun order_boundaries(exposure: &StrikeExposure, order: &Order): (Strike, Strike) {
-    (
+fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
+    pricer.range_price(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )
