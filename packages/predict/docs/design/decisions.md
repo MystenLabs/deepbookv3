@@ -395,8 +395,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   regardless of entry probability. Near expiry a contract's probability can move far
   in a single tick, which can carry a leveraged order past its knockout before
   liquidation can fire — the LP absorbs that gap, so leverage is riskiest exactly
-  where it is least useful. Addresses the pre-deploy open item on near-expiry
-  behavior (O-1) via its "block the affected market shape" arm, scoped to leverage.
+  where it is least useful.
   *Rejected:* a linear taper of the cap down to 1x at expiry. The taper's case was
   that a hard cutoff concentrates max-leverage opens just before the boundary, but
   both designs gate origination only — a position opened before the window carries
@@ -417,3 +416,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   untouched. Reducing risk on positions already open into the window would need a
   different lever (e.g. a near-expiry `liquidation_ltv` tightening), not an admission
   gate.
+- **This does NOT resolve O-1, and O-1 is not one of its arms.** O-1's exploit is a
+  *1x buy-and-hold* of systematically underpriced contracts in `[0.60, 0.95)`
+  (`evidence/o1-oracle-calibration.md`: +0.05 per contract at 0% fee, confirmed
+  on-chain), and unleveraged minting stays open inside the window by design — so the
+  mispricing edge itself is untouched. What the block removes is the leverage
+  *amplifier* on that edge: across O-1's own price range the admission cap is
+  ~2.8-3.0x, so leverage roughly tripled the exploit's return on capital and now does
+  not. O-1's stated mitigations remain recalibrating the near-expiry surface or
+  blocking the affected market shape outright; it stays OPEN, and near-expiry markets
+  are still gated on it. Bounding the residual 1x exposure is a separate decision.
