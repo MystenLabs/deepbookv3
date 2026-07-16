@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig};
-use fixed_math::{i64, math};
+use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -56,7 +56,7 @@ public struct PriceMemo has drop {
 
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
-const EZeroVariance: u64 = 2;
+const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesPriceStale: u64 = 4;
 const EBlockScholesInputsInvalid: u64 = 5;
@@ -187,6 +187,8 @@ public(package) fun price_and_cache(
     let price = pricer.up_price(tick * tick_size);
     if (!memo.prices.is_empty()) {
         let previous = memo.prices[memo.prices.length() - 1];
+        // Higher strikes should not have higher UP prices. NAV's linear tree walk
+        // relies on that order; an inverted surface can overstate pool value.
         assert!(price <= previous, ENonMonotonePriceMemo);
     };
     memo.ticks.push_back(tick);
@@ -376,13 +378,12 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
 fun assert_min_total_variance_positive(svi: &SVIParams) {
     let min_wing_var = min_svi_wing_variance(svi);
     let a = svi.a();
-    let min_total_var = i64::from_u64(min_wing_var).add(&a);
-    assert!(
-        !min_total_var.is_negative() && !min_total_var.is_zero(),
-        EBlockScholesMinVarianceInvalid,
-    );
+    let min_total_var = total_variance_from_wing(min_wing_var, a);
+    assert_positive_total_variance(&min_total_var, EBlockScholesMinVarianceInvalid);
 }
 
+// Analytical minimum of the SVI wing over all strikes, used to reject a surface
+// before any quote can ask for sqrt(total variance) with a non-positive input.
 fun min_svi_wing_variance(svi: &SVIParams): u64 {
     let rho_mag = svi.rho().magnitude();
     if (rho_mag == math::float_scaling!()) return 0;
@@ -458,8 +459,9 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let b = svi_params.b();
     let wing_var = math::mul(b, inner.magnitude());
     let a = svi_params.a();
-    let total_var = i64::from_u64(wing_var).add(&a);
-    assert!(!total_var.is_negative() && !total_var.is_zero(), EZeroVariance);
+    let total_var = total_variance_from_wing(wing_var, a);
+    // Total variance must be positive because pricing takes sqrt(w) below.
+    assert_positive_total_variance(&total_var, ENonPositiveVariance);
     let total_var = total_var.magnitude();
 
     let sqrt_var = math::sqrt(total_var, math::float_scaling!());
@@ -485,4 +487,16 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
+}
+
+fun total_variance_from_wing(wing_var: u64, a: I64): I64 {
+    i64::from_u64(wing_var).add(&a)
+}
+
+fun assert_positive_total_variance(value: &I64, abort_code: u64) {
+    assert!(is_positive(value), abort_code);
+}
+
+fun is_positive(value: &I64): bool {
+    !value.is_negative() && !value.is_zero()
 }

@@ -330,6 +330,7 @@ public fun prepare_live_oracle(
         live_price,
         live_price,
         test_constants::default_svi_a(),
+        false,
         test_constants::default_svi_b(),
         test_constants::default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -352,37 +353,6 @@ public fun prepare_live_oracle_bundle(
 /// SVI) for exact-pricing tests over real on-chain scenarios. On the fresh-Pyth
 /// path pricing derives the live forward as `mul(spot, forward/spot)`.
 public fun prepare_real_oracle(
-    self: &mut OracleFixture,
-    bs: &mut BlockScholesFeed,
-    pyth: &mut PythFeed,
-    spot: u64,
-    forward: u64,
-    svi_a: u64,
-    svi_b: u64,
-    svi_sigma: u64,
-    svi_rho_magnitude: u64,
-    svi_rho_is_negative: bool,
-    svi_m_magnitude: u64,
-    svi_m_is_negative: bool,
-) {
-    self.prepare_real_oracle_signed_a(
-        bs,
-        pyth,
-        spot,
-        forward,
-        svi_a,
-        false,
-        svi_b,
-        svi_sigma,
-        svi_rho_magnitude,
-        svi_rho_is_negative,
-        svi_m_magnitude,
-        svi_m_is_negative,
-    )
-}
-
-/// Seed a fresh Pyth spot + explicit Block Scholes surface with signed SVI `a`.
-public fun prepare_real_oracle_signed_a(
     self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     pyth: &mut PythFeed,
@@ -445,35 +415,6 @@ public fun prepare_real_oracle_bundle(
     oracle: &mut OracleBundle,
     spot: u64,
     forward: u64,
-    svi_a: u64,
-    svi_b: u64,
-    svi_sigma: u64,
-    svi_rho_magnitude: u64,
-    svi_rho_is_negative: bool,
-    svi_m_magnitude: u64,
-    svi_m_is_negative: bool,
-) {
-    self.prepare_real_oracle(
-        &mut oracle.bs,
-        &mut oracle.pyth,
-        spot,
-        forward,
-        svi_a,
-        svi_b,
-        svi_sigma,
-        svi_rho_magnitude,
-        svi_rho_is_negative,
-        svi_m_magnitude,
-        svi_m_is_negative,
-    );
-}
-
-/// Seed a fresh explicit oracle surface with signed SVI `a` through an oracle bundle.
-public fun prepare_real_oracle_signed_a_bundle(
-    self: &mut OracleFixture,
-    oracle: &mut OracleBundle,
-    spot: u64,
-    forward: u64,
     svi_a_magnitude: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -483,7 +424,7 @@ public fun prepare_real_oracle_signed_a_bundle(
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
 ) {
-    self.prepare_real_oracle_signed_a(
+    self.prepare_real_oracle(
         &mut oracle.bs,
         &mut oracle.pyth,
         spot,

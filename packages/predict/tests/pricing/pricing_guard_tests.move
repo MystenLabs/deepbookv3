@@ -29,7 +29,7 @@
 /// negative `a` values that over-offset the wing floor and the degenerate
 /// `a == 0, b == 0` surface. `EZeroForward` is reached via a tiny-forward /
 /// large-spot surface (no LOWER basis bound), where the re-anchored
-/// `spot * (forward/spot)` rounds to 0. `EZeroVariance` and `ECannotBeNegative`
+/// `spot * (forward/spot)` rounds to 0. `ENonPositiveVariance` and `ECannotBeNegative`
 /// inside `compute_nd2` are defensive backstops after the load-time envelope:
 /// valid loaded surfaces should not hit them. `ETickNotInPriceMemo` is a
 /// package-level cache contract guard and is covered directly below; active-book
@@ -99,6 +99,7 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         1,
+        false,
         MAX_SVI_INPUT,
         MIN_SVI_SIGMA,
         test_constants::float(),
@@ -327,7 +328,7 @@ fun surface_with_svi_a_above_max_aborts() {
 fun negative_svi_a_with_positive_min_variance_prices() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_signed_a_bundle(
+    fx.prepare_real_oracle_bundle(
         &mut oracle,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
@@ -360,7 +361,7 @@ fun negative_svi_a_with_positive_min_variance_prices() {
 fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_signed_a_bundle(
+    fx.prepare_real_oracle_bundle(
         &mut oracle,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
@@ -441,6 +442,7 @@ fun re_anchored_zero_forward_aborts() {
         spot,
         1, // forward == 1: div(1, 1e17) == 0, so spot * 0 == 0
         default_svi_a(),
+        false,
         default_svi_b(),
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -471,6 +473,7 @@ fun zero_total_variance_aborts_at_load() {
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         0, // svi_a == 0
+        false,
         0, // svi_b == 0, so total_var = a + b*inner == 0
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -568,6 +571,7 @@ fun load_pricer_with_full_svi_and_spot(
         spot,
         forward,
         svi_a,
+        false,
         svi_b,
         svi_sigma,
         svi_rho_magnitude,

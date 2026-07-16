@@ -293,6 +293,7 @@ fun live_pricer_at(forward: u64): (OracleFixture, OracleBundle, Pricer) {
         forward,
         forward,
         HIGH_VARIANCE_A,
+        false,
         test_constants::default_svi_b(),
         test_constants::default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),

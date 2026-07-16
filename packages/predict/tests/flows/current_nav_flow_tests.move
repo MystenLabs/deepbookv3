@@ -270,6 +270,10 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         ONE_X_QUANTITY,
         test_constants::leverage_one_x(),
     );
+    // These SVI values are intentionally extreme: tiny positive `a`, max `b`,
+    // min `sigma`, and `rho = -1`. Together they make the model report a higher
+    // chance of finishing above tick 100 than above tick 90, which is impossible
+    // for a valid UP price curve.
     fx.seed_bs_surface_with_svi_bundle(
         &mut market,
         test_constants::default_live_price(),
