@@ -272,6 +272,7 @@ public(package) fun quote_mint_terms(
     higher_tick: u64,
     quantity: u64,
     leverage: u64,
+    clock: &Clock,
 ): MintTerms {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
     let admission = exposure
@@ -280,6 +281,7 @@ public(package) fun quote_mint_terms(
             entry_probability,
             quantity,
             leverage,
+            exposure.expiry_ms - clock.timestamp_ms(),
         );
     // Runs after admission so the quote path keeps mint's abort order (mint hits
     // this check inside order construction, after admission).
@@ -343,9 +345,16 @@ public(package) fun quote_mint_entry_probability(
     lower_tick: u64,
     higher_tick: u64,
     leverage: u64,
+    clock: &Clock,
 ): u64 {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
-    exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+    exposure
+        .config
+        .assert_mint_probability_and_leverage_policy(
+            entry_probability,
+            leverage,
+            exposure.expiry_ms - clock.timestamp_ms(),
+        );
     entry_probability
 }
 

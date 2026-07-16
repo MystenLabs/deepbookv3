@@ -297,7 +297,7 @@ public fun quote_mint(
     market.assert_live_mint_allowed(config, pricer);
     let terms = market
         .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage, clock);
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
     market.compute_mint_quote(config, &terms, 0, &builder_code_id, penalty_fee, clock)
@@ -325,7 +325,7 @@ public fun quote_mint_for_account(
     let account = wrapper.load_account();
     let terms = market
         .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage, clock);
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
     market.compute_mint_quote(
@@ -470,6 +470,7 @@ public fun mint_exact_amount(
         higher_tick,
         amount,
         leverage,
+        clock,
     );
     assert!(quantity >= min_quantity, EMintQuantityBelowMin);
     market.mint_prepared_exact_quantity(
@@ -1011,7 +1012,7 @@ fun mint_prepared_exact_quantity(
 ): u256 {
     let terms = market
         .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage, clock);
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
@@ -1055,6 +1056,7 @@ fun max_mint_quantity_for_amount(
     higher_tick: u64,
     amount: u64,
     leverage: u64,
+    clock: &Clock,
 ): u64 {
     let entry_probability = market
         .strike_exposure
@@ -1063,6 +1065,7 @@ fun max_mint_quantity_for_amount(
             lower_tick,
             higher_tick,
             leverage,
+            clock,
         );
     let quantity = strike_exposure_config::max_quantity_for_net_premium(
         entry_probability,

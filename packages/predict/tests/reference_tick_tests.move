@@ -165,7 +165,7 @@ fun set_reference_tick_floor_to_zero_aborts() {
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidAdmissionTick)]
 fun off_grid_tick_before_reference_tick_is_set_aborts() {
-    let (_fx, pricer, mut harness) = setup_priced_harness();
+    let (fx, pricer, mut harness) = setup_priced_harness();
 
     let terms = harness
         .exposure
@@ -175,6 +175,7 @@ fun off_grid_tick_before_reference_tick_is_set_aborts() {
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
+            fx.clock(),
         );
     harness.exposure.allocate_mint_order(terms);
     abort EUnexpectedSuccess
@@ -194,6 +195,7 @@ fun reference_tick_admits_up_and_down_ranges() {
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
+            fx.clock(),
         );
     let up_order = harness.exposure.allocate_mint_order(up_terms);
     let down_terms = harness
@@ -204,6 +206,7 @@ fun reference_tick_admits_up_and_down_ranges() {
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
+            fx.clock(),
         );
     let down_order = harness.exposure.allocate_mint_order(down_terms);
 
@@ -215,7 +218,7 @@ fun reference_tick_admits_up_and_down_ranges() {
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidAdmissionTick)]
 fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
-    let (_fx, pricer, mut harness) = setup_priced_harness();
+    let (fx, pricer, mut harness) = setup_priced_harness();
 
     harness.exposure.set_reference_tick(REFERENCE_TICK);
     let terms = harness
@@ -226,6 +229,7 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
             constants::pos_inf_tick!(),
             test_constants::mint_quantity(),
             test_constants::leverage_one_x(),
+            fx.clock(),
         );
     harness.exposure.allocate_mint_order(terms);
     abort EUnexpectedSuccess

@@ -116,6 +116,19 @@ fun template_expiry_fee_window_above_max_aborts() {
     abort 999
 }
 
+// The no-leverage window's minimum is 0 (0 disables the block), so only the
+// upper bound can be violated.
+#[test, expected_failure(abort_code = config_constants::EInvalidNoLeverageWindowMs)]
+fun template_no_leverage_window_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_no_leverage_window_ms(
+        &admin_cap,
+        config_constants::max_no_leverage_window_ms!() + 1,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
 fun template_expiry_fee_max_multiplier_below_min_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();

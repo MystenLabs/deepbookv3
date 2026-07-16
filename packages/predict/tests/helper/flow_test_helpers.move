@@ -194,12 +194,18 @@ public fun setup_market(tick: u64): Fixture {
         bs_svi_id,
     );
     let mut registry = scenario.take_shared<Registry>();
-    let config = scenario.take_shared<ProtocolConfig>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
     );
+    // Flow fixtures exercise leverage / close / liquidation mechanics on short-lived
+    // markets, which sit inside the default 1h no-leverage window and so could not
+    // mint leveraged orders at all. Disable the block by default (a valid
+    // `window == 0` admin config); it is covered by the config unit tests and by
+    // dedicated flow tests that re-enable it.
+    config.set_template_no_leverage_window_ms(&admin_cap, 0);
     return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
@@ -408,6 +414,16 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_max_admission_leverage(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Re-enable the near-expiry no-leverage block that `setup_market` disables. Call
+/// before creating the expiry that should snapshot it.
+public fun set_template_no_leverage_window_ms(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_no_leverage_window_ms(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
