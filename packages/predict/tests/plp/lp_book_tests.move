@@ -18,7 +18,7 @@ use deepbook_predict::{
     constants::{
         lp_request_limit_flush_attempts as limit_attempts,
         min_supply_request as min_supply,
-        min_withdraw_request as min_withdraw
+        min_withdraw_request as min_withdraw,
     },
     lp_book::{Self, DrainSummary, LpBook},
     pool_accounting::{Self, Ledger}

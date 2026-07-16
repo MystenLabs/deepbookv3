@@ -12,7 +12,7 @@ use deepbook::{
         DepositCap,
         WithdrawCap,
         TradeProof,
-        DeepBookPoolReferral
+        DeepBookPoolReferral,
     },
     constants,
     math,
@@ -31,7 +31,7 @@ use deepbook_margin::{
         get_pyth_price,
         get_pyth_price_unsafe,
         calculate_price,
-        calculate_price_unsafe
+        calculate_price_unsafe,
     },
     tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
 };
@@ -67,6 +67,11 @@ const EInsufficientRiskRatioAfterTrade: u64 = 19;
 /// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
 /// post-trade risk_ratio invariant.
 const EDeprecatedUseV2: u64 = 20;
+/// A triggered conditional **market** order settled outside the oracle price
+/// bounds. The pre-check simulates the fill against the whole book, but
+/// `cancel_maker` can remove the manager's own resting orders and fill deeper
+/// into worse liquidity, so we re-check the *actual* executed price.
+const EFillOutsidePriceBounds: u64 = 21;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -168,8 +173,18 @@ public struct WithdrawCollateralEvent has copy, drop {
 }
 
 // === Functions - Take Profit Stop Loss ===
-/// Add a conditional order.
-/// Specifies the conditions under which the order is triggered and the pending order to be placed.
+/// Add a conditional order (take-profit / stop-loss). Specifies the condition
+/// under which it triggers and the pending order to place when it does.
+///
+/// Lifetime: the conditional order itself is never clamped — it rests in the
+/// queue until it triggers or is cancelled. A *market* pending order
+/// (`tpsl::new_pending_market_order`) has no expiry, so it is the "until
+/// cancelled" stop: it waits indefinitely and, when triggered, fires and
+/// deleverages via `execute_conditional_orders_v3` (so it can protect even in
+/// the danger band). A *limit* pending order is intentionally transient — when
+/// it triggers, the resting order it places is clamped to `max_order_ttl_ms`
+/// (default 3 days) by `clamp_expire_timestamp`, the same stale-price guard as
+/// any margin limit order. For a permanent stop, use a market pending order.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -272,44 +287,15 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
         clock,
     );
 
+    let orders_to_process = self.collect_triggered_orders(current_price);
+
     let mut order_infos = vector[];
     let mut executed_ids = vector[];
     let mut expired_ids = vector[];
     let mut insufficient_funds_ids = vector[];
     let mut out_of_bounds_ids = vector[];
+    let mut below_liquidation_ids = vector[];
 
-    // Collect orders to process (to avoid borrow conflicts)
-    let mut orders_to_process = vector[];
-
-    // Collect trigger_below orders (sorted high to low)
-    let mut i = 0;
-    while (i < self.take_profit_stop_loss.trigger_below().length()) {
-        let conditional_order = &self.take_profit_stop_loss.trigger_below()[i];
-
-        // Break early if price doesn't trigger
-        if (current_price >= conditional_order.condition().trigger_price()) {
-            break
-        };
-
-        orders_to_process.push_back(*conditional_order);
-        i = i + 1;
-    };
-
-    // Collect trigger_above orders (sorted low to high)
-    i = 0;
-    while (i < self.take_profit_stop_loss.trigger_above().length()) {
-        let conditional_order = &self.take_profit_stop_loss.trigger_above()[i];
-
-        // Break early if price doesn't trigger
-        if (current_price <= conditional_order.condition().trigger_price()) {
-            break
-        };
-
-        orders_to_process.push_back(*conditional_order);
-        i = i + 1;
-    };
-
-    // Process collected orders
     self.process_collected_orders_v2(
         pool,
         registry,
@@ -323,37 +309,94 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
         &mut expired_ids,
         &mut insufficient_funds_ids,
         &mut out_of_bounds_ids,
+        &mut below_liquidation_ids,
         max_orders_to_execute,
         clock,
         ctx,
     );
 
-    let manager_id = self.id();
-    let pool_id = pool.id();
+    self.finalize_conditional_execution(
+        pool.id(),
+        expired_ids,
+        insufficient_funds_ids,
+        out_of_bounds_ids,
+        below_liquidation_ids,
+        executed_ids,
+        clock,
+    );
 
-    insufficient_funds_ids.do!(|id| {
-        self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
-    });
+    order_infos
+}
 
-    out_of_bounds_ids.do!(|id| {
-        self.take_profit_stop_loss.emit_price_out_of_bounds_event(manager_id, id, clock);
-    });
+/// Execute conditional orders, deleveraging on each market-type fill.
+/// Permissionless, like `execute_conditional_orders_v2`, with the same trigger
+/// and cancellation handling — but takes the margin pools as `&mut` and repays
+/// the loan with the market proceeds before gating on the net (post-repay)
+/// `risk_ratio` being at least the pre-fill ratio.
+///
+/// This is what lets a stop-loss fire in the `liquidation..min_borrow` danger
+/// band: a swap alone only lowers the oracle-valued ratio (so the v2 borrow-floor
+/// gate rejects it), while repaying actually improves it. If a single triggered
+/// fill would worsen net solvency the whole txn aborts — no partial-state
+/// landing.
+public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    max_orders_to_execute: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): vector<OrderInfo> {
+    registry.load_inner();
+    assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
+    let current_price = calculate_price<BaseAsset, QuoteAsset>(
+        registry,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
 
-    let mut cancelled_ids = expired_ids;
-    cancelled_ids.append(insufficient_funds_ids);
-    cancelled_ids.append(out_of_bounds_ids);
-    cancelled_ids.do!(|id| {
-        self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
-    });
+    let orders_to_process = self.collect_triggered_orders(current_price);
 
-    self
-        .take_profit_stop_loss
-        .remove_executed_conditional_orders(
-            manager_id,
-            pool_id,
-            executed_ids,
-            clock,
-        );
+    let mut order_infos = vector[];
+    let mut executed_ids = vector[];
+    let mut expired_ids = vector[];
+    let mut insufficient_funds_ids = vector[];
+    let mut out_of_bounds_ids = vector[];
+    let mut below_liquidation_ids = vector[];
+
+    self.process_collected_orders_v3(
+        pool,
+        registry,
+        base_margin_pool,
+        quote_margin_pool,
+        base_price_info_object,
+        quote_price_info_object,
+        orders_to_process,
+        &mut order_infos,
+        &mut executed_ids,
+        &mut expired_ids,
+        &mut insufficient_funds_ids,
+        &mut out_of_bounds_ids,
+        &mut below_liquidation_ids,
+        max_orders_to_execute,
+        clock,
+        ctx,
+    );
+
+    self.finalize_conditional_execution(
+        pool.id(),
+        expired_ids,
+        insufficient_funds_ids,
+        out_of_bounds_ids,
+        below_liquidation_ids,
+        executed_ids,
+        clock,
+    );
 
     order_infos
 }
@@ -842,11 +885,11 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             clock,
         );
         let quote_out = max_quote_out.min(quote_asset);
-        let base_coin = self.liquidation_withdraw(
+        let base_coin = self.withdraw_without_owner_check(
             base_out,
             ctx,
         );
-        let quote_coin = self.liquidation_withdraw(
+        let quote_coin = self.withdraw_without_owner_check(
             quote_out,
             ctx,
         );
@@ -862,11 +905,11 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             clock,
         );
         let base_out = max_base_out.min(base_asset);
-        let base_coin = self.liquidation_withdraw(
+        let base_coin = self.withdraw_without_owner_check(
             base_out,
             ctx,
         );
-        let quote_coin = self.liquidation_withdraw(
+        let quote_coin = self.withdraw_without_owner_check(
             quote_out,
             ctx,
         );
@@ -1476,8 +1519,14 @@ fun validate_owner<BaseAsset, QuoteAsset>(
     assert!(ctx.sender() == self.owner, EInvalidMarginManagerOwner);
 }
 
-/// Repays the loan using the margin manager.
-/// Returns the total amount repaid
+/// Repays the loan using the margin manager. Returns the total amount repaid.
+///
+/// Does not check ownership: owner-gating is the caller's responsibility. The
+/// public `repay_base`/`repay_quote` wrappers validate the owner; the
+/// permissionless conditional executor (`execute_conditional_orders_v3`)
+/// intentionally repays without an owner check, which is safe because repay only
+/// moves the manager's own funds to pay down its own debt — it deleverages and
+/// cannot extract value.
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
@@ -1492,7 +1541,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     let repay_amount = repay_amount.min(borrowed_amount);
     let repay_shares = math::mul(borrowed_shares, math::div(repay_amount, borrowed_amount));
 
-    let coin: Coin<RepayAsset> = self.repay_withdraw(repay_amount, ctx);
+    let coin: Coin<RepayAsset> = self.withdraw_without_owner_check(repay_amount, ctx);
     margin_pool.repay(repay_shares, coin, clock);
 
     if (type_name::with_defining_ids<RepayAsset>() == type_name::with_defining_ids<BaseAsset>()) {
@@ -1516,7 +1565,11 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     repay_amount
 }
 
-fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
+/// Withdraws from the manager's balance manager without checking ownership.
+/// Callers must either gate on the owner themselves or perform an owner-neutral
+/// operation: liquidation (anyone may unwind an unhealthy manager) and repay
+/// (only deleverages, paying the manager's own debt).
+fun withdraw_without_owner_check<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
     ctx: &mut TxContext,
@@ -1528,24 +1581,6 @@ fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         withdraw_amount,
         ctx,
     )
-}
-
-/// This can only be called by the manager owner
-fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    withdraw_amount: u64,
-    ctx: &mut TxContext,
-): Coin<WithdrawAsset> {
-    validate_owner(self, ctx);
-    let balance_manager = &mut self.balance_manager;
-
-    let coin = balance_manager.withdraw_with_cap<WithdrawAsset>(
-        &self.withdraw_cap,
-        withdraw_amount,
-        ctx,
-    );
-
-    coin
 }
 
 /// Helper function to determine if margin manager can borrow from a margin pool
@@ -1716,32 +1751,62 @@ fun place_market_order_conditional_v2<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Helper function to process collected conditional orders.
-///
-/// After each successful `place_pending_order_v2` call, recompute `risk_ratio`
-/// against Pyth via the public `risk_ratio` helper. If the manager has debt
-/// and the post-fill ratio is below `min_borrow_risk_ratio`, abort the entire
-/// txn with `EInsufficientRiskRatioAfterTrade`. We do not allow partial-fill
-/// landing — one bad fill reverts everything so the manager is never left in
-/// a state borrowing would have been forbidden from.
-fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
+/// Collects the conditional orders whose trigger condition is met at
+/// `current_price`. `trigger_below` orders fire when price falls to/below their
+/// trigger (stored high→low, so stop at the first that doesn't fire);
+/// `trigger_above` orders fire when price rises to/above their trigger (stored
+/// low→high).
+fun collect_triggered_orders<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    current_price: u64,
+): vector<ConditionalOrder> {
+    let mut orders_to_process = vector[];
+
+    let mut i = 0;
+    while (i < self.take_profit_stop_loss.trigger_below().length()) {
+        let conditional_order = &self.take_profit_stop_loss.trigger_below()[i];
+        if (current_price >= conditional_order.condition().trigger_price()) {
+            break
+        };
+        orders_to_process.push_back(*conditional_order);
+        i = i + 1;
+    };
+
+    i = 0;
+    while (i < self.take_profit_stop_loss.trigger_above().length()) {
+        let conditional_order = &self.take_profit_stop_loss.trigger_above()[i];
+        if (current_price <= conditional_order.condition().trigger_price()) {
+            break
+        };
+        orders_to_process.push_back(*conditional_order);
+        i = i + 1;
+    };
+
+    orders_to_process
+}
+
+/// Places the triggered conditional orders, routing each to its outcome bucket
+/// (executed / expired / insufficient-funds / out-of-bounds). Shared by the v2
+/// and v3 executors; the solvency gate and any deleveraging are applied by the
+/// caller. Returns whether any *market* order executed (the v3 executor repays
+/// only then).
+fun place_triggered_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
     orders: vector<ConditionalOrder>,
     order_infos: &mut vector<OrderInfo>,
     executed_ids: &mut vector<u64>,
     expired_ids: &mut vector<u64>,
     insufficient_funds_ids: &mut vector<u64>,
     out_of_bounds_ids: &mut vector<u64>,
+    below_liquidation_ids: &mut vector<u64>,
     max_orders_to_execute: u64,
+    below_liquidation: bool,
     clock: &Clock,
     ctx: &TxContext,
-) {
+): bool {
+    let mut market_filled = false;
     let mut i = 0;
     while (i < orders.length() && order_infos.length() < max_orders_to_execute) {
         let conditional_order = &orders[i];
@@ -1776,6 +1841,20 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
             let is_bid = pending_order.is_bid();
             if (pending_order.is_limit_order()) {
                 let price = *pending_order.price().borrow();
+                // A below-liquidation manager must not rest a conditional limit: the
+                // resting remainder fills later *ungated* and a band-edge self-match
+                // could push it under `risk_ratio` 1.0 (bad debt) — the same reason
+                // the direct reduce-only limit entries carry the `>= liquidation` floor
+                // (`EReduceOnlyBelowLiquidation`). Cancel it under a *distinct* bucket so
+                // its event is `BelowLiquidation`, not the misleading `PriceOutOfBounds`.
+                // A *market* conditional still fires here (it deleverages; the net
+                // monotonic gate in v3 covers it). (v2 passes `below_liquidation = false`:
+                // its `min_borrow` post-gate already aborts a below-floor resting limit.)
+                if (below_liquidation) {
+                    below_liquidation_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
                 if ((is_bid && price > upper_bound) || (!is_bid && price < lower_bound)) {
                     out_of_bounds_ids.push_back(conditional_order_id);
                     i = i + 1;
@@ -1829,6 +1908,26 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
                 ctx,
             );
 
+            if (!pending_order.is_limit_order()) {
+                // Self-match-aware safety net: the price-bound pre-check above
+                // simulated the fill against the full book, but a market order
+                // with `cancel_maker` can cancel the manager's own resting orders
+                // and fill deeper into worse liquidity. Re-check the *actual*
+                // executed price so a self-match can't bypass the oracle bounds.
+                // (Limit fills are already bounded by their own limit price.)
+                let executed = order_info.executed_quantity();
+                if (executed > 0) {
+                    let actual_price = math::div(
+                        order_info.cumulative_quote_quantity(),
+                        executed,
+                    );
+                    assert!(
+                        (is_bid && actual_price <= upper_bound) || (!is_bid && actual_price >= lower_bound),
+                        EFillOutsidePriceBounds,
+                    );
+                };
+                market_filled = true;
+            };
             order_infos.push_back(order_info);
             executed_ids.push_back(conditional_order_id);
         } else {
@@ -1847,12 +1946,96 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
         i = i + 1;
     };
 
-    // Post-loop solvency check. Move PTBs are atomic, so checking once after
-    // all fills is functionally equivalent to checking after each fill — a
-    // breach of the invariant aborts the whole txn either way. Skipped when
-    // no fills landed (executed_ids empty) and skipped when manager has no
-    // debt (nothing to be insolvent against). Saves up to N-1 Pyth reads on
-    // the happy path versus per-fill checking.
+    market_filled
+}
+
+/// Emits the outcome events and reconciles the conditional-order queue:
+/// insufficient-funds, out-of-bounds, and expired orders are cancelled (with
+/// their event); executed orders are removed. Shared by the v2 and v3 executors.
+fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool_id: ID,
+    expired_ids: vector<u64>,
+    insufficient_funds_ids: vector<u64>,
+    out_of_bounds_ids: vector<u64>,
+    below_liquidation_ids: vector<u64>,
+    executed_ids: vector<u64>,
+    clock: &Clock,
+) {
+    let manager_id = self.id();
+
+    insufficient_funds_ids.do!(|id| {
+        self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
+    });
+
+    out_of_bounds_ids.do!(|id| {
+        self.take_profit_stop_loss.emit_price_out_of_bounds_event(manager_id, id, clock);
+    });
+
+    below_liquidation_ids.do!(|id| {
+        self.take_profit_stop_loss.emit_below_liquidation_event(manager_id, id, clock);
+    });
+
+    let mut cancelled_ids = expired_ids;
+    cancelled_ids.append(insufficient_funds_ids);
+    cancelled_ids.append(out_of_bounds_ids);
+    cancelled_ids.append(below_liquidation_ids);
+    cancelled_ids.do!(|id| {
+        self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
+    });
+
+    self
+        .take_profit_stop_loss
+        .remove_executed_conditional_orders(
+            manager_id,
+            pool_id,
+            executed_ids,
+            clock,
+        );
+}
+
+/// v2 solvency gate (legacy): places the triggered orders, then requires a
+/// post-fill `risk_ratio >= min_borrow_risk_ratio` whenever a fill landed and
+/// the manager has debt. A swap alone only lowers the oracle-valued ratio, so a
+/// stop-loss in the `liquidation..min_borrow` band aborts here — use
+/// `execute_conditional_orders_v3`, which deleverages and uses a monotonic gate.
+fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    orders: vector<ConditionalOrder>,
+    order_infos: &mut vector<OrderInfo>,
+    executed_ids: &mut vector<u64>,
+    expired_ids: &mut vector<u64>,
+    insufficient_funds_ids: &mut vector<u64>,
+    out_of_bounds_ids: &mut vector<u64>,
+    below_liquidation_ids: &mut vector<u64>,
+    max_orders_to_execute: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    self.place_triggered_orders(
+        pool,
+        registry,
+        orders,
+        order_infos,
+        executed_ids,
+        expired_ids,
+        insufficient_funds_ids,
+        out_of_bounds_ids,
+        below_liquidation_ids,
+        max_orders_to_execute,
+        // v2's post-loop `min_borrow` gate already reverts a below-floor resting
+        // limit, so no separate below-liquidation skip is needed here.
+        false,
+        clock,
+        ctx,
+    );
+
     if (
         !executed_ids.is_empty()
         && (self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0)
@@ -1870,6 +2053,111 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
             risk_ratio_after >= registry.min_borrow_risk_ratio(pool.id()),
             EInsufficientRiskRatioAfterTrade,
         );
+    };
+}
+
+/// v3 solvency gate with deleveraging. Captures `risk_ratio` before any fill,
+/// places the triggered orders, repays the debt side with the market proceeds,
+/// then requires the net (post-repay) `risk_ratio` to be at least the pre-fill
+/// ratio. Deleveraging lets a stop-loss fire even in the `liquidation..min_borrow`
+/// danger band — a swap alone only lowers the oracle-valued ratio, so the v2
+/// borrow-floor gate would reject it. Repay is skipped when no market order
+/// filled (resting limit orders don't change the ratio) or the manager has no
+/// debt; the monotonic gate is skipped when the manager had no debt to begin
+/// with.
+fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    orders: vector<ConditionalOrder>,
+    order_infos: &mut vector<OrderInfo>,
+    executed_ids: &mut vector<u64>,
+    expired_ids: &mut vector<u64>,
+    insufficient_funds_ids: &mut vector<u64>,
+    out_of_bounds_ids: &mut vector<u64>,
+    below_liquidation_ids: &mut vector<u64>,
+    max_orders_to_execute: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let has_debt = self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0;
+    let risk_ratio_before = if (has_debt) {
+        self.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        )
+    } else {
+        0
+    };
+
+    // A below-liquidation manager (liquidatable, pre-liquidation window) must not
+    // rest a conditional limit — the executor cancels it (see place_triggered_orders).
+    // Market conditionals still fire (they deleverage, gated by the net monotonic
+    // check below). The `has_debt` guard: a no-debt manager has no bad-debt risk, and
+    // `risk_ratio_before` is a `0` placeholder there, not a real ratio.
+    let below_liquidation =
+        has_debt && risk_ratio_before < registry.liquidation_risk_ratio(pool.id());
+
+    let market_filled = self.place_triggered_orders(
+        pool,
+        registry,
+        orders,
+        order_infos,
+        executed_ids,
+        expired_ids,
+        insufficient_funds_ids,
+        out_of_bounds_ids,
+        below_liquidation_ids,
+        max_orders_to_execute,
+        below_liquidation,
+        clock,
+        ctx,
+    );
+
+    // Deleverage with the market proceeds so the fill improves (not just holds)
+    // solvency. The repay only moves the manager's own funds against its own
+    // debt, so it is safe in this permissionless path. A manager holds at most
+    // one debt side at a time (single `margin_pool_id: Option<ID>`, enforced by
+    // `can_borrow`), so `has_base_debt()`-else-quote is an exhaustive dispatch,
+    // not a both-sides-simultaneously assumption.
+    if (market_filled && has_debt) {
+        if (self.has_base_debt()) {
+            self.repay<BaseAsset, QuoteAsset, BaseAsset>(
+                base_margin_pool,
+                option::none(),
+                clock,
+                ctx,
+            );
+        } else {
+            self.repay<BaseAsset, QuoteAsset, QuoteAsset>(
+                quote_margin_pool,
+                option::none(),
+                clock,
+                ctx,
+            );
+        };
+    };
+
+    if (has_debt && !executed_ids.is_empty()) {
+        let risk_ratio_after = self.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+        assert!(risk_ratio_after >= risk_ratio_before, EInsufficientRiskRatioAfterTrade);
     };
 }
 

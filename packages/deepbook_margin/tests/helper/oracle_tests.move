@@ -11,7 +11,7 @@ use deepbook_margin::{
         calculate_target_currency_amount,
         calculate_usd_price,
         calculate_target_amount,
-        test_conversion_config
+        test_conversion_config,
     },
     test_constants::{Self, USDC},
     test_helpers::{build_pyth_price_info_object, create_test_pyth_config}
