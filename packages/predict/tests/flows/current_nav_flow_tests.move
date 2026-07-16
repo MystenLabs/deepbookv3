@@ -25,7 +25,7 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     order,
-    pricing::Pricer,
+    pricing::{Self, Pricer},
     range_codec,
     test_constants
 };
@@ -42,6 +42,11 @@ const SECOND_SAME_STRIKE_QUANTITY: u64 = 4_000_000_000;
 /// Deep-OTM forward (well below the 100e9 grid) so the minted up range prices to
 /// ~0, driving the leveraged order underwater (value <= floor).
 const UNDERWATER_FORWARD: u64 = 10_000_000_000;
+const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
+const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
+const NON_MONOTONE_A_MAGNITUDE: u64 = 1;
+const NON_MONOTONE_LOWER_TICK: u64 = 90;
+const NON_MONOTONE_HIGHER_TICK: u64 = 100;
 
 #[test]
 fun empty_live_market_values_at_free_cash() {
@@ -242,6 +247,47 @@ fun mixed_one_x_and_leveraged_book() {
 
     helpers::return_account_bundle(account);
 
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
+fun current_nav_rejects_non_monotone_active_book_surface() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // First create a normal order with live boundaries at ticks 90 and 100. Then
+    // replace the oracle surface with a synthetic bad surface where the higher
+    // strike has a higher UP price than the lower strike. NAV should reject that
+    // instead of using a price order that can overstate pool value.
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        NON_MONOTONE_LOWER_TICK,
+        NON_MONOTONE_HIGHER_TICK,
+        ONE_X_QUANTITY,
+        test_constants::leverage_one_x(),
+    );
+    fx.seed_bs_surface_with_svi_bundle(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        NON_MONOTONE_A_MAGNITUDE,
+        false,
+        MAX_SVI_INPUT,
+        MIN_SVI_SIGMA,
+        float!(),
+        true,
+        0,
+        false,
+        test_constants::live_source_timestamp_ms() + 1,
+    );
+
+    fx.current_nav_bundle(&market);
+
+    helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
 }

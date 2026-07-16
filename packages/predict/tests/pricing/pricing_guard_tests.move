@@ -19,25 +19,21 @@
 ///
 /// The `assert_surface_pricing_safe` envelope rejects (`EBlockScholesInputsInvalid`)
 /// is covered here too: one test per reachable branch seeds a surface that violates
-/// exactly that bound (`forward` ceiling, `basis`, `a`, `b`, `rho`, `m`, `sigma`),
-/// leaving every other input default so only the targeted branch fires. The
-/// `spot == 0` / `forward == 0` branch of that assert is unreachable through
+/// exactly that bound (`forward` ceiling, `basis`, `a` magnitude, `b`, `rho`, `m`,
+/// `sigma`), leaving every other input default so only the targeted branch fires.
+/// The `spot == 0` / `forward == 0` branch of that assert is unreachable through
 /// `load_live_pricer`: the split Block Scholes feed reads drop a zero spot or zero
 /// forward upstream (-> `EBlockScholesPriceStale`), so those two conditions are
-/// defensive-only and not tested here. `EZeroForward` is reached
-/// via a tiny-forward / large-spot surface (no LOWER basis bound), where the
-/// re-anchored `spot * (forward/spot)` rounds to 0. `EZeroVariance` is reached by a
-/// degenerate-but-in-envelope surface (`a == 0, b == 0`, so total variance
-/// `a + b*inner == 0`): a/b are bounded only from above, and the `sigma >= 1e-3`
-/// floor bounds the SVI wing parameter, NOT the total variance, so it does not
-/// prevent this. It is the same recoverable fail-closed liveness stop a near-expiry
-/// surface hits as total variance rounds to 0: all quoting (incl. NAV) aborts until
-/// a valid surface is pushed, never a mispricing. `ECannotBeNegative` in
-/// `compute_nd2` is the one genuinely unreachable guard: the envelope's `|rho| <= 1`
-/// makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0` always; it is a
-/// defensive fixed-point guard, noted not tested. `ETickNotInPriceMemo` is a
-/// package-level cache contract guard and is covered directly below; the successful
-/// memo path is covered in `payout_tree_walk_tests`.
+/// defensive-only and not tested here. `EBlockScholesMinVarianceInvalid` covers
+/// surfaces whose analytical minimum total variance is non-positive, including
+/// negative `a` values that over-offset the wing floor and the degenerate
+/// `a == 0, b == 0` surface. `EZeroForward` is reached via a tiny-forward /
+/// large-spot surface (no LOWER basis bound), where the re-anchored
+/// `spot * (forward/spot)` rounds to 0. `EZeroVariance` and `ECannotBeNegative`
+/// inside `compute_nd2` are defensive backstops after the load-time envelope:
+/// valid loaded surfaces should not hit them. `ETickNotInPriceMemo` is a
+/// package-level cache contract guard and is covered directly below; active-book
+/// non-monotone UP prices are covered by `ENonMonotonePriceMemo`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -45,7 +41,8 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
-    test_constants
+    test_constants,
+    test_helpers
 };
 use fixed_math::math::float_scaling as float;
 use propbook::{
@@ -75,6 +72,14 @@ const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
 const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
 const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
 const PRICE_MEMO_MISSING_TICK: u64 = 100;
+const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
+const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
+const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
+const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
+const NEGATIVE_A_AT_FORWARD_TOLERANCE: u64 = 5_000;
+const NONPOSITIVE_MIN_VARIANCE_A_MAG: u64 = 5_000_001;
+const NON_MONOTONE_LOW_TICK: u64 = 90;
+const NON_MONOTONE_HIGH_TICK: u64 = 95;
 
 // === Abort guards ===
 
@@ -82,6 +87,33 @@ const PRICE_MEMO_MISSING_TICK: u64 = 100;
 fun cached_range_price_with_missing_finite_tick_aborts() {
     let memo = pricing::new_price_memo();
     memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
+fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        1,
+        MAX_SVI_INPUT,
+        MIN_SVI_SIGMA,
+        test_constants::float(),
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let mut memo = pricing::new_price_memo();
+
+    memo.price_and_cache(&pricer, NON_MONOTONE_LOW_TICK, test_constants::float());
+    memo.price_and_cache(&pricer, NON_MONOTONE_HIGH_TICK, test_constants::float());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
     abort EUnexpectedSuccess
 }
 
@@ -291,6 +323,61 @@ fun surface_with_svi_a_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
+#[test]
+fun negative_svi_a_with_positive_min_variance_prices() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_signed_a_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        NEGATIVE_SVI_A_MAG,
+        true,
+        POSITIVE_MIN_VARIANCE_SVI_B,
+        POSITIVE_MIN_VARIANCE_SIGMA,
+        0,
+        false,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    let up = pricer.range_price(test_constants::default_live_price(), constants::pos_inf!());
+    // Independent Python true-math reference:
+    // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
+    // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
+    test_helpers::assert_within(
+        up,
+        NEGATIVE_A_AT_FORWARD_REFERENCE,
+        NEGATIVE_A_AT_FORWARD_TOLERANCE,
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_signed_a_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        NONPOSITIVE_MIN_VARIANCE_A_MAG,
+        true,
+        POSITIVE_MIN_VARIANCE_SVI_B,
+        POSITIVE_MIN_VARIANCE_SIGMA,
+        0,
+        false,
+        0,
+        false,
+    );
+
+    let _pricer = fx.load_pricer_bundle(&oracle);
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_b_above_max_aborts() {
     load_pricer_with_invalid_svi(default_svi_a(), MAX_SVI_INPUT + 1, default_svi_sigma());
@@ -370,16 +457,13 @@ fun re_anchored_zero_forward_aborts() {
     abort EUnexpectedSuccess
 }
 
-// === Deep-math abort (EZeroVariance) ===
+// === Surface minimum-variance abort ===
 
-/// A degenerate but in-envelope surface (`a == 0, b == 0`) has zero SVI total
-/// variance (`total_var = a + b*inner == 0`). It passes `assert_surface_pricing_safe`
-/// (a/b are bounded only from above), but `compute_nd2` fails closed on the first
-/// finite-strike quote. The `min_svi_sigma` floor does not prevent this: it bounds
-/// the SVI wing parameter, not the total variance. This is the same recoverable
-/// liveness stop a near-expiry surface hits as total variance rounds to 0.
-#[test, expected_failure(abort_code = pricing::EZeroVariance)]
-fun zero_total_variance_aborts() {
+/// A degenerate surface (`a == 0, b == 0`) has zero analytical minimum total
+/// variance (`a + b*sigma*sqrt(1-rho^2) == 0`), so it is rejected while loading
+/// the live pricer rather than reaching the first finite-strike quote.
+#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+fun zero_total_variance_aborts_at_load() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(

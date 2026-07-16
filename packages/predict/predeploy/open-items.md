@@ -145,8 +145,9 @@ cannot choose them. Exploitation additionally requires pre-existing offsetting
 ranges, a pool flush while the surface is active, and queued LP withdrawals.
 Under that surface the adjusted digital is non-monotone. `walk_linear` nets
 signed boundary contributions tree-wide and floors once at the aggregate,
-whereas `compute_range_price` floors each order at zero; the tree can therefore
-net away real liability and make `current_nav` overstate withdrawable value.
+whereas `compute_range_price` floors each order at zero; without an active-book
+monotonicity guard the tree can therefore net away real liability and make
+`current_nav` overstate withdrawable value.
 
 **Economic impact.** The replay uses two ranges with `1e9` raw DUSDC units of
 quantity each, a $1,000 face value per range at six decimals. Per-order pricing
@@ -167,11 +168,12 @@ accepted-envelope counterexample, not a live-pool measurement or a realistic
 loss estimate.
 
 **Action:** Measure a `b`-specific envelope against observed surface history and
-evaluate a butterfly/monotonicity admission check. Add an actual payout-tree
-regression with whichever hardening change is selected; do not encode the known
-discrepancy as expected behavior in this pricing-formula change. Surface quality
-remains a trusted input until that follow-up lands. (2026-07-09 PR #1110 review;
-quantitative framing corrected 2026-07-11.)
+evaluate a source-level butterfly/monotonicity admission check. The active-book
+price-memo guard prevents the known NAV overstatement by aborting valuation on a
+non-monotone active boundary set, but surface quality remains a trusted input for
+single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
+review; quantitative framing corrected 2026-07-11; active-book guard added by
+DBU-548.)
 
 ## Access and Governance
 

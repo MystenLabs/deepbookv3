@@ -549,6 +549,7 @@ interface OracleRefreshParams {
     forward: bigint;
     svi: {
         a: bigint;
+        aNegative: boolean;
         b: bigint;
         rho: bigint;
         rhoNegative: boolean;
@@ -786,6 +787,7 @@ function addBsExpiryUpdate(
             tx.pure.u64(expiry),
             tx.pure.u64(publishedAtMs),
             tx.pure.u64(svi.a),
+            tx.pure.bool(svi.aNegative),
             tx.pure.u64(svi.b),
             tx.pure.u64(svi.sigma),
             tx.pure.u64(svi.rho),

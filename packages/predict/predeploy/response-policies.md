@@ -182,9 +182,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Blast radius:** every live price — entry prices, NAV marks, liquidation.
 - **Response:** accept + disclose (commit `057f9565`). The cross-feed
   deviation guards are gone; the static pricing-safe envelope remains
-  (positive spot/forward, bounded basis, bounded SVI inputs, `|rho| ≤ 1`,
-  sigma band). A correct-but-adversarial source can steer prices anywhere
-  inside that envelope.
+  (positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`,
+  sigma band, positive minimum total variance). A correct-but-adversarial
+  source can steer prices anywhere inside that envelope.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity

@@ -404,6 +404,15 @@ def _bool(row: dict[str, str], field: str, line_number: int) -> bool:
     return value == "true"
 
 
+def _optional_bool(row: dict[str, str], field: str, line_number: int, default: bool = False) -> bool:
+    value = row.get(field, "")
+    if value == "":
+        return default
+    if value not in ("true", "false"):
+        raise ValueError(f'Scenario line {line_number}: expected {field} to be true/false, got "{value}"')
+    return value == "true"
+
+
 def _oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
     present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
     if len(present) != len(ORACLE_REFRESH_FIELDS):
@@ -413,6 +422,7 @@ def _oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
             "spot": _uint(row, "spot", line_number),
             "forward": _uint(row, "forward", line_number),
             "a": _uint(row, "a", line_number),
+            "aNegative": _optional_bool(row, "a_negative", line_number),
             "b": _uint(row, "b", line_number),
             "rho": _uint(row, "rho", line_number),
             "rhoNegative": _bool(row, "rho_negative", line_number),
@@ -445,6 +455,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "spot": _uint(row, "spot", index),
                     "forward": _uint(row, "forward", index),
                     "a": _uint(row, "a", index),
+                    "aNegative": _optional_bool(row, "a_negative", index),
                     "b": _uint(row, "b", index),
                     "rho": _uint(row, "rho", index),
                     "rhoNegative": _bool(row, "rho_negative", index),
@@ -818,7 +829,11 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     if inner.is_negative:
         raise ValueError("SVI inner term cannot be negative")
     wing_var = deepbook_mul(svi["b"], inner.magnitude)
-    total_var = svi["a"] + wing_var
+    a = I64(svi["a"], svi.get("aNegative", False))
+    total_var_i64 = I64(wing_var).add(a)
+    if total_var_i64.is_negative or total_var_i64.magnitude == 0:
+        raise ValueError("SVI total variance must be positive")
+    total_var = total_var_i64.magnitude
     sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
     d2_numerator = k.add(I64(total_var // 2))
     d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
@@ -836,9 +851,10 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     return nd2 - correction if nd2 > correction else 0
 
 
-def svi_cache_key(svi: dict[str, Any]) -> tuple[int, int, int, bool, int, bool, int]:
+def svi_cache_key(svi: dict[str, Any]) -> tuple[int, bool, int, int, bool, int, bool, int]:
     return (
         svi["a"],
+        svi.get("aNegative", False),
         svi["b"],
         svi["rho"],
         svi["rhoNegative"],
@@ -852,6 +868,7 @@ def svi_cache_key(svi: dict[str, Any]) -> tuple[int, int, int, bool, int, bool, 
 def compute_up_price_cached(
     forward: int,
     a: int,
+    a_negative: bool,
     b: int,
     rho: int,
     rho_negative: bool,
@@ -867,6 +884,7 @@ def compute_up_price_cached(
     return compute_nd2(
         {
             "a": a,
+            "aNegative": a_negative,
             "b": b,
             "rho": rho,
             "rhoNegative": rho_negative,
@@ -887,6 +905,7 @@ def compute_up_price(svi: dict[str, Any], forward: int, strike: int) -> int:
 def compute_range_price_cached(
     forward: int,
     a: int,
+    a_negative: bool,
     b: int,
     rho: int,
     rho_negative: bool,
@@ -896,11 +915,31 @@ def compute_range_price_cached(
     lower: int,
     higher: int,
 ) -> int:
-    lower_up = compute_up_price_cached(forward, a, b, rho, rho_negative, m, m_negative, sigma, lower)
-    higher_up = compute_up_price_cached(forward, a, b, rho, rho_negative, m, m_negative, sigma, higher)
-    if lower_up < higher_up:
-        raise ValueError("range price underflow")
-    return lower_up - higher_up
+    lower_up = compute_up_price_cached(
+        forward,
+        a,
+        a_negative,
+        b,
+        rho,
+        rho_negative,
+        m,
+        m_negative,
+        sigma,
+        lower,
+    )
+    higher_up = compute_up_price_cached(
+        forward,
+        a,
+        a_negative,
+        b,
+        rho,
+        rho_negative,
+        m,
+        m_negative,
+        sigma,
+        higher,
+    )
+    return max(0, lower_up - higher_up)
 
 
 def compute_range_price(svi: dict[str, Any], forward: int, lower: int, higher: int) -> int:
@@ -1043,8 +1082,9 @@ def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
         floor_shares,
     )
     # The payout tree owns both the linear quantity walk and max-point net payout
-    # reserve reads. NAV is the exact order-sum walk_linear - correction, which
-    # reads model["orders"] directly and needs no per-order NAV index.
+    # reserve reads. The replay mirrors NAV from model["orders"] directly after
+    # checking the same active-book monotonicity precondition as the on-chain
+    # price memo, so it needs no per-order NAV index.
     model["payout"].insert_range(order["lower"], order["higher"], quantity, floor_shares)
     invalidate_valuation_cache(model)
     track_minted_boundaries(model, order["lower"], order["higher"])
@@ -1081,7 +1121,9 @@ def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
     return remove_closed_live_order(model, order, order["quantity"], None)
 
 
-def valuation_curve_key(model: dict[str, Any]) -> tuple[int, int, int, int, bool, int, bool, int, int, int] | None:
+def valuation_curve_key(
+    model: dict[str, Any],
+) -> tuple[int, int, bool, int, int, bool, int, bool, int, int, int] | None:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     if model["minted_min_strike"] is None or model["minted_max_strike"] is None:
@@ -1115,24 +1157,40 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
 
 
 # --- Exact NAV liability (replaces the deleted dense StrikeNavMatrix + curve). ---
-# The contract's `strike_exposure::exact_live_liability` is `linear - correction`,
-# where the payout-tree `walk_linear` and the leveraged-book `correction_value` are
-# just efficient on-chain aggregations of per-order sums. Mirrored here order-by-
-# order (the simulation has one book, so the O(n) walk is fine and EXACT — it does
-# not depend on the deleted grid/curve interpolation at all):
+# The contract's `strike_exposure::exact_live_liability` is `linear - correction`.
+# The payout-tree `walk_linear` and leveraged-book `correction_value` are efficient
+# on-chain aggregations of per-order sums when the active boundary UP prices are
+# monotone. The contract rejects non-monotone active boundary sets during the price
+# memo walk; mirror that precondition, then sum order-by-order here (the simulation
+# has one book, so the O(n) walk is fine and exact):
 #   linear     = Σ_active           quantity · range_price(lower, higher)
 #   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
 #                                       floor_shares)
 #   exact_live_liability = max(0, linear - correction)
-# walk_linear over all orders equals Σ qty·range_price because each `(lower, higher]`
-# order contributes q·P(lower) - q·P(higher) = q·(up(lower) - up(higher)) =
-# q·range_price(lower, higher) to the tree's start/end totals (neg-inf rides base
-# P=1, pos-inf ends are P=0). There is NO conservative band anymore (deleted with
-# the approximate-NAV world): the flush prices one EXACT mark for both supply and
-# withdraw.
+# There is NO conservative band anymore (deleted with the approximate-NAV world):
+# the flush prices one exact mark for both supply and withdraw.
+def assert_active_book_monotone(model: dict[str, Any]) -> None:
+    boundaries = sorted(
+        {
+            strike
+            for order in model["orders"].values()
+            if order["status"] == "active"
+            for strike in (order["lower"], order["higher"])
+            if strike not in (NEG_INF_STRIKE, POS_INF_STRIKE)
+        },
+    )
+    previous: int | None = None
+    for strike in boundaries:
+        price = compute_up_price(model["current_svi"], model["current_forward"], strike)
+        if previous is not None and price > previous:
+            raise ValueError("non-monotone active-book SVI surface")
+        previous = price
+
+
 def exact_live_liability(model: dict[str, Any]) -> int:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
+    assert_active_book_monotone(model)
     linear = 0
     correction = 0
     for order in model["orders"].values():
@@ -1418,7 +1476,7 @@ def state_snapshot(state: dict[str, int]) -> dict[str, str]:
 
 def svi_input(row: dict[str, Any]) -> dict[str, str]:
     return {
-        "a": str(row["a"]),
+        "a": signed_svi_value(row["a"], row.get("aNegative", False)),
         "b": str(row["b"]),
         "rho": signed_svi_value(row["rho"], row["rhoNegative"]),
         "m": signed_svi_value(row["m"], row["mNegative"]),
@@ -2251,7 +2309,7 @@ def normalized_flow_action(action: str) -> str:
     return "mint" if action == "oracle_mint_ptb" else action
 
 
-def analytics_oracle_key(model: dict[str, Any]) -> tuple[int, int, int, int, bool, int, bool, int]:
+def analytics_oracle_key(model: dict[str, Any]) -> tuple[int, int, bool, int, int, bool, int, bool, int]:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("liquidation requires prior price and SVI updates")
     return (model["current_forward"], *svi_cache_key(model["current_svi"]))

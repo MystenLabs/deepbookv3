@@ -18,9 +18,9 @@ const ERawSVINotFound: u64 = 1;
 const EWrongVersion: u64 = 2;
 const ENotNewerVersion: u64 = 3;
 
-/// SVI smile parameters; `rho` and `m` are signed (`fixed_math::i64`).
+/// SVI smile parameters; `a`, `rho`, and `m` are signed (`fixed_math::i64`).
 public struct SVIParams has copy, drop, store {
-    a: u64,
+    a: I64,
     b: u64,
     rho: I64,
     m: I64,
@@ -122,7 +122,7 @@ public fun raw_svi_params(raw: &RawSVI): SVIParams {
     raw.svi
 }
 
-public fun a(params: &SVIParams): u64 {
+public fun a(params: &SVIParams): I64 {
     params.a
 }
 
@@ -214,7 +214,7 @@ fun new_read(
             bs_source_id: feed.bs_source_id,
             expiry_ms: update.svi_expiry_ms(),
             svi: SVIParams {
-                a: update.svi_a(),
+                a: i64::from_parts(update.svi_a_magnitude(), update.svi_a_is_negative()),
                 b: update.svi_b(),
                 rho: i64::from_parts(update.svi_rho_magnitude(), update.svi_rho_is_negative()),
                 m: i64::from_parts(update.svi_m_magnitude(), update.svi_m_is_negative()),

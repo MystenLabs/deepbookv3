@@ -27,7 +27,8 @@ const FORWARD_B: u64 = 51_500_000_000_000;
 const EXPIRY_A: u64 = 1_700_100_000_000;
 const EXPIRY_B: u64 = 1_700_200_000_000;
 const UNKNOWN_TIMESTAMP: u64 = 9_999_999_999;
-const SVI_A: u64 = 40_000_000;
+const SVI_A_MAG: u64 = 40_000_000;
+const SVI_A_NEG: bool = true;
 const SVI_B: u64 = 120_000_000;
 const SVI_SIGMA: u64 = 90_000_000;
 const RHO_MAG: u64 = 300_000_000;
@@ -226,7 +227,8 @@ fun updates_accept_raw_values_without_pricing_envelope_validation() {
             BS_SOURCE_ID,
             EXPIRY_A,
             T_EARLY,
-            SVI_A,
+            SVI_A_MAG,
+            SVI_A_NEG,
             SVI_B,
             0,
             FLOAT_SCALING + 1,
@@ -570,7 +572,8 @@ fun assert_svi_read(
 }
 
 fun assert_svi_params(params: &SVIParams) {
-    assert_eq!(params.a(), SVI_A);
+    assert_eq!(params.a().magnitude(), SVI_A_MAG);
+    assert_eq!(params.a().is_negative(), SVI_A_NEG);
     assert_eq!(params.b(), SVI_B);
     assert_eq!(params.sigma(), SVI_SIGMA);
     assert_eq!(params.rho().magnitude(), RHO_MAG);
@@ -592,7 +595,8 @@ fun svi_update(source_id: u32, expiry: u64, published: u64): SVIUpdate {
         source_id,
         expiry,
         published,
-        SVI_A,
+        SVI_A_MAG,
+        SVI_A_NEG,
         SVI_B,
         SVI_SIGMA,
         RHO_MAG,

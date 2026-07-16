@@ -391,7 +391,7 @@ function findEvents(events: any[], name: string): any[] {
 
 function sviInput(row: MintRow | OracleRefreshData) {
     return {
-        a: row.a.toString(),
+        a: signedValue(row.a, row.aNegative),
         b: row.b.toString(),
         rho: signedValue(row.rho, row.rhoNegative),
         m: signedValue(row.m, row.mNegative),
@@ -551,7 +551,7 @@ function recordBlockScholesSVI(
     const raw = eventObservationValue(event);
     const svi = raw.svi?.fields ?? raw.svi ?? {};
     pending.svi = {
-        a: decimal(svi.a),
+        a: signedI64(svi.a),
         b: decimal(svi.b),
         rho: signedI64(svi.rho),
         m: signedI64(svi.m),
@@ -1232,6 +1232,7 @@ interface OracleSeedData {
     forward: bigint;
     svi: {
         a: bigint;
+        aNegative: boolean;
         b: bigint;
         rho: bigint;
         rhoNegative: boolean;
@@ -1252,6 +1253,7 @@ function firstOracleData(row: ScenarioRow): OracleSeedData {
         forward: o.forward,
         svi: {
             a: o.a,
+            aNegative: o.aNegative,
             b: o.b,
             rho: o.rho,
             rhoNegative: o.rhoNegative,
@@ -1567,6 +1569,7 @@ async function executeStressMintBatch(
                 forward: row.forward,
                 svi: {
                     a: row.a,
+                    aNegative: row.aNegative,
                     b: row.b,
                     rho: row.rho,
                     rhoNegative: row.rhoNegative,
@@ -1598,6 +1601,7 @@ async function executeRow(
                     forward: row.forward,
                     svi: {
                         a: row.a,
+                        aNegative: row.aNegative,
                         b: row.b,
                         rho: row.rho,
                         rhoNegative: row.rhoNegative,

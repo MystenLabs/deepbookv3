@@ -35,7 +35,8 @@ public struct Pricer has copy, drop {
     block_scholes_svi_source_timestamp_ms: u64,
 }
 
-/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
+/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending
+/// and non-increasing in price.
 ///
 /// The NAV linear walk (`strike_payout_tree::walk_linear`) fills it once per node
 /// as it prices the payout tree in-order; the correction walk
@@ -44,6 +45,8 @@ public struct Pricer has copy, drop {
 /// leveraged order's finite boundary ticks are payout-tree nodes, so every finite
 /// lookup MUST hit: a miss is a broken exposure index, not a cache fallback, and
 /// `cached_range_price` aborts `ETickNotInPriceMemo` rather than silently repricing.
+/// The same cache rejects non-monotone UP prices during NAV valuation, because
+/// `walk_linear` tree-wide netting is exact only on a monotone active surface.
 public struct PriceMemo has drop {
     /// Finite boundary ticks in ascending order (the in-order walk appends them).
     ticks: vector<u64>,
@@ -67,6 +70,8 @@ const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
 const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
+const EBlockScholesMinVarianceInvalid: u64 = 16;
+const ENonMonotonePriceMemo: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -180,6 +185,10 @@ public(package) fun price_and_cache(
     tick_size: u64,
 ): u64 {
     let price = pricer.up_price(tick * tick_size);
+    if (!memo.prices.is_empty()) {
+        let previous = memo.prices[memo.prices.length() - 1];
+        assert!(price <= previous, ENonMonotonePriceMemo);
+    };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
     price
@@ -353,7 +362,7 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
             <= (max_pricing_basis!() as u128),
         EBlockScholesInputsInvalid,
     );
-    assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -361,6 +370,26 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
         svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
         EBlockScholesInputsInvalid,
     );
+    assert_min_total_variance_positive(svi);
+}
+
+fun assert_min_total_variance_positive(svi: &SVIParams) {
+    let min_wing_var = min_svi_wing_variance(svi);
+    let a = svi.a();
+    let min_total_var = i64::from_u64(min_wing_var).add(&a);
+    assert!(
+        !min_total_var.is_negative() && !min_total_var.is_zero(),
+        EBlockScholesMinVarianceInvalid,
+    );
+}
+
+fun min_svi_wing_variance(svi: &SVIParams): u64 {
+    let rho_mag = svi.rho().magnitude();
+    if (rho_mag == math::float_scaling!()) return 0;
+
+    let one_minus_rho_squared = math::float_scaling!() - math::mul(rho_mag, rho_mag);
+    let sqrt_one_minus_rho_squared = math::sqrt(one_minus_rho_squared, math::float_scaling!());
+    math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
@@ -426,11 +455,12 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     // is known to reach it, so it carries no expected_failure test.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let a = svi_params.a();
     let b = svi_params.b();
     let wing_var = math::mul(b, inner.magnitude());
-    let total_var = a + wing_var;
-    assert!(total_var > 0, EZeroVariance);
+    let a = svi_params.a();
+    let total_var = i64::from_u64(wing_var).add(&a);
+    assert!(!total_var.is_negative() && !total_var.is_zero(), EZeroVariance);
+    let total_var = total_var.magnitude();
 
     let sqrt_var = math::sqrt(total_var, math::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
@@ -445,8 +475,11 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let nd2 = math::normal_cdf(&d2);
     if (w_prime.is_zero()) return nd2;
 
-    let correction_magnitude =
-        math::mul_div_down(math::normal_pdf(&d2), w_prime.magnitude(), 2 * sqrt_var);
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        2 * sqrt_var,
+    );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;

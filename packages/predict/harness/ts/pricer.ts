@@ -13,7 +13,7 @@
 //   up_price(strike) = clamp01(Phi(d2) - phi(d2)·w'(k)/(2·sqrt(w)))
 
 export interface Svi {
-  a: number; // SVI alpha
+  a: number; // signed SVI alpha
   b: number; // SVI beta
   rho: number; // signed
   m: number; // signed
@@ -54,7 +54,7 @@ export function upPrice(svi: Svi, forward: number, strike: number): number {
   const km = k - svi.m;
   const sq = Math.sqrt(km * km + svi.sigma * svi.sigma);
   const w = svi.a + svi.b * (svi.rho * km + sq);
-  if (w <= 0) return k < 0 ? 1 : 0; // degenerate variance → tail limit (contract aborts here instead; intentional float-pricer divergence)
+  if (w <= 0) return k < 0 ? 1 : 0; // degenerate variance -> tail limit (contract rejects unsafe surfaces; intentional float-pricer divergence)
   const sqrtW = Math.sqrt(w);
   const d2 = -((k + w / 2) / sqrtW);
   const wPrime = svi.b * (svi.rho + km / sq);

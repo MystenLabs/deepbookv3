@@ -108,7 +108,8 @@ Predict reads it but does not own it.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are
   differenced off. Predict enforces its pricing-safe SVI envelope at read time
-  (`|rho| <= 1`, bounded inputs, bounded sigma). Code `SVIParams`.
+  (`|rho| <= 1`, bounded magnitudes, bounded sigma, positive minimum total
+  variance). Code `SVIParams`.
 - **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
   (`i64`) math package both Predict and propbook depend on (formerly
   `predict_math`). Code package/address `fixed_math`.
