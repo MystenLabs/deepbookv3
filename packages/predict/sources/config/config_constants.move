@@ -118,7 +118,9 @@ public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
 public(package) macro fun default_no_leverage_window_ms(): u64 {
     deepbook_predict::constants::one_hour_ms!()
 }
+
 public(package) macro fun min_no_leverage_window_ms(): u64 { 0 }
+
 public(package) macro fun max_no_leverage_window_ms(): u64 {
     deepbook_predict::constants::one_year_ms!()
 }
