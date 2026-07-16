@@ -246,9 +246,14 @@ public(package) fun close_settled_order(
     order: &Order,
     settlement: u64,
 ): u64 {
-    let (lower, higher) = exposure.order_boundaries(order);
     exposure.liquidation.remove_order(order);
-    if (settlement <= lower || settlement > higher) {
+    let won = range_codec::settlement_in_range(
+        order.lower_tick(),
+        order.higher_tick(),
+        settlement,
+        exposure.tick_size,
+    );
+    if (!won) {
         return 0
     };
     // payout = quantity - floor_shares (= Q - F). The settled liability was derived
@@ -402,8 +407,6 @@ public(package) fun close_and_quote_live_order(
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
 
-    let (lower, higher) = exposure.order_boundaries(order);
-
     let old_floor_shares = order.floor_shares();
     let remaining_quantity = old_quantity - close_quantity;
     let remaining_floor_shares = math::mul_div_down(
@@ -425,7 +428,7 @@ public(package) fun close_and_quote_live_order(
         );
     exposure.liquidation.remove_order(order);
 
-    let range_probability = pricer.range_price(lower, higher);
+    let range_probability = exposure.order_range_price(pricer, order);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
 
@@ -514,9 +517,7 @@ public(package) fun materialize_settled_liability(
 }
 
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    let (lower, higher) = exposure.order_boundaries(order);
-    let range_probability = pricer.range_price(lower, higher);
-    math::mul(range_probability, order.quantity())
+    math::mul(exposure.order_range_price(pricer, order), order.quantity())
 }
 
 /// Liquidate (knock out) `order` when its live value has reached the static floor:
@@ -562,10 +563,11 @@ fun liquidate_order_if_under_floor(
     true
 }
 
-/// Decode an order into `(lower, higher)` raw strike boundaries for pricing and
-/// settlement comparison, mapping the open-ended sentinels.
-fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
-    range_codec::strikes_from_ticks(order.lower_tick(), order.higher_tick(), exposure.tick_size)
+fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
+    pricer.range_price(
+        range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
+        range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
+    )
 }
 
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
@@ -578,11 +580,8 @@ fun admitted_entry_probability(
     higher_tick: u64,
 ): u64 {
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let (lower, higher) = range_codec::strikes_from_ticks(
-        lower_tick,
-        higher_tick,
-        exposure.tick_size,
-    );
+    let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
+    let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
     pricer.range_price(lower, higher)
 }
 

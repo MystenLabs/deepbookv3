@@ -45,6 +45,7 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
+    range_codec::strike_for_testing as strike,
     test_constants
 };
 use fixed_math::math::float_scaling as float;
@@ -242,7 +243,7 @@ fun deep_itm_up_price_saturates_to_one() {
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert_eq!(pricer.up_price(DEEP_ITM_STRIKE), float!());
+    assert_eq!(pricer.up_price(strike(DEEP_ITM_STRIKE)), float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -259,7 +260,7 @@ fun deep_otm_up_price_saturates_to_zero() {
     fx.prepare_live_oracle_bundle(&mut oracle, 1);
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert_eq!(pricer.up_price(DEEP_OTM_STRIKE), 0);
+    assert_eq!(pricer.up_price(strike(DEEP_OTM_STRIKE)), 0);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -323,7 +324,7 @@ fun surface_with_basis_at_exact_factor_admits() {
     // abort nor a saturated tail. Exact pricing values are owned by the oracle
     // scenario tests; this test pins that the exact-boundary basis is admitted
     // and priceable.
-    let price = pricer.up_price(spot * 100);
+    let price = pricer.up_price(strike(spot * 100));
     assert!(0 < price && price < float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -410,7 +411,7 @@ fun re_anchored_zero_forward_aborts() {
     fx.set_pyth_bundle(&mut oracle, 1_000_000_000, fx.clock().timestamp_ms());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    pricer.up_price(test_constants::default_live_price());
+    pricer.up_price(strike(test_constants::default_live_price()));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -443,7 +444,7 @@ fun zero_total_variance_aborts() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    pricer.up_price(test_constants::default_live_price());
+    pricer.up_price(strike(test_constants::default_live_price()));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -616,5 +617,5 @@ fun setup_live(): (OracleFixture, OracleBundle) {
 /// Worker: one live quote over `(lower, higher]` against the fixture market.
 fun live_quote(fx: &OracleFixture, oracle: &OracleBundle, lower: u64, higher: u64): u64 {
     let pricer = fx.load_pricer_bundle(oracle);
-    pricer.range_price(lower, higher)
+    pricer.range_price(strike(lower), strike(higher))
 }

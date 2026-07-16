@@ -20,7 +20,12 @@
 #[test_only]
 module deepbook_predict::pricing_tests;
 
-use deepbook_predict::{constants, oracle_fixture, test_constants};
+use deepbook_predict::{
+    constants,
+    oracle_fixture,
+    range_codec::strike_for_testing as strike,
+    test_constants
+};
 use fixed_math::math::float_scaling as float;
 use std::unit_test::assert_eq;
 
@@ -88,7 +93,7 @@ fun unusable_pyth_observation_uses_zero_timestamp_sentinel() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS);
-    assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
+    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -102,12 +107,12 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     let below = pricer.range_price(
-        constants::neg_inf!(),
-        test_constants::default_live_price(),
+        strike(constants::neg_inf!()),
+        strike(test_constants::default_live_price()),
     );
     let above = pricer.range_price(
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
+        strike(test_constants::default_live_price()),
+        strike(constants::pos_inf!()),
     );
 
     // Exact: the partition of the real line sums to probability 1.
@@ -128,8 +133,8 @@ fun whole_line_range_is_certain() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     let whole = pricer.range_price(
-        constants::neg_inf!(),
-        constants::pos_inf!(),
+        strike(constants::neg_inf!()),
+        strike(constants::pos_inf!()),
     );
     assert_eq!(whole, float!());
 
@@ -146,8 +151,8 @@ fun digital_above_probability_is_non_increasing_in_strike() {
 
     // P(price > X) must be non-increasing as X rises: a higher strike is less
     // likely to be exceeded.
-    let above_low = pricer.range_price(STRIKE_BELOW, constants::pos_inf!());
-    let above_high = pricer.range_price(STRIKE_ABOVE, constants::pos_inf!());
+    let above_low = pricer.range_price(strike(STRIKE_BELOW), strike(constants::pos_inf!()));
+    let above_high = pricer.range_price(strike(STRIKE_ABOVE), strike(constants::pos_inf!()));
     assert!(above_low >= above_high);
     // And strictly so straddling the forward with this curve.
     assert!(above_low > above_high);
@@ -187,14 +192,14 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget);
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), float!() / 2);
+    assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), float!() / 2);
 
     // ONE ms past the boundary: Pyth is stale, the BS surface still fresh, so the
     // forward falls back to the stored Block Scholes forward = 100e9.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget + 1);
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.up_price(test_constants::default_live_price()), float!() / 2);
-    assert_eq!(pricer.up_price(DIVERGED_PYTH_SPOT), 0);
+    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
 
     oracle_fixture::return_oracle_bundle(oracle);
