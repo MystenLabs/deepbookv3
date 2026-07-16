@@ -29,6 +29,8 @@
 		"prettier:check": "prettier -c --ignore-unknown .",
 		"prettier:fix": "prettier -w --ignore-unknown .",
 		"prettier:fix:watch": "onchange '**' -i -f add -f change -j 5 -- prettier -w --ignore-unknown {{file}}",
+		"format:move": "prettier-move --write \"packages/**/*.move\"",
+		"format:move:check": "prettier-move -c \"packages/**/*.move\"",
 		"eslint:check": "eslint --max-warnings=0 .",
 		"eslint:fix": "pnpm run eslint:check --fix",
 		"lint": "pnpm run eslint:check && pnpm run prettier:check",

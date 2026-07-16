@@ -51,8 +51,10 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 - Run all tests for a package:
   - `sui move test --path packages/predict --gas-limit 100000000000`
   - `sui move test --path packages/deepbook --gas-limit 100000000000`
-- Format Move code:
-  - `bunx prettier-move -c path/to/file.move --write`
+- Format Move code (run before opening a PR; CI runs the same script):
+  - `pnpm install --frozen-lockfile && pnpm format:move`
+  - Do NOT use `bunx`/`npx prettier-move`: they fetch the latest plugin, which formats
+    differently from the version CI pins in the lockfile.
 
 ### Rust
 

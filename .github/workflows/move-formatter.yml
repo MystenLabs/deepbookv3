@@ -25,8 +25,7 @@ jobs:
       # never silently change what CI enforces on unrelated PRs.
       - name: Install the pinned toolchain
         run: pnpm install --frozen-lockfile
-      # One recursive glob over every package. Quoted so prettier expands it: bash
-      # leaves globstar off, so an unquoted `**` collapses to `*` and matches only
-      # one directory level.
+      # Same script contributors run (`pnpm format:move`), so the file set and the
+      # plugin version have exactly one definition and CI cannot drift from local.
       - name: Check Move formatting
-        run: pnpm exec prettier-move -c "packages/**/*.move"
+        run: pnpm run format:move:check
