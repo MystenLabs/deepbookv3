@@ -100,10 +100,10 @@ public fun set_template_expiry_fee_max_multiplier(
 public fun set_template_no_leverage_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    value: u64,
+    window_ms: u64,
 ) {
     config.assert_version();
-    config.strike_exposure_template_config.set_no_leverage_window_ms(value);
+    config.strike_exposure_template_config.set_no_leverage_window_ms(window_ms);
 }
 
 /// Set the liquidation LTV snapshotted by future expiry markets.

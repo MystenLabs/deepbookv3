@@ -278,9 +278,9 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
     config.expiry_fee_max_multiplier = value;
 }
 
-public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_no_leverage_window_ms(value);
-    config.no_leverage_window_ms = value;
+public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {
+    config_constants::assert_no_leverage_window_ms(window_ms);
+    config.no_leverage_window_ms = window_ms;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.

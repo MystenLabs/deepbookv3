@@ -426,7 +426,7 @@ fun no_leverage_window_rejects_two_x_admitted_far_from_expiry() {
 // probability-derived cap still applies. Pins the `<` boundary from the outside:
 // 2.5x admits here with the same terms it gets far from expiry.
 #[test]
-fun no_leverage_window_at_window_boundary_admits_full_cap() {
+fun no_leverage_window_boundary_admits_full_cap() {
     let config = strike_exposure_config::new();
 
     let admission = config.assert_mint_admission(

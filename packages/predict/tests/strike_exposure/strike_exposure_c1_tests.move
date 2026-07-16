@@ -69,7 +69,7 @@ fun double_partial_close_survivor_reinsertion_stays_backed() {
 
 /// A 2x mint through `mint_exact_quantity` is refused inside the window.
 #[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
-fun near_expiry_leverage_mint_rejected() {
+fun near_expiry_leverage_exact_quantity_mint_rejected() {
     let mut fx = helpers::setup_market_default();
     // Re-enable the block (flow fixtures disable it) BEFORE market creation so the
     // market snapshots the 1h window.

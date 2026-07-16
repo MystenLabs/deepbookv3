@@ -420,10 +420,10 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
 
 /// Re-enable the near-expiry no-leverage block that `setup_market` disables. Call
 /// before creating the expiry that should snapshot it.
-public fun set_template_no_leverage_window_ms(self: &mut Fixture, value: u64) {
+public fun set_template_no_leverage_window_ms(self: &mut Fixture, window_ms: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_no_leverage_window_ms(&self.admin_cap, value);
+    config.set_template_no_leverage_window_ms(&self.admin_cap, window_ms);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
