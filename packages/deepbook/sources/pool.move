@@ -14,7 +14,7 @@ use deepbook::{
         DeepBookReferral,
         TradeCap,
         DepositCap,
-        WithdrawCap
+        WithdrawCap,
     },
     balances,
     big_vector::BigVector,

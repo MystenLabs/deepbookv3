@@ -32,7 +32,7 @@ use deepbook_margin::{
         build_demo_usdc_price_info_object_with_price,
         setup_orderbook_liquidity_stablecoin,
         setup_orderbook_liquidity_at_prices,
-        setup_orderbook_liquidity_out_of_bounds_stablecoin
+        setup_orderbook_liquidity_out_of_bounds_stablecoin,
     }
 };
 use std::unit_test::{assert_eq, destroy};

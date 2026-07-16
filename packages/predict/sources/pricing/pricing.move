@@ -73,10 +73,13 @@ const EBlockScholesSVIUnavailable: u64 = 15;
 /// tightly enough that Predict's fixed-point pricing math remains live and
 /// meaningful.
 macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
+
 // max_pricing_spot * max_pricing_basis / float_scaling <= u64::max by
 // construction: the re-anchored forward (spot * basis) can't overflow u64.
 macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+
 macro fun min_svi_sigma(): u64 { 1_000_000 }
+
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
@@ -445,8 +448,11 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let nd2 = math::normal_cdf(&d2);
     if (w_prime.is_zero()) return nd2;
 
-    let correction_magnitude =
-        math::mul_div_down(math::normal_pdf(&d2), w_prime.magnitude(), 2 * sqrt_var);
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        2 * sqrt_var,
+    );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;

@@ -21,7 +21,7 @@ use deepbook_predict::{
         min_executable_plp_price as min_plp_price,
         min_supply_request as min_supply,
         min_withdraw_request as min_withdraw,
-        plp_price_unit as plp_unit
+        plp_price_unit as plp_unit,
     },
     lp_book::{Self, DrainSummary, LpBook},
     pool_accounting::{Self, Ledger}

@@ -353,11 +353,7 @@ public(package) fun quote_mint_entry_probability(
 ///
 /// Already-liquidated and currently-liquidatable orders have zero holder value;
 /// otherwise this returns the order's current range value net of its static floor.
-public(package) fun order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     if (exposure.is_liquidated_order(order)) return 0;
 
     let gross_value = exposure.gross_order_value(pricer, order);
@@ -494,11 +490,7 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
-fun gross_order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
+fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricer.range_price(lower, higher);
     math::mul(range_probability, order.quantity())
