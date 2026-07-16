@@ -303,7 +303,7 @@ public fun quote_mint(
     exact_quantity: bool,
     leverage: u64,
     clock: &Clock,
-    ctx: &TxContext,
+    ctx: &mut TxContext,
 ): MintQuote {
     market.assert_live_mint_allowed(config, pricer);
     let terms = market
@@ -345,7 +345,7 @@ public fun quote_mint_for_account(
     leverage: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
-    ctx: &TxContext,
+    ctx: &mut TxContext,
 ): MintQuote {
     market.assert_live_mint_allowed(config, pricer);
     let account = wrapper.load_account();

@@ -113,7 +113,7 @@ public fun receive_address(self: &Account): address {
 }
 
 /// Generate owner authority from the transaction sender.
-public fun generate_auth(ctx: &TxContext): Auth {
+public fun generate_auth(ctx: &mut TxContext): Auth {
     Auth { kind: AUTH_OWNER, owner: ctx.sender() }
 }
 

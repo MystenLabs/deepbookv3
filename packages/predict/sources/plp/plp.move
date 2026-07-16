@@ -469,7 +469,7 @@ public fun sponsor_fee_incentives(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     payment: Coin<DUSDC>,
-    ctx: &TxContext,
+    ctx: &mut TxContext,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
