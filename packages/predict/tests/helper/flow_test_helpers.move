@@ -16,8 +16,7 @@
 /// through `pyth_feed::record_raw_for_testing` because a real `pyth_lazer::Update`
 /// has no public Move constructor; the BS feeds use the stub verifier's split
 /// public update constructors. Exact settlement spots are inserted through the same
-/// Pyth testing seam; production settlement is passive inside the normal redeem and
-/// pool-rebalance flows.
+/// Pyth testing seam; production settlement is an explicit `try_settle` transition.
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
@@ -1300,11 +1299,9 @@ public fun redeem_bundle_with_limits(
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
@@ -1313,8 +1310,6 @@ public fun redeem_settled(
         &account_registry,
         wrapper,
         config,
-        oracle_registry,
-        pyth,
         order_id,
         close_quantity,
         root,
@@ -1330,11 +1325,9 @@ public fun redeem_settled(
 public fun redeem_settled_with_owner_auth(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
@@ -1343,8 +1336,6 @@ public fun redeem_settled_with_owner_auth(
         wrapper,
         auth,
         config,
-        oracle_registry,
-        pyth,
         order_id,
         close_quantity,
         root,
@@ -1363,11 +1354,9 @@ public fun redeem_settled_bundle(
 ): (u256, Option<u256>) {
     self.redeem_settled(
         &market.config,
-        &market.oracle_registry,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
-        &market.pyth,
         order_id,
         close_quantity,
     )
@@ -1383,30 +1372,49 @@ public fun redeem_settled_with_owner_auth_bundle(
 ): (u256, Option<u256>) {
     self.redeem_settled_with_owner_auth(
         &market.config,
-        &market.oracle_registry,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
-        &market.pyth,
         order_id,
         close_quantity,
     )
 }
 
-/// Run the passive settlement gate against the fixture clock and return whether the
-/// market is settled after the attempt.
-public fun ensure_settled(
+/// Try the explicit settlement transition against the fixture clock and return
+/// whether the market is settled after the attempt.
+public fun try_settle(
     self: &Fixture,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
 ): bool {
-    market.ensure_settled(oracle_registry, pyth, &self.clock)
+    market.try_settle(config, oracle_registry, pyth, &self.clock)
 }
 
-/// Run the passive settlement gate through a market bundle.
-public fun ensure_settled_bundle(self: &Fixture, market: &mut MarketBundle): bool {
-    self.ensure_settled(&mut market.market, &market.oracle_registry, &market.pyth)
+/// Try the explicit settlement transition through a market bundle.
+public fun try_settle_bundle(self: &Fixture, market: &mut MarketBundle): bool {
+    self.try_settle(
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+    )
+}
+
+/// Try settlement through a market bundle while substituting an explicit Pyth
+/// feed for binding-guard tests.
+public fun try_settle_bundle_with_pyth(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    pyth: &PythFeed,
+): bool {
+    self.try_settle(
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        pyth,
+    )
 }
 
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
@@ -1529,10 +1537,8 @@ public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    pyth: &PythFeed,
 ) {
-    vault.rebalance_expiry_cash(market, config, oracle_registry, pyth, &self.clock);
+    vault.rebalance_expiry_cash(market, config, &self.clock);
 }
 
 /// Rebalance expiry cash through a market bundle.
@@ -1541,24 +1547,6 @@ public fun rebalance_expiry_cash_bundle(self: &Fixture, market: &mut MarketBundl
         &mut market.vault,
         &mut market.market,
         &market.config,
-        &market.oracle_registry,
-        &market.pyth,
-    );
-}
-
-/// Rebalance expiry cash through a market bundle while substituting an explicit
-/// Pyth feed for binding-guard tests.
-public fun rebalance_expiry_cash_bundle_with_pyth(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    pyth: &PythFeed,
-) {
-    self.rebalance_expiry_cash(
-        &mut market.vault,
-        &mut market.market,
-        &market.config,
-        &market.oracle_registry,
-        pyth,
     );
 }
 
@@ -1616,8 +1604,6 @@ public fun claim_trading_loss_rebate_bundle(
             &mut account_bundle.wrapper,
             auth,
             &market.config,
-            &market.oracle_registry,
-            &market.pyth,
             &account_bundle.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1638,8 +1624,6 @@ public fun claim_trading_loss_rebate_permissionless_bundle(
             &mut account_bundle.wrapper,
             &account_registry,
             &market.config,
-            &market.oracle_registry,
-            &market.pyth,
             &account_bundle.root,
             &self.clock,
             self.scenario.ctx(),

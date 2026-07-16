@@ -157,8 +157,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   resolution endpoints supply the exact-timestamp print).
 - **Blast radius:** the whole flush aborts while the market is in the window.
 - **Response:** `pause`-with-recovery — abort and retry; the recovery path is
-  the permissionless exact-ms insert followed by passive settlement. The
-  keeper does not flush inside the window. Deliberately **no substitute
+  the permissionless exact-ms insert followed by `try_settle`. Standalone cash
+  rebalance is a no-op in the window, and the keeper does not flush until the
+  transition succeeds. Deliberately **no substitute
   mark**: a settlement-dependent market has no well-defined true value, and
   the single mark prices both queue directions — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
@@ -169,8 +170,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `evidence/rp4-settlement-liveness.md`);
   residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
   `risks.md`.
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `settlement_flow_tests.move` —
+  `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
+  `expired_unsettled_standalone_rebalance_moves_no_cash`, and
+  `explicit_settlement_unblocks_pool_valuation_sweep`.
 - **Reopen when:** settlement-v2 introduces a valuation-safe representation
   for unsettled past-expiry markets.
 

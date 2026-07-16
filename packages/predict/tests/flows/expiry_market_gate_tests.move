@@ -57,7 +57,7 @@ fun mint_after_expiry_aborts() {
 
 /// A permissionless `redeem_settled` against a still-LIVE (unexpired) market must
 /// abort: the settled-redeem path requires the market to be terminally settled, and
-/// `ensure_settled` returns false before expiry.
+/// no settlement transition has run.
 #[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
 fun redeem_settled_on_live_order_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();

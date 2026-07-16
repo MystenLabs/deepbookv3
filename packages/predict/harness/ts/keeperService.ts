@@ -84,7 +84,7 @@ function cadenceOf(expiryMs: number): number {
 }
 
 // The durable settlement lane: settle every currently-past-expiry active market, each in its own PTB
-// (insert exact spot + rebalance_expiry_cash -> ensure_settled -> sweep). Needs only the exact Pyth
+// (insert exact spot -> try_settle -> rebalance_expiry_cash sweep). Needs only the exact Pyth
 // spot, NOT live BS pricing, so a BS outage that defers the flush can never back settlement up (no
 // beyond-retention brick). Reads a fresh clock + chain active set. Returns ok / last error / count.
 async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: string; count: number }> {
@@ -136,8 +136,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
 
   // 1b. Pool flush (own PTB): value every active market. The 1a lane swept the markets past-expiry when
   //     it ran; a market that expired SINCE (a boundary-race straggler) is still active + unsettled, so
-  //     the flush inserts its exact-expiry observation inline — value_expiry then settles it via
-  //     ensure_settled instead of tripping dynamic_field on a missing obs. These inserts are the
+  //     the flush inserts its exact-expiry observation and calls try_settle before value_expiry,
+  //     instead of tripping dynamic_field on a missing obs. These commands are the
   //     race-avoidance ONLY; the durable settlement is 1a (a BS outage reverts the flush's inserts but
   //     can't block 1a, so no brick). A flush OOG here is the nav-stress BREAKPOINT (analyze.py
   //     excludes it), NOT a stall — logged as a plain flush fail.
@@ -146,9 +146,9 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       const nowClock = Number(await clockTimestampMs());
       const flush: Mkt[] = [];
       for (const id of await readActiveMarketIds()) flush.push({ id, expiryMs: await expiryOf(id) });
-      const settlements: { expiryMs: bigint; price: bigint }[] = [];
+      const settlements: { marketId: string; expiryMs: bigint; price: bigint }[] = [];
       for (const m of flush) {
-        if (m.expiryMs <= nowClock) settlements.push({ expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
+        if (m.expiryMs <= nowClock) settlements.push({ marketId: m.id, expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
       }
       const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
@@ -191,7 +191,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     if (funded.has(m.id)) continue;
     try {
       await executeAndWait(
-        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id, pythFeedId: feeds.pythFeedId }),
+        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
         "rebalance",
       );
       funded.add(m.id);
@@ -212,7 +212,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       try {
         const { marketId, expiryMs } = await createMarket(lifecycleCapId, c);
         await executeAndWait(
-          rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
+          rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
           "rebalance",
         );
         funded.add(marketId);

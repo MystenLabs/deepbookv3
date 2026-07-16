@@ -8,7 +8,7 @@
 /// half, that the survivor carries zero floor (a 1x order), and that custody
 /// conserves across the market-cash / account sheets with S1 backing intact.
 ///
-/// The settled-redeem boundary legs are covered by the passive settlement flow
+/// The settled-redeem boundary legs are covered by the explicit settlement flow
 /// tests; this file keeps the live cancel-and-replace solvency boundary focused.
 #[test_only]
 module deepbook_predict::settled_solvency_boundary_tests;

@@ -92,10 +92,10 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Settlement
 
-- **Passive exact settlement.** Normal flows that branch on settlement call
-  `expiry_market::ensure_settled` first. It records the exact normalized Pyth spot
-  at the market's expiry timestamp from Propbook if present; otherwise the market
-  remains unsettled. There is no public settle-only entrypoint.
+- **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
+  settlement-price writer. It records the exact normalized Pyth spot at the market's
+  expiry timestamp and exact terminal payout liability atomically; otherwise it
+  returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
   `(lower, higher]`, else 0 (`close_settled_order`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw

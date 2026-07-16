@@ -56,11 +56,11 @@ non-normalizable exact-expiry Pyth print (negative, normalizes-to-zero,
 u64-overflow, or exponent-shift > 18 — `normalize_raw_spot` returns none,
 pyth_feed.move:281-308) inserted at `key == expiry_ms` locks that key forever:
 the exact-history lane is first-writer-wins with no overwrite/remove
-(oracle_lane.move:130). `ensure_settled` (expiry_market.move:698-720) then
+(oracle_lane.move:130). `try_settle` then
 returns false permanently and post-expiry live pricing aborts
 (`ELivePricingExpired`), so the market never settles and the pool-wide flush
 stays bricked. This defeats RP-4's stated recovery (the permissionless exact-ms
-insert followed by passive settlement) — the later valid insert is silently
+insert followed by `try_settle`) — the later valid insert is silently
 dropped. Reachability is low for real major-asset feeds but the failure is
 permanent.
 

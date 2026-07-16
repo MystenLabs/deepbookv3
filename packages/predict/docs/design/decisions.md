@@ -333,15 +333,20 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
 
-## Passive exact-timestamp settlement (recent)
+## Explicit exact-timestamp settlement (recent)
 
-- **Settlement is passive, not a public operator action.** Normal flows that branch
-  on settlement call `expiry_market::ensure_settled` first. It validates the supplied
-  Pyth feed against Propbook's canonical binding for the market's underlying and
-  records `pyth.normalized_spot_at(expiry)` when present. *Rationale:* terminal
-  settlement should use Propbook exact timestamp history, and users/keepers should
-  continue through ordinary redeem or pool-maintenance flows rather than calling a
-  separate settle-only API. *Rejected:* a public `settle_if_possible` entrypoint.
+- **Settlement is one public permissionless transition.** `expiry_market::try_settle`
+  validates the supplied Pyth feed against Propbook's canonical binding for the
+  market's underlying and records `pyth.normalized_spot_at(expiry)` plus exact terminal
+  payout liability when present. Settled redeem, rebate claim, pool rebalance, and
+  valuation consume only the recorded phase; keepers compose settlement first in the
+  same PTB when needed. *Rationale:* one writer makes the market phase transition
+  atomic and removes oracle ingress from every later settled consumer. *Rejected:*
+  implicit settlement inside each consumer.
+- **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
+  expiry moves no cash until `try_settle` succeeds; valuation still aborts through
+  live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
+  while an unsettled market has no exact terminal liability from which to sweep.
 - **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
   missing after expiry, the market remains unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —

@@ -372,6 +372,7 @@ fun value_expiry_for_inactive_market_aborts() {
         &mut market,
         test_constants::default_live_price(),
     );
+    assert!(fx.try_settle_bundle(&mut market));
     fx.rebalance_expiry_cash_bundle(&mut market);
     helpers::return_market_bundle(market);
 

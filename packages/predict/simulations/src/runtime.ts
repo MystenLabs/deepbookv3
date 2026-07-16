@@ -964,7 +964,6 @@ export function rebalanceExpiryCashTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    pythFeedId: string;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -973,8 +972,6 @@ export function rebalanceExpiryCashTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
             tx.object(CLOCK_ID),
         ],
     });
