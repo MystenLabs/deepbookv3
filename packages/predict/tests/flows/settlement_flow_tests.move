@@ -44,9 +44,8 @@ const CASH_AFTER_REBATE_CLAIM: u64 = 300_502_500_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
 
-/// At expiry with no exact Propbook spot recorded, the market cannot settle, so the
-/// permissionless `redeem_settled` aborts on its settled-state precondition rather
-/// than mispricing against a missing terminal.
+/// Even with the exact Propbook spot recorded, permissionless `redeem_settled`
+/// requires the explicit settlement transition instead of settling implicitly.
 #[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
 fun settled_redeem_requires_explicit_settlement() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
@@ -67,6 +66,10 @@ fun settled_redeem_requires_explicit_settlement() {
     );
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_inside_default_finite_range(),
+    );
     fx.redeem_settled_bundle(
         &mut market,
         &mut account,
@@ -573,8 +576,8 @@ fun settlement_below_default_finite_range(): u64 {
     (helpers::strike_tick() - 1) * test_constants::default_tick_size()
 }
 
-/// The plp rebate-claim wrapper's own settled gate: past expiry with no exact
-/// Propbook spot recorded, the claim aborts before touching rebate or account state.
+/// Even with the exact Propbook spot recorded, the rebate claim requires the
+/// explicit settlement transition instead of settling implicitly.
 #[test, expected_failure(abort_code = plp::EMarketNotSettled)]
 fun rebate_claim_requires_settled_market() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
@@ -586,6 +589,10 @@ fun rebate_claim_requires_settled_market() {
     let mut account = fx.take_account_bundle(&trader);
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_below_default_finite_range(),
+    );
     fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
 
     abort 999
