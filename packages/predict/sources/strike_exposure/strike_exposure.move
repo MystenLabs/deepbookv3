@@ -258,6 +258,8 @@ public(package) fun new(
 /// Enter the settled phase by recording the terminal price and its exact payout
 /// liability. The caller owns expiry and oracle validation.
 public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_price: u64) {
+    if (exposure.is_settled()) return;
+
     let settled_payout_liability = exposure
         .payout
         .settled_payout_liability(settlement_price, exposure.tick_size);

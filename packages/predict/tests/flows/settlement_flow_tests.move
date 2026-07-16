@@ -87,12 +87,24 @@ fun try_settle_before_expiry_returns_false_without_mutation() {
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
+    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        SECOND_SOURCE_ID,
+        fx.scenario_mut().ctx(),
+    );
+    return_shared(oracle_registry);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(expiry_id);
-    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
+    // Expiry is checked before the pricing-owned oracle binding check.
+    assert_eq!(fx.try_settle_bundle_with_pyth(&mut market, &wrong_pyth), false);
     assert!(!helpers::market(&market).is_settled());
     assert_eq!(helpers::market(&market).try_settlement_price(), option::none());
 
     helpers::return_market_bundle(market);
+    return_shared(wrong_pyth);
     fx.finish();
 }
 
@@ -444,9 +456,20 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        SECOND_SOURCE_ID,
+        fx.scenario_mut().ctx(),
+    );
+    return_shared(oracle_registry);
+
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -463,9 +486,10 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
     // First call records the settlement price from the exact expiry spot.
     assert_eq!(fx.try_settle_bundle(&mut market), true);
     // Second call (clock now far past expiry) must early-return true via the
-    // already-settled gate without re-reading the oracle or changing the price.
+    // already-settled gate without validating the substituted feed, re-reading
+    // the oracle, or changing the price.
     fx.set_clock_for_testing(test_constants::short_expiry_ms() * 2);
-    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(fx.try_settle_bundle_with_pyth(&mut market, &wrong_pyth), true);
     assert_eq!(
         event::events_by_type<config_events::MarketSettled>().length(),
         MARKET_SETTLED_EVENT_COUNT,
@@ -487,6 +511,7 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
+    return_shared(wrong_pyth);
     fx.finish();
 }
 

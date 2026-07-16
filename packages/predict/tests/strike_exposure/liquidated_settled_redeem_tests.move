@@ -12,7 +12,7 @@ use deepbook_predict::{
     constants,
     liquidation_book,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
-    order::Order,
+    order::{Self, Order},
     strike_exposure::{Self, StrikeExposure},
     strike_exposure_config,
     test_constants
@@ -61,7 +61,27 @@ fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
     abort 999
 }
 
-fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
+#[test]
+fun repeated_settlement_after_close_preserves_first_price_and_remaining_liability() {
+    let (fx, oracle, mut harness, order) = active_order_fixture();
+    let payout = order.quantity() - order.floor_shares();
+
+    harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
+    assert_eq!(harness.exposure.payout_liability(), payout);
+    assert_eq!(harness.exposure.close_settled_order(&order), payout);
+    assert_eq!(harness.exposure.payout_liability(), 0);
+
+    // The package-level phase transition is itself idempotent: even after a
+    // settled close mutates the cached liability, another call cannot recompute
+    // it from the retained live payout tree or replace the first terminal price.
+    harness.exposure.record_settlement(test_constants::default_live_price());
+    assert_eq!(harness.exposure.settlement_price(), SETTLED_WINNING_SPOT);
+    assert_eq!(harness.exposure.payout_liability(), 0);
+
+    cleanup(fx, oracle, harness);
+}
+
+fun active_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -87,6 +107,12 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
             LEVERAGE_TWO_X,
         );
     let order = harness.exposure.allocate_mint_order(terms);
+
+    (fx, oracle, harness, order)
+}
+
+fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
+    let (fx, mut oracle, mut harness, order) = active_order_fixture();
 
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);
