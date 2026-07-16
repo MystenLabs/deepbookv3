@@ -42,7 +42,6 @@ use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, 
 const EMintPaused: u64 = 0;
 const EFullCloseRequired: u64 = 1;
 const EMarketNotSettled: u64 = 2;
-const EWrongPythFeed: u64 = 3;
 const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
 const EWrongPricer: u64 = 7;
@@ -677,18 +676,18 @@ public fun set_reference_tick(
 ): u64 {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    market.assert_pyth_bound(propbook_registry, pyth);
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
-    let read = pyth.normalized_spot_at(source_timestamp_ms);
-    assert!(read.is_some(), EReferenceTickObservationMissing);
-    let read = read.destroy_some();
-    assert!(
-        read.read_source_timestamp_ms() == source_timestamp_ms,
-        EReferenceTickTimestampMismatch,
+    let read = pricing::load_exact_spot_read(
+        propbook_registry,
+        pyth,
+        market.propbook_underlying_id,
+        source_timestamp_ms,
     );
+    assert!(read.has_spot(), EReferenceTickObservationMissing);
+    assert!(read.source_timestamp_ms() == source_timestamp_ms, EReferenceTickTimestampMismatch);
 
-    let spot = read.read_value();
+    let spot = read.spot();
     let tick_size = market.strike_exposure.tick_size();
     let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
@@ -731,11 +730,15 @@ public fun try_settle(
     config.assert_version();
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
-    market.assert_pyth_bound(propbook_registry, pyth);
 
-    let read = pyth.normalized_spot_at(market.expiry);
-    if (read.is_none()) return false;
-    let settlement_price = read.destroy_some().read_value();
+    let read = pricing::load_exact_spot_read(
+        propbook_registry,
+        pyth,
+        market.propbook_underlying_id,
+        market.expiry,
+    );
+    if (!read.has_spot()) return false;
+    let settlement_price = read.spot();
     market.settlement_price = option::some(settlement_price);
     market.strike_exposure.materialize_settled_liability(settlement_price);
     config_events::emit_market_settled(
@@ -929,15 +932,6 @@ fun redeem_liquidated_order(
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     market.cash.assert_backing(market.payout_liability());
-}
-
-fun assert_pyth_bound(market: &ExpiryMarket, propbook_registry: &OracleRegistry, pyth: &PythFeed) {
-    assert!(
-        propbook_registry
-            .propbook_pyth_id_for_underlying(market.propbook_underlying_id)
-            .contains(&pyth.id()),
-        EWrongPythFeed,
-    );
 }
 
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {

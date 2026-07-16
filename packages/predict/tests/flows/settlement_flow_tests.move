@@ -15,6 +15,7 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp,
     predict_account,
+    pricing,
     test_constants
 };
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
@@ -111,7 +112,7 @@ fun try_settle_without_exact_expiry_spot_returns_false_without_mutation() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
+#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
 fun try_settle_with_wrong_pyth_feed_aborts() {
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
@@ -135,7 +136,7 @@ fun try_settle_with_wrong_pyth_feed_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
+#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
 fun try_settle_rejects_old_pyth_after_propbook_rebind() {
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());

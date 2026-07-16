@@ -6,8 +6,9 @@
 /// This module is the app-facing read layer for oracle data. It reads the
 /// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
 /// range prices. It does not mutate feed, pool, expiry, or position state, and it
-/// owns the live pricing boundary: current Propbook feed binding, pre-expiry
-/// market liveness, feed freshness, and Predict's pricing-safe BS input envelope.
+/// owns Predict's oracle-read boundary: current Propbook feed binding,
+/// exact-history spot reads, pre-expiry market liveness, feed freshness, and
+/// Predict's pricing-safe BS input envelope.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
@@ -16,6 +17,7 @@ use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
     block_scholes_svi_feed::{BlockScholesSVIFeed, SVIParams},
+    oracle_lane::OracleRead,
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -33,6 +35,13 @@ public struct Pricer has copy, drop {
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// Canonical normalized Pyth spot read at one exact source timestamp.
+/// Constructed only by `load_exact_spot_read`; consumers decide whether an
+/// absent exact-history row is a no-op or an abort.
+public struct ExactSpotRead has drop {
+    read: Option<OracleRead<u64>>,
 }
 
 /// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
@@ -120,16 +129,28 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
     pricer.block_scholes_svi_source_timestamp_ms
 }
 
+public(package) fun has_spot(read: &ExactSpotRead): bool {
+    read.read.is_some()
+}
+
+public(package) fun source_timestamp_ms(read: &ExactSpotRead): u64 {
+    read.read.borrow().read_source_timestamp_ms()
+}
+
+public(package) fun spot(read: &ExactSpotRead): u64 {
+    read.read.borrow().read_value()
+}
+
 // === Public-Package Functions ===
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
 ///
-/// This is the only path from raw Propbook oracle objects into Predict business
-/// logic. It first checks that `pyth`, `bs_spot`, `bs_forward`, and `bs_svi` are
-/// the current canonical Propbook oracles for `propbook_underlying_id`, then
-/// rejects past-expiry markets, then reads live oracle inputs under Predict's
-/// freshness and pricing-safe envelope.
+/// Together with `load_exact_spot_read`, this is the only path from raw Propbook
+/// oracle objects into Predict business logic. It first checks that `pyth`,
+/// `bs_spot`, `bs_forward`, and `bs_svi` are the current canonical Propbook
+/// oracles for `propbook_underlying_id`, then rejects past-expiry markets, then
+/// reads live oracle inputs under Predict's freshness and pricing-safe envelope.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -161,6 +182,19 @@ public(package) fun load_live_pricer(
         expiry,
         clock,
     )
+}
+
+/// Validate the canonical Pyth binding and read its normalized spot at exactly
+/// `source_timestamp_ms`. The product preserves absence so the reference-tick
+/// and settlement flows can retain their distinct missing-data policies.
+public(package) fun load_exact_spot_read(
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    propbook_underlying_id: u32,
+    source_timestamp_ms: u64,
+): ExactSpotRead {
+    assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
+    ExactSpotRead { read: pyth.normalized_spot_at(source_timestamp_ms) }
 }
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
@@ -220,12 +254,7 @@ fun assert_current_oracles(
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
 ) {
-    assert!(
-        propbook_registry
-            .propbook_pyth_id_for_underlying(propbook_underlying_id)
-            .contains(&pyth.id()),
-        EWrongPythFeed,
-    );
+    assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
     assert!(
         propbook_registry
             .propbook_block_scholes_spot_id_for_underlying(propbook_underlying_id)
@@ -243,6 +272,19 @@ fun assert_current_oracles(
             .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
             .contains(&bs_svi.id()),
         EWrongBlockScholesSVIFeed,
+    );
+}
+
+fun assert_current_pyth(
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+) {
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
     );
 }
 

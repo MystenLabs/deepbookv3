@@ -111,8 +111,8 @@ Note the asymmetry: the Block Scholes forward/SVI source set is mandatory and ga
 
 Resolving a price touches three facts — *are these the current canonical Propbook feeds for this market's underlying and expiry*, *is this market still live for live pricing*, and *are the required feed reads fresh* — and they are owned by different modules:
 
-- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing::load_live_pricer` for a `Pricer` before any live pricing-dependent mutation.
-- **`pricing` owns the live pricing boundary.** It checks the passed `PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, and `BlockScholesSVIFeed` against Propbook's current canonical bindings for the market's `propbook_underlying_id` and expiry, rejects a past-expiry live price, checks the configured Pyth, BS price, and SVI freshness windows, applies Predict's pricing-safe envelope, and then runs the binary-pricing math.
+- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing` for a live `Pricer` or an exact-history `ExactSpotRead` before consuming oracle-derived facts.
+- **`pricing` owns the oracle-read boundary.** It checks passed Propbook feed objects against the current canonical bindings, issues `ExactSpotRead` for reference-tick and settlement lookups, and issues `Pricer` for live flows after enforcing pre-expiry liveness, freshness, and Predict's pricing-safe envelope.
 
 This split keeps each guard with the module whose contract depends on it: the market owns the flow and market facts, while pricing is the only path from Propbook oracle objects into Predict business logic.
 

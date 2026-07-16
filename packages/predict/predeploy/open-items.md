@@ -323,8 +323,9 @@ pre-deploy and breaking (or permanent) after; none block correctness today.
 **Severity:** Low, but all four sit on or near the mint/redeem path — not
 hygiene-speed changes.
 
-- Pyth canonical-binding check re-implemented in `expiry_market` (:776-783)
-  instead of owned by `pricing` — re-home behind one owner. (audit 0622da)
+- Pyth canonical-binding duplication resolved by the pricing-owned
+  `ExactSpotRead`: live pricing, reference tick, and settlement share one binding
+  check, and `expiry_market` contains no raw feed read. (audit 0622da)
 - `mint_exact_amount` prices and admission-validates the same range twice per
   call — resolved by the DBU-566 unified mint gate: one pricing and one full
   admission per request in `strike_exposure::quote_mint_terms`. (audit fb3ec8)

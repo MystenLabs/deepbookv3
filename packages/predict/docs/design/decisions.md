@@ -225,14 +225,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
-- **Ownership split: the market owns flow state, `pricing` owns the live oracle
-  boundary.** `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the
-  current oracle object IDs. Every priced flow asks `pricing::load_live_pricer` to
-  validate the passed feeds against Propbook's current canonical binding, reject a
-  past-expiry live price, apply freshness and Predict's pricing-safe envelope, and
-  return a value-typed `Pricer`. *Rationale:* Propbook owns source identity and
-  canonical binding; Predict pricing owns the only conversion from Propbook objects
-  into business logic.
+- **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
+  `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
+  oracle object IDs. `pricing` validates passed feeds against Propbook's current
+  canonical binding and issues either an exact-history `ExactSpotRead` for reference
+  tick and settlement or a live `Pricer` after applying liveness, freshness, and the
+  pricing-safe envelope. *Rationale:* Propbook owns source identity and canonical
+  binding; Predict pricing owns the only conversion from Propbook objects into
+  business logic.
 - **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
   fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
