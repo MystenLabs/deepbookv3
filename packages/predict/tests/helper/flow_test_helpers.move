@@ -140,7 +140,6 @@ public fun setup_market(tick: u64): Fixture {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
-    config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -939,7 +938,47 @@ public fun quote_mint_bundle(
             &pricer,
             lower_tick,
             higher_tick,
+            0,
             quantity,
+            true,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Anonymous read-only budget-bias mint quote through a market bundle: quotes
+/// the largest lot-rounded quantity whose net premium fits `max_premium`.
+public fun quote_mint_amount_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint(
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            false,
             leverage,
             &self.clock,
             self.scenario.ctx(),
@@ -975,8 +1014,52 @@ public fun quote_mint_for_account_bundle(
             &pricer,
             lower_tick,
             higher_tick,
+            0,
             quantity,
+            true,
             leverage,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Account-aware read-only budget-bias mint quote: the budget is capped to the
+/// account's current balance exactly as `mint_exact_amount` caps it.
+public fun quote_mint_for_account_amount_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            false,
+            leverage,
+            &account.root,
             &self.clock,
             self.scenario.ctx(),
         )

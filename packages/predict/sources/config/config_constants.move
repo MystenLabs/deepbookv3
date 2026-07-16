@@ -211,7 +211,12 @@ public(package) fun assert_cadence_window_size(value: u64) {
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
 
-public(package) macro fun min_min_entry_probability(): u64 { 0 }
+// The envelope floors the admissible entry band at 1% (one cent per contract):
+// budget-bias mint sizing is conservative by at most one premium unit, and one
+// unit stays sub-lot only while entry probability cannot be configured below
+// this floor (worst reachable case ~152 raw units per unit at the 10x template
+// leverage envelope, vs the 10_000-unit lot).
+public(package) macro fun min_min_entry_probability(): u64 { 10_000_000 }
 
 public(package) macro fun max_min_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
