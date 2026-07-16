@@ -28,9 +28,12 @@ Slack.
   the head commit is unchanged. Rerunning the same Actions run updates that
   run's comment instead of creating a duplicate.
 - Minor Codex findings do not prevent bot approval.
-- If a retry on the same commit finds significant issues after the App already
-  approved it, the workflow dismisses that approval. If GitHub refuses the
-  dismissal, the workflow replaces it with `REQUEST_CHANGES`.
+- If any retry cannot establish a valid, published Codex result with no
+  significant findings, the workflow dismisses an existing App approval for
+  that commit. This includes authorization failures, missing configuration,
+  Codex failures, invalid output, significant findings, and comment publication
+  failures. If GitHub refuses the dismissal, the workflow replaces the approval
+  with `REQUEST_CHANGES`.
 - If a later clean retry follows `REQUEST_CHANGES`, the App submits a new
   approval because decisions use its latest review for that commit.
 - Significant Codex findings, Codex failures, and approval failures send a
@@ -91,8 +94,8 @@ review input, and runs Codex with the `:read-only` permission profile and the
 `drop-sudo` safety strategy. A separate trusted workflow step formats the
 structured output and posts the advisory pull request comment.
 
-Codex gates the bot's approval. A fresh significant result does not submit a
-`REQUEST_CHANGES` review. On a significant retry of an already approved commit,
+Codex gates the bot's approval. A fresh blocked result does not submit a
+`REQUEST_CHANGES` review. On a blocked retry of an already approved commit,
 `REQUEST_CHANGES` is used only as a fallback when GitHub refuses to dismiss the
 existing App approval; a human reviewer may dismiss that fallback review after
 deciding how to proceed.
@@ -136,15 +139,17 @@ Use a small test pull request authored by a `defi-eng` member:
    unapproved and sends an `@here` Slack alert.
 5. Reapply the label to an already approved commit and confirm a significant
    retry dismisses or replaces the existing App approval.
-6. Reapply the label without changing the commit and confirm the new Codex
+6. Confirm failed Codex execution, invalid output, and comment publication
+   failure also dismiss or replace an existing App approval.
+7. Reapply the label without changing the commit and confirm the new Codex
    result is published in a new comment.
-7. Confirm a clean retry after fallback `REQUEST_CHANGES` submits a newer App
+8. Confirm a clean retry after fallback `REQUEST_CHANGES` submits a newer App
    approval.
-8. Confirm a comment publication failure does not submit bot approval.
-9. Confirm Slack gets one request message and one final result message.
-10. Push another commit and confirm it is not automatically re-approved.
+9. Confirm a comment publication failure does not submit bot approval.
+10. Confirm Slack gets one request message and one final result message.
+11. Push another commit and confirm it is not automatically re-approved.
    Confirm the old approval is dismissed or replaced with `REQUEST_CHANGES`.
-11. Apply the label to a PR from a non-member and confirm authorization fails.
+12. Apply the label to a PR from a non-member and confirm authorization fails.
 
 The GitHub Actions workflow uses `pull_request_target` so it can access secrets.
 It must continue checking out only the trusted base commit and must never run
