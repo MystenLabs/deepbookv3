@@ -234,13 +234,9 @@ public fun start_pool_valuation(
 /// (deactivated, cash returned, profit materialized) and contributes 0; a live
 /// market is rebalanced to target and valued on its current cash.
 ///
-/// Before branching, this passively records terminal settlement from Propbook's
-/// exact Pyth timestamp if available: a past-expiry market is normally settled here
-/// and swept (contributing 0), so `current_nav` is only reached for a still-live
-/// market. Only in the bounded pending-settlement window (past expiry but the
-/// exact-expiry spot not yet inserted) does the live branch still abort through
-/// `current_nav`; there is no solvency-safe substitute mark for an unsettled expired
-/// market, and the abort clears once anyone lands the exact spot.
+/// Settlement is a separate PTB step through `expiry_market::try_settle`. A settled
+/// market is swept here and contributes 0; an unsettled market is valued live, so a
+/// past-expiry market still aborts through `current_nav` until settlement succeeds.
 public fun value_expiry(
     valuation: &mut PoolValuation,
     vault: &mut PoolVault,
@@ -258,9 +254,7 @@ public fun value_expiry(
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    let nav = if (
-        vault.settle_or_rebalance_expiry(market, config, propbook_registry, pyth, clock)
-    ) {
+    let nav = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
         0
     } else {
         let pricer = market.load_live_pricer(
@@ -410,6 +404,8 @@ public fun unstake_deep(
 /// three per-market cases — initial funding of a freshly registered (unfunded)
 /// market, ongoing live rebalance/surplus-sweep toward target, and the
 /// settled-market sweep (deactivate, return all free cash, materialize profit).
+/// Call `expiry_market::try_settle` first in the same PTB when settlement may be due.
+/// An expired unsettled market is a no-op until that transition succeeds.
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
 /// mintable. The market must already be registered to this vault
 /// (`registry::create_and_share_expiry_market`). Blocked while a full-pool valuation is in
@@ -418,15 +414,13 @@ public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     clock: &Clock,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    vault.settle_or_rebalance_expiry(market, config, propbook_registry, pyth, clock);
+    vault.sweep_or_rebalance_expiry(market, config, clock);
 }
 
 /// Resolve the caller-owned account's settled trading-loss rebate.
@@ -436,8 +430,6 @@ public fun claim_trading_loss_rebate(
     wrapper: &mut AccountWrapper,
     auth: Auth,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -446,15 +438,7 @@ public fun claim_trading_loss_rebate(
     config.assert_not_valuation_in_progress();
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    vault.claim_trading_loss_rebate_internal(
-        market,
-        account,
-        config,
-        propbook_registry,
-        pyth,
-        clock,
-        ctx,
-    );
+    vault.claim_trading_loss_rebate_internal(market, account, config, ctx);
 }
 
 /// Permissionlessly resolve one account's settled trading-loss rebate using Predict
@@ -466,8 +450,6 @@ public fun claim_trading_loss_rebate_permissionless(
     wrapper: &mut AccountWrapper,
     account_registry: &AccountRegistry,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -477,15 +459,7 @@ public fun claim_trading_loss_rebate_permissionless(
     wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
     let account = wrapper.load_account_mut(auth);
-    vault.claim_trading_loss_rebate_internal(
-        market,
-        account,
-        config,
-        propbook_registry,
-        pyth,
-        clock,
-        ctx,
-    );
+    vault.claim_trading_loss_rebate_internal(market, account, config, ctx);
 }
 
 /// Sponsor taker fee incentives with DUSDC. Anyone may contribute; the payment
@@ -710,15 +684,12 @@ fun claim_trading_loss_rebate_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     let vault_id = vault.id();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+    assert!(market.is_settled(), EMarketNotSettled);
     let settlement_price = market.settlement_price();
     let account_id = account.account_id();
     let summary = predict_account::resolve_expiry_summary(account, expiry_market_id);
@@ -788,21 +759,20 @@ fun lp_pool_value(
     gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
 }
 
-/// Shared settle-or-rebalance dispatch: passively settle the market off Propbook's
-/// exact-expiry Pyth print if available and sweep it terminal, else rebalance its
-/// live expiry cash. Returns true when the market is settled/swept.
-fun settle_or_rebalance_expiry(
+/// Sweep a settled market, rebalance a live market, or leave an expired unsettled
+/// market unchanged. Returns true when the market is settled and swept.
+fun sweep_or_rebalance_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     clock: &Clock,
 ): bool {
     let expiry_market_id = market.id();
-    if (market.ensure_settled(propbook_registry, pyth, clock)) {
+    if (market.is_settled()) {
         vault.sweep_settled_expiry(market, config);
         true
+    } else if (clock.timestamp_ms() >= market.expiry()) {
+        false
     } else {
         vault.rebalance_live_expiry(market, expiry_market_id);
         false

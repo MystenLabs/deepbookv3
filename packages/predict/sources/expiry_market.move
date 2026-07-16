@@ -244,7 +244,7 @@ public fun load_live_pricer(
 /// no solvency-safe NAV for an unsettled past-expiry market: the flush uses one
 /// mark for both supply and withdraw, so the mark must equal the
 /// settlement-dependent true value. Flows that branch on settlement call
-/// `ensure_settled` first, using Propbook's exact Pyth timestamp at expiry; if no
+/// `try_settle` first, using Propbook's exact Pyth timestamp at expiry; if no
 /// exact spot exists yet, the live-pricing liveness abort remains the correct
 /// failure mode.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
@@ -586,8 +586,6 @@ public fun redeem_settled(
     wrapper: &mut AccountWrapper,
     auth: Auth,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
     root: &AccumulatorRoot,
@@ -599,8 +597,6 @@ public fun redeem_settled(
     market.redeem_settled_internal(
         account,
         config,
-        propbook_registry,
-        pyth,
         order_id,
         close_quantity,
         clock,
@@ -618,8 +614,6 @@ public fun redeem_settled_permissionless(
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
     root: &AccumulatorRoot,
@@ -632,8 +626,6 @@ public fun redeem_settled_permissionless(
     market.redeem_settled_internal(
         account,
         config,
-        propbook_registry,
-        pyth,
         order_id,
         close_quantity,
         clock,
@@ -726,18 +718,17 @@ public fun set_mint_paused(
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
-// === Public-Package Functions ===
-
-/// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
-/// at this market's expiry timestamp. Returns whether the market is settled after
-/// the attempt. This is the canonical passive settlement gate used immediately
-/// before settlement-dependent branching.
-public(package) fun ensure_settled(
+/// Settle this market from Propbook's exact Pyth spot at expiry and materialize
+/// its terminal payout liability. Permissionless and idempotent; returns whether
+/// the market is settled after the attempt.
+public fun try_settle(
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     clock: &Clock,
 ): bool {
+    config.assert_version();
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
     market.assert_pyth_bound(propbook_registry, pyth);
@@ -746,6 +737,7 @@ public(package) fun ensure_settled(
     if (read.is_none()) return false;
     let settlement_price = read.destroy_some().read_value();
     market.settlement_price = option::some(settlement_price);
+    market.strike_exposure.materialize_settled_liability(settlement_price);
     config_events::emit_market_settled(
         market.id(),
         market.propbook_underlying_id,
@@ -755,6 +747,8 @@ public(package) fun ensure_settled(
     );
     true
 }
+
+// === Public-Package Functions ===
 
 /// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
 /// `registry::pause_expiry_market_mint_pause_cap`; cannot unpause. Deliberately
@@ -785,7 +779,6 @@ public(package) fun claim_trading_loss_rebate(
     ctx: &mut TxContext,
 ): (Balance<DUSDC>, u64) {
     assert!(market.is_settled(), EMarketNotSettled);
-    market.materialize_settled_liability();
 
     let trading_fees_paid = summary.fees_paid();
     let gross_profit = summary.gross_profit();
@@ -833,14 +826,14 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     released_cash
 }
 
-/// Materialize this expiry's settled payout liability and release every unit of
-/// cash above it back to the pool. Used by the settled-market sweep, which then
-/// deactivates the expiry and materializes its profit.
+/// Release every unit of cash above this expiry's settled payout liability back
+/// to the pool. Used by the settled-market sweep, which then deactivates the
+/// expiry and materializes its profit.
 /// Returns the released cash and the terminal settlement price used for event
 /// emission by the pool.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
     let settlement_price = market.settlement_price();
-    let settled_liability = market.materialize_settled_liability();
+    let settled_liability = market.payout_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
 
@@ -891,12 +884,6 @@ public(package) fun create_and_share(
 }
 
 // === Private Functions ===
-
-/// Cache terminal payout liability in strike exposure if it has not already been cached.
-fun materialize_settled_liability(market: &mut ExpiryMarket): u64 {
-    let settlement = market.settlement_price();
-    market.strike_exposure.materialize_settled_liability(settlement)
-}
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
@@ -1194,8 +1181,6 @@ fun redeem_settled_internal(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
     clock: &Clock,
@@ -1205,7 +1190,7 @@ fun redeem_settled_internal(
     config.assert_not_valuation_in_progress();
     let redeemed_order = order::from_order_id(order_id);
     assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-    assert!(market.ensure_settled(propbook_registry, pyth, clock), EMarketNotSettled);
+    assert!(market.is_settled(), EMarketNotSettled);
 
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
         market.redeem_liquidated_order(
@@ -1224,8 +1209,6 @@ fun redeem_settled_internal(
         redeemed_order.id(),
         ctx,
     );
-    market.materialize_settled_liability();
-
     let settlement = market.settlement_price();
     let payout_amount = market.strike_exposure.close_settled_order(&redeemed_order, settlement);
     market.settle_settled_redeem_payment(account, payout_amount, ctx);
