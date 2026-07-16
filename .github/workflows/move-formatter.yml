@@ -9,22 +9,24 @@ on:
     branches:
       - main
 
-env:
-  MOVE_PACKAGES_PATH: packages
-
 jobs:
   prettier-move:
     name: Check Move files formatting
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.MOVE_PACKAGES_PATH }}
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js
         uses: actions/setup-node@v4
-      - run: npm i @mysten/prettier-plugin-move
-      - run: npx prettier-move -c $PWD/../packages/deepbook/**/*.move
-      - run: npx prettier-move -c $PWD/../packages/deepbook_margin/**/*.move
-      - run: npx prettier-move -c $PWD/../packages/margin_liquidation/**/*.move
-      - run: npx prettier-move -c $PWD/../packages/predict/**/*.move
+        with:
+          node-version: 22
+      - name: Do a global PNPM install
+        run: npm install -g pnpm
+      # Install the formatter pinned by the lockfile, so a new plugin release can
+      # never silently change what CI enforces on unrelated PRs.
+      - name: Install the pinned toolchain
+        run: pnpm install --frozen-lockfile
+      # One recursive glob over every package. Quoted so prettier expands it: bash
+      # leaves globstar off, so an unquoted `**` collapses to `*` and matches only
+      # one directory level.
+      - name: Check Move formatting
+        run: pnpm exec prettier-move -c "packages/**/*.move"
