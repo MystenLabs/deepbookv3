@@ -20,7 +20,7 @@ use deepbook_margin::{
         setup_btc_sui_deepbook_margin,
         destroy_3,
         return_shared_3,
-        return_shared_4
+        return_shared_4,
     }
 };
 use std::unit_test::destroy;

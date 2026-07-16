@@ -173,7 +173,9 @@ fun off_grid_tick_before_reference_tick_is_set_aborts() {
             &pricer,
             REFERENCE_TICK,
             constants::pos_inf_tick!(),
+            0,
             test_constants::mint_quantity(),
+            true,
             test_constants::leverage_one_x(),
         );
     harness.exposure.allocate_mint_order(terms);
@@ -192,7 +194,9 @@ fun reference_tick_admits_up_and_down_ranges() {
             &pricer,
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
             constants::pos_inf_tick!(),
+            0,
             test_constants::mint_quantity(),
+            true,
             test_constants::leverage_one_x(),
         );
     let up_order = harness.exposure.allocate_mint_order(up_terms);
@@ -202,7 +206,9 @@ fun reference_tick_admits_up_and_down_ranges() {
             &pricer,
             0,
             ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
+            0,
             test_constants::mint_quantity(),
+            true,
             test_constants::leverage_one_x(),
         );
     let down_order = harness.exposure.allocate_mint_order(down_terms);
@@ -224,7 +230,9 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
             &pricer,
             OTHER_OFF_GRID_TICK,
             constants::pos_inf_tick!(),
+            0,
             test_constants::mint_quantity(),
+            true,
             test_constants::leverage_one_x(),
         );
     harness.exposure.allocate_mint_order(terms);

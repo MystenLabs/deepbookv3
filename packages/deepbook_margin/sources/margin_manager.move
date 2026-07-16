@@ -12,7 +12,7 @@ use deepbook::{
         DepositCap,
         WithdrawCap,
         TradeProof,
-        DeepBookPoolReferral
+        DeepBookPoolReferral,
     },
     constants,
     math,
@@ -31,7 +31,7 @@ use deepbook_margin::{
         get_pyth_price,
         get_pyth_price_unsafe,
         calculate_price,
-        calculate_price_unsafe
+        calculate_price_unsafe,
     },
     tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
 };

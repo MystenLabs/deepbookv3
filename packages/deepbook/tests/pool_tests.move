@@ -11,7 +11,7 @@ use deepbook::{
         TradeCap,
         DeepBookPoolReferral,
         DepositCap,
-        WithdrawCap
+        WithdrawCap,
     },
     balance_manager_tests::{
         USDC,
@@ -21,7 +21,7 @@ use deepbook::{
         create_acct_and_share_with_funds_typed,
         create_acct_only_deep_and_share_with_funds,
         create_caps,
-        asset_balance
+        asset_balance,
     },
     big_vector::BigVector,
     constants,

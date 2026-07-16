@@ -13,7 +13,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 ### Move
 - `sui move build` - Build Move packages
 - `sui move test --gas-limit 100000000000` - Run Move tests
-- `bunx prettier-move -c path/to/file.move --write` - Format Move code
+- `pnpm install --frozen-lockfile && pnpm format:move` - Format Move code. Run before opening a PR; CI runs the same script (`format:move:check`). Formats every package, which is a no-op outside your own edits. Do NOT use `bunx`/`npx prettier-move` — those fetch whatever plugin version is latest, which formats differently from the version CI pins.
 
 ### Indexer
 - `cargo build -p deepbook-server` - Build indexer

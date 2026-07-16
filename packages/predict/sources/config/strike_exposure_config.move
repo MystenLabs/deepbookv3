@@ -19,7 +19,6 @@ const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
 const ELeverageAboveAdmissionCap: u64 = 6;
-const ENetPremiumBudgetTooHigh: u64 = 7;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -111,7 +110,9 @@ public(package) fun trading_fee(
 }
 
 /// Assert entry probability and leverage policy without deriving quantity-dependent
-/// mint terms.
+/// mint terms. Budget-bias sizing runs this before searching so a policy-invalid
+/// request aborts with its domain code before any division by `leverage`, in the
+/// same order the mint admission itself would report it.
 public(package) fun assert_mint_probability_and_leverage_policy(
     config: &StrikeExposureConfig,
     entry_probability: u64,
@@ -166,23 +167,6 @@ public(package) fun net_premium(admission: &MintAdmission): u64 {
 
 public(package) fun floor_shares(admission: &MintAdmission): u64 {
     admission.floor_shares
-}
-
-/// Return the largest raw quantity whose derived net premium is at most `net_premium`.
-public(package) fun max_quantity_for_net_premium(
-    entry_probability: u64,
-    net_premium: u64,
-    leverage: u64,
-): u64 {
-    if (entry_probability == 0 || net_premium == 0) return 0;
-
-    let scaling = math::float_scaling!();
-    assert!(net_premium < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
-    assert!(net_premium + 1 <= std::u64::max_value!() / leverage, ENetPremiumBudgetTooHigh);
-    let max_entry_value = ((net_premium + 1) * leverage - 1) / scaling;
-    assert!(max_entry_value < std::u64::max_value!(), ENetPremiumBudgetTooHigh);
-    assert!(max_entry_value + 1 <= std::u64::max_value!() / scaling, ENetPremiumBudgetTooHigh);
-    ((max_entry_value + 1) * scaling - 1) / entry_probability
 }
 
 public(package) fun new(): StrikeExposureConfig {
@@ -302,10 +286,11 @@ fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64)
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
-    let phase = math::div(
+    // = (max_multiplier - 1) * elapsed / window, round down; the dust is pool-favored.
+    let ramp = math::mul_div_down(
+        config.expiry_fee_max_multiplier - math::float_scaling!(),
         config.expiry_fee_window_ms - time_to_expiry_ms,
         config.expiry_fee_window_ms,
     );
-    let ramp = math::mul(config.expiry_fee_max_multiplier - math::float_scaling!(), phase);
     math::float_scaling!() + ramp
 }

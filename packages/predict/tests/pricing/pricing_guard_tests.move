@@ -26,14 +26,14 @@
 /// forward upstream (-> `EBlockScholesPriceStale`), so those two conditions are
 /// defensive-only and not tested here. `EBlockScholesMinVarianceInvalid` covers
 /// surfaces whose analytical minimum total variance is non-positive, including
-/// negative `a` values that over-offset the wing floor and the degenerate
-/// `a == 0, b == 0` surface. `EZeroForward` is reached via a tiny-forward /
-/// large-spot surface (no LOWER basis bound), where the re-anchored
-/// `spot * (forward/spot)` rounds to 0. `ENonPositiveVariance` and `ECannotBeNegative`
-/// inside `compute_nd2` are defensive backstops after the load-time envelope:
-/// valid loaded surfaces should not hit them. `ETickNotInPriceMemo` is a
-/// package-level cache contract guard and is covered directly below; active-book
-/// non-monotone UP prices are covered by `ENonMonotonePriceMemo`.
+/// negative `a` values that over-offset the SVI increment and the degenerate
+/// `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot far below
+/// the BS spot (no LOWER basis bound), where the re-anchored
+/// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` and
+/// `ECannotBeNegative` inside `compute_nd2` are defensive backstops after the
+/// load-time envelope: valid loaded surfaces should not hit them. `ETickNotInPriceMemo`
+/// is a package-level cache contract guard and is covered directly below;
+/// active-book non-monotone UP prices are covered by `ENonMonotonePriceMemo`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -41,6 +41,7 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
+    range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
 };
@@ -275,7 +276,7 @@ fun deep_itm_up_price_saturates_to_one() {
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert_eq!(pricer.up_price(DEEP_ITM_STRIKE), float!());
+    assert_eq!(pricer.up_price(strike(DEEP_ITM_STRIKE)), float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -292,7 +293,7 @@ fun deep_otm_up_price_saturates_to_zero() {
     fx.prepare_live_oracle_bundle(&mut oracle, 1);
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert_eq!(pricer.up_price(DEEP_OTM_STRIKE), 0);
+    assert_eq!(pricer.up_price(strike(DEEP_OTM_STRIKE)), 0);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -316,6 +317,52 @@ fun surface_with_basis_above_max_aborts() {
     let forward = spot * 101;
     load_pricer_with_spot_forward(spot, forward);
     abort EUnexpectedSuccess
+}
+
+/// The basis envelope is exact: `forward == factor * spot` is the largest
+/// admitted forward. The old widening compare admitted a `floor(spot/1e9)`-unit
+/// sliver above it; the `div_ceil` form deliberately tightens that away, so the
+/// very next unit must reject (companion admit case below pins the boundary
+/// from the other side).
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_with_basis_one_above_exact_factor_aborts() {
+    let spot = 100 * test_constants::float();
+    let forward = spot * 100 + 1;
+    load_pricer_with_spot_forward(spot, forward);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun surface_with_basis_at_exact_factor_admits() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let spot = 100 * test_constants::float();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        spot,
+        spot * 100, // basis exactly at the factor: the largest admitted forward
+        default_svi_a(),
+        false,
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        default_svi_m_magnitude(),
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    // Envelope admitted: quote at the re-anchored forward itself (pyth spot
+    // equals the BS spot here, so the live forward is spot * 100), where the
+    // at-the-forward digital is strictly interior — neither the zero-forward
+    // abort nor a saturated tail. Exact pricing values are owned by the oracle
+    // scenario tests; this test pins that the exact-boundary basis is admitted
+    // and priceable.
+    let price = pricer.up_price(strike(spot * 100));
+    assert!(0 < price && price < float!());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
@@ -343,7 +390,10 @@ fun negative_svi_a_with_positive_min_variance_prices() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let up = pricer.range_price(test_constants::default_live_price(), constants::pos_inf!());
+    let up = pricer.range_price(
+        strike(test_constants::default_live_price()),
+        strike(constants::pos_inf!()),
+    );
     // Independent Python true-math reference:
     // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
     // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
@@ -428,19 +478,19 @@ fun surface_with_svi_sigma_above_max_aborts() {
 
 // === Deep-math abort (EZeroForward) ===
 
-/// A surface whose forward is tiny relative to spot has basis 0 (no LOWER basis
-/// bound), so it passes the envelope, but the re-anchored live forward
-/// `mul(spot, div(forward, spot))` rounds to 0 and `compute_nd2` aborts on the first
-/// finite-strike quote.
+/// A surface whose forward is tiny relative to the BS spot passes the envelope
+/// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
+/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
+/// the first finite-strike quote.
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    let spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
+    let bs_spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling
     fx.prepare_real_oracle_bundle(
         &mut oracle,
-        spot,
-        1, // forward == 1: div(1, 1e17) == 0, so spot * 0 == 0
+        bs_spot,
+        1, // bs_forward == 1
         default_svi_a(),
         false,
         default_svi_b(),
@@ -450,9 +500,11 @@ fun re_anchored_zero_forward_aborts() {
         default_svi_m_magnitude(),
         false,
     );
+    // Re-anchor at a pyth spot far below the BS spot: 1e9 * 1 / 1e17 floors to 0.
+    fx.set_pyth_bundle(&mut oracle, 1_000_000_000, fx.clock().timestamp_ms());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    pricer.up_price(test_constants::default_live_price());
+    pricer.up_price(strike(test_constants::default_live_price()));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -483,7 +535,7 @@ fun zero_total_variance_aborts_at_load() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    pricer.up_price(test_constants::default_live_price());
+    pricer.up_price(strike(test_constants::default_live_price()));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -657,5 +709,5 @@ fun setup_live(): (OracleFixture, OracleBundle) {
 /// Worker: one live quote over `(lower, higher]` against the fixture market.
 fun live_quote(fx: &OracleFixture, oracle: &OracleBundle, lower: u64, higher: u64): u64 {
     let pricer = fx.load_pricer_bundle(oracle);
-    pricer.range_price(lower, higher)
+    pricer.range_price(strike(lower), strike(higher))
 }

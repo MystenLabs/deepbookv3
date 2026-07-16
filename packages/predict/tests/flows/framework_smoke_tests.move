@@ -12,6 +12,7 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     oracle_fixture,
     pricing,
+    range_codec::{strike_for_testing as strike, strike_from_tick},
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -69,8 +70,11 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     // inside.)
     let pricer = fx.load_pricer_bundle(&oracle);
     let up = pricer.range_price(
-        test_constants::default_strike_tick() * test_constants::default_tick_size(),
-        constants::pos_inf!(),
+        strike_from_tick(
+            test_constants::default_strike_tick(),
+            test_constants::default_tick_size(),
+        ),
+        strike(constants::pos_inf!()),
     );
     assert!(up > 0);
     assert!(up < test_constants::float());

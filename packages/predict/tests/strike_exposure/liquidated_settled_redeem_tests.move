@@ -80,7 +80,9 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
             &pricer,
             test_constants::default_strike_tick(),
             constants::pos_inf_tick!(),
+            0,
             test_constants::mint_quantity(),
+            true,
             LEVERAGE_TWO_X,
         );
     let order = harness.exposure.allocate_mint_order(terms);

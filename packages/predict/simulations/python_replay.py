@@ -334,7 +334,7 @@ def binary_range_ticks(strike: int, is_up: bool) -> tuple[int, int]:
 
 
 def strikes_from_ticks(lower_tick: int, higher_tick: int) -> tuple[int, int]:
-    # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strikes_from_ticks):
+    # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strike_from_tick per boundary):
     # lower_tick 0 -> NEG_INF_STRIKE; higher_tick POS_INF_TICK -> POS_INF_STRIKE.
     lower = NEG_INF_STRIKE if lower_tick == 0 else lower_tick * ORACLE_TICK_SIZE
     higher = POS_INF_STRIKE if higher_tick == POS_INF_TICK else higher_tick * ORACLE_TICK_SIZE
@@ -2020,16 +2020,13 @@ def apply_manager_summary_update(summary: dict[str, int], update: dict[str, Any]
 
 
 def settled_order_payout(order: dict[str, Any], settlement_price: int) -> int:
-    # Half-open (lower, higher] winner test on raw strikes. The Python payout tree is
-    # raw-strike-keyed, so this and the tree's settled_payout_liability use the same
-    # raw `settlement_price` threshold and agree with each other (the indexed==scanned
-    # cross-check still holds). TODO(sim-parity): the contract's tree is TICK-keyed and
-    # uses prefix_limit_tick = ceil(settlement / tick_size) (range_codec); for a
-    # settlement that is NOT a whole tick multiple the raw-strike threshold here can
-    # differ by up to one tick from the contract's. Settlement is stubbed on-chain
-    # (is_settled() always false), so this terminal-closeout path is Python-only and
-    # cannot be localnet-parity-checked until settlement-v2 — confirm the
-    # prefix_limit_tick equivalence then.
+    # Half-open (lower, higher] winner test on raw strikes. Bit-equivalent to the
+    # contract's tick-domain predicate (range_codec::settlement_in_range, the single
+    # owner both settlement surfaces derive from): for integer boundaries at exact
+    # tick multiples, settlement > l*ts <=> l < ceil(settlement/ts) and
+    # settlement <= h*ts <=> ceil(settlement/ts) <= h, with sentinel ends mapping to
+    # 0 / u64::MAX — so the raw and tick thresholds agree for EVERY settlement,
+    # whole-tick multiple or not.
     if settlement_price > order["lower"] and settlement_price <= order["higher"]:
         return order["quantity"] - order_floor_shares(order)
     return 0

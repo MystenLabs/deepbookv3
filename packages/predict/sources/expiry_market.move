@@ -24,6 +24,7 @@ use deepbook_predict::{
     predict_account::{Self, ResolvedExpirySummary},
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
+    range_codec,
     strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config
 };
@@ -44,7 +45,6 @@ const EMarketNotSettled: u64 = 2;
 const EWrongPythFeed: u64 = 3;
 const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
-const EMintQuantityBelowMin: u64 = 6;
 const EWrongPricer: u64 = 7;
 const EReferenceTickObservationMissing: u64 = 8;
 const EReferenceTickTimestampMismatch: u64 = 9;
@@ -75,10 +75,13 @@ public struct ExpiryMarket has key {
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
-/// `trading_fee` is the post-stake-discount fee before the sponsor subsidy, and
+/// `quantity` is the sized fill the quote priced — the request's exact quantity,
+/// or the budget-sized largest fitting fill. `trading_fee` is the
+/// post-stake-discount fee before the sponsor subsidy, and
 /// `all_in_cost` is the exact account withdrawal the same-state mint would make:
 /// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
 public struct MintQuote has copy, drop {
+    quantity: u64,
     entry_probability: u64,
     net_premium: u64,
     trading_fee: u64,
@@ -273,8 +276,10 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Quote the all-in cost of `mint_exact_quantity` for an anonymous taker (no
-/// stake discount, no builder code) without mutating any market state. Applies
+/// Quote the all-in cost of a mint request for an anonymous taker (no
+/// stake discount, no builder code) without mutating any market state.
+/// `exact_quantity = true` quotes minting exactly `min_quantity`; `false`
+/// quotes the largest quantity whose net premium fits `max_premium`. Applies
 /// the same live-mint gates and admission asserts as the mint path, so a quote
 /// aborts exactly when the mint-side terms computation would; it does not
 /// preflight account balance, slippage caps, or exposure-index capacity.
@@ -289,7 +294,9 @@ public fun quote_mint(
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
-    quantity: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
     leverage: u64,
     clock: &Clock,
     ctx: &TxContext,
@@ -297,17 +304,28 @@ public fun quote_mint(
     market.assert_live_mint_allowed(config, pricer);
     let terms = market
         .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+        .quote_mint_terms(
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            exact_quantity,
+            leverage,
+        );
     let builder_code_id: Option<ID> = option::none();
-    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     market.compute_mint_quote(config, &terms, 0, &builder_code_id, penalty_fee, clock)
 }
 
-/// Quote the all-in cost of `mint_exact_quantity` for one account, reading the
+/// Quote the all-in cost of a mint request for one account, reading the
 /// account's builder code and current `active_stake` as-is. An un-rolled stake
 /// from a prior epoch quotes a smaller discount than the mint (which rolls
-/// first) would apply, so the quote can only overstate cost. Same gates,
-/// admission aborts, and EWMA-peek semantics as `quote_mint`. Public read for
+/// first) would apply, so the quote can only overstate cost. A budget request
+/// is capped to the account's current balance exactly as `mint_exact_amount`
+/// caps it — read without settling, and a mint settles first, so the quote can
+/// only understate the fill. Same gates, admission aborts, request-bias
+/// semantics, and EWMA-peek semantics as `quote_mint`. Public read for
 /// SDK/devInspect pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
@@ -316,18 +334,30 @@ public fun quote_mint_for_account(
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
-    quantity: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
     leverage: u64,
+    root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &TxContext,
 ): MintQuote {
     market.assert_live_mint_allowed(config, pricer);
     let account = wrapper.load_account();
+    let max_premium = max_premium.min(account.balance<DUSDC>(root, clock));
     let terms = market
         .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+        .quote_mint_terms(
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            exact_quantity,
+            leverage,
+        );
     let builder_code_id = predict_account::builder_code_id(account);
-    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), quantity, ctx);
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     market.compute_mint_quote(
         config,
         &terms,
@@ -339,6 +369,10 @@ public fun quote_mint_for_account(
 }
 
 // === MintQuote Getters ===
+
+public fun quantity(quote: &MintQuote): u64 {
+    quote.quantity
+}
 
 public fun entry_probability(quote: &MintQuote): u64 {
     quote.entry_probability
@@ -412,14 +446,16 @@ public fun mint_exact_quantity(
             clock,
         );
 
-    market.mint_prepared_exact_quantity(
+    market.mint_prepared(
         account,
         config,
         pricer,
         active_stake,
         lower_tick,
         higher_tick,
+        0,
         quantity,
+        true,
         leverage,
         max_cost,
         max_probability,
@@ -429,13 +465,15 @@ public fun mint_exact_quantity(
 }
 
 /// Mint the largest lot-rounded live position whose net premium fits inside
-/// `amount`, aborting if the resulting quantity is below `min_quantity`.
+/// `max_premium` (sized within one lot of the exact maximum; the charged
+/// premium never exceeds the budget), aborting if the resulting quantity is
+/// below `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
-/// `amount`. The sizing budget is first capped to the account's available DUSDC
-/// after settlement; fees still require additional available DUSDC at payment
-/// time. Any unspent premium dust remains in the account because order quantity
-/// must be an integer number of `position_lot_size` lots.
+/// `max_premium`. The sizing budget is first capped to the account's available
+/// DUSDC after settlement; fees still require additional available DUSDC at
+/// payment time. Any unspent premium dust remains in the account because order
+/// quantity must be an integer number of `position_lot_size` lots.
 public fun mint_exact_amount(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -444,7 +482,7 @@ public fun mint_exact_amount(
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
-    amount: u64,
+    max_premium: u64,
     min_quantity: u64,
     leverage: u64,
     root: &AccumulatorRoot,
@@ -453,7 +491,7 @@ public fun mint_exact_amount(
 ): u256 {
     market.assert_live_mint_allowed(config, pricer);
     wrapper.settle<DUSDC>(root, clock);
-    let amount = amount.min(wrapper.load_account().balance<DUSDC>(root, clock));
+    let max_premium = max_premium.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
     market
@@ -463,23 +501,16 @@ public fun mint_exact_amount(
             config.trade_liquidation_budget(),
             clock,
         );
-
-    let quantity = market.max_mint_quantity_for_amount(
-        pricer,
-        lower_tick,
-        higher_tick,
-        amount,
-        leverage,
-    );
-    assert!(quantity >= min_quantity, EMintQuantityBelowMin);
-    market.mint_prepared_exact_quantity(
+    market.mint_prepared(
         account,
         config,
         pricer,
         active_stake,
         lower_tick,
         higher_tick,
-        quantity,
+        max_premium,
+        min_quantity,
+        false,
         leverage,
         std::u64::max_value!(),
         std::u64::max_value!(),
@@ -667,7 +698,7 @@ public fun set_reference_tick(
 
     let spot = read.read_value();
     let tick_size = market.strike_exposure.tick_size();
-    let tick = spot / tick_size;
+    let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
         config_events::emit_reference_tick_set(
             market.id(),
@@ -984,6 +1015,7 @@ fun compute_mint_quote(
         net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee;
 
     MintQuote {
+        quantity,
         entry_probability,
         net_premium,
         trading_fee,
@@ -994,7 +1026,7 @@ fun compute_mint_quote(
     }
 }
 
-fun mint_prepared_exact_quantity(
+fun mint_prepared(
     market: &mut ExpiryMarket,
     account: &mut Account,
     config: &ProtocolConfig,
@@ -1002,7 +1034,9 @@ fun mint_prepared_exact_quantity(
     active_stake: u64,
     lower_tick: u64,
     higher_tick: u64,
-    quantity: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
     leverage: u64,
     max_cost: u64,
     max_probability: u64,
@@ -1011,10 +1045,18 @@ fun mint_prepared_exact_quantity(
 ): u256 {
     let terms = market
         .strike_exposure
-        .quote_mint_terms(pricer, lower_tick, higher_tick, quantity, leverage);
+        .quote_mint_terms(
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            exact_quantity,
+            leverage,
+        );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
     let quote = market.compute_mint_quote(
         config,
@@ -1046,31 +1088,6 @@ fun mint_prepared_exact_quantity(
         clock.timestamp_ms(),
     );
     minted_order.id()
-}
-
-fun max_mint_quantity_for_amount(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    amount: u64,
-    leverage: u64,
-): u64 {
-    let entry_probability = market
-        .strike_exposure
-        .quote_mint_entry_probability(
-            pricer,
-            lower_tick,
-            higher_tick,
-            leverage,
-        );
-    let quantity = strike_exposure_config::max_quantity_for_net_premium(
-        entry_probability,
-        amount,
-        leverage,
-    );
-    let lots = (quantity / constants::position_lot_size!()).min(order::max_quantity_lots());
-    lots * constants::position_lot_size!()
 }
 
 fun redeem_live_internal(
@@ -1291,15 +1308,13 @@ fun settle_live_redeem_payment(
     );
     let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
 
-    let mut payout = market.cash.pay_authorized(redeem_amount);
+    // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
+    let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     predict_account::record_gross_received_from_expiry(account, market.id(), redeem_amount, ctx);
     market.collect_trade_fee(account, fee, fee_amount, ctx);
     send_builder_fee(copy builder_code_id, builder_fee);
-    // Penalty surplus stays in expiry cash rather than flowing to the redeemer.
-    market.cash.receive(payout.split(penalty_amount));
-
     market.assert_cash_backing();
     account.deposit<DUSDC>(payout.into_coin(ctx));
     (builder_fee_amount, penalty_amount)

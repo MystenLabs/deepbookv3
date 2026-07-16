@@ -327,11 +327,8 @@ fun reference_nav(
     let mut liability = 0;
     order_ids.do_ref!(|id| {
         let decoded = order::from_order_id(*id);
-        let (lower, higher) = range_codec::strikes_from_ticks(
-            decoded.lower_tick(),
-            decoded.higher_tick(),
-            market.tick_size(),
-        );
+        let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
+        let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
         let range_value = math::mul(pricer.range_price(lower, higher), decoded.quantity());
         let floor_value = math::mul(decoded.floor_shares(), index_now);
         liability = liability + range_value.saturating_sub(floor_value);

@@ -10,7 +10,13 @@
 #[test_only]
 module deepbook_predict::mint_redeem_guard_tests;
 
-use deepbook_predict::{constants, expiry_market, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{
+    constants,
+    expiry_market,
+    flow_test_helpers as helpers,
+    strike_exposure,
+    test_constants
+};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
@@ -174,7 +180,7 @@ fun mint_exact_quantity_above_max_probability_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = expiry_market::EMintQuantityBelowMin)]
+#[test, expected_failure(abort_code = strike_exposure::EMintQuantityBelowMin)]
 fun mint_exact_amount_below_min_quantity_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::default_expiry_ms(),

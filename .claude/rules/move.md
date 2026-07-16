@@ -156,7 +156,9 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - Build/test/format commands live in `CLAUDE.md` (§ Quick Commands and § Predict Build & Verify). The high test gas limit is required because sui 1.66+ lowered the default test gas budget.
 - When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding.
 - Before claiming Move or protocol work is complete, run the impacted package test suite(s) and confirm they pass with zero failures. If the change affects multiple packages or local package manifests, run each impacted package's tests.
-- When you have completed making Move changes, run `bunx prettier-move -c path/to/file.move --write` on any files that are modified to format them correctly.
+- When you have completed making Move changes, run `pnpm install --frozen-lockfile && pnpm format:move` before opening the PR. CI runs the same script (`format:move:check`) over the same file set, so a clean local run means a clean check.
+- **Never format with `bunx`/`npx prettier-move`, a globally-installed prettier, or `sui move format`.** Those resolve whatever plugin version is latest; the lockfile pins the version CI enforces, and the two format differently. A local run with the wrong version silently rewrites files CI then rejects — or worse, passes locally and reddens someone else's PR later.
+- `pnpm format:move` formats every package, not just your files. That is deliberate and safe: the tree is formatted at HEAD, so it is a no-op outside your own edits. If it reports changes to files you did not touch, do not just commit them — that means something upstream drifted, and the drift belongs in its own PR (why: the check once matched only 45 of 182 files, so drift accumulated where it could not be seen, and the next PR to format such a file inherited unrelated churn in its diff — deepbookv3#1126).
 
 ## Upstream Move Style (2024 Edition)
 
