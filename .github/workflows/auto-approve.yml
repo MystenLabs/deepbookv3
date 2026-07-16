@@ -475,14 +475,23 @@ jobs:
             });
             core.setOutput("comment_url", comment.html_url);
 
-      - name: Invalidate existing approval after significant findings
+      - name: Reconcile existing approval with gate result
         id: revoke-approval
-        if: steps.codex-decision.outputs.significant == 'true'
+        if: >-
+          always() &&
+          steps.app-token.outcome == 'success' &&
+          (
+            steps.authorize.outcome != 'success' ||
+            steps.codex-decision.outcome != 'success' ||
+            steps.codex-decision.outputs.significant != 'false' ||
+            steps.publish-codex-review.outcome != 'success' ||
+            steps.publish-codex-review.outputs.comment_url == ''
+          )
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
-          PR_NUMBER: ${{ steps.authorize.outputs.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -520,7 +529,7 @@ jobs:
                   repo,
                   pull_number: pullNumber,
                   review_id: latestBotReview.id,
-                  message: `Codex found significant issues in retry for ${shortSha}`,
+                  message: `Current auto-approval attempt did not pass the Codex gate for ${shortSha}`,
                   event: "DISMISS",
                 },
               );
@@ -536,7 +545,7 @@ jobs:
                 commit_id: process.env.HEAD_SHA,
                 event: "REQUEST_CHANGES",
                 body: [
-                  `Codex found significant issues in commit \`${shortSha}\` after it was auto-approved.`,
+                  `The current auto-approval attempt did not establish a valid, published Codex review with no significant findings for \`${shortSha}\`.`,
                   "The previous App approval could not be dismissed automatically.",
                   "A human reviewer may dismiss this review after deciding how to proceed.",
                 ].join(" "),
@@ -689,23 +698,49 @@ jobs:
               .replaceAll(">", "&gt;");
             const prLink = `<${process.env.PR_URL}|PR #${process.env.PR_NUMBER}>`;
             const shortSha = process.env.PR_HEAD_SHA?.slice(0, 12) || "unknown";
+            const reconciliationLine = () => {
+              if (process.env.REVOCATION_OUTCOME !== "success") {
+                return "An existing App approval may still be active because reconciliation did not complete. Check the GitHub Actions run.";
+              }
+              if (process.env.REVOCATION_INVALIDATED !== "true") {
+                return "No active App approval remains for this commit.";
+              }
+              return process.env.REVOCATION_METHOD === "dismissed"
+                ? "An existing App approval was dismissed."
+                : "An existing App approval was replaced with REQUEST_CHANGES.";
+            };
             let text;
 
             if (process.env.AUTHORIZATION_OUTCOME !== "success") {
-              text = `<!here> *AUTO-APPROVAL FAILED* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`;
+              text = [
+                `<!here> *AUTO-APPROVAL FAILED* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`,
+                reconciliationLine(),
+              ].join("\n");
             } else if (process.env.CODEX_CONFIGURED !== "true") {
-              text = `<!here> *CODEX REVIEW IS NOT CONFIGURED* for ${prLink} at \`${shortSha}\`. Bot approval was withheld.`;
+              text = [
+                `<!here> *CODEX REVIEW IS NOT CONFIGURED* for ${prLink} at \`${shortSha}\`.`,
+                reconciliationLine(),
+              ].join("\n");
             } else if (process.env.CODEX_OUTCOME !== "success" || !process.env.CODEX_RESULT) {
-              text = `<!here> *CODEX REVIEW DID NOT COMPLETE* for ${prLink} at \`${shortSha}\`. Bot approval was withheld; check the GitHub Actions run.`;
+              text = [
+                `<!here> *CODEX REVIEW DID NOT COMPLETE* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`,
+                reconciliationLine(),
+              ].join("\n");
             } else if (process.env.CODEX_DECISION_OUTCOME !== "success") {
-              text = `<!here> *CODEX REVIEW OUTPUT WAS INVALID* for ${prLink} at \`${shortSha}\`. Bot approval was withheld; check the GitHub Actions run.`;
+              text = [
+                `<!here> *CODEX REVIEW OUTPUT WAS INVALID* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`,
+                reconciliationLine(),
+              ].join("\n");
             } else {
               let result;
               try {
                 result = JSON.parse(process.env.CODEX_RESULT);
               } catch (error) {
                 core.warning(`Could not parse Codex structured output: ${error.message}`);
-                text = `<!here> *CODEX REVIEW OUTPUT WAS INVALID* for ${prLink} at \`${shortSha}\`. Bot approval was withheld; check the GitHub Actions run.`;
+                text = [
+                  `<!here> *CODEX REVIEW OUTPUT WAS INVALID* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`,
+                  reconciliationLine(),
+                ].join("\n");
               }
 
               if (result) {
@@ -729,17 +764,10 @@ jobs:
                     ? significantFindings
                     : findings;
                   const findingLines = formatFindings(displayedFindings);
-                  let approvalLine = "Bot approval was withheld. A human reviewer must decide how to proceed.";
-                  if (process.env.REVOCATION_OUTCOME !== "success") {
-                    approvalLine = "Bot approval was withheld, but an existing App approval may not have been invalidated. Check the GitHub Actions run.";
-                  } else if (process.env.REVOCATION_INVALIDATED === "true") {
-                    approvalLine = process.env.REVOCATION_METHOD === "dismissed"
-                      ? "An existing App approval was dismissed. A human reviewer must decide how to proceed."
-                      : "An existing App approval was replaced with REQUEST_CHANGES. A human reviewer must decide how to proceed.";
-                  }
                   text = [
                     `<!here> *SIGNIFICANT CODEX FINDINGS* for ${prLink} at \`${shortSha}\`${reviewLink}`,
-                    approvalLine,
+                    reconciliationLine(),
+                    "A human reviewer must decide how to proceed.",
                     summary,
                     ...findingLines,
                     findingLines.length < displayedFindings.length
@@ -750,7 +778,8 @@ jobs:
                   || !process.env.CODEX_COMMENT_URL) {
                   text = [
                     `<!here> *CODEX REVIEW COULD NOT BE PUBLISHED* for ${prLink} at \`${shortSha}\``,
-                    "Codex found no significant issues, but bot approval was withheld because the PR comment was not published. Check the GitHub Actions run.",
+                    "Codex found no significant issues, but the PR comment was not published. Check the GitHub Actions run.",
+                    reconciliationLine(),
                     summary,
                   ].join("\n");
                 } else if (process.env.APPROVAL_OUTCOME !== "success") {
