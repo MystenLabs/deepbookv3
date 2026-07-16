@@ -144,7 +144,7 @@ public fun sigma(params: &SVIParams): u64 {
 
 // === Write Functions ===
 
-/// Ingest a verified BS SVI update into the oracle lane for the update's expiry.
+/// Ingest an unverified (stub-oracle) BS SVI update into the oracle lane for the update's expiry.
 public fun update(
     feed: &mut BlockScholesSVIFeed,
     update: SVIUpdate,

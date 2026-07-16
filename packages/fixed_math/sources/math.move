@@ -96,7 +96,7 @@ const B1: u128 = 976_098_551_738;
 const B2: u128 = 10_260_932_208_619;
 const B3: u128 = 45_507_789_335_027;
 
-// Medium range (0.66291 ≤ |x| < √32): Φ = exp(-x²/2) * P(|x|) / Q(|x|)
+// Medium range (0.66291 ≤ |x| < √32): complement = exp(-x²/2) * P(|x|) / Q(|x|)
 const MEDIUM_THRESHOLD: u128 = 5_656_854_249;
 const C0: u128 = 398_941_512;
 const C1: u128 = 8_883_149_794;
