@@ -1,8 +1,9 @@
 # Auto-approval setup
 
-The `auto-approve` workflow approves a pull request when its author is an
-active member of `MystenLabs/defi-eng`. It then runs Codex as an advisory
-reviewer and records the result in Slack.
+The `auto-approve` workflow reviews a pull request with Codex when its author is
+an active member of `MystenLabs/defi-eng`. It submits the GitHub App approval
+only when Codex reports no significant findings, then records the result in
+Slack.
 
 ## Behavior
 
@@ -12,14 +13,17 @@ reviewer and records the result in Slack.
   `MystenLabs/defi-eng`.
 - Approval is bound to the head commit that was current when the label was
   applied.
-- The `auto-approve` label is removed after approval. A later commit requires
-  the label to be applied again.
+- The `auto-approve` label is removed after the workflow attempt, whether or
+  not approval is submitted. A later attempt requires the label to be applied
+  again.
 - A push after auto-approval invalidates the bot review. The workflow first
   tries to dismiss the old approval and falls back to `REQUEST_CHANGES` if the
   repository does not let the App dismiss protected-branch reviews.
-- Codex findings are advisory and never revoke or block the approval.
+- Significant Codex findings, a missing or failed Codex review, and invalid
+  Codex output prevent the bot from approving the pull request.
+- Minor Codex findings do not prevent bot approval.
 - Significant Codex findings, Codex failures, and approval failures send a
-  top-level `<!channel>` notification in Slack.
+  top-level `@here` notification in Slack.
 - Pull request text is escaped before it is copied to Slack so it cannot inject
   mentions.
 
@@ -76,6 +80,10 @@ review input, and runs Codex with the `:read-only` permission profile and the
 `drop-sudo` safety strategy. A separate trusted workflow step formats the
 structured output and posts the advisory pull request comment.
 
+Codex gates only the bot's approval. A significant finding does not submit a
+`REQUEST_CHANGES` review or otherwise prevent a human reviewer from deciding
+that the pull request may proceed.
+
 ## Slack
 
 Create or reuse a Slack App, enable Incoming Webhooks, and add a webhook for the
@@ -99,7 +107,7 @@ App credentials are configured:
 ```bash
 gh label create auto-approve \
   --repo MystenLabs/deepbookv3 \
-  --description "Request bot approval and an advisory Codex review" \
+  --description "Request Codex-gated bot approval" \
   --color 0E8A16
 ```
 
@@ -107,13 +115,16 @@ gh label create auto-approve \
 
 Use a small test pull request authored by a `defi-eng` member:
 
-1. Apply `auto-approve` and confirm the custom GitHub App submits the approval.
+1. Apply `auto-approve` and confirm Codex completes before the custom GitHub
+   App submits the approval.
 2. Confirm the label is removed and the approval references the expected SHA.
-3. Confirm Codex posts a review summary without changing the approval state.
-4. Confirm Slack gets one request message and one final result message.
-5. Push another commit and confirm it is not automatically re-approved.
+3. Confirm a review with no significant findings is posted before approval.
+4. Confirm a review with a significant finding leaves the pull request
+   unapproved and sends an `@here` Slack alert.
+5. Confirm Slack gets one request message and one final result message.
+6. Push another commit and confirm it is not automatically re-approved.
    Confirm the old approval is dismissed or replaced with `REQUEST_CHANGES`.
-6. Apply the label to a PR from a non-member and confirm authorization fails.
+7. Apply the label to a PR from a non-member and confirm authorization fails.
 
 The GitHub Actions workflow uses `pull_request_target` so it can access secrets.
 It must continue checking out only the trusted base commit and must never run
