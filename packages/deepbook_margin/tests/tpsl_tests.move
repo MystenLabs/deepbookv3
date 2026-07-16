@@ -25,7 +25,7 @@ use deepbook_margin::{
         mint_coin,
         build_pyth_price_info_object,
         destroy_2,
-        return_shared_2
+        return_shared_2,
     },
     tpsl
 };
