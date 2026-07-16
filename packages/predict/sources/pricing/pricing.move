@@ -17,7 +17,6 @@ use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
     block_scholes_svi_feed::{BlockScholesSVIFeed, SVIParams},
-    oracle_lane::OracleRead,
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -41,7 +40,7 @@ public struct Pricer has copy, drop {
 /// Constructed only by `load_exact_spot_read`; consumers decide whether an
 /// absent exact-history row is a no-op or an abort.
 public struct ExactSpotRead has drop {
-    read: Option<OracleRead<u64>>,
+    spot: Option<u64>,
 }
 
 /// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
@@ -129,16 +128,9 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
     pricer.block_scholes_svi_source_timestamp_ms
 }
 
-public(package) fun has_spot(read: &ExactSpotRead): bool {
-    read.read.is_some()
-}
-
-public(package) fun source_timestamp_ms(read: &ExactSpotRead): u64 {
-    read.read.borrow().read_source_timestamp_ms()
-}
-
-public(package) fun spot(read: &ExactSpotRead): u64 {
-    read.read.borrow().read_value()
+public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
+    let ExactSpotRead { spot } = read;
+    spot
 }
 
 // === Public-Package Functions ===
@@ -194,7 +186,13 @@ public(package) fun load_exact_spot_read(
     source_timestamp_ms: u64,
 ): ExactSpotRead {
     assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
-    ExactSpotRead { read: pyth.normalized_spot_at(source_timestamp_ms) }
+    let read = pyth.normalized_spot_at(source_timestamp_ms);
+    let spot = if (read.is_some()) {
+        option::some(read.destroy_some().read_value())
+    } else {
+        option::none()
+    };
+    ExactSpotRead { spot }
 }
 
 /// Create an empty per-flush price cache (see `PriceMemo`).

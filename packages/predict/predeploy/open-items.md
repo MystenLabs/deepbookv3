@@ -332,8 +332,11 @@ hygiene-speed changes.
 - Four cascading asserts under one `ENetPremiumBudgetTooHigh` exist only to
   pre-empt +1 overflow — resolved by deletion: the DBU-566 sizing search has no
   overflowable intermediates, duty inventory in RP-13. (audit a68338)
-- `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
-  returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
+- `EReferenceTickTimestampMismatch` re-checked that an exact-timestamp lane read
+  returned its own key — resolved by deleting the duplicate guard and retaining
+  only the normalized value in pricing's opaque `ExactSpotRead`: `oracle_lane`
+  keys exact history by the read's source timestamp, and normalization preserves
+  that timestamp; duty inventory in RP-14. (audit 914ecd)
 - `mint_exact_amount` disables BOTH slippage guards (`max_cost` and
   `max_probability` hardcoded to `u64::max`, expiry_market.move:482-483),
   asymmetric with `mint_exact_quantity` — decide whether a premium-budget mint

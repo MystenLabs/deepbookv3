@@ -46,7 +46,6 @@ const EMintCostAboveMax: u64 = 4;
 const EMintProbabilityAboveMax: u64 = 5;
 const EWrongPricer: u64 = 7;
 const EReferenceTickObservationMissing: u64 = 8;
-const EReferenceTickTimestampMismatch: u64 = 9;
 const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
@@ -676,16 +675,15 @@ public fun set_reference_tick(
     config.assert_not_valuation_in_progress();
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
-    let read = pricing::load_exact_spot_read(
+    let spot = pricing::load_exact_spot_read(
         propbook_registry,
         pyth,
         market.propbook_underlying_id,
         source_timestamp_ms,
-    );
-    assert!(read.has_spot(), EReferenceTickObservationMissing);
-    assert!(read.source_timestamp_ms() == source_timestamp_ms, EReferenceTickTimestampMismatch);
+    ).into_spot();
+    assert!(spot.is_some(), EReferenceTickObservationMissing);
 
-    let spot = read.spot();
+    let spot = spot.destroy_some();
     let tick_size = market.strike_exposure.tick_size();
     let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
@@ -729,14 +727,14 @@ public fun try_settle(
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
 
-    let read = pricing::load_exact_spot_read(
+    let spot = pricing::load_exact_spot_read(
         propbook_registry,
         pyth,
         market.propbook_underlying_id,
         market.expiry,
-    );
-    if (!read.has_spot()) return false;
-    let settlement_price = read.spot();
+    ).into_spot();
+    if (spot.is_none()) return false;
+    let settlement_price = spot.destroy_some();
     market.strike_exposure.record_settlement(settlement_price);
     config_events::emit_market_settled(
         market.id(),
