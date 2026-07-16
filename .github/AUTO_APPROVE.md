@@ -21,7 +21,13 @@ Slack.
   repository does not let the App dismiss protected-branch reviews.
 - Significant Codex findings, a missing or failed Codex review, and invalid
   Codex output prevent the bot from approving the pull request.
+- Codex output is validated against the complete expected schema before it can
+  authorize approval.
+- The Codex review comment must be published successfully before approval.
 - Minor Codex findings do not prevent bot approval.
+- If a retry on the same commit finds significant issues after the App already
+  approved it, the workflow dismisses that approval. If GitHub refuses the
+  dismissal, the workflow replaces it with `REQUEST_CHANGES`.
 - Significant Codex findings, Codex failures, and approval failures send a
   top-level `@here` notification in Slack.
 - Pull request text is escaped before it is copied to Slack so it cannot inject
@@ -80,9 +86,11 @@ review input, and runs Codex with the `:read-only` permission profile and the
 `drop-sudo` safety strategy. A separate trusted workflow step formats the
 structured output and posts the advisory pull request comment.
 
-Codex gates only the bot's approval. A significant finding does not submit a
-`REQUEST_CHANGES` review or otherwise prevent a human reviewer from deciding
-that the pull request may proceed.
+Codex gates the bot's approval. A fresh significant result does not submit a
+`REQUEST_CHANGES` review. On a significant retry of an already approved commit,
+`REQUEST_CHANGES` is used only as a fallback when GitHub refuses to dismiss the
+existing App approval; a human reviewer may dismiss that fallback review after
+deciding how to proceed.
 
 ## Slack
 
@@ -121,10 +129,13 @@ Use a small test pull request authored by a `defi-eng` member:
 3. Confirm a review with no significant findings is posted before approval.
 4. Confirm a review with a significant finding leaves the pull request
    unapproved and sends an `@here` Slack alert.
-5. Confirm Slack gets one request message and one final result message.
-6. Push another commit and confirm it is not automatically re-approved.
+5. Reapply the label to an already approved commit and confirm a significant
+   retry dismisses or replaces the existing App approval.
+6. Confirm a comment publication failure does not submit bot approval.
+7. Confirm Slack gets one request message and one final result message.
+8. Push another commit and confirm it is not automatically re-approved.
    Confirm the old approval is dismissed or replaced with `REQUEST_CHANGES`.
-7. Apply the label to a PR from a non-member and confirm authorization fails.
+9. Apply the label to a PR from a non-member and confirm authorization fails.
 
 The GitHub Actions workflow uses `pull_request_target` so it can access secrets.
 It must continue checking out only the trusted base commit and must never run
