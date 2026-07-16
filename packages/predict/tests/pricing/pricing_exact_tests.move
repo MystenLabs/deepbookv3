@@ -33,6 +33,7 @@ use deepbook_predict::{
     oracle_fixture,
     pricing,
     pricing_reference_data as ref_data,
+    range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
 };
@@ -76,7 +77,7 @@ fun run_scenario(s: u64) {
     let mut i = 0;
     while (i < n) {
         let p = &points[i];
-        let actual = pricer.range_price(p.lower(), p.higher());
+        let actual = pricer.range_price(strike(p.lower()), strike(p.higher()));
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
         i = i + 1;
     };
@@ -128,8 +129,8 @@ fun at_the_forward_is_exactly_one_half() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     let up = pricer.range_price(
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
+        strike(test_constants::default_live_price()),
+        strike(constants::pos_inf!()),
     );
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
     assert_eq!(up, math::float_scaling!() / 2);
@@ -160,8 +161,8 @@ fun skew_clamp_up_price(rho_is_negative: bool): u64 {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
     let up = pricer.range_price(
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
+        strike(test_constants::default_live_price()),
+        strike(constants::pos_inf!()),
     );
 
     oracle_fixture::return_oracle_bundle(oracle);

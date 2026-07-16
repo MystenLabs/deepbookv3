@@ -49,6 +49,13 @@ public(package) fun is_pos_inf(strike: Strike): bool {
     strike.0 == constants::pos_inf!()
 }
 
+#[test_only]
+/// Raw-strike constructor for reference-fixture tests that price arbitrary raw
+/// points; production strikes are only ever tick-derived via `strike_from_tick`.
+public fun strike_for_testing(raw: u64): Strike {
+    Strike(raw)
+}
+
 /// Smallest tick whose strike is `>= settlement`: every finite boundary with
 /// `tick < prefix_limit_tick` satisfies `tick * tick_size < settlement` and is
 /// therefore active in the settlement prefix walk, which preserves the half-open
