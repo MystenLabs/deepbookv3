@@ -1,4 +1,4 @@
-name: Auto-approve with Codex review
+name: Auto-approve after Codex review
 
 on:
   pull_request_target:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   auto-approve:
-    name: Approve and run advisory review
+    name: Review and conditionally approve
     if: github.event.action == 'labeled' && github.event.label.name == 'auto-approve'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -40,7 +40,7 @@ jobs:
             echo "codex=true" >> "$GITHUB_OUTPUT"
           else
             echo "codex=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::OPENAI_API_KEY is not configured; the advisory review will be skipped"
+            echo "::warning::OPENAI_API_KEY is not configured; Codex review and auto-approval will be skipped"
           fi
 
           if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
@@ -192,110 +192,6 @@ jobs:
               throw new Error(`Slack incoming webhook failed: ${response.status} ${result}`);
             }
 
-      - name: Approve the pull request
-        id: approve
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          CODEX_CONFIGURED: ${{ steps.config.outputs.codex }}
-          HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
-          PR_AUTHOR: ${{ steps.authorize.outputs.author }}
-          PR_NUMBER: ${{ steps.authorize.outputs.number }}
-          SLACK_CONFIGURED: ${{ steps.config.outputs.slack }}
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const { owner, repo } = context.repo;
-            const pullNumber = Number(process.env.PR_NUMBER);
-            const botLogin = `${process.env.APP_SLUG}[bot]`;
-            const shortSha = process.env.HEAD_SHA.slice(0, 12);
-            const codexLine = process.env.CODEX_CONFIGURED === "true"
-              ? "Codex is reviewing this commit separately and its findings are advisory."
-              : "Codex review was skipped because it is not configured.";
-
-            const { data: livePull } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: pullNumber,
-            });
-            if (livePull.head.sha !== process.env.HEAD_SHA) {
-              throw new Error(
-                `PR #${pullNumber} changed before approval; remove and re-add auto-approve`,
-              );
-            }
-
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner,
-              repo,
-              pull_number: pullNumber,
-              per_page: 100,
-            });
-            const existingApproval = reviews.find(
-              (review) => review.user?.login === botLogin
-                && review.commit_id === process.env.HEAD_SHA
-                && review.state === "APPROVED",
-            );
-
-            if (existingApproval) {
-              core.info(`Commit ${shortSha} is already approved by ${botLogin}`);
-              core.setOutput("created", "false");
-            } else {
-              await github.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: pullNumber,
-                commit_id: process.env.HEAD_SHA,
-                event: "APPROVE",
-                body: [
-                  `Auto-approved commit \`${shortSha}\` because @${process.env.PR_AUTHOR}`,
-                  `is an active member of ${process.env.AUTHORIZED_ORG}/${process.env.AUTHORIZED_TEAM}.`,
-                  codexLine,
-                ].join(" "),
-              });
-              core.setOutput("created", "true");
-            }
-
-            const marker = `<!-- auto-approve:${process.env.HEAD_SHA} -->`;
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number: pullNumber,
-              per_page: 100,
-            });
-            if (!comments.some((comment) => comment.body?.includes(marker))) {
-              const slackLine = process.env.SLACK_CONFIGURED === "true"
-                ? "The event was also posted to Slack."
-                : "Slack notification was not configured or could not be delivered.";
-              try {
-                await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number: pullNumber,
-                  body: [
-                    marker,
-                    `Auto-approved \`${shortSha}\`. ${codexLine}`,
-                    "Significant findings will be called out prominently but will not revoke this approval.",
-                    slackLine,
-                  ].join("\n\n"),
-                });
-              } catch (error) {
-                core.warning(`Approval succeeded, but the audit comment failed: ${error.message}`);
-              }
-            }
-
-            try {
-              await github.rest.issues.removeLabel({
-                owner,
-                repo,
-                issue_number: pullNumber,
-                name: "auto-approve",
-              });
-            } catch (error) {
-              if (error.status !== 404) {
-                core.warning(`Approval succeeded, but label cleanup failed: ${error.message}`);
-              }
-            }
-
       - name: Check out the trusted base commit for Codex
         if: steps.config.outputs.codex == 'true'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
@@ -416,11 +312,87 @@ jobs:
           output-schema: |
             {"type":"object","properties":{"significant_findings":{"type":"boolean"},"summary":{"type":"string"},"findings":{"type":"array","maxItems":10,"items":{"type":"object","properties":{"severity":{"type":"string","enum":["significant","minor"]},"title":{"type":"string"},"location":{"type":"string"},"description":{"type":"string"}},"required":["severity","title","location","description"],"additionalProperties":false}}},"required":["significant_findings","summary","findings"],"additionalProperties":false}
 
+      - name: Evaluate Codex approval decision
+        id: codex-decision
+        if: >-
+          steps.config.outputs.codex == 'true' &&
+          steps.codex-review.outcome == 'success' &&
+          steps.codex-review.outputs.final-message != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CODEX_RESULT: ${{ steps.codex-review.outputs.final-message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            let result;
+            try {
+              result = JSON.parse(process.env.CODEX_RESULT);
+            } catch (error) {
+              throw new Error(`Could not parse Codex structured output: ${error.message}`);
+            }
+
+            const assertExactKeys = (value, expectedKeys, path) => {
+              if (value === null || typeof value !== "object" || Array.isArray(value)) {
+                throw new Error(`${path} must be an object`);
+              }
+              const actualKeys = Object.keys(value).sort();
+              const expected = [...expectedKeys].sort();
+              if (actualKeys.length !== expected.length
+                || actualKeys.some((key, index) => key !== expected[index])) {
+                throw new Error(
+                  `${path} must contain exactly: ${expectedKeys.join(", ")}`,
+                );
+              }
+            };
+
+            assertExactKeys(
+              result,
+              ["significant_findings", "summary", "findings"],
+              "Codex result",
+            );
+            if (typeof result.significant_findings !== "boolean") {
+              throw new Error("Codex result significant_findings must be a boolean");
+            }
+            if (typeof result.summary !== "string") {
+              throw new Error("Codex result summary must be a string");
+            }
+            if (!Array.isArray(result.findings) || result.findings.length > 10) {
+              throw new Error("Codex result findings must be an array of at most 10 items");
+            }
+
+            result.findings.forEach((finding, index) => {
+              const path = `Codex result findings[${index}]`;
+              assertExactKeys(
+                finding,
+                ["severity", "title", "location", "description"],
+                path,
+              );
+              if (!new Set(["significant", "minor"]).has(finding.severity)) {
+                throw new Error(`${path} severity must be significant or minor`);
+              }
+              for (const key of ["title", "location", "description"]) {
+                if (typeof finding[key] !== "string") {
+                  throw new Error(`${path} ${key} must be a string`);
+                }
+              }
+            });
+
+            const findings = result.findings;
+            const isSignificant = result.significant_findings === true
+              || findings.some((finding) => finding.severity === "significant");
+            core.setOutput("significant", String(isSignificant));
+            core.info(
+              isSignificant
+                ? "Codex found significant issues; bot approval is blocked"
+                : "Codex found no significant issues; bot approval is allowed",
+            );
+
       - name: Publish Codex advisory review
         id: publish-codex-review
         if: >-
           steps.config.outputs.codex == 'true' &&
           steps.codex-review.outcome == 'success' &&
+          steps.codex-decision.outcome == 'success' &&
           steps.codex-review.outputs.final-message != ''
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -428,12 +400,13 @@ jobs:
           CODEX_RESULT: ${{ steps.codex-review.outputs.final-message }}
           HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
           PR_NUMBER: ${{ steps.authorize.outputs.number }}
+          RUN_ID: ${{ github.run_id }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { owner, repo } = context.repo;
             const pullNumber = Number(process.env.PR_NUMBER);
-            const marker = `<!-- codex-advisory:${process.env.HEAD_SHA} -->`;
+            const marker = `<!-- codex-advisory:${process.env.HEAD_SHA}:${process.env.RUN_ID} -->`;
             const shortSha = process.env.HEAD_SHA.slice(0, 12);
             const safeMarkdown = (value, limit = 2000) => String(value || "")
               .slice(0, limit)
@@ -470,7 +443,9 @@ jobs:
               safeMarkdown(result.summary || "Codex returned no summary.", 4000),
               findingLines.length > 0 ? "#### Findings" : "",
               ...findingLines,
-              "_Advisory only. This review does not change the bot approval._",
+              isSignificant
+                ? "_Bot approval was withheld. A human reviewer must decide how to proceed._"
+                : "_No significant findings were detected; bot approval may proceed._",
             ].filter(Boolean).join("\n\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -481,8 +456,14 @@ jobs:
             });
             const existing = comments.find((comment) => comment.body?.includes(marker));
             if (existing) {
-              core.info(`Codex advisory comment already exists for ${shortSha}`);
-              core.setOutput("comment_url", existing.html_url);
+              const { data: comment } = await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: body.slice(0, 65000),
+              });
+              core.info(`Updated Codex advisory comment for ${shortSha} in run ${process.env.RUN_ID}`);
+              core.setOutput("comment_url", comment.html_url);
               return;
             }
 
@@ -494,19 +475,210 @@ jobs:
             });
             core.setOutput("comment_url", comment.html_url);
 
+      - name: Invalidate existing approval after significant findings
+        id: revoke-approval
+        if: steps.codex-decision.outputs.significant == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.authorize.outputs.number }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pullNumber = Number(process.env.PR_NUMBER);
+            const botLogin = `${process.env.APP_SLUG}[bot]`;
+            const shortSha = process.env.HEAD_SHA.slice(0, 12);
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: pullNumber,
+              per_page: 100,
+            });
+            const latestBotReview = reviews
+              .filter(
+                (review) => review.user?.login === botLogin
+                  && review.commit_id === process.env.HEAD_SHA,
+              )
+              .sort((left, right) => left.id - right.id)
+              .at(-1);
+
+            if (!latestBotReview || latestBotReview.state !== "APPROVED") {
+              core.info(`No active ${botLogin} approval exists for ${shortSha}`);
+              core.setOutput("invalidated", "false");
+              core.setOutput("method", "none");
+              return;
+            }
+
+            let method = "dismissed";
+            try {
+              await github.request(
+                "PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals",
+                {
+                  owner,
+                  repo,
+                  pull_number: pullNumber,
+                  review_id: latestBotReview.id,
+                  message: `Codex found significant issues in retry for ${shortSha}`,
+                  event: "DISMISS",
+                },
+              );
+            } catch (error) {
+              method = "changes-requested";
+              core.warning(
+                `Could not dismiss existing approval; replacing it with REQUEST_CHANGES: ${error.message}`,
+              );
+              await github.rest.pulls.createReview({
+                owner,
+                repo,
+                pull_number: pullNumber,
+                commit_id: process.env.HEAD_SHA,
+                event: "REQUEST_CHANGES",
+                body: [
+                  `Codex found significant issues in commit \`${shortSha}\` after it was auto-approved.`,
+                  "The previous App approval could not be dismissed automatically.",
+                  "A human reviewer may dismiss this review after deciding how to proceed.",
+                ].join(" "),
+              });
+            }
+
+            core.setOutput("invalidated", "true");
+            core.setOutput("method", method);
+
+      - name: Approve the pull request
+        id: approve
+        if: >-
+          steps.codex-decision.outputs.significant == 'false' &&
+          steps.publish-codex-review.outcome == 'success' &&
+          steps.publish-codex-review.outputs.comment_url != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
+          PR_AUTHOR: ${{ steps.authorize.outputs.author }}
+          PR_NUMBER: ${{ steps.authorize.outputs.number }}
+          SLACK_CONFIGURED: ${{ steps.config.outputs.slack }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pullNumber = Number(process.env.PR_NUMBER);
+            const botLogin = `${process.env.APP_SLUG}[bot]`;
+            const shortSha = process.env.HEAD_SHA.slice(0, 12);
+            const codexLine = "Codex found no significant issues in its review of this commit.";
+
+            const { data: livePull } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: pullNumber,
+            });
+            if (livePull.head.sha !== process.env.HEAD_SHA) {
+              throw new Error(
+                `PR #${pullNumber} changed before approval; remove and re-add auto-approve`,
+              );
+            }
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: pullNumber,
+              per_page: 100,
+            });
+            const latestBotReview = reviews
+              .filter(
+                (review) => review.user?.login === botLogin
+                  && review.commit_id === process.env.HEAD_SHA,
+              )
+              .sort((left, right) => left.id - right.id)
+              .at(-1);
+
+            if (latestBotReview?.state === "APPROVED") {
+              core.info(`Commit ${shortSha} is already approved by ${botLogin}`);
+              core.setOutput("created", "false");
+            } else {
+              await github.rest.pulls.createReview({
+                owner,
+                repo,
+                pull_number: pullNumber,
+                commit_id: process.env.HEAD_SHA,
+                event: "APPROVE",
+                body: [
+                  `Auto-approved commit \`${shortSha}\` because @${process.env.PR_AUTHOR}`,
+                  `is an active member of ${process.env.AUTHORIZED_ORG}/${process.env.AUTHORIZED_TEAM}.`,
+                  codexLine,
+                ].join(" "),
+              });
+              core.setOutput("created", "true");
+            }
+
+            const marker = `<!-- auto-approve:${process.env.HEAD_SHA} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pullNumber,
+              per_page: 100,
+            });
+            if (!comments.some((comment) => comment.body?.includes(marker))) {
+              const slackLine = process.env.SLACK_CONFIGURED === "true"
+                ? "The event was also posted to Slack."
+                : "Slack notification was not configured or could not be delivered.";
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pullNumber,
+                  body: [
+                    marker,
+                    `Auto-approved \`${shortSha}\` after Codex reported no significant findings.`,
+                    slackLine,
+                  ].join("\n\n"),
+                });
+              } catch (error) {
+                core.warning(`Approval succeeded, but the audit comment failed: ${error.message}`);
+              }
+            }
+
+      - name: Remove auto-approve label
+        if: always() && steps.app-token.outcome == 'success'
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            try {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: context.payload.pull_request.number,
+                name: "auto-approve",
+              });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+
       - name: Publish final Slack update
         if: always() && steps.config.outputs.slack == 'true'
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           APPROVAL_OUTCOME: ${{ steps.approve.outcome }}
+          AUTHORIZATION_OUTCOME: ${{ steps.authorize.outcome }}
           CODEX_COMMENT_URL: ${{ steps.publish-codex-review.outputs.comment_url }}
           CODEX_CONFIGURED: ${{ steps.config.outputs.codex }}
+          CODEX_DECISION_OUTCOME: ${{ steps.codex-decision.outcome }}
           CODEX_OUTCOME: ${{ steps.codex-review.outcome }}
           CODEX_RESULT: ${{ steps.codex-review.outputs.final-message }}
+          PUBLICATION_OUTCOME: ${{ steps.publish-codex-review.outcome }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          REVOCATION_INVALIDATED: ${{ steps.revoke-approval.outputs.invalidated }}
+          REVOCATION_METHOD: ${{ steps.revoke-approval.outputs.method }}
+          REVOCATION_OUTCOME: ${{ steps.revoke-approval.outcome }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
           github-token: ${{ github.token }}
@@ -519,19 +691,21 @@ jobs:
             const shortSha = process.env.PR_HEAD_SHA?.slice(0, 12) || "unknown";
             let text;
 
-            if (process.env.APPROVAL_OUTCOME !== "success") {
-              text = `<!channel> *AUTO-APPROVAL FAILED* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`;
+            if (process.env.AUTHORIZATION_OUTCOME !== "success") {
+              text = `<!here> *AUTO-APPROVAL FAILED* for ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`;
             } else if (process.env.CODEX_CONFIGURED !== "true") {
-              text = `*Approved* ${prLink} at \`${shortSha}\`. Codex review was skipped because it is not configured.`;
+              text = `<!here> *CODEX REVIEW IS NOT CONFIGURED* for ${prLink} at \`${shortSha}\`. Bot approval was withheld.`;
             } else if (process.env.CODEX_OUTCOME !== "success" || !process.env.CODEX_RESULT) {
-              text = `<!channel> *CODEX REVIEW DID NOT COMPLETE* for approved ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`;
+              text = `<!here> *CODEX REVIEW DID NOT COMPLETE* for ${prLink} at \`${shortSha}\`. Bot approval was withheld; check the GitHub Actions run.`;
+            } else if (process.env.CODEX_DECISION_OUTCOME !== "success") {
+              text = `<!here> *CODEX REVIEW OUTPUT WAS INVALID* for ${prLink} at \`${shortSha}\`. Bot approval was withheld; check the GitHub Actions run.`;
             } else {
               let result;
               try {
                 result = JSON.parse(process.env.CODEX_RESULT);
               } catch (error) {
                 core.warning(`Could not parse Codex structured output: ${error.message}`);
-                text = `<!channel> *CODEX REVIEW OUTPUT WAS INVALID* for approved ${prLink} at \`${shortSha}\`. Check the GitHub Actions run.`;
+                text = `<!here> *CODEX REVIEW OUTPUT WAS INVALID* for ${prLink} at \`${shortSha}\`. Bot approval was withheld; check the GitHub Actions run.`;
               }
 
               if (result) {
@@ -555,14 +729,36 @@ jobs:
                     ? significantFindings
                     : findings;
                   const findingLines = formatFindings(displayedFindings);
+                  let approvalLine = "Bot approval was withheld. A human reviewer must decide how to proceed.";
+                  if (process.env.REVOCATION_OUTCOME !== "success") {
+                    approvalLine = "Bot approval was withheld, but an existing App approval may not have been invalidated. Check the GitHub Actions run.";
+                  } else if (process.env.REVOCATION_INVALIDATED === "true") {
+                    approvalLine = process.env.REVOCATION_METHOD === "dismissed"
+                      ? "An existing App approval was dismissed. A human reviewer must decide how to proceed."
+                      : "An existing App approval was replaced with REQUEST_CHANGES. A human reviewer must decide how to proceed.";
+                  }
                   text = [
-                    `<!channel> *SIGNIFICANT CODEX FINDINGS* for approved ${prLink} at \`${shortSha}\`${reviewLink}`,
+                    `<!here> *SIGNIFICANT CODEX FINDINGS* for ${prLink} at \`${shortSha}\`${reviewLink}`,
+                    approvalLine,
                     summary,
                     ...findingLines,
                     findingLines.length < displayedFindings.length
                       ? `- Plus ${displayedFindings.length - findingLines.length} more findings on the PR.`
                       : "",
                   ].filter(Boolean).join("\n");
+                } else if (process.env.PUBLICATION_OUTCOME !== "success"
+                  || !process.env.CODEX_COMMENT_URL) {
+                  text = [
+                    `<!here> *CODEX REVIEW COULD NOT BE PUBLISHED* for ${prLink} at \`${shortSha}\``,
+                    "Codex found no significant issues, but bot approval was withheld because the PR comment was not published. Check the GitHub Actions run.",
+                    summary,
+                  ].join("\n");
+                } else if (process.env.APPROVAL_OUTCOME !== "success") {
+                  text = [
+                    `<!here> *AUTO-APPROVAL FAILED* for ${prLink} at \`${shortSha}\`${reviewLink}`,
+                    "Codex found no significant issues, but the approval was not submitted. Check the GitHub Actions run.",
+                    summary,
+                  ].join("\n");
                 } else {
                   const findingLines = formatFindings(findings);
                   text = [
