@@ -57,8 +57,6 @@ public struct ExpiryMarket has key {
     /// Propbook underlying this market was created for.
     propbook_underlying_id: u32,
     expiry: u64,
-    /// Terminal settlement price once exact Propbook expiry data has been recorded.
-    settlement_price: Option<u64>,
     /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
     cash: ExpiryCash,
     /// Sponsor-funded DUSDC available to subsidize this market's taker fees.
@@ -109,19 +107,19 @@ public fun expiry(market: &ExpiryMarket): u64 {
 
 /// Return the recorded settlement price. Aborts if the market is not settled.
 public fun settlement_price(market: &ExpiryMarket): u64 {
-    market.settlement_price.destroy_some()
+    market.strike_exposure.settlement_price()
 }
 
 /// Return whether terminal settlement has been recorded for this market.
 /// Public read for SDK/devInspect settlement-state checks.
 public fun is_settled(market: &ExpiryMarket): bool {
-    market.settlement_price.is_some()
+    market.strike_exposure.is_settled()
 }
 
 /// Return the recorded settlement price, or `none` while the market is live.
 /// Non-aborting companion to `settlement_price` for SDK/devInspect reads.
 public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
-    market.settlement_price
+    market.strike_exposure.try_settlement_price()
 }
 
 /// Return DUSDC currently held by this expiry.
@@ -739,8 +737,7 @@ public fun try_settle(
     );
     if (!read.has_spot()) return false;
     let settlement_price = read.spot();
-    market.settlement_price = option::some(settlement_price);
-    market.strike_exposure.materialize_settled_liability(settlement_price);
+    market.strike_exposure.record_settlement(settlement_price);
     config_events::emit_market_settled(
         market.id(),
         market.propbook_underlying_id,
@@ -867,7 +864,6 @@ public(package) fun create_and_share(
         id,
         propbook_underlying_id,
         expiry,
-        settlement_price: option::none(),
         cash: expiry_cash::new(cash_config),
         fee_incentive_balance: balance::zero(),
         strike_exposure: strike_exposure::new(
@@ -1204,7 +1200,7 @@ fun redeem_settled_internal(
         ctx,
     );
     let settlement = market.settlement_price();
-    let payout_amount = market.strike_exposure.close_settled_order(&redeemed_order, settlement);
+    let payout_amount = market.strike_exposure.close_settled_order(&redeemed_order);
     market.settle_settled_redeem_payment(account, payout_amount, ctx);
 
     order_events::emit_settled_order_redeemed(

@@ -336,13 +336,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Explicit exact-timestamp settlement (recent)
 
 - **Settlement is one public permissionless transition.** `expiry_market::try_settle`
-  validates the supplied Pyth feed against Propbook's canonical binding for the
-  market's underlying and records `pyth.normalized_spot_at(expiry)` plus exact terminal
-  payout liability when present. Settled redeem, rebate claim, pool rebalance, and
-  valuation consume only the recorded phase; keepers compose settlement first in the
-  same PTB when needed. *Rationale:* one writer makes the market phase transition
-  atomic and removes oracle ingress from every later settled consumer. *Rejected:*
-  implicit settlement inside each consumer.
+  consumes pricing's canonical exact-history read and calls
+  `StrikeExposure::record_settlement`, which stores the terminal price and exact
+  remaining payout liability together. The exposure's settlement-price option is
+  the phase discriminator; settled redeem, rebate claim, pool rebalance, and valuation
+  consume only that recorded phase. Keepers compose settlement first in the same PTB
+  when needed. *Rationale:* one writer makes the market phase transition atomic,
+  keeps price and book liability under one owner, and removes oracle ingress from
+  every later settled consumer. *Rejected:* implicit settlement inside each consumer.
 - **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
   expiry moves no cash until `try_settle` succeeds; valuation still aborts through
   live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,

@@ -40,7 +40,8 @@ fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
 
     assert!(harness.exposure.is_liquidated_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
-    assert_eq!(harness.exposure.materialize_settled_liability(SETTLED_WINNING_SPOT), 0);
+    harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
+    assert_eq!(harness.exposure.payout_liability(), 0);
 
     harness.exposure.clear_liquidated_order(&order);
 
@@ -54,8 +55,8 @@ fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
 fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
     let (_fx, _oracle, mut harness, order) = liquidated_order_fixture();
 
-    harness.exposure.materialize_settled_liability(SETTLED_WINNING_SPOT);
-    harness.exposure.close_settled_order(&order, SETTLED_WINNING_SPOT);
+    harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
+    harness.exposure.close_settled_order(&order);
 
     abort 999
 }

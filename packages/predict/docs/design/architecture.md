@@ -189,7 +189,7 @@ The flush is **privileged**, not permissionless: the hot potato can only be crea
 
 ## Settlement
 
-Settlement is one permissionless public transition. `ExpiryMarket` stores `settlement_price: Option<u64>`, and `try_settle` is its single writer: after expiry it validates the supplied `PythFeed` against Propbook's current canonical binding for the market's underlying, reads `normalized_spot_at(expiry)`, and atomically records the price plus exact terminal payout liability when present. It returns whether the market is settled, including idempotent repeat calls.
+Settlement is one permissionless public transition. After expiry, `try_settle` asks `pricing` for the canonical exact-history Pyth read and passes its price to `StrikeExposure::record_settlement`, which records the exposure's phase and exact terminal payout liability together. The market's public settlement getters delegate to the exposure, while idempotent repeat calls remain owned by `try_settle`.
 
 `redeem_settled`, `redeem_settled_permissionless`, rebate claim, `plp::rebalance_expiry_cash`, and `value_expiry` do not read settlement oracles; they consume the recorded phase. Transaction builders call `try_settle` first when settlement may be due. If exact timestamp data is absent after expiry, standalone rebalance is a no-op and live valuation still aborts; no approximate mark is substituted because the flush uses one mark for both PLP supply and withdraw. See [decisions](./decisions.md) and [invariants](./invariants.md).
 
