@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig};
-use fixed_math::{i64, math};
+use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -379,10 +379,7 @@ fun assert_min_total_variance_positive(svi: &SVIParams) {
     let min_variance_increment = min_svi_variance_increment(svi);
     let a = svi.a();
     let min_total_var = i64::from_u64(min_variance_increment).add(&a);
-    assert!(
-        !min_total_var.is_negative() && !min_total_var.is_zero(),
-        EBlockScholesMinVarianceInvalid,
-    );
+    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -465,7 +462,7 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let a = svi_params.a();
     let total_var = i64::from_u64(variance_increment).add(&a);
     // Total variance must be positive because pricing takes sqrt(w) below.
-    assert!(!total_var.is_negative() && !total_var.is_zero(), ENonPositiveVariance);
+    assert!(is_positive(&total_var), ENonPositiveVariance);
     let total_var = total_var.magnitude();
 
     let sqrt_var = math::sqrt(total_var, math::float_scaling!());
@@ -491,4 +488,8 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
+}
+
+fun is_positive(value: &I64): bool {
+    !value.is_negative() && !value.is_zero()
 }
