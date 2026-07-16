@@ -4,7 +4,9 @@
 /// Block Scholes spot oracle: one shared object per source id, storing the
 /// source-native spot stream through a generic Propbook oracle lane.
 ///
-/// The verified `SpotUpdate` is its own provenance proof. Predict-unaware: this
+/// `SpotUpdate` carries no provenance proof today: `block_scholes_oracle` is a
+/// stub that performs no validation, so update values are forgeable until the
+/// production verifier lands (see that module's warning). Predict-unaware: this
 /// module stores raw source facts and leaves feed binding, freshness, and
 /// pricing-safe envelopes to consumers.
 module propbook::block_scholes_spot_feed;
@@ -96,7 +98,7 @@ public fun raw_spot_value(raw: &RawSpot): u64 {
 
 // === Write Functions ===
 
-/// Ingest a verified BS spot update into this feed's generic oracle lane.
+/// Ingest an unverified (stub-oracle) BS spot update into this feed's generic oracle lane.
 public fun update(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.spot_source_id() == feed.bs_source_id, EWrongSource);

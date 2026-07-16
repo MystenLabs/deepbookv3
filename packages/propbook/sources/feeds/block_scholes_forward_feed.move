@@ -112,7 +112,7 @@ public fun raw_forward_value(raw: &RawForward): u64 {
 
 // === Write Functions ===
 
-/// Ingest a verified BS forward update into the oracle lane for the update's expiry.
+/// Ingest an unverified (stub-oracle) BS forward update into the oracle lane for the update's expiry.
 public fun update(
     feed: &mut BlockScholesForwardFeed,
     update: ForwardUpdate,

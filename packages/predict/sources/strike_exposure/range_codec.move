@@ -59,7 +59,7 @@ public fun strike_for_testing(raw: u64): Strike {
 /// Smallest tick whose strike is `>= settlement`: every finite boundary with
 /// `tick < prefix_limit_tick` satisfies `tick * tick_size < settlement` and is
 /// therefore active in the settlement prefix walk, which preserves the half-open
-/// `(lower, higher]` payoff (settlement equal to a higher boundary does not apply
+/// `(lower, higher]` payoff (settlement equal to a lower boundary does not apply
 /// it). Equals `ceil(settlement / tick_size)`, which can legitimately exceed
 /// `pos_inf_tick` (settlement above the encodable range) and so is a plain `u64`
 /// comparison bound, never validated as a domain tick.

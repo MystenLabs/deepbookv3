@@ -13,7 +13,8 @@ public(package) macro fun current_version(): u64 {
     1
 }
 
-/// Decimal places of the 1e9 price scaling that `normalize_pyth_price` targets.
+/// Decimal places of the 1e9 price scaling that `pyth_feed::normalize_raw_spot`
+/// targets.
 public(package) macro fun float_scaling_decimals(): u64 {
     9
 }

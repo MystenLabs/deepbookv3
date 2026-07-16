@@ -7,8 +7,8 @@
 module deepbook_predict::pause_cap;
 
 /// Capability for emergency pause operations. Admin can mint these for
-/// trusted operators; holders can disable versions, pause global trading,
-/// and pause per-market minting. Cannot unpause anything.
+/// trusted operators; holders can pause global trading and pause per-market
+/// minting. Cannot unpause anything.
 public struct PauseCap has key, store {
     id: UID,
 }
