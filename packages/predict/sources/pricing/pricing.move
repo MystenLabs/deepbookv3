@@ -10,7 +10,7 @@
 /// market liveness, feed freshness, and Predict's pricing-safe BS input envelope.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, pricing_config::PricingConfig};
+use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
 use fixed_math::{i64, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
@@ -82,14 +82,16 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // === Public Functions ===
 
 /// Return the current UP tail price for one strike. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
-public fun up_price(pricer: &Pricer, strike: u64): u64 {
+/// SDK/devInspect board pricing off a legitimately loaded `Pricer`; construct the
+/// strike on-chain via `range_codec::strike_from_tick`.
+public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
 /// Return the current raw probability for a live range. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
-public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+/// SDK/devInspect board pricing off a legitimately loaded `Pricer`; construct the
+/// strikes on-chain via `range_codec::strike_from_tick`.
+public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
@@ -179,7 +181,7 @@ public(package) fun price_and_cache(
     tick: u64,
     tick_size: u64,
 ): u64 {
-    let price = pricer.up_price(tick * tick_size);
+    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
     price
@@ -364,8 +366,8 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+    assert!(lower.value() < higher.value(), EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
@@ -376,15 +378,15 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 }
 
 /// Compute the fair UP tail price for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
-    if (strike == constants::neg_inf!()) {
+fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+    if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
-    if (strike == constants::pos_inf!()) {
+    if (strike.is_pos_inf()) {
         return 0
     };
 
-    compute_nd2(svi, forward, strike)
+    compute_nd2(svi, forward, strike.value())
 }
 
 /// Binary pricing from SVI total variance:
@@ -445,8 +447,11 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let nd2 = math::normal_cdf(&d2);
     if (w_prime.is_zero()) return nd2;
 
-    let correction_magnitude =
-        math::mul_div_down(math::normal_pdf(&d2), w_prime.magnitude(), 2 * sqrt_var);
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        2 * sqrt_var,
+    );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;

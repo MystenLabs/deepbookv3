@@ -24,6 +24,7 @@ use deepbook_predict::{
     predict_account::{Self, ResolvedExpirySummary},
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
+    range_codec,
     strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config
 };
@@ -667,7 +668,7 @@ public fun set_reference_tick(
 
     let spot = read.read_value();
     let tick_size = market.strike_exposure.tick_size();
-    let tick = spot / tick_size;
+    let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
         config_events::emit_reference_tick_set(
             market.id(),

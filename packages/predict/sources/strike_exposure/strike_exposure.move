@@ -19,7 +19,7 @@ use deepbook_predict::{
     order::{Self, Order},
     order_events,
     pricing::{Self, Pricer},
-    range_codec,
+    range_codec::{Self, Strike},
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
@@ -245,9 +245,14 @@ public(package) fun close_settled_order(
     order: &Order,
     settlement: u64,
 ): u64 {
-    let (lower, higher) = exposure.order_boundaries(order);
     exposure.liquidation.remove_order(order);
-    if (settlement <= lower || settlement > higher) {
+    let won = range_codec::settlement_in_range(
+        order.lower_tick(),
+        order.higher_tick(),
+        settlement,
+        exposure.tick_size,
+    );
+    if (!won) {
         return 0
     };
     // payout = quantity - floor_shares (= Q - F). The settled liability was derived
@@ -547,10 +552,13 @@ fun liquidate_order_if_under_floor(
     true
 }
 
-/// Decode an order into `(lower, higher)` raw strike boundaries for pricing and
-/// settlement comparison, mapping the open-ended sentinels.
-fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
-    range_codec::strikes_from_ticks(order.lower_tick(), order.higher_tick(), exposure.tick_size)
+/// Decode an order into `(lower, higher)` raw strike boundaries for pricing,
+/// mapping the open-ended sentinels.
+fun order_boundaries(exposure: &StrikeExposure, order: &Order): (Strike, Strike) {
+    (
+        range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
+        range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
+    )
 }
 
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
@@ -563,11 +571,8 @@ fun admitted_entry_probability(
     higher_tick: u64,
 ): u64 {
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let (lower, higher) = range_codec::strikes_from_ticks(
-        lower_tick,
-        higher_tick,
-        exposure.tick_size,
-    );
+    let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
+    let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
     pricer.range_price(lower, higher)
 }
 
