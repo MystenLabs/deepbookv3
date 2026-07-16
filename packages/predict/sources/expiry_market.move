@@ -52,6 +52,12 @@ const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
 
+/// Exact live liability recorded by a full exposure walk.
+public struct NavMark has copy, drop, store {
+    liability: u64,
+    computed_at_ms: u64,
+}
+
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
     id: UID,
@@ -66,6 +72,8 @@ public struct ExpiryMarket has key {
     fee_incentive_balance: Balance<DUSDC>,
     /// Exposure lifecycle state for this expiry's strike ticks.
     strike_exposure: StrikeExposure,
+    /// Most recent exact live-liability walk, if this market has been refreshed.
+    nav_mark: Option<NavMark>,
     /// Smoothed gas-price stats backing the congestion trade penalty.
     ewma: EwmaState,
     /// When true, new mints on this expiry abort. Other flows stay available.
@@ -366,6 +374,19 @@ public fun penalty_fee(quote: &MintQuote): u64 {
 
 public fun all_in_cost(quote: &MintQuote): u64 {
     quote.all_in_cost
+}
+
+/// Walk every live exposure and replace this market's exact liability mark.
+/// Later market activity does not invalidate the mark; flush consumers bound its
+/// age and knowingly accept activity and oracle movement inside that window.
+public fun refresh_nav(market: &mut ExpiryMarket, pricer: &Pricer, clock: &Clock) {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.exact_live_liability(pricer);
+    market.nav_mark =
+        option::some(NavMark {
+            liability,
+            computed_at_ms: clock.timestamp_ms(),
+        });
 }
 
 /// Mint an exact live position quantity against this expiry market.
@@ -697,6 +718,27 @@ public fun set_mint_paused(
 
 // === Public-Package Functions ===
 
+/// Return the most recent stored liability mark, if this market has been refreshed.
+/// Acceptance policy (mark age, expiry handling) is owned by the consumer.
+public(package) fun nav_mark(market: &ExpiryMarket): Option<NavMark> {
+    market.nav_mark
+}
+
+/// Return DUSDC free cash currently held by this expiry.
+public(package) fun free_cash(market: &ExpiryMarket): u64 {
+    market.cash.free_cash()
+}
+
+/// Return the marked exact live liability.
+public(package) fun liability(mark: &NavMark): u64 {
+    mark.liability
+}
+
+/// Return when the marked liability walk ran, in `clock.timestamp_ms()` time.
+public(package) fun computed_at_ms(mark: &NavMark): u64 {
+    mark.computed_at_ms
+}
+
 /// Ensure terminal settlement has been recorded if Propbook has an exact Pyth spot
 /// at this market's expiry timestamp. Returns whether the market is settled after
 /// the attempt. This is the canonical passive settlement gate used immediately
@@ -852,6 +894,7 @@ public(package) fun create_and_share(
             strike_exposure_config,
             ctx,
         ),
+        nav_mark: option::none(),
         ewma: ewma::new(ctx),
         mint_paused: false,
     };
