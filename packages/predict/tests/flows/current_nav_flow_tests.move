@@ -42,8 +42,6 @@ const SECOND_SAME_STRIKE_QUANTITY: u64 = 4_000_000_000;
 /// Deep-OTM forward (well below the 100e9 grid) so the minted up range prices to
 /// ~0, driving the leveraged order underwater (value <= floor).
 const UNDERWATER_FORWARD: u64 = 10_000_000_000;
-const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
-const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
 const NON_MONOTONE_A_MAGNITUDE: u64 = 1;
 const NON_MONOTONE_LOWER_TICK: u64 = 90;
 const NON_MONOTONE_HIGHER_TICK: u64 = 100;
@@ -280,8 +278,8 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         test_constants::default_live_price(),
         NON_MONOTONE_A_MAGNITUDE,
         false,
-        MAX_SVI_INPUT,
-        MIN_SVI_SIGMA,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
         float!(),
         true,
         0,

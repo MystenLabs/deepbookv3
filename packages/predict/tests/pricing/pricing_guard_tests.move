@@ -29,11 +29,14 @@
 /// negative `a` values that over-offset the SVI increment and the degenerate
 /// `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot far below
 /// the BS spot (no LOWER basis bound), where the re-anchored
-/// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` and
-/// `ECannotBeNegative` inside `compute_nd2` are defensive backstops after the
-/// load-time envelope: valid loaded surfaces should not hit them. `ETickNotInPriceMemo`
-/// is a package-level cache contract guard and is covered directly below;
-/// active-book non-monotone UP prices are covered by `ENonMonotonePriceMemo`.
+/// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
+/// a boundary surface whose rounded analytical minimum is positive at load but
+/// whose concrete at-forward quote rounds total variance non-positive.
+/// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
+/// the load-time envelope: no production input is known to reach it.
+/// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
+/// directly below; active-book non-monotone UP prices are covered by
+/// `ENonMonotonePriceMemo`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -41,6 +44,7 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
+    pricing_reference_data as ref_data,
     range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
@@ -70,15 +74,16 @@ const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
-const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
-const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
 const PRICE_MEMO_MISSING_TICK: u64 = 100;
 const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
 const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
 const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
 const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
-const NEGATIVE_A_AT_FORWARD_TOLERANCE: u64 = 5_000;
 const NONPOSITIVE_MIN_VARIANCE_A_MAG: u64 = 5_000_001;
+const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
+const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
+const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
+const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
 const NON_MONOTONE_LOW_TICK: u64 = 90;
 const NON_MONOTONE_HIGH_TICK: u64 = 95;
 
@@ -101,8 +106,8 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
         test_constants::default_live_price(),
         1,
         false,
-        MAX_SVI_INPUT,
-        MIN_SVI_SIGMA,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
         test_constants::float(),
         true,
         0,
@@ -367,7 +372,11 @@ fun surface_with_basis_at_exact_factor_admits() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_a_above_max_aborts() {
-    load_pricer_with_invalid_svi(MAX_SVI_INPUT + 1, default_svi_b(), default_svi_sigma());
+    load_pricer_with_invalid_svi(
+        test_constants::pricing_max_svi_input() + 1,
+        default_svi_b(),
+        default_svi_sigma(),
+    );
     abort EUnexpectedSuccess
 }
 
@@ -397,10 +406,13 @@ fun negative_svi_a_with_positive_min_variance_prices() {
     // Independent Python true-math reference:
     // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
     // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
+    // The tolerance uses the committed pricing-reference generator's worst-case
+    // per-endpoint error budget. This at-forward, zero-skew point is less
+    // ill-conditioned than that generated small-variance worst case.
     test_helpers::assert_within(
         up,
         NEGATIVE_A_AT_FORWARD_REFERENCE,
-        NEGATIVE_A_AT_FORWARD_TOLERANCE,
+        ref_data::worst_case_budget(),
     );
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -431,7 +443,11 @@ fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_b_above_max_aborts() {
-    load_pricer_with_invalid_svi(default_svi_a(), MAX_SVI_INPUT + 1, default_svi_sigma());
+    load_pricer_with_invalid_svi(
+        default_svi_a(),
+        test_constants::pricing_max_svi_input() + 1,
+        default_svi_sigma(),
+    );
     abort EUnexpectedSuccess
 }
 
@@ -458,7 +474,7 @@ fun surface_with_svi_m_above_max_aborts() {
         default_svi_sigma(),
         test_constants::float(),
         false,
-        MAX_SVI_INPUT + 1,
+        test_constants::pricing_max_svi_input() + 1,
         false,
     );
     abort EUnexpectedSuccess
@@ -466,13 +482,21 @@ fun surface_with_svi_m_above_max_aborts() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_sigma_below_min_aborts() {
-    load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), MIN_SVI_SIGMA - 1);
+    load_pricer_with_invalid_svi(
+        default_svi_a(),
+        default_svi_b(),
+        test_constants::pricing_min_svi_sigma() - 1,
+    );
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_sigma_above_max_aborts() {
-    load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), MAX_SVI_INPUT + 1);
+    load_pricer_with_invalid_svi(
+        default_svi_a(),
+        default_svi_b(),
+        test_constants::pricing_max_svi_input() + 1,
+    );
     abort EUnexpectedSuccess
 }
 
@@ -502,6 +526,36 @@ fun re_anchored_zero_forward_aborts() {
     );
     // Re-anchor at a pyth spot far below the BS spot: 1e9 * 1 / 1e17 floors to 0.
     fx.set_pyth_bundle(&mut oracle, 1_000_000_000, fx.clock().timestamp_ms());
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    pricer.up_price(strike(test_constants::default_live_price()));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    abort EUnexpectedSuccess
+}
+
+/// A boundary-valid surface can still hit the quote-time positive-variance
+/// backstop: the load-time rounded analytical minimum is positive by 4 units,
+/// but at the forward strike this specific surface rounds the per-strike SVI
+/// increment 5 units lower, making total variance negative.
+#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
+fun boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        PER_STRIKE_NONPOSITIVE_A_MAG,
+        true,
+        PER_STRIKE_NONPOSITIVE_B,
+        test_constants::pricing_min_svi_sigma(),
+        PER_STRIKE_NONPOSITIVE_RHO,
+        false,
+        PER_STRIKE_NONPOSITIVE_M,
+        false,
+    );
     let pricer = fx.load_pricer_bundle(&oracle);
 
     pricer.up_price(strike(test_constants::default_live_price()));

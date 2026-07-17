@@ -479,6 +479,37 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-14: Non-monotone active-book BS surfaces block NAV valuation
+
+- **Trigger state:** during `current_nav`, the active payout tree asks for UP
+  prices at increasing strike ticks and a fresh Block Scholes surface makes a
+  higher strike price above a lower strike price.
+- **Controller:** external — the BS surface publisher controls the shape inside
+  Predict's pricing-safe envelope.
+- **Blast radius:** one market's active book can abort that market's NAV read.
+  Because pool flush uses one frozen mark for all LP supply and withdraw fills,
+  this can block LP fills pool-wide until the surface is corrected.
+- **Response:** abort and retry with a valid surface. The recovery path is the
+  same operational path as stale or missing oracle data: publish a fresh,
+  usable BS surface and rerun valuation.
+- **Reasoning:** `strike_payout_tree::walk_linear` relies on active boundary
+  prices being monotone. Skipping the market or carrying a partial mark would
+  poison the single LP mark used for both supply and withdraw, while allowing
+  the inverted segment through can overstate pool NAV.
+- **Risk profile:** `BEST-GUESS` — reachability depends on the BS publisher
+  sending an arbitrageable surface that also intersects the active book.
+  Production safety depends on replacing the stub verifier before value-bearing
+  deployment (S-4).
+- **Pinning tests:** `pricing_guard_tests.move` —
+  `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
+  `current_nav_flow_tests.move` —
+  `current_nav_rejects_non_monotone_active_book_surface`.
+- **Reopen when:** NAV valuation gains a safe per-market skip/carry design, the
+  LP flush no longer uses one shared mark for both queues, or the production BS
+  verifier proves monotonicity before the surface reaches Predict.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
