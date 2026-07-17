@@ -1,9 +1,10 @@
 // Strategy: cleanout-gas-liq — the LIQUIDATED-account variant of cleanout-gas (predeploy P-9 /
 // RP-11 follow-up). E1 (cleanout-gas) measured the cleanout of SURVIVING positions; but the
 // archetypal loser is LIQUIDATED, and that path differs: a liquidated order freed its
-// strike_payout_tree storage at LIQUIDATION time (clear_liquidated_order), so its cleanout
-// (redeem_settled_permissionless -> redeem_liquidated_order) frees only the account Position entry
-// + a tombstone, NOT the payout-tree node that dominated E1's ~3.29M MIST/position rebate. This
+// strike_payout_tree storage at LIQUIDATION time (apply_liquidation removes the node, no
+// tombstone is written), so its cleanout (redeem_settled_permissionless -> the derived
+// Liquidated close arm) frees only the account Position entry, NOT the payout-tree node that
+// dominated E1's ~3.29M MIST/position rebate. This
 // strategy parks N high-leverage near-ATM positions (thin floor buffer) in ONE direction so the
 // keeper's liquidation pass knocks the whole batch out on an adverse drift, waits for settlement,
 // then runs the permissionless cleanout. The cleanout trace records nLiquidated / nSettled (from the

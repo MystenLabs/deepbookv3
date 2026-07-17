@@ -327,9 +327,10 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       );
       const g = gasBreakdownOf(res);
       // Split by redeem path: a LIQUIDATED position freed most of its storage at liquidation
-      // time (clear_liquidated_order), so its cleanout frees less than a SETTLED (surviving) one
-      // whose payout-tree node is freed here (close_settled_order). Counting each lets the fit
-      // separate the per-liquidated-position gas from the per-survivor gas.
+      // time (apply_liquidation removes the payout-tree node and index entry), so its cleanout
+      // frees less than a SETTLED (surviving) one whose payout-tree node is freed here
+      // (process_settled_close). Counting each lets the fit separate the per-liquidated-position
+      // gas from the per-survivor gas.
       const evs = (res.events ?? []) as any[];
       const nLiquidated = evs.filter((e) => e.type?.includes("LiquidatedOrderRedeemed")).length;
       const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;
