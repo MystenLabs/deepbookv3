@@ -119,6 +119,47 @@ fun owner_auth_opens_account_and_coin_paths() {
     scenario.end();
 }
 
+#[test]
+fun never_settled_coin_reads_unsettled_at_clock_zero() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(ALICE);
+    let wrapper = take_account_wrapper(&scenario, ALICE);
+    let clock = scenario.take_shared<Clock>();
+
+    // Clock sits at timestamp 0 (never incremented). A coin type that has never
+    // been settled must NOT read as settled-this-timestamp — the former `0`
+    // sentinel for "never settled" collided with a clock at 0.
+    assert!(!wrapper.load_account().settled_this_timestamp<TEST_COIN>(&clock));
+
+    return_shared(clock);
+    return_shared(wrapper);
+    scenario.end();
+}
+
+#[test]
+fun settlement_latch_holds_within_timestamp_and_releases_next() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(ALICE);
+    let mut wrapper = take_account_wrapper(&scenario, ALICE);
+    let root = accumulator_support::take_root(&scenario);
+    let mut clock = scenario.take_shared<Clock>();
+    clock.increment_for_testing(5);
+
+    // Not latched before the first settle at this timestamp.
+    assert!(!wrapper.load_account().settled_this_timestamp<TEST_COIN>(&clock));
+    wrapper.settle<TEST_COIN>(&root, &clock);
+    // Latched at the settlement timestamp (the duplicate-settle guard)...
+    assert!(wrapper.load_account().settled_this_timestamp<TEST_COIN>(&clock));
+    // ...and released once the clock advances.
+    clock.increment_for_testing(1);
+    assert!(!wrapper.load_account().settled_this_timestamp<TEST_COIN>(&clock));
+
+    return_shared(clock);
+    return_shared(root);
+    return_shared(wrapper);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = account::EInvalidOwner)]
 fun owner_auth_from_wrong_sender_aborts() {
     let mut scenario = setup_with_account(ALICE);

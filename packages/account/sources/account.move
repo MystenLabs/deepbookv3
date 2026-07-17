@@ -309,17 +309,23 @@ fun unsettled_balance<T>(self: &Account, root: &AccumulatorRoot, clock: &Clock):
 /// accumulator suppression. `settled_funds_value` observes beginning-of-commit
 /// funds, so same-timestamp balance reads after `settle` must not add that
 /// accumulator view on top of the newly stored balance.
-fun settled_this_timestamp<T>(self: &Account, clock: &Clock): bool {
-    clock.timestamp_ms() == self.last_settlement_ms<T>()
+/// `public(package)` so the latch predicate is directly testable without a
+/// test-only seam: a never-settled coin (`last_settlement_ms` is `none`) must
+/// read as not-settled even at `clock.timestamp_ms() == 0`.
+public(package) fun settled_this_timestamp<T>(self: &Account, clock: &Clock): bool {
+    self.last_settlement_ms<T>() == option::some(clock.timestamp_ms())
 }
 
-fun last_settlement_ms<T>(self: &Account): u64 {
+/// `none` when `T` has never been settled — distinct from a real settlement at
+/// timestamp 0. Returning `0` for "never settled" would collide with a clock at
+/// timestamp 0, making a never-settled coin read as already-settled.
+fun last_settlement_ms<T>(self: &Account): Option<u64> {
     let key = CoinKey<T>();
     if (self.settlements.contains(key)) {
         let timestamp: &u64 = &self.settlements[key];
-        *timestamp
+        option::some(*timestamp)
     } else {
-        0
+        option::none()
     }
 }
 
