@@ -371,6 +371,10 @@ jobs:
             Return exactly READY. Do not inspect repository files or perform any
             other work. This initializes the runtime for a later private review.
 
+      # The pinned action documents that its authenticated Responses API proxy and
+      # Codex configuration remain available to later `codex` calls in this job:
+      # https://github.com/openai/codex-action/blob/52fe01ec70a42f454c9d2ebd47598f9fd6893d56/README.md#additional-tips
+      # Keep OPENAI_API_KEY out of this step so the review process cannot read it.
       - name: Run private advisory Codex review
         id: codex-review
         if: >-
