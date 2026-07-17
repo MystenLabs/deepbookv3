@@ -75,7 +75,13 @@ public struct CoinKey<phantom T>() has copy, drop, store;
 
 /// Hot-potato authority to mutably open an `AccountWrapper`.
 public struct Auth {
+    /// `AUTH_OWNER` or `AUTH_APP`; anything else is rejected by `EInvalidAuth`.
     kind: u8,
+    /// Meaningful only when `kind == AUTH_OWNER`, where it is the authority the
+    /// account is matched against — a transaction sender (`generate_auth`) or an
+    /// object address (`generate_auth_as_object`). When `kind == AUTH_APP` this
+    /// is the `@0x0` sentinel and is never read: app authority is carried by the
+    /// registry's authorization of the app, not by an address here.
     owner: address,
 }
 

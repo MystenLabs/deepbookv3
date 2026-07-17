@@ -310,6 +310,13 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
 /// The single version gate for the package: every version-gated flow threads the
 /// shared `ProtocolConfig` and calls this first. Replaces the former per-object
 /// `allowed_versions` mirrors.
+///
+/// `EPackageVersionDisabled` is unreachable within any one package version, and
+/// so carries no `expected_failure` test: `bump_version_watermark` only ever
+/// stores the *running* `current_version!()`, so `version_watermark` can never
+/// exceed the version of the package that wrote it. The gate fires only after a
+/// live upgrade, when a superseded package calls this with a watermark a newer
+/// package advanced past it — which is exactly what it exists to do.
 public(package) fun assert_version(config: &ProtocolConfig) {
     assert!(constants::current_version!() >= config.version_watermark, EPackageVersionDisabled);
 }

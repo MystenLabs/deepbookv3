@@ -26,6 +26,8 @@ public struct OrderMinted has copy, drop, store {
     /// form, `tick * tick_size` with the `tick_size` from `MarketCreated`.
     lower_tick: u64,
     higher_tick: u64,
+    /// 1e9-scaled; `1_000_000_000` is 1x (unleveraged) and is the floor enforced
+    /// at mint.
     leverage: u64,
     /// 1e9-scaled range probability quoted at entry.
     entry_probability: u64,

@@ -16,6 +16,11 @@ use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use sui::clock::Clock;
 
+/// `EWrongVersion` is unreachable within any one package version, and so carries
+/// no `expected_failure` test: `create_and_share` stamps the feed with
+/// `current_version!()`, and `migrate` only advances it forward to that same
+/// compiled constant. The gate fires only after a live package upgrade, against
+/// a feed that has not been migrated yet — which is what it exists to do.
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
 const ERawSpotNotFound: u64 = 2;

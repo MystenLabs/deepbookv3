@@ -14,6 +14,11 @@ use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
 const ERawForwardNotFound: u64 = 1;
+/// `EWrongVersion` is unreachable within any one package version, and so carries
+/// no `expected_failure` test: `create_and_share` stamps the feed with
+/// `current_version!()`, and `migrate` only advances it forward to that same
+/// compiled constant. The gate fires only after a live package upgrade, against
+/// a feed that has not been migrated yet — which is what it exists to do.
 const EWrongVersion: u64 = 2;
 const ENotNewerVersion: u64 = 3;
 
