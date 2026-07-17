@@ -84,7 +84,7 @@ public(package) fun assert_liquidation_ltv(value: u64) {
     );
 }
 
-/// Global admission-leverage cap snapshotted by future expiry markets. Mint
+/// Global admission-leverage cap snapshotted by newly created expiry markets. Mint
 /// admission scales this cap down for low-probability contracts.
 public(package) macro fun default_max_admission_leverage(): u64 {
     3 * fixed_math::math::float_scaling!()
@@ -233,11 +233,7 @@ public(package) fun assert_cadence_window_size(value: u64) {
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
 
-// The envelope floors the admissible entry band at 1% (one cent per contract):
-// budget-bias mint sizing is conservative by at most one premium unit, and one
-// unit stays sub-lot only while entry probability cannot be configured below
-// this floor (worst reachable case ~152 raw units per unit at the 10x template
-// leverage envelope, vs the 10_000-unit lot).
+// The 1% hard floor keeps the budget-to-quantity inverse's rounding undershoot below one position lot throughout the supported leverage envelope.
 public(package) macro fun min_min_entry_probability(): u64 { 10_000_000 }
 
 public(package) macro fun max_min_entry_probability(): u64 {
@@ -317,8 +313,7 @@ public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
 
 // === EWMA Penalty ===
 
-/// Smoothing factor for the gas-price EWMA in FLOAT_SCALING. ~1% reacts slowly,
-/// mirroring DeepBook core. Bounded below float_scaling so `1 - alpha` stays positive.
+/// Smoothing factor for the gas-price EWMA in FLOAT_SCALING. The default 1% reacts slowly; the upper bound keeps `1 - alpha` positive.
 public(package) macro fun default_ewma_alpha(): u64 { 10_000_000 }
 
 public(package) macro fun min_ewma_alpha(): u64 { 1 }

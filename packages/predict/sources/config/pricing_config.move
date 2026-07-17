@@ -11,11 +11,11 @@ use deepbook_predict::config_constants;
 
 /// Freshness parameters used when resolving live Predict probabilities.
 public struct PricingConfig has store {
-    /// Maximum age for Pyth spot to be used as canonical live spot.
+    /// Fixed wall-clock maximum age for Pyth spot; it does not vary with time to expiry.
     pyth_spot_freshness_ms: u64,
-    /// Maximum age for Block Scholes spot and forward to be used in live pricing.
+    /// Fixed wall-clock maximum age for Block Scholes spot and forward; it does not vary with time to expiry.
     block_scholes_price_freshness_ms: u64,
-    /// Maximum age for Block Scholes SVI params to be used in live pricing.
+    /// Fixed wall-clock maximum age for Block Scholes SVI parameters; it does not vary with time to expiry.
     block_scholes_svi_freshness_ms: u64,
 }
 

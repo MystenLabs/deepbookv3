@@ -44,13 +44,12 @@ public struct Registry has key {
 
 // === Public Functions ===
 
-/// Return the registry object ID.
+/// Return the registry object ID for external discovery and PTB construction.
 public fun id(registry: &Registry): ID {
     registry.id.to_inner()
 }
 
-/// Return the expiry market ID for `(propbook_underlying_id, expiry)`, if one
-/// has been created.
+/// Resolve an expiry market ID for external discovery and PTB construction.
 public fun expiry_market_id(
     registry: &Registry,
     propbook_underlying_id: u32,
@@ -59,7 +58,7 @@ public fun expiry_market_id(
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
 }
 
-/// Return the stored deployment policy for one underlying/cadence.
+/// Return deployment policy for SDK and dev-inspect market discovery.
 public fun cadence_config(
     registry: &Registry,
     propbook_underlying_id: u32,
@@ -70,8 +69,8 @@ public fun cadence_config(
 
 // === PauseCap Lifecycle (admin) ===
 
-/// Mint a new `PauseCap`. Admin-only and bypasses the version gate so the
-/// kill switch remains available even when admin has misconfigured versions.
+/// Mint a new `PauseCap`. This bypasses the version gate so emergency pause
+/// authority remains available from a package version below the runtime floor.
 public fun mint_pause_cap(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
@@ -90,8 +89,7 @@ public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, paus
 
 // === MarketLifecycleCap Lifecycle (admin) ===
 
-/// Mint a new `MarketLifecycleCap`. Admin-only and version-gated because
-/// granting privileged lifecycle authority under a version freeze is risky.
+/// Mint a version-gated `MarketLifecycleCap` with market-creation and valuation authority.
 public fun mint_lifecycle_cap(
     registry: &mut Registry,
     config: &ProtocolConfig,
@@ -104,17 +102,12 @@ public fun mint_lifecycle_cap(
     cap
 }
 
-/// Revoke a previously minted `MarketLifecycleCap` by ID. Admin-only.
-/// Deliberately not version-gated (like pause-cap revocation): revocation is
-/// harm-reducing and must stay available even when the running package version
-/// is frozen below the protocol watermark.
+/// Revoke a `MarketLifecycleCap` by ID without applying the version gate.
 public fun revoke_lifecycle_cap(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     lifecycle_cap_id: ID,
 ) {
-    // Distinct from the gate code so expected_failure tests that revoke first
-    // stay pinned to the create gate under test.
     assert!(registry.allowed_lifecycle_caps.contains(&lifecycle_cap_id), ELifecycleCapNotFound);
     registry.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
 }
@@ -207,20 +200,11 @@ public fun set_template_cadence_config(
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
 ///
-/// Requires an allowlisted `MarketLifecycleCap`. The market manager enforces one
-/// market per `(propbook_underlying_id, expiry)`, that the underlying is
-/// admin-approved for Predict, that the cadence is enabled and inside its
-/// deployment window after skipping enabled higher-rank cadence slots and already
-/// created markets, and — via Propbook's admin-gated canonical binding — that
-/// the underlying's Pyth spot, BS spot, BS forward, and BS SVI feed OBJECTS are
-/// bound (per-expiry forward/SVI data lanes are seeded by the first push after
-/// creation; the market is not priceable until then — see the funding note
-/// below). The market snapshots the cadence tick size and admission
-/// tick size, while pool accounting snapshots the cadence allocation cap and
-/// initial expiry cash target. Priced flows resolve the canonical oracle object IDs
-/// from Propbook's current (admin-replaceable) bindings. The market is created with zero cash and
-/// registered with the pool vault as an accounting row only; it is not mintable
-/// until `plp::rebalance_expiry_cash` funds it.
+/// Requires an allowlisted lifecycle capability, a registered underlying with all
+/// canonical feed objects bound, and an enabled cadence with a deployable slot.
+/// Higher-rank cadence overlaps and existing markets are skipped. The market
+/// snapshots cadence and expiry policy, starts with zero cash, and cannot mint
+/// until pool rebalancing funds it. Live pricing reads current Propbook bindings.
 public fun create_and_share_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -294,7 +278,7 @@ public fun create_and_share_builder_code(
 
 // === Private Functions ===
 
-/// Package initializer - creates Registry and AdminCap.
+/// Create and share protocol setup objects and transfer root authority to the publisher.
 fun init(ctx: &mut TxContext) {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     let _ = protocol_config::create_and_share(ctx);
@@ -302,7 +286,7 @@ fun init(ctx: &mut TxContext) {
     transfer::public_transfer(admin_cap, ctx.sender());
 }
 
-/// Construct registry and admin cap during package init or tests.
+/// Construct registry state and its root capability.
 fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {

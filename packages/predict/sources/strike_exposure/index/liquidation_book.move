@@ -3,14 +3,10 @@
 
 /// Priority-sorted liquidation index for active leveraged Predict orders.
 ///
-/// The active index stores order IDs in ascending order. `Order` encodes its
-/// liquidation priority in the high bits, so the front of this index contains the
-/// orders that should be checked first. Beyond serving liquidation candidates, the
-/// book owns exactly one valuation read: `correction_value` walks its active
-/// leveraged set to value the NAV floor-correction term — the only place this
-/// module touches floor math, and it reads range prices back from a caller-supplied
-/// `PriceMemo`, never owning the pricing model itself. It does not own payout backing,
-/// cash, or account positions.
+/// Order IDs sort larger quantities and then larger static floors first because
+/// those fields are inverse-encoded. Candidate selection repeatedly checks that
+/// head while rotating a smaller scan across the remaining leveraged orders. The
+/// same bounded active set supplies the floor-correction term for pool valuation.
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo};
@@ -64,15 +60,10 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
 /// Sum the NAV floor-correction term over the active leveraged book:
 /// `Σ min(qty·range_price(lower, higher), floor_shares)`.
 ///
-/// The active index already holds exactly the leveraged orders (1x mints are
-/// no-ops, liquidated orders are removed), so this scan needs no extra
-/// filtering. Each active order's range price is read back from `memo` — the price
-/// cache the NAV linear walk filled for every tree node — so no order is re-priced.
-/// The `min` is the order's limited-recourse static floor: a knocked-out order's
-/// range value is capped at its floor and nets to zero against the linear term, so
-/// NAV needs no liquidation pass for an exact mark. All terms are non-negative — a
-/// plain `u64` sum. Every leveraged boundary is a tree node, so every lookup hits;
-/// `cached_range_price` aborts if one does not (a broken exposure index).
+/// One-x orders are never inserted and liquidated orders are removed. Boundary
+/// prices come from the payout walk's memo, and every finite leveraged boundary
+/// must be present there. The correction is rounded and capped independently for
+/// each still-active leveraged order; it does not apply the liquidation threshold.
 public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): u64 {
     let mut correction = 0;
     let mut cursor = book.first_cursor();
@@ -100,7 +91,9 @@ public(package) fun new(ctx: &mut TxContext): LiquidationBook {
     }
 }
 
-/// Return a bounded liquidation candidate batch and advance passive scan state.
+/// Return at most `budget` candidates. Most come from the priority head; the
+/// remainder advances a persistent cursor through the tail so lower-priority
+/// active orders are eventually reconsidered.
 public(package) fun select_liquidation_candidates(
     book: &mut LiquidationBook,
     budget: u64,

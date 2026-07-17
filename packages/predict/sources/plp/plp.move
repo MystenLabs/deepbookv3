@@ -5,15 +5,14 @@
 ///
 /// PoolVault owns the PLP treasury cap, the pooled DEEP staked by accounts, idle
 /// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
-/// accounting, and the async LP supply/withdraw queues. It coordinates the
+/// accounting, and the queued LP supply/withdraw requests. It coordinates the
 /// full-pool NAV valuation (a hot-potato aggregation over every active market) and
 /// the unified per-market cash flow (initial funding, live rebalance/sweep, and
 /// settled-market sweep with terminal profit materialization). LPs queue
-/// supply/withdraw requests routed through a loaded Account; the daily flush
+/// supply/withdraw requests routed through a loaded Account; each flush
 /// (`finish_flush`) drains them at the frozen pool NAV, minting/burning PLP and
-/// delivering fills to each account via the balance accumulator. PLP incentives
-/// moved to a separate staking contract; DEEP staking is an unrelated trading
-/// feature.
+/// delivering fills to each account via the balance accumulator. DEEP held here
+/// provides account trading benefits and is not part of PLP share value.
 module deepbook_predict::plp;
 
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
@@ -63,8 +62,8 @@ public struct PLP has drop {}
 /// Pool-level vault state.
 public struct PoolVault has key {
     id: UID,
-    /// Protocol-owned DUSDC (the materialized terminal-profit cut) excluded from
-    /// PLP redemption.
+    /// Protocol-owned DUSDC excluded from PLP redemption. No package entrypoint
+    /// withdraws this balance.
     protocol_reserve_balance: Balance<DUSDC>,
     /// Sponsor-funded DUSDC reserved for taker fee sponsorship, excluded from PLP NAV.
     fee_incentive_reserve: Balance<DUSDC>,
@@ -138,86 +137,75 @@ fun create_and_share_vault(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext):
 
 // === Public Functions ===
 
-/// Return the pool vault object ID.
+/// Return the pool vault object ID for external discovery and PTB construction.
 public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
 }
 
-/// Return DEEP staked by accounts and held in custody by the pool.
+/// Return pooled DEEP custody for SDK and dev-inspect state reads.
 public fun staked_deep(vault: &PoolVault): u64 {
     vault.staked_deep.value()
 }
 
-/// Return idle DUSDC held by the pool (available for funding and withdrawals).
+/// Return idle DUSDC for SDK and dev-inspect state reads.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.expiry_accounting.idle_balance()
 }
 
-/// Return protocol-owned DUSDC excluded from PLP redemption.
+/// Return protocol-owned DUSDC for SDK and dev-inspect state reads.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
 }
 
-/// Return sponsor-funded DUSDC available for future fee-incentive allocation.
+/// Return sponsor-funded fee reserves for SDK and dev-inspect state reads.
 public fun fee_incentive_reserve(vault: &PoolVault): u64 {
     vault.fee_incentive_reserve.value()
 }
 
-/// Return the total PLP share supply outstanding.
+/// Return total PLP supply for SDK and dev-inspect state reads.
 public fun plp_total_supply(vault: &PoolVault): u64 {
     vault.lp.total_supply()
 }
 
-/// Return the count of pending (un-drained) LP supply requests.
+/// Return pending LP supply count for SDK and dev-inspect queue reads.
 public fun supply_requests_pending(vault: &PoolVault): u64 {
     vault.lp.supply_requests_pending()
 }
 
-/// Return the count of pending (un-drained) LP withdraw requests.
+/// Return pending LP withdrawal count for SDK and dev-inspect queue reads.
 public fun withdraw_requests_pending(vault: &PoolVault): u64 {
     vault.lp.withdraw_requests_pending()
 }
 
-/// Return the expiry markets still contributing active pool valuation/risk.
+/// Return active expiry IDs for external PTB construction and pool inspection.
 public fun active_expiry_markets(vault: &PoolVault): vector<ID> {
     vault.expiry_accounting.active_expiry_markets()
 }
 
-/// Return the count of active pre-expiry markets that require live NAV valuation.
+/// Return the pre-expiry active count for SDK and dev-inspect capacity reads.
 public fun active_live_expiry_count(vault: &PoolVault, clock: &Clock): u64 {
     vault.expiry_accounting.active_live_expiry_count(clock.timestamp_ms())
 }
 
-/// Return the pricing debit side of the aggregate expiry profit basis.
+/// Return the profit-basis debits for external accounting observability.
 public fun profit_basis_debits(vault: &PoolVault): u64 {
     vault.expiry_accounting.profit_basis_debits()
 }
 
-/// Return the pricing credit side of the aggregate expiry profit basis.
+/// Return the profit-basis credits for external accounting observability.
 public fun profit_basis_credits(vault: &PoolVault): u64 {
     vault.expiry_accounting.profit_basis_credits()
 }
 
-/// Return the materialized protocol cut still awaiting a physical move to the reserve.
+/// Return deferred protocol profit for external accounting observability.
 public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Begin a full-pool flush (NAV valuation + LP queue drain) as a market deployer,
-/// using a registry-generated `MarketLifecycleProof`. This is the sole flush start:
-/// it is cron-driven and PRIVILEGED, not permissionless (audit L8). Engages the
-/// protocol valuation lock — so no NAV-changing op can interleave between value
-/// steps — and snapshots the active expiry set every `value_expiry` must cover. The
-/// hot potato can only be created here, so gating the start gates the whole flush.
-///
-/// The flush prices the pool NAV off the live oracle and `finish_flush` drains the
-/// LP queues at that mark, and Pyth updates (`pyth_feed::update`) are permissionless
-/// — so a flush-capable cap-holder who manipulates the live oracle in a preceding
-/// tx, then flushes, could fill their own queued supply/withdraw request at a mark
-/// they chose. The start is therefore gated on both current registry allowlisting
-/// and trust in every flush-capable holder not to manipulate the live oracle. The
-/// revocable `MarketLifecycleCap` (not the root `AdminCap`) carries this authority;
-/// admin retains a break-glass route by minting itself a lifecycle cap.
+/// Begin a full-pool valuation using a registry-issued lifecycle proof. The proof
+/// grants control over when current oracle state is frozen for queued LP fills.
+/// Starting engages the transaction-local valuation lock and snapshots every
+/// active expiry that must be included before the queues can drain.
 public fun start_pool_valuation(
     config: &mut ProtocolConfig,
     vault: &PoolVault,
@@ -229,14 +217,13 @@ public fun start_pool_valuation(
 }
 
 /// Run the per-market cash flow for one snapshotted market, then fold its NAV into
-/// the running total. The market must be in the snapshot and not already valued
-/// (the exactly-once proof). The flush IS the valuation: a settled market is swept
+/// the running total. The market must be in the snapshot and not already valued.
+/// A settled market is swept
 /// (deactivated, cash returned, profit materialized) and contributes 0; a live
 /// market is rebalanced to target and valued on its current cash.
 ///
-/// Settlement is a separate PTB step through `expiry_market::try_settle`. A settled
-/// market is swept here and contributes 0; an unsettled market is valued live, so a
-/// past-expiry market still aborts through `current_nav` until settlement succeeds.
+/// Settlement is a separate PTB step through `expiry_market::try_settle`. An
+/// expired unsettled market cannot produce the live pricer required here.
 public fun value_expiry(
     valuation: &mut PoolValuation,
     vault: &mut PoolVault,
@@ -279,13 +266,12 @@ public fun value_expiry(
 /// LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV, net of the
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
-/// `supply_budget` / `withdraw_budget` bound how many requests each queue may
+/// `supply_budget` and `withdraw_budget` bound how many requests each queue may
 /// process this flush (`None` = unbounded). Filled heads, protocol-refunded
 /// non-executable heads, and live limit misses count as processed; a live limit
 /// miss remains queued and stops that queue for the flush. A withdrawal whose
-/// quote is valid but exceeds idle carries without spending budget. The operator
-/// sizes the budgets to the gas left after valuing the snapshotted markets. The
-/// budgets are independent, so a supply backlog never starves withdrawals.
+/// quote is valid but exceeds idle carries without spending budget. The budgets
+/// are independent, so a supply backlog does not consume withdrawal capacity.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
@@ -423,7 +409,7 @@ public fun rebalance_expiry_cash(
     vault.sweep_or_rebalance_expiry(market, config, clock);
 }
 
-/// Resolve the caller-owned account's settled trading-loss rebate.
+/// Resolve a settled trading-loss rebate using valid account authority.
 public fun claim_trading_loss_rebate(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -490,11 +476,10 @@ public fun sponsor_fee_incentives(
 /// Bootstrap the pool exactly once: permanently lock `payment` DUSDC of minimum
 /// liquidity. Mints matching PLP (1:1) into the book's locked balance — never
 /// withdrawable, so the caller receives no shares — and joins the DUSDC into idle.
-/// This keeps `total_supply > 0` for the life of the pool, making the supply==0
-/// bootstrap branch unreachable and the residual-idle re-bootstrap brick impossible.
-/// Callable only by the operator and only while the pool is pristine
-/// (`total_supply == 0`), so it runs exactly once; all supply/withdraw/flush flows
-/// abort `ENotBootstrapped` until it has.
+/// This keeps `total_supply > 0` while the vault exists and gives rounding dust a
+/// non-withdrawable PLP holder.
+/// Requires root authority and zero existing supply. Supply, withdrawal, and flush
+/// flows remain disabled until the locked liquidity has been created.
 public fun lock_capital(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -960,10 +945,8 @@ fun materialize_expiry_profit(
     );
 }
 
-/// Engage the valuation lock and snapshot the active expiry set for the single
-/// flush entrypoint, `start_pool_valuation` (lifecycle-cap-gated; the root-AdminCap
-/// flush path was removed — admin's break-glass is minting itself a lifecycle cap).
-/// Gated on a bootstrapped pool so the flush mark always has nonzero PLP supply.
+/// Engage the valuation lock and snapshot the active expiry set after requiring a
+/// bootstrapped pool with nonzero PLP supply.
 fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();

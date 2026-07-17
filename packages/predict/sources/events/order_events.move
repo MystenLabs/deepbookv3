@@ -3,10 +3,9 @@
 
 /// Order-lifecycle and liquidation events for Predict.
 ///
-/// Hot-path events stay lean: each carries the deltas and identities a consumer
-/// needs to reconstruct money flows off-chain, with no absolute balances.
-/// `order_id` joins minted, redeemed, and liquidated rows for one position. The
-/// lifecycle timestamps are the chain clock sampled during the transition.
+/// Events carry transition identities and deltas rather than account or market
+/// balances. Partial closes link an old order ID to its replacement; the position
+/// root remains constant across that chain.
 module deepbook_predict::order_events;
 
 use deepbook_predict::{order::Order, pricing::Pricer};
@@ -111,8 +110,8 @@ public struct LiquidatedOrderRedeemed has copy, drop, store {
 
 /// Emitted once per order removed by liquidation.
 ///
-/// Liquidation is permissionless and does not touch accounts, so account/owner
-/// are not known here; consumers join `order_id` to `OrderMinted`.
+/// Liquidation is permissionless and does not touch accounts, so account and owner
+/// are not available here. Replacement IDs are linked by live-redemption events.
 public struct OrderLiquidated has copy, drop, store {
     expiry_market_id: ID,
     order_id: u256,

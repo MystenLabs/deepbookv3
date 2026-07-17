@@ -1,11 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Builder code identity and reward claiming for Predict.
-///
-/// Builder codes are deterministic shared objects derived from the Predict
-/// registry. Trade flows send add-on builder fees to the code object's address
-/// balance, and the code owner can later claim those accumulated DUSDC funds.
+/// Owns deterministic builder referral codes and the DUSDC fees delivered to their object addresses through the funds accumulator.
+/// Codes are derived per owner and index, and only the immutable owner may withdraw accumulated fees.
 module deepbook_predict::builder_code;
 
 use deepbook_predict::builder_code_events;
@@ -14,10 +11,10 @@ use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object};
 
 const ENotOwner: u64 = 0;
 
-/// Key used to derive one builder code per `(owner, index)` pair.
+/// Derivation key for one builder code per owner-selected index.
 public struct BuilderCodeKey(address, u64) has copy, drop, store;
 
-/// Shared builder-code identity.
+/// Shared referral identity whose object address receives builder-fee settlements.
 public struct BuilderCode has key {
     id: UID,
     owner: address,
@@ -26,27 +23,27 @@ public struct BuilderCode has key {
 
 // === Public Functions ===
 
-/// Return the builder code object ID.
+/// Returns the code identity for trade construction and external discovery.
 public fun id(code: &BuilderCode): ID {
     code.id.to_inner()
 }
 
-/// Return the permanent owner of this builder code.
+/// Returns the immutable owner authorized to claim fees.
 public fun owner(code: &BuilderCode): address {
     code.owner
 }
 
-/// Return this owner's builder-code index.
+/// Returns the owner-selected derivation index for external discovery.
 public fun index(code: &BuilderCode): u64 {
     code.index
 }
 
-/// Return the DUSDC builder fees currently visible for this code.
+/// Return visible DUSDC builder fees for SDK and dev-inspect reads.
 public fun claimable_builder_fees(root: &AccumulatorRoot, code: &BuilderCode): u64 {
     balance::settled_funds_value<DUSDC>(root, code.id.to_address())
 }
 
-/// Claim all settled DUSDC builder fees accumulated for this code.
+/// Claims all settled DUSDC builder fees for the immutable owner; an empty accumulator returns a zero coin.
 public fun claim_all_builder_fees(
     code: &mut BuilderCode,
     root: &AccumulatorRoot,
@@ -63,7 +60,7 @@ public fun claim_all_builder_fees(
 
 // === Public-Package Functions ===
 
-/// Create and share a derived builder code for the transaction sender.
+/// Derives and shares a builder code for the transaction sender and index under the registry root.
 public(package) fun create_and_share(registry_uid: &mut UID, index: u64, ctx: &TxContext): ID {
     let owner = ctx.sender();
     let code = BuilderCode {

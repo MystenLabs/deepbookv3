@@ -32,7 +32,7 @@ public struct StrikeExposureConfig has store {
     /// scales it down. Actual liquidation still uses `liquidation_ltv`.
     max_admission_leverage: u64,
     /// Fraction of the disjoint-book backing gap reserved for early exits.
-    /// 1.0 fully reserves early exits, matching the pre-buffer summed reserve.
+    /// A value of 1.0 reserves the full gap.
     backing_buffer_lambda: u64,
     /// Base fee multiplier for Bernoulli scaling.
     /// Effective base fee = base_fee * sqrt(price * (1 - price)).
@@ -101,7 +101,7 @@ public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
 }
 
-/// Return the raw trade fee for a live probability and quantity.
+/// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
 ///
 /// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
 /// before passing timestamps because the fee-rate helper derives time-to-expiry
@@ -325,7 +325,7 @@ fun admitted_leverage_cap(
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
-    // = (max_multiplier - 1) * elapsed / window, round down; the dust is pool-favored.
+    // = (max_multiplier - 1) * elapsed / window, round down; the trader keeps the ramp dust.
     let ramp = math::mul_div_down(
         config.expiry_fee_max_multiplier - math::float_scaling!(),
         config.expiry_fee_window_ms - time_to_expiry_ms,

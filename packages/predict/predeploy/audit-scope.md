@@ -10,32 +10,33 @@ with rationale).
 
 - Commit: the `deepbookv3` `main` commit tagged for the audit — stamped here
   when the tag is cut.
-- Move packages in scope: `predict`, `propbook`, `block_scholes_oracle`,
-  `account`, plus the shared libraries `fixed_math` and `dusdc`.
+- Move packages in scope: `predict`, `propbook`, `account`, and `fixed_math`.
 
 ## Not in scope
 
 - **Off-chain systems.** The indexer, server, keeper, and SDK live in other
   repositories and are not part of this snapshot.
+- **Dependency packages.** `block_scholes_oracle` and `dusdc` are present only
+  to build the scoped contracts. Their implementations are not audit targets;
+  the scoped contracts are reviewed against the interface assumptions below.
 - **The asynchronous NAV-flush rewrite.** The audited system values the pool in
   one atomic pool-flush transaction. A per-market asynchronous refresh is not
   part of this snapshot; the atomic flush is what is audited. Its known
   capacity limit is recorded as `open-items.md` C-1.
 - **Code not present at this commit.** Only what exists in the four packages at
-  the tagged commit is in scope. There is no token-staking reward system; the
-  only stake references are the loss-rebate gaming-resistance gate, which is in
-  scope.
+  the tagged commit is in scope. There is no token-staking reward system; DEEP
+  staking for trading-fee discounts and trading-loss rebates is in scope.
 
 ## Trust model — what the contracts assume
 
 Treat these as the system's stated assumptions, each tied to its tracked item.
 
-- **The Block Scholes volatility surface is a trusted input.** Surface updates
-  are permissionless and gated by source id, timestamp monotonicity, freshness,
-  and a pricing-safe envelope — not by a signature verifier, which is currently
-  a stub (`open-items.md` S-4, a deploy gate). Surface authenticity and quality
-  are assumed until that verifier ships or the push surface is capability-gated.
-  A malformed update also has a write-path gap (`open-items.md` P-5).
+- **Block Scholes update objects are authenticated external inputs.** The audit
+  model assumes the verifier produces unforgeable spot, forward, and SVI update
+  objects bound to the claimed provider source. Propbook still owns source-id,
+  timestamp, and storage validation; Predict owns freshness and its pricing-safe
+  envelope. `open-items.md` S-4 tracks the production dependency swap, while
+  P-5 tracks raw-value fitness after authentication.
 - **Oracle freshness bounds are policy, not proof.** Near-expiry pricing can
   consume a stale-but-fresh-enough surface (`open-items.md` P-2, O-1). Exact
   settlement trusts Propbook's exact-history key (`response-policies.md` RP-14).
@@ -43,8 +44,10 @@ Treat these as the system's stated assumptions, each tied to its tracked item.
   have no on-chain revoke or rotate path, and a leaked account admin cap can
   reach user custody (`open-items.md` G-1).
 - **The pool flush is privileged, not permissionless** (`response-policies.md`
-  RP-6). It executes at the exact NAV mark, with the pre-deploy price and basis
-  circuit breakers intentionally removed (RP-1, RP-5).
+  RP-6). It freezes one contract-produced NAV mark for both LP supply and
+  withdrawal. `open-items.md` P-10, P-11, and P-13 track where current aggregate
+  valuation can differ from per-order recoverable value; the pre-deploy price
+  and basis circuit breakers are intentionally removed (RP-1, RP-5).
 
 ## Known issues — where the detail lives
 
@@ -52,7 +55,7 @@ This snapshot ships with its open questions catalogued. Nothing here is hidden
 from the audit; the two files below are the authoritative detail.
 
 - **Open findings and undecided questions — `open-items.md`.** Deploy gate:
-  S-4. Contract findings: P-2, P-5, P-8, P-10, P-11. Access and governance:
+  S-4. Contract findings: P-2, P-5, P-8, P-10, P-11, P-13. Access and governance:
   G-1. Capacity and liveness: C-1. Oracle calibration: O-1. Maintainability:
   H-3, H-5, H-6, H-7.
 - **Risks accepted with rationale — `response-policies.md` RP-1…RP-14 and the
@@ -65,5 +68,5 @@ from the audit; the two files below are the authoritative detail.
 ## Deploy gates
 
 Distinct from the audit: these carry an explicit decision before the system
-holds real value — S-4 (the update verifier), P-8 (a protocol-reserve
-withdrawal path), and G-1 (admin-capability rotation).
+holds real value — S-4 (the production verifier dependency), P-8 (a
+protocol-reserve withdrawal path), and G-1 (admin-capability rotation).

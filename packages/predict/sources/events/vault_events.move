@@ -1,9 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault events for Predict: DEEP staking, expiry cash/profit, fee
-/// incentives, and the async LP supply/withdraw request → flush lifecycle (the
-/// flush event carries the full-pool valuation it priced fills at).
+/// Pool-vault events for staking, expiry cash and profit, fee incentives, and the
+/// queued LP request lifecycle. A flush records the frozen pool mark used by fills.
 module deepbook_predict::vault_events;
 
 use sui::event;
@@ -159,12 +158,8 @@ public struct WithdrawFilled has copy, drop, store {
     requests_pending_after: u64,
 }
 
-/// Emitted once per flush after both queues drain. The flush IS the full-pool
-/// valuation, so this single event carries the frozen mark every fill was priced at
-/// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
-/// plus `active_market_nav` over `market_count` active markets), how many of each
-/// kind filled, how many queue heads spent per-flush budget (filled,
-/// protocol-refunded, or live limit-missed), and the idle balance after the drain.
+/// Emitted once after a flush drains both queues. `pool_value / total_supply` is
+/// the frozen pre-drain mark used by every fill in the flush.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
@@ -173,7 +168,7 @@ public struct FlushExecuted has copy, drop, store {
     pool_value: u64,
     /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
-    /// Σ of each active market's exact NAV at valuation (settled markets contribute 0).
+    /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,

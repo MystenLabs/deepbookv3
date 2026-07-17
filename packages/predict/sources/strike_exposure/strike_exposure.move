@@ -191,11 +191,10 @@ public(package) fun try_settlement_price(exposure: &StrikeExposure): Option<u64>
     exposure.settlement_price
 }
 
-/// Return the buffered live reserve or exact remaining settled payout liability.
+/// Return the buffered live reserve or remaining settled payout liability.
 ///
 /// Live reserve is the settlement floor (max single-point net payout) plus a
-/// configured fraction of the disjoint-book gap. Lambda at 1.0 reproduces the
-/// old summed reserve because `math::mul(1_000_000_000, gap) == gap`.
+/// configured fraction of the gap between summed and maximum point payout.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     if (exposure.is_settled()) {
         exposure.settled_payout_liability
@@ -207,23 +206,14 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     }
 }
 
-/// Value this book's exact live liability for one live price snapshot:
-/// `linear - correction`, where `linear = Σ_orders qty·P` is the full payout-tree
-/// walk and `correction = Σ_leveraged min(qty·P, floor_shares)` is the static-floor
-/// scan over the active leveraged set. The per-order floor cap makes a knocked-out
-/// leveraged order net to zero, so no liquidation pass is needed for an exact mark.
-/// `correction <= linear` for any mint-admitted book (each leveraged order's `min`
-/// is capped at its own linear contribution), so the saturating_sub floors only the
-/// bounded valuation ulp dust the linear walk can carry, rather than aborting. A
-/// pure read returning the liability fact; the caller owns the NAV/cash clamp.
-///
-/// The linear walk prices every tree node once into `memo`; the correction reads
-/// each leveraged order's boundary prices back from it, so no order is re-priced.
+/// Return the live marked liability as the aggregate boundary-linear term minus
+/// `Σ_active_leveraged min(order_range_value, floor_shares)`. Boundary aggregation
+/// and per-order correction round at different points, so subtraction saturates at
+/// zero. A still-active order in the liquidation band contributes its positive
+/// `range_value - floor_shares` until a close or liquidation pass removes it.
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
-    // Linear term: the full payout-tree walk, caching each boundary's price.
     let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
-    // Correction term: the static-floor-capped scan, reading prices from the cache.
     let correction = exposure.liquidation.correction_value(&memo);
     linear.saturating_sub(correction)
 }
@@ -291,19 +281,16 @@ public(package) fun trading_fee(
         )
 }
 
-/// Return whether an order is live in the active indexes: minted and neither
-/// closed nor liquidated.
+/// Return whether a leveraged order remains in the liquidation index. One-x
+/// orders are never indexed and always return false.
 public(package) fun is_active_order(exposure: &StrikeExposure, order: &Order): bool {
     exposure.liquidation.contains_active_order(order)
 }
 
-/// Quote the mint terms for one request: price the range, choose the quantity
-/// per the request bias, and run full mint admission on the result. Quantity
-/// bias (`exact_quantity = true`) takes `min_quantity` verbatim; budget
-/// bias sizes the largest lot-rounded quantity whose net premium fits
-/// `max_premium`, with `min_quantity` as the fill floor. Shares every admission
-/// abort with the mint path, including lot-size validity and the fill floor,
-/// so a quote aborts exactly when the mint-side terms computation would.
+/// Price a range, choose quantity under the requested bias, and run mint
+/// admission. Exact-quantity mode uses `min_quantity`. Budget mode uses a
+/// conservative lot-rounded premium search, then requires the result to meet
+/// `min_quantity`.
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -321,9 +308,7 @@ public(package) fun quote_mint_terms(
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        // Policy first: the search divides by `leverage`, so a policy-invalid
-        // request must abort with its domain code before the first probe (also
-        // the pre-unification abort order of the budget path).
+        // Validate policy before the search divides by leverage.
         exposure
             .config
             .assert_mint_probability_and_leverage_policy(
@@ -331,16 +316,10 @@ public(package) fun quote_mint_terms(
                 leverage,
                 time_to_expiry_ms,
             );
-        // Largest lot count whose net premium fits the budget: binary search on
-        // the monotone premium relation. The single-floor probe over-estimates
-        // admission's two-floor charge (`assert_mint_admission`) by at most one
-        // premium unit, so sizing is conservative: the charged premium never
-        // exceeds the budget, and the fill is at most one lot short of the
-        // exact maximum. One premium unit spans `leverage / entry_probability`
-        // raw quantity units, which stays sub-lot only because the config
-        // envelope floors entry probability at 1%
-        // (`config_constants::min_min_entry_probability`) — worst reachable
-        // case ~152 raw units vs the 10_000-unit lot.
+        // The single-floor probe overstates the admitted two-floor premium by at
+        // most one unit. The configured probability floor keeps that difference
+        // below one lot, so sizing never exceeds the budget and may undershoot the
+        // largest admissible quantity by at most one lot.
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
@@ -364,8 +343,7 @@ public(package) fun quote_mint_terms(
             leverage,
             time_to_expiry_ms,
         );
-    // Runs after admission so the quote path keeps mint's abort order (mint hits
-    // this check inside order construction, after admission).
+    // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
     MintTerms {
         expiry_market_id: exposure.expiry_market_id,
@@ -488,7 +466,7 @@ public(package) fun process_close(
     }
 }
 
-/// Run one bounded liquidation pass using exact per-candidate pricing.
+/// Price and conditionally remove one bounded batch of liquidation candidates.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -514,7 +492,7 @@ public(package) fun liquidate_live_orders(
     liquidated_count
 }
 
-/// Enter the settled phase by recording the terminal price and its exact payout
+/// Enter the settled phase by recording the terminal price and aggregate payout
 /// liability. The caller owns expiry and oracle validation.
 public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_price: u64) {
     if (exposure.is_settled()) return;
@@ -526,7 +504,7 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
     exposure.settled_payout_liability = settled_payout_liability;
 }
 
-/// Set the reference fine-grid tick that can bypass coarser mint admission once wired.
+/// Set the reference fine-grid tick that can bypass coarser mint admission.
 /// Returns `true` only when this call records the tick for the first time.
 /// Repeated calls are idempotent for the same tick and abort for a different one.
 public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64): bool {
@@ -666,10 +644,8 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
 /// index and release its quoted payout from the settled liability.
 fun process_settled_close(exposure: &mut StrikeExposure, order: &Order, payout: u64) {
     exposure.liquidation.remove_order(order);
-    // The settled liability was derived from the payout tree's same aggregate
-    // atoms, so reserve == payout and the subtraction cannot underflow (R1
-    // liveness). The static floor makes the terms exactly additive, so this
-    // holds with no dust buffer.
+    // Settlement liability and individual payouts use the same integer quantity
+    // and floor atoms, so the subtraction is additive without rounding dust.
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
 }
 
@@ -766,10 +742,8 @@ fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
     math::mul(exposure.order_range_price(pricer, order), order.quantity())
 }
 
-/// The knock-out test: live value at or under the LTV-buffered static floor.
-/// The LTV buffer is the anti-arbitrage enforcement margin — knock out a hair
-/// before zero equity so a missed barrier touch can't be monetized; the reserve
-/// already backs the full `Q - F`, so this is not a solvency margin.
+/// Return whether live gross value is at or below the configured multiple of the
+/// static floor. The reserve independently backs the order's full net payout.
 fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_amount: u64): bool {
     gross_value <= math::div(floor_amount, exposure.config.liquidation_ltv())
 }

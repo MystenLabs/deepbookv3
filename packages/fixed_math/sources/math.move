@@ -1,66 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Math utilities for fixed-point arithmetic (FLOAT_SCALING = 1e9) and exact
-/// integer ratios.
-///
-/// Provides:
-/// - mul(x, y): 1e9-scaled multiplication, rounded down
-/// - div(x, y): 1e9-scaled division, rounded down
-/// - mul_div_down(x, y, denominator): raw integer x*y/denominator, rounded down
-/// - mul_div_up(x, y, denominator): raw integer x*y/denominator, rounded up
-/// - try_mul_div_down / try_mul_div_up: non-aborting checked variants
-/// - ln(x): natural logarithm
-/// - exp(x): exponential function for signed fixed-point inputs
-/// - sqrt(x, precision): fixed-point square root
-/// - normal_cdf(x): standard normal CDF for signed fixed-point inputs
-/// - normal_pdf(x): standard normal PDF for signed fixed-point inputs
-///
-/// Public functions use `u64` for nonnegative values and `i64::I64` for signed
-/// fixed-point values. Internal math uses u128 to minimize truncation.
-///
-/// # Precision contract
-///
-/// These primitives trade exactness for cheap on-chain evaluation, so each is
-/// held to a documented error budget. The budgets are derived from downstream
-/// pricing sensitivity (`pricing.move` computes a skew-adjusted digital from
-/// `Φ(d2)` and `φ(d2)`, with `ln` and `sqrt` feeding `d2`), NOT measured from
-/// the implementation's own output.
-/// Quote impact is regime-dependent. Away from expiry (variance not small) the
-/// math layer moves any quote by at most ~1e-7 of full scale (~100 units on a
-/// 1e9 price): `normal_cdf` error reaches the quote 1:1 (the binding term there),
-/// while `ln`/`sqrt`/`exp` errors are attenuated by `φ(d2) <= 0.399` (and `ln`'s
-/// error is largest at deep-OTM strikes, where `φ(d2) -> 0`). Near expiry the
-/// binding term flips: `d2 = -(k + w/2)/sqrt(w)` is ill-conditioned in the total
-/// variance `w` (its sensitivity `d(d2)/dw = 0.5*w^(-3/2)*(k - w/2)` grows like
-/// `w^(-3/2)`), so a sub-1-ULP error in `w` is amplified by ~1e3-1e4 into `d2`
-/// *before* the `φ(d2)` attenuation. At small variance and moderate moneyness
-/// (`|d2| ~ 1`) this dominates, and the worst-case quote impact rises to ~2.4e-6
-/// of full scale (~2_400 units @1e9). Still negligible versus tick size and fees
-/// and sign-varying (no pool bias), but the variance (`sqrt`/`mul`) term — not
-/// `normal_cdf` — is binding in this regime. Verified per-strike against an
-/// independent erf reference on real near-expiry SVI data in
-/// `pricing_exact_tests.move`.
-///
-/// | primitive  | budget                | rounding / bias                       |
-/// |------------|-----------------------|---------------------------------------|
-/// | normal_cdf | <= 2e-8 abs (20u @1e9)| sign-varying, <= 1 ULP at test points |
-/// | normal_pdf | <= 50 abs units @1e9 | sign-varying, rounds tails to 0        |
-/// | exp        | <= 1e-7 relative      | sign-varying, ~1e-9 over used range    |
-/// | ln         | <= 1e-7 relative      | sign-varying, ~1e-9                     |
-/// | sqrt       | <= 1 ULP (1e-9)       | floor (integer floor-sqrt, <= true)    |
-///
-/// The `normal_pdf` absolute budget is `phi(0) * exp_rel_budget ≈ 0.399 * 1e-7`
-/// of full scale (~40 units @1e9), plus fixed-point exponent and final-mul floor
-/// dust; tests assert a 50-unit envelope.
-///
-/// `exp` is invoked by `normal_cdf` (the `exp(-x²/2)` tail factor) and
-/// `normal_pdf` with moderate negative arguments, where its relative error is
-/// ~1e-9; the large-positive-argument path is unused on the pricing path. No
-/// primitive carries a systematic bias against the pool — the protocol's designed
-/// floor-rounding direction lives in this module's `mul`/`div`, far above this
-/// resolution. Budgets are asserted in `math_tests.move` against an independent
-/// reference (`tests/helper/reference/generate_constants.py`).
+/// Fixed-point arithmetic at 1e9 scale, raw integer ratio helpers, and bounded approximations for common transcendental functions.
+/// Integer ratio functions state their rounding direction explicitly; signed scaled operations truncate magnitude toward zero.
+/// Approximation error is sign-varying: `normal_cdf` is within 20 raw units, `normal_pdf` within 50 raw units, `exp` and `ln` within 1e-7 relative error, and `sqrt` floors within one raw unit.
+/// These are primitive-level bounds; callers remain responsible for any amplification caused by an ill-conditioned formula.
 module fixed_math::math;
 
 use fixed_math::i64;
@@ -75,10 +19,7 @@ const F: u128 = 1_000_000_000;
 const LN2_U128: u128 = 693_147_180;
 const INV_SQRT_2PI: u64 = 398_942_280;
 
-// Largest exp input guaranteed to keep the u64 result in range even at the 1e-7
-// precision ceiling: e^x * 1e9 * (1 + 1e-7) <= u64::MAX. Set ~100 units below the
-// exact math bound (64*ln2 - 9*ln10 ≈ 23.638) so the named EExpOverflow guard
-// always fires before the result's `as u64` cast could overflow on a hot impl.
+// Largest positive exponent for which the 1e9-scaled result, including the approximation budget, fits in u64.
 const EXP_MAX_INPUT: u64 = 23_638_153_618;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
@@ -124,8 +65,7 @@ const INV_9_U128: u128 = 111_111_111;
 const INV_11_U128: u128 = 90_909_091;
 const INV_13_U128: u128 = 76_923_077;
 
-/// Fixed-point scaling factor (1e9) for math operations and prices.
-/// 500_000_000 = 50%, 1_000_000_000 = 100%.
+/// Returns the fixed-point scale: `500_000_000` is 50% and `1_000_000_000` is 100%.
 public macro fun float_scaling(): u64 { 1_000_000_000 }
 
 // === Public Functions ===
@@ -135,12 +75,14 @@ public fun mul(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128)) / F) as u64
 }
 
-/// Divide two 1e9-scaled fixed-point values, rounding down.
+/// Divides two 1e9-scaled fixed-point values, rounding down.
+/// Aborts when `y` is zero or the quotient does not fit in `u64`.
 public fun div(x: u64, y: u64): u64 {
     (((x as u128) * F) / (y as u128)) as u64
 }
 
-/// Multiply two raw integer values, divide by a raw denominator, and round down.
+/// Multiplies two raw integers, divides by a raw denominator, and rounds down.
+/// Aborts when the denominator is zero or the quotient does not fit in `u64`.
 public fun mul_div_down(x: u64, y: u64, denominator: u64): u64 {
     assert!(denominator > 0, EInputZero);
     (((x as u128) * (y as u128)) / (denominator as u128)) as u64
@@ -154,7 +96,8 @@ public fun try_mul_div_down(x: u64, y: u64, denominator: u64): Option<u64> {
     try_u64(result)
 }
 
-/// Multiply two raw integer values, divide by a raw denominator, and round up.
+/// Multiplies two raw integers, divides by a raw denominator, and rounds up.
+/// Aborts when the denominator is zero or the quotient does not fit in `u64`.
 /// `numerator + denominator - 1` cannot overflow u128 for any u64 operands
 /// (max is `(2^64-1)^2 + 2^64 - 2 < u128::MAX`), so no intermediate guard is needed.
 public fun mul_div_up(x: u64, y: u64, denominator: u64): u64 {
@@ -172,9 +115,8 @@ public fun try_mul_div_up(x: u64, y: u64, denominator: u64): Option<u64> {
     try_u64(result)
 }
 
-/// Natural logarithm of x (in FLOAT_SCALING 1e9).
-/// Returns a signed fixed-point result.
-/// Precision: relative error <= 1e-7 (see module "Precision contract").
+/// Returns the natural logarithm of a positive 1e9-scaled value as a signed 1e9-scaled result.
+/// Relative error is at most 1e-7; zero input aborts.
 public fun ln(x: u64): i64::I64 {
     assert!(x > 0, EInputZero);
     if (x == float_scaling!()) return i64::zero();
@@ -190,10 +132,8 @@ public fun ln(x: u64): i64::I64 {
     i64::from_u64((result as u64))
 }
 
-/// Exponential function. Returns e^x in FLOAT_SCALING.
-/// Precision: relative error <= 1e-7 over the used (moderate, negative-argument)
-/// range; invoked by `normal_cdf` and `normal_pdf`. See module "Precision contract".
-/// Aborts (`EExpOverflow`) when a positive input is too large for the u64 result.
+/// Returns `e^x` at 1e9 scale with relative error at most 1e-7.
+/// Positive inputs whose scaled result may not fit in `u64` abort with `EExpOverflow`.
 public fun exp(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
@@ -208,9 +148,8 @@ public fun exp(x: &i64::I64): u64 {
     (exp_u128((r as u128), (n as u128), x_negative) as u64)
 }
 
-/// Standard normal CDF Φ(x) using Cody's rational Chebyshev approximation.
-/// Three piecewise ranges (~1e-15 in float). Precision: absolute error
-/// <= 2e-8 of full scale (20 units @1e9); see module "Precision contract".
+/// Returns the standard normal CDF `Φ(x)` at 1e9 scale using Cody's piecewise rational approximation.
+/// Absolute error is at most 20 raw units; values beyond eight standard deviations saturate to zero or one.
 public fun normal_cdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
@@ -221,7 +160,7 @@ public fun normal_cdf(x: &i64::I64): u64 {
 }
 
 /// Standard normal PDF φ(x) = exp(-x²/2) / sqrt(2π).
-/// Returns a 1e9-scaled density; tails beyond |8| round to zero at this scale.
+/// Returns a 1e9-scaled density with absolute error at most 50 raw units; tails beyond `|8|` round to zero.
 public fun normal_pdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     if (x_mag > 8 * float_scaling!()) return 0;
@@ -231,9 +170,8 @@ public fun normal_pdf(x: &i64::I64): u64 {
     mul(exp(&exponent), INV_SQRT_2PI)
 }
 
-/// Fixed-point square root using a bit-length initial guess and
-/// unrolled Newton iterations.
-/// Precision: integer floor-sqrt, exact to <= 1 ULP. See module "Precision contract".
+/// Returns a 1e9-scaled square root rounded down to the requested decimal precision.
+/// `precision` must be in `[1, 1e9]`; the result is within one raw unit at that precision.
 public fun sqrt(x: u64, precision: u64): u64 {
     assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
     let multiplier = (float_scaling!() / precision) as u128;
