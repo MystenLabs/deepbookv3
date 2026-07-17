@@ -263,16 +263,22 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.cash.free_cash().saturating_sub(liability)
 }
 
-/// Return the live holder value of one order, gross of fees.
-///
-/// Already-liquidated and currently-liquidatable orders return zero; otherwise
-/// this returns the order's current range value net of its static floor. Public
-/// read for SDK/devInspect and external Move composition; callers must already
-/// know the order belongs to the position they are valuing.
+/// Return the holder value of one order, gross of fees: the read prefix of the
+/// redeem flow. The same classifier quotes the close, so this view cannot
+/// disagree with what a redeem would pay — tombstones and knocked-out orders
+/// are worth zero, a live order its full-close redeem amount (range value net
+/// of its static floor), a settled order its terminal payout. Public read for
+/// SDK/devInspect and external Move composition; callers must already know the
+/// order belongs to the position they are valuing.
 public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
     market.assert_pricer_bound(pricer);
     let order = order::from_order_id(order_id);
-    market.strike_exposure.order_value(pricer, &order)
+    let terms = market
+        .strike_exposure
+        .quote_close(option::some(*pricer), &order, order.quantity());
+    if (terms.is_tombstone() || terms.is_knocked_out()) return 0;
+    if (terms.is_live()) return terms.redeem_amount();
+    terms.settled_payout()
 }
 
 /// Return whether minting is currently paused on this expiry market.

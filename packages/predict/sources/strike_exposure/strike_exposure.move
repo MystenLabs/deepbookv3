@@ -607,20 +607,6 @@ public(package) fun quote_mint_terms(
     }
 }
 
-/// Return the live holder value of a full order close, gross of fees.
-///
-/// Already-liquidated and currently-liquidatable orders have zero holder value;
-/// otherwise this returns the order's current range value net of its static floor.
-public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    if (exposure.is_liquidated_order(order)) return 0;
-
-    let gross_value = exposure.gross_order_value(pricer, order);
-    let floor_amount = order.floor_shares();
-    if (exposure.under_liquidation_floor(gross_value, floor_amount)) return 0;
-
-    gross_value.saturating_sub(floor_amount)
-}
-
 /// The knock-out test: live value at or under the LTV-buffered static floor.
 /// The LTV buffer is the anti-arbitrage enforcement margin — knock out a hair
 /// before zero equity so a missed barrier touch can't be monetized; the reserve
