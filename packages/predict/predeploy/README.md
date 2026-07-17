@@ -36,7 +36,6 @@ finding — never leave a known disagreement standing.
 
 | Surface | Owns | Notes |
 | --- | --- | --- |
-| `audit-scope.md` | Audit-snapshot cover: scoped packages, exclusions, trust assumptions, and pointers to the live issue/policy surfaces | Stamp the commit when the audit tag is cut; finding detail stays in `open-items.md` and `response-policies.md` |
 | `open-items.md` | THE START — the single intake for open work; items carry inline experiment plans and, for multi-run items, the current measured model | Resolved items leave the OPEN sections; the register entry (`resolves <id>`) is their permanent tombstone — item ids stay referenceable (see Item-id lifecycle) |
 | `response-policies.md` | THE END — every decision that outlives an item: chosen tail-state behavior, accepted risks, guard removals, and the rounding policy (R1–R3) | At most one entry resolves a given item; guard removals require a duty inventory |
 | `evidence/` | Immutable dated run records, each anchored to the item (or register entry) it serves | Append-only; naming `<item>-<instrument>-<date>.md`; nothing unreferenced |
