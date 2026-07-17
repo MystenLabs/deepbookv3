@@ -379,6 +379,31 @@ public(package) fun quote_mint_terms(
     }
 }
 
+/// Allocate a live mint order from priced terms: consume the expiry-local
+/// sequence and insert the order into the liquidation and payout indexes.
+/// Taking `terms` by value ties each allocation to exactly one admission
+/// result, so the order's contract fields are always the ones that were priced,
+/// and the market-identity assert rejects terms priced on another exposure.
+public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
+    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, floor_shares, .. } = terms;
+    assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
+
+    let sequence = exposure.next_order_sequence;
+    let allocated_order = order::new_from_ticks(
+        lower_tick,
+        higher_tick,
+        floor_shares,
+        quantity,
+        sequence,
+    );
+    exposure.next_order_sequence = sequence + 1;
+
+    exposure.liquidation.insert_order(&allocated_order);
+    exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
+
+    allocated_order
+}
+
 /// Quote the close of `order` in ANY state as compute-once close terms: the
 /// single classifier for every close flow. Outcome precedence: the liquidated
 /// state first (only the holder's position clear remains), then the settled
@@ -423,31 +448,6 @@ public(package) fun quote_close(
         order,
         CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
     )
-}
-
-/// Allocate a live mint order from priced terms: consume the expiry-local
-/// sequence and insert the order into the liquidation and payout indexes.
-/// Taking `terms` by value ties each allocation to exactly one admission
-/// result, so the order's contract fields are always the ones that were priced,
-/// and the market-identity assert rejects terms priced on another exposure.
-public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
-    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, floor_shares, .. } = terms;
-    assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
-
-    let sequence = exposure.next_order_sequence;
-    let allocated_order = order::new_from_ticks(
-        lower_tick,
-        higher_tick,
-        floor_shares,
-        quantity,
-        sequence,
-    );
-    exposure.next_order_sequence = sequence + 1;
-
-    exposure.liquidation.insert_order(&allocated_order);
-    exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
-
-    allocated_order
 }
 
 /// Apply one quoted close to the book — the single close mutator, total over
