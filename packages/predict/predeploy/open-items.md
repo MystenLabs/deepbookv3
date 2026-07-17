@@ -173,6 +173,32 @@ discrepancy as expected behavior in this pricing-formula change. Surface quality
 remains a trusted input until that follow-up lands. (2026-07-09 PR #1110 review;
 quantitative framing corrected 2026-07-11.)
 
+### P-12: Pricing-safe envelope has no backwardation floor (re-anchor collapse)
+
+**Severity:** Medium; value-leak + liveness, oracle-operator-triggered.
+
+`assert_inputs_pricing_safe` caps the basis above (`forward <= factor * spot`,
+contango) but not below. `load_live_pricer` re-anchors the live forward as
+`mul_div_down(pyth_spot, bs_forward, bs_spot)`, so a tiny `bs_forward` (or large
+`bs_spot`) collapses the re-anchored forward toward 0: forward small-but-positive
+prices every real strike deep-OTM (all range prices 0 → free mints, an LP-funded
+value leak, with NO abort); forward exactly 0 trips `EZeroForward`. The lower bound
+was left out deliberately (premised on deep-tail saturation keeping pricing live),
+but that premise is false for a realistic strike grid — a 0.6 forward puts every
+BTC strike deep-OTM. Distinct from S-4 (feed forgeability) and P-11 (SVI butterfly).
+The audit's own recommended fix (absolute `spot` ceiling) was verified incomplete —
+a tiny `bs_forward` collapses the forward at any spot magnitude. (audit 42cc55; the
+forward-rounds-to-0 instance is audit 3fecf4, same root cause.)
+
+**Action:** DBU-596 / PR #1143 adds the symmetric basis floor
+`spot.div_ceil(factor) <= forward`. Reviewer-flagged: it changes the deliberate
+documented behavior, so it merges as a design decision, not a rubber-stamp. Related
+unverified envelope-liveness gaps from the same run — zero-total-variance SVI
+`a=0 ∧ b=0` → `EZeroVariance` (audit 9de70b) and the general "envelope does not
+guarantee compute_nd2 liveness" (audit e84675) — share the root cause and feed the
+C-1 / DBU-557 all-or-nothing flush rework; assess whether the floor plus an SVI
+`total_var > 0` admission check closes them together.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
@@ -291,6 +317,16 @@ remains open is the FIX, not the measurement. Retained for context:
 - Any final cap change is followed by one run that reaches the new boundary
   and proves the flush stays under the safety target.
 
+**2026-07-17 audit — the all-or-nothing brick has non-gas triggers too.** Beyond
+the joint gas budget, any single active market that cannot be valued aborts the
+whole flush (`assert_all_expected_valued` needs every expiry). Two such triggers
+surfaced: an active-but-unseeded newly-created market (`value_expiry` loads a live
+pricer for a zero-order market and aborts on the missing propbook feed — audit
+dfa599), and any active market whose propbook feed is unpriceable (audit 81936e).
+The DBU-557 flush rework (skip/carry a market that cannot be valued, rather than
+abort the pool) is the structural fix for this class; the P-12 basis floor removes
+one degenerate-feed entry point but not the class.
+
 ## Oracle Calibration
 
 ### O-1: Near-expiry oracle miscalibration is exploitable
@@ -382,3 +418,25 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   (zero builder fee / subsidy). Strengthen each to assert the passing boundary.
   (`unstake_deep` receiving-side assertion — that the account received the DEEP —
   added on PR #1106.)
+
+### H-8: 2026-07-17 predict-audit Low findings
+
+From the 2026-07-17 security fan-out (all Low; verify panel was codex-degraded, so
+these are source-verified operator dispositions, not machine-confirmed).
+
+- **Batch liquidation omits the single-order path's active-order guard.**
+  `liquidate_live_orders` (strike_exposure.move) calls
+  `liquidate_order_if_under_floor` with no `contains_active_order` check, unlike the
+  single-order `liquidate_live_order`. Safe at HEAD (candidate selection is deduped)
+  but no defense-in-depth against a paging regression. Add the guard. (audit 5a5980.)
+- **`set/unset_builder_code` are the only account mutators with no version /
+  valuation gate** (predict_account.move). Attribution metadata only, no NAV/fund
+  effect. Add the gate for parity or document the exemption. (audit 7dc0af.)
+- **`token` DEEP-custody dep pinned to `rev="main"` with no published-at**, unlike
+  the exactly-pinned pyth_lazer / wormhole (Move.toml). A build-reproducibility /
+  DEEP-type-identity risk to pin before a value-bearing deploy. (audit 4f30e0.)
+
+The remaining Info/Low findings (mostly comment/hygiene, overlapping the DBU-575
+sweep) live in the 2026-07-17 run's gitignored consolidated report under the
+predict-audit skill's `reports/` output — operator-triage tail, not individually
+promoted.
