@@ -701,7 +701,6 @@ fun claim_trading_loss_rebate_internal(
         config,
         ctx,
     );
-    let residual_returned = residual_cash.value();
     let returned_cash_amount = vault
         .expiry_accounting
         .receive_expiry_cash(residual_cash, expiry_market_id);
@@ -719,7 +718,7 @@ fun claim_trading_loss_rebate_internal(
         expiry_market_id,
         account_id,
         rebate_amount,
-        residual_returned,
+        returned_cash_amount,
         trading_fees_paid,
         gross_profit,
     );
@@ -783,10 +782,11 @@ fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expi
     vault.sync_fee_incentives(market, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
-    let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
+    let (target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
         market,
         initial_expiry_cash,
     );
+    let cash_balance = market.cash_balance();
     if (cash_balance < target_cash) {
         vault.top_up_live_expiry_cash(market, expiry_market_id, cash_balance, target_cash);
     } else if (cash_balance > sweep_threshold_cash) {
@@ -884,14 +884,14 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
 /// `sweep_threshold_cash` adds two, both floored at the per-expiry initial cash
 /// target. Below target the pool tops up to target; above the sweep band it
 /// returns the excess over target.
-fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64, u64) {
+fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
     let required_cash = market.required_cash();
     let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
     let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
     let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
         initial_expiry_cash,
     );
-    (market.cash_balance(), target_cash, sweep_threshold_cash)
+    (target_cash, sweep_threshold_cash)
 }
 
 /// Settled-market sweep: deactivate the expiry, return its free cash to idle,
@@ -905,7 +905,7 @@ fun sweep_settled_expiry(
 ) {
     let expiry_market_id = market.id();
     let deactivated = vault.expiry_accounting.deactivate_expiry_if_present(expiry_market_id);
-    let (returned_cash, settlement_price) = market.release_settled_pool_cash();
+    let returned_cash = market.release_settled_pool_cash();
     let returned_cash_amount = vault
         .expiry_accounting
         .receive_expiry_cash(returned_cash, expiry_market_id);
@@ -913,7 +913,7 @@ fun sweep_settled_expiry(
         vault_events::emit_expiry_cash_received(
             vault.id(),
             expiry_market_id,
-            settlement_price,
+            market.settlement_price(),
             returned_cash_amount,
         );
     };

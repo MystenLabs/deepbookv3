@@ -184,23 +184,13 @@ public(package) fun remove_range(
     );
 }
 
+// Seed `node_count` to reach the cap-BOUNDARY tests fast. Irreducible state seam (unit-tests.md Rule
+// 18): ~1000 real treap inserts time out the Move test framework (measured — real inserts pass to
+// ~768, so the 1000-node boundary is unreachable), so the boundary tests seed the count then insert
+// one more to assert `EMaxPayoutTreeNodes`. `real_inserts_accumulate_into_node_cap` proves this seam
+// isn't lying: real inserts reach the same counter the cap reads.
 #[test_only]
-public(package) fun debug_contains_node(tree: &StrikePayoutTree, tick: u64): bool {
-    tree.nodes.contains(tick)
-}
-
-#[test_only]
-public(package) fun debug_node_count(tree: &StrikePayoutTree): u64 {
-    tree.node_count
-}
-
-// Seed `node_count` for the exact 1000-node cap-BOUNDARY tests. Genuinely irreducible (unit-tests.md
-// Rule 18): ~1000 REAL treap inserts (each hashes a priority + rebalances a growing Table) time out
-// the Move test framework, so the boundary tests fake the count to reach the cap fast, then insert one
-// more to assert `EMaxPayoutTreeNodes`. `node_count_tracks_real_boundary_accumulation` inserts a
-// moderate REAL batch to prove the counter tracks genuine accumulation, not just this setter.
-#[test_only]
-public(package) fun debug_set_node_count(tree: &mut StrikePayoutTree, node_count: u64) {
+public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node_count: u64) {
     tree.node_count = node_count;
 }
 
