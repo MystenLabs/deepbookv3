@@ -411,6 +411,89 @@ fun unbounded_flush_drains_every_queued_supply() {
 }
 
 #[test]
+fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(min_supply!());
+
+    // Fill exactly two pages (PAGE_CAPACITY = 64): page 0 holds 0..63, page 1
+    // holds the single index 64. A FIFO drain only ever empties the head page,
+    // so the tail-page unlink (`prev = some`, `next = none`) is reached only by
+    // cancelling that lone tail entry.
+    let page_capacity = 64u64;
+    let total = page_capacity + 1;
+    let mut tail_index = 0u64;
+    let mut i = 0u64;
+    while (i < total) {
+        let coin = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+        tail_index = book.request_supply(coin, alice_id(), ALICE, NO_MIN_OUTPUT);
+        i = i + 1;
+    };
+    assert_eq!(book.supply_requests_pending(), total);
+
+    let (_id, _amount, refund) = book.cancel_supply_request(ALICE, tail_index);
+    destroy(refund);
+    assert_eq!(book.supply_requests_pending(), page_capacity);
+
+    // The list survived the unlink: draining fills all 64 page-0 requests, so
+    // head_page_id and tail_page_id still point at a coherent single page.
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        vault_id(),
+        option::none(),
+        option::none(),
+        scenario.ctx(),
+    );
+    assert_drain_summary(&summary, page_capacity, 0, page_capacity);
+    assert_eq!(book.supply_requests_pending(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun cancel_entire_middle_page_relinks_both_neighbors() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(min_supply!());
+
+    // Three pages: page 0 (0..63), page 1 (64..127), page 2 (128). Emptying the
+    // middle page is the only path that unlinks with BOTH `prev = some` and
+    // `next = some`, exercising the full relink (page 0.next -> page 2 and
+    // page 2.prev -> page 0) in one call.
+    let page_capacity = 64u64;
+    let total = 2 * page_capacity + 1;
+    let mut i = 0u64;
+    while (i < total) {
+        let coin = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+        book.request_supply(coin, alice_id(), ALICE, NO_MIN_OUTPUT);
+        i = i + 1;
+    };
+
+    // Cancel the whole middle page; the last cancel (index 127) empties it.
+    let mut j = page_capacity;
+    while (j < 2 * page_capacity) {
+        let (_id, _amount, refund) = book.cancel_supply_request(ALICE, j);
+        destroy(refund);
+        j = j + 1;
+    };
+    assert_eq!(book.supply_requests_pending(), page_capacity + 1);
+
+    // The relink held: a FIFO drain reaches page 2 only through page 0's rewired
+    // `next`, so all 65 surviving requests (page 0's 64 + page 2's 1) fill.
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        vault_id(),
+        option::none(),
+        option::none(),
+        scenario.ctx(),
+    );
+    assert_drain_summary(&summary, page_capacity + 1, 0, page_capacity + 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
 fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(min_supply!());
