@@ -166,6 +166,14 @@ public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
 }
 
+/// Return the near-expiry no-leverage window snapshotted for this expiry, in ms.
+/// Within this much time of expiry the market admits no leverage above 1x; `0`
+/// disables the block. Read by devInspect (SDK/UI) to size a leverage selector
+/// against the market's own snapshotted terms rather than the live template.
+public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.no_leverage_window_ms()
+}
+
 /// Return the strike tick size snapshotted for this expiry. Raw strikes are
 /// derived off-chain / by the SDK as `tick * tick_size`.
 public fun tick_size(market: &ExpiryMarket): u64 {
@@ -308,6 +316,7 @@ public fun quote_mint(
             min_quantity,
             exact_quantity,
             leverage,
+            clock,
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
@@ -351,6 +360,7 @@ public fun quote_mint_for_account(
             min_quantity,
             exact_quantity,
             leverage,
+            clock,
         );
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
@@ -1028,6 +1038,7 @@ fun mint_prepared(
             min_quantity,
             exact_quantity,
             leverage,
+            clock,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.

@@ -30,6 +30,7 @@ const EInvalidBackingBufferLambda: u64 = 19;
 const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
+const EInvalidNoLeverageWindowMs: u64 = 23;
 
 // === Fees ===
 
@@ -109,6 +110,27 @@ public(package) fun assert_max_admission_leverage(value: u64) {
 /// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
 /// while still approaching the configured cap smoothly as probability rises.
 public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
+
+/// Window before expiry within which mint admission originates no leverage at all:
+/// the cap is exactly 1x. Near expiry a contract's probability can move far in a
+/// single tick, leaping a leveraged order past its knockout before liquidation can
+/// fire and leaving the gap with the LP. `0` disables the block; one hour by default.
+public(package) macro fun default_no_leverage_window_ms(): u64 {
+    deepbook_predict::constants::one_hour_ms!()
+}
+
+public(package) macro fun min_no_leverage_window_ms(): u64 { 0 }
+
+public(package) macro fun max_no_leverage_window_ms(): u64 {
+    deepbook_predict::constants::one_year_ms!()
+}
+
+public(package) fun assert_no_leverage_window_ms(value: u64) {
+    assert!(
+        value >= min_no_leverage_window_ms!() && value <= max_no_leverage_window_ms!(),
+        EInvalidNoLeverageWindowMs,
+    );
+}
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 

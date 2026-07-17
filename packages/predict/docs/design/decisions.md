@@ -393,3 +393,42 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   no valuation-lock gate — it is legal only at `total_supply == 0` (both LP request
   entrypoints abort `ENotBootstrapped` until supply > 0), so nothing the lock protects
   can exist when it runs.
+
+## Near-expiry leverage block (recent)
+
+- **Leverage origination stops entirely inside a window before expiry.** Within the
+  expiry's snapshotted `no_leverage_window_ms` the mint-admission cap is exactly 1x,
+  regardless of entry probability. Near expiry a contract's probability can move far
+  in a single tick, which can carry a leveraged order past its knockout before
+  liquidation can fire — the LP absorbs that gap, so leverage is riskiest exactly
+  where it is least useful.
+  *Rejected:* a linear taper of the cap down to 1x at expiry. The taper's case was
+  that a hard cutoff concentrates max-leverage opens just before the boundary, but
+  both designs gate origination only — a position opened before the window carries
+  full leverage into expiry either way — so the taper does not actually remove that
+  incentive, and it prices a range of near-expiry leverage the block simply declines
+  to originate.
+- **The block replaces the low-probability curve inside the window, rather than
+  scaling it.** The cap is 1x flat, not `1 + (max - 1) * risk_curve * taper`, so the
+  policy reads as one sentence and the window is the only thing to reason about near
+  expiry.
+- **Admin-tunable per template, snapshotted per expiry, `0` disables.** It is a
+  contract term like `max_admission_leverage`: future markets pick up a new value,
+  live markets keep the one they snapshotted, so an admin cannot retroactively
+  change a live market's economics. `0` is a deliberate escape hatch, mirroring how
+  `expiry_fee_max_multiplier = 1x` disables the fee ramp.
+- **Origination only; no repricing and no forced deleveraging.** Admitted orders keep
+  their frozen floor `F` and their terms, and closing / liquidation / settlement are
+  untouched. Reducing risk on positions already open into the window would need a
+  different lever (e.g. a near-expiry `liquidation_ltv` tightening), not an admission
+  gate.
+- **This does NOT resolve O-1, and O-1 is not one of its arms.** O-1's exploit is a
+  *1x buy-and-hold* of systematically underpriced contracts in `[0.60, 0.95)`
+  (`evidence/o1-oracle-calibration.md`: +0.05 per contract at 0% fee, confirmed
+  on-chain), and unleveraged minting stays open inside the window by design — so the
+  mispricing edge itself is untouched. What the block removes is the leverage
+  *amplifier* on that edge: across O-1's own price range the admission cap is
+  ~2.8-3.0x, so leverage roughly tripled the exploit's return on capital and now does
+  not. O-1's stated mitigations remain recalibrating the near-expiry surface or
+  blocking the affected market shape outright; it stays OPEN, and near-expiry markets
+  are still gated on it. Bounding the residual 1x exposure is a separate decision.

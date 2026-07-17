@@ -188,6 +188,10 @@ public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
     exposure.config.expiry_fee_max_multiplier()
 }
 
+public(package) fun no_leverage_window_ms(exposure: &StrikeExposure): u64 {
+    exposure.config.no_leverage_window_ms()
+}
+
 public(package) fun tick_size(exposure: &StrikeExposure): u64 {
     exposure.tick_size
 }
@@ -344,8 +348,10 @@ public(package) fun quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
     leverage: u64,
+    clock: &Clock,
 ): MintTerms {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
+    let time_to_expiry_ms = exposure.expiry_ms - clock.timestamp_ms();
 
     let quantity = if (exact_quantity) {
         min_quantity
@@ -353,7 +359,13 @@ public(package) fun quote_mint_terms(
         // Policy first: the search divides by `leverage`, so a policy-invalid
         // request must abort with its domain code before the first probe (also
         // the pre-unification abort order of the budget path).
-        exposure.config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+        exposure
+            .config
+            .assert_mint_probability_and_leverage_policy(
+                entry_probability,
+                leverage,
+                time_to_expiry_ms,
+            );
         // Largest lot count whose net premium fits the budget: binary search on
         // the monotone premium relation. The single-floor probe over-estimates
         // admission's two-floor charge (`assert_mint_admission`) by at most one
@@ -385,6 +397,7 @@ public(package) fun quote_mint_terms(
             entry_probability,
             quantity,
             leverage,
+            time_to_expiry_ms,
         );
     // Runs after admission so the quote path keeps mint's abort order (mint hits
     // this check inside order construction, after admission).

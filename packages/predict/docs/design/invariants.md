@@ -131,8 +131,12 @@ and contributors. For *how* each mechanism works, follow the links into
   max_entry_probability]`; fees are not included in this admission bound.
 - Leverage is continuous at 1e9 scale: any requested `leverage ≥ 1×` is allowed
   only if it is no greater than the dynamic admission cap derived from entry
-  probability, the expiry's snapshotted `max_admission_leverage`, and the
-  upgrade-required curve-shape constant.
+  probability, time to expiry, the expiry's snapshotted `max_admission_leverage`,
+  and the upgrade-required curve-shape constant.
+- Within the expiry's snapshotted `no_leverage_window_ms` of expiry the admission
+  cap is exactly 1×, regardless of entry probability; a `0` window disables the
+  block. This bounds origination only — an order opened before the window keeps its
+  leverage into expiry.
 - `net_premium = entry_probability × quantity / leverage ≥
   min_net_premium`; the pool seeds the remainder (`financed_amount`).
 

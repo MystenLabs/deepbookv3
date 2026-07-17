@@ -155,6 +155,19 @@ contracts approach the configured maximum smoothly. Actual liquidation still use
 the expiry's fixed `liquidation_ltv`; admission only decides whether the protocol
 originates the requested leverage.
 
+### The near-expiry no-leverage window
+
+Within `no_leverage_window_ms` of expiry the curve above does not apply: the
+admission cap is exactly 1x, so the protocol originates no leverage at all,
+regardless of entry probability. Near expiry a contract's probability can move far
+in a single tick, which can carry a leveraged order past its knockout before
+liquidation can fire, leaving the gap with the LP.
+
+The window is snapshotted into the expiry at market creation and is emitted on
+`MarketCreated`; `0` disables the block. It gates origination only — an order
+opened before the window keeps its leverage into expiry, and closing, liquidation,
+and settlement are unaffected.
+
 ### The entry-value gate
 
 ```text
