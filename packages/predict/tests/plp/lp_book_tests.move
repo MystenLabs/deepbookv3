@@ -450,15 +450,18 @@ fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
     finish(scenario, book, ledger);
 }
 
+// The middle-page unlink relinks BOTH neighbors — `page 0.next -> page 2` and
+// `page 2.prev -> page 0`. The two directions need separate tests: a forward
+// drain can only observe `.next` (it never reads `.prev`), and page 0's own later
+// unlink overwrites `page 2.prev` before a forward drain would reach it, masking a
+// wrong backward relink. So one test drives each direction to its own observation.
+
 #[test]
-fun cancel_entire_middle_page_relinks_both_neighbors() {
+fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(min_supply!());
 
-    // Three pages: page 0 (0..63), page 1 (64..127), page 2 (128). Emptying the
-    // middle page is the only path that unlinks with BOTH `prev = some` and
-    // `next = some`, exercising the full relink (page 0.next -> page 2 and
-    // page 2.prev -> page 0) in one call.
+    // Three pages: page 0 (0..63), page 1 (64..127), page 2 (128).
     let page_capacity = 64u64;
     let total = 2 * page_capacity + 1;
     let mut i = 0u64;
@@ -468,7 +471,7 @@ fun cancel_entire_middle_page_relinks_both_neighbors() {
         i = i + 1;
     };
 
-    // Cancel the whole middle page; the last cancel (index 127) empties it.
+    // Empty the middle page (last cancel at index 127 triggers the unlink).
     let mut j = page_capacity;
     while (j < 2 * page_capacity) {
         let (_id, _amount, refund) = book.cancel_supply_request(ALICE, j);
@@ -477,8 +480,8 @@ fun cancel_entire_middle_page_relinks_both_neighbors() {
     };
     assert_eq!(book.supply_requests_pending(), page_capacity + 1);
 
-    // The relink held: a FIFO drain reaches page 2 only through page 0's rewired
-    // `next`, so all 65 surviving requests (page 0's 64 + page 2's 1) fill.
+    // Forward relink: a FIFO drain reaches page 2 only through page 0's rewired
+    // `next`, so all 65 survivors (page 0's 64 + page 2's 1) fill.
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
@@ -488,6 +491,53 @@ fun cancel_entire_middle_page_relinks_both_neighbors() {
         scenario.ctx(),
     );
     assert_drain_summary(&summary, page_capacity + 1, 0, page_capacity + 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(min_supply!());
+
+    // Same three pages: page 0 (0..63), page 1 (64..127), page 2 (128).
+    let page_capacity = 64u64;
+    let total = 2 * page_capacity + 1;
+    let mut i = 0u64;
+    while (i < total) {
+        let coin = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+        book.request_supply(coin, alice_id(), ALICE, NO_MIN_OUTPUT);
+        i = i + 1;
+    };
+
+    // Empty the middle page: sets `page 2.prev -> page 0`.
+    let mut j = page_capacity;
+    while (j < 2 * page_capacity) {
+        let (_id, _amount, refund) = book.cancel_supply_request(ALICE, j);
+        destroy(refund);
+        j = j + 1;
+    };
+    assert_eq!(book.supply_requests_pending(), page_capacity + 1);
+
+    // Backward relink: now empty page 2 (its lone index 128). Its unlink reads
+    // `page 2.prev` and relinks it — if the middle unlink left it pointing at the
+    // removed page 1, this `borrow_mut` hits a missing page and aborts. Page 0 is
+    // still full, so it is untouched here and cannot mask the check.
+    let (_id, _amount, refund) = book.cancel_supply_request(ALICE, 2 * page_capacity);
+    destroy(refund);
+    assert_eq!(book.supply_requests_pending(), page_capacity);
+
+    // Page 0 survived intact: draining fills all 64.
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        vault_id(),
+        option::none(),
+        option::none(),
+        scenario.ctx(),
+    );
+    assert_drain_summary(&summary, page_capacity, 0, page_capacity);
     assert_eq!(book.supply_requests_pending(), 0);
 
     finish(scenario, book, ledger);
