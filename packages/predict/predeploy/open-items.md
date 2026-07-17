@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-08. **The single source of truth for open work.** Anything that
+Updated 2026-07-17. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
