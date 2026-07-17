@@ -1958,6 +1958,7 @@ public fun insert_exact_settlement_spot(
         PYTH_EXPONENT_NEG_9,
         true,
         expiry_ms * 1000,
+        expiry_ms * 1000,
         self.clock.timestamp_ms(),
         true,
     );
@@ -2014,6 +2015,7 @@ fun store_pyth_spot(
         false,
         PYTH_EXPONENT_NEG_9,
         true,
+        source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
         false,

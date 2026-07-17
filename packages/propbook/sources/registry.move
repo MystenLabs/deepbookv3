@@ -13,8 +13,9 @@
 /// source data represents a Propbook underlying such as BTC.
 ///
 /// Intentionally NOT version-gated: a feed created under an old package version
-/// just seeds an old version and is migratable by the feed module, so a stale
-/// registry caller is harmless.
+/// seeds that version and is either safely migratable by its feed module or,
+/// when source semantics changed, replaceable through an admin-controlled clean
+/// rotation. A stale registry caller therefore cannot bypass feed version policy.
 module propbook::registry;
 
 use propbook::{
@@ -103,6 +104,14 @@ public struct OracleSourceRegistered has copy, drop {
     oracle_kind: u8,
     source_id: u32,
     propbook_oracle_id: ID,
+}
+
+/// Emitted when an admin replaces a source wrapper with a clean same-source feed.
+public struct OracleSourceRotated has copy, drop {
+    oracle_kind: u8,
+    source_id: u32,
+    old_propbook_oracle_id: ID,
+    new_propbook_oracle_id: ID,
 }
 
 /// Emitted when an admin binds an oracle to a canonical Propbook underlying.
@@ -297,6 +306,71 @@ public fun create_and_share_pyth_feed(
     let propbook_pyth_id = pyth_feed::create_and_share(pyth_source_id, ctx);
     registry.record_source(source_key, propbook_pyth_id);
     propbook_pyth_id
+}
+
+/// Admin-replace a Pyth source wrapper with a clean current-version feed for the
+/// same Pyth source id. The source catalog changes atomically; if this source is
+/// the active canonical binding, that binding changes in the same transaction.
+/// Retired or never-bound sources rotate without disturbing another active feed.
+public fun rotate_pyth_source_feed(
+    registry: &mut OracleRegistry,
+    _admin_cap: &RegistryAdminCap,
+    pyth_source_id: u32,
+    ctx: &mut TxContext,
+): ID {
+    let source_key = pyth_source_key(pyth_source_id);
+    assert!(registry.sources.contains(source_key), ESourceNotFound);
+    let old_propbook_oracle_id = *registry.sources.borrow(source_key);
+    let active_underlying = if (registry.source_bindings.contains(source_key)) {
+        let propbook_underlying_id = *registry.source_bindings.borrow(source_key);
+        let binding_key = pyth_binding_key(propbook_underlying_id);
+        registry.assert_binding_exists(binding_key);
+        let old_metadata = *registry.bindings.borrow(binding_key);
+        if (old_metadata.source_id == pyth_source_id) {
+            assert!(
+                old_metadata.propbook_oracle_id == old_propbook_oracle_id,
+                EInvalidOracleObject,
+            );
+            option::some(propbook_underlying_id)
+        } else {
+            option::none()
+        }
+    } else {
+        option::none()
+    };
+
+    let new_propbook_oracle_id = pyth_feed::create_and_share(pyth_source_id, ctx);
+    *registry.sources.borrow_mut(source_key) = new_propbook_oracle_id;
+
+    if (active_underlying.is_some()) {
+        let propbook_underlying_id = active_underlying.destroy_some();
+        let binding_key = pyth_binding_key(propbook_underlying_id);
+        let metadata = OracleMetadata {
+            propbook_underlying_id,
+            oracle_kind: kind_pyth!(),
+            source_id: pyth_source_id,
+            propbook_oracle_id: new_propbook_oracle_id,
+            value_kind: value_kind_spot!(),
+        };
+        *registry.bindings.borrow_mut(binding_key) = metadata;
+        event::emit(OracleRebound {
+            propbook_underlying_id,
+            oracle_kind: kind_pyth!(),
+            value_kind: value_kind_spot!(),
+            old_source_id: pyth_source_id,
+            old_propbook_oracle_id,
+            new_source_id: pyth_source_id,
+            new_propbook_oracle_id,
+        });
+    };
+
+    event::emit(OracleSourceRotated {
+        oracle_kind: kind_pyth!(),
+        source_id: pyth_source_id,
+        old_propbook_oracle_id,
+        new_propbook_oracle_id,
+    });
+    new_propbook_oracle_id
 }
 
 /// Create and share the Propbook BS spot wrapper for `bs_source_id`, then record

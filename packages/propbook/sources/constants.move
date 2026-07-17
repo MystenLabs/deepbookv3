@@ -10,7 +10,7 @@ module propbook::constants;
 /// Running package version: the exact version a feed must match to accept
 /// updates, and the target of each feed's `migrate`.
 public(package) macro fun current_version(): u64 {
-    1
+    2
 }
 
 /// Decimal places of the 1e9 price scaling that `pyth_feed::normalize_raw_spot`

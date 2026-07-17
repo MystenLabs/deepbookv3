@@ -41,6 +41,7 @@ export interface Mkt {
 }
 export interface Snap {
   spot1e9: string;
+  pythFeedTimestampMs: string;
   publishedAtMs: string;
   expiries: Record<string, { forward: number; svi: { alpha: number; beta: number; rho: number; m: number; sigma: number } }>;
 }

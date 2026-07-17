@@ -671,9 +671,10 @@ export function buildOracleRefreshGridTx(
     spot: bigint,
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
+    pythFeedTimestampMs: bigint = sourceTimestampMs,
 ): Transaction {
     const tx = new Transaction();
-    addOracleRefreshGrid(tx, feeds, spot, grid, sourceTimestampMs);
+    addOracleRefreshGrid(tx, feeds, spot, grid, sourceTimestampMs, pythFeedTimestampMs);
     return tx;
 }
 
@@ -686,8 +687,9 @@ function addOracleRefreshGrid(
     spot: bigint,
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
+    pythFeedTimestampMs: bigint = sourceTimestampMs,
 ): void {
-    addPythFeedUpdate(tx, feeds.pythFeedId, spot, sourceTimestampMs);
+    addPythFeedUpdate(tx, feeds.pythFeedId, spot, sourceTimestampMs, pythFeedTimestampMs);
     addBsSpotUpdate(tx, feeds.bsSpotFeedId, spot, sourceTimestampMs);
     for (const g of grid) {
         addBsExpiryUpdate(tx, feeds.bsForwardFeedId, feeds.bsSviFeedId, g.expiry, g.forward, g.svi, sourceTimestampMs);
@@ -700,13 +702,15 @@ function addPythFeedUpdate(
     tx: Transaction,
     pythFeedId: string,
     spot: bigint,
-    sourceTimestampMs: bigint,
+    envelopeTimestampMs: bigint,
+    feedUpdateTimestampMs: bigint = envelopeTimestampMs,
 ): void {
     const updateBytes = lazerUpdateFromConfig(
         localPythConfig(),
         PYTH_FEED_ID,
         spot,
-        sourceTimestampMs,
+        envelopeTimestampMs,
+        feedUpdateTimestampMs,
     );
     const update = tx.moveCall({
         target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),

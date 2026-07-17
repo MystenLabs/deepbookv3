@@ -92,6 +92,10 @@ async function main() {
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
     const ts = await clampedSourceTimestampMs(snap.publishedAtMs);
     if (ts === null) { skips++; continue; }
+    // Keep BS/envelope time advancing when Pyth carries an older price. If the localnet Clock
+    // lags the provider, clamp the feed time down with the envelope rather than re-dating it.
+    const pythFeedTs = snap.pythFeedTimestampMs < ts ? snap.pythFeedTimestampMs : ts;
+    if (pythFeedTs === 0n) { skips++; continue; }
     const grid = [...snap.expiries.entries()].map(([expiry, e]) => ({
       expiry: BigInt(expiry),
       forward: to1e9(e.forward),
@@ -108,7 +112,7 @@ async function main() {
             pythFeedId: feeds.pythFeedId, bsSpotFeedId: feeds.bsSpotFeedId,
             bsForwardFeedId: feeds.bsForwardFeedId, bsSviFeedId: feeds.bsSviFeedId,
           },
-          snap.spot1e9, grid, ts,
+          snap.spot1e9, grid, ts, pythFeedTs,
         ),
         signer,
       );
@@ -117,6 +121,7 @@ async function main() {
       // spurious guard aborts that look like harness failures.
       atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
         spot1e9: snap.spot1e9.toString(),
+        pythFeedTimestampMs: pythFeedTs.toString(),
         publishedAtMs: ts.toString(),
         expiries: Object.fromEntries([...snap.expiries.entries()]),
       }));

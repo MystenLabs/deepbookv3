@@ -15,10 +15,12 @@ A lane owns:
 
 An `OracleRead<Value>` wraps a value with two Propbook timestamps:
 
-- `source_timestamp_ms`: source/publisher time, converted to milliseconds.
+- `source_timestamp_ms`: source/publisher observation time, converted to
+  milliseconds. For Pyth this is the per-feed `feedUpdateTimestamp`, not the
+  enclosing Lazer update timestamp.
 - `update_timestamp_ms`: Sui clock time when the update landed on chain.
 
-There are two write shapes:
+At the generic oracle-lane layer there are two write shapes:
 
 - `update`: latest-state update. It records the read only when
   `source_timestamp_ms` is positive, not ahead of `update_timestamp_ms`, and
@@ -26,7 +28,11 @@ There are two write shapes:
   reads are no-ops.
 - `insert_at`: exact timestamp insert. It records the read only when the
   timestamp is valid and no read already exists at that exact source timestamp.
-  It does not mutate `latest`; invalid or duplicate inserts are no-ops.
+  It does not mutate `latest`; lane-invalid or duplicate inserts are no-ops.
+
+Source modules can enforce stricter preconditions before a read reaches the
+lane. In particular, Pyth exact insertion aborts for missing or inconsistent
+feed timestamps, carried rows, and non-whole-millisecond source timestamps.
 
 Consumers should use the `source_timestamp_ms` returned on raw or normalized
 `OracleRead` values when they need a liveness reference.
@@ -43,10 +49,11 @@ payloads. Every source module follows the same read pattern:
   observation is absent or cannot produce a usable normalized Propbook value.
 
 For Pyth, the raw payload keeps the source price magnitude/sign, exponent
-magnitude/sign, and microsecond source timestamp. `normalized_spot()` and the
-exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
-from those fields. Missing data, negative source prices, zero normalized spots,
-overflow, or unsupported exponent shapes return `none`.
+magnitude/sign, and per-feed generation timestamp in microseconds.
+`normalized_spot()` and the exact-history normalized spot reads derive a
+positive 1e9-scaled Propbook spot from those fields. Missing data, negative
+source prices, zero normalized spots, overflow, or unsupported exponent shapes
+return `none`.
 
 For Block Scholes, raw reads expose source spot plus per-expiry forward and SVI
 payloads from permanent source-level feed objects. Normalized spot and forward
@@ -59,8 +66,10 @@ Propbook does not have a separate settlement or minute-bucket write mode. Feeds
 can insert source-native observations into `exact_reads`, keyed by the exact
 source timestamp derived from the update:
 
-- Pyth uses the Lazer source timestamp in microseconds, rounded up to
-  milliseconds.
+- Pyth latest reads use the per-feed `feedUpdateTimestamp`, rounded up from
+  microseconds to milliseconds. Exact insertion additionally requires that
+  timestamp to equal the enclosing Lazer update timestamp and already be a
+  whole millisecond; carried prices cannot claim an exact key.
 - Block Scholes spot, forward, and SVI use each update's published millisecond
   timestamp directly.
 
@@ -78,14 +87,36 @@ the source-native price fields from the Lazer update:
 
 - price magnitude and sign
 - exponent magnitude and sign
-- native source timestamp in microseconds
+- per-feed generation timestamp in microseconds (`feedUpdateTimestamp`)
 
 The 1e9-normalized spot reads are derived from those stored fields. This keeps
 the stored oracle data close to what Pyth actually supplied, while still exposing
 a non-aborting normalized view for consumers.
 
 Pyth Lazer `Update` values are produced by the Pyth verifier package, so the Move
-type system provides provenance for normal Pyth ingestion.
+type system provides provenance for normal Pyth ingestion. Clients must request
+`feedUpdateTimestamp` along with price and exponent; Propbook rejects a payload
+when either layer of that optional field is missing. A carried live price keeps
+its older generation timestamp and therefore ages normally under consumer
+freshness checks.
+
+### Pyth version 2 rollout
+
+Version 1 Pyth observations used the enclosing Lazer timestamp and are not safe
+to retain under the feed-level timestamp policy. All signed-payload clients must
+request and validate `feedUpdateTimestamp` before the package upgrade. After the
+upgrade, observation reads require the current feed version. An empty version 1
+feed may call `pyth_feed::migrate`; a nonempty one rejects migration and the
+registry admin must call `registry::rotate_pyth_source_feed`. Rotation creates an
+empty current-version feed for the same Pyth source and atomically replaces both
+source discovery and any active canonical binding, so legacy exact rows cannot
+be selected later. The replacement needs fresh live updates and validated exact
+backfill before those reads become available again.
+
+The package version is shared across feed families, so existing Block Scholes
+spot, forward, and SVI objects must also run their normal migrations. Rotation
+cannot undo a market already settled from a legacy row; an upgrade must audit
+already-settled markets separately.
 
 ## Block Scholes Feeds
 
@@ -219,11 +250,12 @@ High-frequency cost caveats:
 - `ObservationRecorded` emits for every accepted live update.
 - `exact_reads` are unbounded tables. Storage growth is paid by writers; a
   permissionless prune flow can be added later if long-run retention needs it.
-- Pyth latest updates are ceil-rounded from microseconds to milliseconds, so two
-  source updates inside the same millisecond can collide at the Propbook
-  freshness key and the second live update is a no-op. Exact-history inserts are
-  stricter: `pyth_feed::insert_at` accepts only source timestamps that are
-  already exact whole milliseconds.
+- Pyth latest updates are ceil-rounded from the per-feed generation time in
+  microseconds to milliseconds, so two source updates inside the same
+  millisecond can collide at the Propbook freshness key and the second live
+  update is a no-op. Exact-history inserts are stricter:
+  `pyth_feed::insert_at` accepts only a whole-millisecond feed timestamp equal
+  to the enclosing update timestamp.
 
 ## Consumer Responsibilities
 

@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-08. This is the tracked register of **settled response-policy
+Updated 2026-07-17. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -152,30 +152,35 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-4: Past-expiry-but-unsettled market blocks the flush (no substitute mark)
 
 - **Trigger state:** an active market is past expiry but Propbook has no
-  normalized spot at the exact expiry millisecond yet.
-- **Controller:** external — resolution relayer liveness (Pyth Lazer
-  resolution endpoints supply the exact-timestamp print).
+  normalized spot whose Pyth per-feed generation timestamp equals the exact
+  expiry millisecond.
+- **Controller:** external — Pyth must generate a feed value at the exact
+  boundary, and the resolution relayer must retrieve and insert it.
 - **Blast radius:** the whole flush aborts while the market is in the window.
-- **Response:** `pause`-with-recovery — abort and retry; the recovery path is
-  the permissionless exact-ms insert followed by `try_settle`. Standalone cash
-  rebalance is a no-op in the window, and the keeper does not flush until the
-  transition succeeds. Deliberately **no substitute
+- **Response:** `pause`-and-retry — the recovery path, when the exact feed-level
+  row exists, is a permissionless exact-ms insert followed by `try_settle`.
+  A carried row is rejected before it can claim the insert-only key. Standalone
+  cash rebalance is a no-op in the window, and the keeper does not flush until
+  the transition succeeds. Deliberately **no substitute
   mark**: a settlement-dependent market has no well-defined true value, and
   the single mark prices both queue directions — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
-- **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` (accepted
-  operational assumption, testnet evidence); grid-snap at creation makes the
-  key representable, resolution endpoints make it producible.
-- **Risk profile:** `MEASURED` (testnet evidence in
-  `evidence/rp4-settlement-liveness.md`);
-  residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
+- **Reasoning + evidence:** grid-snap at creation makes the key representable,
+  but not necessarily producible at the feed level. The immutable
+  `evidence/rp4-settlement-liveness.md` measured only the enclosing Lazer
+  timestamp and does not establish exact `feedUpdateTimestamp` availability.
+- **Risk profile:** `BEST-GUESS`; a prolonged relayer outage blocks LP fills
+  pool-wide, and a boundary with no exact per-feed generation time remains
+  unsettled rather than accepting a stale payout price. Disclosed in
   `risks.md`.
 - **Pinning tests:** `settlement_flow_tests.move` —
   `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
   `expired_unsettled_standalone_rebalance_moves_no_cash`, and
-  `explicit_settlement_unblocks_pool_valuation_sweep`.
-- **Reopen when:** settlement-v2 introduces a valuation-safe representation
-  for unsettled past-expiry markets.
+  `explicit_settlement_unblocks_pool_valuation_sweep`. Propbook's
+  pyth-feed suite separately pins rejection of a carried exact insert.
+- **Reopen when:** exact per-feed availability is measured at supported
+  boundaries, or settlement-v2 introduces a valuation-safe representation for
+  unsettled past-expiry markets.
 
 ## RP-5: BS-vs-Pyth basis/deviation circuit breakers removed
 
@@ -489,21 +494,25 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-14: Exact spot products trust Propbook's exact-history key (`EReferenceTickTimestampMismatch` removed; resolves audit 914ecd)
+## RP-14: Exact spot products trust Propbook's validated exact-history key (`EReferenceTickTimestampMismatch` removed; resolves audit 914ecd)
 
-- **Trigger state:** `pyth_feed::normalized_spot_at(requested_timestamp)` returns
-  a read whose `source_timestamp_ms` differs from `requested_timestamp`.
+- **Trigger state:** `pyth_feed::normalized_spot_at(requested_timestamp)` returns a read whose
+  `source_timestamp_ms` differs from `requested_timestamp`.
 - **Controller:** protocol dependency — Propbook owns exact-history insertion,
   lookup, and Pyth normalization semantics.
 - **Blast radius:** reference-tick selection for one expiry market. Settlement
   already consumed the same exact lookup without repeating the timestamp check.
-- **Response:** proceed — Predict trusts the Propbook exact-read contract and
+- **Response:** proceed — Predict trusts the validated exact-read contract and
   pricing's opaque `ExactSpotRead` retains only the optional normalized value.
-- **Reasoning:** `oracle_lane::insert_at` keys `exact_reads` by the inserted
-  read's `source_timestamp_ms`; `read_at(timestamp)` can return only the value
-  stored under that exact key; and `pyth_feed::normalized_spot_from_read`
-  preserves both timestamps. A mismatched timestamp is therefore
-  unrepresentable without changing Propbook's source semantics.
+- **Reasoning:** Pyth clients must request `feedUpdateTimestamp`; Propbook uses
+  it as the source timestamp and requires it to equal the enclosing update
+  timestamp before exact insertion. `oracle_lane::insert_at` then keys
+  `exact_reads` by that validated source timestamp; `read_at(timestamp)` can
+  return only the value stored under that exact key; and normalization preserves
+  both timestamps. A carried price therefore cannot be re-dated onto the key.
+  Legacy observation reads are version-gated, and a nonempty version 1 Pyth feed
+  must be replaced through clean same-source registry rotation rather than
+  migrated with its old history.
 - **Duty inventory (guard removal):** the deleted assert only re-checked that
   exact-key invariant. It did not bound spot value, arithmetic headroom,
   freshness, landing time, grid alignment, or market identity. Canonical-feed
@@ -516,10 +525,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Pinning tests:** `reference_tick_tests.move` —
   `set_reference_tick_floors_spot_and_is_idempotent`,
   `set_reference_tick_missing_exact_history_aborts`, and
-  `set_reference_tick_wrong_pyth_feed_aborts`.
+  `set_reference_tick_wrong_pyth_feed_aborts`. Propbook's pyth-feed suite
+  separately pins carried exact-insert rejection and the feed-after-envelope
+  guard.
 - **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
-  normalization semantics, or Predict begins using the exact product across a
-  delayed boundary that requires update-time metadata.
+  normalization semantics, or a bounded-carry settlement policy is proposed.
 
 ---
 

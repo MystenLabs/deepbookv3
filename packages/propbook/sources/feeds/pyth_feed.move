@@ -5,10 +5,13 @@
 /// payloads, then stores them through a generic Propbook oracle lane. Feed
 /// uniqueness per Pyth Lazer source feed is enforced by `registry`.
 ///
-/// Fully permissionless: anyone can create, update, and migrate feeds — the
-/// verified `Update` is its own provenance proof. Predict-unaware: it owns no
-/// DUSDC conversion, forward derivation, freshness policy, or market-settlement
-/// valuation; callers own feed binding and freshness over timestamped reads.
+/// Fully permissionless: anyone can create and update feeds — the verified
+/// `Update` is its own provenance proof. Safe migrations are permissionless;
+/// a legacy feed containing observations must instead be rotated by the registry
+/// admin because its timestamps were recorded under older semantics.
+/// Predict-unaware: it owns no DUSDC conversion, forward derivation, freshness
+/// policy, or market-settlement valuation; callers own feed binding and
+/// freshness over timestamped reads.
 module propbook::pyth_feed;
 
 use fixed_math::math;
@@ -22,10 +25,15 @@ const ERawSpotNotFound: u64 = 2;
 const ELazerFeedNotFound: u64 = 3;
 const ELazerValueUnavailable: u64 = 4;
 const EInsertTimestampNotExactMillisecond: u64 = 5;
+const EFeedTimestampAfterEnvelope: u64 = 6;
+const EInsertFeedTimestampMismatch: u64 = 7;
+const ELegacyObservationsRequireRotation: u64 = 8;
+
+const ENVELOPE_TIMESTAMP_VERSION: u64 = 1;
 
 /// Source-native Pyth Lazer spot fields for this feed. The generic oracle lane
 /// stores Propbook's canonical millisecond timestamps around this payload;
-/// Pyth's native microsecond timestamp remains here for provenance.
+/// Pyth's per-feed generation timestamp remains here in microseconds for provenance.
 public struct RawSpot has copy, drop, store {
     pyth_source_id: u32,
     price_magnitude: u64,
@@ -40,7 +48,7 @@ public struct PythFeed has key {
     id: UID,
     pyth_source_id: u32,
     /// Package version this feed runs at; updates require an exact match and
-    /// `migrate` advances it forward-only after a package upgrade.
+    /// safe legacy state migrates forward after a package upgrade.
     version: u64,
     lane: OracleLane<RawSpot>,
 }
@@ -67,6 +75,7 @@ public fun version(feed: &PythFeed): u64 {
 
 /// Latest raw Pyth spot read. Aborts `ERawSpotNotFound` if no live update has landed.
 public fun raw_spot(feed: &PythFeed): OracleRead<RawSpot> {
+    assert_current_version(feed);
     let read = feed.lane.latest_read();
     assert!(read.is_some(), ERawSpotNotFound);
     read.destroy_some()
@@ -74,6 +83,7 @@ public fun raw_spot(feed: &PythFeed): OracleRead<RawSpot> {
 
 /// Latest Propbook-normalized spot in 1e9 price scaling.
 public fun normalized_spot(feed: &PythFeed): Option<OracleRead<u64>> {
+    assert_current_version(feed);
     let read = feed.lane.latest_read();
     if (read.is_none()) return option::none();
     normalized_spot_from_read(&read.destroy_some())
@@ -81,6 +91,7 @@ public fun normalized_spot(feed: &PythFeed): Option<OracleRead<u64>> {
 
 /// Exact raw Pyth spot read for `source_timestamp_ms`.
 public fun raw_spot_at(feed: &PythFeed, source_timestamp_ms: u64): OracleRead<RawSpot> {
+    assert_current_version(feed);
     let read = feed.lane.read_at(source_timestamp_ms);
     assert!(read.is_some(), ERawSpotNotFound);
     read.destroy_some()
@@ -88,6 +99,7 @@ public fun raw_spot_at(feed: &PythFeed, source_timestamp_ms: u64): OracleRead<Ra
 
 /// Exact Propbook-normalized spot in 1e9 price scaling for `source_timestamp_ms`.
 public fun normalized_spot_at(feed: &PythFeed, source_timestamp_ms: u64): Option<OracleRead<u64>> {
+    assert_current_version(feed);
     let read = feed.lane.read_at(source_timestamp_ms);
     if (read.is_none()) return option::none();
     normalized_spot_from_read(&read.destroy_some())
@@ -122,27 +134,35 @@ public fun raw_source_timestamp_us(raw: &RawSpot): u64 {
 /// Decode a verified Pyth Lazer spot update, store it through the feed's generic
 /// oracle lane, then emit the update event.
 public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
-    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    assert_current_version(feed);
     let read = feed.new_read(&update, clock.timestamp_ms());
     let id = feed.id();
     feed.lane.update(read, id);
 }
 
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
-/// source timestamp. Aborts `EInsertTimestampNotExactMillisecond` if the signed
-/// source timestamp is not a whole millisecond, so the exact-history key is an
-/// unambiguous millisecond a consumer can look up by equality. This does not
-/// mutate `latest`.
+/// per-feed generation timestamp. The feed timestamp must equal the Lazer update
+/// envelope timestamp, so a carried price cannot claim an exact-history key. It
+/// must also be a whole millisecond, making the key unambiguous for equality
+/// lookups. This does not mutate `latest`.
 public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
-    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    assert_current_version(feed);
     let read = feed.new_insert_read(&update, clock.timestamp_ms());
     let id = feed.id();
     feed.lane.insert_at(read, id);
 }
 
-/// Migrate this feed to the running package version (forward-only).
+/// Migrate an empty feed to the running package version (forward-only).
+///
+/// Version 1 observations used the Lazer envelope timestamp as their source
+/// timestamp and cannot be distinguished from fresh per-feed observations.
+/// A nonempty version 1 feed must be replaced with `registry::rotate_pyth_source_feed`
+/// rather than carrying that history across the semantic boundary.
 public fun migrate(feed: &mut PythFeed) {
     assert!(constants::current_version!() > feed.version, ENotNewerVersion);
+    if (feed.version == ENVELOPE_TIMESTAMP_VERSION) {
+        assert!(feed.lane.is_empty(), ELegacyObservationsRequireRotation);
+    };
     feed.version = constants::current_version!();
 }
 
@@ -169,26 +189,32 @@ fun new_read(feed: &PythFeed, update: &LazerUpdate, update_timestamp_ms: u64): O
     new_raw_read(raw, update_timestamp_ms)
 }
 
+fun assert_current_version(feed: &PythFeed) {
+    assert!(feed.version == constants::current_version!(), EWrongVersion);
+}
+
 fun new_insert_read(
     feed: &PythFeed,
     update: &LazerUpdate,
     update_timestamp_ms: u64,
 ): OracleRead<RawSpot> {
     let raw = raw_spot_from_update(update, feed.pyth_source_id);
-    new_raw_insert_read(raw, update_timestamp_ms)
+    new_raw_insert_read(raw, update.timestamp(), update_timestamp_ms)
 }
 
-/// NOTE: the `ELazerFeedNotFound` / `ELazerValueUnavailable` parse guards below are
-/// not reachable from Move unit tests — a real `pyth_lazer::Update` has no test
-/// constructor (which is why `record_raw_for_testing` exists and bypasses this
-/// path). They are exercised only against live Lazer payloads.
+/// NOTE: the `ELazerFeedNotFound` / `ELazerValueUnavailable` parse guards below
+/// are not reachable from Move unit tests — a real `pyth_lazer::Update` has no
+/// test constructor (which is why `record_raw_for_testing` exists and bypasses
+/// this path). They are exercised only against live Lazer payloads.
 fun raw_spot_from_update(update: &LazerUpdate, pyth_source_id: u32): RawSpot {
-    let source_timestamp_us = update.timestamp();
+    let envelope_timestamp_us = update.timestamp();
     let feeds = update.feeds_ref();
     let idx_opt = feeds.find_index!(|f| f.feed_id() == pyth_source_id);
     assert!(idx_opt.is_some(), ELazerFeedNotFound);
     let feed = &feeds[idx_opt.destroy_some()];
 
+    let source_timestamp_us = extract_lazer_feed_update_timestamp(feed.feed_update_timestamp());
+    assert_feed_timestamp_not_after_envelope(source_timestamp_us, envelope_timestamp_us);
     let price = extract_lazer_price(feed.price());
     let exponent = extract_lazer_exponent(feed.exponent());
     let price_is_negative = price.get_is_negative();
@@ -240,8 +266,13 @@ fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
     oracle_lane::new_read(source_timestamp_us.div_ceil(1000), update_timestamp_ms, raw)
 }
 
-fun new_raw_insert_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
+fun new_raw_insert_read(
+    raw: RawSpot,
+    envelope_timestamp_us: u64,
+    update_timestamp_ms: u64,
+): OracleRead<RawSpot> {
     let source_timestamp_us = raw.source_timestamp_us;
+    assert!(source_timestamp_us == envelope_timestamp_us, EInsertFeedTimestampMismatch);
     assert!(source_timestamp_us % 1000 == 0, EInsertTimestampNotExactMillisecond);
     oracle_lane::new_read(source_timestamp_us / 1000, update_timestamp_ms, raw)
 }
@@ -258,6 +289,19 @@ fun extract_lazer_price(price_outer: Option<Option<LazerI64>>): LazerI64 {
 fun extract_lazer_exponent(exp_outer: Option<LazerI16>): LazerI16 {
     assert!(exp_outer.is_some(), ELazerValueUnavailable);
     exp_outer.destroy_some()
+}
+
+fun extract_lazer_feed_update_timestamp(timestamp_outer: Option<Option<u64>>): u64 {
+    // Both Option layers must be Some: clients must request the property, and
+    // Pyth must have a generation timestamp for this feed value.
+    assert!(timestamp_outer.is_some(), ELazerValueUnavailable);
+    let timestamp_inner = timestamp_outer.destroy_some();
+    assert!(timestamp_inner.is_some(), ELazerValueUnavailable);
+    timestamp_inner.destroy_some()
+}
+
+fun assert_feed_timestamp_not_after_envelope(source_timestamp_us: u64, envelope_timestamp_us: u64) {
+    assert!(source_timestamp_us <= envelope_timestamp_us, EFeedTimestampAfterEnvelope);
 }
 
 fun normalized_spot_from_read(read: &OracleRead<RawSpot>): Option<OracleRead<u64>> {
@@ -328,10 +372,12 @@ public fun record_raw_for_testing(
     exponent_magnitude: u16,
     exponent_is_negative: bool,
     source_timestamp_us: u64,
+    envelope_timestamp_us: u64,
     update_timestamp_ms: u64,
     insert_at: bool,
 ) {
-    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    assert_current_version(feed);
+    assert_feed_timestamp_not_after_envelope(source_timestamp_us, envelope_timestamp_us);
     let raw = new_raw_spot(
         feed.pyth_source_id,
         price_magnitude,
@@ -341,7 +387,7 @@ public fun record_raw_for_testing(
         source_timestamp_us,
     );
     let read = if (insert_at) {
-        new_raw_insert_read(raw, update_timestamp_ms)
+        new_raw_insert_read(raw, envelope_timestamp_us, update_timestamp_ms)
     } else {
         new_raw_read(raw, update_timestamp_ms)
     };
@@ -351,4 +397,9 @@ public fun record_raw_for_testing(
     } else {
         feed.lane.update(read, id);
     };
+}
+
+#[test_only]
+public fun set_version_for_testing(feed: &mut PythFeed, version: u64) {
+    feed.version = version;
 }

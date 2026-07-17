@@ -79,6 +79,10 @@ public(package) fun read_at<Payload: copy + drop + store>(
     }
 }
 
+public(package) fun is_empty<Payload: copy + drop + store>(lane: &OracleLane<Payload>): bool {
+    lane.latest.is_none() && lane.exact_reads.length() == 0
+}
+
 public(package) fun read_has_valid_timestamp<Value: copy + drop + store>(
     read: &OracleRead<Value>,
 ): bool {

@@ -134,6 +134,29 @@ fun update_flows_into_raw_and_normalized_latest_getters() {
 }
 
 #[test]
+fun update_uses_feed_timestamp_when_envelope_is_newer() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    pyth_feed::record_raw_for_testing(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        SOURCE_TS_2_US,
+        UPDATE_1_MS,
+        false,
+    );
+
+    assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_1_MS, UPDATE_1_MS);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
 fun normalized_spot_scales_every_exponent_branch_through_feed_getter() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
@@ -342,6 +365,46 @@ fun insert_at_non_exact_source_us_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = pyth_feed::EInsertFeedTimestampMismatch)]
+fun insert_at_carried_price_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    pyth_feed::record_raw_for_testing(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        SOURCE_TS_2_US,
+        UPDATE_1_MS,
+        true,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EFeedTimestampAfterEnvelope)]
+fun feed_timestamp_after_envelope_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    pyth_feed::record_raw_for_testing(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_2_US,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+        false,
+    );
+
+    abort 999
+}
+
 #[test]
 fun stale_future_and_zero_updates_are_no_ops() {
     let (scenario, feed_obj_id) = setup_feed();
@@ -422,6 +485,99 @@ fun migrate_current_version_aborts() {
     abort 999
 }
 
+#[test]
+fun migrate_empty_legacy_feed_succeeds() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+    pyth_feed::set_version_for_testing(&mut feed, 1);
+
+    feed.migrate();
+
+    assert_eq!(feed.version(), constants::current_version!());
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = pyth_feed::ELegacyObservationsRequireRotation)]
+fun migrate_legacy_feed_with_exact_history_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+    insert_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    pyth_feed::set_version_for_testing(&mut feed, 1);
+
+    feed.migrate();
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pyth_feed::ELegacyObservationsRequireRotation)]
+fun migrate_legacy_feed_with_latest_observation_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    pyth_feed::set_version_for_testing(&mut feed, 1);
+
+    feed.migrate();
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EWrongVersion)]
+fun legacy_exact_history_is_unreadable() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+    insert_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    pyth_feed::set_version_for_testing(&mut feed, 1);
+
+    feed.normalized_spot_at(SOURCE_TS_1_MS);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EWrongVersion)]
+fun legacy_latest_observation_is_unreadable() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    pyth_feed::set_version_for_testing(&mut feed, 1);
+
+    feed.normalized_spot();
+
+    abort 999
+}
+
 fun store_raw(
     feed: &mut PythFeed,
     price_magnitude: u64,
@@ -437,6 +593,7 @@ fun store_raw(
         price_is_negative,
         exponent_magnitude,
         exponent_is_negative,
+        source_timestamp_us,
         source_timestamp_us,
         update_timestamp_ms,
         false,
@@ -458,6 +615,7 @@ fun insert_raw(
         price_is_negative,
         exponent_magnitude,
         exponent_is_negative,
+        source_timestamp_us,
         source_timestamp_us,
         update_timestamp_ms,
         true,

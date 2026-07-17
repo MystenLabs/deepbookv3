@@ -248,11 +248,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  and SVI are independent Propbook feeds, so price freshness and SVI freshness remain
 	  separate policy windows.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
-  package version and a forward-only `migrate`; Predict reads them and never asserts
-  their version. *Rationale:* an external, independently-upgraded package owns its
-  own version policy; a stale feed caller is harmless (it just reads an old, still
-  migratable feed). This removed the per-object `allowed_versions` mirror and
-  `sync_*` entry that the old in-package oracle objects carried.
+  package version and enforce it at their own boundary; Predict reads them and
+  never duplicates that assertion. Safe legacy state can migrate forward, while
+  a semantic change that makes old observations ambiguous requires a clean
+  registry rotation instead. *Rationale:* the external, independently-upgraded
+  package owns the version and history policy. This removed the per-object
+  `allowed_versions` mirror and `sync_*` entry that the old in-package oracle
+  objects carried.
 - **No inventory-aware mid shift.** *Rejected:* skewing the quoted mid by pool
   inventory — the aggregate drifts when the SVI surface moves and it carried an `i64`
   overflow risk (built, then fully reverted). Revisit only if the drift and overflow
@@ -346,12 +348,19 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   when needed. *Rationale:* one writer makes the market phase transition atomic,
   keeps price and book liability under one owner, and removes oracle ingress from
   every later settled consumer. *Rejected:* implicit settlement inside each consumer.
+- **An exact Pyth settlement print is exact at the feed level.** The per-feed
+  `feedUpdateTimestamp` must equal the enclosing Lazer update timestamp and the
+  market expiry. A carried price is rejected before it can claim Propbook's
+  insert-only exact key. *Rationale:* an exact envelope timestamp does not prove
+  the price was generated at that boundary; accepting a carried row could
+  permanently settle every payout against an older observation.
 - **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
   expiry moves no cash until `try_settle` succeeds; valuation still aborts through
   live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
   while an unsettled market has no exact terminal liability from which to sweep.
-- **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
-  missing after expiry, the market remains unsettled and live valuation aborts.
+- **Accepted consequence: exact-data liveness.** If a Pyth value with an exact
+  per-feed generation timestamp is missing after expiry, the market remains
+  unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —
   the single flush mark needs a true value that is settlement-dependent and undefined
   until the exact timestamp spot exists. Substituting contribute-0 dilutes incumbents

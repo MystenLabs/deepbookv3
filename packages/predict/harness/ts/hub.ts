@@ -43,6 +43,7 @@ async function main() {
     if (!snap || snap.expiries.size === 0) continue;
     const json = JSON.stringify({
       spot1e9: snap.spot1e9.toString(),
+      pythFeedTimestampMs: snap.pythFeedTimestampMs.toString(),
       publishedAtMs: snap.publishedAtMs.toString(),
       expiries: Object.fromEntries([...snap.expiries.entries()]),
     });

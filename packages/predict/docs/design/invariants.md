@@ -94,8 +94,11 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
   settlement-price writer. It records the exact normalized Pyth spot at the market's
-  expiry timestamp and exact terminal payout liability atomically; otherwise it
-  returns false without changing the market. Settled consumers read no oracle.
+  expiry timestamp and exact terminal payout liability atomically; the Pyth
+  per-feed generation timestamp must equal both its enclosing update timestamp
+  and the expiry. A carried row aborts at exact insertion. If no qualifying exact
+  read exists, `try_settle` returns false without changing the market. Settled
+  consumers read no oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
   `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
   applied by `strike_exposure::process_close`).
@@ -196,16 +199,16 @@ and contributors. For *how* each mechanism works, follow the links into
   step was deleted with the dense NAV matrix; the payout tree is full-lifecycle, so
   the sweep alone suffices.)
 - **Past-expiry exact-data liveness.** A market that crosses its expiry but lacks
-  an exact Propbook Pyth spot cannot be live-valued: `value_expiry` tries passive
+  a Propbook Pyth spot generated at that exact timestamp cannot be live-valued:
+  `value_expiry` tries passive
   settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
   market remains unsettled. This preserves the single exact mark for PLP supply and
   withdraw; no approximate substitute mark is allowed. Because the flush must value
   every active market exactly once, this abort blocks the *whole* pool flush, not
   just the one market — so an expiry whose exact settlement spot is permanently
   unobtainable is a cross-market liveness brick, not a benign wait. Guaranteeing the
-  exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, or a
-  bounded settlement fallback) is a pre-testnet open item — see the open-issues
-  tracker.
+  exact per-feed datum is obtainable is an accepted external dependency under
+  response policy RP-4; a carried observation is not a valid substitute.
 
 ## Configuration
 

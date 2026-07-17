@@ -9,7 +9,7 @@
 //   so the recorded spot path + term structure run against the replay localnet's clock.
 import { readFileSync } from "node:fs";
 
-import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
+import { PythLazerClient, type PriceFeedProperty } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
 import { harnessKey } from "./io.js";
@@ -25,6 +25,7 @@ export interface Svi {
 }
 export interface MarketSnapshot {
   spot1e9: bigint;
+  pythFeedTimestampMs: bigint;
   publishedAtMs: bigint;
   expiries: Map<number, { forward: number; svi: Svi }>;
 }
@@ -35,9 +36,16 @@ export interface MarketSource {
   stop(): void;
 }
 
-// Parse a snapshot JSON object ({spot1e9, publishedAtMs, expiries:{ms:{forward,svi}}}) into a
-// MarketSnapshot. mapByPosition remaps the recorded expiries onto `wanted` by sorted index
-// (replay); otherwise it filters to exactly the wanted expiries (hub).
+function parseTimestampUs(value: unknown): bigint | null {
+  if (value == null || !/^\d+$/.test(String(value))) return null;
+  return BigInt(String(value));
+}
+
+// Parse a snapshot JSON object
+// ({spot1e9, pythFeedTimestampMs, publishedAtMs, expiries:{ms:{forward,svi}}}) into a
+// MarketSnapshot. Old recordings predate the split timestamp and therefore imply a fresh Pyth
+// row. mapByPosition remaps the recorded expiries onto `wanted` by sorted index (replay);
+// otherwise it filters to exactly the wanted expiries (hub).
 function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketSnapshot {
   const expiries = new Map<number, { forward: number; svi: Svi }>();
   if (mapByPosition) {
@@ -53,7 +61,12 @@ function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketS
       if (e) expiries.set(ms, { forward: e.forward, svi: e.svi });
     }
   }
-  return { spot1e9: BigInt(h.spot1e9), publishedAtMs: BigInt(h.publishedAtMs), expiries };
+  return {
+    spot1e9: BigInt(h.spot1e9),
+    pythFeedTimestampMs: BigInt(h.pythFeedTimestampMs ?? h.publishedAtMs),
+    publishedAtMs: BigInt(h.publishedAtMs),
+    expiries,
+  };
 }
 
 const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
@@ -66,6 +79,8 @@ const BS_KEY = harnessKey("BLOCK_SCHOLES_API_KEY");
 // the local signer, not Pyth's signature) before inserting it at the expiry key.
 const PYTH_HISTORY_URL = "https://pyth-lazer.dourolabs.app/v1/price";
 const PYTH_HISTORY_CHANNEL = "fixed_rate@200ms";
+// Pyth documents this production property, but pyth-lazer-sdk 5.2.0's union predates it.
+const FEED_UPDATE_TIMESTAMP = "feedUpdateTimestamp" as PriceFeedProperty;
 
 export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<bigint> {
   const timestampUs = expiryMs * 1000;
@@ -81,7 +96,7 @@ export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<
         method: "POST",
         headers: { Authorization: `Bearer ${PYTH_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent"],
+          timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent", "feedUpdateTimestamp"],
           formats: ["leEcdsa"], jsonBinaryEncoding: "base64", parsed: true, channel: PYTH_HISTORY_CHANNEL,
         }),
       });
@@ -91,6 +106,9 @@ export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<
         throw new Error(`pyth history: expected ts ${timestampUs}us, got ${root?.parsed?.timestampUs}us`);
       const feed = (root.parsed.priceFeeds ?? []).find((f: any) => Number(f.priceFeedId) === 1);
       if (feed?.price == null) throw new Error("pyth history: no price for feed 1");
+      const feedTimestampUs = parseTimestampUs(feed.feedUpdateTimestamp);
+      if (feedTimestampUs == null || feedTimestampUs !== BigInt(timestampUs))
+        throw new Error(`pyth history: carried or missing feed timestamp ${feed?.feedUpdateTimestamp}`);
       return BigInt(Math.round(Number(feed.price) * 10 ** (Number(feed.exponent ?? -8) + 9)));
     } catch (e) {
       lastErr = e;
@@ -104,7 +122,8 @@ export class DirectWsSource implements MarketSource {
   #pyth: PythLazerClient | null = null;
   #bs: WebSocket | null = null;
   #spot1e9: bigint | null = null;
-  #spotMs = 0n;
+  #pythFeedMs = 0n;
+  #pythEnvelopeMs = 0n;
   #fwd = new Map<number, number>();
   #svi = new Map<number, Svi>();
   #expiries: number[] = [];
@@ -121,13 +140,22 @@ export class DirectWsSource implements MarketSource {
       if (ev.type !== "binary" || !ev.value.parsed) return;
       const f = ev.value.parsed.priceFeeds?.[0];
       if (f?.price == null) return;
+      const envelopeTimestampUs = parseTimestampUs(ev.value.parsed.timestampUs);
+      const feedTimestampUs = parseTimestampUs(f.feedUpdateTimestamp);
+      if (
+        envelopeTimestampUs == null ||
+        feedTimestampUs == null ||
+        feedTimestampUs === 0n ||
+        feedTimestampUs > envelopeTimestampUs
+      ) return;
       const exp = Number(f.exponent ?? -8);
       this.#spot1e9 = BigInt(Math.round(Number(f.price) * 10 ** (exp + 9)));
-      this.#spotMs = BigInt(Math.floor(Number(ev.value.parsed.timestampUs) / 1000));
+      this.#pythFeedMs = (feedTimestampUs + 999n) / 1_000n;
+      this.#pythEnvelopeMs = (envelopeTimestampUs + 999n) / 1_000n;
     });
     this.#pyth.subscribe({
       type: "subscribe", subscriptionId: 1, priceFeedIds: [1],
-      properties: ["price", "exponent"], formats: ["leEcdsa"],
+      properties: ["price", "exponent", FEED_UPDATE_TIMESTAMP], formats: ["leEcdsa"],
       deliveryFormat: "binary", parsed: true, channel: "real_time",
     });
     await this.#startBs();
@@ -200,7 +228,12 @@ export class DirectWsSource implements MarketSource {
       const svi = this.#svi.get(ms);
       if (forward != null && svi) expiries.set(ms, { forward, svi });
     }
-    return { spot1e9: this.#spot1e9, publishedAtMs: this.#spotMs, expiries };
+    return {
+      spot1e9: this.#spot1e9,
+      pythFeedTimestampMs: this.#pythFeedMs,
+      publishedAtMs: this.#pythEnvelopeMs,
+      expiries,
+    };
   }
 
   stop(): void {
@@ -248,7 +281,12 @@ export class ReplaySource implements MarketSource {
     if (this.#records.length === 0) return null;
     const h = this.#records[Math.min(this.#i, this.#records.length - 1)];
     this.#i++;
-    return { ...snapshotFrom(h, this.#wanted, true), publishedAtMs: BigInt(Date.now()) };
+    const now = BigInt(Date.now());
+    return {
+      ...snapshotFrom(h, this.#wanted, true),
+      pythFeedTimestampMs: now,
+      publishedAtMs: now,
+    };
   }
   stop(): void {}
 }

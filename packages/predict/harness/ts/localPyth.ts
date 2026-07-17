@@ -20,6 +20,7 @@ const LAZER_PAYLOAD_MAGIC = 2_479_346_549;
 const LAZER_CHANNEL_REAL_TIME = 1;
 const LAZER_PRICE_PROPERTY = 0;
 const LAZER_EXPONENT_PROPERTY = 4;
+const LAZER_FEED_UPDATE_TIMESTAMP_PROPERTY = 12;
 const LAZER_EXACT_1E9_EXPONENT = -9;
 
 export interface LocalPythConfig {
@@ -48,7 +49,8 @@ export interface LazerUpdateParams {
   signerPrivateKey: Uint8Array;
   feedId: number;
   spot1e9: bigint;
-  sourceTimestampMs: bigint;
+  envelopeTimestampMs: bigint;
+  feedUpdateTimestampMs?: bigint;
 }
 
 export function createLocalPythConfig(nowSeconds = Math.floor(Date.now() / 1000)): LocalPythConfig {
@@ -95,18 +97,22 @@ export function buildUpdateTrustedSignerVaaBytes(params: UpdateTrustedSignerVaaP
 }
 
 export function buildLazerUpdateBytes(params: LazerUpdateParams): Uint8Array {
-  const sourceTimestampUs = params.sourceTimestampMs * 1_000n;
+  const envelopeTimestampUs = params.envelopeTimestampMs * 1_000n;
+  const feedUpdateTimestampUs = (params.feedUpdateTimestampMs ?? params.envelopeTimestampMs) * 1_000n;
   const payload = concatBytes(
     u32le(LAZER_PAYLOAD_MAGIC),
-    u64le(sourceTimestampUs),
+    u64le(envelopeTimestampUs),
     u8(LAZER_CHANNEL_REAL_TIME),
     u8(1),
     u32le(params.feedId),
-    u8(2),
+    u8(3),
     u8(LAZER_PRICE_PROPERTY),
     u64le(params.spot1e9),
     u8(LAZER_EXPONENT_PROPERTY),
     u16le(twosComplementI16(LAZER_EXACT_1E9_EXPONENT)),
+    u8(LAZER_FEED_UPDATE_TIMESTAMP_PROPERTY),
+    u8(1),
+    u64le(feedUpdateTimestampUs),
   );
 
   return concatBytes(
@@ -134,13 +140,15 @@ export function lazerUpdateFromConfig(
   config: LocalPythConfig,
   feedId: number,
   spot1e9: bigint,
-  sourceTimestampMs: bigint,
+  envelopeTimestampMs: bigint,
+  feedUpdateTimestampMs = envelopeTimestampMs,
 ): Uint8Array {
   return buildLazerUpdateBytes({
     signerPrivateKey: hexToBytes(config.signerPrivateKey),
     feedId,
     spot1e9,
-    sourceTimestampMs,
+    envelopeTimestampMs,
+    feedUpdateTimestampMs,
   });
 }
 

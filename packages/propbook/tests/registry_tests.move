@@ -8,6 +8,7 @@ use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
     block_scholes_svi_feed::BlockScholesSVIFeed,
+    constants,
     pyth_feed::{Self as pyth_feed, PythFeed},
     registry::{Self, OracleMetadata, OracleRegistry, RegistryAdminCap}
 };
@@ -166,6 +167,158 @@ fun replace_pyth_binding_updates_typed_lookup_and_metadata() {
     return_shared(registry);
     destroy(admin_cap);
     scenario.end();
+}
+
+#[test]
+fun rotate_active_pyth_source_replaces_catalog_and_binding_with_empty_feed() {
+    let (
+        mut scenario,
+        pyth_a_id,
+        _pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+
+    let replacement_id = registry.rotate_pyth_source_feed(
+        &admin_cap,
+        PYTH_SOURCE_A,
+        scenario.ctx(),
+    );
+
+    assert!(replacement_id != pyth_a_id);
+    assert_eq!(registry.propbook_pyth_id_for_source(PYTH_SOURCE_A).destroy_some(), replacement_id);
+    assert_eq!(
+        registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        replacement_id,
+    );
+    assert_metadata(
+        registry.pyth_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        BTC_UNDERLYING_ID,
+        PYTH_SOURCE_A,
+        replacement_id,
+    );
+
+    return_shared(pyth_a);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.next_tx(ADMIN);
+
+    let replacement = scenario.take_shared_by_id<PythFeed>(replacement_id);
+    assert_eq!(replacement.version(), constants::current_version!());
+    assert!(replacement.normalized_spot().is_none());
+    return_shared(replacement);
+    scenario.end();
+}
+
+#[test]
+fun rotate_retired_pyth_source_does_not_change_active_binding() {
+    let (
+        mut scenario,
+        pyth_a_id,
+        pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+
+    let replacement_a_id = registry.rotate_pyth_source_feed(
+        &admin_cap,
+        PYTH_SOURCE_A,
+        scenario.ctx(),
+    );
+
+    assert_eq!(
+        registry.propbook_pyth_id_for_source(PYTH_SOURCE_A).destroy_some(),
+        replacement_a_id,
+    );
+    assert_eq!(
+        registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        pyth_b_id,
+    );
+    assert_metadata(
+        registry.pyth_metadata_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
+        BTC_UNDERLYING_ID,
+        PYTH_SOURCE_B,
+        pyth_b_id,
+    );
+
+    return_shared(pyth_b);
+    return_shared(pyth_a);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun rotate_unbound_pyth_source_updates_only_catalog() {
+    let (
+        mut scenario,
+        pyth_a_id,
+        _pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+
+    let replacement_id = registry.rotate_pyth_source_feed(
+        &admin_cap,
+        PYTH_SOURCE_A,
+        scenario.ctx(),
+    );
+
+    assert!(replacement_id != pyth_a_id);
+    assert_eq!(registry.propbook_pyth_id_for_source(PYTH_SOURCE_A).destroy_some(), replacement_id);
+    assert!(registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).is_none());
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EInvalidOracleObject)]
+fun rotated_old_pyth_source_cannot_be_rebound() {
+    let (
+        mut scenario,
+        pyth_a_id,
+        _pyth_b_id,
+        _bs_spot_a_id,
+        _bs_spot_b_id,
+        _bs_forward_a_id,
+        _bs_forward_b_id,
+        _bs_svi_a_id,
+        _bs_svi_b_id,
+    ) = setup_registry_with_feeds();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+    registry.rotate_pyth_source_feed(&admin_cap, PYTH_SOURCE_A, scenario.ctx());
+
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
+
+    abort 999
 }
 
 #[test]

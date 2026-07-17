@@ -2,7 +2,7 @@
 // signer + cadence/freshness config + lifecycle cap, then create+seed a market and
 // bootstrap the pool. Used by the B1 mint spike and the keeper so the multi-step
 // operator sequence lives in one place.
-import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
+import { PythLazerClient, type PriceFeedProperty } from "@pythnetwork/pyth-lazer-sdk";
 import WebSocket from "ws";
 
 import { existsSync, readFileSync } from "node:fs";
@@ -63,6 +63,9 @@ export interface Snap {
   svi: Svi;
 }
 
+// Pyth documents this production property, but pyth-lazer-sdk 5.2.0's union predates it.
+const FEED_UPDATE_TIMESTAMP = "feedUpdateTimestamp" as PriceFeedProperty;
+
 // One-shot: fetch real Pyth spot + BS forward/SVI for `expiryMs` (warm boundary ~1s).
 export function fetchSnapshot(expiryMs: number, timeoutMs = 70_000): Promise<Snap> {
   return new Promise((resolve, reject) => {
@@ -86,12 +89,15 @@ export function fetchSnapshot(expiryMs: number, timeoutMs = 70_000): Promise<Sna
           if (ev.type !== "binary" || !ev.value.parsed) return;
           const f = ev.value.parsed.priceFeeds?.[0];
           if (f?.price == null) return;
+          const envelopeTimestampUs = String(ev.value.parsed.timestampUs ?? "");
+          const feedTimestampUs = String(f.feedUpdateTimestamp ?? "");
+          if (!/^\d+$/.test(feedTimestampUs) || feedTimestampUs !== envelopeTimestampUs) return;
           out.pythSpot = Number(f.price) * 10 ** Number(f.exponent ?? -8);
           tryDone();
         });
         c.subscribe({
           type: "subscribe", subscriptionId: 1, priceFeedIds: [1],
-          properties: ["price", "exponent"], formats: ["leEcdsa"], deliveryFormat: "binary",
+          properties: ["price", "exponent", FEED_UPDATE_TIMESTAMP], formats: ["leEcdsa"], deliveryFormat: "binary",
           parsed: true, channel: "fixed_rate@200ms",
         });
       })
