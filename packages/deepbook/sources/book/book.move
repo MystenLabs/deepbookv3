@@ -300,36 +300,75 @@ public(package) fun modify_order(
     (cancel_quantity, order)
 }
 
-/// Returns the mid price of the order book.
+/// Returns the best (lowest) ask price, skipping expired orders at the top of
+/// the book. Returns `none` if the ask side has no live order. The walk is
+/// unbounded so a one-sided expired backlog never hides the true top-of-book
+/// from `mid_price` and its consumers; for the crossing test a placement needs,
+/// use `crosses_live_order`, which is bounded to the matcher's reach.
+public(package) fun best_ask_price(self: &Book, current_timestamp: u64): Option<u64> {
+    let (mut slice_ref, mut offset) = self.asks.min_slice();
+    while (!slice_ref.is_null()) {
+        let order = slice_borrow(self.asks.borrow_slice(slice_ref), offset);
+        if (current_timestamp <= order.expire_timestamp()) return option::some(order.price());
+        (slice_ref, offset) = self.asks.next_slice(slice_ref, offset);
+    };
+
+    option::none()
+}
+
+/// Returns the best (highest) bid price, skipping expired orders at the top of
+/// the book. Returns `none` if the bid side has no live order. Unbounded, for
+/// the same reason as `best_ask_price`.
+public(package) fun best_bid_price(self: &Book, current_timestamp: u64): Option<u64> {
+    let (mut slice_ref, mut offset) = self.bids.max_slice();
+    while (!slice_ref.is_null()) {
+        let order = slice_borrow(self.bids.borrow_slice(slice_ref), offset);
+        if (current_timestamp <= order.expire_timestamp()) return option::some(order.price());
+        (slice_ref, offset) = self.bids.prev_slice(slice_ref, offset);
+    };
+
+    option::none()
+}
+
+/// Returns the mid price of the order book. Aborts `EEmptyOrderbook` if either
+/// side has no live order.
 public(package) fun mid_price(self: &Book, current_timestamp: u64): u64 {
-    let (mut ask_ref, mut ask_offset) = self.asks.min_slice();
-    let (mut bid_ref, mut bid_offset) = self.bids.max_slice();
-    let mut best_ask_price = 0;
-    let mut best_bid_price = 0;
+    let ask = self.best_ask_price(current_timestamp);
+    let bid = self.best_bid_price(current_timestamp);
+    assert!(ask.is_some() && bid.is_some(), EEmptyOrderbook);
 
-    while (!ask_ref.is_null()) {
-        let best_ask_order = slice_borrow(
-            self.asks.borrow_slice(ask_ref),
-            ask_offset,
-        );
-        best_ask_price = best_ask_order.price();
-        if (current_timestamp <= best_ask_order.expire_timestamp()) break;
-        (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
+    math::mul(ask.destroy_some() + bid.destroy_some(), constants::half())
+}
+
+/// Returns true if a `price`-priced order on the `is_bid` side would cross a
+/// live order the matcher can actually reach. Walks the opposite side skipping
+/// expired orders, bounded to `max_fills` — the same limit `match_against_book`
+/// uses — because a live order buried under more than `max_fills` expired orders
+/// is unreachable in a single fill and so cannot execute. This, not the
+/// unbounded getters above, is the crossing test a POST_ONLY placement must use:
+/// it mirrors exactly what the fill would see.
+public(package) fun crosses_live_order(
+    self: &Book,
+    price: u64,
+    is_bid: bool,
+    current_timestamp: u64,
+): bool {
+    let book_side = if (is_bid) &self.asks else &self.bids;
+    let (mut slice_ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+    let mut scanned = 0;
+    while (!slice_ref.is_null() && scanned < constants::max_fills()) {
+        let order = slice_borrow(book_side.borrow_slice(slice_ref), offset);
+        if (current_timestamp <= order.expire_timestamp()) {
+            // First live order at top-of-book; the side is price-sorted, so if it
+            // does not cross, nothing deeper does either.
+            return if (is_bid) order.price() <= price else order.price() >= price
+        };
+        (slice_ref, offset) = if (is_bid) book_side.next_slice(slice_ref, offset)
+        else book_side.prev_slice(slice_ref, offset);
+        scanned = scanned + 1;
     };
 
-    while (!bid_ref.is_null()) {
-        let best_bid_order = slice_borrow(
-            self.bids.borrow_slice(bid_ref),
-            bid_offset,
-        );
-        best_bid_price = best_bid_order.price();
-        if (current_timestamp <= best_bid_order.expire_timestamp()) break;
-        (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
-    };
-
-    assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
-
-    math::mul(best_ask_price + best_bid_price, constants::half())
+    false
 }
 
 /// Returns the best bids and asks.

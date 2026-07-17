@@ -209,6 +209,63 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Graceful post-only limit order. Checks the relevant side of the book first
+/// and only forwards to `place_limit_order` with `POST_ONLY` when the order is
+/// guaranteed not to cross a live order the matcher can reach. Returns `none`
+/// instead of aborting `EPOSTOrderCrossesOrderbook` when it would cross — and
+/// also `none` when the forwarded placement rests nothing (a large expired
+/// backlog at a crossing price makes `place_limit_order` hit its fill limit and
+/// inject no order), so `some` always means the order is resting on the book.
+/// An empty opposite side always allows placement.
+///
+/// Self-matching is fixed to `SELF_MATCHING_ALLOWED` and is not a parameter:
+/// the wrapper only ever forwards a non-crossing order, and self-matching
+/// governs how a *crossing* fill treats the taker's own maker orders, so it has
+/// no effect on the forwarded placement. Exposing it would also be a footgun —
+/// `CANCEL_TAKER` aborts (`ESelfMatchingCancelTaker`) against the caller's own
+/// expired order sitting at a crossing price, which the pre-check skips as
+/// non-live, re-introducing the very abort this wrapper exists to avoid. A
+/// caller that wants to cross and cancel its own resting orders should call
+/// `place_limit_order` directly.
+public fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_proof: &TradeProof,
+    client_order_id: u64,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): Option<OrderInfo> {
+    let would_cross = self
+        .load_inner()
+        .book
+        .crosses_live_order(price, is_bid, clock.timestamp_ms());
+    if (would_cross) return option::none();
+
+    let order_info = self.place_limit_order(
+        balance_manager,
+        trade_proof,
+        client_order_id,
+        constants::post_only(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    );
+
+    // place_limit_order can hit its fill limit clearing an expired backlog and
+    // rest nothing; report that as `none` so `some` always means the order rests.
+    if (order_info.order_inserted()) option::some(order_info) else option::none()
+}
+
 /// Place a market order. Quantity is in base asset terms. Calls
 /// place_limit_order with
 /// a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not
@@ -1342,6 +1399,26 @@ public fun mid_price<BaseAsset, QuoteAsset>(
     clock: &Clock,
 ): u64 {
     self.load_inner().book.mid_price(clock.timestamp_ms())
+}
+
+/// Top-of-book read for PTB construction / devInspect (SDK, UI). Returns the
+/// best (lowest) ask price, skipping expired orders. Returns `none` if the ask
+/// side has no live order.
+public fun best_ask_price<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+): Option<u64> {
+    self.load_inner().book.best_ask_price(clock.timestamp_ms())
+}
+
+/// Top-of-book read for PTB construction / devInspect (SDK, UI). Returns the
+/// best (highest) bid price, skipping expired orders. Returns `none` if the bid
+/// side has no live order.
+public fun best_bid_price<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+): Option<u64> {
+    self.load_inner().book.best_bid_price(clock.timestamp_ms())
 }
 
 /// Returns the order_id for all open order for the balance_manager in the pool.
