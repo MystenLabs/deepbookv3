@@ -38,13 +38,13 @@ The SVI curve is described by five stochastic-volatility-inspired parameters in 
 
 | Param | Type | Role in `w(k)` |
 | --- | --- | --- |
-| `a` | `u64` | Added directly to total variance |
+| `a` | `I64` (signed) | Added directly to total variance |
 | `b` | `u64` | Scales the wing term |
 | `rho` | `I64` (signed) | Multiplies `(k − m)` inside the wing term |
 | `m` | `I64` (signed) | Subtracted from `k` (smile center offset) |
 | `sigma` | `u64` | Enters under the square root with `(k − m)²` |
 
-`rho` and `m` are signed because the wing tilt and smile-center offset can each point either direction; `a`, `b`, and `sigma` are unsigned variance quantities. `I64` is the signed fixed-point type from the shared `fixed_math` package (the renamed `predict_math`), a magnitude-plus-sign type with normalized zero. (The "Role" column describes each parameter's place in the variance formula below; the standard raw-SVI reading — `a` baseline variance, `b` wing slope, `rho` skew, `m` horizontal shift, `sigma` curvature — is consistent with it.)
+`a`, `rho`, and `m` are signed because the baseline variance, wing tilt, and smile-center offset can each point either direction; `b` and `sigma` remain unsigned. `I64` is the signed fixed-point type from the shared `fixed_math` package (the renamed `predict_math`), a magnitude-plus-sign type with normalized zero. (The "Role" column describes each parameter's place in the variance formula below; the standard raw-SVI reading — `a` baseline variance, `b` wing slope, `rho` skew, `m` horizontal shift, `sigma` curvature — is consistent with it.)
 
 SVI is its own per-expiry lane and has a looser freshness threshold than BS spot/forward. A push whose publisher timestamp does not advance its lane is a clean no-op rather than an abort, so one transaction can refresh multiple BS feeds without an ordering race on one non-advancing feed reverting the whole batch.
 
@@ -78,7 +78,9 @@ Because strikes are absolute integer ticks against a forward that can drift far 
 
 Reaching either tail requires the forward to leave the entire encodable strike domain by orders of magnitude; saturating there keeps NAV, redeem, and liquidation reads live instead of bricking the whole market on an extreme price. The range-price differencing is likewise saturating, so a thin or far-OTM range with ~0 true probability and a 1-ulp fixed-point inversion prices `0` rather than aborting a legitimate trade.
 
-The math runs in 1e9 fixed point throughout, using the `fixed_math` `I64` signed type for the intermediate signed quantities (`k`, `k − m`, `d2`) and guarding the real preconditions: positive forward, non-negative SVI wing term, and positive total variance. The `min_svi_sigma` floor on `sigma` closes the non-negative-wing precondition (`ECannotBeNegative`); positive total variance (`EZeroVariance`) is a separate guard reachable with valid data only in the final moments before expiry, where total variance (σ²·T) rounds to zero in 1e9 fixed point — a recoverable liveness stop (the affected live-redeem / liquidation / NAV read succeeds once the market crosses into settlement), never a mispricing.
+The math runs in 1e9 fixed point throughout, using the `fixed_math` `I64` signed type for the intermediate signed quantities (`a`, `rho`, `m`, `k`, `k − m`, `d2`) and guarding the real preconditions: positive forward, non-negative SVI wing term, and positive total variance. The read-time envelope bounds `|a|` instead of rejecting negative `a`, then checks the analytical minimum variance `a + b·sigma·sqrt(1 − rho²)` is positive. That rejects surfaces whose signed baseline over-offsets the SVI wing before any mint, redeem, liquidation, or NAV path can divide by `sqrt(w)`. The deep `ENonPositiveVariance` check remains as a defensive math backstop, but valid loaded surfaces are expected to fail at the envelope if their minimum total variance is non-positive.
+
+For single order/range quotes, range-price differencing is saturating: if a clamped or non-monotone adjusted digital segment would make `up_price(lower) < up_price(higher)`, that order prices at zero rather than aborting the trade path. NAV valuation has an additional active-book check. The payout-tree walk caches finite boundary UP prices in ascending tick order; if an active market's current surface makes those cached UP prices increase over the active boundary set, the flush aborts with a non-monotone price-memo guard instead of netting a non-monotone surface into an overstated `current_nav`.
 
 > The full closed-form SVI and normal-CDF/PDF implementation, including the fixed-point `ln`, `sqrt`, `normal_cdf`, and `normal_pdf` helpers, lives in the `pricing` and `fixed_math` modules. The formulas above are the model, not a reproduction of every rounding step.
 
@@ -128,7 +130,7 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 
-**Read-time pricing envelope (Predict, not Propbook).** Propbook stores source facts. Predict's `pricing` module decides whether the combined BS inputs are safe for Predict's fixed-point pricing math: `spot > 0`, `forward > 0`, bounded basis, bounded SVI inputs, `|rho| <= 1`, and sigma within Predict's accepted range.
+**Read-time pricing envelope (Predict, not Propbook).** Propbook stores source facts. Predict's `pricing` module decides whether the combined BS inputs are safe for Predict's fixed-point pricing math: `spot > 0`, `forward > 0`, bounded basis, bounded SVI magnitudes, `|rho| <= 1`, sigma within Predict's accepted range, and positive analytical minimum total variance. Negative SVI `a` is accepted when that minimum-variance condition still holds.
 
 **No writes during pool valuation.** The full-pool flush computes NAV against a frozen snapshot, so Predict's valuation lock blocks Predict trading and admin changes mid-valuation; see [liquidity and NAV](./liquidity-and-nav.md). The propbook feeds are independent objects and are not part of that lock — but the flush is privileged and the flush operator is trusted not to push the oracle mid-flush, which is the model that makes the single frozen mark sound (see the audit-L8 note in [liquidity and NAV](./liquidity-and-nav.md)).
 

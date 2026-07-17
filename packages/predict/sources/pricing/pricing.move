@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{i64, math};
+use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -43,9 +43,18 @@ public struct ExactSpotRead has drop {
     spot: Option<u64>,
 }
 
-/// Per-flush cache of boundary prices populated in ascending payout-tree order.
-/// Every active leveraged order's finite boundaries must be tree nodes, so a
-/// correction-walk cache miss aborts rather than repricing around index drift.
+/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending
+/// and non-increasing in price.
+///
+/// The NAV linear walk (`strike_payout_tree::walk_linear`) fills it once per node
+/// as it prices the payout tree in-order; the correction walk
+/// (`liquidation_book::correction_value`) then reads each leveraged order's boundary
+/// prices back by binary search instead of re-pricing every order. Every active
+/// leveraged order's finite boundary ticks are payout-tree nodes, so every finite
+/// lookup MUST hit: a miss is a broken exposure index, not a cache fallback, and
+/// `cached_range_price` aborts `ETickNotInPriceMemo` rather than silently repricing.
+/// The same cache rejects non-monotone UP prices during NAV valuation, because
+/// `walk_linear` tree-wide netting is exact only on a monotone active surface.
 public struct PriceMemo has drop {
     /// Finite boundary ticks in ascending order (the in-order walk appends them).
     ticks: vector<u64>,
@@ -55,7 +64,7 @@ public struct PriceMemo has drop {
 
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
-const EZeroVariance: u64 = 2;
+const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesPriceStale: u64 = 4;
 const EBlockScholesInputsInvalid: u64 = 5;
@@ -69,6 +78,8 @@ const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
 const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
+const EBlockScholesMinVarianceInvalid: u64 = 16;
+const ENonMonotonePriceMemo: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -210,6 +221,12 @@ public(package) fun price_and_cache(
     tick_size: u64,
 ): u64 {
     let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+    if (!memo.prices.is_empty()) {
+        let previous = memo.prices[memo.prices.length() - 1];
+        // Higher strikes should not have higher UP prices. NAV's linear tree walk
+        // relies on that order; an inverted surface can overstate pool value.
+        assert!(price <= previous, ENonMonotonePriceMemo);
+    };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
     price
@@ -379,7 +396,7 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
-    assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -387,6 +404,26 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
         svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
         EBlockScholesInputsInvalid,
     );
+    assert_min_total_variance_positive(svi);
+}
+
+fun assert_min_total_variance_positive(svi: &SVIParams) {
+    let min_variance_increment = min_svi_variance_increment(svi);
+    let a = svi.a();
+    let min_total_var = i64::from_u64(min_variance_increment).add(&a);
+    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+}
+
+// SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
+// `x = k - m`. This returns the smallest possible non-`a` part over all strikes:
+// `b * sigma * sqrt(1 - rho^2)`, or 0 at the `|rho| == 1` boundary.
+fun min_svi_variance_increment(svi: &SVIParams): u64 {
+    let rho_mag = svi.rho().magnitude();
+    if (rho_mag == math::float_scaling!()) return 0;
+
+    let one_minus_rho_squared = math::float_scaling!() - math::mul(rho_mag, rho_mag);
+    let sqrt_one_minus_rho_squared = math::sqrt(one_minus_rho_squared, math::float_scaling!());
+    math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
@@ -445,11 +482,13 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let a = svi_params.a();
     let b = svi_params.b();
-    let wing_var = math::mul(b, inner.magnitude());
-    let total_var = a + wing_var;
-    assert!(total_var > 0, EZeroVariance);
+    let variance_increment = math::mul(b, inner.magnitude());
+    let a = svi_params.a();
+    let total_var = i64::from_u64(variance_increment).add(&a);
+    // Total variance must be positive because pricing takes sqrt(w) below.
+    assert!(is_positive(&total_var), ENonPositiveVariance);
+    let total_var = total_var.magnitude();
 
     let sqrt_var = math::sqrt(total_var, math::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
@@ -474,4 +513,8 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
+}
+
+fun is_positive(value: &I64): bool {
+    !value.is_negative() && !value.is_zero()
 }

@@ -19,26 +19,25 @@
 ///
 /// The `assert_inputs_pricing_safe` envelope rejects (`EBlockScholesInputsInvalid`)
 /// is covered here too: one test per reachable branch seeds a surface that violates
-/// exactly that bound (`forward` ceiling, `basis`, `a`, `b`, `rho`, `m`, `sigma`),
-/// leaving every other input default so only the targeted branch fires. The
-/// `spot == 0` / `forward == 0` branch of that assert is unreachable through
+/// exactly that bound (`forward` ceiling, `basis`, `a` magnitude, `b`, `rho`, `m`,
+/// `sigma`), leaving every other input default so only the targeted branch fires.
+/// The `spot == 0` / `forward == 0` branch of that assert is unreachable through
 /// `load_live_pricer`: the split Block Scholes feed reads drop a zero spot or zero
 /// forward upstream, so the read arrives as `none` and pricing aborts on absence
 /// (-> `EBlockScholesPriceUnavailable`) before any staleness check runs. Those two
-/// conditions are defensive-only and not tested here. `EZeroForward` is reached
-/// via a pyth spot far below the BS spot (no LOWER basis bound), where the
-/// re-anchored `spot * bs_forward / bs_spot` floors to 0. `EZeroVariance` is reached by a
-/// degenerate-but-in-envelope surface (`a == 0, b == 0`, so total variance
-/// `a + b*inner == 0`): a/b are bounded only from above, and the `sigma >= 1e-3`
-/// floor bounds the SVI wing parameter, NOT the total variance, so it does not
-/// prevent this. It is the same recoverable fail-closed liveness stop a near-expiry
-/// surface hits as total variance rounds to 0: all quoting (incl. NAV) aborts until
-/// a valid surface is pushed, never a mispricing. `ECannotBeNegative` in
-/// `compute_nd2` is the one genuinely unreachable guard: the envelope's `|rho| <= 1`
-/// makes `inner = rho*(k-m) + sqrt((k-m)^2 + sigma^2) >= 0` always; it is a
-/// defensive fixed-point guard, noted not tested. `ETickNotInPriceMemo` is a
-/// package-level cache contract guard and is covered directly below; the successful
-/// memo path is covered in `payout_tree_walk_tests`.
+/// conditions are defensive-only and not tested here. `EBlockScholesMinVarianceInvalid`
+/// covers surfaces whose analytical minimum total variance is non-positive,
+/// including negative `a` values that over-offset the SVI increment and the
+/// degenerate `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot
+/// far below the BS spot (no LOWER basis bound), where the re-anchored
+/// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
+/// a boundary surface whose rounded analytical minimum is positive at load but
+/// whose concrete at-forward quote rounds total variance non-positive.
+/// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
+/// the load-time envelope: no production input is known to reach it.
+/// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
+/// directly below; active-book non-monotone UP prices are covered by
+/// `ENonMonotonePriceMemo`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -46,8 +45,10 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
+    pricing_reference_data as ref_data,
     range_codec::strike_for_testing as strike,
-    test_constants
+    test_constants,
+    test_helpers
 };
 use fixed_math::math::float_scaling as float;
 use propbook::{
@@ -74,9 +75,18 @@ const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
-const MIN_SVI_SIGMA: u64 = 1_000_000; // 1e-3 in 1e9 fixed point
-const MAX_SVI_INPUT: u64 = 100_000_000_000; // 100 * 1e9
 const PRICE_MEMO_MISSING_TICK: u64 = 100;
+const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
+const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
+const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
+const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
+const NONPOSITIVE_MIN_VARIANCE_A_MAG: u64 = 5_000_001;
+const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
+const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
+const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
+const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
+const NON_MONOTONE_LOW_TICK: u64 = 90;
+const NON_MONOTONE_HIGH_TICK: u64 = 95;
 
 // === Abort guards ===
 
@@ -84,6 +94,34 @@ const PRICE_MEMO_MISSING_TICK: u64 = 100;
 fun cached_range_price_with_missing_finite_tick_aborts() {
     let memo = pricing::new_price_memo();
     memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
+fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        1,
+        false,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
+        test_constants::float(),
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let mut memo = pricing::new_price_memo();
+
+    memo.price_and_cache(&pricer, NON_MONOTONE_LOW_TICK, test_constants::float());
+    memo.price_and_cache(&pricer, NON_MONOTONE_HIGH_TICK, test_constants::float());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
     abort EUnexpectedSuccess
 }
 
@@ -310,6 +348,7 @@ fun surface_with_basis_at_exact_factor_admits() {
         spot,
         spot * 100, // basis exactly at the factor: the largest admitted forward
         default_svi_a(),
+        false,
         default_svi_b(),
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -334,13 +373,82 @@ fun surface_with_basis_at_exact_factor_admits() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_a_above_max_aborts() {
-    load_pricer_with_invalid_svi(MAX_SVI_INPUT + 1, default_svi_b(), default_svi_sigma());
+    load_pricer_with_invalid_svi(
+        test_constants::pricing_max_svi_input() + 1,
+        default_svi_b(),
+        default_svi_sigma(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun negative_svi_a_with_positive_min_variance_prices() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        NEGATIVE_SVI_A_MAG,
+        true,
+        POSITIVE_MIN_VARIANCE_SVI_B,
+        POSITIVE_MIN_VARIANCE_SIGMA,
+        0,
+        false,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    let up = pricer.range_price(
+        strike(test_constants::default_live_price()),
+        strike(constants::pos_inf!()),
+    );
+    // Independent Python true-math reference:
+    // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
+    // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
+    // The tolerance uses the committed pricing-reference generator's worst-case
+    // per-endpoint error budget. This at-forward, zero-skew point is less
+    // ill-conditioned than that generated small-variance worst case.
+    test_helpers::assert_within(
+        up,
+        NEGATIVE_A_AT_FORWARD_REFERENCE,
+        ref_data::worst_case_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        NONPOSITIVE_MIN_VARIANCE_A_MAG,
+        true,
+        POSITIVE_MIN_VARIANCE_SVI_B,
+        POSITIVE_MIN_VARIANCE_SIGMA,
+        0,
+        false,
+        0,
+        false,
+    );
+
+    let _pricer = fx.load_pricer_bundle(&oracle);
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_b_above_max_aborts() {
-    load_pricer_with_invalid_svi(default_svi_a(), MAX_SVI_INPUT + 1, default_svi_sigma());
+    load_pricer_with_invalid_svi(
+        default_svi_a(),
+        test_constants::pricing_max_svi_input() + 1,
+        default_svi_sigma(),
+    );
     abort EUnexpectedSuccess
 }
 
@@ -367,7 +475,7 @@ fun surface_with_svi_m_above_max_aborts() {
         default_svi_sigma(),
         test_constants::float(),
         false,
-        MAX_SVI_INPUT + 1,
+        test_constants::pricing_max_svi_input() + 1,
         false,
     );
     abort EUnexpectedSuccess
@@ -375,13 +483,21 @@ fun surface_with_svi_m_above_max_aborts() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_sigma_below_min_aborts() {
-    load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), MIN_SVI_SIGMA - 1);
+    load_pricer_with_invalid_svi(
+        default_svi_a(),
+        default_svi_b(),
+        test_constants::pricing_min_svi_sigma() - 1,
+    );
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_sigma_above_max_aborts() {
-    load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), MAX_SVI_INPUT + 1);
+    load_pricer_with_invalid_svi(
+        default_svi_a(),
+        default_svi_b(),
+        test_constants::pricing_max_svi_input() + 1,
+    );
     abort EUnexpectedSuccess
 }
 
@@ -401,6 +517,7 @@ fun re_anchored_zero_forward_aborts() {
         bs_spot,
         1, // bs_forward == 1
         default_svi_a(),
+        false,
         default_svi_b(),
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -419,16 +536,43 @@ fun re_anchored_zero_forward_aborts() {
     abort EUnexpectedSuccess
 }
 
-// === Deep-math abort (EZeroVariance) ===
+/// A boundary-valid surface can still hit the quote-time positive-variance
+/// backstop: the load-time rounded analytical minimum is positive by 4 units,
+/// but at the forward strike this specific surface rounds the per-strike SVI
+/// increment 5 units lower, making total variance negative.
+#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
+fun boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        PER_STRIKE_NONPOSITIVE_A_MAG,
+        true,
+        PER_STRIKE_NONPOSITIVE_B,
+        test_constants::pricing_min_svi_sigma(),
+        PER_STRIKE_NONPOSITIVE_RHO,
+        false,
+        PER_STRIKE_NONPOSITIVE_M,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
 
-/// A degenerate but in-envelope surface (`a == 0, b == 0`) has zero SVI total
-/// variance (`total_var = a + b*inner == 0`). It passes `assert_inputs_pricing_safe`
-/// (a/b are bounded only from above), but `compute_nd2` fails closed on the first
-/// finite-strike quote. The `min_svi_sigma` floor does not prevent this: it bounds
-/// the SVI wing parameter, not the total variance. This is the same recoverable
-/// liveness stop a near-expiry surface hits as total variance rounds to 0.
-#[test, expected_failure(abort_code = pricing::EZeroVariance)]
-fun zero_total_variance_aborts() {
+    pricer.up_price(strike(test_constants::default_live_price()));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    abort EUnexpectedSuccess
+}
+
+// === Surface minimum-variance abort ===
+
+/// A degenerate surface (`a == 0, b == 0`) has zero analytical minimum total
+/// variance (`a + b*sigma*sqrt(1-rho^2) == 0`), so it is rejected while loading
+/// the live pricer rather than reaching the first finite-strike quote.
+#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+fun zero_total_variance_aborts_at_load() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(
@@ -436,6 +580,7 @@ fun zero_total_variance_aborts() {
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         0, // svi_a == 0
+        false,
         0, // svi_b == 0, so total_var = a + b*inner == 0
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -533,6 +678,7 @@ fun load_pricer_with_full_svi_and_spot(
         spot,
         forward,
         svi_a,
+        false,
         svi_b,
         svi_sigma,
         svi_rho_magnitude,

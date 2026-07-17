@@ -251,6 +251,7 @@ fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
         ref_data::spot(LARGE_VARIANCE_SCENARIO),
         ref_data::forward(LARGE_VARIANCE_SCENARIO),
         ref_data::svi_a(LARGE_VARIANCE_SCENARIO),
+        false,
         ref_data::svi_b(LARGE_VARIANCE_SCENARIO),
         ref_data::svi_sigma(LARGE_VARIANCE_SCENARIO),
         ref_data::svi_rho_magnitude(LARGE_VARIANCE_SCENARIO),

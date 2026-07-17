@@ -96,7 +96,8 @@ async function main() {
       expiry: BigInt(expiry),
       forward: to1e9(e.forward),
       svi: {
-        a: to1e9(e.svi.alpha), b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
+        a: to1e9(Math.abs(e.svi.alpha)), aNegative: e.svi.alpha < 0,
+        b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
         rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
         m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
       },
