@@ -297,7 +297,7 @@ public fun create_and_share_builder_code(
 /// Package initializer - creates Registry and AdminCap.
 fun init(ctx: &mut TxContext) {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
-    protocol_config::create_and_share(ctx);
+    let _ = protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
     transfer::public_transfer(admin_cap, ctx.sender());
 }
@@ -333,7 +333,7 @@ fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
 public fun init_for_testing(ctx: &mut TxContext): ID {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     let registry_id = registry.id();
-    protocol_config::create_and_share(ctx);
+    let _ = protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
     transfer::public_transfer(admin_cap, ctx.sender());
 
