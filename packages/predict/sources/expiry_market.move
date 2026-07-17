@@ -265,7 +265,7 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 
 /// Return the holder value of one order, gross of fees: the read prefix of the
 /// redeem flow. The same classifier quotes the close, so this view cannot
-/// disagree with what a redeem would pay — liquidated and knocked-out orders
+/// disagree with what a redeem would pay — liquidated and liquidatable orders
 /// are worth zero, a live order its full-close redeem amount (range value net
 /// of its static floor), a settled order its terminal payout. Public read for
 /// SDK/devInspect and external Move composition; callers must already know the
@@ -276,7 +276,7 @@ public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): 
     let terms = market
         .strike_exposure
         .quote_close(option::some(*pricer), &order, order.quantity());
-    if (terms.is_liquidated() || terms.is_knocked_out()) return 0;
+    if (terms.is_liquidated() || terms.is_liquidatable()) return 0;
     if (terms.is_live()) return terms.redeem_amount();
     terms.settled_payout()
 }
@@ -662,7 +662,7 @@ public fun liquidate(
 
 /// Try to liquidate one active leveraged order by ID, through the close flow:
 /// quote the order's state, and apply the keeper liquidation only on a
-/// knocked-out outcome. Returns whether the order was liquidated.
+/// liquidatable outcome. Returns whether the order was liquidated.
 public fun liquidate_order(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -677,7 +677,7 @@ public fun liquidate_order(
     let terms = market
         .strike_exposure
         .quote_close(option::some(*pricer), &order, order.quantity());
-    if (!terms.is_knocked_out()) return false;
+    if (!terms.is_liquidatable()) return false;
     market.strike_exposure.process_close(option::some(*pricer), terms, clock);
     true
 }
@@ -964,9 +964,9 @@ fun redeem(
     assert!(terms.is_live() || close_quantity == order.quantity(), EFullCloseRequired);
 
     // Zero-payout arm (either phase): an already-liquidated order has only its
-    // position left to clear; a knocked-out order is liquidated book-side in
+    // position left to clear; a liquidatable order is liquidated book-side in
     // the same breath.
-    if (terms.is_liquidated() || terms.is_knocked_out()) {
+    if (terms.is_liquidated() || terms.is_liquidatable()) {
         market.strike_exposure.process_close(pricer, terms, clock);
         let position_root_id = predict_account::remove_position(
             account,

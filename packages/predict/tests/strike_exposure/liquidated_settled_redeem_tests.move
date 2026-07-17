@@ -118,7 +118,7 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
     let terms = harness
         .exposure
         .quote_close(option::some(liquidation_pricer), &order, order.quantity());
-    assert!(terms.is_knocked_out());
+    assert!(terms.is_liquidatable());
     harness.exposure.process_close(option::some(liquidation_pricer), terms, fx.clock());
 
     (fx, oracle, harness, order)

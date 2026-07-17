@@ -93,13 +93,14 @@ public struct CloseTerms has drop {
 }
 
 /// Every outcome of one prospective close: an already-liquidated order whose
-/// book state is gone (only the holder's position clear remains), a knock-out
-/// at the current price, a priced live close, or the settled terminal payout
+/// book state is gone (only the holder's position clear remains), a
+/// liquidatable order due its knock-out at the current price, a priced live
+/// close, or the settled terminal payout
 /// (zero for a loss). Enums match only inside their defining module, so flows
 /// branch via the `is_*` accessors and `process_close` owns the dispatch.
 public enum CloseOutcome has drop {
     Liquidated,
-    KnockedOut { gross_value: u64 },
+    Liquidatable { gross_value: u64 },
     Live(LiveCloseTerms),
     Settled { payout: u64 },
 }
@@ -142,9 +143,9 @@ public(package) fun is_liquidated(terms: &CloseTerms): bool {
     }
 }
 
-public(package) fun is_knocked_out(terms: &CloseTerms): bool {
+public(package) fun is_liquidatable(terms: &CloseTerms): bool {
     match (&terms.outcome) {
-        CloseOutcome::KnockedOut { .. } => true,
+        CloseOutcome::Liquidatable { .. } => true,
         _ => false,
     }
 }
@@ -344,8 +345,8 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
 /// Quote the close of `order` in ANY state as compute-once close terms: the
 /// single classifier for every close flow. Outcome precedence: the liquidated
 /// state first (only the holder's position clear remains), then the settled
-/// terminal payout from the recorded settlement, then live knock-out vs a
-/// priced live close — the only outcomes that need the pricer.
+/// terminal payout from the recorded settlement, then liquidatable (knock-out
+/// due) vs a priced live close — the only outcomes that need the pricer.
 ///
 /// A `Pricer` is a live-phase capability: it is only constructible before
 /// expiry and settlement is only recordable after it, so a caller holding one
@@ -377,9 +378,9 @@ public(package) fun quote_close(
     let range_probability = exposure.order_range_price(pricer.borrow(), order);
     let gross_value = math::mul(range_probability, order.quantity());
     // Leveraged only: a 1x order has a zero floor, so the threshold test would
-    // spuriously classify a currently-worthless 1x order as knocked out.
+    // spuriously classify a currently-worthless 1x order as liquidatable.
     if (order.is_leveraged() && exposure.under_liquidation_floor(gross_value, order.floor_shares())) {
-        return exposure.close_terms(order, CloseOutcome::KnockedOut { gross_value })
+        return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
     exposure.close_terms(
         order,
@@ -391,8 +392,8 @@ public(package) fun quote_close(
 /// every outcome. Consuming `terms` by value ties each application to exactly
 /// one quote, and the market identity assert rejects terms quoted on another
 /// exposure book. Returns the replacement order a partial live close leaves
-/// behind. `pricer` and `clock` feed only the knock-out arm's liquidation
-/// event; a `KnockedOut` outcome is only constructible in the live phase, so
+/// behind. `pricer` and `clock` feed only the liquidatable arm's liquidation
+/// event; a `Liquidatable` outcome is only constructible in the live phase, so
 /// the pricer is present when that arm runs.
 public(package) fun process_close(
     exposure: &mut StrikeExposure,
@@ -406,9 +407,9 @@ public(package) fun process_close(
         // Liquidation already removed the order's book state; only the
         // holder's account position remains, and the flow owns that.
         CloseOutcome::Liquidated => option::none(),
-        CloseOutcome::KnockedOut { gross_value } => {
+        CloseOutcome::Liquidatable { gross_value } => {
             let liquidation_ltv = exposure.config.liquidation_ltv();
-            exposure.apply_knockout(
+            exposure.apply_liquidation(
                 pricer.borrow(),
                 &order,
                 gross_value,
@@ -425,14 +426,14 @@ public(package) fun process_close(
     }
 }
 
-/// The single knockout mutation: remove the order's full `(quantity, floor)`
+/// The single liquidation mutation: remove the order's full `(quantity, floor)`
 /// terms from the active index and the payout tree, and emit the liquidation
 /// event atomically with the removal. Shared by the close flow
 /// (`process_close`) and the ambient sweep, so the book, tree, and event can
-/// never diverge. Callers own the knock-out decision; only leveraged orders
+/// never diverge. Callers own the liquidation decision; only leveraged orders
 /// reach here — the classifier by its explicit guard, the sweep because the
 /// active index holds exactly the leveraged orders (1x inserts are no-ops).
-fun apply_knockout(
+fun apply_liquidation(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
@@ -748,7 +749,7 @@ fun liquidate_order_if_under_floor(
     let gross_value = exposure.gross_order_value(pricer, order);
     if (!exposure.under_liquidation_floor(gross_value, order.floor_shares())) return false;
 
-    exposure.apply_knockout(pricer, order, gross_value, liquidation_ltv, liquidated_at_ms);
+    exposure.apply_liquidation(pricer, order, gross_value, liquidation_ltv, liquidated_at_ms);
     true
 }
 
