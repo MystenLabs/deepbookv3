@@ -171,7 +171,7 @@ public fun normal_pdf(x: &i64::I64): u64 {
 }
 
 /// Returns a fixed-point square root with `precision` as the operand scale.
-/// For `m = floor(1e9 / precision)`, the exact integer contract is `floor(sqrt(x * m * 1e9)) / m`; when `precision` divides 1e9, the raw result represents `sqrt(x * precision)`. Production callers pass `precision = 1e9`, so a 1e9-scaled input produces a 1e9-scaled result rounded down within one raw unit. `precision` must be in `[1, 1e9]`.
+/// For `m = floor(1e9 / precision)`, the exact integer contract is `floor(sqrt(x * m * 1e9)) / m`; when `precision` divides 1e9, the raw result represents `sqrt(x * precision)`. Predict callers pass `precision = 1e9`, so a 1e9-scaled input produces a 1e9-scaled result rounded down within one raw unit. `precision` must be in `[1, 1e9]`.
 public fun sqrt(x: u64, precision: u64): u64 {
     assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
     let multiplier = (float_scaling!() / precision) as u128;
