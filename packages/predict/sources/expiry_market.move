@@ -595,9 +595,7 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    assert!(market.is_settled(), EMarketNotSettled);
+    market.assert_settled_flow_allowed(config);
     // No slippage bounds: the settled arm pays the fixed terminal payout.
     market.redeem(
         wrapper,
@@ -630,9 +628,7 @@ public fun redeem_settled_permissionless(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    assert!(market.is_settled(), EMarketNotSettled);
+    market.assert_settled_flow_allowed(config);
     let auth = predict_account::generate_auth_as_app(account_registry);
     // No slippage bounds: the settled arm pays the fixed terminal payout.
     market.redeem(
@@ -1144,11 +1140,15 @@ fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 }
 
 fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    market.assert_pricer_bound(pricer);
+    market.assert_live_flow_allowed(config, pricer);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
+}
+
+fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    assert!(market.is_settled(), EMarketNotSettled);
 }
 
 fun assert_pricer_bound(market: &ExpiryMarket, pricer: &Pricer) {
