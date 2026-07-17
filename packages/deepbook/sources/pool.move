@@ -214,12 +214,21 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 /// guaranteed not to cross. If it would cross, returns `none` without placing
 /// — avoiding the `EPOSTOrderCrossesOrderbook` abort that tears down a PTB.
 /// An empty opposite side always allows placement.
+///
+/// Self-matching is fixed to `SELF_MATCHING_ALLOWED` and is not a parameter:
+/// the wrapper only ever forwards a non-crossing order, and self-matching
+/// governs how a *crossing* fill treats the taker's own maker orders, so it has
+/// no effect on the forwarded placement. Exposing it would also be a footgun —
+/// `CANCEL_TAKER` aborts (`ESelfMatchingCancelTaker`) against the caller's own
+/// expired order sitting at a crossing price, which the pre-check skips as
+/// non-live, re-introducing the very abort this wrapper exists to avoid. A
+/// caller that wants to cross and cancel its own resting orders should call
+/// `place_limit_order` directly.
 public fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,
     trade_proof: &TradeProof,
     client_order_id: u64,
-    self_matching_option: u8,
     price: u64,
     quantity: u64,
     is_bid: bool,
@@ -240,7 +249,7 @@ public fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
         trade_proof,
         client_order_id,
         constants::post_only(),
-        self_matching_option,
+        constants::self_matching_allowed(),
         price,
         quantity,
         is_bid,

@@ -645,6 +645,76 @@ fun post_only_wrapper_places_when_only_same_side_has_orders() {
 }
 
 #[test]
+fun post_only_wrapper_places_past_own_expired_crossing_order() {
+    // The pre-check skips expired top-of-book orders exactly as the matching
+    // engine does, so an order crossing only an *expired* opposite-side order
+    // still places. This also pins why self-matching is fixed to
+    // SELF_MATCHING_ALLOWED: the crossing maker here is ALICE's own expired
+    // order, which under CANCEL_TAKER would abort ESelfMatchingCancelTaker even
+    // though the pre-check reads the side as empty.
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let quantity = 1 * constants::float_scaling();
+    let pay_with_deep = true;
+    let cross_price = 2 * constants::float_scaling();
+    let expire_soon = get_time(&mut test) + 100;
+
+    // ALICE rests her own ask at 2.0 with a short expiry.
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        cross_price,
+        quantity,
+        false,
+        pay_with_deep,
+        expire_soon,
+        &mut test,
+    );
+
+    // Let the ask expire; it lingers at top-of-book until a taker clears it.
+    set_time(expire_soon + 1, &mut test);
+
+    // A bid at 2.0 crosses that ask in price, but the ask is expired: the
+    // pre-check reads best_ask as empty (skips it), so the wrapper forwards and
+    // the post-only bid rests instead of aborting EPOSTOrderCrossesOrderbook.
+    let result = place_post_only_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        cross_price,
+        quantity,
+        true,
+        pay_with_deep,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    let order_info = result.destroy_some();
+    assert!(order_info.order_inserted());
+    assert_eq!(order_info.price(), cross_price);
+    assert_eq!(order_info.order_type(), constants::post_only());
+
+    end(test);
+}
+
+#[test]
 fun test_crossing_multiple_orders_bid_ok() {
     test_crossing_multiple(true, 3)
 }
@@ -1924,7 +1994,6 @@ public(package) fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
     pool_id: ID,
     balance_manager_id: ID,
     client_order_id: u64,
-    self_matching_option: u8,
     price: u64,
     quantity: u64,
     is_bid: bool,
@@ -1947,7 +2016,6 @@ public(package) fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
             &mut balance_manager,
             &trade_proof,
             client_order_id,
-            self_matching_option,
             price,
             quantity,
             is_bid,
@@ -3728,7 +3796,6 @@ fun run_post_only_wrapper_scenario(
         pool_id,
         balance_manager_id_alice,
         3,
-        constants::self_matching_allowed(),
         new_order_price,
         quantity,
         is_bid,
