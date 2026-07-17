@@ -141,8 +141,8 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 - **Knock-out** — the extinguishing of a leveraged contract once its gross
   value reaches the knock-out level. Code and event vocabulary: liquidation,
   `OrderLiquidated`. Predict's knock-out pays **zero order payout**: the holder
-  receives nothing from the knocked-out order, and a tombstone remains until
-  cleared. The separate settled trading-loss rebate still follows the normal
+  receives nothing from the knocked-out order, and the account position
+  remains until cleared for zero payout. The separate settled trading-loss rebate still follows the normal
   expiry-level PnL and fee-basis rules.
 - **Knock-out level** — `floor_amount / liquidation_ltv`, the gross value at
   which the contract is extinguished. It sits above the financing balance by

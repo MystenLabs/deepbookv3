@@ -326,10 +326,13 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
         "cleanout",
       );
       const g = gasBreakdownOf(res);
-      // Split by redeem path: a LIQUIDATED position freed most of its storage at liquidation
-      // time (clear_liquidated_order), so its cleanout frees less than a SETTLED (surviving) one
-      // whose payout-tree node is freed here (close_settled_order). Counting each lets the fit
-      // separate the per-liquidated-position gas from the per-survivor gas.
+      // Split by redeem path: a LIQUIDATED position had its book state (payout-tree node +
+      // active-index entry) removed at liquidation time (apply_liquidation), so its cleanout frees
+      // only the account position; a SETTLED (surviving) one's cleanout also removes its active-index
+      // entry (process_settled_close removes the index entry and adjusts cached liability; the
+      // payout-tree node persists under the settled-liability model). The per-position gas profiles
+      // differ, so the fit counts each. NB: the P-9/RP-11 gas figures predate the tombstone removal
+      // (DBU-592) — the per-position rebate structure needs re-measurement under the derived-state model.
       const evs = (res.events ?? []) as any[];
       const nLiquidated = evs.filter((e) => e.type?.includes("LiquidatedOrderRedeemed")).length;
       const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;

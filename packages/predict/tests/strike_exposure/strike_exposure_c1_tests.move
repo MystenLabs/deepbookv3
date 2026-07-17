@@ -7,7 +7,7 @@
 ///
 /// Before the fix, a partial close removed `close_q - mul(remove_fs, T)` from the
 /// payout tree, leaving residual `R = remaining_q - mul(old_fs,T) + mul(remove_fs,T)`,
-/// while `close_settled_order` recomputes `P = remaining_q - mul(remaining_fs,T)`.
+/// while `quote_settled_close` recomputes `P = remaining_q - mul(remaining_fs,T)`.
 /// Round-down `mul` is sub-additive (`mul(old_fs,T) >= mul(remove_fs,T) + mul(remaining_fs,T)`,
 /// gap in {0,1}), so `R <= P` and `settled_payout_liability - payout` underflowed
 /// when the gap was 1, stranding the payout. The fix removes the order's full

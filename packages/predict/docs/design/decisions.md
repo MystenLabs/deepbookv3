@@ -22,9 +22,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   orders; liquidation remains mark-based against the order's current range value.
   *Rejected:* spot-dependent rates.
 - **Pure knock-out liquidation.** A leveraged order is removed without paying the
-  holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
-  persists until the holder redeems and clears it. *Rejected:* residual-paying
-  liquidation.
+  holder once it falls to/below `floor_amount / liquidation_ltv`; the holder's
+  account position is the only remaining record, redeemed later for zero payout
+  (the liquidated state is derived from the order's absence from the active
+  index, not stored). *Rejected:* residual-paying liquidation; a stored
+  tombstone table (removed as a duplicate of the account position).
 - **The ask-price band applies to mint only — redeems price at the live mark.**
   The mint-time `[min_entry_probability, max_entry_probability]` band is admission policy: the protocol
   declines to become counterparty in the tail price regions where the curve is

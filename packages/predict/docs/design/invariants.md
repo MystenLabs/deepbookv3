@@ -97,7 +97,8 @@ and contributors. For *how* each mechanism works, follow the links into
   expiry timestamp and exact terminal payout liability atomically; otherwise it
   returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
-  `(lower, higher]`, else 0 (`close_settled_order`).
+  `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
+  applied by `strike_exposure::process_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
   prices against tick boundaries through one threshold tick, `prefix_limit_tick =
   ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is
@@ -118,8 +119,18 @@ and contributors. For *how* each mechanism works, follow the links into
   liquidation_ltv`. Only leveraged orders (`floor_shares > 0`) are ever
   liquidatable.
 - Liquidation is **permissionless and bounded** per call by a candidate budget.
-  Liquidated orders become tombstones until the holder redeems the worthless
-  position and clears it.
+  Liquidation removes all of the order's book state; the holder's account
+  position is the only remaining record until it is redeemed for zero payout.
+  The liquidated state is derived, not stored: every flow that removes an order
+  from the active index also removes its position in the same transaction,
+  except liquidation — so a leveraged order absent from the index while its
+  position exists is liquidated. This derivation replaces the former
+  `liquidated_orders` tombstone table and its `ELiquidatedOrderAlreadyExists` /
+  `ELiquidatedOrderNotFound` guards, which prevented double-insert / double-clear
+  of that table. With the table gone, the invariant is protected instead by
+  monotonic per-expiry sequence allocation: order ids are never reused, so a
+  liquidated order's id can never be re-inserted into the active index to flip
+  its derived state back to live.
 - Liquidation **priority is encoded in the order-id high bits**: the packed
   quantity field stores the complement (`U32_MASK − quantity_lots`), so an
   ascending `u256` sort over raw order ids liquidates larger quantities first,

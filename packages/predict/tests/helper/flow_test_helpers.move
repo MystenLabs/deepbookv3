@@ -1681,7 +1681,14 @@ public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
 /// Read one order's gross-of-fees live holder value through a market bundle.
 public fun order_value_bundle(self: &Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.order_value(&pricer, order_id)
+    market.market.order_value(option::some(pricer), order_id)
+}
+
+/// Read one settled or already-closed order's terminal holder value with no
+/// pricer — the only way to value an order once the market has settled, since no
+/// `Pricer` can be constructed post-expiry.
+public fun settled_order_value_bundle(market: &MarketBundle, order_id: u256): u64 {
+    market.market.order_value(option::none(), order_id)
 }
 
 public fun load_pricer(

@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Unit tests for the `liquidation_book` active-index and tombstone lifecycle
-/// guards. The book is a pure data structure (no shared protocol state), so
-/// orders are constructed directly via `order::new_from_ticks` with nonzero
+/// Unit tests for the `liquidation_book` active-index lifecycle guards. The
+/// book is a pure data structure (no shared protocol state), so orders are
+/// constructed directly via `order::new_from_ticks` with nonzero
 /// `floor_shares` (leveraged) — only leveraged orders are indexed.
 #[test_only]
 module deepbook_predict::liquidation_book_tests;
@@ -75,45 +75,6 @@ fun remove_uninserted_order_from_nonempty_book_aborts() {
     );
     book.remove_order(&missing);
     abort 999
-}
-
-#[test, expected_failure(abort_code = liquidation_book::ELiquidatedOrderAlreadyExists)]
-fun insert_liquidated_order_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let mut book = liquidation_book::new(ctx);
-    let o = leveraged_order();
-    book.insert_order(&o);
-    book.mark_liquidated(&o);
-    // Tombstone persists until cleared; re-indexing the same order is blocked.
-    book.insert_order(&o);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = liquidation_book::ELiquidatedOrderNotFound)]
-fun clear_never_liquidated_order_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let mut book = liquidation_book::new(ctx);
-    let o = leveraged_order();
-    book.clear_liquidated(&o);
-    abort 999
-}
-
-#[test]
-fun mark_liquidated_removes_active_and_records_tombstone() {
-    let ctx = &mut tx_context::dummy();
-    let mut book = liquidation_book::new(ctx);
-    let o = leveraged_order();
-    book.insert_order(&o);
-    assert!(book.contains_active_order(&o));
-    assert!(!book.is_liquidated(&o));
-
-    book.mark_liquidated(&o);
-    assert!(!book.contains_active_order(&o));
-    assert!(book.is_liquidated(&o));
-
-    book.clear_liquidated(&o);
-    assert!(!book.is_liquidated(&o));
-    destroy(book);
 }
 
 #[test, expected_failure(abort_code = liquidation_book::EMaxActiveLeveragedOrders)]

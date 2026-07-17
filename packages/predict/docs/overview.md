@@ -54,14 +54,14 @@ stateDiagram-v2
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
   Live --> Liquidated: leveraged order falls to/below floor (OrderLiquidated)
-  Liquidated --> [*]: holder/keeper clears tombstone (LiquidatedOrderRedeemed, zero payout)
+  Liquidated --> [*]: holder/keeper clears the position (LiquidatedOrderRedeemed, zero payout)
   Live --> Settled: try_settle records exact expiry spot + liability
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 
 - **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and static floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the tick pair `(lower_tick, higher_tick)`. Leveraged mints must satisfy the probability-sensitive admission cap and sit above the liquidation threshold at entry.
 - **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability, net of the floor on the closed slice. A partial close removes the closed slice from the payout index and creates a replacement order with the remaining quantity and floor.
-- **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero order payout that touches no account and leaves a tombstone the holder or keeper later clears for zero payout. The later trading-loss rebate, if any, is still resolved through the normal expiry-level PnL and fee-basis claim.
+- **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero order payout that touches no account; only the holder's account position remains, later cleared for zero payout. The later trading-loss rebate, if any, is still resolved through the normal expiry-level PnL and fee-basis claim.
 - **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − floor_shares` and zero otherwise. Anyone may call `try_settle`; ordinary settled consumers require that transition to have succeeded already.
 - **Settled sweep** deactivates a settled market from the pool's active set, returns free LP cash to idle, and materializes terminal profit.
 

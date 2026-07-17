@@ -332,7 +332,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 - **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
   settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
-  `active_stake` read at CLAIM time (`expiry_market.move:763`), and expiry cash stays reserved
+  `active_stake` read at CLAIM time (`expiry_market::claim_trading_loss_rebate`), and expiry cash stays reserved
   until each account is resolved.
 - **Controller:** protocol (the resolution path + the app-auth gate) × user (their standing stake
   and whether they self-claim). The cleanup TRIGGER is permissionless.
@@ -358,12 +358,16 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     compute. No up-front fee / summary padding needed (E3 min-fee = 0).
     `evidence/p9-cleanout-gas-2026-07-07.md`.
   - The self-incentive holds for LIQUIDATED accounts too — the archetypal loser, which takes the
-    `redeem_liquidated_order` path. MEASURED (two-marginal fit, R²=0.999):
+    zero-payout liquidated arm of `redeem`. MEASURED (two-marginal fit, R²=0.999):
     `net = −3.02M − 4.47M·nLiquidated − 3.19M·nSurvived` MIST — both marginals strongly negative and
     the per-**liquidated**-position refund (−4.47M) EXCEEDS the per-survivor (−3.19M), because a
-    liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
-    storage) while creating less new storage (zero/floor payout). So the accounts most owed rebates
-    are the most profitable to sweep. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
+    liquidated redeem frees comparable-or-more storage while creating less new storage (zero/floor
+    payout). ⚠ This fit was measured on the since-removed tombstone model, where liquidation wrote
+    a book-side tombstone that the cleanout later freed. The derived-state model (DBU-592) frees the
+    liquidated order's book storage AT LIQUIDATION instead of at cleanout, so the liquidated-account
+    cleanout net gas is unmeasured under the shipped model and needs re-measurement — the
+    magnitude and even the liquidated-vs-survivor ordering are unverified.
+    `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
   - The rebate CLAIM is self-incentivized on its OWN, not just inside the bundle — so a searcher
     resolves it even for non-owed (winner) accounts whose owner has no self-claim incentive, releasing
     their reserve to the pool. MEASURED: standalone `claim_trading_loss_rebate_permissionless` net
@@ -380,11 +384,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
   over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
   inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
-  stake read at claim, `expiry_market.move:763`) is not pinned by a dedicated Move assertion — it
+  stake read at claim, `expiry_market::claim_trading_loss_rebate`) is not pinned by a dedicated Move assertion — it
   rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
   is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
   Audit provenance: finding 8b5d5f.
-- **Reopen when:** a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
+- **Reopen when:** the tombstone removal (DBU-592) ships — re-run `cleanout-gas-liq` to re-measure
+  the liquidated-account cleanout net gas under the derived-state model (the order's book storage is
+  now freed at liquidation, not at cleanout, so the prior liquidated fit above no longer describes
+  the shipped model); OR a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
   (re-measure the late-stake exposure; reconsider snapshotting benefit-relevant stake at mint); OR
   the settled-redeem storage footprint shrinks / Sui storage pricing drops enough that the cleanout
   net gas turns positive (re-run the sweep; apply the E3 up-front-fee formula); OR

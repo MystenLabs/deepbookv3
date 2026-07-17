@@ -8,7 +8,7 @@
 /// round-down composition. Pins both sides of the threshold (a clearly-solvent
 /// order is left untouched and stays closable at its spec value; a worthless
 /// order liquidates), that a failed attempt and a budget-0 budgeted pass are
-/// pure no-ops, and the zero-pay tombstone cleanup. The exact boundary unit is
+/// pure no-ops, and the zero-pay liquidated-position cleanup. The exact boundary unit is
 /// implementation-defined (the price→probability map is a step function under
 /// the degenerate test SVI), so the two sides use a safe gap: p = 0.5 exactly
 /// (gross 420e6 ≫ threshold 252_235_294) vs p = 0 (gross 0).
@@ -218,7 +218,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     assert_eq!(fx.order_value_bundle(&market, order_b), 0);
     assert!(helpers::has_position_bundle(&account, expiry_id, order_b));
 
-    // --- Tombstone cleanup: zero payout, zero fee, position cleared.
+    // --- Liquidated-position cleanup: zero payout, zero fee, position cleared.
     let (_closed_b, repl_b) = fx.redeem_bundle(
         &mut market,
         &mut account,
