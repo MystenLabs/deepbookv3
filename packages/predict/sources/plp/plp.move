@@ -142,37 +142,37 @@ public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
 }
 
-/// Return pooled DEEP custody for SDK and dev-inspect state reads.
+/// Return pooled DEEP custody for SDK and devInspect state reads.
 public fun staked_deep(vault: &PoolVault): u64 {
     vault.staked_deep.value()
 }
 
-/// Return idle DUSDC for SDK and dev-inspect state reads.
+/// Return idle DUSDC for SDK and devInspect state reads.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.expiry_accounting.idle_balance()
 }
 
-/// Return protocol-owned DUSDC for SDK and dev-inspect state reads.
+/// Return protocol-owned DUSDC for SDK and devInspect state reads.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
 }
 
-/// Return sponsor-funded fee reserves for SDK and dev-inspect state reads.
+/// Return sponsor-funded fee reserves for SDK and devInspect state reads.
 public fun fee_incentive_reserve(vault: &PoolVault): u64 {
     vault.fee_incentive_reserve.value()
 }
 
-/// Return total PLP supply for SDK and dev-inspect state reads.
+/// Return total PLP supply for SDK and devInspect state reads.
 public fun plp_total_supply(vault: &PoolVault): u64 {
     vault.lp.total_supply()
 }
 
-/// Return pending LP supply count for SDK and dev-inspect queue reads.
+/// Return pending LP supply count for SDK and devInspect queue reads.
 public fun supply_requests_pending(vault: &PoolVault): u64 {
     vault.lp.supply_requests_pending()
 }
 
-/// Return pending LP withdrawal count for SDK and dev-inspect queue reads.
+/// Return pending LP withdrawal count for SDK and devInspect queue reads.
 public fun withdraw_requests_pending(vault: &PoolVault): u64 {
     vault.lp.withdraw_requests_pending()
 }
@@ -182,7 +182,7 @@ public fun active_expiry_markets(vault: &PoolVault): vector<ID> {
     vault.expiry_accounting.active_expiry_markets()
 }
 
-/// Return the pre-expiry active count for SDK and dev-inspect capacity reads.
+/// Return the pre-expiry active count for SDK and devInspect capacity reads.
 public fun active_live_expiry_count(vault: &PoolVault, clock: &Clock): u64 {
     vault.expiry_accounting.active_live_expiry_count(clock.timestamp_ms())
 }

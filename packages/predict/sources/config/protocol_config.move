@@ -59,7 +59,7 @@ public fun id(config: &ProtocolConfig): ID {
     config.id.to_inner()
 }
 
-/// Return the global trading-pause state for SDK and dev-inspect reads.
+/// Return the global trading-pause state for SDK and devInspect reads.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
 }

@@ -87,7 +87,7 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and
-/// dev-inspect reads can compose it with a transaction-local `Pricer`.
+/// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }

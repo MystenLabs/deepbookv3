@@ -17,7 +17,7 @@ use deepbook_predict::constants;
 public struct Strike(u64) has copy, drop;
 
 /// Convert a boundary tick to its raw strike, including the open-end sentinels.
-/// Non-sentinel ticks multiply directly by `tick_size`; public PTB and dev-inspect
+/// Non-sentinel ticks multiply directly by `tick_size`; public PTB and devInspect
 /// callers are responsible for supplying the intended market domain.
 public fun strike_from_tick(tick: u64, tick_size: u64): Strike {
     if (tick == 0) return Strike(constants::neg_inf!());

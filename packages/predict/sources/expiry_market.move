@@ -93,12 +93,12 @@ public fun id(market: &ExpiryMarket): ID {
     market.id.to_inner()
 }
 
-/// Return the Propbook underlying for SDK and dev-inspect market reads.
+/// Return the Propbook underlying for SDK and devInspect market reads.
 public fun propbook_underlying_id(market: &ExpiryMarket): u32 {
     market.propbook_underlying_id
 }
 
-/// Return the expiry timestamp for SDK and dev-inspect market reads.
+/// Return the expiry timestamp for SDK and devInspect market reads.
 public fun expiry(market: &ExpiryMarket): u64 {
     market.expiry
 }
@@ -120,47 +120,47 @@ public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.try_settlement_price()
 }
 
-/// Return expiry DUSDC custody for SDK and dev-inspect state reads.
+/// Return expiry DUSDC custody for SDK and devInspect state reads.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
 }
 
-/// Return unresolved rebate reserve for SDK and dev-inspect state reads.
+/// Return unresolved rebate reserve for SDK and devInspect state reads.
 public fun rebate_reserve(market: &ExpiryMarket): u64 {
     market.cash.rebate_reserve()
 }
 
-/// Return local fee incentives for SDK and dev-inspect state reads.
+/// Return local fee incentives for SDK and devInspect state reads.
 public fun fee_incentive_balance(market: &ExpiryMarket): u64 {
     market.fee_incentive_balance.value()
 }
 
-/// Return the snapshotted loss-rebate rate for SDK and dev-inspect reads.
+/// Return the snapshotted loss-rebate rate for SDK and devInspect reads.
 public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.cash.trading_loss_rebate_rate()
 }
 
-/// Return the snapshotted liquidation LTV for SDK and dev-inspect reads.
+/// Return the snapshotted liquidation LTV for SDK and devInspect reads.
 public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
-/// Return the snapshotted admission-leverage cap for SDK and dev-inspect reads.
+/// Return the snapshotted admission-leverage cap for SDK and devInspect reads.
 public fun max_admission_leverage(market: &ExpiryMarket): u64 {
     market.strike_exposure.max_admission_leverage()
 }
 
-/// Return the snapshotted backing-buffer lambda for SDK and dev-inspect reads.
+/// Return the snapshotted backing-buffer lambda for SDK and devInspect reads.
 public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
     market.strike_exposure.backing_buffer_lambda()
 }
 
-/// Return the snapshotted fee-ramp window for SDK and dev-inspect reads.
+/// Return the snapshotted fee-ramp window for SDK and devInspect reads.
 public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_window_ms()
 }
 
-/// Return the snapshotted fee-ramp multiplier for SDK and dev-inspect reads.
+/// Return the snapshotted fee-ramp multiplier for SDK and devInspect reads.
 public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
 }
@@ -173,23 +173,23 @@ public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.no_leverage_window_ms()
 }
 
-/// Return the strike tick size for SDK and dev-inspect range construction. Raw
+/// Return the strike tick size for SDK and devInspect range construction. Raw
 /// strikes are `tick * tick_size`.
 public fun tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.tick_size()
 }
 
-/// Return the admission-grid step for SDK and dev-inspect range construction.
+/// Return the admission-grid step for SDK and devInspect range construction.
 public fun admission_tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.admission_tick_size()
 }
 
-/// Return the admitted reference tick for SDK and dev-inspect range construction.
+/// Return the admitted reference tick for SDK and devInspect range construction.
 public fun reference_tick(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.reference_tick()
 }
 
-/// Return the reference observation timestamp for SDK and dev-inspect reads.
+/// Return the reference observation timestamp for SDK and devInspect reads.
 public fun reference_tick_source_timestamp_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.reference_tick_source_timestamp_ms()
 }
@@ -235,7 +235,7 @@ public fun load_live_pricer(
 /// Return live marked NAV as free expiry cash minus the exposure book's marked
 /// liability, floored at zero. This read requires a market-bound pre-expiry
 /// `Pricer`; an expired but unsettled market cannot be valued through this path.
-/// Public for PTB composition and dev-inspect pool valuation.
+/// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.exact_live_liability(pricer);
@@ -248,7 +248,7 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 /// liquidatable orders return zero, live orders return their full-close range
 /// value net of static floor, and settled orders return terminal payout. Live
 /// reads require a market-bound `Pricer`; this function does not prove account
-/// ownership of `order_id`. Public for SDK and dev-inspect position valuation.
+/// ownership of `order_id`. Public for SDK and devInspect position valuation.
 public fun order_value(market: &ExpiryMarket, pricer: Option<Pricer>, order_id: u256): u64 {
     if (pricer.is_some()) market.assert_pricer_bound(pricer.borrow());
     let order = order::from_order_id(order_id);
@@ -258,7 +258,7 @@ public fun order_value(market: &ExpiryMarket, pricer: Option<Pricer>, order_id: 
     terms.settled_payout()
 }
 
-/// Return the market mint-pause state for SDK and dev-inspect reads.
+/// Return the market mint-pause state for SDK and devInspect reads.
 public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
@@ -269,7 +269,7 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 /// lot-rounded fill under `max_premium`. The quote applies live-mint and admission
 /// gates but does not preflight account balance, slippage caps, or exposure-index
 /// capacity. Its penalty uses the current pre-update EWMA state. Public for SDK
-/// and dev-inspect pre-trade pricing.
+/// and devInspect pre-trade pricing.
 public fun quote_mint(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -305,7 +305,7 @@ public fun quote_mint(
 /// account's builder code and current `active_stake` without rolling epochs. If
 /// inactive stake is eligible to roll, the executing mint receives a larger
 /// discount than this quote reflects. Budget mode caps premium by total account
-/// balance, including unsettled accumulator funds. Public for SDK and dev-inspect
+/// balance, including unsettled accumulator funds. Public for SDK and devInspect
 /// pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
@@ -351,42 +351,42 @@ public fun quote_mint_for_account(
 
 // === MintQuote Getters ===
 
-/// Return the sized quantity for SDK and dev-inspect quote consumers.
+/// Return the sized quantity for SDK and devInspect quote consumers.
 public fun quantity(quote: &MintQuote): u64 {
     quote.quantity
 }
 
-/// Return the quoted range probability for SDK and dev-inspect consumers.
+/// Return the quoted range probability for SDK and devInspect consumers.
 public fun entry_probability(quote: &MintQuote): u64 {
     quote.entry_probability
 }
 
-/// Return the quoted net premium for SDK and dev-inspect consumers.
+/// Return the quoted net premium for SDK and devInspect consumers.
 public fun net_premium(quote: &MintQuote): u64 {
     quote.net_premium
 }
 
-/// Return the quoted post-stake trading fee before subsidy for SDK and dev-inspect consumers.
+/// Return the quoted post-stake trading fee before subsidy for SDK and devInspect consumers.
 public fun trading_fee(quote: &MintQuote): u64 {
     quote.trading_fee
 }
 
-/// Return the sponsor-funded portion of the quoted fee for SDK and dev-inspect consumers.
+/// Return the sponsor-funded portion of the quoted fee for SDK and devInspect consumers.
 public fun fee_incentive_subsidy(quote: &MintQuote): u64 {
     quote.fee_incentive_subsidy
 }
 
-/// Return the quoted builder fee for SDK and dev-inspect consumers.
+/// Return the quoted builder fee for SDK and devInspect consumers.
 public fun builder_fee(quote: &MintQuote): u64 {
     quote.builder_fee
 }
 
-/// Return the quoted EWMA congestion surcharge for SDK and dev-inspect consumers.
+/// Return the quoted EWMA congestion surcharge for SDK and devInspect consumers.
 public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
 }
 
-/// Return the total quoted account withdrawal for SDK and dev-inspect consumers.
+/// Return the total quoted account withdrawal for SDK and devInspect consumers.
 public fun all_in_cost(quote: &MintQuote): u64 {
     quote.all_in_cost
 }

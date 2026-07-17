@@ -92,32 +92,32 @@ public macro fun cadence_one_month(): u8 { 5 }
 
 // === Public Functions ===
 
-/// Return the raw-price-per-tick factor for SDK and dev-inspect cadence reads.
+/// Return the raw-price-per-tick factor for SDK and devInspect cadence reads.
 public fun cadence_tick_size(config: &CadenceConfig): u64 {
     config.tick_size
 }
 
-/// Return the admission-grid step for SDK and dev-inspect cadence reads.
+/// Return the admission-grid step for SDK and devInspect cadence reads.
 public fun cadence_admission_tick_size(config: &CadenceConfig): u64 {
     config.admission_tick_size
 }
 
-/// Return the expiry allocation cap for SDK and dev-inspect cadence reads.
+/// Return the expiry allocation cap for SDK and devInspect cadence reads.
 public fun cadence_max_expiry_allocation(config: &CadenceConfig): u64 {
     config.max_expiry_allocation
 }
 
-/// Return the initial expiry cash target for SDK and dev-inspect cadence reads.
+/// Return the initial expiry cash target for SDK and devInspect cadence reads.
 public fun cadence_initial_expiry_cash(config: &CadenceConfig): u64 {
     config.initial_expiry_cash
 }
 
-/// Return the rolling deployment horizon for SDK and dev-inspect cadence reads.
+/// Return the rolling deployment horizon for SDK and devInspect cadence reads.
 public fun cadence_window_size(config: &CadenceConfig): u64 {
     config.window_size
 }
 
-/// Return whether this cadence is enabled for SDK and dev-inspect discovery.
+/// Return whether this cadence is enabled for SDK and devInspect discovery.
 public fun cadence_enabled(config: &CadenceConfig): bool {
     config.window_size > 0
 }

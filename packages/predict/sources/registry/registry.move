@@ -58,7 +58,7 @@ public fun expiry_market_id(
     registry.market_manager.expiry_market_id(propbook_underlying_id, expiry)
 }
 
-/// Return deployment policy for SDK and dev-inspect market discovery.
+/// Return deployment policy for SDK and devInspect market discovery.
 public fun cadence_config(
     registry: &Registry,
     propbook_underlying_id: u32,

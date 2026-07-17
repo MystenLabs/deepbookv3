@@ -38,7 +38,7 @@ public fun index(code: &BuilderCode): u64 {
     code.index
 }
 
-/// Return visible DUSDC builder fees for SDK and dev-inspect reads.
+/// Return visible DUSDC builder fees for SDK and devInspect reads.
 public fun claimable_builder_fees(root: &AccumulatorRoot, code: &BuilderCode): u64 {
     balance::settled_funds_value<DUSDC>(root, code.id.to_address())
 }

@@ -81,13 +81,13 @@ public struct PredictData has store {
 
 // === Public Functions ===
 
-/// Return whether an account holds a position for SDK and dev-inspect state reads.
+/// Return whether an account holds a position for SDK and devInspect state reads.
 public fun has_position(account: &Account, expiry_market_id: ID, order_id: u256): bool {
     if (!account.has_data<PredictApp>()) return false;
     data(account).positions.contains(position_key(expiry_market_id, order_id))
 }
 
-/// Return an expiry's open-position count for SDK and dev-inspect state reads.
+/// Return an expiry's open-position count for SDK and devInspect state reads.
 public fun expiry_position_count(account: &Account, expiry_market_id: ID): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     let d = data(account);
@@ -98,7 +98,7 @@ public fun expiry_position_count(account: &Account, expiry_market_id: ID): u64 {
     }
 }
 
-/// Return an account's aggregate expiry trading fees for SDK and dev-inspect reads.
+/// Return an account's aggregate expiry trading fees for SDK and devInspect reads.
 public fun trading_fees_paid(account: &Account, expiry_market_id: ID): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     let d = data(account);
