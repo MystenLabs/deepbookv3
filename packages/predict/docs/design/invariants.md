@@ -97,7 +97,8 @@ and contributors. For *how* each mechanism works, follow the links into
   expiry timestamp and exact terminal payout liability atomically; otherwise it
   returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
-  `(lower, higher]`, else 0 (`close_settled_order`).
+  `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
+  applied by `process_redeem`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
   prices against tick boundaries through one threshold tick, `prefix_limit_tick =
   ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is

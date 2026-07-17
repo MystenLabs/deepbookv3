@@ -332,7 +332,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 - **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
   settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
-  `active_stake` read at CLAIM time (`expiry_market.move:763`), and expiry cash stays reserved
+  `active_stake` read at CLAIM time (`expiry_market::claim_trading_loss_rebate`), and expiry cash stays reserved
   until each account is resolved.
 - **Controller:** protocol (the resolution path + the app-auth gate) × user (their standing stake
   and whether they self-claim). The cleanup TRIGGER is permissionless.
@@ -358,7 +358,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     compute. No up-front fee / summary padding needed (E3 min-fee = 0).
     `evidence/p9-cleanout-gas-2026-07-07.md`.
   - The self-incentive holds for LIQUIDATED accounts too — the archetypal loser, which takes the
-    `redeem_liquidated_order` path. MEASURED (two-marginal fit, R²=0.999):
+    liquidated-tombstone arm of `redeem`. MEASURED (two-marginal fit, R²=0.999):
     `net = −3.02M − 4.47M·nLiquidated − 3.19M·nSurvived` MIST — both marginals strongly negative and
     the per-**liquidated**-position refund (−4.47M) EXCEEDS the per-survivor (−3.19M), because a
     liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
@@ -380,7 +380,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
   over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
   inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
-  stake read at claim, `expiry_market.move:763`) is not pinned by a dedicated Move assertion — it
+  stake read at claim, `expiry_market::claim_trading_loss_rebate`) is not pinned by a dedicated Move assertion — it
   rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
   is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
   Audit provenance: finding 8b5d5f.
