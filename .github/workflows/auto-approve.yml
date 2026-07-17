@@ -322,7 +322,7 @@ jobs:
               type: "object",
               properties: {
                 significant_findings: { type: "boolean" },
-                summary: { type: "string", maxLength: 4000 },
+                summary: { type: "string" },
                 findings: {
                   type: "array",
                   maxItems: 10,
@@ -333,9 +333,9 @@ jobs:
                         type: "string",
                         enum: ["significant", "minor"],
                       },
-                      title: { type: "string", maxLength: 500 },
-                      location: { type: "string", maxLength: 300 },
-                      description: { type: "string", maxLength: 2000 },
+                      title: { type: "string" },
+                      location: { type: "string" },
+                      description: { type: "string" },
                     },
                     required: ["severity", "title", "location", "description"],
                     additionalProperties: false,
@@ -871,10 +871,7 @@ jobs:
                 });
 
                 if (isSignificant) {
-                  const displayedFindings = significantFindings.length > 0
-                    ? significantFindings
-                    : findings;
-                  const findingLines = formatFindings(displayedFindings);
+                  const findingLines = formatFindings(findings);
                   text = [
                     `${authorReference} *SIGNIFICANT CODEX FINDINGS* for ${prLink} at \`${shortSha}\`${reviewLink}`,
                     `*PR owner:* \`@${escapeSlack(githubAuthor)}\``,
