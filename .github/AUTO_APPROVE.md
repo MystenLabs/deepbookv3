@@ -23,8 +23,10 @@ Slack.
   Codex output prevent the bot from approving the pull request.
 - Codex output is validated against the complete expected schema before it can
   authorize approval.
-- The Codex review comment must be published successfully before approval.
-- Each label-triggered run publishes its own Codex review comment, even when
+- The public Codex status comment must be published successfully before
+  approval. It reports only whether significant findings exist; summaries,
+  locations, and descriptions are sent only to Slack.
+- Each label-triggered run publishes its own Codex status comment, even when
   the head commit is unchanged. Rerunning the same Actions run updates that
   run's comment instead of creating a duplicate.
 - Minor Codex findings do not prevent bot approval.
@@ -36,8 +38,8 @@ Slack.
   with `REQUEST_CHANGES`.
 - If a later clean retry follows `REQUEST_CHANGES`, the App submits a new
   approval because decisions use its latest review for that commit.
-- Significant Codex findings, Codex failures, and approval failures send a
-  top-level `@here` notification in Slack.
+- Significant Codex findings mention only the mapped Slack account for the pull
+  request owner. Other workflow failures do not use broad Slack mentions.
 - Pull request text is escaped before it is copied to Slack so it cannot inject
   mentions.
 
@@ -91,8 +93,17 @@ subscription is not used by this workflow.
 Codex is deliberately isolated from GitHub write access. The workflow checks
 out only the trusted base commit, downloads the pull request diff as untrusted
 review input, and runs Codex with the `:read-only` permission profile and the
-`drop-sudo` safety strategy. A separate trusted workflow step formats the
-structured output and posts the advisory pull request comment.
+`drop-sudo` safety strategy.
+
+The official Codex Action initializes the authenticated runtime with a harmless
+prompt. The actual review runs in a separate silenced `codex exec` process that
+writes its structured result to a runner-temporary file. Trusted workflow steps
+read that file directly; they do not place review output in Action outputs,
+environment variables, artifacts, or public logs. The file is removed after the
+Slack notification attempt.
+
+The public pull request comment contains only the commit and gate status. Full
+Codex summaries and findings are posted only to Slack.
 
 Codex gates the bot's approval. A fresh blocked result does not submit a
 `REQUEST_CHANGES` review. On a blocked retry of an already approved commit,
@@ -108,12 +119,19 @@ destination channel. Configure:
 | Type | Name | Value |
 | --- | --- | --- |
 | Secret | `SLACK_WEBHOOK_URL` | Complete `https://hooks.slack.com/services/...` URL |
+| Secret | `SLACK_USER_MAP` | JSON object mapping lowercase GitHub logins to Slack `U...` or `W...` member IDs |
 
 The webhook is tied to its configured channel. The workflow posts the request,
 final Codex result, and any later approval invalidation as separate top-level
 messages containing the PR link and commit SHA. Incoming webhooks do not return
 the message timestamp needed to create a thread without an additional Slack API
 or Events integration.
+
+The initial request identifies the `PR owner` and `Auto-approval requested by`
+using GitHub logins without sending a Slack mention. When Codex reports
+significant findings, the final message mentions only the mapped PR owner using
+Slack's `<@USER_ID>` syntax. A missing or invalid mapping leaves the GitHub login
+visible but does not fall back to `@here` or `@channel`.
 
 ## Repository label
 
@@ -134,15 +152,17 @@ Use a small test pull request authored by a `defi-eng` member:
 1. Apply `auto-approve` and confirm Codex completes before the custom GitHub
    App submits the approval.
 2. Confirm the label is removed and the approval references the expected SHA.
-3. Confirm a review with no significant findings is posted before approval.
+3. Confirm a status with no significant findings is posted before approval and
+   does not expose the Codex summary or findings.
 4. Confirm a review with a significant finding leaves the pull request
-   unapproved and sends an `@here` Slack alert.
+   unapproved, keeps finding details out of the pull request and Actions log,
+   and mentions only the mapped PR owner in Slack.
 5. Reapply the label to an already approved commit and confirm a significant
    retry dismisses or replaces the existing App approval.
 6. Confirm failed Codex execution, invalid output, and comment publication
    failure also dismiss or replace an existing App approval.
 7. Reapply the label without changing the commit and confirm the new Codex
-   result is published in a new comment.
+   status is published in a new comment.
 8. Confirm a clean retry after fallback `REQUEST_CHANGES` submits a newer App
    approval.
 9. Confirm a comment publication failure does not submit bot approval.
