@@ -32,7 +32,8 @@ At the generic oracle-lane layer there are two write shapes:
 
 Source modules can enforce stricter preconditions before a read reaches the
 lane. In particular, Pyth exact insertion aborts for missing or inconsistent
-feed timestamps, carried rows, and non-whole-millisecond source timestamps.
+feed timestamps, prices carried from beyond the bounded settlement window, and
+non-whole-millisecond envelope timestamps.
 
 Consumers should use the `source_timestamp_ms` returned on raw or normalized
 `OracleRead` values when they need a liveness reference.
@@ -67,9 +68,10 @@ can insert source-native observations into `exact_reads`, keyed by the exact
 source timestamp derived from the update:
 
 - Pyth latest reads use the per-feed `feedUpdateTimestamp`, rounded up from
-  microseconds to milliseconds. Exact insertion additionally requires that
-  timestamp to equal the enclosing Lazer update timestamp and already be a
-  whole millisecond; carried prices cannot claim an exact key.
+  microseconds to milliseconds. Exact insertion keys the row at the whole-
+  millisecond enclosing Lazer update timestamp and requires the per-feed
+  `feedUpdateTimestamp` to be within the bounded settlement window at-or-before
+  it; a price carried from beyond that window cannot claim an exact key.
 - Block Scholes spot, forward, and SVI use each update's published millisecond
   timestamp directly.
 

@@ -91,7 +91,11 @@ export function fetchSnapshot(expiryMs: number, timeoutMs = 70_000): Promise<Sna
           if (f?.price == null) return;
           const envelopeTimestampUs = String(ev.value.parsed.timestampUs ?? "");
           const feedTimestampUs = String(f.feedUpdateTimestamp ?? "");
-          if (!/^\d+$/.test(feedTimestampUs) || feedTimestampUs !== envelopeTimestampUs) return;
+          // Accept a fresh or within-window carried print, matching propbook's
+          // bounded settlement carry window (max_settlement_carry_ms = 2s).
+          if (!/^\d+$/.test(feedTimestampUs) || !/^\d+$/.test(envelopeTimestampUs)) return;
+          const carryUs = Number(envelopeTimestampUs) - Number(feedTimestampUs);
+          if (carryUs < 0 || carryUs > 2_000_000) return;
           out.pythSpot = Number(f.price) * 10 ** Number(f.exponent ?? -8);
           tryDone();
         });

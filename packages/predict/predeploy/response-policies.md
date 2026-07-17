@@ -152,35 +152,46 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-4: Past-expiry-but-unsettled market blocks the flush (no substitute mark)
 
 - **Trigger state:** an active market is past expiry but Propbook has no
-  normalized spot whose Pyth per-feed generation timestamp equals the exact
-  expiry millisecond.
-- **Controller:** external — Pyth must generate a feed value at the exact
-  boundary, and the resolution relayer must retrieve and insert it.
+  normalized spot on the exact expiry key — no verified Pyth print whose
+  per-feed generation timestamp is within `constants::max_settlement_carry_ms`
+  at-or-before the whole-millisecond expiry boundary.
+- **Controller:** external — Pyth must have generated a feed value within the
+  carry window of the boundary, and the resolution relayer must retrieve and
+  insert it.
 - **Blast radius:** the whole flush aborts while the market is in the window.
-- **Response:** `pause`-and-retry — the recovery path, when the exact feed-level
-  row exists, is a permissionless exact-ms insert followed by `try_settle`.
-  A carried row is rejected before it can claim the insert-only key. Standalone
-  cash rebalance is a no-op in the window, and the keeper does not flush until
-  the transition succeeds. Deliberately **no substitute
-  mark**: a settlement-dependent market has no well-defined true value, and
-  the single mark prices both queue directions — contribute-0 dilutes
-  incumbents on supply, free-cash overpays withdrawals.
-- **Reasoning + evidence:** grid-snap at creation makes the key representable,
-  but not necessarily producible at the feed level. The immutable
-  `evidence/rp4-settlement-liveness.md` measured only the enclosing Lazer
-  timestamp and does not establish exact `feedUpdateTimestamp` availability.
-- **Risk profile:** `BEST-GUESS`; a prolonged relayer outage blocks LP fills
-  pool-wide, and a boundary with no exact per-feed generation time remains
-  unsettled rather than accepting a stale payout price. Disclosed in
-  `risks.md`.
+- **Response:** `pause`-and-retry — the recovery path is a permissionless
+  exact-ms insert of a within-window print followed by `try_settle`. A carried
+  price generated inside the window is admissible as a most-recent-as-of-expiry
+  mark, keyed at the boundary with its true generation time retained; a price
+  carried from beyond the window is rejected so a stale value cannot lock the
+  insert-only key. Standalone cash rebalance is a no-op in the window, and the
+  keeper does not flush until the transition succeeds. Deliberately **no
+  substitute mark**: a settlement-dependent market has no well-defined true
+  value, and the single mark prices both queue directions — contribute-0
+  dilutes incumbents on supply, free-cash overpays withdrawals.
+- **Reasoning + evidence:** grid-snap at creation makes the key representable;
+  the bounded carry window makes the settling row producible whenever Pyth has
+  generated any value within the window — far weaker than requiring a fresh
+  print at the exact boundary. The immutable `evidence/rp4-settlement-liveness.md`
+  measured only the enclosing Lazer timestamp; within-window availability does
+  not depend on it.
+- **Risk profile:** `BEST-GUESS`. Two residuals, both disclosed in `risks.md`:
+  (a) a Pyth carry or relayer outage longer than the window leaves the market
+  unsettled rather than accepting a stale payout price; (b) the settlement
+  insert is permissionless, so within the window a caller may pick the most
+  favorable real print — a bounded bias that can flip a binary outcome only
+  when a strike sits inside the window. Accepted deliberately: the window is
+  small (a few price ticks), and a caller-supplied window or a trusted
+  settlement cap were both rejected to keep settlement permissionless with an
+  un-forgeable, compiled bound.
 - **Pinning tests:** `settlement_flow_tests.move` —
   `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
   `expired_unsettled_standalone_rebalance_moves_no_cash`, and
-  `explicit_settlement_unblocks_pool_valuation_sweep`. Propbook's
-  pyth-feed suite separately pins rejection of a carried exact insert.
-- **Reopen when:** exact per-feed availability is measured at supported
-  boundaries, or settlement-v2 introduces a valuation-safe representation for
-  unsettled past-expiry markets.
+  `explicit_settlement_unblocks_pool_valuation_sweep`. Propbook's pyth-feed
+  suite separately pins within-window accept and beyond-window reject.
+- **Reopen when:** the window proves too tight at supported boundaries (measured
+  Pyth carry exceeds it), or settlement-v2 introduces a valuation-safe
+  representation for unsettled past-expiry markets.
 
 ## RP-5: BS-vs-Pyth basis/deviation circuit breakers removed
 

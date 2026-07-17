@@ -26,7 +26,7 @@ const ELazerFeedNotFound: u64 = 3;
 const ELazerValueUnavailable: u64 = 4;
 const EInsertTimestampNotExactMillisecond: u64 = 5;
 const EFeedTimestampAfterEnvelope: u64 = 6;
-const EInsertFeedTimestampMismatch: u64 = 7;
+const ESettlementCarryExceedsWindow: u64 = 7;
 const ELegacyObservationsRequireRotation: u64 = 8;
 
 const ENVELOPE_TIMESTAMP_VERSION: u64 = 1;
@@ -140,11 +140,13 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     feed.lane.update(read, id);
 }
 
-/// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
-/// per-feed generation timestamp. The feed timestamp must equal the Lazer update
-/// envelope timestamp, so a carried price cannot claim an exact-history key. It
-/// must also be a whole millisecond, making the key unambiguous for equality
-/// lookups. This does not mutate `latest`.
+/// Insert an exact Pyth Lazer spot observation keyed by the whole-millisecond
+/// envelope timestamp (the settlement boundary for a grid-aligned resolution
+/// print). The feed's own `feedUpdateTimestamp` may trail the envelope by at
+/// most `constants::max_settlement_carry_ms!()`: a within-window carried price
+/// settles the boundary as a most-recent-as-of-expiry mark, while a longer carry
+/// is rejected and cannot lock the insert-only key. The stored row keeps its
+/// true generation time for provenance. This does not mutate `latest`.
 public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert_current_version(feed);
     let read = feed.new_insert_read(&update, clock.timestamp_ms());
@@ -271,10 +273,17 @@ fun new_raw_insert_read(
     envelope_timestamp_us: u64,
     update_timestamp_ms: u64,
 ): OracleRead<RawSpot> {
-    let source_timestamp_us = raw.source_timestamp_us;
-    assert!(source_timestamp_us == envelope_timestamp_us, EInsertFeedTimestampMismatch);
-    assert!(source_timestamp_us % 1000 == 0, EInsertTimestampNotExactMillisecond);
-    oracle_lane::new_read(source_timestamp_us / 1000, update_timestamp_ms, raw)
+    // Key the settling row at the envelope (== the grid-aligned market expiry),
+    // so a within-window carried price still lands on the exact settlement key.
+    // `raw.source_timestamp_us` — the true feedUpdateTimestamp, <= envelope by
+    // `assert_feed_timestamp_not_after_envelope` — is retained for provenance.
+    assert!(envelope_timestamp_us % 1000 == 0, EInsertTimestampNotExactMillisecond);
+    let carry_us = envelope_timestamp_us - raw.source_timestamp_us;
+    assert!(
+        carry_us <= constants::max_settlement_carry_ms!() * 1000,
+        ESettlementCarryExceedsWindow,
+    );
+    oracle_lane::new_read(envelope_timestamp_us / 1000, update_timestamp_ms, raw)
 }
 
 fun extract_lazer_price(price_outer: Option<Option<LazerI64>>): LazerI64 {

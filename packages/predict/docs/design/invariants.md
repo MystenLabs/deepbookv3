@@ -93,12 +93,13 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Settlement
 
 - **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
-  settlement-price writer. It records the exact normalized Pyth spot at the market's
-  expiry timestamp and exact terminal payout liability atomically; the Pyth
-  per-feed generation timestamp must equal both its enclosing update timestamp
-  and the expiry. A carried row aborts at exact insertion. If no qualifying exact
-  read exists, `try_settle` returns false without changing the market. Settled
-  consumers read no oracle.
+  settlement-price writer. It records the normalized Pyth spot keyed at the market's
+  expiry timestamp and exact terminal payout liability atomically; the settling
+  print's per-feed generation timestamp must be within
+  `constants::max_settlement_carry_ms` at-or-before the expiry, and a price carried
+  from beyond that window aborts at exact insertion. If no qualifying read exists,
+  `try_settle` returns false without changing the market. Settled consumers read no
+  oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
   `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
   applied by `strike_exposure::process_close`).
@@ -198,17 +199,18 @@ and contributors. For *how* each mechanism works, follow the links into
   there is no expiry-only path that can strand capital. (The standalone compaction
   step was deleted with the dense NAV matrix; the payout tree is full-lifecycle, so
   the sweep alone suffices.)
-- **Past-expiry exact-data liveness.** A market that crosses its expiry but lacks
-  a Propbook Pyth spot generated at that exact timestamp cannot be live-valued:
+- **Past-expiry within-window-data liveness.** A market that crosses its expiry but
+  lacks a Propbook Pyth spot generated within the settlement carry window of that
+  timestamp cannot be live-valued:
   `value_expiry` tries passive
   settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
   market remains unsettled. This preserves the single exact mark for PLP supply and
   withdraw; no approximate substitute mark is allowed. Because the flush must value
   every active market exactly once, this abort blocks the *whole* pool flush, not
-  just the one market — so an expiry whose exact settlement spot is permanently
-  unobtainable is a cross-market liveness brick, not a benign wait. Guaranteeing the
-  exact per-feed datum is obtainable is an accepted external dependency under
-  response policy RP-4; a carried observation is not a valid substitute.
+  just the one market — so an expiry whose settling spot is permanently
+  unobtainable is a cross-market liveness brick, not a benign wait. That a Pyth value
+  exists within the carry window is an accepted external dependency under
+  response policy RP-4; a price carried from beyond the window is not a valid substitute.
 
 ## Configuration
 

@@ -50,6 +50,13 @@ const UPDATE_2_MS: u64 = 20;
 const UPDATE_3_MS: u64 = 30;
 const UPDATE_4_MS: u64 = 40;
 const UPDATE_5_MS: u64 = 50;
+// Settlement carry-window fixtures: envelope is the grid boundary; the feed
+// timestamp is a carried generation time some ms before it (compiled window 2s).
+const SETTLE_ENVELOPE_US: u64 = 5_000_000;
+const SETTLE_ENVELOPE_MS: u64 = 5_000;
+const CARRY_WITHIN_FEED_US: u64 = 3_500_000; // 1.5s carry (<= 2s window)
+const CARRY_BEYOND_FEED_US: u64 = 2_000_000; // 3s carry (> 2s window)
+const UPDATE_SETTLE_MS: u64 = 5_000;
 
 #[test]
 fun registry_records_created_pyth_source() {
@@ -365,8 +372,11 @@ fun insert_at_non_exact_source_us_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = pyth_feed::EInsertFeedTimestampMismatch)]
-fun insert_at_carried_price_aborts() {
+// A carried price generated within the settlement window (1.5s <= 2s before the
+// boundary) is admissible: it lands on the exact settlement key at the envelope
+// as a most-recent-as-of-expiry mark, and keeps its true generation time.
+#[test]
+fun insert_at_carried_within_window_settles() {
     let (scenario, feed_obj_id) = setup_feed();
     let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
 
@@ -376,9 +386,39 @@ fun insert_at_carried_price_aborts() {
         false,
         EXPONENT_NEG_9,
         true,
-        SOURCE_TS_1_US,
-        SOURCE_TS_2_US,
-        UPDATE_1_MS,
+        CARRY_WITHIN_FEED_US, // feedUpdateTimestamp (carried, within window)
+        SETTLE_ENVELOPE_US, // envelope == settlement boundary
+        UPDATE_SETTLE_MS,
+        true,
+    );
+
+    let normalized = feed.normalized_spot_at(SETTLE_ENVELOPE_MS).destroy_some();
+    assert_eq!(normalized.read_source_timestamp_ms(), SETTLE_ENVELOPE_MS);
+    assert_eq!(normalized.read_value(), SPOT_65K);
+    // Provenance: the stored row retains the carried generation time.
+    let raw = feed.raw_spot_at(SETTLE_ENVELOPE_MS).read_value();
+    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), CARRY_WITHIN_FEED_US);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+// A price carried from beyond the settlement window (3s > 2s) cannot occupy the
+// insert-only settlement key: a stale price is rejected rather than locked in.
+#[test, expected_failure(abort_code = pyth_feed::ESettlementCarryExceedsWindow)]
+fun insert_at_carried_beyond_window_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    pyth_feed::record_raw_for_testing(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        CARRY_BEYOND_FEED_US, // feedUpdateTimestamp (carried, beyond window)
+        SETTLE_ENVELOPE_US, // envelope == settlement boundary
+        UPDATE_SETTLE_MS,
         true,
     );
 

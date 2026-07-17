@@ -348,19 +348,25 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   when needed. *Rationale:* one writer makes the market phase transition atomic,
   keeps price and book liability under one owner, and removes oracle ingress from
   every later settled consumer. *Rejected:* implicit settlement inside each consumer.
-- **An exact Pyth settlement print is exact at the feed level.** The per-feed
-  `feedUpdateTimestamp` must equal the enclosing Lazer update timestamp and the
-  market expiry. A carried price is rejected before it can claim Propbook's
-  insert-only exact key. *Rationale:* an exact envelope timestamp does not prove
-  the price was generated at that boundary; accepting a carried row could
-  permanently settle every payout against an older observation.
+- **A Pyth settlement print may carry within a bounded window.** The settling
+  row is keyed at the whole-millisecond envelope/expiry, and the per-feed
+  `feedUpdateTimestamp` may trail it by at most `constants::max_settlement_carry_ms`
+  (a most-recent-as-of-expiry mark); a price carried from beyond the window is
+  rejected before it can claim Propbook's insert-only exact key. *Rationale:*
+  Pyth carries prices forward, and requiring a fresh print at the exact boundary
+  would stall settlement whenever Pyth generated nothing at that instant; a small
+  bounded carry keeps settlement live while still barring a stale value from
+  permanently locking the key. The window is compiled, not caller-supplied: the
+  insert is permissionless, so a passed window could be set arbitrarily large.
+  *Rejected:* strict `feedUpdateTimestamp == envelope` (stalls on carry); an
+  unbounded carry (a halt could settle at a minutes-old price).
 - **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
   expiry moves no cash until `try_settle` succeeds; valuation still aborts through
   live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
   while an unsettled market has no exact terminal liability from which to sweep.
-- **Accepted consequence: exact-data liveness.** If a Pyth value with an exact
-  per-feed generation timestamp is missing after expiry, the market remains
-  unsettled and live valuation aborts.
+- **Accepted consequence: within-window data liveness.** If Pyth generated no
+  value within the carry window of the expiry (a carry or relayer outage longer
+  than the window), the market remains unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —
   the single flush mark needs a true value that is settlement-dependent and undefined
   until the exact timestamp spot exists. Substituting contribute-0 dilutes incumbents
