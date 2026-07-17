@@ -9,7 +9,7 @@ module deepbook_predict::ewma_config;
 
 use deepbook_predict::config_constants;
 
-/// Admin-tunable EWMA penalty policy. All values are in FLOAT_SCALING.
+/// Admin-tunable EWMA penalty policy; numeric fields use FLOAT_SCALING.
 public struct EwmaConfig has store {
     /// Smoothing factor for the gas-price mean and variance; higher reacts faster.
     alpha: u64,

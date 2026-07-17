@@ -1,20 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Unified shared registry for Propbook oracle metadata.
-///
-/// The registry owns two separate namespaces:
-/// - source catalog: one Propbook oracle object per source-local key
-/// - canonical binding: one active oracle per canonical consumer key
-///
-/// Source oracle objects are permissionless wrappers around source data (Pyth:
-/// signature-verified; BS: stub payloads, unverified until the production verifier lands).
-/// Canonical bindings are admin-controlled because they are the trust claim that
-/// source data represents a Propbook underlying such as BTC.
-///
-/// Intentionally NOT version-gated: a feed created under an old package version
-/// just seeds an old version and is migratable by the feed module, so a stale
-/// registry caller is harmless.
+/// Owns Propbook's permissionless source catalog and admin-selected canonical oracle bindings.
+/// Registering a source creates its wrapper but does not make it canonical; a binding is the trust claim that the source represents a particular Propbook underlying and value kind.
+/// A source key can serve only one underlying for its lifetime, even after its active binding is replaced.
+/// Registry operations are not version-gated because each feed owns its write version and migration path.
 module propbook::registry;
 
 use propbook::{
@@ -34,7 +24,7 @@ const EBlockScholesSpotNotBound: u64 = 5;
 const EWrongBlockScholesSource: u64 = 6;
 const EBindingNotFound: u64 = 7;
 
-/// Oracle-kind tags stored in registry keys; future oracles add a value here.
+// Stable discriminators stored in source keys, binding keys, metadata, and events.
 public(package) macro fun kind_pyth(): u8 {
     0
 }
@@ -63,33 +53,37 @@ public(package) macro fun value_kind_svi(): u8 {
     2
 }
 
-/// Capability controlling canonical Propbook oracle bindings.
+/// Root capability authorized to choose and replace canonical oracle bindings.
+/// The package exposes no on-chain revocation or rotation mechanism for it.
 public struct RegistryAdminCap has key, store {
     id: UID,
 }
 
-/// Unified registry for source discovery and canonical Propbook bindings.
+/// Shared source catalog, canonical binding table, and permanent source-to-underlying assignments.
 public struct OracleRegistry has key {
     id: UID,
+    /// Provider/source pair to the shared feed object created for that source.
     sources: Table<OracleSourceKey, ID>,
+    /// Underlying/provider/value tuple to its active canonical feed metadata.
     bindings: Table<OracleBindingKey, OracleMetadata>,
+    /// Provider/source pair to the sole underlying it may serve.
     source_bindings: Table<OracleSourceKey, u32>,
 }
 
-/// Composite source key: oracle kind plus source-local identity.
+/// Unique identity of a provider source within one oracle kind.
 public struct OracleSourceKey has copy, drop, store {
     oracle_kind: u8,
     source_id: u32,
 }
 
-/// Canonical binding key: Propbook underlying plus oracle value identity.
+/// Canonical slot for one underlying, oracle kind, and value kind.
 public struct OracleBindingKey has copy, drop, store {
     propbook_underlying_id: u32,
     oracle_kind: u8,
     value_kind: u8,
 }
 
-/// Canonical metadata for one active Propbook oracle binding.
+/// Metadata for an active binding returned to protocol and off-chain consumers.
 public struct OracleMetadata has copy, drop, store {
     propbook_underlying_id: u32,
     oracle_kind: u8,
@@ -98,14 +92,14 @@ public struct OracleMetadata has copy, drop, store {
     value_kind: u8,
 }
 
-/// Emitted when a Propbook source wrapper is created and registered.
+/// Records creation and registration of a source wrapper.
 public struct OracleSourceRegistered has copy, drop {
     oracle_kind: u8,
     source_id: u32,
     propbook_oracle_id: ID,
 }
 
-/// Emitted when an admin binds an oracle to a canonical Propbook underlying.
+/// Records the first canonical assignment of a binding slot.
 public struct OracleBound has copy, drop {
     propbook_underlying_id: u32,
     oracle_kind: u8,
@@ -114,7 +108,7 @@ public struct OracleBound has copy, drop {
     value_kind: u8,
 }
 
-/// Emitted when an admin replaces the active oracle for a canonical binding.
+/// Records an atomic replacement of an existing canonical binding slot.
 public struct OracleRebound has copy, drop {
     propbook_underlying_id: u32,
     oracle_kind: u8,
@@ -130,27 +124,29 @@ fun init(ctx: &mut TxContext) {
     transfer::public_transfer(RegistryAdminCap { id: object::new(ctx) }, ctx.sender());
 }
 
-/// Return the registry object ID.
+// === External Reads ===
+
+/// Returns the registry identity for external composition and PTB construction.
 public fun id(registry: &OracleRegistry): ID {
     registry.id.to_inner()
 }
 
-/// Return the registry admin cap object ID.
+/// Returns the admin capability identity for administration tooling and object discovery.
 public fun registry_admin_cap_id(cap: &RegistryAdminCap): ID {
     cap.id.to_inner()
 }
 
-/// Whether a Propbook Pyth source wrapper exists for `pyth_source_id`.
+/// Returns whether the Pyth source wrapper exists in the external source catalog.
 public fun contains_pyth_source(registry: &OracleRegistry, pyth_source_id: u32): bool {
     registry.contains_source(pyth_source_key(pyth_source_id))
 }
 
-/// Whether a Propbook BS spot wrapper exists for `bs_source_id`.
+/// Returns whether the Block Scholes spot wrapper exists in the external source catalog.
 public fun contains_block_scholes_spot_source(registry: &OracleRegistry, bs_source_id: u32): bool {
     registry.contains_source(block_scholes_spot_source_key(bs_source_id))
 }
 
-/// Whether a Propbook BS forward wrapper exists for `bs_source_id`.
+/// Returns whether the Block Scholes forward wrapper exists in the external source catalog.
 public fun contains_block_scholes_forward_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
@@ -158,17 +154,17 @@ public fun contains_block_scholes_forward_source(
     registry.contains_source(block_scholes_forward_source_key(bs_source_id))
 }
 
-/// Whether a Propbook BS SVI wrapper exists for `bs_source_id`.
+/// Returns whether the Block Scholes SVI wrapper exists in the external source catalog.
 public fun contains_block_scholes_svi_source(registry: &OracleRegistry, bs_source_id: u32): bool {
     registry.contains_source(block_scholes_svi_source_key(bs_source_id))
 }
 
-/// Propbook Pyth object ID for a Pyth source id, if a wrapper exists.
+/// Resolves a registered Pyth source wrapper for external composition or discovery.
 public fun propbook_pyth_id_for_source(registry: &OracleRegistry, pyth_source_id: u32): Option<ID> {
     registry.source_oracle_id(pyth_source_key(pyth_source_id))
 }
 
-/// Propbook BS spot object ID for a BS source id, if a wrapper exists.
+/// Resolves a registered Block Scholes spot wrapper for external composition or discovery.
 public fun propbook_block_scholes_spot_id_for_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
@@ -176,7 +172,7 @@ public fun propbook_block_scholes_spot_id_for_source(
     registry.source_oracle_id(block_scholes_spot_source_key(bs_source_id))
 }
 
-/// Propbook BS forward object ID for `bs_source_id`, if a wrapper exists.
+/// Resolves a registered Block Scholes forward wrapper for external composition or discovery.
 public fun propbook_block_scholes_forward_id_for_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
@@ -184,7 +180,7 @@ public fun propbook_block_scholes_forward_id_for_source(
     registry.source_oracle_id(block_scholes_forward_source_key(bs_source_id))
 }
 
-/// Propbook BS SVI object ID for `bs_source_id`, if a wrapper exists.
+/// Resolves a registered Block Scholes SVI wrapper for external composition or discovery.
 public fun propbook_block_scholes_svi_id_for_source(
     registry: &OracleRegistry,
     bs_source_id: u32,
@@ -192,7 +188,7 @@ public fun propbook_block_scholes_svi_id_for_source(
     registry.source_oracle_id(block_scholes_svi_source_key(bs_source_id))
 }
 
-/// Canonical Propbook Pyth object ID for `propbook_underlying_id`, if bound.
+/// Resolves the canonical Pyth feed for external composition or discovery.
 public fun propbook_pyth_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -200,7 +196,7 @@ public fun propbook_pyth_id_for_underlying(
     registry.canonical_oracle_id(pyth_binding_key(propbook_underlying_id))
 }
 
-/// Canonical Propbook BS spot object ID for `propbook_underlying_id`, if bound.
+/// Resolves the canonical Block Scholes spot feed for external composition or discovery.
 public fun propbook_block_scholes_spot_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -208,7 +204,7 @@ public fun propbook_block_scholes_spot_id_for_underlying(
     registry.canonical_oracle_id(block_scholes_spot_binding_key(propbook_underlying_id))
 }
 
-/// Canonical Propbook BS forward object ID for `propbook_underlying_id`, if bound.
+/// Resolves the canonical Block Scholes forward feed for external composition or discovery.
 public fun propbook_block_scholes_forward_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -216,7 +212,7 @@ public fun propbook_block_scholes_forward_id_for_underlying(
     registry.canonical_oracle_id(block_scholes_forward_binding_key(propbook_underlying_id))
 }
 
-/// Canonical Propbook BS SVI object ID for `propbook_underlying_id`, if bound.
+/// Resolves the canonical Block Scholes SVI feed for external composition or discovery.
 public fun propbook_block_scholes_svi_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -224,7 +220,7 @@ public fun propbook_block_scholes_svi_id_for_underlying(
     registry.canonical_oracle_id(block_scholes_svi_binding_key(propbook_underlying_id))
 }
 
-/// Canonical Pyth metadata for `propbook_underlying_id`, if bound.
+/// Returns the canonical Pyth binding metadata for external composition or inspection.
 public fun pyth_metadata_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -232,7 +228,7 @@ public fun pyth_metadata_for_underlying(
     registry.canonical_metadata(pyth_binding_key(propbook_underlying_id))
 }
 
-/// Canonical BS spot metadata for `propbook_underlying_id`, if bound.
+/// Returns the canonical Block Scholes spot binding metadata for external composition or inspection.
 public fun block_scholes_spot_metadata_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -240,7 +236,7 @@ public fun block_scholes_spot_metadata_for_underlying(
     registry.canonical_metadata(block_scholes_spot_binding_key(propbook_underlying_id))
 }
 
-/// Canonical BS forward metadata for `propbook_underlying_id`, if bound.
+/// Returns the canonical Block Scholes forward binding metadata for external composition or inspection.
 public fun block_scholes_forward_metadata_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -248,7 +244,7 @@ public fun block_scholes_forward_metadata_for_underlying(
     registry.canonical_metadata(block_scholes_forward_binding_key(propbook_underlying_id))
 }
 
-/// Canonical BS SVI metadata for `propbook_underlying_id`, if bound.
+/// Returns the canonical Block Scholes SVI binding metadata for external composition or inspection.
 public fun block_scholes_svi_metadata_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -256,29 +252,27 @@ public fun block_scholes_svi_metadata_for_underlying(
     registry.canonical_metadata(block_scholes_svi_binding_key(propbook_underlying_id))
 }
 
-/// Propbook underlying ID named by this metadata record.
+/// Return the bound underlying ID for external registry discovery.
 public fun propbook_underlying_id(metadata: &OracleMetadata): u32 {
     metadata.propbook_underlying_id
 }
 
-/// Oracle-family discriminator for provenance/observability consumers that
-/// inspect canonical metadata through external Move, PTBs, SDKs, or devInspect.
+/// Return the oracle-kind discriminator for external registry discovery.
 public fun oracle_kind(metadata: &OracleMetadata): u8 {
     metadata.oracle_kind
 }
 
-/// Source-native identifier recorded when the canonical binding was created.
+/// Return the provider source ID for external registry discovery.
 public fun source_id(metadata: &OracleMetadata): u32 {
     metadata.source_id
 }
 
-/// Shared Propbook oracle object ID named by this metadata record.
+/// Return the canonical feed object ID for external PTB construction.
 public fun propbook_oracle_id(metadata: &OracleMetadata): ID {
     metadata.propbook_oracle_id
 }
 
-/// Value-family discriminator for provenance/observability consumers that
-/// inspect canonical metadata through external Move, PTBs, SDKs, or devInspect.
+/// Return the value-kind discriminator for external registry discovery.
 public fun value_kind(metadata: &OracleMetadata): u8 {
     metadata.value_kind
 }
@@ -486,8 +480,6 @@ public(package) fun create_and_share(ctx: &mut TxContext) {
 
 // === Private Functions ===
 
-/// Bind a source key to its Propbook object ID, aborting if a source wrapper
-/// already exists for that key.
 fun record_source(
     registry: &mut OracleRegistry,
     source_key: OracleSourceKey,

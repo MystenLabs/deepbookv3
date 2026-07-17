@@ -3,33 +3,22 @@
 
 /// Canonical strike-range codec for Predict.
 ///
-/// Predict's canonical strike representation is an absolute tick from zero
-/// (`finite_strike = tick * tick_size`). Ranges travel as the pair
-/// `(lower_tick, higher_tick)` everywhere on-chain — public entrypoints, events,
-/// and (packed) order IDs — so there is no standalone packed range key. This module
-/// owns every tick <-> raw-strike crossing: tick-to-raw for the pricing boundary,
-/// and raw-to-tick for oracle facts (the settlement prefix threshold and the
-/// reference grid snap). It is stateless: every conversion
-/// takes the owning market's `tick_size`. Range-shape validity (lower < higher,
-/// sentinels) is enforced by `order` when ticks are packed into an order ID, so this
-/// codec does not re-check it. Finite ticks occupy
-/// `1..pos_inf_tick - 1`; tick `0` is the negative-infinity sentinel as a lower tick
-/// and `pos_inf_tick` is the positive-infinity sentinel as a higher tick.
+/// Finite strikes are absolute ticks from zero: `strike = tick * tick_size`.
+/// Ranges use `(lower_tick, higher_tick)` in entrypoints, events, and order IDs.
+/// Tick zero and `pos_inf_tick` are the open lower and upper sentinels. This
+/// module owns conversion between those ticks and raw oracle-price coordinates;
+/// `order` owns range-shape validation.
 module deepbook_predict::range_codec;
 
 use deepbook_predict::constants;
 
-/// A raw price-axis value derived from a tick. `strike_from_tick` is the sole
-/// constructor, so a `Strike`-typed consumer cannot receive a bare `u64` (a tick,
-/// quantity, or fee) that skipped this codec.
+/// A raw price-axis value derived from a tick. Range validity is enforced when
+/// production orders are constructed, not by this wrapper.
 public struct Strike(u64) has copy, drop;
 
-/// Raw strike for one boundary tick, mapping the open-ended sentinels: tick `0`
-/// is `neg_inf`, `pos_inf_tick` is `pos_inf`. Position-free because range-shape
-/// validation (`order::assert_valid_order_shape`) makes the sentinels exclusive:
-/// `0` occurs only as a lower tick and `pos_inf_tick` only as a higher tick.
-/// The only `Strike` constructor; `public` so PTB/devInspect pricing reads can
-/// chain it into `pricing::up_price`/`range_price`.
+/// Convert a boundary tick to its raw strike, including the open-end sentinels.
+/// Non-sentinel ticks multiply directly by `tick_size`; public PTB and devInspect
+/// callers are responsible for supplying the intended market domain.
 public fun strike_from_tick(tick: u64, tick_size: u64): Strike {
     if (tick == 0) return Strike(constants::neg_inf!());
     if (tick == constants::pos_inf_tick!()) return Strike(constants::pos_inf!());
@@ -74,8 +63,8 @@ public(package) fun grid_tick(spot: u64, tick_size: u64): u64 {
     spot / tick_size
 }
 
-/// Half-open `(lower, higher]` — the payout-side pair of the tree's prefix-walk
-/// reserve (R1); diverges only at settlement 0 (unreachable), which the walk reserves.
+/// Return whether a positive normalized settlement lies in `(lower, higher]`,
+/// using the same rounded-up boundary as the aggregate settlement prefix.
 public(package) fun settlement_in_range(
     lower_tick: u64,
     higher_tick: u64,

@@ -1,13 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Signed u64 magnitude with normalized zero.
+/// Signed integers represented by a `u64` magnitude and a canonical nonnegative zero.
+/// Scaled multiplication and division use 1e9 fixed point and truncate the result's magnitude toward zero.
 module fixed_math::i64;
 
 const EZeroDivisor: u64 = 0;
 const F: u128 = 1_000_000_000;
 
-/// Signed integer represented as magnitude plus sign.
+/// A signed integer whose zero value always has `is_negative == false`.
 public struct I64 has copy, drop, store {
     magnitude: u64,
     is_negative: bool,
@@ -15,22 +16,22 @@ public struct I64 has copy, drop, store {
 
 // === Public Functions ===
 
-/// Return the absolute magnitude.
+/// Returns the absolute magnitude.
 public fun magnitude(value: &I64): u64 {
     value.magnitude
 }
 
-/// Return whether the value is negative.
+/// Returns whether the nonzero value is negative.
 public fun is_negative(value: &I64): bool {
     value.is_negative
 }
 
-/// Return whether the value is normalized zero.
+/// Returns whether the magnitude is zero.
 public fun is_zero(value: &I64): bool {
     value.magnitude == 0
 }
 
-/// Return normalized zero.
+/// Returns canonical zero.
 public fun zero(): I64 {
     I64 {
         magnitude: 0,
@@ -38,7 +39,7 @@ public fun zero(): I64 {
     }
 }
 
-/// Create a nonnegative value from `u64`.
+/// Creates a nonnegative value from a magnitude.
 public fun from_u64(value: u64): I64 {
     I64 {
         magnitude: value,
@@ -46,7 +47,7 @@ public fun from_u64(value: u64): I64 {
     }
 }
 
-/// Create a value from magnitude and sign, normalizing zero to nonnegative.
+/// Creates a value from its parts, normalizing zero to nonnegative.
 public fun from_parts(magnitude: u64, is_negative: bool): I64 {
     if (magnitude == 0) {
         zero()
@@ -58,7 +59,7 @@ public fun from_parts(magnitude: u64, is_negative: bool): I64 {
     }
 }
 
-/// Return the negated value, preserving normalized zero.
+/// Negates a value without creating negative zero.
 public fun neg(value: &I64): I64 {
     if (value.magnitude == 0) {
         zero()
@@ -87,20 +88,21 @@ public fun sub(a: &I64, b: &I64): I64 {
     add(a, &neg_b)
 }
 
-/// Multiplies two FLOAT_SCALING fixed-point signed values.
+/// Multiplies two 1e9-scaled values and truncates the result's magnitude toward zero.
 public fun mul_scaled(a: &I64, b: &I64): I64 {
     let product = ((a.magnitude as u128) * (b.magnitude as u128)) / F;
     from_parts((product as u64), a.is_negative != b.is_negative)
 }
 
-/// Divide two FLOAT_SCALING fixed-point signed values.
+/// Divides two 1e9-scaled values and truncates the result's magnitude toward zero.
+/// Aborts when the divisor is zero or the quotient does not fit in `u64`.
 public fun div_scaled(a: &I64, b: &I64): I64 {
     assert!(b.magnitude > 0, EZeroDivisor);
     let quotient = ((a.magnitude as u128) * F) / (b.magnitude as u128);
     from_parts((quotient as u64), a.is_negative != b.is_negative)
 }
 
-/// Square a FLOAT_SCALING fixed-point signed value and return a nonnegative result.
+/// Squares a 1e9-scaled value and returns a nonnegative result.
 public fun square_scaled(value: &I64): u64 {
     mul_scaled(value, value).magnitude
 }

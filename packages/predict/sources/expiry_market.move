@@ -71,10 +71,9 @@ public struct ExpiryMarket has key {
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
-/// `quantity` is the sized fill the quote priced — the request's exact quantity,
-/// or the budget-sized largest fitting fill. `trading_fee` is the
-/// post-stake-discount fee before the sponsor subsidy, and
-/// `all_in_cost` is the exact account withdrawal the same-state mint would make:
+/// `quantity` is the exact requested quantity or the conservatively budget-sized
+/// fill. `trading_fee` is the post-stake-discount fee before sponsor subsidy, and
+/// `all_in_cost` is the resulting account withdrawal:
 /// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
 public struct MintQuote has copy, drop {
     quantity: u64,
@@ -89,17 +88,17 @@ public struct MintQuote has copy, drop {
 
 // === Public Functions ===
 
-/// Return the expiry market object ID.
+/// Return the market object ID for external discovery and PTB construction.
 public fun id(market: &ExpiryMarket): ID {
     market.id.to_inner()
 }
 
-/// Return the Propbook underlying this market was created for.
+/// Return the Propbook underlying for SDK and devInspect market reads.
 public fun propbook_underlying_id(market: &ExpiryMarket): u32 {
     market.propbook_underlying_id
 }
 
-/// Return the expiry timestamp in milliseconds.
+/// Return the expiry timestamp for SDK and devInspect market reads.
 public fun expiry(market: &ExpiryMarket): u64 {
     market.expiry
 }
@@ -121,47 +120,47 @@ public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.try_settlement_price()
 }
 
-/// Return DUSDC currently held by this expiry.
+/// Return expiry DUSDC custody for SDK and devInspect state reads.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
 }
 
-/// Return DUSDC reserved for unresolved trading loss rebates.
+/// Return unresolved rebate reserve for SDK and devInspect state reads.
 public fun rebate_reserve(market: &ExpiryMarket): u64 {
     market.cash.rebate_reserve()
 }
 
-/// Return sponsor-funded DUSDC available to subsidize this market's taker fees.
+/// Return local fee incentives for SDK and devInspect state reads.
 public fun fee_incentive_balance(market: &ExpiryMarket): u64 {
     market.fee_incentive_balance.value()
 }
 
-/// Return the trading loss rebate rate snapshotted for this expiry.
+/// Return the snapshotted loss-rebate rate for SDK and devInspect reads.
 public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.cash.trading_loss_rebate_rate()
 }
 
-/// Return the liquidation LTV snapshotted for this expiry.
+/// Return the snapshotted liquidation LTV for SDK and devInspect reads.
 public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
-/// Return the max admission leverage snapshotted for this expiry.
+/// Return the snapshotted admission-leverage cap for SDK and devInspect reads.
 public fun max_admission_leverage(market: &ExpiryMarket): u64 {
     market.strike_exposure.max_admission_leverage()
 }
 
-/// Return the backing-buffer lambda snapshotted for this expiry.
+/// Return the snapshotted backing-buffer lambda for SDK and devInspect reads.
 public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
     market.strike_exposure.backing_buffer_lambda()
 }
 
-/// Return the trade-fee ramp window snapshotted for this expiry.
+/// Return the snapshotted fee-ramp window for SDK and devInspect reads.
 public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_window_ms()
 }
 
-/// Return the trade-fee ramp max multiplier snapshotted for this expiry.
+/// Return the snapshotted fee-ramp multiplier for SDK and devInspect reads.
 public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
 }
@@ -174,33 +173,33 @@ public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.no_leverage_window_ms()
 }
 
-/// Return the strike tick size snapshotted for this expiry. Raw strikes are
-/// derived off-chain / by the SDK as `tick * tick_size`.
+/// Return the strike tick size for SDK and devInspect range construction. Raw
+/// strikes are `tick * tick_size`.
 public fun tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.tick_size()
 }
 
-/// Return the coarser raw-price step that new finite mint boundaries must align to.
+/// Return the admission-grid step for SDK and devInspect range construction.
 public fun admission_tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.admission_tick_size()
 }
 
-/// Return the reference fine-grid tick admitted for this expiry, if it has been set.
+/// Return the admitted reference tick for SDK and devInspect range construction.
 public fun reference_tick(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.reference_tick()
 }
 
-/// Return the exact Propbook Pyth source timestamp used to derive `reference_tick`.
+/// Return the reference observation timestamp for SDK and devInspect reads.
 public fun reference_tick_source_timestamp_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.reference_tick_source_timestamp_ms()
 }
 
-/// Return buffered live reserve, or exact remaining settled payout liability once materialized.
+/// Return payout reserve or settled liability for external accounting observability.
 public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
 }
 
-/// Return cash required to cover payout liability plus unresolved rebate reserve.
+/// Return required expiry cash for external accounting observability.
 public fun required_cash(market: &ExpiryMarket): u64 {
     market.cash.required_cash(market.payout_liability())
 }
@@ -233,49 +232,23 @@ public fun load_live_pricer(
     )
 }
 
-/// Return this expiry market's exact live NAV: free cash minus the exact
-/// per-order live liability, floored at zero. This is structurally the live
-/// primitive for a market-bound `Pricer`; an empty or order-free live market
-/// returns free cash (zero liability).
-///
-/// A pure read with no backing assert: backing is owned by the payout-tree reserve
-/// and proven on every trade, and the `max(0, ·)` cash floor marks a degenerate
-/// (underwater) market at 0 — the correct per-market limited-recourse value, never
-/// negative. `load_live_pricer` binds the propbook feeds to this market's current
-/// Propbook registry mapping, rejects a past-expiry market, and gates oracle freshness.
-///
-/// A past-expiry market that has not settled cannot produce this pricer. There is
-/// no solvency-safe NAV for an unsettled past-expiry market: the flush uses one
-/// mark for both supply and withdraw, so the mark must equal the
-/// settlement-dependent true value. Flows that branch on settlement call
-/// `try_settle` first, using Propbook's exact Pyth timestamp at expiry; if no
-/// exact spot exists yet, the live-pricing liveness abort remains the correct
-/// failure mode.
+/// Return live marked NAV as free expiry cash minus the exposure book's marked
+/// liability, floored at zero. This read requires a market-bound pre-expiry
+/// `Pricer`; an expired but unsettled market cannot be valued through this path.
+/// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.exact_live_liability(pricer);
-    // Floor at 0 rather than abort: a degenerate underwater market has zero
-    // limited-recourse value, and partial-close `walk_linear` survivors can leave
-    // residual ulp dust that makes liability exceed free cash by ~1-2 ulp/order.
-    // This is a ROUNDING_POLICY R1/R2 liveness/dust clamp, not a conservative
-    // supply mark: a lower pool mark would mint more PLP to new suppliers, so the
-    // exact-mark invariant remains the governing safety property.
+    // Marked liability and free cash are computed through different rounded
+    // aggregates; negative marked NAV is represented as zero.
     market.cash.free_cash().saturating_sub(liability)
 }
 
-/// Return the holder value of one order, gross of fees: the read prefix of the
-/// redeem flow. The same classifier quotes the close, so this view cannot
-/// disagree with what a redeem would pay — liquidated and liquidatable orders
-/// are worth zero, a live order its full-close redeem amount (range value net
-/// of its static floor), a settled order its terminal payout. Pass `some(pricer)`
-/// to value a live order; a `Pricer` is live-only (constructible only before
-/// expiry), so it also proves the market unsettled. Pass `none` to value a
-/// settled or already-closed order, whose worth needs no live price — this is
-/// the only way to read a settled order, since no `Pricer` can exist once the
-/// market has settled. A live order valued with `none` aborts
-/// `strike_exposure::EPricerRequired`. Public read for SDK/devInspect and
-/// external Move composition; callers must already know the order belongs to the
-/// position they are valuing.
+/// Return one order's close value before fees. Liquidated or currently
+/// liquidatable orders return zero, live orders return their full-close range
+/// value net of static floor, and settled orders return terminal payout. Live
+/// reads require a market-bound `Pricer`; this function does not prove account
+/// ownership of `order_id`. Public for SDK and devInspect position valuation.
 public fun order_value(market: &ExpiryMarket, pricer: Option<Pricer>, order_id: u256): u64 {
     if (pricer.is_some()) market.assert_pricer_bound(pricer.borrow());
     let order = order::from_order_id(order_id);
@@ -285,23 +258,18 @@ public fun order_value(market: &ExpiryMarket, pricer: Option<Pricer>, order_id: 
     terms.settled_payout()
 }
 
-/// Return whether minting is currently paused on this expiry market.
+/// Return the market mint-pause state for SDK and devInspect reads.
 public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
 /// Quote the all-in cost of a mint request for an anonymous taker (no
 /// stake discount, no builder code) without mutating any market state.
-/// `exact_quantity = true` quotes minting exactly `min_quantity`; `false`
-/// quotes the largest quantity whose net premium fits `max_premium`. Applies
-/// the same live-mint gates and admission asserts as the mint path, so a quote
-/// aborts exactly when the mint-side terms computation would; it does not
-/// preflight account balance, slippage caps, or exposure-index capacity.
-/// `penalty_fee` is computed from the pre-trade EWMA stats exactly as the mint
-/// path computes its charge, so it matches a same-state, same-gas-price mint;
-/// across transactions it can still drift (different gas price, or trades
-/// folding observations in between). Public read for SDK/devInspect pre-trade
-/// pricing.
+/// Exact-quantity mode uses `min_quantity`; budget mode conservatively sizes a
+/// lot-rounded fill under `max_premium`. The quote applies live-mint and admission
+/// gates but does not preflight account balance, slippage caps, or exposure-index
+/// capacity. Its penalty uses the current pre-update EWMA state. Public for SDK
+/// and devInspect pre-trade pricing.
 public fun quote_mint(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -334,14 +302,11 @@ public fun quote_mint(
 }
 
 /// Quote the all-in cost of a mint request for one account, reading the
-/// account's builder code and current `active_stake` as-is. An un-rolled stake
-/// from a prior epoch quotes a smaller discount than the mint (which rolls
-/// first) would apply, so the quote can only overstate cost. A budget request
-/// is capped to the account's current balance exactly as `mint_exact_amount`
-/// caps it — read without settling, and a mint settles first, so the quote can
-/// only understate the fill. Same gates, admission aborts, request-bias
-/// semantics, and EWMA-peek semantics as `quote_mint`. Public read for
-/// SDK/devInspect pre-trade pricing.
+/// account's builder code and current `active_stake` without rolling epochs. If
+/// inactive stake is eligible to roll, the executing mint receives a larger
+/// discount than this quote reflects. Budget mode caps premium by total account
+/// balance, including unsettled accumulator funds. Public for SDK and devInspect
+/// pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -386,34 +351,42 @@ public fun quote_mint_for_account(
 
 // === MintQuote Getters ===
 
+/// Return the sized quantity for SDK and devInspect quote consumers.
 public fun quantity(quote: &MintQuote): u64 {
     quote.quantity
 }
 
+/// Return the quoted range probability for SDK and devInspect consumers.
 public fun entry_probability(quote: &MintQuote): u64 {
     quote.entry_probability
 }
 
+/// Return the quoted net premium for SDK and devInspect consumers.
 public fun net_premium(quote: &MintQuote): u64 {
     quote.net_premium
 }
 
+/// Return the quoted post-stake trading fee before subsidy for SDK and devInspect consumers.
 public fun trading_fee(quote: &MintQuote): u64 {
     quote.trading_fee
 }
 
+/// Return the sponsor-funded portion of the quoted fee for SDK and devInspect consumers.
 public fun fee_incentive_subsidy(quote: &MintQuote): u64 {
     quote.fee_incentive_subsidy
 }
 
+/// Return the quoted builder fee for SDK and devInspect consumers.
 public fun builder_fee(quote: &MintQuote): u64 {
     quote.builder_fee
 }
 
+/// Return the quoted EWMA congestion surcharge for SDK and devInspect consumers.
 public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
 }
 
+/// Return the total quoted account withdrawal for SDK and devInspect consumers.
 public fun all_in_cost(quote: &MintQuote): u64 {
     quote.all_in_cost
 }
@@ -421,8 +394,8 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 /// Mint an exact live position quantity against this expiry market.
 ///
 /// Requires the running package version to be at or above the protocol version
-/// watermark, per-market mint pause to be off, trading globally enabled, a valid
-/// account owner auth, a market-bound live `Pricer`, and enough expiry cash to
+/// watermark, per-market mint pause to be off, trading globally enabled, valid
+/// owner or authorized-app account auth, a market-bound live `Pricer`, and enough expiry cash to
 /// back the post-mint max payout and rebate reserve. Leverage is continuous (any
 /// `L >= 1`); the derived static barrier `b = floor_shares/quantity` must sit
 /// below the at-entry liquidation threshold so the order is not instantly
@@ -480,10 +453,9 @@ public fun mint_exact_quantity(
     )
 }
 
-/// Mint the largest lot-rounded live position whose net premium fits inside
-/// `max_premium` (sized within one lot of the exact maximum; the charged
-/// premium never exceeds the budget), aborting if the resulting quantity is
-/// below `min_quantity`.
+/// Mint a conservatively sized lot-rounded position whose net premium does not
+/// exceed `max_premium`. The result may be one lot below the largest fitting
+/// quantity and must meet `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
 /// `max_premium`. The sizing budget is first capped to the account's available
@@ -586,8 +558,8 @@ public fun redeem_live(
 ///
 /// The market must be settled already; this flow does not run live pricing or new
 /// liquidation. Liquidated orders clear with zero payout. Requires a full close.
-/// This owner-auth path remains available even when Predict app-auth automation is
-/// deauthorized in the account registry.
+/// Explicit owner auth remains available when Predict app automation is deauthorized;
+/// another authorized app may also supply valid account auth.
 public fun redeem_settled(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -740,9 +712,9 @@ public fun set_mint_paused(
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
-/// Settle this market from Propbook's exact Pyth spot at expiry and materialize
-/// its terminal payout liability. Permissionless and idempotent; returns whether
-/// the market is settled after the attempt.
+/// Settle from Propbook's exact positive normalized Pyth spot at expiry and
+/// materialize terminal payout liability. Permissionless and idempotent; a missing
+/// or non-normalizable observation leaves the market unsettled.
 public fun try_settle(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -775,9 +747,8 @@ public fun try_settle(
 
 // === Public-Package Functions ===
 
-/// Force `mint_paused = true`. Reserved for `PauseCap` holders going through
-/// `registry::pause_expiry_market_mint_pause_cap`; cannot unpause. Deliberately
-/// not version-gated so the kill switch survives a version freeze.
+/// Force `mint_paused = true` through the registry's `PauseCap` path. This cannot
+/// unpause and does not apply the package-version gate.
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
     config_events::emit_expiry_market_mint_paused_updated(market.id(), true);
@@ -851,9 +822,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     released_cash
 }
 
-/// Release every unit of cash above this expiry's settled payout liability back
-/// to the pool. Used by the settled-market sweep, which then deactivates the
-/// expiry and materializes its profit.
+/// Release settled cash above payout liability and unresolved rebate reserve.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
@@ -995,10 +964,7 @@ fun mint_prepared(
     minted_order.id()
 }
 
-/// Assemble the mint cost decomposition from priced terms. The single home of
-/// the mint payment formula: quotes return it as-is and the mint path settles
-/// exactly these amounts, so a quote's `all_in_cost` matches the debit of a
-/// same-state mint by construction.
+/// Assemble the cost decomposition shared by mint quotes and execution.
 fun compute_mint_quote(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -1078,14 +1044,8 @@ fun settle_mint_payment(
 }
 
 // --- Redeem flow ---
-/// One redeem body behind every redeem entry: the live ambient pass, one
-/// close classification, then the outcome arms. Every public entry asserts its
-/// phase gates (version, valuation freeze, and pricer binding or recorded
-/// settlement) before delegating here — the protocol-wide gates stay visible
-/// on the public surface. `pricer` carries the phase — `some` runs the live
-/// flow, `none` the settled flow; the two cannot mix because the live gates
-/// require a market-bound pricer and the settled gate requires recorded
-/// settlement.
+/// Execute the shared close flow after the public entrypoint has enforced live or
+/// settled phase gates. A live close carries a `Pricer`; a settled close does not.
 fun redeem(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -1151,8 +1111,7 @@ fun redeem(
         );
         assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
         let active_stake = predict_account::roll_active_stake(account, ctx);
-        // Congestion penalty from the pre-trade EWMA stats (RP-9: penalty before
-        // fold); nothing between here and the payment folds the EWMA.
+        // Charge against the pre-trade EWMA distribution, then fold this gas price.
         let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
         let redeem_amount = terms.redeem_amount();
@@ -1195,12 +1154,8 @@ fun redeem(
             ERedeemProceedsBelowMin,
         );
 
-        // Target-close mutation phase, entered only after every close policy check
-        // (same-timestamp guard, both slippage floors) has passed: apply the quoted
-        // close to the book, swap the closed position for its replacement, then apply
-        // the payment. The ambient stake roll and EWMA fold above are allowlisted
-        // pre-trade rolls whose result the quote already reflects, not part of this
-        // policy-gated close; an abort here rolls them back atomically.
+        // Apply book and account-position mutations only after all close policy
+        // checks. Any later abort rolls back the earlier stake and EWMA updates.
         let replacement_order = market.strike_exposure.process_close(pricer, terms, clock);
         let position_root_id = predict_account::remove_position(
             account,
@@ -1318,14 +1273,8 @@ fun settle_live_redeem_payment(
 }
 
 // --- Shared by the mint and redeem flows ---
-/// Return the congestion surcharge (in DUSDC) for `quantity` from the pre-trade
-/// EWMA stats, then fold the current gas price into the estimate. Penalty before
-/// fold on every trade path (mint and live redeem): the trade's gas is judged
-/// against the prior distribution rather than one already containing it, which
-/// for mint additionally makes the charge equal what the quote functions compute
-/// for the same state and gas price. Deliberate ordering divergence from
-/// DeepBook core, which folds first — registered in
-/// `predeploy/response-policies.md` (RP-9).
+/// Compute the congestion surcharge from pre-trade EWMA state, then fold the
+/// current gas price into the estimate.
 fun ewma_penalty(
     market: &mut ExpiryMarket,
     config: &EwmaConfig,

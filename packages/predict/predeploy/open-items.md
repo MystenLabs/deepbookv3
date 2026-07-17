@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-08. **The single source of truth for open work.** Anything that
+Updated 2026-07-17. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -13,15 +13,17 @@ manifest.
 
 ## Deploy Gates
 
-### S-4: Block Scholes updates are forgeable while the verifier is a stub
+### S-4: Production Block Scholes verifier must replace the development stub
 
 **Severity:** Deploy gate.
 
-`block_scholes_oracle::update` currently constructs public stub updates. Propbook
-BS feed writes are permissionless and gated by source id, timestamp monotonicity,
-freshness, and Predict's pricing-safe envelope, not by a production signature
-verifier. Do not deploy to a value-bearing environment until the real verifier
-replaces the stub or the BS push surface is cap-gated.
+The repository dependency is a development stub and is not the verifier intended
+for deployment. Propbook's public BS write paths accept verifier-produced update
+objects and rely on their constructor boundary for authenticity; source id,
+timestamp, freshness, and Predict's pricing-safe envelope do not replace that
+proof. Before a value-bearing deployment, replace the dependency with the
+production verifier and confirm the scoped contracts still bind the authenticated
+payload to the expected source.
 
 ## Contract Findings
 
@@ -53,10 +55,10 @@ forward updates, or document that the production verifier/source guarantees this
 **2026-07-07 extension — settlement lane, permanent brick.** The same
 write-time normalizability gap reaches settlement, not just live reads. A
 non-normalizable exact-expiry Pyth print (negative, normalizes-to-zero,
-u64-overflow, or exponent-shift > 18 — `normalize_raw_spot` returns none,
-pyth_feed.move:281-308) inserted at `key == expiry_ms` locks that key forever:
-the exact-history lane is first-writer-wins with no overwrite/remove
-(oracle_lane.move:130). `try_settle` then
+u64-overflow, or exponent-shift > 18 — `pyth_feed::normalize_raw_spot` returns
+none) inserted at `key == expiry_ms` locks that key forever: the exact-history
+lane is first-writer-wins with no overwrite/remove (`oracle_lane::insert_at`).
+`expiry_market::try_settle` then
 returns false permanently and post-expiry live pricing aborts
 (`ELivePricingExpired`), so the market never settles and the pool-wide flush
 stays bricked. This defeats RP-4's stated recovery (the permissionless exact-ms
@@ -68,38 +70,36 @@ permanent.
 guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
-cover the permanent (not just transient) case. (audit 4d2a1e)
+cover the permanent (not just transient) case.
 
 ### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
 
 **Severity:** Medium / required decision before deploy.
 
 Materialized protocol profit joins into `PoolVault.protocol_reserve_balance`
-(plp.move:797, :912) but no split/withdraw/claim entrypoint exists in any of the
-four packages (verified by grep at HEAD b34b0cd4; only a getter and an event
-field read it). The protocol cut is excluded from LP value and can never leave
-the vault without a package upgrade.
+through `pool_accounting::realize_pending_protocol_profit`, but no split/withdraw/claim
+entrypoint exists in the four scoped packages; only a getter and event fields
+read it. The protocol cut is excluded from LP value and can never leave the
+vault without a package upgrade.
 
-**Action:** Add an AdminCap-gated withdraw entrypoint (e.g.
+**Action:** Add an AdminCap-gated withdraw entrypoint (for example,
 `withdraw_protocol_reserve` splitting from the balance), or record deliberate
-deferral to a post-deploy upgrade as the decision. (audit 412e9e)
+deferral to a post-deploy upgrade as the decision.
 
 **2026-07-07 extension — the cut is order-dependent, not just accrue-only.**
 The protocol cut is realized against a single pool-wide, forward-only
-`net_losses_to_fill` (pool_accounting.move:36): a loss grows it (:240) and only
-a *later* profit shrinks it (:245,:249) — a loss never claws back a cut already
-materialized from an earlier profit. Because cross-market materialization order
-is permissionless (`rebalance_expiry_cash` → `sweep_settled_expiry` →
-`materialize_expiry_profit`, plp.move:412), a profit-first ordering splits
-`share × (gross profit recognized before losses)` into
-`protocol_reserve_balance` (join-only, plp.move:814,929 — never split, matching
-this item's accrue-only claim) instead of `share × net pool profit`. Lens split
-this run: the lifecycle sim called it an LP leak (High), while the
-invariants-lens 40k-scenario fuzz and one cross-model verifier found it
-NAV-neutral under fair live marking (the cut is pre-reserved in
-`lp_pool_value`'s exclusion, plp.move:713-737) — the excess only bites when the
-offsetting loss market is *settled-but-unswept* at the profit-first instant, a
-narrow ordering window. Panel severity: Medium.
+`net_losses_to_fill` in `pool_accounting`: a loss grows it and only a *later*
+profit shrinks it — a loss never claws back a cut already materialized from an
+earlier profit. Because cross-market materialization order is permissionless
+(`plp::rebalance_expiry_cash` → `sweep_settled_expiry` →
+`materialize_expiry_profit`), a profit-first ordering splits `share × (gross
+profit recognized before losses)` into `protocol_reserve_balance` (join-only,
+never split, matching this item's accrue-only claim) instead of `share × net
+pool profit`. While all offsetting losses remain represented in live marking,
+the cut is NAV-neutral because `plp::lp_pool_value` excludes the pre-reserved
+amount. The excess becomes real when an offsetting loss market is settled but
+unswept at the profit-first instant, so the reserve can accrue on gross
+recognized profit rather than net realized pool profit.
 
 **Action (extension):** Fold into the accrue-only deploy decision — take the
 cut against NET realized pool profit (a pool-level net-profit high-water mark
@@ -107,27 +107,27 @@ realizing the incremental cut of the running net), or make `net_losses`
 symmetrically reduce not-yet-realized/pending protocol profit before any cut is
 split. Verify with a cross-market Move flow test: value/sweep a profitable
 market before an offsetting lossy one and assert
-`protocol_reserve == share × net` (expected to fail at HEAD). (audit db0506)
+`protocol_reserve == share × net`; current behavior produces a larger reserve
+when the profitable market is materialized first.
 
-### P-10: current_nav carries an undocumented conservative band
+### P-10: current_nav's conservative liquidation band is absent from public risk disclosure
 
 **Severity:** Low.
 
 Liquidatable-but-still-active leveraged orders (live gross in
 `(floor, floor/ltv]`) are marked at holder value (gross-floor) by
-`correction_value`'s min-cap (liquidation_book.move:85-99), and `value_expiry`
-runs no pre-valuation liquidation pass (plp.move:244-279), so `current_nav`
-(expiry_market.move:247-257) understates recoverable value by up to the LTV
-buffer. This contradicts the settled "exact `current_nav`, no conservative
-band" framing (RP-1 reasoning) and dilutes incumbent LPs on a same-flush supply
-(NAV reads low → the supplier mints too many shares). Distinct from the ~1-ulp
-aggregation-dust *over*-statement (walk_linear per-node end-term) also flagged
-this run.
+`liquidation_book::correction_value`'s min-cap, and `plp::value_expiry` runs no
+pre-valuation liquidation pass, so `expiry_market::current_nav` understates
+recoverable value by up to the LTV buffer. This contradicts the settled "exact
+`current_nav`, no conservative band" framing (RP-1 reasoning) and dilutes
+incumbent LPs on a same-flush supply (NAV reads low → the supplier mints too many
+shares). P-13 tracks the opposite, rounding-only direction where aggregate
+liability is one raw unit low.
 
-**Action:** Decide and document — either accept and disclose the conservative
-band in `docs/risks.md` (reconciling the "exact NAV" framing), or run a
+**Action:** Decide whether to accept and disclose the conservative band in
+`docs/risks.md` (reconciling the "exact NAV" framing), or run a
 pre-valuation liquidation pass so the flush marks liquidatable orders at their
-liquidated value. (2026-07-07 holistic audit)
+liquidated value.
 
 ### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
 
@@ -170,10 +170,35 @@ loss estimate.
 **Action:** Measure a `b`-specific envelope against observed surface history and
 evaluate a source-level butterfly/monotonicity admission check. The active-book
 price-memo guard prevents the known NAV overstatement by aborting valuation on a
-non-monotone active boundary set, but surface quality remains a trusted input for
-single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
+non-monotone active boundary set, so the completed-valuation-discrepancy risk is
+closed (only P-10 and P-13 now describe live valuation gaps). Because the guard
+aborts rather than reprices, and the pool flush values every active market in one
+transaction, an admitted non-monotone surface now stalls that flush until the
+surface is replaced — the residual is a surface-quality admission gap plus this
+flush-liveness cost, not a mispriced NAV. Surface quality remains a trusted input
+for single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
 review; quantitative framing corrected 2026-07-11; active-book guard added by
 DBU-548.)
+
+### P-13: Boundary aggregation can understate positive liability by one raw unit
+
+**Severity:** Low.
+
+The payout tree prices and floors each signed boundary contribution before
+netting the aggregate, while an individual order floors its range probability
+before multiplying by quantity. Those operation orders are not bit-equivalent.
+On a normal monotone constant-variance surface, two one-lot ranges sharing an
+upper strike price individually at `463 + 410 = 873` raw DUSDC units, while
+`strike_payout_tree::walk_linear` produces `9583 + 9530 - 18241 = 872`. The
+aggregate live liability is therefore one raw unit below the sum of the two
+order liabilities, and `current_nav` is one raw unit high. This is distinct from
+P-11's non-monotone-surface netting failure and P-10's conservative low-NAV band.
+
+**Action:** Decide whether live liability must reproduce per-order rounding. If
+yes, preserve per-range rounded terms in the valuation representation. If not,
+bound and accept the aggregation residual in the rounding policy, add a
+regression covering both directions, and narrow every exact-NAV claim to the
+accepted bound. (2026-07-17 clean-room gap audit)
 
 ## Access and Governance
 
@@ -181,28 +206,28 @@ DBU-548.)
 
 **Severity:** Deploy decision.
 
-The three root caps — predict `AdminCap` (admin.move:13), propbook
-`RegistryAdminCap` (registry.move:67), and account `AccountAdminCap`
-(account_registry.move:25) — have no on-chain revoke or rotate path (contrast
-predict's `revoke_pause_cap` / `revoke_lifecycle_cap`, registry.move:86,111).
+The three root caps — predict `AdminCap`, propbook `RegistryAdminCap`, and
+account `AccountAdminCap` — have no on-chain revoke or rotate path (contrast
+predict's `registry::revoke_pause_cap` / `revoke_lifecycle_cap`).
 Coupled exposures:
 
 - A leaked `AccountAdminCap` is an unrecoverable path to draining all user
   custody: it authorizes apps (`authorize_app`), and account app-auth is
   generic — any co-authorized app can call public `account::withdraw` on any
-  predict user's wrapper (account.move:131-139). AGENTS.md:106 records the
-  full-account app-auth as intentional, but the deploy-time authorization
-  hygiene and the cap-compromise recovery are not an explicit item.
+  predict user's wrapper. `account::load_account_mut` intentionally grants a
+  valid `Auth` unrestricted mutable account access, but the deploy-time
+  authorization hygiene and the cap-compromise recovery are not an explicit
+  item.
 - The propbook `RegistryAdminCap` is a *separate* admin domain that can rebind
-  an underlying's oracle (`replace_pyth_binding_for_underlying`,
-  registry.move:365-377), instantly redirecting and stranding pricing AND
+  an underlying's oracle (`registry::replace_pyth_binding_for_underlying`),
+  instantly redirecting and stranding pricing AND
   settlement of all in-flight predict markets, with no timelock and no
   predict-side detection.
 
-**Action:** Before a value-bearing deploy, decide the governance posture —
-multisig custody of each root cap, an allowlist-revocation for authorized apps
-(as the derived caps already have), and/or documented acceptance of the
-cross-package admin trust coupling. (2026-07-07 holistic audit)
+**Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
+multisig custody plus a rotation/replacement mechanism for each non-rotatable
+root cap, or documented acceptance of the cap-compromise and cross-package admin
+trust coupling.
 
 ## Capacity and Liveness Findings
 
@@ -308,42 +333,26 @@ the affected near-expiry market shape until the reliability curve is verified.
 
 ## Maintainability and Pre-Deploy Hygiene
 
-From the 2026-07-02 mini audit sweep (HEAD b34b0cd4). These are free to fix
-pre-deploy and breaking (or permanent) after; none block correctness today.
+These are free to fix pre-deploy and breaking (or permanent) after; none block
+correctness today.
 
 ### H-3: Smaller cleanup items
 
 - Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
   helpers (and shared guard preamble) across the BS forward/SVI/spot feeds into
-  a generic `oracle_lane` helper. (audit 7af3ed)
+  a generic `oracle_lane` helper.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
-  component so per-expiry DUSDC has one owner. (audit 49108f)
+  component so per-expiry DUSDC has one owner.
 
-### H-5: Careful trade-flow dedup batch (verify deeply before fixing)
+### H-5: Premium-budget mint omits probability and all-in-cost slippage caps
 
-**Severity:** Low, but all four sit on or near the mint/redeem path — not
-hygiene-speed changes.
+**Severity:** Low.
 
-- Pyth canonical-binding duplication resolved by the pricing-owned
-  `ExactSpotRead`: live pricing, reference tick, and settlement share one binding
-  check, and `expiry_market` contains no raw feed read. (audit 0622da)
-- `mint_exact_amount` prices and admission-validates the same range twice per
-  call — resolved by the DBU-566 unified mint gate: one pricing and one full
-  admission per request in `strike_exposure::quote_mint_terms`. (audit fb3ec8)
-- Four cascading asserts under one `ENetPremiumBudgetTooHigh` exist only to
-  pre-empt +1 overflow — resolved by deletion: the DBU-566 sizing search has no
-  overflowable intermediates, duty inventory in RP-13. (audit a68338)
-- `EReferenceTickTimestampMismatch` re-checked that an exact-timestamp lane read
-  returned its own key — resolved by deleting the duplicate guard and retaining
-  only the normalized value in pricing's opaque `ExactSpotRead`: `oracle_lane`
-  keys exact history by the read's source timestamp, and normalization preserves
-  that timestamp; duty inventory in RP-14. (audit 914ecd)
-- `mint_exact_amount` disables BOTH slippage guards (`max_cost` and
-  `max_probability` hardcoded to `u64::max`, expiry_market.move:482-483),
-  asymmetric with `mint_exact_quantity` — decide whether a premium-budget mint
-  should be able to bound total fees/penalty and entry probability, and add the
-  optional guards if so. (2026-07-07 holistic audit)
+`expiry_market::mint_exact_amount` disables both slippage guards (`max_cost` and
+`max_probability` are unbounded), unlike `mint_exact_quantity`. Decide whether
+a premium-budget mint should also bound total fees/penalty and entry probability,
+and add optional guards if so.
 
 ### H-6: Maintainability backlog
 
@@ -352,13 +361,12 @@ hygiene-speed changes.
   `CadenceParams` struct instead of a 5-long u64 run through
   registry → market_manager → event; reshapes the public
   `set_template_cadence_config` signature, so coordinate with the positional TS
-  callers. (hygiene sweep)
+  callers.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
-  consciously accept before the codebase grows further. (audit c3edaa)
+  consciously accept before the codebase grows further.
 - Public `liquidate()` takes an unbounded caller budget — low-priority self-DoS
   probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
-  (from the retired experiments backlog)
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 
@@ -369,12 +377,9 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   flush test that latches positive profit-basis credits (settle a profitable
   market), withdraws idle, then collapses the remaining active mark so
   `exclusion + pending > gross`, and asserts the flush still succeeds at NAV==0.
-- **New cadence public-read surface unclassified + uncovered.** The
-  `market_manager` cadence-config getters (registry.move:63 / market_manager.move
-  public reads) are `public` with no in-repo caller and no consumer-class doc
-  comment (violates the public-read classification policy this branch landed) and
-  have zero test coverage — classify each per the policy (delete or document the
-  consumer class), then cover the kept ones.
+- **Cadence public-read surface uncovered.** The `market_manager` cadence-config
+  getters are retained for SDK and dev-inspect consumers but have zero direct
+  test coverage; cover the external values and the enabled/disabled projection.
 - **`pricing` forward-absence branch untested.** `EBlockScholesPriceUnavailable`
   is pinned for the spot-absence path but not the forward-absence path; add the
   missing `expected_failure`.

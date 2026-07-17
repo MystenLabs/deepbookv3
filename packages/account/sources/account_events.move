@@ -1,10 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Account-domain events: canonical-account lifecycle, app-whitelist governance,
-/// and per-coin custody movement. Emitted by the modules that own each transition
-/// (`account_registry` for lifecycle, `account` for custody). This is the
-/// package's only event surface; indexing lives in follow-up account indexer work.
+/// Defines canonical-account lifecycle, app-authorization, and per-coin custody events.
+/// `account_registry` emits creation and authorization transitions; `account` emits balance transitions.
 module account::account_events;
 
 use std::ascii::String;

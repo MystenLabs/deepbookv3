@@ -1,11 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Block Scholes SVI oracle: one shared object per source id, storing
-/// per-expiry volatility-surface streams keyed by expiry timestamp.
-///
-/// Propbook does not validate Predict's pricing-safe SVI envelope; consumers
-/// own any bounds or no-arbitrage policy needed by their pricing math.
+/// Stores Block Scholes SVI surface streams for one source, partitioned by expiry into independent Propbook oracle lanes.
+/// Writes require the verifier-produced `SVIUpdate` type and must match the feed's immutable source ID.
+/// Propbook preserves the signed surface parameters but does not impose consumer-specific pricing or no-arbitrage policy.
 module propbook::block_scholes_svi_feed;
 
 use block_scholes_oracle::update::SVIUpdate;
@@ -27,15 +25,14 @@ public struct SVIParams has copy, drop, store {
     sigma: u64,
 }
 
-/// Source-native Block Scholes SVI fields. The generic oracle lane stores
-/// Propbook's canonical millisecond timestamps around this payload.
+/// Source-native Block Scholes SVI fields; the lane supplies publication and recording timestamps.
 public struct RawSVI has copy, drop, store {
     bs_source_id: u32,
     expiry_ms: u64,
     svi: SVIParams,
 }
 
-/// One Block Scholes SVI feed: version gate plus one generic oracle lane per expiry.
+/// A versioned Block Scholes SVI feed with one lane per expiry.
 public struct BlockScholesSVIFeed has key {
     id: UID,
     bs_source_id: u32,
@@ -47,25 +44,24 @@ public struct BlockScholesSVIFeed has key {
 
 // === Read Functions ===
 
-// Raw reads (`raw_*`) are public provenance/observability API (devInspect and
-// external composition); validated consumers use the `normalized_*` reads.
+// Raw reads expose source-native fields for external inspection; normalized reads expose the signed parameter representation used by consumers.
 
-/// Return the feed object ID.
+/// Returns the feed identity for external composition and canonical-binding discovery.
 public fun id(feed: &BlockScholesSVIFeed): ID {
     feed.id.to_inner()
 }
 
-/// Return the Block Scholes source id this feed is bound to.
+/// Returns the immutable Block Scholes source ID for external feed inspection.
 public fun bs_source_id(feed: &BlockScholesSVIFeed): u32 {
     feed.bs_source_id
 }
 
-/// Return the package version this feed runs at.
+/// Returns the write-gating storage version for external feed inspection.
 public fun version(feed: &BlockScholesSVIFeed): u64 {
     feed.version
 }
 
-/// Latest raw BS SVI read for `expiry_ms`. Aborts if no live update has landed.
+/// Latest raw SVI parameters for external inspection; aborts if none has landed.
 public fun raw_svi(feed: &BlockScholesSVIFeed, expiry_ms: u64): OracleRead<RawSVI> {
     assert!(feed.expiries.contains(expiry_ms), ERawSVINotFound);
     let read = feed.expiries.borrow(expiry_ms).latest_read();
@@ -84,9 +80,7 @@ public fun normalized_svi(
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
 
-/// Exact raw BS SVI read for `(expiry_ms, timestamp_ms)`. This is a
-/// provenance/observability read for external Move, PTB, and devInspect
-/// consumers that need the source-native exact SVI payload.
+/// Exact source-native SVI read for external Move, PTB, and devInspect consumers.
 public fun raw_svi_at(
     feed: &BlockScholesSVIFeed,
     expiry_ms: u64,
@@ -98,7 +92,7 @@ public fun raw_svi_at(
     read.destroy_some()
 }
 
-/// Exact Propbook-normalized SVI params for `(expiry_ms, timestamp_ms)`.
+/// Exact normalized SVI parameters for external timestamp inspection.
 public fun normalized_svi_at(
     feed: &BlockScholesSVIFeed,
     expiry_ms: u64,
@@ -110,14 +104,17 @@ public fun normalized_svi_at(
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
 
+/// Return the provider source ID for external raw-feed inspection.
 public fun raw_bs_source_id(raw: &RawSVI): u32 {
     raw.bs_source_id
 }
 
+/// Return the quoted expiry timestamp for external raw-feed inspection.
 public fun raw_expiry_ms(raw: &RawSVI): u64 {
     raw.expiry_ms
 }
 
+/// Return the source-native SVI parameters for external raw-feed inspection.
 public fun raw_svi_params(raw: &RawSVI): SVIParams {
     raw.svi
 }
@@ -144,8 +141,9 @@ public fun sigma(params: &SVIParams): u64 {
 
 // === Write Functions ===
 
-// TODO(bs-verifier): "unverified" holds only while block_scholes_oracle is a stub.
-/// Ingest an unverified (stub-oracle) BS SVI update into the oracle lane for the update's expiry.
+/// Record a verifier-produced SVI update in the lane selected by its expiry.
+/// After the version and source checks, a zero, future, duplicate, or stale source
+/// timestamp is ignored without changing `latest` or emitting an event.
 public fun update(
     feed: &mut BlockScholesSVIFeed,
     update: SVIUpdate,
@@ -161,8 +159,8 @@ public fun update(
     feed.update_expiry(expiry, id, read, ctx);
 }
 
-/// Insert an exact BS SVI observation keyed by the update-derived source
-/// timestamp. This does not mutate the live latest observation.
+/// Inserts a verifier-produced SVI observation at its exact source timestamp without changing `latest`.
+/// The first valid observation accepted for an expiry and timestamp owns that key; later inserts are ignored.
 public fun insert_at(
     feed: &mut BlockScholesSVIFeed,
     update: SVIUpdate,

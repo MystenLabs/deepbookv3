@@ -1,21 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Upgrade-required protocol constants for Predict.
-///
-/// Scaling conventions (aligned with DeepBook):
-/// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
-/// - Quantities are in 6-decimal quote units: 1_000_000 = 1 contract = one quote unit
-/// - At settlement, a winning order redeems `quantity - floor_shares` (the full
-///   `quantity` only when unleveraged, i.e. `floor_shares == 0`)
-/// - Use `math` for all fixed-point scaling and mul/div operations
+/// Defines Predict's upgrade-required scales, hard limits, time units, and event discriminators.
+/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, DEEP, and contract quantities use six decimal base units unless stated otherwise.
 module deepbook_predict::constants;
 
 // === Package Versioning ===
 
-/// Current package version, bumped on each upgrade. Version-gated entry points run
-/// only while `current_version!() >= ProtocolConfig.version_watermark`; admin raises
-/// the watermark (`protocol_config::bump_version_watermark`) to retire older versions.
+/// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
 public macro fun current_version(): u64 { 1 }
 
 // === Scaling ===
@@ -45,8 +37,7 @@ public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 
 // === Async LP Requests ===
-// Minimums and the per-flush cap are upgrade-required for now. A per-vault
-// admin-tunable minimum is a deferred follow-up (see config rules in move.md).
+// Request admission thresholds and cancellation reasons are upgrade-required protocol values.
 
 /// Minimum DUSDC a single supply request must escrow: 10 DUSDC (6-decimal units).
 public(package) macro fun min_supply_request(): u64 { 10_000_000 }
@@ -87,25 +78,20 @@ public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
 
 // === Time Constants ===
 
-/// Milliseconds in one minute.
 public(package) macro fun one_minute_ms(): u64 { 60_000 }
 
-/// Milliseconds in five minutes.
 public(package) macro fun five_minutes_ms(): u64 { 5 * one_minute_ms!() }
 
-/// Milliseconds in one hour.
 public(package) macro fun one_hour_ms(): u64 { 60 * one_minute_ms!() }
 
-/// Milliseconds in one day.
 public(package) macro fun one_day_ms(): u64 { 24 * one_hour_ms!() }
 
-/// Milliseconds in one week.
 public(package) macro fun one_week_ms(): u64 { 7 * one_day_ms!() }
 
 /// Milliseconds in one fixed 30-day month; this is not a calendar month.
 public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
 
-/// Milliseconds in a 365-day year.
+/// Milliseconds in a fixed 365-day year.
 public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
 
 // === Staking ===
@@ -148,16 +134,8 @@ public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
 
 // === Settlement ===
 
-/// Resolution-feed grid period. Terminal settlement is an exact whole-millisecond
-/// lookup keyed at `market.expiry`; `pyth_feed::insert_at` accepts only a print
-/// whose signed publisher timestamp is exactly that millisecond. The off-chain
-/// resolution relayer sources that key from Pyth Lazer's exact-timestamp
-/// resolution endpoints and inserts it on this millisecond grid.
-/// Cadence periods are multiples of this value, so cadence-created expiries stay
-/// on a settling key the relayer can produce. An off-grid expiry could never settle
-/// and would block the pool flush indefinitely
-/// (`plp::value_expiry` aborts on a past-expiry market that has no settling
-/// observation yet).
+/// Exact settlement timestamp grid.
+/// Cadence periods are multiples of this value so created expiries align with whole-millisecond Pyth history keys; a missing exact expiry observation prevents settlement and therefore pool valuation.
 public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 
 // === Strike Tick Domain ===
@@ -165,10 +143,8 @@ public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 /// Bit width of each strike tick field packed into an order ID.
 public(package) macro fun tick_bits(): u8 { 30 }
 
-/// Positive-infinity sentinel tick and maximum finite-tick bound. As the higher
-/// tick it is the open upper bound; finite ticks
-/// occupy `1..pos_inf_tick - 1`, and tick `0` is the negative-infinity sentinel
-/// as the lower tick. Read by `order` (shape validation) and the range/tick codec.
+/// Positive-infinity tick sentinel and exclusive upper bound of the finite tick domain.
+/// Finite ticks occupy `1..pos_inf_tick - 1`; tick zero is the negative-infinity sentinel.
 public(package) macro fun pos_inf_tick(): u64 { (1u64 << tick_bits!()) - 1 }
 
 /// Granularity unit for market tick sizes; every tick_size must be a multiple of this value.

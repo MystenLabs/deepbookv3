@@ -26,7 +26,7 @@ public struct StakeConfig has store {
 
 // === Public-Package Functions ===
 
-/// Fee amount remaining after the active stake discount is applied.
+/// Fee remaining after the active-stake discount, with the discount rounded down.
 public(package) fun fee_amount_after_discount(
     config: &StakeConfig,
     amount: u64,
@@ -39,7 +39,7 @@ public(package) fun fee_amount_after_discount(
     amount - math::mul(amount, discount_fraction)
 }
 
-/// Trading-loss rebate amount paid for an active stake.
+/// Trading-loss rebate earned for an active stake, rounded down.
 public(package) fun rebate_amount(
     config: &StakeConfig,
     eligible_rebate: u64,
@@ -60,9 +60,7 @@ public(package) fun new(): StakeConfig {
 public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upper: u64) {
     config_constants::assert_lower_benefit_power(lower);
     config_constants::assert_upper_benefit_power(upper);
-    // The upper segment must require strictly more stake than the lower one:
-    // `upper - lower > lower`, i.e. `upper > 2 * lower` (which also guarantees
-    // `upper > lower`, so `benefit_ratio`'s `upper - lower` denominator is positive).
+    // The pair invariant also keeps the upper-segment denominator positive.
     assert!(upper > 2 * lower, EInvalidBenefitPowers);
     config.lower_benefit_power = lower;
     config.upper_benefit_power = upper;
@@ -70,16 +68,12 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 
 // === Private Functions ===
 
-/// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING
-/// (0..1): linear 0 -> 0.5 over `0..lower`, linear 0.5 -> 1 over `lower..upper`,
-/// capped at 1 above `upper`. Relies on `lower >= min_lower_benefit_power!() > 0`
-/// (config bound) and the `upper > 2 * lower` pair invariant (so `upper - lower > 0`).
+/// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING.
+/// Each segment rounds down, so the returned benefit never exceeds the curve.
 fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
     let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;
-    // Each segment is half * progress / span, round down; the earned benefit
-    // never exceeds the true line.
     if (active_stake <= config.lower_benefit_power) {
         math::mul_div_down(half, active_stake, config.lower_benefit_power)
     } else {

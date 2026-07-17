@@ -16,11 +16,9 @@ public struct TradingPausedUpdated has copy, drop, store {
     paused: bool,
 }
 
-/// Emitted when a new expiry market is created. This is the authoritative
-/// creation event: it carries identity, cadence terms, and the immutable policy
-/// snapshot applied to the market. The economic policy fields mirror
-/// `StrikeExposureConfig`: the fraction / leverage / fee / probability / multiplier
-/// fields are 1e9-scaled (FLOAT_SCALING) and `expiry_fee_window_ms` is in milliseconds.
+/// Emitted when a new expiry market is created, with its cadence terms and
+/// immutable expiry-policy snapshot. Fraction, leverage, fee, probability, and
+/// multiplier fields use FLOAT_SCALING; windows use milliseconds.
 public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
     pool_vault_id: ID,
@@ -79,10 +77,8 @@ public struct ReferenceTickSet has copy, drop, store {
     recorded_at_ms: u64,
 }
 
-/// Emitted once when a market crosses into terminal settlement: `try_settle`
-/// records the terminal `settlement_price` from Propbook's exact-expiry Pyth spot.
-/// This is the canonical per-market settlement signal. Fires exactly once
-/// per market, guarded by `try_settle`'s settled short-circuit.
+/// Emitted once when a market records its terminal settlement price from the
+/// exact-expiry Propbook Pyth observation.
 public struct MarketSettled has copy, drop, store {
     expiry_market_id: ID,
     propbook_underlying_id: u32,

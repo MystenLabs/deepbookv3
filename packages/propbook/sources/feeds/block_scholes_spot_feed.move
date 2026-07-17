@@ -1,17 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// TODO(bs-verifier): once block_scholes_oracle validates signatures, these
-// updates become verified provenance. Flip the "unverified (stub-oracle)"
-// wording back to "verified" at every `grep -rn 'TODO(bs-verifier)'` site.
-/// Block Scholes spot oracle: one shared object per source id, storing the
-/// source-native spot stream through a generic Propbook oracle lane.
-///
-/// `SpotUpdate` carries no provenance proof today: `block_scholes_oracle` is a
-/// stub that performs no validation, so update values are forgeable until the
-/// production verifier lands (see that module's warning). Predict-unaware: this
-/// module stores raw source facts and leaves feed binding, freshness, and
-/// pricing-safe envelopes to consumers.
+/// Stores the Block Scholes spot stream for one source in a shared Propbook oracle lane.
+/// Writes require the verifier-produced `SpotUpdate` type and must match the feed's immutable source ID.
+/// Canonical feed binding, freshness, and pricing policy remain consumer responsibilities.
 module propbook::block_scholes_spot_feed;
 
 use block_scholes_oracle::update::SpotUpdate;
@@ -23,14 +15,13 @@ const ERawSpotNotFound: u64 = 1;
 const EWrongVersion: u64 = 2;
 const ENotNewerVersion: u64 = 3;
 
-/// Source-native Block Scholes spot fields. The generic oracle lane stores
-/// Propbook's canonical millisecond timestamps around this payload.
+/// Source-native Block Scholes spot fields; the lane supplies publication and recording timestamps.
 public struct RawSpot has copy, drop, store {
     bs_source_id: u32,
     spot: u64,
 }
 
-/// One Block Scholes spot feed: version gate plus one generic oracle lane.
+/// A versioned Block Scholes spot feed bound to one source ID.
 public struct BlockScholesSpotFeed has key {
     id: UID,
     bs_source_id: u32,
@@ -42,25 +33,24 @@ public struct BlockScholesSpotFeed has key {
 
 // === Read Functions ===
 
-// Raw reads (`raw_*`) are public provenance/observability API (devInspect and
-// external composition); validated consumers use the `normalized_*` reads.
+// Raw reads expose source-native fields for external inspection; normalized reads expose the positive 1e9-scaled projection used by consumers.
 
-/// Return the feed object ID.
+/// Returns the feed identity for external composition and canonical-binding discovery.
 public fun id(feed: &BlockScholesSpotFeed): ID {
     feed.id.to_inner()
 }
 
-/// Return the Block Scholes source id this feed is bound to.
+/// Returns the immutable Block Scholes source ID for external feed inspection.
 public fun bs_source_id(feed: &BlockScholesSpotFeed): u32 {
     feed.bs_source_id
 }
 
-/// Return the package version this feed runs at.
+/// Returns the write-gating storage version for external feed inspection.
 public fun version(feed: &BlockScholesSpotFeed): u64 {
     feed.version
 }
 
-/// Latest raw BS spot read. Aborts if no live update has landed.
+/// Latest raw BS spot for external inspection; aborts if none has landed.
 public fun raw_spot(feed: &BlockScholesSpotFeed): OracleRead<RawSpot> {
     let read = feed.lane.latest_read();
     assert!(read.is_some(), ERawSpotNotFound);
@@ -74,14 +64,14 @@ public fun normalized_spot(feed: &BlockScholesSpotFeed): Option<OracleRead<u64>>
     normalized_spot_from_read(&read.destroy_some())
 }
 
-/// Exact raw BS spot read for `timestamp_ms`.
+/// Exact raw BS spot for external timestamp inspection.
 public fun raw_spot_at(feed: &BlockScholesSpotFeed, timestamp_ms: u64): OracleRead<RawSpot> {
     let read = feed.lane.read_at(timestamp_ms);
     assert!(read.is_some(), ERawSpotNotFound);
     read.destroy_some()
 }
 
-/// Exact Propbook-normalized spot in 1e9 price scaling for `timestamp_ms`.
+/// Exact normalized spot for external timestamp inspection, in 1e9 scaling.
 public fun normalized_spot_at(
     feed: &BlockScholesSpotFeed,
     timestamp_ms: u64,
@@ -91,18 +81,22 @@ public fun normalized_spot_at(
     normalized_spot_from_read(&read.destroy_some())
 }
 
+/// Return the provider source ID for external raw-feed inspection.
 public fun raw_bs_source_id(raw: &RawSpot): u32 {
     raw.bs_source_id
 }
 
+/// Return the source-native spot value for external raw-feed inspection.
 public fun raw_spot_value(raw: &RawSpot): u64 {
     raw.spot
 }
 
 // === Write Functions ===
 
-// TODO(bs-verifier): "unverified" holds only while block_scholes_oracle is a stub.
-/// Ingest an unverified (stub-oracle) BS spot update into this feed's generic oracle lane.
+/// Record a verifier-produced raw spot when its source matches this feed. After
+/// the version and source checks, a zero, future, duplicate, or stale source
+/// timestamp is ignored without changing `latest` or emitting an event. A zero
+/// spot is stored when its timestamp advances, but its normalized read is `none`.
 public fun update(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.spot_source_id() == feed.bs_source_id, EWrongSource);
@@ -112,8 +106,9 @@ public fun update(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &C
     feed.lane.update(read, id);
 }
 
-/// Insert an exact BS spot observation keyed by the update-derived source
-/// timestamp. This does not mutate the live latest observation.
+/// Insert a verifier-produced raw spot at its exact source timestamp without
+/// changing `latest`. The first lane-valid value owns the key; zero still owns
+/// the key even though its normalized read is `none`.
 public fun insert_at(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.spot_source_id() == feed.bs_source_id, EWrongSource);

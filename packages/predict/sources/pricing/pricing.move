@@ -3,12 +3,11 @@
 
 /// Pricing for Predict markets.
 ///
-/// This module is the app-facing read layer for oracle data. It reads the
-/// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
-/// range prices. It does not mutate feed, pool, expiry, or position state, and it
-/// owns Predict's oracle-read boundary: current Propbook feed binding,
-/// exact-history spot reads, pre-expiry market liveness, feed freshness, and
-/// Predict's pricing-safe BS input envelope.
+/// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
+/// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
+/// Scholes spot, forward, and SVI observations. A fresh positive Pyth spot reanchors
+/// the Block Scholes forward basis; otherwise pricing uses that forward directly.
+/// Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
@@ -22,7 +21,8 @@ use propbook::{
 };
 use sui::clock::Clock;
 
-/// Value snapshot of live oracle inputs for one market's price calculations.
+/// Validated live oracle inputs bound to one expiry market. `Pricer` has no
+/// `store` ability and must be created again in each transaction that prices.
 public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
@@ -98,16 +98,14 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
 
-/// Return the current UP tail price for one strike. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`; construct the
-/// strike on-chain via `range_codec::strike_from_tick`.
+/// Return the current UP digital probability for a typed strike. Public PTB and
+/// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
-/// Return the current raw probability for a live range. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`; construct the
-/// strikes on-chain via `range_codec::strike_from_tick`.
+/// Return the current probability for `(lower, higher]`, floored at zero if the
+/// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
@@ -143,11 +141,11 @@ public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
 ///
-/// Together with `load_exact_spot_read`, this is the only path from raw Propbook
-/// oracle objects into Predict business logic. It first checks that `pyth`,
-/// `bs_spot`, `bs_forward`, and `bs_svi` are the current canonical Propbook
-/// oracles for `propbook_underlying_id`, then rejects past-expiry markets, then
-/// reads live oracle inputs under Predict's freshness and pricing-safe envelope.
+/// The supplied feeds must be the current Propbook bindings for the underlying,
+/// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
+/// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
+/// pricing-safe envelope. A fresh positive normalized Pyth spot reanchors the Block
+/// Scholes forward basis; a missing, non-normalizable, or stale Pyth spot is ignored.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -297,14 +295,9 @@ fun assert_current_pyth(
     );
 }
 
-/// Resolve the live forward/SVI inputs and snapshot each oracle source timestamp
-/// independently of pricing-source selection.
-///
-/// Fresh Pyth spot is canonical for spot; forward is then derived from this
-/// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
-/// spot, pricing falls back to the Block Scholes forward. The Block Scholes
-/// spot/forward pair must be fresh enough for basis math; SVI has its own looser
-/// freshness threshold. All inputs must be inside Predict's pricing-safe envelope.
+/// Resolve live forward and SVI inputs and retain every feed's source timestamp.
+/// A fresh positive normalized Pyth spot re-anchors the Block Scholes forward
+/// basis; otherwise the Block Scholes forward is used directly.
 fun resolve_live_pricer(
     config: &PricingConfig,
     pyth: &PythFeed,
@@ -376,13 +369,8 @@ fun resolve_live_pricer(
         let pyth_spot = pyth_spot.destroy_some();
         let spot = pyth_spot.read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
-        // Re-anchored forward = spot * bs_forward / bs_spot (one floor) is
-        // intentionally NOT re-bounded to max_pricing_spot: with basis up to
-        // max_pricing_basis_factor (100x), a legitimate contango forward exceeds
-        // the spot ceiling. The envelope ceilings are co-designed so the result
-        // <= factor * spot <= u64::max (no overflow), and compute_nd2's deep-tail
-        // saturations keep pricing live (P->1) there. A forward ceiling here
-        // would abort valid mint/redeem/NAV reads (R1 liveness).
+        // The re-anchored forward may exceed the input spot ceiling. The basis and
+        // spot bounds still guarantee this multiplication and result fit in u64.
         forward = math::mul_div_down(spot, bs_forward, bs_spot);
     };
 
@@ -405,11 +393,8 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    // Basis cap at exactly `factor` (`basis <= factor`): forward <= factor * spot
-    // <=> ceil(forward / factor) <= spot, u64-native with no widening. The exact
-    // bound is what keeps the re-anchored forward `mul_div_down(spot, forward,
-    // spot')` inside u64; rejecting a too-high basis at this input gate is
-    // fail-safe, never a fund path.
+    // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
+    // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -441,19 +426,18 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
     math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
-/// Compute the fair price for the range `(lower, higher]`.
+/// Compute the approximated probability for `(lower, higher]`.
 fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    // A range price cannot be negative. Floor at zero when fixed-point dust or an
-    // admitted butterfly-arbitrageable SVI surface inverts the boundary prices;
-    // predeploy P-11 tracks the material accounting case.
+    // Fixed-point approximation or a non-monotone SVI surface can invert the
+    // boundary prices; the range probability is floored at zero.
     lower_up_price.saturating_sub(higher_up_price)
 }
 
-/// Compute the fair UP tail price for `strike`.
+/// Compute the adjusted UP digital probability for `strike`.
 fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
     if (strike.is_neg_inf()) {
         return math::float_scaling!()
@@ -473,11 +457,8 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // strike / forward in 1e9 fixed point; both deep tails saturate instead of
-    // underflowing to 0 (which would abort) or wrapping the u64 cast. Reaching
-    // either tail needs the forward to leave the entire encodable strike ladder by
-    // orders of magnitude; saturating keeps NAV / redeem / liquidation reads live
-    // there rather than aborting the whole market.
+    // Saturate ratios outside the fixed-point domain to their digital-probability
+    // limits instead of aborting live valuation and position flows.
     let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
     if (strike_ratio_opt.is_none()) return 0;
@@ -497,10 +478,8 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let rho = svi_params.rho();
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
-    // Analytically non-negative inside the pricing-safe envelope: |rho| <= 1 and
-    // sqrt((k-m)^2 + sigma^2) >= |k-m| >= |rho·(k-m)|. Kept as defense-in-depth
-    // against fixed-point rounding at the |rho| = 1 corner; no production input
-    // is known to reach it, so it carries no expected_failure test.
+    // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
+    // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b();

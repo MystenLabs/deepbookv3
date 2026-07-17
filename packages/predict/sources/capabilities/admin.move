@@ -1,20 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Administrative authority for Predict governance operations.
-///
-/// The package initializer creates one `AdminCap` and transfers it to the
-/// deployer. Modules that own admin-controlled state accept this capability
-/// directly instead of routing unrelated mutations through the registry.
+/// Defines the root capability used by state-owning modules to authorize Predict
+/// governance operations. Possession is the sole authority; the package exposes
+/// no on-chain revocation or rotation mechanism for this capability.
 module deepbook_predict::admin;
 
-/// Capability for admin operations.
-/// Created during package init, transferred to deployer (multisig).
+/// Root authority for protocol administration.
 public struct AdminCap has key, store {
     id: UID,
 }
 
-/// Return the admin cap object ID.
+/// Returns the capability identity for administration tooling and object discovery.
 public fun id(cap: &AdminCap): ID {
     cap.id.to_inner()
 }

@@ -1,9 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Per-market exponentially-weighted gas-price statistics used to surcharge
-/// trades placed during abnormal network congestion, mirroring DeepBook core's
-/// gas-price EWMA penalty.
+/// Per-market exponentially weighted gas-price statistics used to surcharge
+/// trades placed during abnormal network congestion.
 ///
 /// This module owns only the evolving `(mean, variance)` estimate and the
 /// gas-price observation and penalty math. The tunable knobs (`alpha`,
@@ -26,9 +25,8 @@ public struct EwmaState has copy, drop, store {
 
 // === Public-Package Functions ===
 
-/// Seed the estimate from the creating transaction's gas price, matching
-/// DeepBook's per-pool initialization. Variance starts at zero, so no penalty
-/// can fire until observations accumulate.
+/// Seed the mean from the creating transaction's gas price. Variance starts at
+/// zero, so no penalty applies until a later observation creates variance.
 public(package) fun new(ctx: &TxContext): EwmaState {
     EwmaState {
         mean: scaled_gas_price(ctx),
@@ -65,8 +63,8 @@ public(package) fun penalty_fee(
 /// mean'     = alpha * gas + (1 - alpha) * mean
 /// variance' = (1 - alpha) * variance + alpha * (gas - mean)^2
 ///
-/// The squared deviation is taken against the pre-update mean, and seeds the
-/// variance directly on the first observation, matching DeepBook core.
+/// The squared deviation is measured from the pre-update mean. When variance is
+/// zero, the first nonzero deviation becomes the variance without alpha scaling.
 public(package) fun update(
     self: &mut EwmaState,
     config: &EwmaConfig,
@@ -97,9 +95,7 @@ public(package) fun update(
 
 // === Private Functions ===
 
-/// The transaction's gas price in FLOAT_SCALING. Gas price must exceed
-/// 18_446_744_073 MIST to overflow the scaling; realistic Sui gas is far lower,
-/// and the VM abort is the backstop.
+/// Return the transaction gas price in FLOAT_SCALING.
 fun scaled_gas_price(ctx: &TxContext): u64 {
     ctx.gas_price() * math::float_scaling!()
 }

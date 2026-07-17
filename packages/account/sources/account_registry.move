@@ -1,11 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Shared registry for canonical account creation.
-///
-/// The registry owns the derivation root and controls the ecosystem app
-/// whitelist. `account::account` owns deterministic wrapper derivation, account
-/// construction, custody, settlement, and app-data invariants.
+/// Owns the derivation root for canonical accounts and the global whitelist of application witness types.
+/// App authorization is package-wide rather than per-account: an authorized app can request full mutable authority for any account wrapper supplied to its flow.
+/// `account::account` owns wrapper construction, custody, accumulator settlement, and app-data invariants.
 module account::account_registry;
 
 use account::{account::{Self, AccountWrapper, Auth}, account_events};
@@ -21,7 +19,8 @@ const EAppAlreadyAuthorized: u64 = 0;
 const EAppNotAuthorized: u64 = 1;
 const EAccountAlreadyExists: u64 = 2;
 
-/// Administrative authority over the account registry.
+/// Root authority over application authorization. The package exposes no on-chain
+/// revocation or rotation mechanism for this capability itself.
 public struct AccountAdminCap has key, store {
     id: UID,
 }
@@ -31,11 +30,10 @@ public struct AccountRegistry has key {
     id: UID,
 }
 
-/// Canonical account derivation key: one account per owner address under this
-/// registry root. This derived ID is used for app data, funds settlement, and events.
+/// Derivation key for the canonical account identity used by app data and account events.
 public struct AccountKey(address) has copy, drop, store;
 
-/// Derived wrapper object key for the shared object that gates mutable account borrows.
+/// Derivation key for the shared wrapper that receives accumulator funds and gates mutable borrows.
 public struct AccountWrapperKey(address) has copy, drop, store;
 
 /// Dynamic-field key recording that `App` is authorized to generate app auth.
@@ -52,33 +50,33 @@ public fun init_for_testing(ctx: &mut TxContext) {
 }
 
 // === Public Functions ===
-/// Return the deterministic canonical account address for `owner` under this registry.
+/// Returns the deterministic canonical account address for external discovery and PTB construction.
 public fun derived_address(registry: &AccountRegistry, owner: address): address {
     derived_object::derive_address(registry.id.to_inner(), AccountKey(owner))
 }
 
-/// Return the deterministic account wrapper address for `owner` under this registry.
+/// Returns the deterministic wrapper address for external discovery, accumulator delivery, and PTB construction.
 public fun derived_wrapper_address(registry: &AccountRegistry, owner: address): address {
     derived_object::derive_address(registry.id.to_inner(), AccountWrapperKey(owner))
 }
 
-/// Return whether the canonical derived account has already been claimed.
+/// Returns whether the canonical account identity has been claimed.
 public fun derived_exists(registry: &AccountRegistry, owner: address): bool {
     derived_object::exists(&registry.id, AccountKey(owner))
 }
 
-/// Return whether the derived account wrapper has already been claimed.
+/// Returns whether the canonical wrapper has been claimed.
 public fun derived_wrapper_exists(registry: &AccountRegistry, owner: address): bool {
     derived_object::exists(&registry.id, AccountWrapperKey(owner))
 }
 
-/// Create the sender's canonical derived account wrapper.
+/// Creates the sender's canonical account and wrapper, aborting if either derived ID is already claimed.
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
     registry.new_for_owner(owner, false, ctx)
 }
 
-/// Create the canonical derived account wrapper owned by `owner_uid`'s object address.
+/// Creates the canonical account owned by `owner_uid`'s object address, aborting if either derived ID is already claimed.
 public fun new_self_owned(
     registry: &mut AccountRegistry,
     owner_uid: &mut UID,
@@ -88,32 +86,32 @@ public fun new_self_owned(
     registry.new_for_owner(owner, true, ctx)
 }
 
-/// Return whether `App` is authorized for app-driven account access.
+/// Returns whether `App` may request package-issued mutable account authority.
 public fun is_app_authorized<App>(registry: &AccountRegistry): bool {
     registry.id.exists_(AppKey<App>())
 }
 
-/// Authorize `App` to generate app auth through this registry.
+/// Globally authorizes `App` to request mutable authority for account wrappers.
 public fun authorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     assert!(!registry.is_app_authorized<App>(), EAppAlreadyAuthorized);
     registry.id.add(AppKey<App>(), true);
     account_events::emit_app_authorized(type_name::with_defining_ids<App>().into_string());
 }
 
-/// Remove `App` from the app account-loading whitelist.
+/// Revokes `App` from requesting new mutable account authority.
 public fun deauthorize_app<App>(registry: &mut AccountRegistry, _cap: &AccountAdminCap) {
     registry.assert_app_is_authorized<App>();
     let _authorized: bool = registry.id.remove(AppKey<App>());
     account_events::emit_app_deauthorized(type_name::with_defining_ids<App>().into_string());
 }
 
-/// Assert that `App` is authorized for app-driven account access.
+/// Aborts unless `App` is currently authorized for app-driven account access.
 public fun assert_app_is_authorized<App>(registry: &AccountRegistry) {
     assert!(registry.is_app_authorized<App>(), EAppNotAuthorized);
 }
 
-/// Generate app authority after checking the registry whitelist. The
-/// `Permit<App>` proves the caller is the module defining `App`.
+/// Generates full mutable account authority after checking the global app whitelist.
+/// `Permit<App>` restricts the request to the module that defines `App`; the returned authority is not bound to an owner, wrapper, or operation.
 public fun generate_auth_as_app<App>(registry: &AccountRegistry, _permit: Permit<App>): Auth {
     registry.assert_app_is_authorized<App>();
     account::new_app_auth()
