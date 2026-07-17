@@ -267,13 +267,19 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 /// redeem flow. The same classifier quotes the close, so this view cannot
 /// disagree with what a redeem would pay — liquidated and liquidatable orders
 /// are worth zero, a live order its full-close redeem amount (range value net
-/// of its static floor), a settled order its terminal payout. Public read for
-/// SDK/devInspect and external Move composition; callers must already know the
-/// order belongs to the position they are valuing.
-public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
-    market.assert_pricer_bound(pricer);
+/// of its static floor), a settled order its terminal payout. Pass `some(pricer)`
+/// to value a live order; a `Pricer` is live-only (constructible only before
+/// expiry), so it also proves the market unsettled. Pass `none` to value a
+/// settled or already-closed order, whose worth needs no live price — this is
+/// the only way to read a settled order, since no `Pricer` can exist once the
+/// market has settled. A live order valued with `none` aborts
+/// `strike_exposure::EPricerRequired`. Public read for SDK/devInspect and
+/// external Move composition; callers must already know the order belongs to the
+/// position they are valuing.
+public fun order_value(market: &ExpiryMarket, pricer: Option<Pricer>, order_id: u256): u64 {
+    if (pricer.is_some()) market.assert_pricer_bound(pricer.borrow());
     let order = order::from_order_id(order_id);
-    let terms = market.strike_exposure.quote_close(option::some(*pricer), &order, order.quantity());
+    let terms = market.strike_exposure.quote_close(pricer, &order, order.quantity());
     if (terms.is_liquidated() || terms.is_liquidatable()) return 0;
     if (terms.is_live()) return terms.redeem_amount();
     terms.settled_payout()
