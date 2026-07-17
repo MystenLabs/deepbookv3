@@ -31,7 +31,7 @@ const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// this fresh live 2x order with no pricer aborts `EPricerRequired`.
 #[test, expected_failure(abort_code = strike_exposure::EPricerRequired)]
 fun quote_live_close_without_pricer_aborts() {
-    let (fx, oracle, harness, order) = live_exposure(LEVERAGE_TWO_X);
+    let (_fx, _oracle, harness, order) = live_exposure(LEVERAGE_TWO_X);
     harness.exposure.quote_close(option::none(), &order, order.quantity());
     abort 999
 }

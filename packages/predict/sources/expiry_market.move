@@ -1192,9 +1192,12 @@ fun redeem(
             ERedeemProceedsBelowMin,
         );
 
-        // Mutation phase, entered only after every policy check has passed: apply
-        // the quoted close to the book, swap the closed position for its
-        // replacement, then apply the payment.
+        // Target-close mutation phase, entered only after every close policy check
+        // (same-timestamp guard, both slippage floors) has passed: apply the quoted
+        // close to the book, swap the closed position for its replacement, then apply
+        // the payment. The ambient stake roll and EWMA fold above are allowlisted
+        // pre-trade rolls whose result the quote already reflects, not part of this
+        // policy-gated close; an abort here rolls them back atomically.
         let replacement_order = market.strike_exposure.process_close(pricer, terms, clock);
         let position_root_id = predict_account::remove_position(
             account,
