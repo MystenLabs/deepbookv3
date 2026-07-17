@@ -1395,8 +1395,10 @@ public fun mid_price<BaseAsset, QuoteAsset>(
     self.load_inner().book.mid_price(clock.timestamp_ms())
 }
 
-/// Returns the best (lowest) ask price, skipping expired orders.
-/// Returns `none` if the ask side has no live orders.
+/// Top-of-book read for PTB construction / devInspect (SDK, UI). Returns the
+/// best (lowest) ask price, skipping expired orders. Returns `none` if the ask
+/// side has no live order within the first `max_fills` orders (see
+/// `book::best_ask_price` for the bound).
 public fun best_ask_price<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
@@ -1404,8 +1406,10 @@ public fun best_ask_price<BaseAsset, QuoteAsset>(
     self.load_inner().book.best_ask_price(clock.timestamp_ms())
 }
 
-/// Returns the best (highest) bid price, skipping expired orders.
-/// Returns `none` if the bid side has no live orders.
+/// Top-of-book read for PTB construction / devInspect (SDK, UI). Returns the
+/// best (highest) bid price, skipping expired orders. Returns `none` if the bid
+/// side has no live order within the first `max_fills` orders (see
+/// `book::best_bid_price` for the bound).
 public fun best_bid_price<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
