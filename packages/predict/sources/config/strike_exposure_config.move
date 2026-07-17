@@ -47,6 +47,9 @@ public struct StrikeExposureConfig has store {
     expiry_fee_window_ms: u64,
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables the ramp.
     expiry_fee_max_multiplier: u64,
+    /// Window before expiry within which mint admission caps leverage at 1x, in ms.
+    /// `0` disables the block.
+    no_leverage_window_ms: u64,
 }
 
 /// Mint admission outcome: the net premium charged for the order and the static
@@ -94,6 +97,10 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
     config.expiry_fee_max_multiplier
 }
 
+public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
+    config.no_leverage_window_ms
+}
+
 /// Return the raw trade fee for a live probability and quantity.
 ///
 /// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
@@ -117,6 +124,7 @@ public(package) fun assert_mint_probability_and_leverage_policy(
     config: &StrikeExposureConfig,
     entry_probability: u64,
     leverage: u64,
+    time_to_expiry_ms: u64,
 ) {
     assert!(
         entry_probability >= config.min_entry_probability
@@ -124,10 +132,11 @@ public(package) fun assert_mint_probability_and_leverage_policy(
         EEntryProbabilityOutOfBounds,
     );
 
-    // Leverage is continuous, with the protocol cap scaled down for low prices.
+    // Leverage is continuous, with the protocol cap scaled down for low prices and
+    // withheld entirely inside the no-leverage window before expiry.
     assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
     assert!(
-        leverage <= config.admitted_leverage_cap(entry_probability),
+        leverage <= config.admitted_leverage_cap(entry_probability, time_to_expiry_ms),
         ELeverageAboveAdmissionCap,
     );
 }
@@ -136,17 +145,23 @@ public(package) fun assert_mint_probability_and_leverage_policy(
 /// `MintAdmission` carrying the net premium and the static floor `F`.
 ///
 /// `floor_shares` is the static dollar floor `F = financed_amount = entry_value -
-/// net_premium`. Leverage must be at least 1x and no greater than the
-/// probability-sensitive admission cap. The actual live liquidation threshold
-/// remains the market's fixed `liquidation_ltv`; admission only decides whether
-/// the protocol originates the requested leverage.
+/// net_premium`. Leverage must be at least 1x and no greater than the admission
+/// cap, which scales down for low probabilities and drops to 1x inside the
+/// no-leverage window before expiry (`time_to_expiry_ms`). The actual live
+/// liquidation threshold remains the market's fixed `liquidation_ltv`; admission
+/// only decides whether the protocol originates the requested leverage.
 public(package) fun assert_mint_admission(
     config: &StrikeExposureConfig,
     entry_probability: u64,
     quantity: u64,
     leverage: u64,
+    time_to_expiry_ms: u64,
 ): MintAdmission {
-    config.assert_mint_probability_and_leverage_policy(entry_probability, leverage);
+    config.assert_mint_probability_and_leverage_policy(
+        entry_probability,
+        leverage,
+        time_to_expiry_ms,
+    );
 
     let entry_value = math::mul(entry_probability, quantity);
     let net_premium = math::div(entry_value, leverage);
@@ -180,6 +195,7 @@ public(package) fun new(): StrikeExposureConfig {
         max_entry_probability: config_constants::default_max_entry_probability!(),
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
+        no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
     }
 }
 
@@ -195,6 +211,7 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         max_entry_probability: config.max_entry_probability,
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
+        no_leverage_window_ms: config.no_leverage_window_ms,
     }
 }
 
@@ -245,6 +262,11 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
     config.expiry_fee_max_multiplier = value;
 }
 
+public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {
+    config_constants::assert_no_leverage_window_ms(window_ms);
+    config.no_leverage_window_ms = window_ms;
+}
+
 /// Return the 1e9-scaled per-unit trade fee.
 ///
 /// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
@@ -256,7 +278,7 @@ fun fee_rate(
     timestamp_ms: u64,
 ): u64 {
     let raw_fee = config.raw_bernoulli_fee_rate(probability);
-    let base = if (raw_fee > config.min_fee) raw_fee else config.min_fee;
+    let base = raw_fee.max(config.min_fee);
     let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
     math::mul(base, multiplier)
 }
@@ -271,7 +293,24 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
     math::mul(config.base_fee, bernoulli_factor)
 }
 
-fun admitted_leverage_cap(config: &StrikeExposureConfig, entry_probability: u64): u64 {
+/// Max leverage mint admission will originate, given the entry probability and the
+/// time left to expiry.
+///
+/// Inside the no-leverage window the cap is exactly 1x, so no leverage is
+/// originated into the highest-gamma stretch of the market's life regardless of
+/// price. Outside it the cap is the configured max scaled down by the
+/// low-probability risk curve. A `0` window disables the block: no unsigned
+/// time-to-expiry is below zero, so the comparison never fires.
+///
+/// Precondition: `time_to_expiry_ms` is derived under caller-enforced pre-expiry
+/// liveness, mirroring `expiry_fee_multiplier`.
+fun admitted_leverage_cap(
+    config: &StrikeExposureConfig,
+    entry_probability: u64,
+    time_to_expiry_ms: u64,
+): u64 {
+    if (time_to_expiry_ms < config.no_leverage_window_ms) return math::float_scaling!();
+
     let k = config_constants::admission_leverage_curve_k!();
     let risk_curve = math::mul_div_down(
         entry_probability,

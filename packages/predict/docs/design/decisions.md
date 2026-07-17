@@ -22,9 +22,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   orders; liquidation remains mark-based against the order's current range value.
   *Rejected:* spot-dependent rates.
 - **Pure knock-out liquidation.** A leveraged order is removed without paying the
-  holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
-  persists until the holder redeems and clears it. *Rejected:* residual-paying
-  liquidation.
+  holder once it falls to/below `floor_amount / liquidation_ltv`; the holder's
+  account position is the only remaining record, redeemed later for zero payout
+  (the liquidated state is derived from the order's absence from the active
+  index, not stored). *Rejected:* residual-paying liquidation; a stored
+  tombstone table (removed as a duplicate of the account position).
 - **The ask-price band applies to mint only — redeems price at the live mark.**
   The mint-time `[min_entry_probability, max_entry_probability]` band is admission policy: the protocol
   declines to become counterparty in the tail price regions where the curve is
@@ -228,14 +230,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
-- **Ownership split: the market owns flow state, `pricing` owns the live oracle
-  boundary.** `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the
-  current oracle object IDs. Every priced flow asks `pricing::load_live_pricer` to
-  validate the passed feeds against Propbook's current canonical binding, reject a
-  past-expiry live price, apply freshness and Predict's pricing-safe envelope, and
-  return a value-typed `Pricer`. *Rationale:* Propbook owns source identity and
-  canonical binding; Predict pricing owns the only conversion from Propbook objects
-  into business logic.
+- **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
+  `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
+  oracle object IDs. `pricing` validates passed feeds against Propbook's current
+  canonical binding and issues either an exact-history `ExactSpotRead` for reference
+  tick and settlement or a live `Pricer` after applying liveness, freshness, and the
+  pricing-safe envelope. *Rationale:* Propbook owns source identity and canonical
+  binding; Predict pricing owns the only conversion from Propbook objects into
+  business logic.
 - **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
   fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
@@ -336,15 +338,21 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
 
-## Passive exact-timestamp settlement (recent)
+## Explicit exact-timestamp settlement (recent)
 
-- **Settlement is passive, not a public operator action.** Normal flows that branch
-  on settlement call `expiry_market::ensure_settled` first. It validates the supplied
-  Pyth feed against Propbook's canonical binding for the market's underlying and
-  records `pyth.normalized_spot_at(expiry)` when present. *Rationale:* terminal
-  settlement should use Propbook exact timestamp history, and users/keepers should
-  continue through ordinary redeem or pool-maintenance flows rather than calling a
-  separate settle-only API. *Rejected:* a public `settle_if_possible` entrypoint.
+- **Settlement is one public permissionless transition.** `expiry_market::try_settle`
+  consumes pricing's canonical exact-history read and calls
+  `StrikeExposure::record_settlement`, which stores the terminal price and exact
+  remaining payout liability together. The exposure's settlement-price option is
+  the phase discriminator; settled redeem, rebate claim, pool rebalance, and valuation
+  consume only that recorded phase. Keepers compose settlement first in the same PTB
+  when needed. *Rationale:* one writer makes the market phase transition atomic,
+  keeps price and book liability under one owner, and removes oracle ingress from
+  every later settled consumer. *Rejected:* implicit settlement inside each consumer.
+- **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
+  expiry moves no cash until `try_settle` succeeds; valuation still aborts through
+  live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
+  while an unsettled market has no exact terminal liability from which to sweep.
 - **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
   missing after expiry, the market remains unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —
@@ -390,3 +398,42 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   no valuation-lock gate — it is legal only at `total_supply == 0` (both LP request
   entrypoints abort `ENotBootstrapped` until supply > 0), so nothing the lock protects
   can exist when it runs.
+
+## Near-expiry leverage block (recent)
+
+- **Leverage origination stops entirely inside a window before expiry.** Within the
+  expiry's snapshotted `no_leverage_window_ms` the mint-admission cap is exactly 1x,
+  regardless of entry probability. Near expiry a contract's probability can move far
+  in a single tick, which can carry a leveraged order past its knockout before
+  liquidation can fire — the LP absorbs that gap, so leverage is riskiest exactly
+  where it is least useful.
+  *Rejected:* a linear taper of the cap down to 1x at expiry. The taper's case was
+  that a hard cutoff concentrates max-leverage opens just before the boundary, but
+  both designs gate origination only — a position opened before the window carries
+  full leverage into expiry either way — so the taper does not actually remove that
+  incentive, and it prices a range of near-expiry leverage the block simply declines
+  to originate.
+- **The block replaces the low-probability curve inside the window, rather than
+  scaling it.** The cap is 1x flat, not `1 + (max - 1) * risk_curve * taper`, so the
+  policy reads as one sentence and the window is the only thing to reason about near
+  expiry.
+- **Admin-tunable per template, snapshotted per expiry, `0` disables.** It is a
+  contract term like `max_admission_leverage`: future markets pick up a new value,
+  live markets keep the one they snapshotted, so an admin cannot retroactively
+  change a live market's economics. `0` is a deliberate escape hatch, mirroring how
+  `expiry_fee_max_multiplier = 1x` disables the fee ramp.
+- **Origination only; no repricing and no forced deleveraging.** Admitted orders keep
+  their frozen floor `F` and their terms, and closing / liquidation / settlement are
+  untouched. Reducing risk on positions already open into the window would need a
+  different lever (e.g. a near-expiry `liquidation_ltv` tightening), not an admission
+  gate.
+- **This does NOT resolve O-1, and O-1 is not one of its arms.** O-1's exploit is a
+  *1x buy-and-hold* of systematically underpriced contracts in `[0.60, 0.95)`
+  (`evidence/o1-oracle-calibration.md`: +0.05 per contract at 0% fee, confirmed
+  on-chain), and unleveraged minting stays open inside the window by design — so the
+  mispricing edge itself is untouched. What the block removes is the leverage
+  *amplifier* on that edge: across O-1's own price range the admission cap is
+  ~2.8-3.0x, so leverage roughly tripled the exploit's return on capital and now does
+  not. O-1's stated mitigations remain recalibrating the near-expiry surface or
+  blocking the affected market shape outright; it stays OPEN, and near-expiry markets
+  are still gated on it. Bounding the residual 1x exposure is a separate decision.

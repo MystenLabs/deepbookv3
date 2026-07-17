@@ -232,6 +232,12 @@ fun mul_div_up_zero_denominator_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = math::EInputZero)]
+fun mul_div_down_zero_denominator_aborts() {
+    math::mul_div_down(10, 10, 0);
+    abort 999
+}
+
 // === ln ===
 
 #[test]

@@ -96,7 +96,7 @@ const B1: u128 = 976_098_551_738;
 const B2: u128 = 10_260_932_208_619;
 const B3: u128 = 45_507_789_335_027;
 
-// Medium range (0.66291 ≤ |x| < √32): Φ = exp(-x²/2) * P(|x|) / Q(|x|)
+// Medium range (0.66291 ≤ |x| < √32): complement = exp(-x²/2) * P(|x|) / Q(|x|)
 const MEDIUM_THRESHOLD: u128 = 5_656_854_249;
 const C0: u128 = 398_941_512;
 const C1: u128 = 8_883_149_794;
@@ -124,11 +124,11 @@ const INV_9_U128: u128 = 111_111_111;
 const INV_11_U128: u128 = 90_909_091;
 const INV_13_U128: u128 = 76_923_077;
 
-// === Public Functions ===
-
 /// Fixed-point scaling factor (1e9) for math operations and prices.
 /// 500_000_000 = 50%, 1_000_000_000 = 100%.
 public macro fun float_scaling(): u64 { 1_000_000_000 }
+
+// === Public Functions ===
 
 /// Multiply two 1e9-scaled fixed-point values, rounding down.
 public fun mul(x: u64, y: u64): u64 {

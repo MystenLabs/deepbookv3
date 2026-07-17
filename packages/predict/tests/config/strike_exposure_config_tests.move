@@ -36,6 +36,20 @@ const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
 const HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM: u64 = 200_000_000;
 const HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES: u64 = 300_000_000;
 const UNLEVERAGED_FLOOR_SHARES: u64 = 0;
+/// Time-to-expiry far outside the default 1h no-leverage window (1 week), so the
+/// block is inactive and admission runs at the full probability-derived cap.
+const FAR_FROM_EXPIRY_MS: u64 = 604_800_000;
+/// Expiry itself: zero time left, the deepest point inside the window.
+const AT_EXPIRY_MS: u64 = 0;
+/// Smallest leverage strictly above 1x; inside the window even this is refused.
+const LEVERAGE_JUST_ABOVE_ONE_X: u64 = 1_000_000_001;
+const LEVERAGE_ONE_POINT_FIVE_X: u64 = 1_500_000_000;
+/// p = 0.5 at 1x: net premium is the full entry value 500_000_000, floor 0.
+const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
+/// p = 0.1, 1.5x, quantity 1e9: entry value 100_000_000; net premium
+/// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares the 33_333_334 remainder.
+const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_666;
+const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_334;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -107,6 +121,29 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
     scenario.end();
 }
 
+// === Near-expiry no-leverage window (template wiring) ===
+
+// The default seeds a 1h block, and the template setter reaches the snapshot that
+// future expiry markets take.
+#[test]
+fun template_no_leverage_window_defaults_to_one_hour_and_is_tunable() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    let default_snapshot = config.strike_exposure_config_snapshot();
+    assert_eq!(default_snapshot.no_leverage_window_ms(), constants::one_hour_ms!());
+    destroy(default_snapshot);
+
+    config.set_template_no_leverage_window_ms(&admin_cap, constants::one_day_ms!());
+    let tuned_snapshot = config.strike_exposure_config_snapshot();
+    assert_eq!(tuned_snapshot.no_leverage_window_ms(), constants::one_day_ms!());
+    destroy(tuned_snapshot);
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}
+
 // === EInvalidFeeProbability (leaf math guard, direct call) ===
 
 #[test, expected_failure(abort_code = strike_exposure_config::EInvalidFeeProbability)]
@@ -150,6 +187,7 @@ fun mint_admission_probability_one_above_max_entry_probability_aborts() {
         float!(),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -164,6 +202,7 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
         ENTRY_PROBABILITY_BELOW_MIN,
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -177,6 +216,7 @@ fun mint_admission_leverage_below_one_x_aborts() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_BELOW_ONE_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -189,6 +229,7 @@ fun mint_admission_low_probability_two_x_above_curve_aborts() {
         ENTRY_PROBABILITY_LOW,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -202,6 +243,7 @@ fun mint_admission_template_cap_scales_curve_aborts() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -217,6 +259,7 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
+        FAR_FROM_EXPIRY_MS,
     );
     assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
     assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
@@ -234,6 +277,7 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!() - constants::position_lot_size!(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -246,10 +290,137 @@ fun mint_admission_net_premium_at_minimum_succeeds() {
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
+        FAR_FROM_EXPIRY_MS,
     );
     assert_eq!(admission.net_premium(), constants::min_net_premium!());
     assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
     destroy(config);
+}
+
+// === Near-expiry no-leverage window (mint admission) ===
+//
+// Independently derived caps for the default config (max admission leverage 3x,
+// curve k = 0.2, cap = 1 + (3 - 1) * p * 1.2 / (p + 0.2)):
+//   p = 0.5 -> 1 + 2 * (0.6 / 0.7)  = 2.714285714x
+//   p = 0.1 -> 1 + 2 * (0.12 / 0.3) = 1.8x
+// Inside the window the cap is exactly 1x regardless of p.
+
+// 2x at p = 0.5 clears the 2.714285714x cap far from expiry
+// (`mint_admission_half_probability_two_and_half_x_succeeds` admits even 2.5x).
+// One millisecond inside the window the cap drops to 1x and the same order is
+// refused — the tightest just-inside value for the `<` edge.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun no_leverage_window_rejects_two_x_admitted_far_from_expiry() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_X,
+        config_constants::default_no_leverage_window_ms!() - 1,
+    );
+    abort 999
+}
+
+// The block is `time_to_expiry < window`, so at exactly the window edge the full
+// probability-derived cap still applies. Pins the `<` boundary from the outside:
+// 2.5x admits here with the same terms it gets far from expiry.
+#[test]
+fun no_leverage_window_boundary_admits_full_cap() {
+    let config = strike_exposure_config::new();
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_AND_HALF_X,
+        config_constants::default_no_leverage_window_ms!(),
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+// The cap inside the window is exactly 1x, not "nearly 1x": one unit of leverage
+// above 1x is already above the cap.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun no_leverage_window_rejects_smallest_leverage_above_one_x() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_JUST_ABOVE_ONE_X,
+        AT_EXPIRY_MS,
+    );
+    abort 999
+}
+
+// The window blocks leverage, not trading: an unleveraged mint still succeeds at
+// the deepest point inside it. p = 0.5, quantity 1e9, 1x -> net premium is the
+// full entry value 500_000_000 and the floor is 0.
+#[test]
+fun no_leverage_window_admits_one_x_at_expiry() {
+    let config = strike_exposure_config::new();
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+        AT_EXPIRY_MS,
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_ONE_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
+    destroy(config);
+}
+
+// A 0 window is the admin escape hatch: the block never engages, so a leveraged
+// mint is admitted even with zero time left.
+#[test]
+fun no_leverage_window_zero_disables_block() {
+    let mut config = strike_exposure_config::new();
+    config.set_no_leverage_window_ms(config_constants::min_no_leverage_window_ms!());
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_AND_HALF_X,
+        AT_EXPIRY_MS,
+    );
+    assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+// Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
+// is admitted far from expiry. Entry value 100_000_000; net premium
+// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares 100_000_000 - 66_666_666.
+#[test]
+fun low_probability_one_point_five_x_admitted_far_from_expiry() {
+    let config = strike_exposure_config::new();
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_LOW,
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_POINT_FIVE_X,
+        FAR_FROM_EXPIRY_MS,
+    );
+    assert_eq!(admission.net_premium(), LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+// The block replaces the curve rather than composing with it: inside the window
+// the cap is 1x even at a probability whose curve cap (1.8x) would have admitted
+// this order. Paired with the control above, the rejection is attributable to the
+// window alone.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun no_leverage_window_overrides_low_probability_curve() {
+    let config = strike_exposure_config::new();
+    config.assert_mint_admission(
+        ENTRY_PROBABILITY_LOW,
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_POINT_FIVE_X,
+        AT_EXPIRY_MS,
+    );
+    abort 999
 }
 
 // === EOrderBelowLiquidationThreshold (mint admission) ===
@@ -265,6 +436,7 @@ fun mint_admission_liquidation_ltv_still_controls_open_threshold() {
         ENTRY_PROBABILITY_HALF,
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
+        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }

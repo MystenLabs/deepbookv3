@@ -96,6 +96,16 @@ public fun set_template_expiry_fee_max_multiplier(
     config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
 }
 
+/// Set the near-expiry no-leverage window snapshotted by future expiry markets.
+public fun set_template_no_leverage_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    window_ms: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_no_leverage_window_ms(window_ms);
+}
+
 /// Set the liquidation LTV snapshotted by future expiry markets.
 public fun set_template_liquidation_ltv(
     config: &mut ProtocolConfig,

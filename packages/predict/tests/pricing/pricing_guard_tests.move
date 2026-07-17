@@ -17,18 +17,19 @@
 /// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
 /// so it is not duplicated here.
 ///
-/// The `assert_surface_pricing_safe` envelope rejects (`EBlockScholesInputsInvalid`)
+/// The `assert_inputs_pricing_safe` envelope rejects (`EBlockScholesInputsInvalid`)
 /// is covered here too: one test per reachable branch seeds a surface that violates
 /// exactly that bound (`forward` ceiling, `basis`, `a` magnitude, `b`, `rho`, `m`,
 /// `sigma`), leaving every other input default so only the targeted branch fires.
 /// The `spot == 0` / `forward == 0` branch of that assert is unreachable through
 /// `load_live_pricer`: the split Block Scholes feed reads drop a zero spot or zero
-/// forward upstream (-> `EBlockScholesPriceStale`), so those two conditions are
-/// defensive-only and not tested here. `EBlockScholesMinVarianceInvalid` covers
-/// surfaces whose analytical minimum total variance is non-positive, including
-/// negative `a` values that over-offset the SVI increment and the degenerate
-/// `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot far below
-/// the BS spot (no LOWER basis bound), where the re-anchored
+/// forward upstream, so the read arrives as `none` and pricing aborts on absence
+/// (-> `EBlockScholesPriceUnavailable`) before any staleness check runs. Those two
+/// conditions are defensive-only and not tested here. `EBlockScholesMinVarianceInvalid`
+/// covers surfaces whose analytical minimum total variance is non-positive,
+/// including negative `a` values that over-offset the SVI increment and the
+/// degenerate `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot
+/// far below the BS spot (no LOWER basis bound), where the re-anchored
 /// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
 /// a boundary surface whose rounded analytical minimum is positive at load but
 /// whose concrete at-forward quote rounds total variance non-positive.
@@ -607,7 +608,7 @@ fun default_svi_sigma(): u64 { test_constants::default_svi_sigma() }
 fun default_svi_m_magnitude(): u64 { test_constants::default_svi_m() }
 
 /// Seed a surface with the given spot/forward and default SVI, then load the pricer
-/// (where `assert_surface_pricing_safe` runs).
+/// (where `assert_inputs_pricing_safe` runs).
 fun load_pricer_with_spot_forward(spot: u64, forward: u64) {
     load_pricer_with_full_svi_and_spot(
         spot,
@@ -685,7 +686,7 @@ fun load_pricer_with_full_svi_and_spot(
         svi_m_magnitude,
         svi_m_is_negative,
     );
-    // `load_pricer` runs `assert_surface_pricing_safe`; the invalid surface aborts
+    // `load_pricer` runs `assert_inputs_pricing_safe`; the invalid surface aborts
     // here before the pricer is returned.
     let _pricer = fx.load_pricer_bundle(&oracle);
 

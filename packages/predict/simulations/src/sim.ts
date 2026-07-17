@@ -1510,7 +1510,7 @@ async function setupSimulation(
     console.log(`[${ts()}]   Bootstrap flush: PLP minted 1:1, idle funded`);
 
     await executeAndWait(
-        rebalanceExpiryCashTx({ poolVaultId, protocolConfigId, expiryMarketId, pythFeedId }),
+        rebalanceExpiryCashTx({ poolVaultId, protocolConfigId, expiryMarketId }),
         "bootstrap_rebalance_expiry_cash",
     );
     console.log(`[${ts()}]   Expiry cash rebalanced toward floor`);
@@ -1775,7 +1775,6 @@ async function executeScenario(
                     poolVaultId: state.poolVaultId,
                     protocolConfigId: state.protocolConfigId,
                     expiryMarketId: state.expiryMarketId,
-                    pythFeedId: state.pythFeedId,
                 }),
             `rebalance_expiry_cash_after_row_${afterRow}`,
         );

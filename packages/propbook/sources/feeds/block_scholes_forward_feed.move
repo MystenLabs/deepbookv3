@@ -112,7 +112,8 @@ public fun raw_forward_value(raw: &RawForward): u64 {
 
 // === Write Functions ===
 
-/// Ingest a verified BS forward update into the oracle lane for the update's expiry.
+// TODO(bs-verifier): "unverified" holds only while block_scholes_oracle is a stub.
+/// Ingest an unverified (stub-oracle) BS forward update into the oracle lane for the update's expiry.
 public fun update(
     feed: &mut BlockScholesForwardFeed,
     update: ForwardUpdate,
@@ -196,7 +197,7 @@ fun update_expiry(
     if (feed.expiries.contains(expiry_ms)) {
         feed.expiries.borrow_mut(expiry_ms).update(read, propbook_oracle_id);
     } else {
-        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
         lane.update(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
@@ -213,7 +214,7 @@ fun insert_expiry_at(
     if (feed.expiries.contains(expiry_ms)) {
         feed.expiries.borrow_mut(expiry_ms).insert_at(read, propbook_oracle_id);
     } else {
-        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
         lane.insert_at(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
