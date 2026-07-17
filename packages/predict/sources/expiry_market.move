@@ -265,7 +265,7 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 
 /// Return the holder value of one order, gross of fees: the read prefix of the
 /// redeem flow. The same classifier quotes the close, so this view cannot
-/// disagree with what a redeem would pay — tombstones and knocked-out orders
+/// disagree with what a redeem would pay — liquidated and knocked-out orders
 /// are worth zero, a live order its full-close redeem amount (range value net
 /// of its static floor), a settled order its terminal payout. Public read for
 /// SDK/devInspect and external Move composition; callers must already know the
@@ -276,7 +276,7 @@ public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): 
     let terms = market
         .strike_exposure
         .quote_close(option::some(*pricer), &order, order.quantity());
-    if (terms.is_tombstone() || terms.is_knocked_out()) return 0;
+    if (terms.is_liquidated() || terms.is_knocked_out()) return 0;
     if (terms.is_live()) return terms.redeem_amount();
     terms.settled_payout()
 }
@@ -535,7 +535,7 @@ public fun mint_exact_amount(
 ///
 /// A live order is priced and closed (partial or full), unless it is currently
 /// liquidatable, in which case it is knocked out and fully closed with zero
-/// payout. A liquidated tombstone is fully closed with zero payout. Settled
+/// payout. An already-liquidated order is fully closed with zero payout. Settled
 /// orders must use `redeem_settled`.
 /// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
 /// only when a live partial close leaves quantity open.
@@ -546,7 +546,7 @@ public fun mint_exact_amount(
 /// `min_proceeds` floors the all-in net DUSDC credited to the account
 /// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
 /// of mint's all-in `max_cost`. Both only gate the live-priced path — a liquidated
-/// tombstone closes at zero payout regardless, since its value is deterministic,
+/// order closes at zero payout regardless, since its value is deterministic,
 /// not market-quoted.
 public fun redeem_live(
     market: &mut ExpiryMarket,
@@ -580,7 +580,7 @@ public fun redeem_live(
 /// Redeem a settled order you hold account authority over.
 ///
 /// The market must be settled already; this flow does not run live pricing or new
-/// liquidation. Liquidated tombstones clear with zero payout. Requires a full close.
+/// liquidation. Liquidated orders clear with zero payout. Requires a full close.
 /// This owner-auth path remains available even when Predict app-auth automation is
 /// deauthorized in the account registry.
 public fun redeem_settled(
@@ -678,9 +678,7 @@ public fun liquidate_order(
         .strike_exposure
         .quote_close(option::some(*pricer), &order, order.quantity());
     if (!terms.is_knocked_out()) return false;
-    // The keeper drops the successor tombstone terms: clearing the tombstone is
-    // the holder's redeem, later.
-    market.strike_exposure.process_liquidation(pricer, terms, clock);
+    market.strike_exposure.process_close(option::some(*pricer), terms, clock);
     true
 }
 
@@ -923,7 +921,7 @@ fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
 }
 
 /// One redeem body behind every redeem entry: phase gates, the live ambient
-/// pass, tombstone classification, then the live or settled arm. `pricer`
+/// pass, one close classification, then the outcome arms. `pricer`
 /// carries the phase — `some` runs the live flow, `none` the settled flow; the
 /// two cannot mix because the live gates require a market-bound pricer and the
 /// settled gate requires recorded settlement.
@@ -962,19 +960,14 @@ fun redeem(
 
     // One classifier for every order state, then one close policy: only a live
     // close may be partial.
-    let mut terms = market.strike_exposure.quote_close(pricer, &order, close_quantity);
+    let terms = market.strike_exposure.quote_close(pricer, &order, close_quantity);
     assert!(terms.is_live() || close_quantity == order.quantity(), EFullCloseRequired);
 
-    // Knock-out arm (live phase): the quote finds the order under floor — apply
-    // the keeper liquidation book-side, then chain its successor tombstone terms
-    // straight into the clear below.
-    if (terms.is_knocked_out()) {
-        terms = market.strike_exposure.process_liquidation(pricer.borrow(), terms, clock);
-    };
-
-    // Tombstone arm (either phase): clear the liquidated order with zero payout.
-    if (terms.is_tombstone()) {
-        market.strike_exposure.process_redeem(terms);
+    // Zero-payout arm (either phase): an already-liquidated order has only its
+    // position left to clear; a knocked-out order is liquidated book-side in
+    // the same breath.
+    if (terms.is_liquidated() || terms.is_knocked_out()) {
+        market.strike_exposure.process_close(pricer, terms, clock);
         let position_root_id = predict_account::remove_position(
             account,
             market.id(),
@@ -1049,7 +1042,7 @@ fun redeem(
         // Mutation phase, entered only after every policy check has passed: apply
         // the quoted close to the book, swap the closed position for its
         // replacement, then apply the payment.
-        let replacement_order = market.strike_exposure.process_redeem(terms);
+        let replacement_order = market.strike_exposure.process_close(pricer, terms, clock);
         let position_root_id = predict_account::remove_position(
             account,
             market.id(),
@@ -1105,7 +1098,7 @@ fun redeem(
 
     // Mutation phase: apply the quoted close to the book, remove the position,
     // then apply the payment.
-    market.strike_exposure.process_redeem(terms);
+    market.strike_exposure.process_close(pricer, terms, clock);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),

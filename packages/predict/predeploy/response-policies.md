@@ -358,11 +358,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     compute. No up-front fee / summary padding needed (E3 min-fee = 0).
     `evidence/p9-cleanout-gas-2026-07-07.md`.
   - The self-incentive holds for LIQUIDATED accounts too — the archetypal loser, which takes the
-    liquidated-tombstone arm of `redeem`. MEASURED (two-marginal fit, R²=0.999):
+    zero-payout liquidated arm of `redeem`. MEASURED (two-marginal fit, R²=0.999):
     `net = −3.02M − 4.47M·nLiquidated − 3.19M·nSurvived` MIST — both marginals strongly negative and
     the per-**liquidated**-position refund (−4.47M) EXCEEDS the per-survivor (−3.19M), because a
-    liquidated redeem frees comparable-or-more storage (liquidation leaves a tombstone, not freed
-    storage) while creating less new storage (zero/floor payout). So the accounts most owed rebates
+    liquidated redeem frees comparable-or-more storage (measured on the since-removed tombstone
+    model, where liquidation left a book-side record instead of freeing storage; removal shifts
+    these figures further negative) while creating less new storage (zero/floor payout). So the accounts most owed rebates
     are the most profitable to sweep. `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`.
   - The rebate CLAIM is self-incentivized on its OWN, not just inside the bundle — so a searcher
     resolves it even for non-owed (winner) accounts whose owner has no self-claim incentive, releasing

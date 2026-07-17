@@ -78,27 +78,27 @@ public struct MintTerms has drop {
     floor_shares: u64,
 }
 
-/// Compute-once terms for one prospective redeem of `order`. Built only by
-/// `quote_close` and consumed by value in `process_redeem`, so one terms value
+/// Compute-once terms for one prospective close of `order`. Built only by
+/// `quote_close` and consumed by value in `process_close`, so one terms value
 /// backs at most one close and the book mutation can only apply exactly the
 /// quoted outcome. Terms carry the pricing exposure's market identity; the
 /// consumer asserts it, so terms cannot cross exposure books. `order` names the
 /// book entry the close removes (its atoms decode from the packed id); the
 /// outcome payload holds the values the quote computed.
-public struct RedeemTerms has drop {
+public struct CloseTerms has drop {
     expiry_market_id: ID,
     /// Which book entry the close removes.
     order: Order,
     outcome: CloseOutcome,
 }
 
-/// Every outcome of one prospective close: a liquidated tombstone awaiting its
-/// holder's clear, a knock-out at the current price, a priced live close, or
-/// the settled terminal payout (zero for a loss). Enums match only inside
-/// their defining module, so flows branch via the `is_*` accessors and
-/// `process_redeem` owns the dispatch.
+/// Every outcome of one prospective close: an already-liquidated order whose
+/// book state is gone (only the holder's position clear remains), a knock-out
+/// at the current price, a priced live close, or the settled terminal payout
+/// (zero for a loss). Enums match only inside their defining module, so flows
+/// branch via the `is_*` accessors and `process_close` owns the dispatch.
 public enum CloseOutcome has drop {
-    Tombstone,
+    Liquidated,
     KnockedOut { gross_value: u64 },
     Live(LiveCloseTerms),
     Settled { payout: u64 },
@@ -135,21 +135,21 @@ public(package) fun leverage(terms: &MintTerms): u64 {
     terms.leverage
 }
 
-public(package) fun is_tombstone(terms: &RedeemTerms): bool {
+public(package) fun is_liquidated(terms: &CloseTerms): bool {
     match (&terms.outcome) {
-        CloseOutcome::Tombstone => true,
+        CloseOutcome::Liquidated => true,
         _ => false,
     }
 }
 
-public(package) fun is_knocked_out(terms: &RedeemTerms): bool {
+public(package) fun is_knocked_out(terms: &CloseTerms): bool {
     match (&terms.outcome) {
         CloseOutcome::KnockedOut { .. } => true,
         _ => false,
     }
 }
 
-public(package) fun is_live(terms: &RedeemTerms): bool {
+public(package) fun is_live(terms: &CloseTerms): bool {
     match (&terms.outcome) {
         CloseOutcome::Live(_) => true,
         _ => false,
@@ -158,7 +158,7 @@ public(package) fun is_live(terms: &RedeemTerms): bool {
 
 /// Terminal payout for the account credit and event: exact for a settled win,
 /// zero for a settled loss; aborts unless the outcome is `Settled`.
-public(package) fun settled_payout(terms: &RedeemTerms): u64 {
+public(package) fun settled_payout(terms: &CloseTerms): u64 {
     match (&terms.outcome) {
         CloseOutcome::Settled { payout } => *payout,
         _ => abort EWrongCloseOutcome,
@@ -167,15 +167,15 @@ public(package) fun settled_payout(terms: &RedeemTerms): u64 {
 
 /// Live-arm reads for flow policy and the payment decomposition; abort unless
 /// the outcome is `Live`.
-public(package) fun redeem_amount(terms: &RedeemTerms): u64 {
+public(package) fun redeem_amount(terms: &CloseTerms): u64 {
     terms.live_terms().redeem_amount
 }
 
-public(package) fun range_probability(terms: &RedeemTerms): u64 {
+public(package) fun range_probability(terms: &CloseTerms): u64 {
     terms.live_terms().range_probability
 }
 
-fun live_terms(terms: &RedeemTerms): &LiveCloseTerms {
+fun live_terms(terms: &CloseTerms): &LiveCloseTerms {
     match (&terms.outcome) {
         CloseOutcome::Live(live) => live,
         _ => abort EWrongCloseOutcome,
@@ -297,11 +297,6 @@ public(package) fun trading_fee(
         )
 }
 
-/// Return whether an order has already been liquidated from live indexes.
-public(package) fun is_liquidated_order(exposure: &StrikeExposure, order: &Order): bool {
-    exposure.liquidation.is_liquidated(order)
-}
-
 /// Return whether an order is live in the active indexes: minted and neither
 /// closed nor liquidated.
 public(package) fun is_active_order(exposure: &StrikeExposure, order: &Order): bool {
@@ -346,9 +341,9 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
     exposure.settled_payout_liability = settled_payout_liability;
 }
 
-/// Quote the close of `order` in ANY state as compute-once redeem terms: the
-/// single classifier for every close flow. Outcome precedence: a liquidated
-/// tombstone first (its only remaining action is the clear), then the settled
+/// Quote the close of `order` in ANY state as compute-once close terms: the
+/// single classifier for every close flow. Outcome precedence: the liquidated
+/// state first (only the holder's position clear remains), then the settled
 /// terminal payout from the recorded settlement, then live knock-out vs a
 /// priced live close — the only outcomes that need the pricer.
 ///
@@ -361,13 +356,20 @@ public(package) fun quote_close(
     pricer: Option<Pricer>,
     order: &Order,
     close_quantity: u64,
-): RedeemTerms {
-    if (exposure.is_liquidated_order(order)) {
-        return exposure.redeem_terms(order, CloseOutcome::Tombstone)
+): CloseTerms {
+    // The liquidated state is derived, not stored: every flow that removes an
+    // order from the active index also removes its account position in the same
+    // transaction, EXCEPT liquidation — so a leveraged order absent from the
+    // index is liquidated (for a holder, one whose position still exists). 1x
+    // orders are never indexed and can never be liquidated. Checked first:
+    // liquidation already removed the order's book state, so no other outcome
+    // can apply.
+    if (order.is_leveraged() && !exposure.liquidation.contains_active_order(order)) {
+        return exposure.close_terms(order, CloseOutcome::Liquidated)
     };
     if (exposure.is_settled()) {
         let payout = exposure.quote_settled_close(order);
-        return exposure.redeem_terms(order, CloseOutcome::Settled { payout })
+        return exposure.close_terms(order, CloseOutcome::Settled { payout })
     };
     assert!(pricer.is_some(), EPricerRequired);
     // Price the range exactly once; the knock-out test and the live terms both
@@ -377,28 +379,44 @@ public(package) fun quote_close(
     // Leveraged only: a 1x order has a zero floor, so the threshold test would
     // spuriously classify a currently-worthless 1x order as knocked out.
     if (order.is_leveraged() && exposure.under_liquidation_floor(gross_value, order.floor_shares())) {
-        return exposure.redeem_terms(order, CloseOutcome::KnockedOut { gross_value })
+        return exposure.close_terms(order, CloseOutcome::KnockedOut { gross_value })
     };
-    exposure.redeem_terms(
+    exposure.close_terms(
         order,
         CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
     )
 }
 
-/// Apply one quoted close to the book — the single close mutator. Consuming
-/// `terms` by value ties each application to exactly one quote, and the market
-/// identity assert rejects terms quoted on another exposure book. Returns the
-/// replacement order a partial live close leaves behind. `KnockedOut` terms
-/// have no redeem consumer: liquidation is a keeper flow, not a close.
-public(package) fun process_redeem(exposure: &mut StrikeExposure, terms: RedeemTerms): Option<Order> {
-    let RedeemTerms { expiry_market_id, order, outcome } = terms;
+/// Apply one quoted close to the book — the single close mutator, total over
+/// every outcome. Consuming `terms` by value ties each application to exactly
+/// one quote, and the market identity assert rejects terms quoted on another
+/// exposure book. Returns the replacement order a partial live close leaves
+/// behind. `pricer` and `clock` feed only the knock-out arm's liquidation
+/// event; a `KnockedOut` outcome is only constructible in the live phase, so
+/// the pricer is present when that arm runs.
+public(package) fun process_close(
+    exposure: &mut StrikeExposure,
+    pricer: Option<Pricer>,
+    terms: CloseTerms,
+    clock: &Clock,
+): Option<Order> {
+    let CloseTerms { expiry_market_id, order, outcome } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
     match (outcome) {
-        CloseOutcome::Tombstone => {
-            exposure.liquidation.clear_liquidated(&order);
+        // Liquidation already removed the order's book state; only the
+        // holder's account position remains, and the flow owns that.
+        CloseOutcome::Liquidated => option::none(),
+        CloseOutcome::KnockedOut { gross_value } => {
+            let liquidation_ltv = exposure.config.liquidation_ltv();
+            exposure.apply_knockout(
+                pricer.borrow(),
+                &order,
+                gross_value,
+                liquidation_ltv,
+                clock.timestamp_ms(),
+            );
             option::none()
         },
-        CloseOutcome::KnockedOut { .. } => abort EWrongCloseOutcome,
         CloseOutcome::Live(live) => exposure.process_live_close(&order, live),
         CloseOutcome::Settled { payout } => {
             exposure.process_settled_close(&order, payout);
@@ -407,39 +425,13 @@ public(package) fun process_redeem(exposure: &mut StrikeExposure, terms: RedeemT
     }
 }
 
-/// Apply one quoted knock-out as a keeper liquidation: mark the order's
-/// tombstone, remove its terms from the payout tree, and emit the liquidation
-/// event atomically with the removal. Consumes `KnockedOut` terms only —
-/// liquidation is the one flow that creates a tombstone, so it returns the
-/// successor `Tombstone` terms for the state it created; a holder close chains
-/// them straight into `process_redeem`, a keeper drops them (the holder clears
-/// later through the redeem flow).
-public(package) fun process_liquidation(
-    exposure: &mut StrikeExposure,
-    pricer: &Pricer,
-    terms: RedeemTerms,
-    clock: &Clock,
-): RedeemTerms {
-    let RedeemTerms { expiry_market_id, order, outcome } = terms;
-    assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
-    let gross_value = match (outcome) {
-        CloseOutcome::KnockedOut { gross_value } => gross_value,
-        _ => abort EWrongCloseOutcome,
-    };
-
-    let liquidation_ltv = exposure.config.liquidation_ltv();
-    exposure.apply_knockout(pricer, &order, gross_value, liquidation_ltv, clock.timestamp_ms());
-
-    exposure.redeem_terms(&order, CloseOutcome::Tombstone)
-}
-
-/// The single knockout mutation: mark the order's tombstone, remove its full
-/// `(quantity, floor)` terms from the payout tree, and emit the liquidation
-/// event atomically with the removal. Shared by the keeper flow
-/// (`process_liquidation`) and the ambient sweep, so the book, tree, and event
-/// can never diverge. Callers own the knock-out decision; only leveraged
-/// orders reach here — the classifier by its explicit guard, the sweep because
-/// the active index holds exactly the leveraged orders (1x inserts are no-ops).
+/// The single knockout mutation: remove the order's full `(quantity, floor)`
+/// terms from the active index and the payout tree, and emit the liquidation
+/// event atomically with the removal. Shared by the close flow
+/// (`process_close`) and the ambient sweep, so the book, tree, and event can
+/// never diverge. Callers own the knock-out decision; only leveraged orders
+/// reach here — the classifier by its explicit guard, the sweep because the
+/// active index holds exactly the leveraged orders (1x inserts are no-ops).
 fun apply_knockout(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -448,7 +440,7 @@ fun apply_knockout(
     liquidation_ltv: u64,
     liquidated_at_ms: u64,
 ) {
-    exposure.liquidation.mark_liquidated(order);
+    exposure.liquidation.remove_order(order);
     exposure
         .payout
         .remove_range(
@@ -470,8 +462,8 @@ fun apply_knockout(
     );
 }
 
-fun redeem_terms(exposure: &StrikeExposure, order: &Order, outcome: CloseOutcome): RedeemTerms {
-    RedeemTerms { expiry_market_id: exposure.expiry_market_id, order: *order, outcome }
+fun close_terms(exposure: &StrikeExposure, order: &Order, outcome: CloseOutcome): CloseTerms {
+    CloseTerms { expiry_market_id: exposure.expiry_market_id, order: *order, outcome }
 }
 
 /// Quote one settled order's terminal payout against the recorded settlement:

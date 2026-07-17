@@ -5,7 +5,7 @@
 /// and the test pins that liquidation is a pure knockout (liability drops by
 /// exactly the order's backing, no cash moves, the holder's account is
 /// untouched), that a second liquidation attempt on the same id returns false
-/// (no double-liquidation), and that the holder's redeem of the tombstone pays
+/// (no double-liquidation), and that the holder's redeem of the liquidated order pays
 /// EXACTLY zero with no fee and clears the position (no double-pay) — after
 /// which a third liquidation attempt is still false.
 #[test_only]
@@ -84,7 +84,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
 
     // --- Drop the spot 1% and liquidate. The knockout removes the order's
     // full live terms (liability → 0 exactly), moves no cash, and leaves the
-    // holder's account untouched (tombstone persists until the holder redeems).
+    // holder's account untouched (the position persists until the holder redeems).
     fx.prepare_live_oracle_bundle_at(&mut market, DROPPED_SPOT, DROPPED_SOURCE_TS);
     let liquidated = fx.liquidate_order_bundle(&mut market, order_id);
     assert!(liquidated);
@@ -100,11 +100,11 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
     // --- A second liquidation attempt on the same id returns false: the
-    // tombstoned order is no longer in the active candidate set.
+    // liquidated order is no longer in the active candidate set.
     assert!(!fx.liquidate_order_bundle(&mut market, order_id));
 
-    // --- The holder clears the tombstone with a full close: exactly zero
-    // payout, zero fee, position removed, market sheet bit-identical.
+    // --- The holder clears the liquidated position with a full close: exactly
+    // zero payout, zero fee, position removed, market sheet bit-identical.
     let balance_before = fx.account_balance_bundle<DUSDC>(&account);
     let (closed_id, replacement) = fx.redeem_bundle(
         &mut market,
@@ -125,8 +125,8 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         &market,
         helpers::expected_market_cash(cash_after_mint, 0, MINT_REBATE),
     );
-    // After the tombstone is cleared the id is gone from the liquidation
-    // index entirely — still false, still no state change.
+    // After the position is cleared the id is still absent from the active
+    // index — still false, still no state change.
     assert!(!fx.liquidate_order_bundle(&mut market, order_id));
 
     helpers::return_account_bundle(account);

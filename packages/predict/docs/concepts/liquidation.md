@@ -1,6 +1,6 @@
 # Liquidation
 
-Liquidation removes a leveraged Predict position whose live value has decayed to or below its floor-derived knock-out level. It is a knock-out in the barrier-option sense — extinguishment with zero order payout — not an auction: the holder receives nothing from the knocked-out order, the position is struck from the live valuation indexes, and a tombstone remains until the holder's account position is closed. Only leveraged positions are subject to liquidation; an unleveraged (1x) position has no floor and cannot be liquidated. This document describes the trigger condition, the data structure that selects candidates, the bounded scan budgets, and what those bounds imply for liquidity providers.
+Liquidation removes a leveraged Predict position whose live value has decayed to or below its floor-derived knock-out level. It is a knock-out in the barrier-option sense — extinguishment with zero order payout — not an auction: the holder receives nothing from the knocked-out order, the order is struck from the live valuation indexes, and the holder's account position remains as its only record until closed. Only leveraged positions are subject to liquidation; an unleveraged (1x) position has no floor and cannot be liquidated. This document describes the trigger condition, the data structure that selects candidates, the bounded scan budgets, and what those bounds imply for liquidity providers.
 
 For the contract model behind a position's floor and leverage, see [./leverage-and-floor.md](./leverage-and-floor.md). For LP exposure to bounded scans, see [../risks.md](../risks.md). Tunable parameters referenced below are defined in [../design/configuration.md](../design/configuration.md).
 
@@ -32,11 +32,11 @@ At mint, the same threshold relation is enforced in the opposite direction: entr
 
 Liquidation is a pure knock-out with zero order payout. When the condition holds, the protocol:
 
-1. Marks the order liquidated in the liquidation index, removing it from the active candidate set and recording a tombstone (`liquidated_orders`).
+1. Removes the order from the liquidation index's active candidate set.
 2. Removes the order's full live-index terms from both NAV and payout backing, so it no longer contributes to live pool valuation.
 3. Emits `OrderLiquidated`.
 
-No payout is computed and no cash moves at liquidation time. The holder's account is not touched — liquidation does not know which account holds the position, which is why `OrderLiquidated` carries no owner or account field and consumers join it to the original `OrderMinted` by `order_id`. The tombstone persists until the account position is closed: while the market is live, the holder clears it through owner-auth `redeem_live`; after settlement, the holder can use `redeem_settled` or a keeper can use `redeem_settled_permissionless` while Predict app-auth remains authorized. Cleanup removes the account position, clears the tombstone, and emits `LiquidatedOrderRedeemed` with a zero payout. This zero-payout cleanup does not exclude the account from the separate settled trading-loss rebate flow; after all of the account's positions in the expiry are closed, any rebate is computed from the normal expiry-level PnL and trader-paid fee basis.
+No payout is computed and no cash moves at liquidation time. The holder's account is not touched — liquidation does not know which account holds the position, which is why `OrderLiquidated` carries no owner or account field and consumers join it to the original `OrderMinted` by `order_id`. After liquidation the account position is the order's only remaining record (the liquidated state is derived from the order's absence from the active index; nothing book-side is stored): while the market is live, the holder clears it through owner-auth `redeem_live`; after settlement, the holder can use `redeem_settled` or a keeper can use `redeem_settled_permissionless` while Predict app-auth remains authorized. Cleanup removes the account position and emits `LiquidatedOrderRedeemed` with a zero payout. This zero-payout cleanup does not exclude the account from the separate settled trading-loss rebate flow; after all of the account's positions in the expiry are closed, any rebate is computed from the normal expiry-level PnL and trader-paid fee basis.
 
 ```mermaid
 stateDiagram-v2
@@ -90,6 +90,6 @@ The knock-out is a *discretely monitored* barrier: it is enforced by bounded kee
 | Event | Emitted when | Notable fields |
 | --- | --- | --- |
 | `OrderLiquidated` | An order is removed by liquidation. | `expiry_market_id`, `order_id`, `quantity`, `gross_value` (live value checked against the threshold), `floor_amount` (current floor in DUSDC base units), `liquidation_ltv` (1e9-scaled threshold used). No owner/account — join `order_id` to `OrderMinted`. |
-| `LiquidatedOrderRedeemed` | An account clears a liquidated tombstone (zero payout). | `expiry_market_id`, `account_id`, `order_id`, `position_root_id`, `owner`, `quantity_closed`. |
+| `LiquidatedOrderRedeemed` | An account clears a liquidated position (zero payout). | `expiry_market_id`, `account_id`, `order_id`, `position_root_id`, `owner`, `quantity_closed`. |
 
 `OrderLiquidated` reports the live value and floor at the moment of the knock-out; `LiquidatedOrderRedeemed` reports the later, separate act of the holder closing out the worthless position. The two are joined by `order_id` (and, across partial-close replacement chains, by `position_root_id`).

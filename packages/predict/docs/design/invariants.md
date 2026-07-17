@@ -119,8 +119,12 @@ and contributors. For *how* each mechanism works, follow the links into
   liquidation_ltv`. Only leveraged orders (`floor_shares > 0`) are ever
   liquidatable.
 - Liquidation is **permissionless and bounded** per call by a candidate budget.
-  Liquidated orders become tombstones until the holder redeems the worthless
-  position and clears it.
+  Liquidation removes all of the order's book state; the holder's account
+  position is the only remaining record until it is redeemed for zero payout.
+  The liquidated state is derived, not stored: every flow that removes an order
+  from the active index also removes its position in the same transaction,
+  except liquidation — so a leveraged order absent from the index while its
+  position exists is liquidated.
 - Liquidation **priority is encoded in the order-id high bits**: the packed
   quantity field stores the complement (`U32_MASK − quantity_lots`), so an
   ascending `u256` sort over raw order ids liquidates larger quantities first,
