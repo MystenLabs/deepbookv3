@@ -654,7 +654,9 @@ public fun liquidate(
     market.strike_exposure.liquidate_live_orders(pricer, budget, clock)
 }
 
-/// Try to liquidate one active leveraged order by ID.
+/// Try to liquidate one active leveraged order by ID, through the close flow:
+/// quote the order's state, and apply the keeper liquidation only on a
+/// knocked-out outcome. Returns whether the order was liquidated.
 public fun liquidate_order(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -665,7 +667,15 @@ public fun liquidate_order(
     market.assert_live_flow_allowed(config, pricer);
 
     let order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_order(pricer, &order, clock)
+    if (!market.strike_exposure.is_active_order(&order)) return false;
+    let terms = market
+        .strike_exposure
+        .quote_close(option::some(*pricer), &order, order.quantity());
+    if (!terms.is_knocked_out()) return false;
+    // The keeper drops the successor tombstone terms: clearing the tombstone is
+    // the holder's redeem, later.
+    market.strike_exposure.process_liquidation(pricer, terms, clock);
+    true
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -937,53 +947,174 @@ fun redeem(
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
 
-    // Ambient pass (live only): the bounded liquidation sweep, plus knocking out
-    // the redeemed order itself when it is under floor, so the tombstone arm
-    // below picks it up.
+    // Ambient pass (live only): the bounded liquidation sweep.
     if (pricer.is_some()) {
         market
             .strike_exposure
             .liquidate_live_orders(pricer.borrow(), config.trade_liquidation_budget(), clock);
-        market.strike_exposure.liquidate_live_order(pricer.borrow(), &order, clock);
     };
 
-    // Tombstone arm (either phase): a liquidated order clears with zero payout.
-    if (market.strike_exposure.is_liquidated_order(&order)) {
-        market.redeem_liquidated_order(account, &order, close_quantity, clock, ctx);
+    // One classifier for every order state, then one close policy: only a live
+    // close may be partial.
+    let mut terms = market.strike_exposure.quote_close(pricer, &order, close_quantity);
+    assert!(terms.is_live() || close_quantity == order.quantity(), EFullCloseRequired);
+
+    // Knock-out arm (live phase): the quote finds the order under floor — apply
+    // the keeper liquidation book-side, then chain its successor tombstone terms
+    // straight into the clear below.
+    if (terms.is_knocked_out()) {
+        terms = market.strike_exposure.process_liquidation(pricer.borrow(), terms, clock);
+    };
+
+    // Tombstone arm (either phase): clear the liquidated order with zero payout.
+    if (terms.is_tombstone()) {
+        market.strike_exposure.process_redeem(terms);
+        let position_root_id = predict_account::remove_position(
+            account,
+            market.id(),
+            order.id(),
+            ctx,
+        );
+        order_events::emit_liquidated_order_redeemed(
+            market.id(),
+            account.account_id(),
+            account.owner(),
+            &order,
+            position_root_id,
+            clock.timestamp_ms(),
+        );
         return (order.id(), option::none())
     };
 
     // Live arm: priced close under fee and slippage policy.
-    if (pricer.is_some()) {
-        let replacement_order_id = market.redeem_live_internal(
+    if (terms.is_live()) {
+        // Block an atomic mint -> oracle-update -> redeem: reject closing a position
+        // in the same timestamp it was opened. A single transaction reads one
+        // `Clock`, so equal timestamps mean the mint and redeem are in the same tx.
+        // The open time is carried forward across partial closes, so seasoned
+        // positions stay closable.
+        let opened_at_ms = predict_account::position_opened_at_ms(
             account,
-            config,
-            pricer.borrow(),
-            &order,
+            market.id(),
+            order.id(),
+        );
+        assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
+        let active_stake = predict_account::roll_active_stake(account, ctx);
+        // Congestion penalty from the pre-trade EWMA stats (RP-9: penalty before
+        // fold); nothing between here and the payment folds the EWMA.
+        let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
+
+        let redeem_amount = terms.redeem_amount();
+        let range_probability = terms.range_probability();
+        // Close-side slippage floor: reject if the quoted per-contract probability
+        // has slipped below the caller's bound. `0` disables.
+        assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
+        let fee_amount = market
+            .strike_exposure
+            .trading_fee(
+                range_probability,
+                close_quantity,
+                clock,
+            )
+            .min(redeem_amount);
+        let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
+
+        // The redeem payment decomposition, computed in full before any cash moves:
+        // builder fee and penalty are each clamped at the payout remaining after the
+        // prior deductions, so every subtraction below is exact. The single
+        // `builder_code_id` read feeds the fee amount, the routing destination, and
+        // the event, so they cannot come from different reads.
+        let builder_code_id = predict_account::builder_code_id(account);
+        let builder_fee_amount = builder_fee_amount(
+            &builder_code_id,
+            fee_amount,
             close_quantity,
-            min_probability,
-            min_proceeds,
-            clock,
+        ).min(redeem_amount - fee_amount);
+        let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+        // Close-side all-in slippage floor: the net credited to the account is
+        // `redeem_amount` minus the fee, builder fee, and penalty just computed —
+        // asserted before the payment applies them. `0` disables. Mirror of mint's
+        // `max_cost`.
+        assert!(
+            redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
+            ERedeemProceedsBelowMin,
+        );
+
+        // Mutation phase, entered only after every policy check has passed: apply
+        // the quoted close to the book, swap the closed position for its
+        // replacement, then apply the payment.
+        let replacement_order = market.strike_exposure.process_redeem(terms);
+        let position_root_id = predict_account::remove_position(
+            account,
+            market.id(),
+            order.id(),
             ctx,
+        );
+        let replacement_order_id = replacement_order.map!(|replacement| {
+            let replacement_order_id = replacement.id();
+            predict_account::add_position(
+                account,
+                market.id(),
+                replacement_order_id,
+                position_root_id,
+                opened_at_ms,
+                ctx,
+            );
+            replacement_order_id
+        });
+        market.settle_live_redeem_payment(
+            account,
+            redeem_amount,
+            fee_amount,
+            builder_fee_amount,
+            penalty_amount,
+            builder_code_id,
+            ctx,
+        );
+
+        order_events::emit_live_order_redeemed(
+            market.id(),
+            account.account_id(),
+            account.owner(),
+            builder_code_id,
+            &order,
+            pricer.borrow(),
+            position_root_id,
+            close_quantity,
+            replacement_order_id,
+            redeem_amount,
+            fee_amount,
+            builder_fee_amount,
+            penalty_amount,
+            clock.timestamp_ms(),
         );
         return (order.id(), replacement_order_id)
     };
 
-    // Settled arm: full close at the recorded settlement's terminal payout.
-    assert!(close_quantity == order.quantity(), EFullCloseRequired);
+    // Settled arm: full close at the recorded settlement's terminal payout. The
+    // arms above consumed every other outcome, so `settled_payout` (which aborts
+    // on a non-settled outcome) is exhaustiveness, not a filter.
+    let payout_amount = terms.settled_payout();
     let settlement = market.settlement_price();
-    let payout_amount = market.strike_exposure.quote_settled_close(&order);
 
     // Mutation phase: apply the quoted close to the book, remove the position,
     // then apply the payment.
-    market.strike_exposure.process_settled_close(&order, payout_amount);
+    market.strike_exposure.process_redeem(terms);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
         order.id(),
         ctx,
     );
-    market.settle_settled_redeem_payment(account, payout_amount, ctx);
+    predict_account::record_gross_received_from_expiry(account, market.id(), payout_amount, ctx);
+    // A settled losing position pays nothing; the settled redeem is
+    // permissionless, so guard the amount before dispensing rather than
+    // splitting/depositing a 0 coin.
+    if (payout_amount > 0) {
+        let payout = market.cash.pay_authorized(payout_amount);
+        account.deposit<DUSDC>(payout.into_coin(ctx));
+    };
+    market.assert_cash_backing();
 
     order_events::emit_settled_order_redeemed(
         market.id(),
@@ -996,32 +1127,6 @@ fun redeem(
         clock.timestamp_ms(),
     );
     (order.id(), option::none())
-}
-
-fun redeem_liquidated_order(
-    market: &mut ExpiryMarket,
-    account: &mut Account,
-    order: &Order,
-    close_quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(close_quantity == order.quantity(), EFullCloseRequired);
-    let position_root_id = predict_account::remove_position(
-        account,
-        market.id(),
-        order.id(),
-        ctx,
-    );
-    market.strike_exposure.clear_liquidated_order(order);
-    order_events::emit_liquidated_order_redeemed(
-        market.id(),
-        account.account_id(),
-        account.owner(),
-        order,
-        position_root_id,
-        clock.timestamp_ms(),
-    );
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {
@@ -1166,120 +1271,6 @@ fun mint_prepared(
     minted_order.id()
 }
 
-fun redeem_live_internal(
-    market: &mut ExpiryMarket,
-    account: &mut Account,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    order: &Order,
-    close_quantity: u64,
-    min_probability: u64,
-    min_proceeds: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Option<u256> {
-    // Block an atomic mint -> oracle-update -> redeem: reject closing a position in
-    // the same timestamp it was opened. A single transaction reads one `Clock`, so
-    // equal timestamps mean the mint and redeem are in the same tx. The open time is
-    // carried forward across partial closes, so seasoned positions stay closable.
-    let opened_at_ms = predict_account::position_opened_at_ms(account, market.id(), order.id());
-    assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
-
-    let active_stake = predict_account::roll_active_stake(account, ctx);
-    // Congestion penalty from the pre-trade EWMA stats (RP-9: penalty before fold);
-    // it needs only the requested close quantity, so it joins the ambient prologue
-    // before the close is priced. Nothing between here and the payment folds the
-    // EWMA, so the charge is unchanged by the move.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
-
-    let close_terms = market
-        .strike_exposure
-        .quote_live_close(pricer, order, close_quantity);
-    let redeem_amount = close_terms.redeem_amount();
-    let range_probability = close_terms.range_probability();
-    // Close-side slippage floor: reject if the quoted per-contract probability has
-    // slipped below the caller's bound. `0` disables.
-    assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
-    let fee_amount = market
-        .strike_exposure
-        .trading_fee(
-            range_probability,
-            close_quantity,
-            clock,
-        )
-        .min(redeem_amount);
-    let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
-
-    // The redeem payment decomposition, computed in full before any cash moves:
-    // builder fee and penalty are each clamped at the payout remaining after the
-    // prior deductions, so every subtraction below is exact. The single
-    // `builder_code_id` read feeds the fee amount, the routing destination, and
-    // the event, so they cannot come from different reads.
-    let builder_code_id = predict_account::builder_code_id(account);
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, close_quantity).min(
-        redeem_amount - fee_amount,
-    );
-    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
-    // Close-side all-in slippage floor: the net credited to the account is
-    // `redeem_amount` minus the fee, builder fee, and penalty just computed —
-    // asserted before the payment applies them. `0` disables. Mirror of mint's
-    // `max_cost`.
-    assert!(
-        redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
-        ERedeemProceedsBelowMin,
-    );
-
-    // Mutation phase, entered only after every policy check has passed: apply
-    // the quoted close to the book, swap the closed position for its
-    // replacement, then apply the payment.
-    let replacement_order = market.strike_exposure.process_live_close(order, close_terms);
-    let position_root_id = predict_account::remove_position(
-        account,
-        market.id(),
-        order.id(),
-        ctx,
-    );
-    let replacement_order_id = replacement_order.map!(|replacement| {
-        let replacement_order_id = replacement.id();
-        predict_account::add_position(
-            account,
-            market.id(),
-            replacement_order_id,
-            position_root_id,
-            opened_at_ms,
-            ctx,
-        );
-        replacement_order_id
-    });
-    market.settle_live_redeem_payment(
-        account,
-        redeem_amount,
-        fee_amount,
-        builder_fee_amount,
-        penalty_amount,
-        builder_code_id,
-        ctx,
-    );
-
-    order_events::emit_live_order_redeemed(
-        market.id(),
-        account.account_id(),
-        account.owner(),
-        builder_code_id,
-        order,
-        pricer,
-        position_root_id,
-        close_quantity,
-        replacement_order_id,
-        redeem_amount,
-        fee_amount,
-        builder_fee_amount,
-        penalty_amount,
-        clock.timestamp_ms(),
-    );
-    replacement_order_id
-}
-
 /// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
 /// account, route the builder fee and the subsidized trading fee, and keep the
 /// remainder in expiry cash. The caller owns the all-in `max_cost` guard and the
@@ -1349,23 +1340,6 @@ fun settle_live_redeem_payment(
     send_builder_fee(builder_code_id, builder_fee);
     market.assert_cash_backing();
     account.deposit<DUSDC>(payout.into_coin(ctx));
-}
-
-fun settle_settled_redeem_payment(
-    market: &mut ExpiryMarket,
-    account: &mut Account,
-    payout_amount: u64,
-    ctx: &mut TxContext,
-) {
-    predict_account::record_gross_received_from_expiry(account, market.id(), payout_amount, ctx);
-    // A settled losing position pays nothing; `redeem_settled` is permissionless,
-    // so guard the amount before dispensing rather than splitting/depositing a 0 coin.
-    if (payout_amount > 0) {
-        let payout = market.cash.pay_authorized(payout_amount);
-        account.deposit<DUSDC>(payout.into_coin(ctx));
-    };
-
-    market.assert_cash_backing();
 }
 
 fun collect_trade_fee(

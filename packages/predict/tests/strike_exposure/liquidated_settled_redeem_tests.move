@@ -10,7 +10,6 @@ module deepbook_predict::liquidated_settled_redeem_tests;
 
 use deepbook_predict::{
     constants,
-    liquidation_book,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     order::{Self, Order},
     strike_exposure::{Self, StrikeExposure},
@@ -43,23 +42,17 @@ fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
     harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
     assert_eq!(harness.exposure.payout_liability(), 0);
 
-    harness.exposure.clear_liquidated_order(&order);
+    // Even in the settled phase, the classifier resolves a liquidated order to
+    // its tombstone before the settled outcome, so the close can only be the
+    // zero-payout clear — the incorrect settled-active close is unrepresentable.
+    let terms = harness.exposure.quote_close(option::none(), &order, order.quantity());
+    assert!(terms.is_tombstone());
+    harness.exposure.process_redeem(terms);
 
     assert!(!harness.exposure.is_liquidated_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
 
     cleanup(fx, oracle, harness);
-}
-
-#[test, expected_failure(abort_code = liquidation_book::EActiveOrderNotFound)]
-fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
-    let (_fx, _oracle, mut harness, order) = liquidated_order_fixture();
-
-    harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
-    let payout = harness.exposure.quote_settled_close(&order);
-    harness.exposure.process_settled_close(&order, payout);
-
-    abort 999
 }
 
 #[test]
@@ -69,8 +62,9 @@ fun repeated_settlement_after_close_preserves_first_price_and_remaining_liabilit
 
     harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
     assert_eq!(harness.exposure.payout_liability(), payout);
-    assert_eq!(harness.exposure.quote_settled_close(&order), payout);
-    harness.exposure.process_settled_close(&order, payout);
+    let terms = harness.exposure.quote_close(option::none(), &order, order.quantity());
+    assert_eq!(terms.settled_payout(), payout);
+    harness.exposure.process_redeem(terms);
     assert_eq!(harness.exposure.payout_liability(), 0);
 
     // The package-level phase transition is itself idempotent: even after a
@@ -119,7 +113,11 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
 
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);
-    assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order, fx.clock()));
+    let terms = harness
+        .exposure
+        .quote_close(option::some(liquidation_pricer), &order, order.quantity());
+    assert!(terms.is_knocked_out());
+    harness.exposure.process_liquidation(&liquidation_pricer, terms, fx.clock());
 
     (fx, oracle, harness, order)
 }
