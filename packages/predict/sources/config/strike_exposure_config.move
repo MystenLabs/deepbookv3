@@ -278,7 +278,7 @@ fun fee_rate(
     timestamp_ms: u64,
 ): u64 {
     let raw_fee = config.raw_bernoulli_fee_rate(probability);
-    let base = if (raw_fee > config.min_fee) raw_fee else config.min_fee;
+    let base = raw_fee.max(config.min_fee);
     let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
     math::mul(base, multiplier)
 }

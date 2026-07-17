@@ -124,11 +124,11 @@ const INV_9_U128: u128 = 111_111_111;
 const INV_11_U128: u128 = 90_909_091;
 const INV_13_U128: u128 = 76_923_077;
 
-// === Public Functions ===
-
 /// Fixed-point scaling factor (1e9) for math operations and prices.
 /// 500_000_000 = 50%, 1_000_000_000 = 100%.
 public macro fun float_scaling(): u64 { 1_000_000_000 }
+
+// === Public Functions ===
 
 /// Multiply two 1e9-scaled fixed-point values, rounding down.
 public fun mul(x: u64, y: u64): u64 {

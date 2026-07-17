@@ -207,7 +207,7 @@ public(package) fun remove_position(
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
-    let Position { root_id, opened_at_ms: _ } = d.positions.remove(key);
+    let Position { root_id, .. } = d.positions.remove(key);
     d.ensure_summary(expiry_market_id);
     let summary = &mut d.expiry_summaries[expiry_market_id];
     assert!(summary.open_position_count > 0, EInsufficientPosition);
