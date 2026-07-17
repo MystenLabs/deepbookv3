@@ -562,6 +562,7 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    market.assert_live_flow_allowed(config, pricer);
     market.redeem(
         wrapper,
         auth,
@@ -594,6 +595,9 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    assert!(market.is_settled(), EMarketNotSettled);
     // No slippage bounds: the settled arm pays the fixed terminal payout.
     market.redeem(
         wrapper,
@@ -626,6 +630,9 @@ public fun redeem_settled_permissionless(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    assert!(market.is_settled(), EMarketNotSettled);
     let auth = predict_account::generate_auth_as_app(account_registry);
     // No slippage bounds: the settled arm pays the fixed terminal payout.
     market.redeem(
@@ -920,11 +927,14 @@ fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
         .value())
 }
 
-/// One redeem body behind every redeem entry: phase gates, the live ambient
-/// pass, one close classification, then the outcome arms. `pricer`
-/// carries the phase — `some` runs the live flow, `none` the settled flow; the
-/// two cannot mix because the live gates require a market-bound pricer and the
-/// settled gate requires recorded settlement.
+/// One redeem body behind every redeem entry: the live ambient pass, one
+/// close classification, then the outcome arms. Every public entry asserts its
+/// phase gates (version, valuation freeze, and pricer binding or recorded
+/// settlement) before delegating here — the protocol-wide gates stay visible
+/// on the public surface. `pricer` carries the phase — `some` runs the live
+/// flow, `none` the settled flow; the two cannot mix because the live gates
+/// require a market-bound pricer and the settled gate requires recorded
+/// settlement.
 fun redeem(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -939,24 +949,15 @@ fun redeem(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    // Phase gates.
-    if (pricer.is_some()) {
-        market.assert_live_flow_allowed(config, pricer.borrow());
-    } else {
-        config.assert_version();
-        config.assert_not_valuation_in_progress();
-        assert!(market.is_settled(), EMarketNotSettled);
-    };
-    wrapper.settle<DUSDC>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    let order = order::from_order_id(order_id);
-
     // Ambient pass (live only): the bounded liquidation sweep.
     if (pricer.is_some()) {
         market
             .strike_exposure
             .liquidate_live_orders(pricer.borrow(), config.trade_liquidation_budget(), clock);
     };
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let order = order::from_order_id(order_id);
 
     // One classifier for every order state, then one close policy: only a live
     // close may be partial.
@@ -1008,6 +1009,10 @@ fun redeem(
         // Close-side slippage floor: reject if the quoted per-contract probability
         // has slipped below the caller's bound. `0` disables.
         assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
+        // Clamp before discount: the raw fee is capped at the redeem first, so
+        // the stake discount always leaves a discounted staker a positive net
+        // even when the raw fee exceeds the payout (discount-then-clamp could
+        // net them exactly zero).
         let fee_amount = market
             .strike_exposure
             .trading_fee(
