@@ -441,7 +441,9 @@ public(package) fun quote_close(
     let gross_value = math::mul(range_probability, order.quantity());
     // Leveraged only: a 1x order has a zero floor, so the threshold test would
     // spuriously classify a currently-worthless 1x order as liquidatable.
-    if (order.is_leveraged() && exposure.under_liquidation_floor(gross_value, order.floor_shares())) {
+    if (
+        order.is_leveraged() && exposure.under_liquidation_floor(gross_value, order.floor_shares())
+    ) {
         return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
     exposure.close_terms(
@@ -630,11 +632,7 @@ fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
 /// range probability: the floor-share split and the redeem facts, touching
 /// neither the book nor the oracle. The trade fee is recovered via
 /// `trading_fee` from the returned `range_probability`.
-fun quote_live_close(
-    order: &Order,
-    close_quantity: u64,
-    range_probability: u64,
-): LiveCloseTerms {
+fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);

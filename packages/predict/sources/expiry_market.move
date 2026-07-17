@@ -273,9 +273,7 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 public fun order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
     market.assert_pricer_bound(pricer);
     let order = order::from_order_id(order_id);
-    let terms = market
-        .strike_exposure
-        .quote_close(option::some(*pricer), &order, order.quantity());
+    let terms = market.strike_exposure.quote_close(option::some(*pricer), &order, order.quantity());
     if (terms.is_liquidated() || terms.is_liquidatable()) return 0;
     if (terms.is_live()) return terms.redeem_amount();
     terms.settled_payout()
@@ -677,9 +675,7 @@ public fun liquidate_order(
 
     let order = order::from_order_id(order_id);
     if (!market.strike_exposure.is_active_order(&order)) return false;
-    let terms = market
-        .strike_exposure
-        .quote_close(option::some(*pricer), &order, order.quantity());
+    let terms = market.strike_exposure.quote_close(option::some(*pricer), &order, order.quantity());
     if (!terms.is_liquidatable()) return false;
     market.strike_exposure.process_close(option::some(*pricer), terms, clock);
     true
