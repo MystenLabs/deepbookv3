@@ -472,12 +472,10 @@ public(package) fun process_close(
         // holder's account position remains, and the flow owns that.
         CloseOutcome::Liquidated => option::none(),
         CloseOutcome::Liquidatable { gross_value } => {
-            let liquidation_ltv = exposure.config.liquidation_ltv();
             exposure.apply_liquidation(
                 pricer.borrow(),
                 &order,
                 gross_value,
-                liquidation_ltv,
                 clock.timestamp_ms(),
             );
             option::none()
@@ -499,7 +497,6 @@ public(package) fun liquidate_live_orders(
 ): u64 {
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
     if (candidates.is_empty()) return 0;
-    let liquidation_ltv = exposure.config.liquidation_ltv();
     let liquidated_at_ms = clock.timestamp_ms();
 
     let mut liquidated_count = 0;
@@ -508,7 +505,6 @@ public(package) fun liquidate_live_orders(
         let liquidated = exposure.liquidate_order_if_under_floor(
             pricer,
             &order,
-            liquidation_ltv,
             liquidated_at_ms,
         );
         if (liquidated) {
@@ -723,13 +719,12 @@ fun liquidate_order_if_under_floor(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
     order: &Order,
-    liquidation_ltv: u64,
     liquidated_at_ms: u64,
 ): bool {
     let gross_value = exposure.gross_order_value(pricer, order);
     if (!exposure.under_liquidation_floor(gross_value, order.floor_shares())) return false;
 
-    exposure.apply_liquidation(pricer, order, gross_value, liquidation_ltv, liquidated_at_ms);
+    exposure.apply_liquidation(pricer, order, gross_value, liquidated_at_ms);
     true
 }
 
@@ -745,7 +740,6 @@ fun apply_liquidation(
     pricer: &Pricer,
     order: &Order,
     gross_value: u64,
-    liquidation_ltv: u64,
     liquidated_at_ms: u64,
 ) {
     exposure.liquidation.remove_order(order);
@@ -762,10 +756,8 @@ fun apply_liquidation(
         exposure.expiry_market_id,
         order,
         pricer,
-        order.quantity(),
         gross_value,
-        order.floor_shares(),
-        liquidation_ltv,
+        exposure.config.liquidation_ltv(),
         liquidated_at_ms,
     );
 }
