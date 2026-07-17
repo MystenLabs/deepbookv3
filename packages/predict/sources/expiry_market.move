@@ -556,29 +556,19 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    market.assert_live_flow_allowed(config, pricer);
-    wrapper.settle<DUSDC>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-
-    let redeemed_order = order::from_order_id(order_id);
-    market.strike_exposure.liquidate_live_orders(pricer, config.trade_liquidation_budget(), clock);
-    market.strike_exposure.liquidate_live_order(pricer, &redeemed_order, clock);
-    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(account, &redeemed_order, close_quantity, clock, ctx);
-        return (redeemed_order.id(), option::none())
-    };
-    let replacement_order_id = market.redeem_live_internal(
-        account,
+    market.redeem(
+        wrapper,
+        auth,
         config,
-        pricer,
-        &redeemed_order,
+        option::some(*pricer),
+        order_id,
         close_quantity,
         min_probability,
         min_proceeds,
+        root,
         clock,
         ctx,
-    );
-    (redeemed_order.id(), replacement_order_id)
+    )
 }
 
 /// Redeem a settled order you hold account authority over.
@@ -598,13 +588,17 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    wrapper.settle<DUSDC>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    market.redeem_settled_internal(
-        account,
+    // No slippage bounds: the settled arm pays the fixed terminal payout.
+    market.redeem(
+        wrapper,
+        auth,
         config,
+        option::none(),
         order_id,
         close_quantity,
+        0,
+        0,
+        root,
         clock,
         ctx,
     )
@@ -626,14 +620,18 @@ public fun redeem_settled_permissionless(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    wrapper.settle<DUSDC>(root, clock);
     let auth = predict_account::generate_auth_as_app(account_registry);
-    let account = wrapper.load_account_mut(auth);
-    market.redeem_settled_internal(
-        account,
+    // No slippage bounds: the settled arm pays the fixed terminal payout.
+    market.redeem(
+        wrapper,
+        auth,
         config,
+        option::none(),
         order_id,
         close_quantity,
+        0,
+        0,
+        root,
         clock,
         ctx,
     )
@@ -908,6 +906,98 @@ fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
         .value())
 }
 
+/// One redeem body behind every redeem entry: phase gates, the live ambient
+/// pass, tombstone classification, then the live or settled arm. `pricer`
+/// carries the phase — `some` runs the live flow, `none` the settled flow; the
+/// two cannot mix because the live gates require a market-bound pricer and the
+/// settled gate requires recorded settlement.
+fun redeem(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    pricer: Option<Pricer>,
+    order_id: u256,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    // Phase gates.
+    if (pricer.is_some()) {
+        market.assert_live_flow_allowed(config, pricer.borrow());
+    } else {
+        config.assert_version();
+        config.assert_not_valuation_in_progress();
+        assert!(market.is_settled(), EMarketNotSettled);
+    };
+    wrapper.settle<DUSDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let order = order::from_order_id(order_id);
+
+    // Ambient pass (live only): the bounded liquidation sweep, plus knocking out
+    // the redeemed order itself when it is under floor, so the tombstone arm
+    // below picks it up.
+    if (pricer.is_some()) {
+        market
+            .strike_exposure
+            .liquidate_live_orders(pricer.borrow(), config.trade_liquidation_budget(), clock);
+        market.strike_exposure.liquidate_live_order(pricer.borrow(), &order, clock);
+    };
+
+    // Tombstone arm (either phase): a liquidated order clears with zero payout.
+    if (market.strike_exposure.is_liquidated_order(&order)) {
+        market.redeem_liquidated_order(account, &order, close_quantity, clock, ctx);
+        return (order.id(), option::none())
+    };
+
+    // Live arm: priced close under fee and slippage policy.
+    if (pricer.is_some()) {
+        let replacement_order_id = market.redeem_live_internal(
+            account,
+            config,
+            pricer.borrow(),
+            &order,
+            close_quantity,
+            min_probability,
+            min_proceeds,
+            clock,
+            ctx,
+        );
+        return (order.id(), replacement_order_id)
+    };
+
+    // Settled arm: full close at the recorded settlement's terminal payout.
+    assert!(close_quantity == order.quantity(), EFullCloseRequired);
+    let settlement = market.settlement_price();
+    let payout_amount = market.strike_exposure.quote_settled_close(&order);
+
+    // Mutation phase: apply the quoted close to the book, remove the position,
+    // then apply the payment.
+    market.strike_exposure.process_settled_close(&order, payout_amount);
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
+    market.settle_settled_redeem_payment(account, payout_amount, ctx);
+
+    order_events::emit_settled_order_redeemed(
+        market.id(),
+        account.account_id(),
+        account.owner(),
+        &order,
+        position_root_id,
+        settlement,
+        payout_amount,
+        clock.timestamp_ms(),
+    );
+    (order.id(), option::none())
+}
+
 fun redeem_liquidated_order(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -1096,19 +1186,17 @@ fun redeem_live_internal(
     assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
 
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let position_root_id = predict_account::remove_position(
-        account,
-        market.id(),
-        order.id(),
-        ctx,
-    );
+    // Congestion penalty from the pre-trade EWMA stats (RP-9: penalty before fold);
+    // it needs only the requested close quantity, so it joins the ambient prologue
+    // before the close is priced. Nothing between here and the payment folds the
+    // EWMA, so the charge is unchanged by the move.
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
-    let close_quote = market
+    let close_terms = market
         .strike_exposure
-        .close_and_quote_live_order(pricer, order, close_quantity);
-    let resulting_order = close_quote.resulting_order();
-    let redeem_amount = close_quote.redeem_amount();
-    let range_probability = close_quote.range_probability();
+        .quote_live_close(pricer, order, close_quantity);
+    let redeem_amount = close_terms.redeem_amount();
+    let range_probability = close_terms.range_probability();
     // Close-side slippage floor: reject if the quoted per-contract probability has
     // slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
@@ -1121,12 +1209,38 @@ fun redeem_live_internal(
         )
         .min(redeem_amount);
     let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
-    let replacement_order_id = if (resulting_order.id() == order.id()) {
-        option::none()
-    } else {
-        let replacement_order_id = resulting_order.id();
+    // The redeem payment decomposition, computed in full before any cash moves:
+    // builder fee and penalty are each clamped at the payout remaining after the
+    // prior deductions, so every subtraction below is exact. The single
+    // `builder_code_id` read feeds the fee amount, the routing destination, and
+    // the event, so they cannot come from different reads.
+    let builder_code_id = predict_account::builder_code_id(account);
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, close_quantity).min(
+        redeem_amount - fee_amount,
+    );
+    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+    // Close-side all-in slippage floor: the net credited to the account is
+    // `redeem_amount` minus the fee, builder fee, and penalty just computed —
+    // asserted before the payment applies them. `0` disables. Mirror of mint's
+    // `max_cost`.
+    assert!(
+        redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
+        ERedeemProceedsBelowMin,
+    );
+
+    // Mutation phase, entered only after every policy check has passed: apply
+    // the quoted close to the book, swap the closed position for its
+    // replacement, then apply the payment.
+    let replacement_order = market.strike_exposure.process_live_close(order, close_terms);
+    let position_root_id = predict_account::remove_position(
+        account,
+        market.id(),
+        order.id(),
+        ctx,
+    );
+    let replacement_order_id = replacement_order.map!(|replacement| {
+        let replacement_order_id = replacement.id();
         predict_account::add_position(
             account,
             market.id(),
@@ -1135,26 +1249,16 @@ fun redeem_live_internal(
             opened_at_ms,
             ctx,
         );
-        option::some(replacement_order_id)
-    };
-
-    let builder_code_id = predict_account::builder_code_id(account);
-    let (builder_fee_amount, penalty_amount) = market.settle_live_redeem_payment(
+        replacement_order_id
+    });
+    market.settle_live_redeem_payment(
         account,
         redeem_amount,
         fee_amount,
+        builder_fee_amount,
         penalty_amount,
-        close_quantity,
+        builder_code_id,
         ctx,
-    );
-    // Close-side all-in slippage floor: the net credited to the account is
-    // `redeem_amount` minus the (post-clamp) fee, builder fee, and penalty that
-    // `settle_live_redeem_payment` just deducted. Subtraction is exact — each
-    // deduction is clamped at or below the running remainder inside settle. `0`
-    // disables. Mirror of mint's `max_cost`.
-    assert!(
-        redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
-        ERedeemProceedsBelowMin,
     );
 
     order_events::emit_live_order_redeemed(
@@ -1174,55 +1278,6 @@ fun redeem_live_internal(
         clock.timestamp_ms(),
     );
     replacement_order_id
-}
-
-fun redeem_settled_internal(
-    market: &mut ExpiryMarket,
-    account: &mut Account,
-    config: &ProtocolConfig,
-    order_id: u256,
-    close_quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): (u256, Option<u256>) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    let redeemed_order = order::from_order_id(order_id);
-    assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-    assert!(market.is_settled(), EMarketNotSettled);
-
-    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(
-            account,
-            &redeemed_order,
-            redeemed_order.quantity(),
-            clock,
-            ctx,
-        );
-        return (redeemed_order.id(), option::none())
-    };
-
-    let position_root_id = predict_account::remove_position(
-        account,
-        market.id(),
-        redeemed_order.id(),
-        ctx,
-    );
-    let settlement = market.settlement_price();
-    let payout_amount = market.strike_exposure.close_settled_order(&redeemed_order);
-    market.settle_settled_redeem_payment(account, payout_amount, ctx);
-
-    order_events::emit_settled_order_redeemed(
-        market.id(),
-        account.account_id(),
-        account.owner(),
-        &redeemed_order,
-        position_root_id,
-        settlement,
-        payout_amount,
-        clock.timestamp_ms(),
-    );
-    (redeemed_order.id(), option::none())
 }
 
 /// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
@@ -1266,40 +1321,34 @@ fun settle_mint_payment(
     market.assert_cash_backing();
 }
 
-/// Settle a live redeem and return the builder fee and penalty actually applied.
+/// Settle a live redeem per an already-computed payment decomposition: pay out
+/// `redeem_amount`, route the fee and builder fee, and credit the account with
+/// the remainder. The caller owns the decomposition (each amount pre-clamped so
+/// the splits below cannot underflow) and the `min_proceeds` guard, and passes
+/// its single `builder_code_id` read so the fee amount and the routing
+/// destination cannot come from different reads.
 ///
 /// The EWMA penalty is withheld from the payout and kept in expiry cash
-/// as surplus. Like the trading fee it comes out of `redeem_amount`, so it is
-/// capped at the payout left after the fee and builder cut.
+/// as surplus.
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
     redeem_amount: u64,
     fee_amount: u64,
+    builder_fee_amount: u64,
     penalty_amount: u64,
-    redeemed_quantity: u64,
+    builder_code_id: Option<ID>,
     ctx: &mut TxContext,
-): (u64, u64) {
-    let builder_code_id = predict_account::builder_code_id(account);
-    let builder_fee_amount = builder_fee_amount(
-        &builder_code_id,
-        fee_amount,
-        redeemed_quantity,
-    ).min(
-        redeem_amount - fee_amount,
-    );
-    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
-
+) {
     // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
     let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     predict_account::record_gross_received_from_expiry(account, market.id(), redeem_amount, ctx);
     market.collect_trade_fee(account, fee, fee_amount, ctx);
-    send_builder_fee(copy builder_code_id, builder_fee);
+    send_builder_fee(builder_code_id, builder_fee);
     market.assert_cash_backing();
     account.deposit<DUSDC>(payout.into_coin(ctx));
-    (builder_fee_amount, penalty_amount)
 }
 
 fun settle_settled_redeem_payment(

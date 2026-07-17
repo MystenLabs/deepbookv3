@@ -56,7 +56,8 @@ fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
     let (_fx, _oracle, mut harness, order) = liquidated_order_fixture();
 
     harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
-    harness.exposure.close_settled_order(&order);
+    let payout = harness.exposure.quote_settled_close(&order);
+    harness.exposure.process_settled_close(&order, payout);
 
     abort 999
 }
@@ -68,7 +69,8 @@ fun repeated_settlement_after_close_preserves_first_price_and_remaining_liabilit
 
     harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
     assert_eq!(harness.exposure.payout_liability(), payout);
-    assert_eq!(harness.exposure.close_settled_order(&order), payout);
+    assert_eq!(harness.exposure.quote_settled_close(&order), payout);
+    harness.exposure.process_settled_close(&order, payout);
     assert_eq!(harness.exposure.payout_liability(), 0);
 
     // The package-level phase transition is itself idempotent: even after a

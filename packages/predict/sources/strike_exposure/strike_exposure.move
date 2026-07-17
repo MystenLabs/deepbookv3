@@ -76,11 +76,20 @@ public struct MintTerms has drop {
     floor_shares: u64,
 }
 
-/// Redeem terms from closing live indexed quantity. `resulting_order` is the
-/// original order for a full close, or the replacement that remains after a
-/// partial close.
-public struct CloseQuote has drop {
-    resulting_order: Order,
+/// Pure close terms for one prospective live close of `order`: the floor-share
+/// split the mutation must apply and the priced facts flow policy reads. Built
+/// only by `quote_live_close` and consumed by value in `process_live_close`, so
+/// one terms value backs at most one close and the book mutation can only apply
+/// exactly the quoted split. The survivor floor is rounded down so
+/// `floor_shares <= quantity` holds by construction, with the closed slice
+/// carrying the conserved floor-share dust.
+public struct LiveCloseTerms has drop {
+    close_quantity: u64,
+    /// Replacement-order values; zero quantity means a full close.
+    remaining_quantity: u64,
+    remaining_floor_shares: u64,
+    /// Floor shares leaving the book with the closed slice.
+    remove_floor_shares: u64,
     redeem_amount: u64,
     range_probability: u64,
 }
@@ -101,16 +110,12 @@ public(package) fun leverage(terms: &MintTerms): u64 {
     terms.leverage
 }
 
-public(package) fun resulting_order(quote: &CloseQuote): Order {
-    quote.resulting_order
+public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
+    terms.redeem_amount
 }
 
-public(package) fun redeem_amount(quote: &CloseQuote): u64 {
-    quote.redeem_amount
-}
-
-public(package) fun range_probability(quote: &CloseQuote): u64 {
-    quote.range_probability
+public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
+    terms.range_probability
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -271,10 +276,11 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
     exposure.settled_payout_liability = settled_payout_liability;
 }
 
-/// Close one settled order and return the user payout.
-public(package) fun close_settled_order(exposure: &mut StrikeExposure, order: &Order): u64 {
+/// Quote one settled order's terminal payout against the recorded settlement:
+/// `quantity - floor_shares` for a win, zero for a loss. A pure read; aborts
+/// while the exposure is live.
+public(package) fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
     let settlement_price = exposure.settlement_price();
-    exposure.liquidation.remove_order(order);
     let won = range_codec::settlement_in_range(
         order.lower_tick(),
         order.higher_tick(),
@@ -284,14 +290,22 @@ public(package) fun close_settled_order(exposure: &mut StrikeExposure, order: &O
     if (!won) {
         return 0
     };
-    // payout = quantity - floor_shares (= Q - F). The settled liability was derived
-    // from the payout tree's same aggregate atoms, so reserve == payout and the
-    // subtraction cannot underflow (R1 liveness). The static floor makes the terms
-    // exactly additive, so this holds with no dust buffer.
-    let payout = order.quantity() - order.floor_shares();
-    exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
+    order.quantity() - order.floor_shares()
+}
 
-    payout
+/// Apply one quoted settled close to the book: remove the order from the live
+/// index and release its quoted payout from the settled liability.
+public(package) fun process_settled_close(
+    exposure: &mut StrikeExposure,
+    order: &Order,
+    payout: u64,
+) {
+    exposure.liquidation.remove_order(order);
+    // The settled liability was derived from the payout tree's same aggregate
+    // atoms, so reserve == payout and the subtraction cannot underflow (R1
+    // liveness). The static floor makes the terms exactly additive, so this
+    // holds with no dust buffer.
+    exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
 }
 
 /// Allocate a live mint order from priced terms: consume the expiry-local
@@ -429,21 +443,21 @@ public(package) fun order_value(exposure: &StrikeExposure, pricer: &Pricer, orde
     gross_value.saturating_sub(floor_amount)
 }
 
-/// Close live indexed quantity and return redeem terms as a `CloseQuote`.
-///
-/// The trade fee is recovered via `trading_fee` from the returned `range_probability`.
-/// `resulting_order` is the original order for a full close, or the replacement
-/// order that remains after a partial close.
-public(package) fun close_and_quote_live_order(
-    exposure: &mut StrikeExposure,
+/// Quote one prospective live close as pure terms: the floor-share split and
+/// the priced redeem facts, with no book mutation. The trade fee is recovered
+/// via `trading_fee` from the returned `range_probability`.
+public(package) fun quote_live_close(
+    exposure: &StrikeExposure,
     pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
-): CloseQuote {
+): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
 
+    // Round survivor floor down so `floor_shares <= quantity` holds by
+    // construction; the closed slice carries the conserved floor-share dust.
     let old_floor_shares = order.floor_shares();
     let remaining_quantity = old_quantity - close_quantity;
     let remaining_floor_shares = math::mul_div_down(
@@ -453,8 +467,38 @@ public(package) fun close_and_quote_live_order(
     );
     let remove_floor_shares = old_floor_shares - remaining_floor_shares;
 
-    // Round survivor floor down so `floor_shares <= quantity` holds by
-    // construction; the closed slice carries the conserved floor-share dust.
+    let range_probability = exposure.order_range_price(pricer, order);
+    let gross_redeem_amount = math::mul(range_probability, close_quantity);
+    let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
+
+    LiveCloseTerms {
+        close_quantity,
+        remaining_quantity,
+        remaining_floor_shares,
+        remove_floor_shares,
+        redeem_amount,
+        range_probability,
+    }
+}
+
+/// Apply one quoted live close to the book: remove the closed slice from the
+/// payout and liquidation indexes and, for a partial close, insert and return
+/// the replacement order that remains. Consuming `terms` by value ties each
+/// application to exactly one quote, so the book can only change by exactly the
+/// quoted split.
+public(package) fun process_live_close(
+    exposure: &mut StrikeExposure,
+    order: &Order,
+    terms: LiveCloseTerms,
+): Option<Order> {
+    let LiveCloseTerms {
+        close_quantity,
+        remaining_quantity,
+        remaining_floor_shares,
+        remove_floor_shares,
+        ..
+    } = terms;
+
     exposure
         .payout
         .remove_range(
@@ -465,12 +509,8 @@ public(package) fun close_and_quote_live_order(
         );
     exposure.liquidation.remove_order(order);
 
-    let range_probability = exposure.order_range_price(pricer, order);
-    let gross_redeem_amount = math::mul(range_probability, close_quantity);
-    let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
-
     if (remaining_quantity == 0) {
-        return CloseQuote { resulting_order: *order, redeem_amount, range_probability }
+        return option::none()
     };
 
     let replacement_order = order::replacement(
@@ -482,7 +522,7 @@ public(package) fun close_and_quote_live_order(
     exposure.liquidation.insert_order(&replacement_order);
     exposure.next_order_sequence = exposure.next_order_sequence + 1;
 
-    CloseQuote { resulting_order: replacement_order, redeem_amount, range_probability }
+    option::some(replacement_order)
 }
 
 /// Clear one liquidated-order tombstone after its account position is closed.
