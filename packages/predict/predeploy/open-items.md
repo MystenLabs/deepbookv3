@@ -56,11 +56,11 @@ non-normalizable exact-expiry Pyth print (negative, normalizes-to-zero,
 u64-overflow, or exponent-shift > 18 — `normalize_raw_spot` returns none,
 pyth_feed.move:281-308) inserted at `key == expiry_ms` locks that key forever:
 the exact-history lane is first-writer-wins with no overwrite/remove
-(oracle_lane.move:130). `ensure_settled` (expiry_market.move:698-720) then
+(oracle_lane.move:130). `try_settle` then
 returns false permanently and post-expiry live pricing aborts
 (`ELivePricingExpired`), so the market never settles and the pool-wide flush
 stays bricked. This defeats RP-4's stated recovery (the permissionless exact-ms
-insert followed by passive settlement) — the later valid insert is silently
+insert followed by `try_settle`) — the later valid insert is silently
 dropped. Reachability is low for real major-asset feeds but the failure is
 permanent.
 
@@ -323,16 +323,20 @@ pre-deploy and breaking (or permanent) after; none block correctness today.
 **Severity:** Low, but all four sit on or near the mint/redeem path — not
 hygiene-speed changes.
 
-- Pyth canonical-binding check re-implemented in `expiry_market` (:776-783)
-  instead of owned by `pricing` — re-home behind one owner. (audit 0622da)
+- Pyth canonical-binding duplication resolved by the pricing-owned
+  `ExactSpotRead`: live pricing, reference tick, and settlement share one binding
+  check, and `expiry_market` contains no raw feed read. (audit 0622da)
 - `mint_exact_amount` prices and admission-validates the same range twice per
   call — resolved by the DBU-566 unified mint gate: one pricing and one full
   admission per request in `strike_exposure::quote_mint_terms`. (audit fb3ec8)
 - Four cascading asserts under one `ENetPremiumBudgetTooHigh` exist only to
   pre-empt +1 overflow — resolved by deletion: the DBU-566 sizing search has no
   overflowable intermediates, duty inventory in RP-13. (audit a68338)
-- `EReferenceTickTimestampMismatch` re-checks that an exact-timestamp lane read
-  returns its own key — decide trust-boundary vs redundant. (audit 914ecd)
+- `EReferenceTickTimestampMismatch` re-checked that an exact-timestamp lane read
+  returned its own key — resolved by deleting the duplicate guard and retaining
+  only the normalized value in pricing's opaque `ExactSpotRead`: `oracle_lane`
+  keys exact history by the read's source timestamp, and normalization preserves
+  that timestamp; duty inventory in RP-14. (audit 914ecd)
 - `mint_exact_amount` disables BOTH slippage guards (`max_cost` and
   `max_probability` hardcoded to `u64::max`, expiry_market.move:482-483),
   asymmetric with `mint_exact_quantity` — decide whether a premium-budget mint

@@ -225,14 +225,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
-- **Ownership split: the market owns flow state, `pricing` owns the live oracle
-  boundary.** `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the
-  current oracle object IDs. Every priced flow asks `pricing::load_live_pricer` to
-  validate the passed feeds against Propbook's current canonical binding, reject a
-  past-expiry live price, apply freshness and Predict's pricing-safe envelope, and
-  return a value-typed `Pricer`. *Rationale:* Propbook owns source identity and
-  canonical binding; Predict pricing owns the only conversion from Propbook objects
-  into business logic.
+- **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
+  `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
+  oracle object IDs. `pricing` validates passed feeds against Propbook's current
+  canonical binding and issues either an exact-history `ExactSpotRead` for reference
+  tick and settlement or a live `Pricer` after applying liveness, freshness, and the
+  pricing-safe envelope. *Rationale:* Propbook owns source identity and canonical
+  binding; Predict pricing owns the only conversion from Propbook objects into
+  business logic.
 - **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
   fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
@@ -333,15 +333,21 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
 
-## Passive exact-timestamp settlement (recent)
+## Explicit exact-timestamp settlement (recent)
 
-- **Settlement is passive, not a public operator action.** Normal flows that branch
-  on settlement call `expiry_market::ensure_settled` first. It validates the supplied
-  Pyth feed against Propbook's canonical binding for the market's underlying and
-  records `pyth.normalized_spot_at(expiry)` when present. *Rationale:* terminal
-  settlement should use Propbook exact timestamp history, and users/keepers should
-  continue through ordinary redeem or pool-maintenance flows rather than calling a
-  separate settle-only API. *Rejected:* a public `settle_if_possible` entrypoint.
+- **Settlement is one public permissionless transition.** `expiry_market::try_settle`
+  consumes pricing's canonical exact-history read and calls
+  `StrikeExposure::record_settlement`, which stores the terminal price and exact
+  remaining payout liability together. The exposure's settlement-price option is
+  the phase discriminator; settled redeem, rebate claim, pool rebalance, and valuation
+  consume only that recorded phase. Keepers compose settlement first in the same PTB
+  when needed. *Rationale:* one writer makes the market phase transition atomic,
+  keeps price and book liability under one owner, and removes oracle ingress from
+  every later settled consumer. *Rejected:* implicit settlement inside each consumer.
+- **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
+  expiry moves no cash until `try_settle` succeeds; valuation still aborts through
+  live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
+  while an unsettled market has no exact terminal liability from which to sweep.
 - **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
   missing after expiry, the market remains unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —

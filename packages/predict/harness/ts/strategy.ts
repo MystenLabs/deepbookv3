@@ -322,7 +322,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
 
     async cleanout(marketId, positions) {
       const res = await deps.submit(
-        cleanoutAccountTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, pythFeedId: deps.feeds.pythFeedId, positions }),
+        cleanoutAccountTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, positions }),
         "cleanout",
       );
       const g = gasBreakdownOf(res);
@@ -338,7 +338,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
     async redeemAll(marketId, positions) {
       const res = await deps.submit(
-        redeemSettledAllTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, pythFeedId: deps.feeds.pythFeedId, positions }),
+        redeemSettledAllTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, positions }),
         "redeemAll",
       );
       const g = gasBreakdownOf(res);
@@ -347,7 +347,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
     async claimRebate(marketId) {
       const res = await deps.submit(
-        claimRebateOnlyTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, pythFeedId: deps.feeds.pythFeedId }),
+        claimRebateOnlyTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId }),
         "claimRebate",
       );
       const g = gasBreakdownOf(res);

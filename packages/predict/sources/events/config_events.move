@@ -77,12 +77,10 @@ public struct ReferenceTickSet has copy, drop, store {
     recorded_at_ms: u64,
 }
 
-/// Emitted once when a market crosses into terminal settlement: `ensure_settled`
+/// Emitted once when a market crosses into terminal settlement: `try_settle`
 /// records the terminal `settlement_price` from Propbook's exact-expiry Pyth spot.
-/// This is the canonical per-market settlement signal — settlement is otherwise
-/// passive, so a consumer cannot observe the moment without it. Fires exactly once
-/// per market (guarded by the settled short-circuit) regardless of which flow
-/// (user redeem or keeper sweep) triggers the recording.
+/// This is the canonical per-market settlement signal. Fires exactly once
+/// per market, guarded by `try_settle`'s settled short-circuit.
 public struct MarketSettled has copy, drop, store {
     expiry_market_id: ID,
     propbook_underlying_id: u32,

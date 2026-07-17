@@ -29,9 +29,9 @@ and contributors. For *how* each mechanism works, follow the links into
   would push cash below the reserve aborts; smaller closes, later retries, and
   the full settlement payout remain available. Closing a position releases its
   own share of the buffer, so exit liquidity cannot be monopolized.
-- **Settled liability is exact.** After settlement, payout liability becomes the
-  exact liability at the settlement price (`materialize_settled_liability`,
-  idempotent), which is always ≤ the settlement floor (hence ≤ the live reserve).
+- **Settled liability is exact.** `StrikeExposure::record_settlement` records the
+  terminal price and exact payout liability together; the liability is always ≤
+  the settlement floor (hence ≤ the live reserve).
 - **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
   market that never receives another top-up still pays every settlement winner
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
@@ -92,10 +92,10 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Settlement
 
-- **Passive exact settlement.** Normal flows that branch on settlement call
-  `expiry_market::ensure_settled` first. It records the exact normalized Pyth spot
-  at the market's expiry timestamp from Propbook if present; otherwise the market
-  remains unsettled. There is no public settle-only entrypoint.
+- **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
+  settlement-price writer. It records the exact normalized Pyth spot at the market's
+  expiry timestamp and exact terminal payout liability atomically; otherwise it
+  returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
   `(lower, higher]`, else 0 (`close_settled_order`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
@@ -108,9 +108,9 @@ and contributors. For *how* each mechanism works, follow the links into
   wins at `higher`. `prefix_limit_tick` is a plain `u64` comparison bound (it can
   legitimately exceed `pos_inf_tick` when settlement is above the encodable range)
   and is never validated as a domain tick.
-- `materialize_settled_liability` is idempotent and caches the exact terminal
-  liability at the settlement price; live indexes survive until the settled-market
-  sweep deactivates the expiry.
+- `StrikeExposure` owns the settled phase: its settlement-price option is the phase
+  discriminator, and its cached liability decreases as settled winners redeem.
+  Live indexes survive until the settled-market sweep deactivates the expiry.
 
 ## Liquidation
 

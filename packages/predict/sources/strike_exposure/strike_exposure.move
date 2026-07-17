@@ -50,10 +50,10 @@ public struct StrikeExposure has store {
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
     next_order_sequence: u64,
-    /// Remaining settled liability after settlement has been materialized.
+    /// Terminal settlement price once the exposure has entered its settled phase.
+    settlement_price: Option<u64>,
+    /// Remaining payout liability in the settled phase.
     settled_payout_liability: u64,
-    /// True once `settled_payout_liability` has been materialized.
-    settled_liability_materialized: bool,
     liquidation: LiquidationBook,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
@@ -113,13 +113,28 @@ public(package) fun range_probability(quote: &CloseQuote): u64 {
     quote.range_probability
 }
 
-/// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
+/// Return the recorded settlement price. Aborts while the exposure is live.
+public(package) fun settlement_price(exposure: &StrikeExposure): u64 {
+    exposure.settlement_price.destroy_some()
+}
+
+/// Return whether this exposure has entered its settled phase.
+public(package) fun is_settled(exposure: &StrikeExposure): bool {
+    exposure.settlement_price.is_some()
+}
+
+/// Return the recorded settlement price, or `none` while the exposure is live.
+public(package) fun try_settlement_price(exposure: &StrikeExposure): Option<u64> {
+    exposure.settlement_price
+}
+
+/// Return the buffered live reserve or exact remaining settled payout liability.
 ///
 /// Live reserve is the settlement floor (max single-point net payout) plus a
 /// configured fraction of the disjoint-book gap. Lambda at 1.0 reproduces the
 /// old summed reserve because `math::mul(1_000_000_000, gap) == gap`.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
-    if (exposure.settled_liability_materialized) {
+    if (exposure.is_settled()) {
         exposure.settled_payout_liability
     } else {
         let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
@@ -233,24 +248,33 @@ public(package) fun new(
         reference_tick: option::none(),
         config,
         next_order_sequence: 0,
+        settlement_price: option::none(),
         settled_payout_liability: 0,
-        settled_liability_materialized: false,
         liquidation: liquidation_book::new(ctx),
         payout: strike_payout_tree::new(ctx),
     }
 }
 
+/// Enter the settled phase by recording the terminal price and its exact payout
+/// liability. The caller owns expiry and oracle validation.
+public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_price: u64) {
+    if (exposure.is_settled()) return;
+
+    let settled_payout_liability = exposure
+        .payout
+        .settled_payout_liability(settlement_price, exposure.tick_size);
+    exposure.settlement_price = option::some(settlement_price);
+    exposure.settled_payout_liability = settled_payout_liability;
+}
+
 /// Close one settled order and return the user payout.
-public(package) fun close_settled_order(
-    exposure: &mut StrikeExposure,
-    order: &Order,
-    settlement: u64,
-): u64 {
+public(package) fun close_settled_order(exposure: &mut StrikeExposure, order: &Order): u64 {
+    let settlement_price = exposure.settlement_price();
     exposure.liquidation.remove_order(order);
     let won = range_codec::settlement_in_range(
         order.lower_tick(),
         order.higher_tick(),
-        settlement,
+        settlement_price,
         exposure.tick_size,
     );
     if (!won) {
@@ -492,28 +516,6 @@ public(package) fun liquidate_live_orders(
         };
     });
     liquidated_count
-}
-
-/// Cache terminal settled payout liability.
-///
-/// The live payout tree is retained after caching because nothing deletes it —
-/// no compaction path exists; post-materialization it is never read or mutated
-/// (settled redeems touch only the liquidation book and the cached liability).
-/// This retained storage is an input to the H-6 compaction decision.
-public(package) fun materialize_settled_liability(
-    exposure: &mut StrikeExposure,
-    settlement: u64,
-): u64 {
-    if (exposure.settled_liability_materialized) {
-        return exposure.settled_payout_liability
-    };
-
-    let settled_liability = exposure
-        .payout
-        .settled_payout_liability(settlement, exposure.tick_size);
-    exposure.settled_payout_liability = settled_liability;
-    exposure.settled_liability_materialized = true;
-    settled_liability
 }
 
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {

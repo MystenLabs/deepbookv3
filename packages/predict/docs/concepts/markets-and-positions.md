@@ -79,7 +79,7 @@ Trading and capital movement are mediated by `AccountWrapper` plus account `Auth
 
 ## Position lifecycle
 
-A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement is recorded passively by normal settled-branch flows (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
+A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement is recorded explicitly through `try_settle` before settled consumers run (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
 
 ```mermaid
 stateDiagram-v2
@@ -109,7 +109,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). There is no public settle-only entrypoint. `redeem_settled`, `redeem_settled_permissionless`, pool rebalance, and pool valuation passively try to settle immediately before choosing settled vs live behavior. If the exact expiry spot is missing, the market remains unsettled and live pricing rejects the past-expiry market.
+Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). `try_settle` is the single permissionless transition: it records the price and terminal payout liability together. `redeem_settled`, `redeem_settled_permissionless`, rebate claim, pool rebalance, and pool valuation only consume the current phase, so transaction builders compose `try_settle` before them when settlement may be due. If the exact expiry spot is missing, the market remains unsettled, standalone rebalance moves no cash, and live pricing rejects the past-expiry market.
 
 ### Settled redeem
 

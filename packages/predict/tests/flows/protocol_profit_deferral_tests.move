@@ -94,8 +94,8 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     let (idle, _, _, _) = rebalance_with_seed(&mut fx, e_b, 0);
     assert_eq!(idle, 3 * f + l); // 4f swept from A, f redeployed to B, atop the genesis lock
 
-    // Both markets past expiry; the flush settles A (deferring its cut under low idle)
-    // then B (break-even, no cut) and prices the pool.
+    // Both markets past expiry; settle them explicitly, then the flush sweeps A
+    // (deferring its cut under low idle), sweeps B (break-even), and prices the pool.
     fx.set_clock_for_testing(test_constants::default_expiry_ms() + 86_400_000);
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
@@ -107,6 +107,8 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     let mut m_b = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e_b);
     fx.insert_exact_settlement_spot(&mut pyth, m_a.expiry(), test_constants::default_live_price());
     fx.insert_exact_settlement_spot(&mut pyth, m_b.expiry(), test_constants::default_live_price());
+    assert!(fx.try_settle(&mut m_a, &config, &oracle_registry, &pyth));
+    assert!(fx.try_settle(&mut m_b, &config, &oracle_registry, &pyth));
 
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m_a, &config, &oracle_registry, &pyth, &bs);
@@ -161,24 +163,20 @@ fun rebalance_with_seed(
 ): (u64, u64, u64, u64) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(expiry_id);
     if (extra > 0) {
         fx.seed_market_cash(&mut market, extra);
     };
-    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
+    fx.rebalance_expiry_cash(&mut vault, &mut market, &config);
     let (idle, pending, reserve, active) = vault_snapshot(&vault);
     return_shared(market);
     return_shared(vault);
-    return_shared(oracle_registry);
-    return_shared(pyth);
     return_shared(config);
     (idle, pending, reserve, active)
 }
 
-/// Drive a past-expiry market through its passive settled sweep via the permissionless
+/// Explicitly settle a past-expiry market, then sweep it through the permissionless
 /// standalone rebalance (the path that materializes terminal profit). Returns the same
 /// post-op vault snapshot as `rebalance_with_seed`.
 fun settle_market(fx: &mut helpers::Fixture, expiry_id: ID): (u64, u64, u64, u64) {
@@ -193,7 +191,8 @@ fun settle_market(fx: &mut helpers::Fixture, expiry_id: ID): (u64, u64, u64, u64
         market.expiry(),
         test_constants::default_live_price(),
     );
-    fx.rebalance_expiry_cash(&mut vault, &mut market, &config, &oracle_registry, &pyth);
+    assert!(fx.try_settle(&mut market, &config, &oracle_registry, &pyth));
+    fx.rebalance_expiry_cash(&mut vault, &mut market, &config);
     let (idle, pending, reserve, active) = vault_snapshot(&vault);
     return_shared(market);
     return_shared(vault);

@@ -219,5 +219,5 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
-| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
+| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records the exact Propbook Pyth expiry spot and terminal payout liability; `redeem_settled` then pays `notional − floor_shares` in range and zero out of range without reading an oracle. |
 | `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |

@@ -157,8 +157,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   resolution endpoints supply the exact-timestamp print).
 - **Blast radius:** the whole flush aborts while the market is in the window.
 - **Response:** `pause`-with-recovery — abort and retry; the recovery path is
-  the permissionless exact-ms insert followed by passive settlement. The
-  keeper does not flush inside the window. Deliberately **no substitute
+  the permissionless exact-ms insert followed by `try_settle`. Standalone cash
+  rebalance is a no-op in the window, and the keeper does not flush until the
+  transition succeeds. Deliberately **no substitute
   mark**: a settlement-dependent market has no well-defined true value, and
   the single mark prices both queue directions — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
@@ -169,8 +170,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `evidence/rp4-settlement-liveness.md`);
   residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
   `risks.md`.
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `settlement_flow_tests.move` —
+  `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
+  `expired_unsettled_standalone_rebalance_moves_no_cash`, and
+  `explicit_settlement_unblocks_pool_valuation_sweep`.
 - **Reopen when:** settlement-v2 introduces a valuation-safe representation
   for unsettled past-expiry markets.
 
@@ -476,6 +479,40 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   breaks), the `min_min_entry_probability` envelope floor is lowered (the
   one-lot fill bound dies with it), a measured gas profile shows the search
   matters, or a consumer needs the exact maximum fill at fractional leverage.
+
+---
+
+## RP-14: Exact spot products trust Propbook's exact-history key (`EReferenceTickTimestampMismatch` removed; resolves audit 914ecd)
+
+- **Trigger state:** `pyth_feed::normalized_spot_at(requested_timestamp)` returns
+  a read whose `source_timestamp_ms` differs from `requested_timestamp`.
+- **Controller:** protocol dependency — Propbook owns exact-history insertion,
+  lookup, and Pyth normalization semantics.
+- **Blast radius:** reference-tick selection for one expiry market. Settlement
+  already consumed the same exact lookup without repeating the timestamp check.
+- **Response:** proceed — Predict trusts the Propbook exact-read contract and
+  pricing's opaque `ExactSpotRead` retains only the optional normalized value.
+- **Reasoning:** `oracle_lane::insert_at` keys `exact_reads` by the inserted
+  read's `source_timestamp_ms`; `read_at(timestamp)` can return only the value
+  stored under that exact key; and `pyth_feed::normalized_spot_from_read`
+  preserves both timestamps. A mismatched timestamp is therefore
+  unrepresentable without changing Propbook's source semantics.
+- **Duty inventory (guard removal):** the deleted assert only re-checked that
+  exact-key invariant. It did not bound spot value, arithmetic headroom,
+  freshness, landing time, grid alignment, or market identity. Canonical-feed
+  identity remains checked by `pricing::load_exact_spot_read`; missing or
+  unnormalizable history remains `Option::none`; and no consumer used the
+  discarded update timestamp.
+- **Risk profile:** `BEST-GUESS` — unreachable by construction at current
+  Propbook source; residual risk is semantic drift in that dependency, not an
+  accepted reachable market state.
+- **Pinning tests:** `reference_tick_tests.move` —
+  `set_reference_tick_floors_spot_and_is_idempotent`,
+  `set_reference_tick_missing_exact_history_aborts`, and
+  `set_reference_tick_wrong_pyth_feed_aborts`.
+- **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
+  normalization semantics, or Predict begins using the exact product across a
+  delayed boundary that requires update-time metadata.
 
 ---
 

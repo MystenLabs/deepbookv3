@@ -121,7 +121,7 @@ Subtracting `correction_value` is the leveraged contracts' floor offset, applied
 
 ### Past-expiry settlement liveness
 
-`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Before `value_expiry` chooses the live branch, it passively calls `ensure_settled`: if Propbook has an exact normalized Pyth spot at the expiry timestamp, the market records settlement, is swept off the active set, and contributes `0` to that flush's active NAV.
+`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Settlement is a separate PTB command: the keeper inserts the exact normalized Pyth spot and calls `try_settle` before `value_expiry`. A settled market is swept off the active set and contributes `0`; an expired unsettled market moves no cash and then aborts through `current_nav` until settlement succeeds.
 
 If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
 

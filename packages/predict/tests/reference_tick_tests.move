@@ -15,7 +15,7 @@ use deepbook_predict::{
     expiry_market,
     oracle_fixture::{Self, OracleFixture},
     order::Order,
-    pricing::Pricer,
+    pricing::{Self, Pricer},
     pricing_reference_data as ref_data,
     strike_exposure::{Self, StrikeExposure},
     strike_exposure_config,
@@ -57,7 +57,7 @@ fun set_reference_tick_missing_exact_history_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
+#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
 fun set_reference_tick_wrong_pyth_feed_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
 

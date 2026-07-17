@@ -22,9 +22,9 @@ Because the tick domain is absolute and fixed in advance, **market creation read
 
 Live prices come from standalone, Predict-unaware feeds in the **propbook** package. A `PythFeed` holds one global source-native spot payload per Pyth Lazer feed id, updated permissionlessly from a verified Lazer payload and exposed through a normalized spot read. Block Scholes data is split into permanent source-level spot, forward, and SVI feeds; the forward and SVI feeds store per-expiry rows. Predict builds a forward and differences each range's probability off the SVI curve: when the normalized Pyth spot is fresh and usable it uses `forward = spot × basis(expiry)`; when the Pyth spot is absent, unusable, or stale it falls back to the BS forward feed. BS spot/forward must be fresh under the price window, and SVI must be fresh under its looser window. Propbook stores source facts; Predict validates the pricing-safe envelope at read time.
 
-### Settlement is passive
+### Settlement is explicit
 
-Terminal settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history. There is no standalone public settle entrypoint: normal flows that branch on settlement — settled redeem and pool cash rebalance / flush valuation — first try to record settlement passively. If the exact expiry spot is not present yet, the market remains unsettled and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
+Terminal settlement is one permissionless public transition, `expiry_market::try_settle`. It records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history and immediately caches the corresponding terminal payout liability. Settled redeem, rebate claim, pool cash rebalance, and flush valuation consume the recorded state without reading an oracle; transaction builders call `try_settle` first when settlement may be due. If the exact expiry spot is not present yet, `try_settle` returns false, standalone rebalance moves no cash, and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
 
 The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability plus its trading-loss rebate reserve.
 
@@ -55,14 +55,14 @@ stateDiagram-v2
   Live --> [*]: full live redeem (LiveOrderRedeemed)
   Live --> Liquidated: leveraged order falls to/below floor (OrderLiquidated)
   Liquidated --> [*]: holder/keeper clears tombstone (LiquidatedOrderRedeemed, zero payout)
-  Live --> Settled: passive settlement records exact expiry spot
+  Live --> Settled: try_settle records exact expiry spot + liability
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 
 - **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and static floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the tick pair `(lower_tick, higher_tick)`. Leveraged mints must satisfy the probability-sensitive admission cap and sit above the liquidation threshold at entry.
 - **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability, net of the floor on the closed slice. A partial close removes the closed slice from the payout index and creates a replacement order with the remaining quantity and floor.
 - **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero order payout that touches no account and leaves a tombstone the holder or keeper later clears for zero payout. The later trading-loss rebate, if any, is still resolved through the normal expiry-level PnL and fee-basis claim.
-- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − floor_shares` and zero otherwise. Settlement is passive: the first normal flow that needs a settled branch records the exact Propbook Pyth spot at expiry if it is available.
+- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − floor_shares` and zero otherwise. Anyone may call `try_settle`; ordinary settled consumers require that transition to have succeeded already.
 - **Settled sweep** deactivates a settled market from the pool's active set, returns free LP cash to idle, and materializes terminal profit.
 
 ## Liquidity is asynchronous

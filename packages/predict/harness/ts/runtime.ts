@@ -723,8 +723,7 @@ function addPythFeedUpdate(
 }
 
 // Settlement observation: same re-signed Lazer spot update as addPythFeedUpdate, but
-// stored via `insert_at` at the exact whole-second expiry timestamp so the flush's
-// `value_expiry` -> `ensure_settled` can read the terminal price and settle the market.
+// stored via `insert_at` at the exact whole-second expiry timestamp for `try_settle`.
 function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, expiryMs: bigint): void {
     const updateBytes = lazerUpdateFromConfig(localPythConfig(), PYTH_FEED_ID, spot, expiryMs);
     const update = tx.moveCall({
@@ -734,6 +733,22 @@ function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, ex
     tx.moveCall({
         target: propbookTarget("pyth_feed", "insert_at"),
         arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
+    });
+}
+
+function addTrySettle(
+    tx: Transaction,
+    params: { marketId: string; protocolConfigId: string; pythFeedId: string },
+): void {
+    tx.moveCall({
+        target: target("expiry_market", "try_settle"),
+        arguments: [
+            tx.object(params.marketId),
+            tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(CLOCK_ID),
+        ],
     });
 }
 
@@ -957,17 +972,16 @@ export interface CleanoutPosition {
 export interface CleanoutParams {
     expiryMarketId: string;
     wrapperId: string;
-    pythFeedId: string;
     positions: CleanoutPosition[];
 }
 
 function addRedeemSettledPermissionless(
     tx: Transaction,
-    p: { expiryMarketId: string; wrapperId: string; pythFeedId: string; orderId: string; quantity: bigint },
+    p: { expiryMarketId: string; wrapperId: string; orderId: string; quantity: bigint },
 ): void {
-    // redeem_settled_permissionless(market, account_registry, wrapper, config, propbook_registry,
-    //   pyth, order_id, close_quantity, root, clock, ctx) — expiry_market.move:583. No live pricer
-    // (settled), no BS feeds; app-auth is derived internally from the registry.
+    // redeem_settled_permissionless(market, account_registry, wrapper, config, order_id,
+    //   close_quantity, root, clock, ctx). Settlement is a separate PTB transition; this
+    // consumer needs no oracle objects or live pricer.
     tx.moveCall({
         target: target("expiry_market", "redeem_settled_permissionless"),
         arguments: [
@@ -975,8 +989,6 @@ function addRedeemSettledPermissionless(
             tx.object(ACCOUNT_REGISTRY_ID),
             tx.object(p.wrapperId),
             tx.object(PROTOCOL_CONFIG_ID),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(p.pythFeedId),
             tx.pure.u256(BigInt(p.orderId)),
             tx.pure.u64(p.quantity),
             tx.object(ACCUMULATOR_ROOT_ID),
@@ -987,11 +999,11 @@ function addRedeemSettledPermissionless(
 
 function addClaimRebatePermissionless(
     tx: Transaction,
-    p: { expiryMarketId: string; wrapperId: string; pythFeedId: string },
+    p: { expiryMarketId: string; wrapperId: string },
 ): void {
     // claim_trading_loss_rebate_permissionless(vault, market, wrapper, account_registry, config,
-    //   propbook_registry, pyth, root, clock, ctx) — plp.move:458. resolve_expiry_summary asserts
-    //   open_position_count == 0, so this MUST follow the redeems in the same PTB.
+    //   root, clock, ctx). resolve_expiry_summary asserts open_position_count == 0, so this
+    // MUST follow the redeems in the same PTB.
     tx.moveCall({
         target: target("plp", "claim_trading_loss_rebate_permissionless"),
         arguments: [
@@ -1000,8 +1012,6 @@ function addClaimRebatePermissionless(
             tx.object(p.wrapperId),
             tx.object(ACCOUNT_REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(p.pythFeedId),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1016,7 +1026,6 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
         addRedeemSettledPermissionless(tx, {
             expiryMarketId: params.expiryMarketId,
             wrapperId: params.wrapperId,
-            pythFeedId: params.pythFeedId,
             orderId: pos.orderId,
             quantity: pos.quantity,
         });
@@ -1024,7 +1033,6 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
     addClaimRebatePermissionless(tx, {
         expiryMarketId: params.expiryMarketId,
         wrapperId: params.wrapperId,
-        pythFeedId: params.pythFeedId,
     });
     return tx;
 }
@@ -1041,7 +1049,6 @@ export function redeemSettledAllTx(params: CleanoutParams): Transaction {
         addRedeemSettledPermissionless(tx, {
             expiryMarketId: params.expiryMarketId,
             wrapperId: params.wrapperId,
-            pythFeedId: params.pythFeedId,
             orderId: pos.orderId,
             quantity: pos.quantity,
         });
@@ -1049,7 +1056,7 @@ export function redeemSettledAllTx(params: CleanoutParams): Transaction {
     return tx;
 }
 
-export function claimRebateOnlyTx(params: { expiryMarketId: string; wrapperId: string; pythFeedId: string }): Transaction {
+export function claimRebateOnlyTx(params: { expiryMarketId: string; wrapperId: string }): Transaction {
     const tx = new Transaction();
     addClaimRebatePermissionless(tx, params);
     return tx;
@@ -1332,7 +1339,6 @@ export function rebalanceExpiryCashTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    pythFeedId: string;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -1341,8 +1347,6 @@ export function rebalanceExpiryCashTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
             tx.object(CLOCK_ID),
         ],
     });
@@ -1503,22 +1507,26 @@ export interface KeeperFeeds {
 
 // The keeper's pool-flush PTB: value EVERY active market between start and finish. The durable
 // settlement lane (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
-// are only the boundary-race STRAGGLERS that expired since — their exact-expiry observations are
-// inserted so `value_expiry` -> `ensure_settled` settles them inline instead of aborting on a missing
-// dynamic field. These inserts are race-avoidance, not the durable path: a BS outage aborts this whole
-// PTB (reverting them), but the settlement lane already settled durably, so no brick. Live-market
-// valuation reads the updater-maintained fresh BS feed.
+// are only the boundary-race STRAGGLERS that expired since. Their exact-expiry observations are
+// inserted and explicitly settled before valuation. These commands are race-avoidance, not the
+// durable path: a BS outage aborts this whole PTB (reverting them), but the settlement lane already
+// settled durably, so no brick. Live-market valuation reads the updater-maintained fresh BS feed.
 export function keeperFlushTx(params: {
     feeds: KeeperFeeds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
     lifecycleCapId: string;
-    settlements: { expiryMs: bigint; price: bigint }[];
+    settlements: { marketId: string; expiryMs: bigint; price: bigint }[];
 }): Transaction {
     const tx = new Transaction();
     for (const s of params.settlements) {
         addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
+        addTrySettle(tx, {
+            marketId: s.marketId,
+            protocolConfigId: params.protocolConfigId,
+            pythFeedId: params.feeds.pythFeedId,
+        });
     }
     const proof = tx.moveCall({
         target: target("registry", "generate_lifecycle_proof"),
@@ -1559,8 +1567,8 @@ export function keeperFlushTx(params: {
 }
 
 // Settle ONE expired market in its own PTB (decoupled from the flush): insert its exact-expiry Pyth
-// observation, then rebalance_expiry_cash — which for a past-expiry market runs ensure_settled ->
-// sweep_settled_expiry, removing it from active_expiry_markets. Needs only the exact Pyth spot, NOT
+// observation, call try_settle, then rebalance_expiry_cash to sweep the settled market from
+// active_expiry_markets. Needs only the exact Pyth spot, NOT
 // live BS pricing, so it proceeds even while the flush defers on a BS outage — no settlement backlog,
 // no beyond-retention brick. Mirrors the production keeper's settlement lane (deepbook-services
 // decision 0010). Per-market so one bad market's settle fails alone.
@@ -1574,14 +1582,17 @@ export function keeperSettleTx(params: {
 }): Transaction {
     const tx = new Transaction();
     addPythFeedInsert(tx, params.pythFeedId, params.price, params.expiryMs);
+    addTrySettle(tx, {
+        marketId: params.marketId,
+        protocolConfigId: params.protocolConfigId,
+        pythFeedId: params.pythFeedId,
+    });
     tx.moveCall({
         target: target("plp", "rebalance_expiry_cash"),
         arguments: [
             tx.object(params.poolVaultId),
             tx.object(params.marketId),
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
             tx.object(CLOCK_ID),
         ],
     });
