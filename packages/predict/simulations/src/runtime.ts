@@ -416,6 +416,7 @@ interface OracleRefreshParams {
     forward: bigint;
     svi: {
         a: bigint;
+        aNegative: boolean;
         b: bigint;
         rho: bigint;
         rhoNegative: boolean;
@@ -569,6 +570,7 @@ function addBlockScholesUpdates(
             tx.pure.u64(params.expiry),
             tx.pure.u64(publishedAtMs),
             tx.pure.u64(params.svi.a),
+            tx.pure.bool(params.svi.aNegative),
             tx.pure.u64(params.svi.b),
             tx.pure.u64(params.svi.sigma),
             tx.pure.u64(params.svi.rho),

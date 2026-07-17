@@ -40,8 +40,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   butterfly/no-arbitrage condition, so an admissible surface can push the raw
   skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any moneyness
   (open-items P-11). The one-sided UP price saturates to `[0, 1]` and range
-  differencing floors at zero rather than aborting live mint, redeem, NAV, or
+  differencing floors at zero rather than aborting live mint, redeem, or
   liquidation reads; surface quality is the Block Scholes feed's responsibility.
+  NAV valuation additionally rejects an active-book surface whose cached finite
+  boundary UP prices are non-monotone, because the aggregate payout-tree walk
+  nets signed boundary contributions across orders.
 - **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
   and utilization-based financing rates are excluded from v1 — exact strike-level
   liquidation indexing requires monotonic single-sided payoffs and history-independent

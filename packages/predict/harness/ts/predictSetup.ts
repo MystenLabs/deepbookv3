@@ -129,7 +129,8 @@ export function refreshParams(feeds: Feeds, expiryMs: bigint, snap: Snap) {
     spot: to1e9(snap.pythSpot),
     forward: to1e9(snap.bsForward),
     svi: {
-      a: to1e9(snap.svi.a), b: to1e9(snap.svi.b), sigma: to1e9(snap.svi.sigma),
+      a: to1e9(Math.abs(snap.svi.a)), aNegative: snap.svi.a < 0,
+      b: to1e9(snap.svi.b), sigma: to1e9(snap.svi.sigma),
       rho: to1e9(Math.abs(snap.svi.rho)), rhoNegative: snap.svi.rho < 0,
       m: to1e9(Math.abs(snap.svi.m)), mNegative: snap.svi.m < 0,
     },

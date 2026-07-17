@@ -770,6 +770,73 @@ public fun seed_bs_surface(
     forward: u64,
     source_timestamp_ms: u64,
 ) {
+    self.seed_bs_surface_with_svi(
+        market,
+        bs,
+        spot,
+        forward,
+        test_constants::default_svi_a(),
+        false,
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+        source_timestamp_ms,
+    )
+}
+
+/// Write split Block Scholes rows for a market bundle with explicit SVI values.
+public fun seed_bs_surface_with_svi_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    spot: u64,
+    forward: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+    source_timestamp_ms: u64,
+) {
+    self.seed_bs_surface_with_svi(
+        &market.market,
+        &mut market.bs,
+        spot,
+        forward,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+        source_timestamp_ms,
+    )
+}
+
+/// Write split Block Scholes spot, forward, and explicit SVI rows for `market`.
+public fun seed_bs_surface_with_svi(
+    self: &mut Fixture,
+    market: &ExpiryMarket,
+    bs: &mut BlockScholesFeed,
+    spot: u64,
+    forward: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+    source_timestamp_ms: u64,
+) {
     bs
         .spot_mut()
         .update(
@@ -795,13 +862,14 @@ public fun seed_bs_surface(
                 test_constants::pyth_feed_id(),
                 market.expiry(),
                 source_timestamp_ms,
-                test_constants::default_svi_a(),
-                test_constants::default_svi_b(),
-                test_constants::default_svi_sigma(),
-                test_constants::default_svi_rho_magnitude(),
-                false,
-                test_constants::default_svi_m(),
-                false,
+                svi_a_magnitude,
+                svi_a_is_negative,
+                svi_b,
+                svi_sigma,
+                svi_rho_magnitude,
+                svi_rho_is_negative,
+                svi_m_magnitude,
+                svi_m_is_negative,
             ),
             &self.clock,
             self.scenario.ctx(),
