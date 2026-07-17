@@ -209,10 +209,13 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Graceful post-only limit order. Reads the relevant side of the book first
+/// Graceful post-only limit order. Checks the relevant side of the book first
 /// and only forwards to `place_limit_order` with `POST_ONLY` when the order is
-/// guaranteed not to cross. If it would cross, returns `none` without placing
-/// — avoiding the `EPOSTOrderCrossesOrderbook` abort that tears down a PTB.
+/// guaranteed not to cross a live order the matcher can reach. Returns `none`
+/// instead of aborting `EPOSTOrderCrossesOrderbook` when it would cross — and
+/// also `none` when the forwarded placement rests nothing (a large expired
+/// backlog at a crossing price makes `place_limit_order` hit its fill limit and
+/// inject no order), so `some` always means the order is resting on the book.
 /// An empty opposite side always allows placement.
 ///
 /// Self-matching is fixed to `SELF_MATCHING_ALLOWED` and is not a parameter:
@@ -237,14 +240,13 @@ public fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): Option<OrderInfo> {
-    let would_cross = if (is_bid) {
-        self.best_ask_price(clock).destroy_or!(constants::max_u64()) <= price
-    } else {
-        self.best_bid_price(clock).destroy_or!(0) >= price
-    };
+    let would_cross = self
+        .load_inner()
+        .book
+        .crosses_live_order(price, is_bid, clock.timestamp_ms());
     if (would_cross) return option::none();
 
-    option::some(self.place_limit_order(
+    let order_info = self.place_limit_order(
         balance_manager,
         trade_proof,
         client_order_id,
@@ -257,7 +259,11 @@ public fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
         expire_timestamp,
         clock,
         ctx,
-    ))
+    );
+
+    // place_limit_order can hit its fill limit clearing an expired backlog and
+    // rest nothing; report that as `none` so `some` always means the order rests.
+    if (order_info.order_inserted()) option::some(order_info) else option::none()
 }
 
 /// Place a market order. Quantity is in base asset terms. Calls
@@ -1397,8 +1403,7 @@ public fun mid_price<BaseAsset, QuoteAsset>(
 
 /// Top-of-book read for PTB construction / devInspect (SDK, UI). Returns the
 /// best (lowest) ask price, skipping expired orders. Returns `none` if the ask
-/// side has no live order within the first `max_fills` orders (see
-/// `book::best_ask_price` for the bound).
+/// side has no live order.
 public fun best_ask_price<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
@@ -1408,8 +1413,7 @@ public fun best_ask_price<BaseAsset, QuoteAsset>(
 
 /// Top-of-book read for PTB construction / devInspect (SDK, UI). Returns the
 /// best (highest) bid price, skipping expired orders. Returns `none` if the bid
-/// side has no live order within the first `max_fills` orders (see
-/// `book::best_bid_price` for the bound).
+/// side has no live order.
 public fun best_bid_price<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,

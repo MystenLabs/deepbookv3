@@ -300,53 +300,75 @@ public(package) fun modify_order(
     (cancel_quantity, order)
 }
 
-/// Returns the best (lowest) ask price, skipping expired orders at the top of the book.
-/// Returns `none` if the ask side has no live order within the first `max_fills`
-/// orders. The scan is bounded to `max_fills` — the same limit the matching
-/// engine uses (`match_against_book`) — so a large expired-order backlog cannot
-/// make this read cost unbounded gas. Bounding at `max_fills` also keeps the
-/// result consistent with the matcher: a taker cannot reach a live order buried
-/// under more than `max_fills` expired orders either, so treating that side as
-/// having no live top-of-book matches what a trade would actually see.
+/// Returns the best (lowest) ask price, skipping expired orders at the top of
+/// the book. Returns `none` if the ask side has no live order. The walk is
+/// unbounded so a one-sided expired backlog never hides the true top-of-book
+/// from `mid_price` and its consumers; for the crossing test a placement needs,
+/// use `crosses_live_order`, which is bounded to the matcher's reach.
 public(package) fun best_ask_price(self: &Book, current_timestamp: u64): Option<u64> {
     let (mut slice_ref, mut offset) = self.asks.min_slice();
-    let mut scanned = 0;
-    while (!slice_ref.is_null() && scanned < constants::max_fills()) {
+    while (!slice_ref.is_null()) {
         let order = slice_borrow(self.asks.borrow_slice(slice_ref), offset);
         if (current_timestamp <= order.expire_timestamp()) return option::some(order.price());
         (slice_ref, offset) = self.asks.next_slice(slice_ref, offset);
-        scanned = scanned + 1;
     };
 
     option::none()
 }
 
-/// Returns the best (highest) bid price, skipping expired orders at the top of the book.
-/// Returns `none` if the bid side has no live order within the first `max_fills`
-/// orders. Bounded to `max_fills` for the same reason as `best_ask_price`.
+/// Returns the best (highest) bid price, skipping expired orders at the top of
+/// the book. Returns `none` if the bid side has no live order. Unbounded, for
+/// the same reason as `best_ask_price`.
 public(package) fun best_bid_price(self: &Book, current_timestamp: u64): Option<u64> {
     let (mut slice_ref, mut offset) = self.bids.max_slice();
-    let mut scanned = 0;
-    while (!slice_ref.is_null() && scanned < constants::max_fills()) {
+    while (!slice_ref.is_null()) {
         let order = slice_borrow(self.bids.borrow_slice(slice_ref), offset);
         if (current_timestamp <= order.expire_timestamp()) return option::some(order.price());
         (slice_ref, offset) = self.bids.prev_slice(slice_ref, offset);
-        scanned = scanned + 1;
     };
 
     option::none()
 }
 
-/// Returns the mid price of the order book.
-/// Aborts `EEmptyOrderbook` if either side has no live order within the first
-/// `max_fills` orders (see `best_ask_price`) — i.e. a genuinely empty side, or a
-/// degenerate side whose top `max_fills` orders are all expired.
+/// Returns the mid price of the order book. Aborts `EEmptyOrderbook` if either
+/// side has no live order.
 public(package) fun mid_price(self: &Book, current_timestamp: u64): u64 {
     let ask = self.best_ask_price(current_timestamp);
     let bid = self.best_bid_price(current_timestamp);
     assert!(ask.is_some() && bid.is_some(), EEmptyOrderbook);
 
     math::mul(ask.destroy_some() + bid.destroy_some(), constants::half())
+}
+
+/// Returns true if a `price`-priced order on the `is_bid` side would cross a
+/// live order the matcher can actually reach. Walks the opposite side skipping
+/// expired orders, bounded to `max_fills` — the same limit `match_against_book`
+/// uses — because a live order buried under more than `max_fills` expired orders
+/// is unreachable in a single fill and so cannot execute. This, not the
+/// unbounded getters above, is the crossing test a POST_ONLY placement must use:
+/// it mirrors exactly what the fill would see.
+public(package) fun crosses_live_order(
+    self: &Book,
+    price: u64,
+    is_bid: bool,
+    current_timestamp: u64,
+): bool {
+    let book_side = if (is_bid) &self.asks else &self.bids;
+    let (mut slice_ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+    let mut scanned = 0;
+    while (!slice_ref.is_null() && scanned < constants::max_fills()) {
+        let order = slice_borrow(book_side.borrow_slice(slice_ref), offset);
+        if (current_timestamp <= order.expire_timestamp()) {
+            // First live order at top-of-book; the side is price-sorted, so if it
+            // does not cross, nothing deeper does either.
+            return if (is_bid) order.price() <= price else order.price() >= price
+        };
+        (slice_ref, offset) = if (is_bid) book_side.next_slice(slice_ref, offset)
+        else book_side.prev_slice(slice_ref, offset);
+        scanned = scanned + 1;
+    };
+
+    false
 }
 
 /// Returns the best bids and asks.
