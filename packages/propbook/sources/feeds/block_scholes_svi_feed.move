@@ -141,7 +141,9 @@ public fun sigma(params: &SVIParams): u64 {
 
 // === Write Functions ===
 
-/// Records a verifier-produced SVI update in the lane selected by its expiry.
+/// Record a verifier-produced SVI update in the lane selected by its expiry.
+/// After the version and source checks, a zero, future, duplicate, or stale source
+/// timestamp is ignored without changing `latest` or emitting an event.
 public fun update(
     feed: &mut BlockScholesSVIFeed,
     update: SVIUpdate,

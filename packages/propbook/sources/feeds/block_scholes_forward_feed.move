@@ -111,8 +111,10 @@ public fun raw_forward_value(raw: &RawForward): u64 {
 
 // === Write Functions ===
 
-/// Record a verifier-produced raw forward in its expiry lane. Zero is stored, but
-/// its normalized read is `none`.
+/// Record a verifier-produced raw forward in its expiry lane. After the version
+/// and source checks, a zero, future, duplicate, or stale source timestamp is
+/// ignored without changing `latest` or emitting an event. A zero forward is
+/// stored when its timestamp advances, but its normalized read is `none`.
 public fun update(
     feed: &mut BlockScholesForwardFeed,
     update: ForwardUpdate,

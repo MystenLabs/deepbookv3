@@ -70,7 +70,7 @@ permanent.
 guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
-cover the permanent (not just transient) case. (audit 4d2a1e)
+cover the permanent (not just transient) case.
 
 ### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
 
@@ -82,9 +82,9 @@ entrypoint exists in the four scoped packages; only a getter and event fields
 read it. The protocol cut is excluded from LP value and can never leave the
 vault without a package upgrade.
 
-**Action:** Add an AdminCap-gated withdraw entrypoint (e.g.
+**Action:** Add an AdminCap-gated withdraw entrypoint (for example,
 `withdraw_protocol_reserve` splitting from the balance), or record deliberate
-deferral to a post-deploy upgrade as the decision. (audit 412e9e)
+deferral to a post-deploy upgrade as the decision.
 
 **2026-07-07 extension — the cut is order-dependent, not just accrue-only.**
 The protocol cut is realized against a single pool-wide, forward-only
@@ -95,13 +95,11 @@ earlier profit. Because cross-market materialization order is permissionless
 `materialize_expiry_profit`), a profit-first ordering splits `share × (gross
 profit recognized before losses)` into `protocol_reserve_balance` (join-only,
 never split, matching this item's accrue-only claim) instead of `share × net
-pool profit`. Lens split
-this run: the lifecycle sim called it an LP leak (High), while the
-invariants-lens 40k-scenario fuzz and one cross-model verifier found it
-NAV-neutral under fair live marking (the cut is pre-reserved in
-`plp::lp_pool_value`'s exclusion) — the excess only bites when the
-offsetting loss market is *settled-but-unswept* at the profit-first instant, a
-narrow ordering window. Panel severity: Medium.
+pool profit`. While all offsetting losses remain represented in live marking,
+the cut is NAV-neutral because `plp::lp_pool_value` excludes the pre-reserved
+amount. The excess becomes real when an offsetting loss market is settled but
+unswept at the profit-first instant, so the reserve can accrue on gross
+recognized profit rather than net realized pool profit.
 
 **Action (extension):** Fold into the accrue-only deploy decision — take the
 cut against NET realized pool profit (a pool-level net-profit high-water mark
@@ -109,9 +107,10 @@ realizing the incremental cut of the running net), or make `net_losses`
 symmetrically reduce not-yet-realized/pending protocol profit before any cut is
 split. Verify with a cross-market Move flow test: value/sweep a profitable
 market before an offsetting lossy one and assert
-`protocol_reserve == share × net` (expected to fail at HEAD). (audit db0506)
+`protocol_reserve == share × net`; current behavior produces a larger reserve
+when the profitable market is materialized first.
 
-### P-10: current_nav carries an undocumented conservative band
+### P-10: current_nav's conservative liquidation band is absent from public risk disclosure
 
 **Severity:** Low.
 
@@ -125,10 +124,10 @@ incumbent LPs on a same-flush supply (NAV reads low → the supplier mints too m
 shares). P-13 tracks the opposite, rounding-only direction where aggregate
 liability is one raw unit low.
 
-**Action:** Decide and document — either accept and disclose the conservative
-band in `docs/risks.md` (reconciling the "exact NAV" framing), or run a
+**Action:** Decide whether to accept and disclose the conservative band in
+`docs/risks.md` (reconciling the "exact NAV" framing), or run a
 pre-valuation liquidation pass so the flush marks liquidatable orders at their
-liquidated value. (2026-07-07 holistic audit)
+liquidated value.
 
 ### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
 
@@ -218,10 +217,10 @@ Coupled exposures:
   settlement of all in-flight predict markets, with no timelock and no
   predict-side detection.
 
-**Action:** Before a value-bearing deploy, decide the governance posture —
-multisig custody of each root cap, an allowlist-revocation for authorized apps
-(as the derived caps already have), and/or documented acceptance of the
-cross-package admin trust coupling. (2026-07-07 holistic audit)
+**Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
+multisig custody plus a rotation/replacement mechanism for each non-rotatable
+root cap, or documented acceptance of the cap-compromise and cross-package admin
+trust coupling.
 
 ## Capacity and Liveness Findings
 
@@ -334,10 +333,10 @@ correctness today.
 
 - Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
   helpers (and shared guard preamble) across the BS forward/SVI/spot feeds into
-  a generic `oracle_lane` helper. (audit 7af3ed)
+  a generic `oracle_lane` helper.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
-  component so per-expiry DUSDC has one owner. (audit 49108f)
+  component so per-expiry DUSDC has one owner.
 
 ### H-5: Premium-budget mint omits probability and all-in-cost slippage caps
 
@@ -346,7 +345,7 @@ correctness today.
 `expiry_market::mint_exact_amount` disables both slippage guards (`max_cost` and
 `max_probability` are unbounded), unlike `mint_exact_quantity`. Decide whether
 a premium-budget mint should also bound total fees/penalty and entry probability,
-and add optional guards if so. (2026-07-07 holistic audit)
+and add optional guards if so.
 
 ### H-6: Maintainability backlog
 
@@ -355,13 +354,12 @@ and add optional guards if so. (2026-07-07 holistic audit)
   `CadenceParams` struct instead of a 5-long u64 run through
   registry → market_manager → event; reshapes the public
   `set_template_cadence_config` signature, so coordinate with the positional TS
-  callers. (hygiene sweep)
+  callers.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
-  consciously accept before the codebase grows further. (audit c3edaa)
+  consciously accept before the codebase grows further.
 - Public `liquidate()` takes an unbounded caller budget — low-priority self-DoS
   probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
-  (from the retired experiments backlog)
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 

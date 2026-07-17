@@ -4,9 +4,10 @@
 /// Pricing for Predict markets.
 ///
 /// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
-/// SVI-adjusted digital probabilities. Live reads enforce market phase, feed
-/// freshness, and Predict's fixed-point input envelope; exact-history reads do not
-/// apply live freshness policy.
+/// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
+/// Scholes spot, forward, and SVI observations. A fresh positive Pyth spot reanchors
+/// the Block Scholes forward basis; otherwise pricing uses that forward directly.
+/// Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
@@ -129,9 +130,11 @@ public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
 ///
-/// The supplied feeds must be the current Propbook bindings for the underlying.
-/// The market must be pre-expiry, and each live input must pass its configured
-/// fixed wall-clock freshness threshold and the pricing-safe numeric envelope.
+/// The supplied feeds must be the current Propbook bindings for the underlying,
+/// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
+/// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
+/// pricing-safe envelope. A fresh positive normalized Pyth spot reanchors the Block
+/// Scholes forward basis; a missing, non-normalizable, or stale Pyth spot is ignored.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,

@@ -3,7 +3,7 @@
 
 /// Fixed-point arithmetic at 1e9 scale, raw integer ratio helpers, and bounded approximations for common transcendental functions.
 /// Integer ratio functions state their rounding direction explicitly; signed scaled operations truncate magnitude toward zero.
-/// Approximation error is sign-varying: `normal_cdf` is within 20 raw units, `normal_pdf` within 50 raw units, `exp` and `ln` within 1e-7 relative error, and `sqrt` floors within one raw unit.
+/// Approximation error is sign-varying: `normal_cdf` is within 20 raw units and `normal_pdf` within 50 raw units before their documented tail saturation. `ln` and `exp` target 1e-7 relative error outside raw-unit quantization regimes; near `ln(1)` use absolute raw-unit error, and sufficiently negative exponentials round to zero.
 /// These are primitive-level bounds; callers remain responsible for any amplification caused by an ill-conditioned formula.
 module fixed_math::math;
 
@@ -116,7 +116,7 @@ public fun try_mul_div_up(x: u64, y: u64, denominator: u64): Option<u64> {
 }
 
 /// Returns the natural logarithm of a positive 1e9-scaled value as a signed 1e9-scaled result.
-/// Relative error is at most 1e-7; zero input aborts.
+/// The approximation targets 1e-7 relative error when the result is outside raw-unit quantization; at `x = 1e9 ± 1`, the result is within one raw unit of zero and may round to zero. Zero input aborts.
 public fun ln(x: u64): i64::I64 {
     assert!(x > 0, EInputZero);
     if (x == float_scaling!()) return i64::zero();
@@ -132,7 +132,7 @@ public fun ln(x: u64): i64::I64 {
     i64::from_u64((result as u64))
 }
 
-/// Returns `e^x` at 1e9 scale with relative error at most 1e-7.
+/// Returns `e^x` at 1e9 scale. The approximation targets 1e-7 relative error before fixed-point tail quantization; sufficiently negative inputs whose true scaled result is below one raw unit round to zero.
 /// Positive inputs whose scaled result may not fit in `u64` abort with `EExpOverflow`.
 public fun exp(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
@@ -149,7 +149,7 @@ public fun exp(x: &i64::I64): u64 {
 }
 
 /// Returns the standard normal CDF `Φ(x)` at 1e9 scale using Cody's piecewise rational approximation.
-/// Absolute error is at most 20 raw units; values beyond eight standard deviations saturate to zero or one.
+/// Absolute error is at most 20 raw units before the explicit tail clamp; `|x| >= sqrt(32) ≈ 5.657` saturates to zero or one.
 public fun normal_cdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
@@ -170,8 +170,8 @@ public fun normal_pdf(x: &i64::I64): u64 {
     mul(exp(&exponent), INV_SQRT_2PI)
 }
 
-/// Returns a 1e9-scaled square root rounded down to the requested decimal precision.
-/// `precision` must be in `[1, 1e9]`; the result is within one raw unit at that precision.
+/// Returns a fixed-point square root with `precision` as the operand scale.
+/// For `m = floor(1e9 / precision)`, the exact integer contract is `floor(sqrt(x * m * 1e9)) / m`; when `precision` divides 1e9, the raw result represents `sqrt(x * precision)`. Production callers pass `precision = 1e9`, so a 1e9-scaled input produces a 1e9-scaled result rounded down within one raw unit. `precision` must be in `[1, 1e9]`.
 public fun sqrt(x: u64, precision: u64): u64 {
     assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
     let multiplier = (float_scaling!() / precision) as u128;

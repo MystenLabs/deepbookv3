@@ -67,6 +67,8 @@ from the audit; the two files below are the authoritative detail.
 
 ## Deploy gates
 
-Distinct from the audit: these carry an explicit decision before the system
-holds real value — S-4 (the production verifier dependency), P-8 (a
-protocol-reserve withdrawal path), and G-1 (admin-capability rotation).
+Distinct from the audit, the recorded pre-value deploy decisions are S-4 (the
+production verifier dependency), P-8 (a protocol-reserve withdrawal path), G-1
+(admin-capability rotation), and C-1 (the joint full-pool valuation budget). O-1
+also becomes a deploy gate if the launch permits the affected near-expiry market
+shape.

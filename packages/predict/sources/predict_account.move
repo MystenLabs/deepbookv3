@@ -109,13 +109,15 @@ public fun trading_fees_paid(account: &Account, expiry_market_id: ID): u64 {
     }
 }
 
-/// Return active staked DEEP (the amount that earns benefits).
+/// Return the stored active-stake split from the account's last epoch reconciliation.
+/// This read does not roll newly eligible inactive stake forward.
 public fun active_stake(account: &Account): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     data(account).active_stake
 }
 
-/// Return inactive staked DEEP (activates next epoch).
+/// Return the stored inactive-stake split from the account's last epoch reconciliation.
+/// This read does not roll stake that became eligible after an epoch boundary.
 public fun inactive_stake(account: &Account): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     data(account).inactive_stake

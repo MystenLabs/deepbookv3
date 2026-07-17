@@ -93,8 +93,10 @@ public fun raw_spot_value(raw: &RawSpot): u64 {
 
 // === Write Functions ===
 
-/// Record a verifier-produced raw spot when its source matches this feed. Zero is
-/// stored, but its normalized read is `none`.
+/// Record a verifier-produced raw spot when its source matches this feed. After
+/// the version and source checks, a zero, future, duplicate, or stale source
+/// timestamp is ignored without changing `latest` or emitting an event. A zero
+/// spot is stored when its timestamp advances, but its normalized read is `none`.
 public fun update(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.spot_source_id() == feed.bs_source_id, EWrongSource);

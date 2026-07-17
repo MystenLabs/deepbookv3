@@ -333,10 +333,10 @@ public fun finish_flush(
     pool_nav
 }
 
-/// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
-/// amount is recorded as inactive on the account and activates next epoch
-/// (`predict_account::roll_active_stake`, run by trade/claim flows). Callable
-/// anytime, any number of times.
+/// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the new
+/// amount is recorded as inactive and becomes eligible after the next epoch
+/// boundary. It moves to active only when a later stake, trade, or claim flow calls
+/// `predict_account::roll_active_stake`. Callable anytime, any number of times.
 public fun stake_deep(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,

@@ -119,8 +119,9 @@ public fun raw_source_timestamp_us(raw: &RawSpot): u64 {
 // === Write Functions ===
 
 /// Decode and record a verifier-produced Pyth Lazer update when its source
-/// timestamp advances. The raw observation may be stored even when its positive
-/// normalized projection is unavailable.
+/// timestamp advances. A zero, future, duplicate, or stale source timestamp is
+/// ignored without changing `latest` or emitting an event. The raw observation
+/// may be stored even when its positive normalized projection is unavailable.
 public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_read(&update, clock.timestamp_ms());
@@ -129,7 +130,7 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
 }
 
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
-/// source timestamp. Aborts `EInsertTimestampNotExactMillisecond` if the signed
+/// source timestamp. Aborts `EInsertTimestampNotExactMillisecond` if the
 /// source timestamp is not a whole millisecond, so the exact-history key is an
 /// unambiguous millisecond a consumer can look up by equality. This does not
 /// mutate `latest`. The first lane-valid raw observation owns the key and cannot
