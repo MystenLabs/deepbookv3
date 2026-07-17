@@ -278,6 +278,20 @@ fun surface_with_forward_above_spot_ceiling_aborts() {
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_with_basis_below_min_aborts() {
+    // basis = forward / spot = 1/101 < 1/100 fails the new backwardation FLOOR
+    // (spot <= factor * forward), the symmetric twin of the contango ceiling above.
+    // forward under the spot ceiling and spot = 101*forward so the ceiling and
+    // contango branches pass and only the floor rejects. This is the residual an
+    // absolute spot ceiling misses: a tiny forward collapses the re-anchored forward
+    // (`pyth_spot * forward / spot` -> 0) regardless of spot's absolute magnitude.
+    let forward = 100 * test_constants::float();
+    let spot = forward * 101;
+    load_pricer_with_spot_forward(spot, forward);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_basis_above_max_aborts() {
     // basis = forward * 1e9 / spot = 101e9 > 100e9, with forward still under the
     // spot ceiling so the basis branch (not the ceiling branch) is the one that fires.
@@ -385,14 +399,16 @@ fun surface_with_svi_sigma_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
-// === Deep-math abort (EZeroForward) ===
+// === Re-anchor collapse rejected at the envelope (basis floor) ===
 
-/// A surface whose forward is tiny relative to the BS spot passes the envelope
-/// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
-/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
-/// the first finite-strike quote.
-#[test, expected_failure(abort_code = pricing::EZeroForward)]
-fun re_anchored_zero_forward_aborts() {
+/// A surface whose forward is tiny relative to the BS spot is now rejected by the
+/// backwardation floor (`spot <= factor * forward`) at the input gate, BEFORE
+/// re-anchoring. Previously it passed the envelope (no lower basis bound) and
+/// re-anchoring at a pyth spot far below the BS spot floored the forward to 0,
+/// aborting `EZeroForward` deep in `compute_nd2` — or, one ulp above 0, silently
+/// priced every strike to 0. The floor rejects the whole degenerate class here.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun re_anchor_collapsing_surface_rejected_at_envelope() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     let bs_spot = 100_000_000_000_000_000; // 1e17, under the spot ceiling

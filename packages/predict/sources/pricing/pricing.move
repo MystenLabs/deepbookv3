@@ -394,12 +394,23 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    // Basis cap at exactly `factor` (`basis <= factor`): forward <= factor * spot
-    // <=> ceil(forward / factor) <= spot, u64-native with no widening. The exact
-    // bound is what keeps the re-anchored forward `mul_div_down(spot, forward,
-    // spot')` inside u64; rejecting a too-high basis at this input gate is
-    // fail-safe, never a fund path.
+    // Basis band, BOTH edges. `load_live_pricer` re-anchors the live forward as
+    // `mul_div_down(pyth_spot, forward, spot)`, so the basis `forward/spot` must be
+    // bounded on both sides or the re-anchored forward degenerates:
+    //   - ceiling `basis <= factor` (forward <= factor * spot): caps contango and
+    //     keeps the re-anchored forward inside u64.
+    //   - floor `basis >= 1/factor` (spot <= factor * forward): caps backwardation.
+    //     Without it an envelope-valid tiny `forward` (or large `spot`) collapses the
+    //     re-anchored forward toward 0 — every strike deep-OTM (all range prices 0)
+    //     or, rounding to 0, `EZeroForward` in `compute_up_price`. The floor keeps
+    //     the re-anchored forward >= pyth_spot / factor > 0.
+    // Both use the exact `div_ceil` form (u64-native, no widening); rejecting an
+    // out-of-band basis at this input gate is fail-safe, never a fund path. This does
+    // NOT change the pool-flush liveness class: a degenerate feed on an active market
+    // is rejected here instead of aborting deeper, but either way that market cannot
+    // be valued (see C-1 / DBU-557).
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
+    assert!(spot.div_ceil(max_pricing_basis_factor!()) <= forward, EBlockScholesInputsInvalid);
     assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
