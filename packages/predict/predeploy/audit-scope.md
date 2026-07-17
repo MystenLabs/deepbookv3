@@ -16,9 +16,9 @@ with rationale).
 
 - **Off-chain systems.** The indexer, server, keeper, and SDK live in other
   repositories and are not part of this snapshot.
-- **Dependency packages.** `block_scholes_oracle` and `dusdc` are present only
-  to build the scoped contracts. Their implementations are not audit targets;
-  the scoped contracts are reviewed against the interface assumptions below.
+- **Dependency packages.** `block_scholes_oracle` and `dusdc` are required by
+  the scoped contracts, but their implementations are not audit targets. The
+  scoped contracts are reviewed against the interface assumptions below.
 - **The asynchronous NAV-flush rewrite.** The audited system values the pool in
   one atomic pool-flush transaction. A per-market asynchronous refresh is not
   part of this snapshot; the atomic flush is what is audited. Its known
