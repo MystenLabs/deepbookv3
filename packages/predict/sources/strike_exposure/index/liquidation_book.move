@@ -19,7 +19,7 @@ use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
 const EActiveOrderNotFound: u64 = 1;
-const EMaxActiveLeveragedOrders: u64 = 4;
+const EMaxActiveLeveragedOrders: u64 = 2;
 
 const PAGE_CAPACITY: u64 = 64;
 
