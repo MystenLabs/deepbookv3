@@ -127,11 +127,11 @@ messages containing the PR link and commit SHA. Incoming webhooks do not return
 the message timestamp needed to create a thread without an additional Slack API
 or Events integration.
 
-The initial request identifies the `PR owner` and `Auto-approval requested by`
-using GitHub logins without sending a Slack mention. When Codex reports
-significant findings, the final message mentions only the mapped PR owner using
-Slack's `<@USER_ID>` syntax. A missing or invalid mapping leaves the GitHub login
-visible but does not fall back to `@here` or `@channel`.
+The initial request mentions the mapped `PR owner` and
+`Auto-approval requested by` accounts. When Codex reports significant findings,
+the final message mentions only the mapped PR owner using Slack's `<@USER_ID>`
+syntax. A missing or invalid mapping leaves the GitHub login visible but does
+not fall back to `@here` or `@channel`.
 
 ## Repository label
 
