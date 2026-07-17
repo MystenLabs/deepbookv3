@@ -983,8 +983,7 @@ fun seed_resting_orders(
     test: &mut Scenario,
 ) {
     let quantity = 1 * constants::float_scaling();
-    let mut i = 0;
-    while (i < count) {
+    count.do!(|i| {
         place_limit_order<SUI, USDC>(
             trader,
             pool_id,
@@ -999,8 +998,7 @@ fun seed_resting_orders(
             expire,
             test,
         );
-        i = i + 1;
-    };
+    });
 }
 
 #[test]
