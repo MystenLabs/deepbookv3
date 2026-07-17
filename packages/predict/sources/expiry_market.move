@@ -854,16 +854,13 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Release every unit of cash above this expiry's settled payout liability back
 /// to the pool. Used by the settled-market sweep, which then deactivates the
 /// expiry and materializes its profit.
-/// Returns the released cash and the terminal settlement price used for event
-/// emission by the pool.
-public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): (Balance<DUSDC>, u64) {
-    let settlement_price = market.settlement_price();
+public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
-    (market.release_pool_cash(returned_cash_amount), settlement_price)
+    market.release_pool_cash(returned_cash_amount)
 }
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
