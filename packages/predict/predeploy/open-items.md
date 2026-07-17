@@ -77,7 +77,7 @@ cover the permanent (not just transient) case.
 **Severity:** Medium / required decision before deploy.
 
 Materialized protocol profit joins into `PoolVault.protocol_reserve_balance`
-through `plp::realize_pending_protocol_profit`, but no split/withdraw/claim
+through `pool_accounting::realize_pending_protocol_profit`, but no split/withdraw/claim
 entrypoint exists in the four scoped packages; only a getter and event fields
 read it. The protocol cut is excluded from LP value and can never leave the
 vault without a package upgrade.
