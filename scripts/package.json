@@ -1,12 +1,11 @@
 {
   "name": "scripts",
   "version": "1.0.0",
-  "description": "",
+  "description": "DeepBook protocol package-upgrade transactions and SDK examples.",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "create-pool": "pnpm tsx transactions/createPool.ts"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
