@@ -1,6 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+// TODO(bs-verifier): once block_scholes_oracle validates signatures, these
+// updates become verified provenance. Flip the "unverified (stub-oracle)"
+// wording back to "verified" at every `grep -rn 'TODO(bs-verifier)'` site.
 /// Block Scholes spot oracle: one shared object per source id, storing the
 /// source-native spot stream through a generic Propbook oracle lane.
 ///
@@ -98,6 +101,7 @@ public fun raw_spot_value(raw: &RawSpot): u64 {
 
 // === Write Functions ===
 
+// TODO(bs-verifier): "unverified" holds only while block_scholes_oracle is a stub.
 /// Ingest an unverified (stub-oracle) BS spot update into this feed's generic oracle lane.
 public fun update(feed: &mut BlockScholesSpotFeed, update: SpotUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);

@@ -144,6 +144,7 @@ public fun sigma(params: &SVIParams): u64 {
 
 // === Write Functions ===
 
+// TODO(bs-verifier): "unverified" holds only while block_scholes_oracle is a stub.
 /// Ingest an unverified (stub-oracle) BS SVI update into the oracle lane for the update's expiry.
 public fun update(
     feed: &mut BlockScholesSVIFeed,
