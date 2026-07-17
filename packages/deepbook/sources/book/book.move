@@ -301,32 +301,46 @@ public(package) fun modify_order(
 }
 
 /// Returns the best (lowest) ask price, skipping expired orders at the top of the book.
-/// Returns `none` if the ask side has no live orders.
+/// Returns `none` if the ask side has no live order within the first `max_fills`
+/// orders. The scan is bounded to `max_fills` — the same limit the matching
+/// engine uses (`match_against_book`) — so a large expired-order backlog cannot
+/// make this read cost unbounded gas. Bounding at `max_fills` also keeps the
+/// result consistent with the matcher: a taker cannot reach a live order buried
+/// under more than `max_fills` expired orders either, so treating that side as
+/// having no live top-of-book matches what a trade would actually see.
 public(package) fun best_ask_price(self: &Book, current_timestamp: u64): Option<u64> {
     let (mut slice_ref, mut offset) = self.asks.min_slice();
-    while (!slice_ref.is_null()) {
+    let mut scanned = 0;
+    while (!slice_ref.is_null() && scanned < constants::max_fills()) {
         let order = slice_borrow(self.asks.borrow_slice(slice_ref), offset);
         if (current_timestamp <= order.expire_timestamp()) return option::some(order.price());
         (slice_ref, offset) = self.asks.next_slice(slice_ref, offset);
+        scanned = scanned + 1;
     };
 
     option::none()
 }
 
 /// Returns the best (highest) bid price, skipping expired orders at the top of the book.
-/// Returns `none` if the bid side has no live orders.
+/// Returns `none` if the bid side has no live order within the first `max_fills`
+/// orders. Bounded to `max_fills` for the same reason as `best_ask_price`.
 public(package) fun best_bid_price(self: &Book, current_timestamp: u64): Option<u64> {
     let (mut slice_ref, mut offset) = self.bids.max_slice();
-    while (!slice_ref.is_null()) {
+    let mut scanned = 0;
+    while (!slice_ref.is_null() && scanned < constants::max_fills()) {
         let order = slice_borrow(self.bids.borrow_slice(slice_ref), offset);
         if (current_timestamp <= order.expire_timestamp()) return option::some(order.price());
         (slice_ref, offset) = self.bids.prev_slice(slice_ref, offset);
+        scanned = scanned + 1;
     };
 
     option::none()
 }
 
 /// Returns the mid price of the order book.
+/// Aborts `EEmptyOrderbook` if either side has no live order within the first
+/// `max_fills` orders (see `best_ask_price`) — i.e. a genuinely empty side, or a
+/// degenerate side whose top `max_fills` orders are all expired.
 public(package) fun mid_price(self: &Book, current_timestamp: u64): u64 {
     let ask = self.best_ask_price(current_timestamp);
     let bid = self.best_bid_price(current_timestamp);

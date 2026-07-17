@@ -965,6 +965,219 @@ fun best_bid_ask_skips_expired_orders() {
     end(test);
 }
 
+#[test_only]
+/// Place `count` resting orders on the `is_bid` side, all at `price`, owned by
+/// `trader`'s balance manager, expiring at `expire`. Used to build an expired
+/// top-of-book backlog larger than `max_fills` for the bounded-scan tests.
+/// Orders at the same price coexist as distinct entries, so the getter walks
+/// each one; the backlog is split across managers because a single manager is
+/// capped at `max_open_orders`.
+fun seed_resting_orders(
+    trader: address,
+    is_bid: bool,
+    count: u64,
+    price: u64,
+    expire: u64,
+    pool_id: ID,
+    balance_manager_id: ID,
+    test: &mut Scenario,
+) {
+    let quantity = 1 * constants::float_scaling();
+    count.do!(|i| {
+        place_limit_order<SUI, USDC>(
+            trader,
+            pool_id,
+            balance_manager_id,
+            i + 1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            true,
+            expire,
+            test,
+        );
+    });
+}
+
+#[test]
+fun best_ask_price_bounded_at_max_fills_returns_none() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let expired_price = 2 * constants::float_scaling();
+    let live_price = 3 * constants::float_scaling();
+    let expire_soon = get_time(&mut test) + 100;
+
+    // max_fills expired asks at the top of book (ALICE, at her open-order cap),
+    // then one live ask just beyond the cap from a second manager.
+    seed_resting_orders(
+        ALICE,
+        false,
+        constants::max_fills(),
+        expired_price,
+        expire_soon,
+        pool_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    seed_resting_orders(
+        BOB,
+        false,
+        1,
+        live_price,
+        constants::max_u64(),
+        pool_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+
+    set_time(expire_soon + 1, &mut test);
+
+    // The live ask exists, but sits beyond max_fills expired orders. The bounded
+    // scan stops at the cap and reports the side as empty — the same horizon a
+    // taker sees, since matching is also capped at max_fills.
+    assert!(get_best_ask_price<SUI, USDC>(pool_id, &mut test).is_none());
+
+    end(test);
+}
+
+#[test]
+fun best_ask_price_finds_live_within_max_fills() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let expired_price = 2 * constants::float_scaling();
+    let live_price = 3 * constants::float_scaling();
+    let expire_soon = get_time(&mut test) + 100;
+
+    // One fewer than max_fills expired asks, then a live ask at the max_fills-th
+    // position — the scan reaches it (scanned = max_fills - 1 < max_fills).
+    seed_resting_orders(
+        ALICE,
+        false,
+        constants::max_fills() - 1,
+        expired_price,
+        expire_soon,
+        pool_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    seed_resting_orders(
+        BOB,
+        false,
+        1,
+        live_price,
+        constants::max_u64(),
+        pool_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+
+    set_time(expire_soon + 1, &mut test);
+
+    assert_eq!(get_best_ask_price<SUI, USDC>(pool_id, &mut test).destroy_some(), live_price);
+
+    end(test);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::book::EEmptyOrderbook)]
+fun mid_price_aborts_when_ask_top_of_book_expired_past_cap() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let expire_soon = get_time(&mut test) + 100;
+
+    // ALICE fills her open-order cap with max_fills expired asks. BOB adds a live
+    // bid (keeps the bid side valid) and a live ask beyond the cap.
+    seed_resting_orders(
+        ALICE,
+        false,
+        constants::max_fills(),
+        2 * constants::float_scaling(),
+        expire_soon,
+        pool_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+    seed_resting_orders(
+        BOB,
+        true,
+        1,
+        1 * constants::float_scaling(),
+        constants::max_u64(),
+        pool_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+    seed_resting_orders(
+        BOB,
+        false,
+        1,
+        3 * constants::float_scaling(),
+        constants::max_u64(),
+        pool_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+
+    set_time(expire_soon + 1, &mut test);
+
+    // A live ask exists (beyond the cap), but the bounded scan cannot reach it,
+    // so mid_price treats the ask side as empty and aborts.
+    let _mid = get_mid_price<SUI, USDC>(pool_id, &mut test);
+    end(test);
+}
+
 #[test]
 fun test_swap_exact_not_fully_filled_bid_ok() {
     test_swap_exact_not_fully_filled(true, false, false, false, false);
