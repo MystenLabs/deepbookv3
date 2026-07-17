@@ -90,9 +90,10 @@ fun near_expiry_leverage_exact_quantity_mint_rejected() {
     abort 999
 }
 
-/// The sizing path reaches the cap through a second admission entry
-/// (`quote_mint_entry_probability`), so it needs its own end-to-end proof: a 2x
-/// sized mint inside the window is refused through `mint_exact_amount` too.
+/// The sizing path reaches the cap through a different interior gate than the
+/// exact path — `quote_mint_terms` runs the pre-probe policy assert before its
+/// budget search — so it needs its own end-to-end proof: a 2x sized mint inside
+/// the window is refused through `mint_exact_amount` too.
 #[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
 fun near_expiry_leverage_exact_amount_mint_rejected() {
     let mut fx = helpers::setup_market_default();

@@ -70,6 +70,20 @@ fun template_min_fee_above_max_aborts() {
 // `EInvalidEntryProbabilityBound` check, so the just-outside envelope value
 // aborts with the envelope code even though it also violates the relational
 // bound.
+// The 1% envelope floor is load-bearing for budget-bias mint sizing: one
+// premium unit of probe conservatism stays sub-lot only while entry
+// probability cannot be configured below it (RP-13).
+#[test, expected_failure(abort_code = config_constants::EInvalidMinEntryProbability)]
+fun template_min_entry_probability_below_envelope_floor_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_min_entry_probability(
+        &admin_cap,
+        config_constants::min_min_entry_probability!() - 1,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidMinEntryProbability)]
 fun template_min_entry_probability_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
@@ -219,9 +233,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
     // Envelope floors. `max_entry_probability`'s envelope floor (0) is
-    // relationally unreachable: the setter requires max > min and min's floor
-    // is 0, so the smallest settable max entry probability is 1. min entry
-    // probability must drop to 0 first.
+    // relationally unreachable: the setter requires max > min and min's
+    // envelope floor is 1% (RP-13), so the smallest settable max entry
+    // probability is one unit above that floor. min entry probability must
+    // drop to its floor first.
     config.set_template_base_fee(&admin_cap, config_constants::min_base_fee!());
     config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
     config.set_template_min_entry_probability(
@@ -230,7 +245,7 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     );
     config.set_template_max_entry_probability(
         &admin_cap,
-        config_constants::min_max_entry_probability!() + 1,
+        config_constants::min_min_entry_probability!() + 1,
     );
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
@@ -256,7 +271,7 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.min_entry_probability(), config_constants::min_min_entry_probability!());
     assert_eq!(
         snapshot.max_entry_probability(),
-        config_constants::min_max_entry_probability!() + 1,
+        config_constants::min_min_entry_probability!() + 1,
     );
     assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::min_expiry_fee_window_ms!());
     assert_eq!(

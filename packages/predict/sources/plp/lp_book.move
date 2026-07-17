@@ -614,18 +614,11 @@ fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
 
 fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
     if (total_supply == 0) return false;
-    let price_floor = math::try_mul_div_down(
-        pool_value,
-        constants::plp_price_unit!(),
-        total_supply,
-    );
-    let price_ceil = math::try_mul_div_up(
-        pool_value,
-        constants::plp_price_unit!(),
-        total_supply,
-    );
-    price_floor.is_some()
-        && price_ceil.is_some()
-        && *price_floor.borrow() >= constants::min_executable_plp_price!()
-        && *price_ceil.borrow() <= constants::max_executable_plp_price!()
+    // Executable iff the mark price is within band× of unit parity in both
+    // directions (dUSDC and PLP share 6 decimals, so unit price is raw-unit
+    // parity and no price unit enters the test):
+    //   price <= band    <=>  pool_value <= band·supply  <=>  ceil(pv/band) <= supply
+    //   price >= 1/band  <=>  supply <= band·pool_value  <=>  ceil(supply/band) <= pv
+    let band = constants::executable_price_band_factor!();
+    pool_value.div_ceil(band) <= total_supply && total_supply.div_ceil(band) <= pool_value
 }

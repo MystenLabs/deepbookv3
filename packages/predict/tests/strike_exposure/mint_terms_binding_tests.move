@@ -48,7 +48,9 @@ fun allocating_terms_priced_on_another_exposure_aborts() {
             &pricer,
             test_constants::default_strike_tick(),
             constants::pos_inf_tick!(),
+            0,
             test_constants::mint_quantity(),
+            true,
             test_constants::leverage_one_x(),
             fx.clock(),
         );

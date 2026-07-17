@@ -10,7 +10,7 @@
 /// market liveness, feed freshness, and Predict's pricing-safe BS input envelope.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, pricing_config::PricingConfig};
+use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
 use fixed_math::{i64, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
@@ -72,11 +72,12 @@ const EBlockScholesSVIUnavailable: u64 = 15;
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
 /// tightly enough that Predict's fixed-point pricing math remains live and
 /// meaningful.
-macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
+macro fun max_pricing_basis_factor(): u64 { 100 }
 
-// max_pricing_spot * max_pricing_basis / float_scaling <= u64::max by
-// construction: the re-anchored forward (spot * basis) can't overflow u64.
-macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+// Co-designed with the basis factor: forward <= factor * spot (envelope) and
+// spot <= u64::max / factor, so the re-anchored forward spot * bs_forward /
+// bs_spot <= factor * spot can't overflow u64.
+macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
 
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 
@@ -85,14 +86,16 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // === Public Functions ===
 
 /// Return the current UP tail price for one strike. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
-public fun up_price(pricer: &Pricer, strike: u64): u64 {
+/// SDK/devInspect board pricing off a legitimately loaded `Pricer`; construct the
+/// strike on-chain via `range_codec::strike_from_tick`.
+public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
 /// Return the current raw probability for a live range. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
-public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+/// SDK/devInspect board pricing off a legitimately loaded `Pricer`; construct the
+/// strikes on-chain via `range_codec::strike_from_tick`.
+public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
@@ -182,7 +185,7 @@ public(package) fun price_and_cache(
     tick: u64,
     tick_size: u64,
 ): u64 {
-    let price = pricer.up_price(tick * tick_size);
+    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
     price
@@ -322,14 +325,14 @@ fun resolve_live_pricer(
         let pyth_spot = pyth_spot.destroy_some();
         let spot = pyth_spot.read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
-        // Re-anchored forward = spot * (bs_forward / bs_spot) is intentionally
-        // NOT re-bounded to max_pricing_spot: with basis up to max_pricing_basis
-        // (100x), a legitimate contango forward exceeds the spot ceiling. The two
-        // envelope ceilings are co-designed so spot * basis <= u64::max (no
-        // overflow), and compute_nd2's deep-tail saturations keep pricing live
-        // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
-        // reads (R1 liveness).
-        forward = math::mul(spot, math::div(bs_forward, bs_spot));
+        // Re-anchored forward = spot * bs_forward / bs_spot (one floor) is
+        // intentionally NOT re-bounded to max_pricing_spot: with basis up to
+        // max_pricing_basis_factor (100x), a legitimate contango forward exceeds
+        // the spot ceiling. The envelope ceilings are co-designed so the result
+        // <= factor * spot <= u64::max (no overflow), and compute_nd2's deep-tail
+        // saturations keep pricing live (P->1) there. A forward ceiling here
+        // would abort valid mint/redeem/NAV reads (R1 liveness).
+        forward = math::mul_div_down(spot, bs_forward, bs_spot);
     };
 
     Pricer {
@@ -351,11 +354,12 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    assert!(
-        ((forward as u128) * (math::float_scaling!() as u128)) / (spot as u128)
-            <= (max_pricing_basis!() as u128),
-        EBlockScholesInputsInvalid,
-    );
+    // Basis cap at exactly `factor` (`basis <= factor`): forward <= factor * spot
+    // <=> ceil(forward / factor) <= spot, u64-native with no widening. The exact
+    // bound is what keeps the re-anchored forward `mul_div_down(spot, forward,
+    // spot')` inside u64; rejecting a too-high basis at this input gate is
+    // fail-safe, never a fund path.
+    assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
@@ -367,8 +371,8 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+    assert!(lower.value() < higher.value(), EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
@@ -379,15 +383,15 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 }
 
 /// Compute the fair UP tail price for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
-    if (strike == constants::neg_inf!()) {
+fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+    if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
-    if (strike == constants::pos_inf!()) {
+    if (strike.is_pos_inf()) {
         return 0
     };
 
-    compute_nd2(svi, forward, strike)
+    compute_nd2(svi, forward, strike.value())
 }
 
 /// Binary pricing from SVI total variance:
@@ -398,18 +402,17 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // strike / forward in 1e9 fixed point, computed in u128 so both deep tails
-    // saturate instead of underflowing to 0 (which would abort) or wrapping the u64
-    // cast. Reaching either tail needs the forward to leave the entire encodable
-    // strike ladder by orders of magnitude; saturating keeps NAV / redeem /
-    // liquidation reads live there rather than aborting the whole market.
-    let strike_ratio_scaled =
-        ((strike as u128) * (math::float_scaling!() as u128)) / (forward as u128);
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio_scaled == 0) return math::float_scaling!();
+    // strike / forward in 1e9 fixed point; both deep tails saturate instead of
+    // underflowing to 0 (which would abort) or wrapping the u64 cast. Reaching
+    // either tail needs the forward to leave the entire encodable strike ladder by
+    // orders of magnitude; saturating keeps NAV / redeem / liquidation reads live
+    // there rather than aborting the whole market.
+    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_scaled > (std::u64::max_value!() as u128)) return 0;
-    let strike_ratio = strike_ratio_scaled as u64;
+    if (strike_ratio_opt.is_none()) return 0;
+    let strike_ratio = strike_ratio_opt.destroy_some();
+    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
+    if (strike_ratio == 0) return math::float_scaling!();
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
