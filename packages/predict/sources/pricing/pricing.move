@@ -19,7 +19,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use sui::{clock::Clock, object::ID};
+use sui::clock::Clock;
 
 /// Value snapshot of live oracle inputs for one market's price calculations.
 public struct Pricer has copy, drop {
@@ -99,6 +99,8 @@ public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
 
+// === Public-Package Functions ===
+
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
@@ -119,8 +121,6 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
 }
-
-// === Public-Package Functions ===
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.

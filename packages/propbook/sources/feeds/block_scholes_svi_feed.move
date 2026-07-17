@@ -234,7 +234,7 @@ fun update_expiry(
     if (feed.expiries.contains(expiry_ms)) {
         feed.expiries.borrow_mut(expiry_ms).update(read, propbook_oracle_id);
     } else {
-        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
         lane.update(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
@@ -251,7 +251,7 @@ fun insert_expiry_at(
     if (feed.expiries.contains(expiry_ms)) {
         feed.expiries.borrow_mut(expiry_ms).insert_at(read, propbook_oracle_id);
     } else {
-        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
         lane.insert_at(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
