@@ -37,6 +37,12 @@ use fun df::remove as UID.remove;
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EBalanceTooLow: u64 = 1;
+/// Unreachable, and so carries no `expected_failure` test (unit-tests.md Rule 4):
+/// `Auth`'s fields are module-private and its only constructors set `kind` to
+/// `AUTH_OWNER` (`generate_auth`, `generate_auth_as_object`) or `AUTH_APP`
+/// (`generate_auth_as_app`). `load_account_mut` reaches this assert only in the
+/// `kind != AUTH_OWNER` branch, which therefore already implies `AUTH_APP`. It is
+/// a defensive backstop against a future third kind, not a live rejection path.
 const EInvalidAuth: u64 = 2;
 
 // === Auth Kinds ===
@@ -75,7 +81,14 @@ public struct CoinKey<phantom T>() has copy, drop, store;
 
 /// Hot-potato authority to mutably open an `AccountWrapper`.
 public struct Auth {
+    /// `AUTH_OWNER` or `AUTH_APP`. No other value is constructible: the fields are
+    /// module-private and every constructor sets one of the two.
     kind: u8,
+    /// Meaningful only when `kind == AUTH_OWNER`, where it is the authority the
+    /// account is matched against — a transaction sender (`generate_auth`) or an
+    /// object address (`generate_auth_as_object`). When `kind == AUTH_APP` this
+    /// is the `@0x0` sentinel and is never read: app authority is carried by the
+    /// registry's authorization of the app, not by an address here.
     owner: address,
 }
 

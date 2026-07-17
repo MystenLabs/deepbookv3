@@ -9,6 +9,14 @@ module propbook::constants;
 
 /// Running package version: the exact version a feed must match to accept
 /// updates, and the target of each feed's `migrate`.
+///
+/// Why every feed's `EWrongVersion` gate is unreachable within one package
+/// version (and so carries no `expected_failure` test, per unit-tests.md Rule 4):
+/// `create_and_share` stamps a feed with `current_version!()`, and `migrate` only
+/// advances a feed forward to that same compiled constant. So a feed's `version`
+/// can never diverge from `current_version!()` at a single package version. The
+/// gate fires only after a live package upgrade, against a feed that has not been
+/// migrated yet — which is exactly what it exists to do.
 public(package) macro fun current_version(): u64 {
     1
 }

@@ -16,6 +16,9 @@ use propbook::{constants, oracle_lane::{Self, OracleLane, OracleRead}};
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use sui::clock::Clock;
 
+/// Unreachable within one package version; documented at
+/// `constants::current_version`. Fires only against an unmigrated feed after
+/// a live package upgrade.
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
 const ERawSpotNotFound: u64 = 2;

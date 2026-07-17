@@ -14,6 +14,9 @@ use sui::{clock::Clock, table::{Self, Table}};
 
 const EWrongSource: u64 = 0;
 const ERawForwardNotFound: u64 = 1;
+/// Unreachable within one package version; documented at
+/// `constants::current_version`. Fires only against an unmigrated feed after
+/// a live package upgrade.
 const EWrongVersion: u64 = 2;
 const ENotNewerVersion: u64 = 3;
 
