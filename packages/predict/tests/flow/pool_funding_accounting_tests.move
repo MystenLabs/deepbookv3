@@ -5,7 +5,7 @@
 #[test_only]
 module deepbook_predict::flow_pool_funding_accounting_tests;
 
-use deepbook_predict::{market_setup, test_values, test_world};
+use deepbook_predict::{market_setup, oracle_setup, test_values, test_world};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::{coin, test_scenario::return_shared};
@@ -20,10 +20,10 @@ fun expiry_cash_rebalance_moves_only_the_configured_allocation() {
 
     test_world::next_tx(&mut world, test_values::admin());
     market_setup::configure_default_cadence(&mut world, &resources);
-    let oracles = market_setup::create_default_oracles(&mut world);
+    let oracles = oracle_setup::create_default_oracles(&mut world);
 
     test_world::next_tx(&mut world, test_values::admin());
-    market_setup::bind_default_oracles(&world, &resources, &oracles);
+    oracle_setup::bind_default_oracles(&world, &resources, &oracles);
 
     test_world::next_tx(&mut world, test_values::admin());
     let (market_handle, lifecycle_cap) = market_setup::create_default_market(

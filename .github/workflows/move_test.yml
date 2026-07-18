@@ -31,6 +31,9 @@ jobs:
             | sudo tar -xz -C /usr/local/bin
           sui --version
 
+      - name: Check Predict test architecture
+        run: python3 packages/predict/tests/check_architecture.py
+
       - name: Run Move tests
         run: |
           for dir in packages/*; do

@@ -6,7 +6,15 @@
 module deepbook_predict::flow_mint_accounting_tests;
 
 use account::{account::{Self, AccountWrapper}, account_registry::AccountRegistry};
-use deepbook_predict::{constants, market_setup, predict_account, test_values, test_world};
+use deepbook_predict::{
+    constants,
+    market_setup,
+    oracle_profile,
+    oracle_setup,
+    predict_account,
+    test_values,
+    test_world
+};
 use dusdc::dusdc::DUSDC;
 use std::{u64, unit_test::assert_eq};
 use sui::{coin, test_scenario::return_shared};
@@ -21,10 +29,10 @@ fun mint_preserves_cash_and_liability_accounting() {
 
     test_world::next_tx(&mut world, test_values::admin());
     market_setup::configure_default_cadence(&mut world, &resources);
-    let oracles = market_setup::create_default_oracles(&mut world);
+    let oracles = oracle_setup::create_default_oracles(&mut world);
 
     test_world::next_tx(&mut world, test_values::admin());
-    market_setup::bind_default_oracles(&world, &resources, &oracles);
+    oracle_setup::bind_default_oracles(&world, &resources, &oracles);
 
     test_world::next_tx(&mut world, test_values::admin());
     let (market_handle, lifecycle_cap) = market_setup::create_default_market(
@@ -55,34 +63,19 @@ fun mint_preserves_cash_and_liability_accounting() {
     return_shared(vault);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let mut pyth = market_setup::take_pyth(&world, &oracles);
-    let mut bs_spot = market_setup::take_bs_spot(&world, &oracles);
-    let mut bs_forward = market_setup::take_bs_forward(&world, &oracles);
-    let mut bs_svi = market_setup::take_bs_svi(&world, &oracles);
-    market_setup::seed_pyth(
+    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
+    let mut bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
+    let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
+    let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
+    let profile = oracle_profile::smoke();
+    oracle_setup::seed_surface(
         &mut pyth,
-        test_values::live_price(),
-        test_values::live_source_timestamp_ms(),
-        test_values::now_ms(),
-    );
-    market_setup::seed_bs_spot(
         &mut bs_spot,
-        test_values::live_price(),
-        test_values::live_source_timestamp_ms(),
-        test_world::clock(&resources),
-    );
-    market_setup::seed_bs_forward(
         &mut bs_forward,
-        market_setup::expiry_ms(&market_handle),
-        test_values::live_price(),
-        test_values::live_source_timestamp_ms(),
-        test_world::clock(&resources),
-        test_world::ctx(&mut world),
-    );
-    market_setup::seed_default_bs_svi(
         &mut bs_svi,
         market_setup::expiry_ms(&market_handle),
-        test_values::live_source_timestamp_ms(),
+        &profile,
+        test_values::now_ms(),
         test_world::clock(&resources),
         test_world::ctx(&mut world),
     );
@@ -122,10 +115,10 @@ fun mint_preserves_cash_and_liability_accounting() {
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
     let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = market_setup::take_pyth(&world, &oracles);
-    let bs_spot = market_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = market_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = market_setup::take_bs_svi(&world, &oracles);
+    let pyth = oracle_setup::take_pyth(&world, &oracles);
+    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
+    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
+    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let pricer = market.load_live_pricer(
         &config,
         &oracle_registry,

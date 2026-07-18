@@ -1,22 +1,26 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Structural guards for incomplete canonical live-oracle state.
+/// Exact fixed-point pricing behavior for an algebraically exact surface.
 #[test_only]
-module deepbook_predict::structure_oracle_guard_tests;
+module deepbook_predict::mechanics_pricing_rounding_tests;
 
 use deepbook_predict::{
+    constants,
     market_setup,
     oracle_profile,
     oracle_setup,
-    pricing,
+    range_codec::strike_for_testing as strike,
     test_values,
     test_world
 };
+use fixed_math::math;
+use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
-fun missing_forward_value_aborts_live_pricing() {
+#[test]
+fun one_raw_variance_unit_at_forward_is_exactly_one_half() {
+    let profile = oracle_profile::exact_half();
     let (mut world, resources) = test_world::new(
         test_values::system(),
         test_values::admin(),
@@ -31,7 +35,7 @@ fun missing_forward_value_aborts_live_pricing() {
     oracle_setup::bind_default_oracles(&world, &resources, &oracles);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let (market_handle, _lifecycle_cap) = market_setup::create_default_market(
+    let (market_handle, lifecycle_cap) = market_setup::create_default_market(
         &mut world,
         &resources,
     );
@@ -42,31 +46,20 @@ fun missing_forward_value_aborts_live_pricing() {
     let oracle_registry = test_world::take_oracle_registry(&world);
     let mut pyth = oracle_setup::take_pyth(&world, &oracles);
     let mut bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
+    let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
     let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let profile = oracle_profile::smoke();
-
-    oracle_setup::seed_pyth(
+    oracle_setup::seed_surface(
         &mut pyth,
-        profile.spot(),
-        profile.source_timestamp_ms(),
-        test_values::now_ms(),
-    );
-    oracle_setup::seed_bs_spot(
         &mut bs_spot,
-        profile.spot(),
-        profile.source_timestamp_ms(),
-        test_world::clock(&resources),
-    );
-    oracle_setup::seed_bs_svi(
+        &mut bs_forward,
         &mut bs_svi,
         market_setup::expiry_ms(&market_handle),
         &profile,
+        test_values::now_ms(),
         test_world::clock(&resources),
         test_world::ctx(&mut world),
     );
-
-    let _ = market.load_live_pricer(
+    let pricer = market.load_live_pricer(
         &config,
         &oracle_registry,
         &pyth,
@@ -76,6 +69,12 @@ fun missing_forward_value_aborts_live_pricing() {
         test_world::clock(&resources),
     );
 
+    let actual = pricer.range_price(
+        strike(profile.forward()),
+        strike(constants::pos_inf!()),
+    );
+    assert_eq!(actual, math::float_scaling!() / 2);
+
     return_shared(bs_svi);
     return_shared(bs_forward);
     return_shared(bs_spot);
@@ -83,5 +82,6 @@ fun missing_forward_value_aborts_live_pricing() {
     return_shared(oracle_registry);
     return_shared(config);
     return_shared(market);
-    abort 999
+    lifecycle_cap.destroy();
+    test_world::finish(world, resources);
 }

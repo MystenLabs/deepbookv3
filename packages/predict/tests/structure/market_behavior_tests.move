@@ -9,6 +9,7 @@ use block_scholes_oracle::update;
 use deepbook_predict::{
     expiry_market::ExpiryMarket,
     market_manager,
+    oracle_profile,
     pricing,
     test_values,
     test_world
@@ -26,6 +27,7 @@ use sui::test_scenario::return_shared;
 const PYTH_EXPONENT_NEGATIVE_NINE: u16 = 9;
 #[test]
 fun production_market_loads_bound_live_surface() {
+    let profile = oracle_profile::smoke();
     let (mut world, resources) = test_world::new(
         test_values::system(),
         test_values::admin(),
@@ -174,19 +176,19 @@ fun production_market_loads_bound_live_surface() {
 
     pyth_feed::record_raw_for_testing(
         &mut pyth,
-        test_values::live_price(),
+        profile.spot(),
         false,
         PYTH_EXPONENT_NEGATIVE_NINE,
         true,
-        test_values::live_source_timestamp_ms() * 1000,
+        profile.source_timestamp_ms() * 1000,
         test_values::now_ms(),
         false,
     );
     bs_spot.update(
         update::new_spot_update(
             test_values::pyth_source_id(),
-            test_values::live_source_timestamp_ms(),
-            test_values::live_price(),
+            profile.source_timestamp_ms(),
+            profile.spot(),
         ),
         test_world::clock(&resources),
     );
@@ -194,8 +196,8 @@ fun production_market_loads_bound_live_surface() {
         update::new_forward_update(
             test_values::pyth_source_id(),
             test_values::expiry_ms(),
-            test_values::live_source_timestamp_ms(),
-            test_values::live_price(),
+            profile.source_timestamp_ms(),
+            profile.forward(),
         ),
         test_world::clock(&resources),
         test_world::ctx(&mut world),
@@ -204,15 +206,15 @@ fun production_market_loads_bound_live_surface() {
         update::new_svi_update(
             test_values::pyth_source_id(),
             test_values::expiry_ms(),
-            test_values::live_source_timestamp_ms(),
-            test_values::svi_a(),
-            false,
-            test_values::svi_b(),
-            test_values::svi_sigma(),
-            test_values::svi_rho_magnitude(),
-            false,
-            test_values::svi_m_magnitude(),
-            false,
+            profile.source_timestamp_ms(),
+            profile.svi_a(),
+            profile.svi_a_is_negative(),
+            profile.svi_b(),
+            profile.svi_sigma(),
+            profile.svi_rho_magnitude(),
+            profile.svi_rho_is_negative(),
+            profile.svi_m_magnitude(),
+            profile.svi_m_is_negative(),
         ),
         test_world::clock(&resources),
         test_world::ctx(&mut world),
@@ -228,21 +230,18 @@ fun production_market_loads_bound_live_surface() {
         test_world::clock(&resources),
     );
     assert_eq!(pricing::expiry_market_id(&pricer), market_id);
-    assert_eq!(
-        pricing::pyth_spot_source_timestamp_ms(&pricer),
-        test_values::live_source_timestamp_ms(),
-    );
+    assert_eq!(pricing::pyth_spot_source_timestamp_ms(&pricer), profile.source_timestamp_ms());
     assert_eq!(
         pricing::block_scholes_spot_source_timestamp_ms(&pricer),
-        test_values::live_source_timestamp_ms(),
+        profile.source_timestamp_ms(),
     );
     assert_eq!(
         pricing::block_scholes_forward_source_timestamp_ms(&pricer),
-        test_values::live_source_timestamp_ms(),
+        profile.source_timestamp_ms(),
     );
     assert_eq!(
         pricing::block_scholes_svi_source_timestamp_ms(&pricer),
-        test_values::live_source_timestamp_ms(),
+        profile.source_timestamp_ms(),
     );
 
     return_shared(bs_svi);
