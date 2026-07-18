@@ -17,8 +17,9 @@ const EXACT_HALF_SVI_A: u64 = 1;
 const EXACT_HALF_SVI_SIGMA: u64 = 1_000_000;
 
 public struct SurfaceProfile has copy, drop {
-    spot: u64,
-    forward: u64,
+    pyth_spot: u64,
+    block_scholes_spot: u64,
+    block_scholes_forward: u64,
     svi_a: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -31,8 +32,9 @@ public struct SurfaceProfile has copy, drop {
 }
 
 public fun new(
-    spot: u64,
-    forward: u64,
+    pyth_spot: u64,
+    block_scholes_spot: u64,
+    block_scholes_forward: u64,
     svi_a: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -44,8 +46,9 @@ public fun new(
     source_timestamp_ms: u64,
 ): SurfaceProfile {
     SurfaceProfile {
-        spot,
-        forward,
+        pyth_spot,
+        block_scholes_spot,
+        block_scholes_forward,
         svi_a,
         svi_a_is_negative,
         svi_b,
@@ -60,6 +63,7 @@ public fun new(
 
 public fun smoke(): SurfaceProfile {
     new(
+        SMOKE_SPOT,
         SMOKE_SPOT,
         SMOKE_SPOT,
         SMOKE_SVI_A,
@@ -78,6 +82,7 @@ public fun exact_half(): SurfaceProfile {
     new(
         SMOKE_SPOT,
         SMOKE_SPOT,
+        SMOKE_SPOT,
         EXACT_HALF_SVI_A,
         false,
         0,
@@ -90,9 +95,11 @@ public fun exact_half(): SurfaceProfile {
     )
 }
 
-public fun spot(profile: &SurfaceProfile): u64 { profile.spot }
+public fun pyth_spot(profile: &SurfaceProfile): u64 { profile.pyth_spot }
 
-public fun forward(profile: &SurfaceProfile): u64 { profile.forward }
+public fun block_scholes_spot(profile: &SurfaceProfile): u64 { profile.block_scholes_spot }
+
+public fun block_scholes_forward(profile: &SurfaceProfile): u64 { profile.block_scholes_forward }
 
 public fun svi_a(profile: &SurfaceProfile): u64 { profile.svi_a }
 

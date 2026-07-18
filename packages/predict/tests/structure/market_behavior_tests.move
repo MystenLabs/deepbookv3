@@ -176,7 +176,7 @@ fun production_market_loads_bound_live_surface() {
 
     pyth_feed::record_raw_for_testing(
         &mut pyth,
-        profile.spot(),
+        profile.pyth_spot(),
         false,
         PYTH_EXPONENT_NEGATIVE_NINE,
         true,
@@ -188,7 +188,7 @@ fun production_market_loads_bound_live_surface() {
         update::new_spot_update(
             test_values::pyth_source_id(),
             profile.source_timestamp_ms(),
-            profile.spot(),
+            profile.block_scholes_spot(),
         ),
         test_world::clock(&resources),
     );
@@ -197,7 +197,7 @@ fun production_market_loads_bound_live_surface() {
             test_values::pyth_source_id(),
             test_values::expiry_ms(),
             profile.source_timestamp_ms(),
-            profile.forward(),
+            profile.block_scholes_forward(),
         ),
         test_world::clock(&resources),
         test_world::ctx(&mut world),

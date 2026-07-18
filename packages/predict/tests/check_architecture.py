@@ -22,6 +22,11 @@ ATTRIBUTED_PUBLIC_FUNCTION = re.compile(
     r"public(?:\(package\))?\s+fun\s+(?P<name>[a-z][a-z0-9_]*)",
     re.DOTALL,
 )
+ATTRIBUTED_FUNCTION = re.compile(
+    r"(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)"
+    r"(?:public(?:\(package\))?\s+)?fun\s+(?P<name>[a-z][a-z0-9_]*)",
+    re.DOTALL,
+)
 FOR_TESTING_FUNCTION = re.compile(r"\bfun\s+([a-z][a-z0-9_]*_for_testing)\s*[<(]")
 # Exact inventory of pre-existing source seams, not approval to add equivalents.
 APPROVED_SOURCE_TEST_SEAMS = {
@@ -144,10 +149,106 @@ def scenario_constructor_count(source: str) -> int:
 def accesses_scenario_api(source: str) -> bool:
     if re.search(r"\bScenario\b|\btest_scenario\s*::\s*(?:begin|Self)\b", source):
         return True
-    group = re.search(r"\btest_scenario\s*::\s*\{(?P<body>[^}]*)\}", source, re.DOTALL)
-    if group and re.search(r"\b(?:begin|Self)\b", group.group("body")):
-        return True
+    for group in re.finditer(
+        r"\btest_scenario\s*::\s*\{(?P<body>[^}]*)\}", source, re.DOTALL
+    ):
+        if re.search(r"\b(?:begin|Self)\b", group.group("body")):
+            return True
     return re.search(r"\btest_scenario\s+as\s+[a-z][a-z0-9_]*\b", source) is not None
+
+
+def has_executable_test(source: str) -> bool:
+    return bool({"test", "random_test"} & attribute_names(source))
+
+
+def scenario_field_count(source: str) -> int:
+    return len(re.findall(r":\s*Scenario\b", source))
+
+
+def attributed_test_spans(source: str) -> list[tuple[str, str, int, int]]:
+    functions = []
+    for function in ATTRIBUTED_FUNCTION.finditer(source):
+        if not ({"test", "random_test"} & attribute_names(function.group("attributes"))):
+            continue
+        body_start = source.find("{", function.end())
+        if body_start < 0:
+            continue
+        depth = 0
+        for index in range(body_start, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    functions.append(
+                        (function.group("name"), source[body_start + 1:index], body_start, index + 1)
+                    )
+                    break
+    return functions
+
+
+def attributed_test_bodies(source: str) -> list[tuple[str, str]]:
+    return [(name, body) for name, body, _, _ in attributed_test_spans(source)]
+
+
+def source_outside_test_bodies(source: str) -> str:
+    outside = list(source)
+    for _, _, start, end in attributed_test_spans(source):
+        outside[start:end] = " " * (end - start)
+    return "".join(outside)
+
+
+def world_constructor_aliases(source: str) -> tuple[set[str], set[str]]:
+    namespace_aliases = {"test_world"}
+    namespace_aliases.update(
+        re.findall(r"\btest_world\s+as\s+([a-z][a-z0-9_]*)\b", source)
+    )
+    function_aliases: set[str] = set()
+    for group in re.finditer(r"\btest_world\s*::\s*\{(?P<body>[^}]*)\}", source, re.DOTALL):
+        body = group.group("body")
+        namespace_aliases.update(
+            re.findall(r"\bSelf\s+as\s+([a-z][a-z0-9_]*)\b", body)
+        )
+        for function in re.finditer(r"\bnew\b(?:\s+as\s+([a-z][a-z0-9_]*))?", body):
+            function_aliases.add(function.group(1) or "new")
+    for function in re.finditer(
+        r"\btest_world\s*::\s*new\b(?:\s+as\s+([a-z][a-z0-9_]*))?\s*;",
+        source,
+    ):
+        function_aliases.add(function.group(1) or "new")
+    return namespace_aliases, function_aliases
+
+
+def world_constructor_count(body: str, aliases: tuple[set[str], set[str]]) -> int:
+    namespace_aliases, function_aliases = aliases
+    count = sum(
+        len(re.findall(rf"\b{re.escape(alias)}\s*::\s*new\s*\(", body))
+        for alias in namespace_aliases
+    )
+    count += sum(
+        len(re.findall(rf"(?<!::)\b{re.escape(alias)}\s*\(", body))
+        for alias in function_aliases
+    )
+    return count
+
+
+def taxonomy_errors(source_path: str, scope: str, module: str) -> list[str]:
+    errors = []
+    module_tokens = set(module.split("_"))
+    scope_tokens = module_tokens & SCOPES
+    intent_tokens = module_tokens & INTENTS
+    if scope not in SCOPES:
+        errors.append(f"{source_path}: executable module has unknown scope path '{scope}'")
+        return errors
+    if scope_tokens != {scope}:
+        errors.append(
+            f"{source_path}: module '{module}' must contain exactly the path scope '{scope}'"
+        )
+    if len(intent_tokens) != 1:
+        errors.append(
+            f"{source_path}: module '{module}' must contain exactly one intent token"
+        )
+    return errors
 
 
 def main() -> int:
@@ -164,38 +265,45 @@ def main() -> int:
         errors.extend(source_boundary_errors(source_path, path.read_text()))
 
     scenario_fields: list[tuple[Path, int]] = []
-    world_constructor_count = 0
+    scenario_world_constructor_count = 0
     for path in move_files:
         text = path.read_text()
         source = source_without_comments(text)
-        field_count = len(re.findall(r":\s*Scenario\b", source))
+        field_count = scenario_field_count(source)
         if field_count:
             scenario_fields.append((path, field_count))
         if path == world_file:
-            world_constructor_count = scenario_constructor_count(source)
+            scenario_world_constructor_count = scenario_constructor_count(source)
         elif accesses_scenario_api(source):
             errors.append(f"{relative(path)}: test_world must own all Scenario API access")
-        if path != world_file and re.search(r"\btake_shared\s*<", text):
+        if path != world_file and re.search(r"\btake_shared\s*<", source):
             errors.append(f"{relative(path)}: ambient take_shared<T> is bootstrap-only")
-        if path.parent == TESTS / "framework" and path != world_file:
-            if re.search(r"(?:\.|::)next_tx\s*\(", text):
-                errors.append(f"{relative(path)}: framework prerequisite hides next_tx")
+        executable = has_executable_test(source)
+        if path != world_file:
+            outside_tests = source_outside_test_bodies(source)
+            if re.search(r"(?:\.|::)next_tx\s*\(", outside_tests):
+                errors.append(f"{relative(path)}: prerequisite helper hides next_tx")
+            aliases = world_constructor_aliases(source)
+            if world_constructor_count(outside_tests, aliases):
+                errors.append(f"{relative(path)}: test World construction must stay in test bodies")
 
-        if not re.search(r"#\[test(?:\]|,)", text):
+        if not executable:
             continue
         scope = path.relative_to(TESTS).parts[0]
-        if scope not in SCOPES:
-            errors.append(f"{relative(path)}: executable module has unknown scope path '{scope}'")
-            continue
-        module_match = re.search(r"module\s+deepbook_predict::([a-z0-9_]+)\s*;", text)
+        module_match = re.search(r"module\s+deepbook_predict::([a-z0-9_]+)\s*;", source)
         if not module_match:
             errors.append(f"{relative(path)}: executable module name is missing or malformed")
             continue
         module = module_match.group(1)
-        if not module.startswith(f"{scope}_"):
-            errors.append(f"{relative(path)}: module '{module}' does not start with '{scope}_'")
-        if not any(f"_{intent}_" in f"_{module}_" for intent in INTENTS):
-            errors.append(f"{relative(path)}: module '{module}' has no intent token")
+        errors.extend(taxonomy_errors(relative(path), scope, module))
+        aliases = world_constructor_aliases(source)
+        for function, body in attributed_test_bodies(source):
+            constructors = world_constructor_count(body, aliases)
+            if constructors > 1:
+                errors.append(
+                    f"{relative(path)}::{function}: expected at most one test World; "
+                    f"found {constructors}"
+                )
 
     if scenario_fields != [(world_file, 1)]:
         rendered = ", ".join(
@@ -204,10 +312,10 @@ def main() -> int:
         errors.append(
             f"Scenario field owner must be exactly {relative(world_file)} (1); found {rendered}"
         )
-    if world_constructor_count != 1:
+    if scenario_world_constructor_count != 1:
         errors.append(
             f"{relative(world_file)}: expected exactly one aliased test_scenario::begin constructor; "
-            f"found {world_constructor_count}"
+            f"found {scenario_world_constructor_count}"
         )
 
     for generated in move_files:

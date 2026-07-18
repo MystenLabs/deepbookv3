@@ -14,5 +14,5 @@ paths:
 - Keep executable unit tests and fixture modules under `packages/predict/tests/**`; never add test functions to `sources/**`. If existing production APIs and approved irreducible test-only seams cannot express the required state or flow, stop and flag the testability gap instead of adding a source-local test or convenience seam.
 - Call the production unit under test in the test body. A prerequisite helper may call production transitions only when a different function is the declared unit under test.
 - Keep exact integer/rounding claims separate from independent true-model accuracy and economic-accounting claims.
-- Numerical reference data must have a committed independent generator, committed inputs, a documented regeneration command, and an ex-ante precision bound that does not inspect contract output.
+- Numerical reference data must have a committed independent generator, committed inputs, a documented regeneration command, an ex-ante precision bound that does not inspect contract output, and a CI stale-output check under a pinned interpreter.
 - Treat an independently valid out-of-bound result as a product/audit finding under `.claude/rules/unit-tests.md`; never widen the bound or snapshot the observed value.

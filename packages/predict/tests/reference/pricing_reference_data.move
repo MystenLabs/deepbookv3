@@ -8,10 +8,10 @@
 // Committed synthetic production-safe inputs; no external-data provenance claim.
 // True values use Python stdlib log/sqrt/erf. Tolerances are ex-ante intervals
 // propagated from current fixed_math primitive contracts, never Move output.
-// Pyth spot equals BS spot, so current mul_div_down reanchoring returns each
-// configured forward exactly.
+// Profiles carry distinct Pyth spot, Block Scholes spot, and Block Scholes
+// forward inputs; true values use the exact live-selected integer forward.
 // Maximum permitted absolute tolerance: 10_000 units
-// at 1e9 scale (0.1 basis point of payout probability).
+// at 1e9 scale (0.1 basis point), used only as a test-usefulness ceiling.
 // Worst generated absolute tolerance: 3_610 units at 1e9 scale.
 #[test_only]
 module deepbook_predict::pricing_reference_data;
@@ -21,15 +21,15 @@ use deepbook_predict::{constants, oracle_profile::{Self, SurfaceProfile}};
 const ENoSuchProfile: u64 = 0;
 
 public struct RefPoint has copy, drop {
-    lower: u64,
-    higher: u64,
+    lower_tick: u64,
+    higher_tick: u64,
     reference: u64,
     tolerance: u64,
 }
 
-public fun lower(point: &RefPoint): u64 { point.lower }
+public fun lower_tick(point: &RefPoint): u64 { point.lower_tick }
 
-public fun higher(point: &RefPoint): u64 { point.higher }
+public fun higher_tick(point: &RefPoint): u64 { point.higher_tick }
 
 public fun reference(point: &RefPoint): u64 { point.reference }
 
@@ -41,6 +41,7 @@ public fun profile(index: u64): SurfaceProfile {
     if (index == 0) {
         // flat_medium_variance
         oracle_profile::new(
+            100_000_000_000,
             100_000_000_000,
             100_000_000_000,
             10_000_000,
@@ -56,6 +57,7 @@ public fun profile(index: u64): SurfaceProfile {
     } else if (index == 1) {
         // negative_skew_medium_variance
         oracle_profile::new(
+            102_000_000_000,
             100_000_000_000,
             101_000_000_000,
             2_000_000,
@@ -71,6 +73,7 @@ public fun profile(index: u64): SurfaceProfile {
     } else if (index == 2) {
         // negative_skew_small_variance
         oracle_profile::new(
+            100_000_000_000,
             100_000_000_000,
             100_000_000_000,
             80_000,
@@ -92,41 +95,41 @@ public fun points(index: u64): vector<RefPoint> {
     if (index == 0) {
         // flat_medium_variance
         vector[
-            point(80_000_000_000, constants::pos_inf!(), 985_424_390, 33),
-            point(90_000_000_000, constants::pos_inf!(), 842_215_516, 55),
-            point(100_000_000_000, constants::pos_inf!(), 480_061_194, 31),
-            point(110_000_000_000, constants::pos_inf!(), 157_905_874, 52),
-            point(120_000_000_000, constants::pos_inf!(), 30_519_312, 38),
-            point(0, 100_000_000_000, 519_938_806, 31),
-            point(90_000_000_000, 110_000_000_000, 684_309_642, 105),
+            point(80, constants::pos_inf_tick!(), 985_424_390, 33),
+            point(90, constants::pos_inf_tick!(), 842_215_516, 55),
+            point(100, constants::pos_inf_tick!(), 480_061_194, 31),
+            point(110, constants::pos_inf_tick!(), 157_905_874, 52),
+            point(120, constants::pos_inf_tick!(), 30_519_312, 38),
+            point(0, 100, 519_938_806, 31),
+            point(90, 110, 684_309_642, 105),
         ]
     } else if (index == 1) {
         // negative_skew_medium_variance
         vector[
-            point(85_000_000_000, constants::pos_inf!(), 939_036_848, 87),
-            point(95_000_000_000, constants::pos_inf!(), 752_654_404, 84),
-            point(101_000_000_000, constants::pos_inf!(), 516_161_933, 42),
-            point(107_000_000_000, constants::pos_inf!(), 262_119_891, 72),
-            point(117_000_000_000, constants::pos_inf!(), 50_122_208, 70),
-            point(0, 101_000_000_000, 483_838_067, 42),
-            point(95_000_000_000, 107_000_000_000, 490_534_513, 154),
+            point(85, constants::pos_inf_tick!(), 952_221_868, 83),
+            point(95, constants::pos_inf_tick!(), 806_365_042, 92),
+            point(101, constants::pos_inf_tick!(), 602_703_224, 61),
+            point(107, constants::pos_inf_tick!(), 344_075_056, 64),
+            point(117, constants::pos_inf_tick!(), 75_783_156, 75),
+            point(0, 101, 397_296_776, 61),
+            point(95, 107, 462_289_986, 153),
         ]
     } else if (index == 2) {
         // negative_skew_small_variance
         vector[
-            point(97_000_000_000, constants::pos_inf!(), 988_927_622, 356),
-            point(99_000_000_000, constants::pos_inf!(), 853_812_809, 2_074),
-            point(100_000_000_000, constants::pos_inf!(), 476_841_431, 693),
-            point(101_000_000_000, constants::pos_inf!(), 162_455_470, 1_538),
-            point(103_000_000_000, constants::pos_inf!(), 11_097_931, 321),
-            point(0, 100_000_000_000, 523_158_569, 693),
-            point(99_000_000_000, 101_000_000_000, 691_357_339, 3_610),
+            point(97, constants::pos_inf_tick!(), 988_927_622, 356),
+            point(99, constants::pos_inf_tick!(), 853_812_809, 2_074),
+            point(100, constants::pos_inf_tick!(), 476_841_431, 693),
+            point(101, constants::pos_inf_tick!(), 162_455_470, 1_538),
+            point(103, constants::pos_inf_tick!(), 11_097_931, 321),
+            point(0, 100, 523_158_569, 693),
+            point(99, 101, 691_357_339, 3_610),
         ]
     } else {
         abort ENoSuchProfile
     }
 }
 
-fun point(lower: u64, higher: u64, reference: u64, tolerance: u64): RefPoint {
-    RefPoint { lower, higher, reference, tolerance }
+fun point(lower_tick: u64, higher_tick: u64, reference: u64, tolerance: u64): RefPoint {
+    RefPoint { lower_tick, higher_tick, reference, tolerance }
 }

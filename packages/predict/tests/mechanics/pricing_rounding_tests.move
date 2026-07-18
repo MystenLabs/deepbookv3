@@ -10,7 +10,7 @@ use deepbook_predict::{
     market_setup,
     oracle_profile,
     oracle_setup,
-    range_codec::strike_for_testing as strike,
+    range_codec,
     test_values,
     test_world
 };
@@ -70,8 +70,8 @@ fun one_raw_variance_unit_at_forward_is_exactly_one_half() {
     );
 
     let actual = pricer.range_price(
-        strike(profile.forward()),
-        strike(constants::pos_inf!()),
+        range_codec::strike_from_tick(test_values::strike_tick(), test_values::tick_size()),
+        range_codec::strike_from_tick(constants::pos_inf_tick!(), test_values::tick_size()),
     );
     assert_eq!(actual, math::float_scaling!() / 2);
 

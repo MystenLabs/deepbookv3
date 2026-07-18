@@ -48,13 +48,13 @@ fun missing_forward_value_aborts_live_pricing() {
 
     oracle_setup::seed_pyth(
         &mut pyth,
-        profile.spot(),
+        profile.pyth_spot(),
         profile.source_timestamp_ms(),
         test_values::now_ms(),
     );
     oracle_setup::seed_bs_spot(
         &mut bs_spot,
-        profile.spot(),
+        profile.block_scholes_spot(),
         profile.source_timestamp_ms(),
         test_world::clock(&resources),
     );

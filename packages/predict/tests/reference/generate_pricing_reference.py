@@ -26,9 +26,12 @@ LN_RELATIVE_ERROR = 1e-7
 NORMAL_CDF_ABS_ERROR = 20 * ULP
 NORMAL_PDF_ABS_ERROR = 50 * ULP
 REFERENCE_ROUNDING_CUSHION = 2
-# A pricing reference may accept at most 0.1 basis point of payout probability.
-# This product-level ceiling is declared independently of profiles and Move output.
+# A reference whose propagated interval exceeds 0.1 basis point of payout
+# probability is too imprecise to be useful in this suite. This is a test-quality
+# discriminator, not a protocol accuracy promise or an economic product limit.
 MAX_ABSOLUTE_TOLERANCE = 10_000
+TICK_SIZE = 1_000_000_000
+POS_INF_TICK = (1 << 30) - 1
 U64_MAX = (1 << 64) - 1
 MAX_PRICING_BASIS_FACTOR = 100
 MAX_PRICING_SPOT = U64_MAX // MAX_PRICING_BASIS_FACTOR
@@ -61,8 +64,9 @@ class Interval:
 @dataclass(frozen=True)
 class Profile:
     name: str
-    spot: int
-    forward: int
+    pyth_spot: int
+    bs_spot: int
+    bs_forward: int
     a: int
     a_negative: bool
     b: int
@@ -78,8 +82,9 @@ class Profile:
 PROFILES = (
     Profile(
         name="flat_medium_variance",
-        spot=100_000_000_000,
-        forward=100_000_000_000,
+        pyth_spot=100_000_000_000,
+        bs_spot=100_000_000_000,
+        bs_forward=100_000_000_000,
         a=10_000_000,
         a_negative=False,
         b=0,
@@ -99,8 +104,9 @@ PROFILES = (
     ),
     Profile(
         name="negative_skew_medium_variance",
-        spot=100_000_000_000,
-        forward=101_000_000_000,
+        pyth_spot=102_000_000_000,
+        bs_spot=100_000_000_000,
+        bs_forward=101_000_000_000,
         a=2_000_000,
         a_negative=False,
         b=40_000_000,
@@ -120,8 +126,9 @@ PROFILES = (
     ),
     Profile(
         name="negative_skew_small_variance",
-        spot=100_000_000_000,
-        forward=100_000_000_000,
+        pyth_spot=100_000_000_000,
+        bs_spot=100_000_000_000,
+        bs_forward=100_000_000_000,
         a=80_000,
         a_negative=False,
         b=4_000_000,
@@ -158,15 +165,17 @@ def validate_production_envelope(profile: Profile) -> None:
     independent true-model values or acceptance tolerances.
     """
 
-    if profile.spot <= 0 or profile.forward <= 0:
-        raise ValueError(f"{profile.name}: spot and forward must be positive")
-    if profile.spot > MAX_PRICING_SPOT or profile.forward > MAX_PRICING_SPOT:
-        raise ValueError(f"{profile.name}: spot or forward exceeds the pricing ceiling")
+    if profile.pyth_spot <= 0 or profile.bs_spot <= 0 or profile.bs_forward <= 0:
+        raise ValueError(f"{profile.name}: oracle prices must be positive")
+    if profile.pyth_spot > MAX_PRICING_SPOT:
+        raise ValueError(f"{profile.name}: Pyth spot exceeds the pricing ceiling")
+    if profile.bs_forward > MAX_PRICING_SPOT:
+        raise ValueError(f"{profile.name}: Block Scholes forward exceeds the pricing ceiling")
     minimum_spot = (
-        profile.forward + MAX_PRICING_BASIS_FACTOR - 1
+        profile.bs_forward + MAX_PRICING_BASIS_FACTOR - 1
     ) // MAX_PRICING_BASIS_FACTOR
-    if minimum_spot > profile.spot:
-        raise ValueError(f"{profile.name}: forward exceeds the permitted spot basis")
+    if minimum_spot > profile.bs_spot:
+        raise ValueError(f"{profile.name}: Block Scholes forward exceeds the permitted spot basis")
     if profile.a > MAX_SVI_INPUT or profile.b > MAX_SVI_INPUT or profile.m > MAX_SVI_INPUT:
         raise ValueError(f"{profile.name}: a, b, or m exceeds the SVI input ceiling")
     if profile.rho > F:
@@ -192,8 +201,13 @@ def validate_production_envelope(profile: Profile) -> None:
 
 
 def validate_profile_sequence() -> None:
+    names: set[str] = set()
+    has_non_identity_reanchor = False
     previous_timestamp_ms = 0
     for profile in PROFILES:
+        if profile.name in names:
+            raise ValueError(f"duplicate profile name: {profile.name}")
+        names.add(profile.name)
         validate_production_envelope(profile)
         if profile.source_timestamp_ms <= previous_timestamp_ms:
             raise ValueError(
@@ -201,6 +215,36 @@ def validate_profile_sequence() -> None:
                 f"strictly greater than {previous_timestamp_ms}"
             )
         previous_timestamp_ms = profile.source_timestamp_ms
+        if not profile.strikes:
+            raise ValueError(f"{profile.name}: at least one strike is required")
+        if tuple(sorted(set(profile.strikes))) != profile.strikes:
+            raise ValueError(f"{profile.name}: strikes must be unique and strictly increasing")
+        for strike in profile.strikes:
+            if strike <= 0 or strike % TICK_SIZE != 0:
+                raise ValueError(
+                    f"{profile.name}: strike {strike} must be a positive production-grid value"
+                )
+            tick = strike // TICK_SIZE
+            if strike > U64_MAX or tick >= POS_INF_TICK:
+                raise ValueError(f"{profile.name}: strike {strike} aliases an open sentinel")
+        selected_forward = live_forward(profile)
+        if selected_forward <= 0 or selected_forward > U64_MAX:
+            raise ValueError(f"{profile.name}: live-selected forward is outside u64")
+        has_non_identity_reanchor = has_non_identity_reanchor or (
+            selected_forward != profile.bs_forward
+        )
+    if not has_non_identity_reanchor:
+        raise ValueError("at least one profile must exercise non-identity Pyth reanchoring")
+
+
+def live_forward(profile: Profile) -> int:
+    """Return the exact integer forward selected by the live-oracle fixture.
+
+    This is fixture semantics, not the pricing UUT: a fresh Pyth spot applies the
+    Block Scholes forward/spot basis with one floor before range pricing begins.
+    """
+
+    return profile.pyth_spot * profile.bs_forward // profile.bs_spot
 
 
 def signed(raw: int, negative: bool) -> float:
@@ -291,7 +335,7 @@ def correction_bounds(pdf: Interval, w_prime: Interval, sqrt_variance: Interval)
 
 
 def true_up(profile: Profile, strike: int) -> float:
-    forward = profile.forward / F
+    forward = live_forward(profile) / F
     k = math.log((strike / F) / forward)
     a = signed(profile.a, profile.a_negative)
     rho = signed(profile.rho, profile.rho_negative)
@@ -311,7 +355,7 @@ def true_up(profile: Profile, strike: int) -> float:
 
 
 def contract_up_bounds(profile: Profile, strike: int) -> Interval:
-    ratio_raw = strike * F // profile.forward
+    ratio_raw = strike * F // live_forward(profile)
     if ratio_raw <= 0 or ratio_raw > U64_MAX:
         raise ValueError(f"{profile.name}: strike ratio outside finite pricing domain")
     ratio = ratio_raw / F
@@ -416,8 +460,12 @@ def move_bool(value: bool) -> str:
     return "true" if value else "false"
 
 
-def move_strike(value: int | None) -> str:
-    return "constants::pos_inf!()" if value is None else move_int(value)
+def move_tick(value: int | None) -> str:
+    if value is None:
+        return "constants::pos_inf_tick!()"
+    if value == 0:
+        return "0"
+    return move_int(value // TICK_SIZE)
 
 
 def render() -> str:
@@ -435,10 +483,10 @@ def render() -> str:
         "// Committed synthetic production-safe inputs; no external-data provenance claim.",
         "// True values use Python stdlib log/sqrt/erf. Tolerances are ex-ante intervals",
         "// propagated from current fixed_math primitive contracts, never Move output.",
-        "// Pyth spot equals BS spot, so current mul_div_down reanchoring returns each",
-        "// configured forward exactly.",
+        "// Profiles carry distinct Pyth spot, Block Scholes spot, and Block Scholes",
+        "// forward inputs; true values use the exact live-selected integer forward.",
         f"// Maximum permitted absolute tolerance: {move_int(MAX_ABSOLUTE_TOLERANCE)} units",
-        "// at 1e9 scale (0.1 basis point of payout probability).",
+        "// at 1e9 scale (0.1 basis point), used only as a test-usefulness ceiling.",
         f"// Worst generated absolute tolerance: {move_int(worst_tolerance)} units at 1e9 scale.",
         "#[test_only]",
         "module deepbook_predict::pricing_reference_data;",
@@ -448,15 +496,15 @@ def render() -> str:
         "const ENoSuchProfile: u64 = 0;",
         "",
         "public struct RefPoint has copy, drop {",
-        "    lower: u64,",
-        "    higher: u64,",
+        "    lower_tick: u64,",
+        "    higher_tick: u64,",
         "    reference: u64,",
         "    tolerance: u64,",
         "}",
         "",
-        "public fun lower(point: &RefPoint): u64 { point.lower }",
+        "public fun lower_tick(point: &RefPoint): u64 { point.lower_tick }",
         "",
-        "public fun higher(point: &RefPoint): u64 { point.higher }",
+        "public fun higher_tick(point: &RefPoint): u64 { point.higher_tick }",
         "",
         "public fun reference(point: &RefPoint): u64 { point.reference }",
         "",
@@ -473,8 +521,9 @@ def render() -> str:
                 f"    {prefix} (index == {index}) {{",
                 f"        // {profile.name}",
                 "        oracle_profile::new(",
-                f"            {move_int(profile.spot)},",
-                f"            {move_int(profile.forward)},",
+                f"            {move_int(profile.pyth_spot)},",
+                f"            {move_int(profile.bs_spot)},",
+                f"            {move_int(profile.bs_forward)},",
                 f"            {move_int(profile.a)},",
                 f"            {move_bool(profile.a_negative)},",
                 f"            {move_int(profile.b)},",
@@ -504,7 +553,7 @@ def render() -> str:
         for lower, higher, reference, tolerance in points:
             lines.append(
                 "            point("
-                f"{move_strike(lower)}, {move_strike(higher)}, "
+                f"{move_tick(lower)}, {move_tick(higher)}, "
                 f"{move_int(reference)}, {move_int(tolerance)}),"
             )
         lines.extend(["        ]", "    }"])
@@ -515,8 +564,8 @@ def render() -> str:
             "    }",
             "}",
             "",
-            "fun point(lower: u64, higher: u64, reference: u64, tolerance: u64): RefPoint {",
-            "    RefPoint { lower, higher, reference, tolerance }",
+            "fun point(lower_tick: u64, higher_tick: u64, reference: u64, tolerance: u64): RefPoint {",
+            "    RefPoint { lower_tick, higher_tick, reference, tolerance }",
             "}",
             "",
         ]

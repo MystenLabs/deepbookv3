@@ -186,17 +186,17 @@ public fun seed_surface(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    seed_pyth(pyth, profile.spot(), profile.source_timestamp_ms(), now_ms);
+    seed_pyth(pyth, profile.pyth_spot(), profile.source_timestamp_ms(), now_ms);
     seed_bs_spot(
         bs_spot,
-        profile.spot(),
+        profile.block_scholes_spot(),
         profile.source_timestamp_ms(),
         clock,
     );
     seed_bs_forward(
         bs_forward,
         expiry_ms,
-        profile.forward(),
+        profile.block_scholes_forward(),
         profile.source_timestamp_ms(),
         clock,
         ctx,

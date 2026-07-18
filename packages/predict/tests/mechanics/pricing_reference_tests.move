@@ -10,7 +10,7 @@ use deepbook_predict::{
     market_setup,
     oracle_setup,
     pricing_reference_data as reference,
-    range_codec::strike_for_testing as strike,
+    range_codec,
     test_values,
     test_world
 };
@@ -73,7 +73,10 @@ fun synthetic_profiles_stay_within_independent_precision_contract() {
         let mut point_index = 0;
         while (point_index < points.length()) {
             let point = &points[point_index];
-            let actual = pricer.range_price(strike(point.lower()), strike(point.higher()));
+            let actual = pricer.range_price(
+                range_codec::strike_from_tick(point.lower_tick(), test_values::tick_size()),
+                range_codec::strike_from_tick(point.higher_tick(), test_values::tick_size()),
+            );
             assert_within(actual, point.reference(), point.tolerance());
             point_index = point_index + 1;
         };
