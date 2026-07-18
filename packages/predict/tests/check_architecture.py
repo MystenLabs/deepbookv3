@@ -9,9 +9,32 @@ from pathlib import Path
 
 TESTS = Path(__file__).resolve().parent
 REPO = TESTS.parents[2]
+SOURCE_ROOTS = tuple(
+    REPO / "packages" / package / "sources"
+    for package in ("predict", "propbook", "block_scholes_oracle", "account")
+)
 SCOPES = {"framework", "mechanics", "structure", "flow"}
 INTENTS = {"behavior", "guard", "boundary", "rounding", "accounting", "reference", "policy"}
 COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+ATTRIBUTE_GROUP = re.compile(r"#\s*\[(?P<body>[^]]*)\]", re.DOTALL)
+ATTRIBUTED_PUBLIC_FUNCTION = re.compile(
+    r"(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)"
+    r"public(?:\(package\))?\s+fun\s+(?P<name>[a-z][a-z0-9_]*)",
+    re.DOTALL,
+)
+FOR_TESTING_FUNCTION = re.compile(r"\bfun\s+([a-z][a-z0-9_]*_for_testing)\s*[<(]")
+# Exact inventory of pre-existing source seams, not approval to add equivalents.
+APPROVED_SOURCE_TEST_SEAMS = {
+    "packages/account/sources/account_registry.move": {"init_for_testing"},
+    "packages/predict/sources/plp/plp.move": {"init_for_testing"},
+    "packages/predict/sources/registry/registry.move": {"init_for_testing"},
+    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move": {
+        "set_node_count_for_testing"
+    },
+    "packages/predict/sources/strike_exposure/range_codec.move": {"strike_for_testing"},
+    "packages/propbook/sources/feeds/pyth_feed.move": {"record_raw_for_testing"},
+    "packages/propbook/sources/registry.move": {"init_for_testing"},
+}
 
 
 def relative(path: Path) -> str:
@@ -20,6 +43,68 @@ def relative(path: Path) -> str:
 
 def source_without_comments(source: str) -> str:
     return COMMENTS.sub("", source)
+
+
+def attribute_names(source: str) -> set[str]:
+    names = set()
+    for group in ATTRIBUTE_GROUP.finditer(source):
+        body = group.group("body")
+        depth = 0
+        start = 0
+        for index, character in enumerate(body + ","):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            elif character == "," and depth == 0:
+                item = body[start:index].strip()
+                name = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", item)
+                if name:
+                    names.add(name.group(1))
+                start = index + 1
+    return names
+
+
+def source_test_only_functions(source: str) -> set[str]:
+    functions = set()
+    for function in ATTRIBUTED_PUBLIC_FUNCTION.finditer(source):
+        if "test_only" in attribute_names(function.group("attributes")):
+            functions.add(function.group("name"))
+    return functions
+
+
+def source_boundary_errors(source_path: str, text: str) -> list[str]:
+    errors = []
+    source = source_without_comments(text)
+    attributes = attribute_names(source)
+    if {"test", "random_test"} & attributes:
+        errors.append(
+            f"{source_path}: executable unit tests belong under the owning package's tests"
+        )
+    test_only_functions = source_test_only_functions(source)
+    named_test_functions = set(FOR_TESTING_FUNCTION.findall(source))
+    approved_seams = APPROVED_SOURCE_TEST_SEAMS.get(source_path, set())
+    unapproved_seams = (test_only_functions | named_test_functions) - approved_seams
+    for function in sorted(unapproved_seams):
+        errors.append(
+            f"{source_path}: new source test seam '{function}' requires explicit approval"
+        )
+    missing_seams = approved_seams - test_only_functions
+    for function in sorted(missing_seams):
+        errors.append(
+            f"{source_path}: approved source test seam '{function}' is missing; update the allowlist"
+        )
+    test_only_attribute_count = sum(
+        "test_only" in attribute_names(group.group(0))
+        for group in ATTRIBUTE_GROUP.finditer(source)
+    )
+    if test_only_attribute_count != len(test_only_functions):
+        errors.append(f"{source_path}: unrecognized source #[test_only] declaration")
+    return errors
+
+
+def missing_approved_source_paths(source_paths: set[str]) -> list[str]:
+    return sorted(set(APPROVED_SOURCE_TEST_SEAMS) - source_paths)
 
 
 def scenario_constructor_count(source: str) -> int:
@@ -68,7 +153,15 @@ def accesses_scenario_api(source: str) -> bool:
 def main() -> int:
     errors: list[str] = []
     move_files = sorted(TESTS.rglob("*.move"))
+    source_files = sorted(path for root in SOURCE_ROOTS for path in root.rglob("*.move"))
     world_file = TESTS / "framework" / "test_world.move"
+
+    source_paths = {relative(path) for path in source_files}
+    for source_path in missing_approved_source_paths(source_paths):
+        errors.append(f"{source_path}: approved source test seam file is missing; update the allowlist")
+    for path in source_files:
+        source_path = relative(path)
+        errors.extend(source_boundary_errors(source_path, path.read_text()))
 
     scenario_fields: list[tuple[Path, int]] = []
     world_constructor_count = 0

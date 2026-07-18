@@ -11,6 +11,7 @@ paths:
 - Create at most one World in each test; reuse it across profiles and seed successive feed rows with strictly increasing source timestamps.
 - Keep post-bootstrap actor and transaction changes in test bodies. Prerequisite helpers operate only in the caller's current transaction.
 - Fixtures construct state and return identity/capability handles; they do not compute expected truth or mirror production business APIs.
+- Keep executable unit tests and fixture modules under `packages/predict/tests/**`; never add test functions to `sources/**`. If existing production APIs and approved irreducible test-only seams cannot express the required state or flow, stop and flag the testability gap instead of adding a source-local test or convenience seam.
 - Call the production unit under test in the test body. A prerequisite helper may call production transitions only when a different function is the declared unit under test.
 - Keep exact integer/rounding claims separate from independent true-model accuracy and economic-accounting claims.
 - Numerical reference data must have a committed independent generator, committed inputs, a documented regeneration command, and an ex-ante precision bound that does not inspect contract output.

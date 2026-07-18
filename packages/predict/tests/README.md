@@ -51,6 +51,8 @@ Use this decision sequence:
 
 The test body owns every post-bootstrap actor change and `next_tx`. A setup helper must not advance the transaction. The test calls its production unit under test directly; setup may call earlier production transitions only when those transitions are explicit prerequisites for a different claim.
 
+Executable unit tests and fixture modules live under `packages/predict/tests/**`, never `packages/predict/sources/**`. If the existing production surface and approved irreducible test-only seams cannot reach the required state or flow, stop and raise the testability gap; do not add a source-local test or convenience `#[test_only]` constructor to bypass fixture design.
+
 ## Expected truth
 
 Fixtures create state; they are never correctness oracles. Before adding a test, write down its primary claim, production unit under test, fixture/profile, expected-value source, and what a failure means.
@@ -71,4 +73,4 @@ If independently valid truth falls outside its bound, keep the finding visible a
 6. Return every shared object, destroy or transfer every owned non-droppable value, and finish the World.
 7. Run the scope and intent filters, then the warning-strict build and full Predict suite.
 
-Run `python3 packages/predict/tests/check_architecture.py` before the Move commands. CI runs the same deterministic structural check; it verifies the single Scenario owner, ID-based shared retrieval boundary, visible transaction progression, executable module taxonomy, and live generated-data provenance links. It does not judge expected values or economic meaning.
+Run `python3 packages/predict/tests/check_architecture.py` and `python3 -m unittest discover -s packages/predict/tests -p "*_test.py"` before the Move commands. CI runs the same deterministic structural checks; they reject executable tests and unapproved new test seams across Predict-cluster production sources and verify the single Scenario owner, ID-based shared retrieval boundary, visible transaction progression, executable module taxonomy, and live generated-data provenance links. They do not judge expected values or economic meaning.
