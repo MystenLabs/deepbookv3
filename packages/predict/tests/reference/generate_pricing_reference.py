@@ -191,6 +191,18 @@ def validate_production_envelope(profile: Profile) -> None:
         raise ValueError(f"{profile.name}: minimum fixed-point total variance is not positive")
 
 
+def validate_profile_sequence() -> None:
+    previous_timestamp_ms = 0
+    for profile in PROFILES:
+        validate_production_envelope(profile)
+        if profile.source_timestamp_ms <= previous_timestamp_ms:
+            raise ValueError(
+                f"{profile.name}: source timestamp {profile.source_timestamp_ms} must be "
+                f"strictly greater than {previous_timestamp_ms}"
+            )
+        previous_timestamp_ms = profile.source_timestamp_ms
+
+
 def signed(raw: int, negative: bool) -> float:
     value = raw / F
     return -value if negative else value
@@ -382,7 +394,6 @@ def range_reference(
 
 
 def profile_points(profile: Profile) -> list[tuple[int, int | None, int, int]]:
-    validate_production_envelope(profile)
     points = []
     for strike in profile.strikes:
         reference, tolerance = range_reference(profile, strike, None)
@@ -410,6 +421,7 @@ def move_strike(value: int | None) -> str:
 
 
 def render() -> str:
+    validate_profile_sequence()
     all_points = [profile_points(profile) for profile in PROFILES]
     worst_tolerance = max(point[3] for points in all_points for point in points)
     lines = [

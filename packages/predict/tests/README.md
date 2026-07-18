@@ -37,6 +37,8 @@ sui move test --path packages/predict --gas-limit 100000000000 flow_
 
 `framework/test_world.move` is the only Scenario owner. It initializes package roots, owns Clock and administrative capabilities, records stable shared-object IDs, exposes explicit `next_tx`, and tears down the world.
 
+Create at most one World in a test function. When a test exercises several oracle profiles, reuse that World and seed each successive feed row with a strictly increasing source timestamp; restarting package initialization inside the same Sui test inventory collides with one-time registrations.
+
 Subject setup modules compose production-valid prerequisites in the caller's current transaction. Handles carry identity and immutable metadata only; shared production state remains in Scenario inventory and is taken by ID.
 
 Use this decision sequence:
