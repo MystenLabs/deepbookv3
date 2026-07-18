@@ -67,6 +67,19 @@ public fun cadence_config(
     registry.market_manager.cadence_config(propbook_underlying_id, cadence_id)
 }
 
+/// Return one underlying's complete deployment policy as a single coherent
+/// snapshot, for off-chain consumers (SDK and devInspect cadence discovery by
+/// the keeper, price updater, and dashboard) that would otherwise need one
+/// read per cadence. The vector holds one entry per supported cadence, indexed
+/// by cadence ID; disabled cadences are present as their all-zero
+/// configuration. Aborts if the underlying is not registered.
+public fun cadence_configs(
+    registry: &Registry,
+    propbook_underlying_id: u32,
+): vector<CadenceConfig> {
+    registry.market_manager.cadence_configs(propbook_underlying_id)
+}
+
 // === PauseCap Lifecycle (admin) ===
 
 /// Mint a new `PauseCap`. This bypasses the version gate so emergency pause

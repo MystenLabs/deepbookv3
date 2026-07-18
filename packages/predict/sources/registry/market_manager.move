@@ -155,6 +155,14 @@ public(package) fun cadence_config(
     *cadence
 }
 
+/// Return every stored deployment policy for one underlying, indexed by cadence ID.
+public(package) fun cadence_configs(
+    manager: &MarketManager,
+    propbook_underlying_id: u32,
+): vector<CadenceConfig> {
+    manager.underlying_config(propbook_underlying_id).cadences
+}
+
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
