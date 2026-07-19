@@ -3,7 +3,7 @@
 
 /// Exact strike conversion and half-open settlement boundaries.
 #[test_only]
-module deepbook_predict::mechanics_range_codec_boundary_tests;
+module deepbook_predict::scope_mechanics__intent_boundary__range_codec_tests;
 
 use deepbook_predict::{constants, range_codec};
 use std::unit_test::assert_eq;

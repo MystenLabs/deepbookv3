@@ -3,7 +3,7 @@
 
 /// Expiry-cash config snapshot independence.
 #[test_only]
-module deepbook_predict::structure_expiry_cash_config_behavior_tests;
+module deepbook_predict::scope_structure__intent_behavior__expiry_cash_config_tests;
 
 use deepbook_predict::expiry_cash_config;
 use std::unit_test::{assert_eq, destroy};

@@ -3,7 +3,7 @@
 
 /// Pool-to-market cash allocation accounting through the production vault path.
 #[test_only]
-module deepbook_predict::flow_pool_funding_accounting_tests;
+module deepbook_predict::scope_flow__intent_accounting__pool_funding_tests;
 
 use deepbook_predict::{market_setup, oracle_setup, test_values, test_world};
 use dusdc::dusdc::DUSDC;

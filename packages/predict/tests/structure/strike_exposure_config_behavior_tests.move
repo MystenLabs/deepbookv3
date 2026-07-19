@@ -3,7 +3,7 @@
 
 /// Strike-exposure config snapshot independence across every stored field.
 #[test_only]
-module deepbook_predict::structure_strike_exposure_config_behavior_tests;
+module deepbook_predict::scope_structure__intent_behavior__strike_exposure_config_tests;
 
 use deepbook_predict::{config_constants, strike_exposure_config};
 use std::unit_test::{assert_eq, destroy};

@@ -3,7 +3,7 @@
 
 /// Structural guards for incomplete canonical live-oracle state.
 #[test_only]
-module deepbook_predict::structure_oracle_guard_tests;
+module deepbook_predict::scope_structure__intent_guard__oracle_tests;
 
 use deepbook_predict::{
     market_setup,

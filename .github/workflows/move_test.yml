@@ -38,6 +38,7 @@ jobs:
       - name: Check Predict test architecture
         run: |
           python3 packages/predict/tests/check_architecture.py
+          python3 packages/predict/tests/check_predeploy_debt.py
           python3 -m unittest discover -s packages/predict/tests -p "*_test.py"
           python3 packages/predict/tests/reference/generate_pricing_reference.py --check
 

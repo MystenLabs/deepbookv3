@@ -3,7 +3,7 @@
 
 /// Stake benefit-power scalar and relational guards.
 #[test_only]
-module deepbook_predict::mechanics_stake_config_guard_tests;
+module deepbook_predict::scope_mechanics__intent_guard__stake_config_tests;
 
 use deepbook_predict::{config_constants, stake_config};
 use std::unit_test::{assert_eq, destroy};

@@ -3,7 +3,7 @@
 
 /// Exact fixed-point pricing behavior for an algebraically exact surface.
 #[test_only]
-module deepbook_predict::mechanics_pricing_rounding_tests;
+module deepbook_predict::scope_mechanics__intent_rounding__pricing_tests;
 
 use deepbook_predict::{
     constants,

@@ -3,7 +3,7 @@
 
 /// Stake-benefit curve segments and first-positive floor rounding.
 #[test_only]
-module deepbook_predict::mechanics_stake_config_rounding_tests;
+module deepbook_predict::scope_mechanics__intent_rounding__stake_config_tests;
 
 use deepbook_predict::{config_constants, stake_config};
 use std::unit_test::{assert_eq, destroy};

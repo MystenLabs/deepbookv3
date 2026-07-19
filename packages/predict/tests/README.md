@@ -9,7 +9,7 @@ Predict tests use one shared architecture so a new test extends an existing stat
 | Framework | Scenario ownership, stable IDs, actor progression, teardown | Constructor inputs and captured identities |
 | Structure | Construction, bindings, authority, config snapshots, public reads | Supplied IDs/configuration and named production guards |
 | Mechanics | Exact integer operations, local state machines, boundaries, rounding | Algebra, explicit inputs, and independently calculated exact values |
-| Numerical reference | Approximate on-chain math against the intended real model | A committed independent generator and an ex-ante precision bound |
+| Numerical reference | Representative implementation accuracy against the intended real model | A committed independent generator and an ex-ante precision bound |
 | Flow/economics | Multi-object transitions, conservation, backing, liabilities, liveness | Input-derived deltas, conservation identities, and independently established economic vectors |
 | Policy/audit | Deliberate response policies and regression pins | The named policy or audited requirement |
 
@@ -17,20 +17,20 @@ One test may use several layers as prerequisites, but it should make one primary
 
 ## Scope and intent
 
-The directory and module name encode scope: `framework`, `mechanics`, `structure`, or `flow`. A dedicated module also carries an intent token: `behavior`, `guard`, `boundary`, `rounding`, `accounting`, `reference`, or `policy`.
+The directory encodes scope: `framework`, `mechanics`, `structure`, or `flow`. Every executable module uses the reserved shape `scope_<scope>__intent_<intent>__<subject>_tests`, where intent is `behavior`, `guard`, `boundary`, `rounding`, `accounting`, `reference`, or `policy`. Reserved `scope_*__` and `intent_*__` markers appear only in the module segment, never in test function names.
 
 Examples:
 
-- `tests/mechanics/range_codec_rounding_tests.move` → `mechanics_range_codec_rounding_tests`
-- `tests/structure/oracle_guard_tests.move` → `structure_oracle_guard_tests`
-- `tests/flow/mint_accounting_tests.move` → `flow_mint_accounting_tests`
+- `tests/mechanics/range_codec_rounding_tests.move` → `scope_mechanics__intent_rounding__range_codec_tests`
+- `tests/structure/oracle_guard_tests.move` → `scope_structure__intent_guard__oracle_tests`
+- `tests/flow/mint_accounting_tests.move` → `scope_flow__intent_accounting__mint_tests`
 
 Sui's test filter matches the fully qualified test name, so either dimension is selectable:
 
 ```sh
-sui move test --path packages/predict --gas-limit 100000000000 mechanics_
-sui move test --path packages/predict --gas-limit 100000000000 _rounding_
-sui move test --path packages/predict --gas-limit 100000000000 flow_
+sui move test --path packages/predict --gas-limit 100000000000 scope_mechanics__
+sui move test --path packages/predict --gas-limit 100000000000 intent_rounding__
+sui move test --path packages/predict --gas-limit 100000000000 scope_flow__
 ```
 
 ## Fixture architecture
@@ -59,7 +59,7 @@ Fixtures create state; they are never correctness oracles. Before adding a test,
 
 Exact chain semantics and true-model accuracy are different claims. Use exact assertions for algebraically exact integer results, identities, clamps, and explicit rounding. For approximate pricing/math, compare against committed independently generated true-model values within a bound derived before the contract runs from the documented primitive precision contracts.
 
-Generated reference data must identify its generator and regeneration command, include every input needed to reproduce it, and exercise every emitted vector against the production function. A generator may use Python standard-library math or another independent implementation, but it must not import the contract's fixed-point replay or measure tolerance from observed Move output. The pricing generator validates profiles against the production input envelope before emission and rejects a propagated acceptance tolerance above 10,000 units at 1e9 scale (0.1 basis point) because a looser vector is not useful to this suite; that discriminator is not a protocol accuracy guarantee or economic product limit.
+Generated reference data must identify its generator and regeneration command, include every input needed to reproduce it, and exercise every emitted vector against the production function. A generator may use Python standard-library math or another independent implementation, but it must not import the contract's fixed-point replay or measure tolerance from observed Move output. The pricing generator validates representative profiles against the production input envelope before emission and rejects a propagated acceptance tolerance above 10,000 units at 1e9 scale (0.1 basis point) because a looser vector is not useful to this suite; these vectors prove representative implementation accuracy, not complete production-envelope calibration, a protocol accuracy guarantee, or an economic product limit.
 
 If independently valid truth falls outside its bound, keep the finding visible and follow the RED protocol in `.claude/rules/unit-tests.md`. Do not change the expected value, widen the tolerance, or convert the mismatch into an expected failure.
 
@@ -69,8 +69,8 @@ If independently valid truth falls outside its bound, keep the finding visible a
 2. Identify the production UUT and the minimum state/transaction borrow set it requires.
 3. Reuse the World and focused prerequisite modules; keep pure units local.
 4. Establish the expected-value oracle independently before running the test.
-5. Call the production UUT visibly in the test body and assert the state/output owned by that claim.
+5. Call the production UUT visibly in the test body and assert the state/output owned by that claim; every successful test contains a direct `assert!` or `assert_eq!` in its own body, while an expected-failure annotation is the oracle for an abort test.
 6. Return every shared object, destroy or transfer every owned non-droppable value, and finish the World.
 7. Run the scope and intent filters, then the warning-strict build and full Predict suite.
 
-Run `python3 packages/predict/tests/check_architecture.py`, `python3 -m unittest discover -s packages/predict/tests -p "*_test.py"`, and `python3 packages/predict/tests/reference/generate_pricing_reference.py --check` before the Move commands. Linux CI pins Python 3.11 for the stale-output check and runs Predict warning-strict. The deterministic structural checks reject executable tests and unapproved new test seams across Predict-cluster production sources and verify the single Scenario owner, ID-based shared retrieval boundary, post-bootstrap transaction progression only in test bodies, at most one World per test, exact executable module taxonomy, and live generated-data provenance links. The `test_world` bootstrap is the sole transaction-progression exception. These checks do not judge expected values or economic meaning.
+Run `python3 packages/predict/tests/check_architecture.py`, `python3 packages/predict/tests/check_predeploy_debt.py`, `python3 -m unittest discover -s packages/predict/tests -p "*_test.py"`, and `python3 packages/predict/tests/reference/generate_pricing_reference.py --check` before the Move commands. Linux CI pins Python 3.11 for the stale-output check and runs Predict warning-strict. The deterministic structural checks reject executable tests and unapproved new test seams across Predict-cluster production sources and verify the single Scenario owner, ID-based shared retrieval boundary, post-bootstrap transaction progression only in test bodies, at most one World per test, exact executable module taxonomy and category selection, direct positive-test assertions, live generated-data provenance links, and the exact transitional predeploy debt set: missing executable pins, uncatalogued policies, explicit non-unit exemptions, and stale named paths. The `test_world` bootstrap is the sole transaction-progression exception. The branch remains an intermediate draft until that debt manifest is empty, the wrapper is deleted, and the strict predeploy checker is clean. These checks do not judge expected values or economic meaning.

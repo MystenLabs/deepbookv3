@@ -3,7 +3,7 @@
 
 /// Framework coverage for shared-root identity capture and owned-resource teardown.
 #[test_only]
-module deepbook_predict::framework_world_behavior_tests;
+module deepbook_predict::scope_framework__intent_behavior__world_tests;
 
 use deepbook_predict::{test_values, test_world};
 use std::unit_test::assert_eq;

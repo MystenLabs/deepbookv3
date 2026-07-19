@@ -3,7 +3,7 @@
 
 /// Reachable packed-order and replacement validation guards.
 #[test_only]
-module deepbook_predict::mechanics_order_guard_tests;
+module deepbook_predict::scope_mechanics__intent_guard__order_tests;
 
 use deepbook_predict::{constants, order};
 

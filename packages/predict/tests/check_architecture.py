@@ -15,16 +15,24 @@ SOURCE_ROOTS = tuple(
 )
 SCOPES = {"framework", "mechanics", "structure", "flow"}
 INTENTS = {"behavior", "guard", "boundary", "rounding", "accounting", "reference", "policy"}
-COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+TAXONOMY = re.compile(
+    r"^scope_(?P<scope>framework|mechanics|structure|flow)__"
+    r"intent_(?P<intent>behavior|guard|boundary|rounding|accounting|reference|policy)__"
+    r"(?P<subject>[a-z][a-z0-9_]*)_tests$"
+)
+RESERVED_TAXONOMY_MARKER = re.compile(
+    r"(?:scope_(?:framework|mechanics|structure|flow)__|"
+    r"intent_(?:behavior|guard|boundary|rounding|accounting|reference|policy)__)")
+DIRECT_ASSERTION = re.compile(r"\bassert(?:_eq)?\s*!")
 ATTRIBUTE_GROUP = re.compile(r"#\s*\[(?P<body>[^]]*)\]", re.DOTALL)
 ATTRIBUTED_PUBLIC_FUNCTION = re.compile(
     r"(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)"
-    r"public(?:\(package\))?\s+fun\s+(?P<name>[a-z][a-z0-9_]*)",
+    r"public(?:\(package\))?\s+(?:entry\s+)?fun\s+(?P<name>[a-z][a-z0-9_]*)",
     re.DOTALL,
 )
 ATTRIBUTED_FUNCTION = re.compile(
     r"(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)"
-    r"(?:public(?:\(package\))?\s+)?fun\s+(?P<name>[a-z][a-z0-9_]*)",
+    r"(?:public(?:\(package\))?\s+)?(?:entry\s+)?fun\s+(?P<name>[a-z][a-z0-9_]*)",
     re.DOTALL,
 )
 FOR_TESTING_FUNCTION = re.compile(r"\bfun\s+([a-z][a-z0-9_]*_for_testing)\s*[<(]")
@@ -47,7 +55,50 @@ def relative(path: Path) -> str:
 
 
 def source_without_comments(source: str) -> str:
-    return COMMENTS.sub("", source)
+    """Mask comments and string literals while preserving source positions."""
+    masked = list(source)
+    index = 0
+    while index < len(source):
+        if source[index] == '"':
+            masked[index] = " "
+            index += 1
+            while index < len(source):
+                character = source[index]
+                if character != "\n":
+                    masked[index] = " "
+                index += 1
+                if character == "\\" and index < len(source):
+                    if source[index] != "\n":
+                        masked[index] = " "
+                    index += 1
+                elif character == '"':
+                    break
+            continue
+        if source.startswith("//", index):
+            while index < len(source) and source[index] != "\n":
+                masked[index] = " "
+                index += 1
+            continue
+        if source.startswith("/*", index):
+            depth = 1
+            masked[index:index + 2] = [" ", " "]
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    masked[index:index + 2] = [" ", " "]
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    masked[index:index + 2] = [" ", " "]
+                    index += 2
+                else:
+                    if source[index] != "\n":
+                        masked[index] = " "
+                    index += 1
+            continue
+        index += 1
+    return "".join(masked)
 
 
 def attribute_names(source: str) -> set[str]:
@@ -165,10 +216,11 @@ def scenario_field_count(source: str) -> int:
     return len(re.findall(r":\s*Scenario\b", source))
 
 
-def attributed_test_spans(source: str) -> list[tuple[str, str, int, int]]:
+def attributed_test_records(source: str) -> list[tuple[str, set[str], str, int, int]]:
     functions = []
     for function in ATTRIBUTED_FUNCTION.finditer(source):
-        if not ({"test", "random_test"} & attribute_names(function.group("attributes"))):
+        attributes = attribute_names(function.group("attributes"))
+        if not ({"test", "random_test"} & attributes):
             continue
         body_start = source.find("{", function.end())
         if body_start < 0:
@@ -180,11 +232,22 @@ def attributed_test_spans(source: str) -> list[tuple[str, str, int, int]]:
             elif source[index] == "}":
                 depth -= 1
                 if depth == 0:
-                    functions.append(
-                        (function.group("name"), source[body_start + 1:index], body_start, index + 1)
-                    )
+                    functions.append((
+                        function.group("name"),
+                        attributes,
+                        source[body_start + 1:index],
+                        body_start,
+                        index + 1,
+                    ))
                     break
     return functions
+
+
+def attributed_test_spans(source: str) -> list[tuple[str, str, int, int]]:
+    return [
+        (name, body, start, end)
+        for name, _, body, start, end in attributed_test_records(source)
+    ]
 
 
 def attributed_test_bodies(source: str) -> list[tuple[str, str]]:
@@ -234,20 +297,80 @@ def world_constructor_count(body: str, aliases: tuple[set[str], set[str]]) -> in
 
 def taxonomy_errors(source_path: str, scope: str, module: str) -> list[str]:
     errors = []
-    module_tokens = set(module.split("_"))
-    scope_tokens = module_tokens & SCOPES
-    intent_tokens = module_tokens & INTENTS
     if scope not in SCOPES:
         errors.append(f"{source_path}: executable module has unknown scope path '{scope}'")
         return errors
-    if scope_tokens != {scope}:
+    taxonomy = TAXONOMY.fullmatch(module)
+    if not taxonomy:
         errors.append(
-            f"{source_path}: module '{module}' must contain exactly the path scope '{scope}'"
+            f"{source_path}: module '{module}' must match "
+            "scope_<scope>__intent_<intent>__<subject>_tests"
         )
-    if len(intent_tokens) != 1:
+        return errors
+    if taxonomy.group("scope") != scope:
         errors.append(
-            f"{source_path}: module '{module}' must contain exactly one intent token"
+            f"{source_path}: module '{module}' must declare path scope '{scope}'"
         )
+    expected_markers = [
+        f"scope_{taxonomy.group('scope')}__",
+        f"intent_{taxonomy.group('intent')}__",
+    ]
+    if RESERVED_TAXONOMY_MARKER.findall(module) != expected_markers:
+        errors.append(f"{source_path}: module '{module}' must contain exactly its two declared markers")
+    return errors
+
+
+def reserved_taxonomy_marker_errors(
+    source_path: str,
+    source: str,
+    module_match: re.Match[str],
+) -> list[str]:
+    outside_module = source[:module_match.start()] + source[module_match.end():]
+    if RESERVED_TAXONOMY_MARKER.search(outside_module):
+        return [f"{source_path}: reserved taxonomy markers may appear only in the module name"]
+    return []
+
+
+def successful_test_assertion_errors(source_path: str, source: str) -> list[str]:
+    errors = []
+    for name, attributes, body, _, _ in attributed_test_records(source):
+        if "expected_failure" in attributes:
+            continue
+        if not DIRECT_ASSERTION.search(body):
+            errors.append(
+                f"{source_path}::{name}: successful test must contain a direct assert! or assert_eq!"
+            )
+    return errors
+
+
+def selected_modules(
+    executable_tests: list[tuple[str, str, str, tuple[str, ...]]],
+    filter_marker: str,
+) -> set[str]:
+    return {
+        module
+        for _, _, module, functions in executable_tests
+        if any(filter_marker in f"deepbook_predict::{module}::{function}" for function in functions)
+    }
+
+
+def selection_errors(
+    executable_tests: list[tuple[str, str, str, tuple[str, ...]]],
+) -> list[str]:
+    errors = []
+    for kind, values in (("scope", SCOPES), ("intent", INTENTS)):
+        for value in sorted(values):
+            marker = f"{kind}_{value}__"
+            expected = {
+                module
+                for scope, intent, module, _ in executable_tests
+                if (scope if kind == "scope" else intent) == value
+            }
+            actual = selected_modules(executable_tests, marker)
+            if actual != expected:
+                errors.append(
+                    f"filter '{marker}' selects {sorted(actual)}, expected {sorted(expected)}"
+                )
     return errors
 
 
@@ -266,6 +389,7 @@ def main() -> int:
 
     scenario_fields: list[tuple[Path, int]] = []
     scenario_world_constructor_count = 0
+    executable_tests: list[tuple[str, str, str, tuple[str, ...]]] = []
     for path in move_files:
         text = path.read_text()
         source = source_without_comments(text)
@@ -296,6 +420,16 @@ def main() -> int:
             continue
         module = module_match.group(1)
         errors.extend(taxonomy_errors(relative(path), scope, module))
+        errors.extend(reserved_taxonomy_marker_errors(relative(path), source, module_match))
+        errors.extend(successful_test_assertion_errors(relative(path), source))
+        taxonomy = TAXONOMY.fullmatch(module)
+        if taxonomy:
+            executable_tests.append((
+                taxonomy.group("scope"),
+                taxonomy.group("intent"),
+                module,
+                tuple(name for name, _ in attributed_test_bodies(source)),
+            ))
         aliases = world_constructor_aliases(source)
         for function, body in attributed_test_bodies(source):
             constructors = world_constructor_count(body, aliases)
@@ -304,6 +438,8 @@ def main() -> int:
                     f"{relative(path)}::{function}: expected at most one test World; "
                     f"found {constructors}"
                 )
+
+    errors.extend(selection_errors(executable_tests))
 
     if scenario_fields != [(world_file, 1)]:
         rendered = ", ".join(

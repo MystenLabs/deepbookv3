@@ -3,7 +3,7 @@
 
 /// Local EWMA policy defaults, endpoint writes, and enable-state transitions.
 #[test_only]
-module deepbook_predict::mechanics_ewma_config_behavior_tests;
+module deepbook_predict::scope_mechanics__intent_behavior__ewma_config_tests;
 
 use deepbook_predict::{config_constants, ewma_config};
 use std::unit_test::{assert_eq, destroy};

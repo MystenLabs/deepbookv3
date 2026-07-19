@@ -3,7 +3,7 @@
 
 /// Bernoulli fee, quantity floor, and expiry-ramp rounding.
 #[test_only]
-module deepbook_predict::mechanics_strike_exposure_config_rounding_tests;
+module deepbook_predict::scope_mechanics__intent_rounding__strike_exposure_config_tests;
 
 use deepbook_predict::strike_exposure_config;
 use std::unit_test::{assert_eq, destroy};

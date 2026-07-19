@@ -3,7 +3,7 @@
 
 /// Reachable expiry-cash backing, payment, and rebate-basis guards.
 #[test_only]
-module deepbook_predict::mechanics_expiry_cash_guard_tests;
+module deepbook_predict::scope_mechanics__intent_guard__expiry_cash_tests;
 
 use deepbook_predict::{expiry_cash, expiry_cash_config};
 use dusdc::dusdc::DUSDC;

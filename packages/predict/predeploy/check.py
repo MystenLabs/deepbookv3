@@ -6,7 +6,8 @@ machine-check each other instead of relying on anyone remembering. This script
 is that check. It verifies, deterministically and stdlib-only:
 
   1. PINNING TESTS (FATAL) — every test function named in a response-policies.md
-     "Pinning tests" field exists as `fun <name>` under packages/predict/tests/.
+     "Pinning tests" field exists as an executable `#[test]` or `#[random_test]`
+     under packages/predict/tests/.
      A register decision whose pinning test vanished is un-enforced: the exact
      drift class that let risks.md promise unshipped behavior.
   2. ID CROSS-REFS — every `RP-n` reference in the predeploy docs resolves to a
@@ -57,11 +58,87 @@ HISTORICAL = re.compile(
 # Lines naming paths that live outside this repository.
 EXTERNAL = re.compile(r"external|not part of this repo|deployment repo|another repo",
                       re.IGNORECASE)
+ATTRIBUTED_FUNCTION = re.compile(
+    r'(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)'
+    r'(?:public(?:\(package\))?\s+)?(?:entry\s+)?fun\s+(?P<name>[a-z][a-z0-9_]*)',
+    re.S)
 
 
 def read(path):
     with open(path, encoding='utf-8') as f:
         return f.read()
+
+
+def source_without_comments_and_literals(source):
+    """Mask comments and string literals while preserving source positions."""
+    masked = list(source)
+    index = 0
+    while index < len(source):
+        if source[index] == '"':
+            masked[index] = ' '
+            index += 1
+            while index < len(source):
+                character = source[index]
+                if character != '\n':
+                    masked[index] = ' '
+                index += 1
+                if character == '\\' and index < len(source):
+                    if source[index] != '\n':
+                        masked[index] = ' '
+                    index += 1
+                elif character == '"':
+                    break
+            continue
+        if source.startswith('//', index):
+            while index < len(source) and source[index] != '\n':
+                masked[index] = ' '
+                index += 1
+            continue
+        if source.startswith('/*', index):
+            depth = 1
+            masked[index:index + 2] = [' ', ' ']
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith('/*', index):
+                    depth += 1
+                    masked[index:index + 2] = [' ', ' ']
+                    index += 2
+                elif source.startswith('*/', index):
+                    depth -= 1
+                    masked[index:index + 2] = [' ', ' ']
+                    index += 2
+                else:
+                    if source[index] != '\n':
+                        masked[index] = ' '
+                    index += 1
+            continue
+        index += 1
+    return ''.join(masked)
+
+
+def executable_test_functions_from_source(source):
+    """Executable test names only; comments and support helpers cannot satisfy pins."""
+    source = source_without_comments_and_literals(source)
+    return {
+        function.group('name')
+        for function in ATTRIBUTED_FUNCTION.finditer(source)
+        if re.search(r'\b(?:test|random_test)\b', function.group('attributes'))
+    }
+
+
+def pinning_test_functions_from_block(block):
+    """Extract naked test names and explicit `<module>_tests::<test>` pins."""
+    functions = []
+    for token in re.findall(r'`([^`]+)`', block):
+        qualified = re.fullmatch(
+            r'([a-z][a-z0-9_]*_tests)::([a-z][a-z0-9_]*)',
+            token,
+        )
+        if qualified:
+            functions.append(qualified.group(2))
+        elif re.fullmatch(r'[a-z][a-z0-9_]+', token) and len(token) >= 10 and '_' in token:
+            functions.append(token)
+    return functions
 
 
 def defined_ids():
@@ -116,10 +193,10 @@ def check_pinning_tests(errors):
     reg = os.path.join(HERE, 'response-policies.md')
     if not os.path.exists(reg):
         return
-    test_src = ''
+    test_functions = set()
     for path in glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'),
                           recursive=True):
-        test_src += read(path)
+        test_functions.update(executable_test_functions_from_source(read(path)))
     text = read(reg)
     # Entry-driven, not block-driven: the register's rule is that EVERY RP entry
     # links a pinning test or explicitly says it doesn't. Iterating only well-formed
@@ -136,20 +213,22 @@ def check_pinning_tests(errors):
                           f"'not yet catalogued')")
             continue
         block = block_m.group(1)
-        if 'not yet catalogued' in block or 'untested' in block:
+        normalized_block = ' '.join(block.lower().split())
+        if 'not yet catalogued' in normalized_block:
             continue
-        toks = [t for t in re.findall(r'`([a-z][a-z0-9_]+)`', block)
-                if '.' not in t and len(t) >= 10 and '_' in t]
+        toks = pinning_test_functions_from_block(block)
         if not toks:
+            if 'untested' in normalized_block:
+                continue
             errors.append(f"response-policies.md entry '{title}' has a Pinning "
                           f"tests field that names no backticked test function "
                           f"(nor 'not yet catalogued')")
             continue
         for tok in toks:
-            if not re.search(r'\bfun\s+' + re.escape(tok) + r'\b', test_src):
+            if tok not in test_functions:
                 errors.append(
                     f"response-policies.md entry '{title}' pins test `{tok}` but "
-                    f"no `fun {tok}` exists under packages/predict/tests/")
+                    f"no executable `fun {tok}` exists under packages/predict/tests/")
 
 
 def check_id_refs(errors, warnings):
@@ -271,7 +350,7 @@ def check_unique_resolution(errors):
         resolved[item] = rp
 
 
-def main():
+def run_checks():
     errors, warnings = [], []
     check_pinning_tests(errors)
     check_id_refs(errors, warnings)
@@ -280,6 +359,11 @@ def main():
     check_paths(errors, warnings)
     check_evidence(errors)
     check_unique_resolution(errors)
+    return errors, warnings
+
+
+def main():
+    errors, warnings = run_checks()
     for w in warnings:
         print(f"WARNING: {w}")
     for e in errors:

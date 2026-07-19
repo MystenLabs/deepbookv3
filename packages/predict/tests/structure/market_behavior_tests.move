@@ -3,7 +3,7 @@
 
 /// Structural coverage for production market construction and live-pricer bindings.
 #[test_only]
-module deepbook_predict::structure_market_behavior_tests;
+module deepbook_predict::scope_structure__intent_behavior__market_tests;
 
 use block_scholes_oracle::update;
 use deepbook_predict::{

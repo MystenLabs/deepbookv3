@@ -3,7 +3,7 @@
 
 /// Expiry-cash policy defaults and setter endpoints.
 #[test_only]
-module deepbook_predict::mechanics_expiry_cash_config_behavior_tests;
+module deepbook_predict::scope_mechanics__intent_behavior__expiry_cash_config_tests;
 
 use deepbook_predict::{config_constants, expiry_cash_config};
 use std::unit_test::{assert_eq, destroy};

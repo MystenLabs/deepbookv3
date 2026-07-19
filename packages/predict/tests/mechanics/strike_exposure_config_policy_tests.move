@@ -3,7 +3,7 @@
 
 /// Exact mint-admission probability, leverage, and term policy.
 #[test_only]
-module deepbook_predict::mechanics_strike_exposure_config_policy_tests;
+module deepbook_predict::scope_mechanics__intent_policy__strike_exposure_config_tests;
 
 use deepbook_predict::{config_constants, strike_exposure_config};
 use std::unit_test::{assert_eq, destroy};

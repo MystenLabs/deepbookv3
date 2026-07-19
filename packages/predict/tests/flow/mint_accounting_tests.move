@@ -3,7 +3,7 @@
 
 /// Mint accounting coverage from an explicitly production-funded market.
 #[test_only]
-module deepbook_predict::flow_mint_accounting_tests;
+module deepbook_predict::scope_flow__intent_accounting__mint_tests;
 
 use account::{account::{Self, AccountWrapper}, account_registry::AccountRegistry};
 use deepbook_predict::{

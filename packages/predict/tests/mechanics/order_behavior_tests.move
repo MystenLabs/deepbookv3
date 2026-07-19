@@ -3,7 +3,7 @@
 
 /// Exact packed-order layout, priority ordering, and replacement behavior.
 #[test_only]
-module deepbook_predict::mechanics_order_behavior_tests;
+module deepbook_predict::scope_mechanics__intent_behavior__order_tests;
 
 use deepbook_predict::{constants, order};
 use std::unit_test::assert_eq;

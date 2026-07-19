@@ -3,7 +3,7 @@
 
 /// Strike-exposure policy defaults, setter writes, and reachable endpoints.
 #[test_only]
-module deepbook_predict::mechanics_strike_exposure_config_behavior_tests;
+module deepbook_predict::scope_mechanics__intent_behavior__strike_exposure_config_tests;
 
 use deepbook_predict::{config_constants, strike_exposure_config};
 use std::unit_test::{assert_eq, destroy};

@@ -3,7 +3,7 @@
 
 /// Oracle freshness defaults and accepted endpoint writes.
 #[test_only]
-module deepbook_predict::mechanics_pricing_config_behavior_tests;
+module deepbook_predict::scope_mechanics__intent_behavior__pricing_config_tests;
 
 use deepbook_predict::{config_constants, pricing_config};
 use std::unit_test::{assert_eq, destroy};

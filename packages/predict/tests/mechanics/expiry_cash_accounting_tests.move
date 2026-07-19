@@ -3,7 +3,7 @@
 
 /// Local expiry-cash conservation and rebate-basis accounting.
 #[test_only]
-module deepbook_predict::mechanics_expiry_cash_accounting_tests;
+module deepbook_predict::scope_mechanics__intent_accounting__expiry_cash_tests;
 
 use deepbook_predict::{expiry_cash, expiry_cash_config};
 use dusdc::dusdc::DUSDC;

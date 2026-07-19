@@ -28,6 +28,13 @@ class SourceBoundaryTests(unittest.TestCase):
                 )
                 self.assertTrue(any("executable unit tests" in error for error in errors))
 
+    def test_public_entry_test_is_rejected_in_production_source(self) -> None:
+        errors = architecture.source_boundary_errors(
+            "packages/predict/sources/example.move",
+            "#[test]\npublic entry fun source_test() {}",
+        )
+        self.assertTrue(any("executable unit tests" in error for error in errors))
+
     def test_approved_test_only_seam_is_accepted(self) -> None:
         errors = architecture.source_boundary_errors(
             "packages/account/sources/account_registry.move",
@@ -156,15 +163,17 @@ class TaxonomyTests(unittest.TestCase):
             architecture.taxonomy_errors(
                 "packages/predict/tests/mechanics/example.move",
                 "mechanics",
-                "mechanics_order_boundary_tests",
+                "scope_mechanics__intent_boundary__order_tests",
             ),
             [],
         )
 
-    def test_extra_scope_or_intent_is_rejected(self) -> None:
+    def test_ambiguous_or_legacy_taxonomy_is_rejected(self) -> None:
         for module in (
-            "mechanics_flow_order_boundary_tests",
-            "mechanics_order_boundary_rounding_tests",
+            "mechanics_order_boundary_tests",
+            "scope_mechanics__intent_boundary__intent_rounding__order_tests",
+            "scope_mechanics__intent_boundary__scope_flow__tests",
+            "scope_mechanics__intent_boundary__intent_rounding__tests",
         ):
             with self.subTest(module=module):
                 self.assertTrue(
@@ -174,6 +183,117 @@ class TaxonomyTests(unittest.TestCase):
                         module,
                     )
                 )
+
+    def test_declared_scope_must_match_path(self) -> None:
+        self.assertTrue(
+            architecture.taxonomy_errors(
+                "packages/predict/tests/flow/example.move",
+                "flow",
+                "scope_structure__intent_behavior__market_tests",
+            )
+        )
+
+    def test_reserved_markers_are_rejected_outside_module_segment(self) -> None:
+        source = (
+            "module deepbook_predict::scope_mechanics__intent_rounding__stake_config_tests;\n"
+            "#[test] fun scope_flow__collision() { assert!(true); }"
+        )
+        module_match = re.search(
+            r"module\s+deepbook_predict::([a-z0-9_]+)\s*;",
+            source,
+        )
+        self.assertIsNotNone(module_match)
+        assert module_match is not None
+        self.assertTrue(
+            architecture.reserved_taxonomy_marker_errors(
+                "packages/predict/tests/mechanics/example.move",
+                source,
+                module_match,
+            )
+        )
+
+    def test_selector_markers_ignore_subject_words_in_test_names(self) -> None:
+        executable_tests = [
+            (
+                "mechanics",
+                "rounding",
+                "scope_mechanics__intent_rounding__stake_config_tests",
+                ("rebate_first_positive_boundary_is_exact",),
+            ),
+            (
+                "mechanics",
+                "boundary",
+                "scope_mechanics__intent_boundary__range_codec_tests",
+                ("prefix_limit_rounds_strict_settlement_boundary_up",),
+            ),
+            (
+                "structure",
+                "guard",
+                "scope_structure__intent_guard__oracle_tests",
+                ("set_reference_tick_missing_exact_history_aborts",),
+            ),
+            (
+                "mechanics",
+                "reference",
+                "scope_mechanics__intent_reference__pricing_tests",
+                ("synthetic_profiles_stay_within_independent_precision_contract",),
+            ),
+        ]
+        self.assertEqual(
+            architecture.selected_modules(executable_tests, "intent_boundary__"),
+            {"scope_mechanics__intent_boundary__range_codec_tests"},
+        )
+        self.assertEqual(
+            architecture.selected_modules(executable_tests, "intent_reference__"),
+            {"scope_mechanics__intent_reference__pricing_tests"},
+        )
+        self.assertEqual(architecture.selection_errors(executable_tests), [])
+
+
+class AssertionPresenceTests(unittest.TestCase):
+    def test_successful_test_requires_direct_assertion(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun delegated() { assert_result(); }\n"
+            "fun assert_result() { assert!(true); }"
+        )
+        self.assertTrue(
+            architecture.successful_test_assertion_errors("example.move", source)
+        )
+
+    def test_public_entry_test_requires_direct_assertion(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] public entry fun delegated() { support(); }"
+        )
+        self.assertTrue(
+            architecture.successful_test_assertion_errors("example.move", source)
+        )
+
+    def test_assertion_text_inside_byte_string_does_not_satisfy_test(self) -> None:
+        source = architecture.source_without_comments(
+            '#[test] fun delegated() { let message = b"assert!(false)"; support(); }'
+        )
+        self.assertTrue(
+            architecture.successful_test_assertion_errors("example.move", source)
+        )
+
+    def test_brace_inside_byte_string_does_not_truncate_test_body(self) -> None:
+        source = architecture.source_without_comments(
+            '#[test] fun observed() { let message = b"}"; assert!(true); }'
+        )
+        self.assertEqual(
+            architecture.successful_test_assertion_errors("example.move", source),
+            [],
+        )
+
+    def test_direct_assertion_and_expected_failure_are_accepted(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() { assert_eq!(value(), 1); }\n"
+            "#[test, expected_failure(abort_code = 7)] fun aborts() { fail(); }"
+        )
+        self.assertEqual(
+            architecture.successful_test_assertion_errors("example.move", source),
+            [],
+        )
 
 
 if __name__ == "__main__":

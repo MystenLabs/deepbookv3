@@ -3,7 +3,7 @@
 
 /// Expiry-cash rebate-rate upper-bound guard.
 #[test_only]
-module deepbook_predict::mechanics_expiry_cash_config_guard_tests;
+module deepbook_predict::scope_mechanics__intent_guard__expiry_cash_config_tests;
 
 use deepbook_predict::{config_constants, expiry_cash_config};
 

@@ -3,7 +3,7 @@
 
 /// Strike-exposure scalar, relational, fee, and admission guards.
 #[test_only]
-module deepbook_predict::mechanics_strike_exposure_config_guard_tests;
+module deepbook_predict::scope_mechanics__intent_guard__strike_exposure_config_tests;
 
 use deepbook_predict::{config_constants, strike_exposure_config};
 

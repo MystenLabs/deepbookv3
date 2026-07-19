@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Production-pricer accuracy against independently generated true-model values
-/// and ex-ante fixed-point error intervals.
+/// Representative production-pricer accuracy against independently generated
+/// true-model values and ex-ante fixed-point error intervals.
 #[test_only]
-module deepbook_predict::mechanics_pricing_reference_tests;
+module deepbook_predict::scope_mechanics__intent_reference__pricing_tests;
 
 use deepbook_predict::{
     market_setup,
@@ -77,7 +77,11 @@ fun synthetic_profiles_stay_within_independent_precision_contract() {
                 range_codec::strike_from_tick(point.lower_tick(), test_values::tick_size()),
                 range_codec::strike_from_tick(point.higher_tick(), test_values::tick_size()),
             );
-            assert_within(actual, point.reference(), point.tolerance());
+            let expected = point.reference();
+            let difference = if (actual >= expected) { actual - expected } else {
+                expected - actual
+            };
+            assert!(difference <= point.tolerance());
             point_index = point_index + 1;
         };
 
@@ -93,9 +97,4 @@ fun synthetic_profiles_stay_within_independent_precision_contract() {
 
     lifecycle_cap.destroy();
     test_world::finish(world, resources);
-}
-
-fun assert_within(actual: u64, expected: u64, tolerance: u64) {
-    let difference = if (actual >= expected) { actual - expected } else { expected - actual };
-    assert!(difference <= tolerance);
 }
