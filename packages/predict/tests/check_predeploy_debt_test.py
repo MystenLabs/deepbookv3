@@ -85,6 +85,25 @@ fun support_pin() {}
 
 
 class ExactDebtTests(unittest.TestCase):
+    def test_unreachable_pin_branch_manifest_requires_registered_executable_boundaries(self) -> None:
+        pins = set(debt.EXPECTED_UNREACHABLE_PIN_BRANCHES)
+        functions = {function for _, function in pins}
+        self.assertEqual(debt.pin_gap_manifest_errors("unreachable", pins, pins, functions), [])
+        policy, function = next(iter(pins))
+        self.assertTrue(
+            debt.pin_gap_manifest_errors(
+                "unreachable",
+                pins,
+                pins - {(policy, function)},
+                functions - {function},
+            )
+        )
+
+    def test_accumulator_delivery_gap_manifest_requires_registered_executable_pins(self) -> None:
+        pins = set(debt.EXPECTED_ACCUMULATOR_DELIVERY_GAPS)
+        functions = {function for _, function in pins}
+        self.assertEqual(debt.pin_gap_manifest_errors("delivery", pins, pins, functions), [])
+
     def test_register_schema_error_is_not_treated_as_expected_missing_debt(self) -> None:
         findings = [
             "response-policies.md entry 'RP-99: New policy' has no 'Pinning tests' field"

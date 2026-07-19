@@ -17,17 +17,6 @@ EXPECTED_MISSING_PINS = {
     ("RP-1", "finish_flush_with_zero_pool_nav_and_empty_queues_succeeds"),
     ("RP-1", "finish_flush_with_low_plp_price_and_empty_queues_succeeds"),
     ("RP-1", "finish_flush_with_high_plp_price_and_empty_queues_succeeds"),
-    ("RP-2", "priced_supply_with_zero_pool_value_refunds"),
-    ("RP-2", "priced_supply_that_rounds_to_zero_shares_refunds"),
-    ("RP-2", "priced_withdraw_that_rounds_to_zero_payout_refunds"),
-    ("RP-2", "supply_at_min_executable_plp_price_fills"),
-    ("RP-2", "supply_below_min_executable_plp_price_refunds"),
-    ("RP-2", "supply_at_max_executable_plp_price_fills"),
-    ("RP-2", "supply_above_max_executable_plp_price_refunds"),
-    ("RP-2", "oversized_supply_that_exceeds_u64_shares_refunds"),
-    ("RP-2", "non_executable_supply_refunds_spend_supply_budget"),
-    ("RP-2", "non_executable_withdraw_refunds_spend_withdraw_budget"),
-    ("RP-2", "withdrawals_stop_when_idle_is_dry_and_carry"),
     ("RP-3", "finish_flush_with_zero_pool_nav_and_empty_queues_succeeds"),
     ("RP-4", "try_settle_without_exact_expiry_spot_returns_false_without_mutation"),
     ("RP-4", "expired_unsettled_standalone_rebalance_moves_no_cash"),
@@ -40,10 +29,6 @@ EXPECTED_MISSING_PINS = {
     ("RP-11", "deauthorized_predict_app_blocks_permissionless_rebate_claim"),
     ("RP-11", "owner_auth_rebate_claim_survives_predict_app_deauth"),
     ("RP-11", "prepare_settled_loss_with_inactive_rebate_stake"),
-    ("RP-12", "supply_limit_miss_carries_then_fills_when_mark_improves"),
-    ("RP-12", "supply_limit_expires_after_three_misses"),
-    ("RP-12", "withdraw_limit_miss_carries_then_fills_when_mark_improves"),
-    ("RP-12", "withdraw_limit_expires_after_three_misses"),
     ("RP-13", "oversized_budget_saturates_at_the_lot_cap_without_aborting"),
     ("RP-13", "budget_mints_largest_fitting_quantity_and_debits_its_exact_cost"),
     ("RP-13", "budget_at_next_lot_premium_mints_the_next_lot"),
@@ -58,7 +43,6 @@ EXPECTED_MISSING_PINS = {
 
 EXPECTED_WARNINGS = {
     "response-policies.md: names file `pool_valuation_flow_tests.move` not found under packages/predict/ or .claude/",
-    "response-policies.md: names file `lp_book_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `settlement_flow_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `mint_exact_amount_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `reference_tick_tests.move` not found under packages/predict/ or .claude/",
@@ -67,6 +51,16 @@ EXPECTED_WARNINGS = {
 }
 EXPECTED_UNCATALOGUED_POLICIES = {"RP-5", "RP-6", "RP-7", "RP-8", "RP-13"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
+EXPECTED_UNREACHABLE_PIN_BRANCHES = {
+    ("RP-2", "priced_supply_that_rounds_to_zero_shares_refunds"),
+    ("RP-2", "priced_withdraw_that_rounds_to_zero_payout_refunds"),
+}
+EXPECTED_ACCUMULATOR_DELIVERY_GAPS = {
+    ("RP-2", "non_executable_supply_refunds_spend_supply_budget"),
+    ("RP-2", "non_executable_withdraw_refunds_spend_withdraw_budget"),
+    ("RP-12", "supply_limit_expires_after_three_misses"),
+    ("RP-12", "withdraw_limit_expires_after_three_misses"),
+}
 
 
 def load_predeploy_check() -> ModuleType:
@@ -118,6 +112,21 @@ def registered_pins(register: str) -> set[tuple[str, str]]:
     return registered_policy_debt(register)[0]
 
 
+def pin_gap_manifest_errors(
+    label: str,
+    gaps: set[tuple[str, str]],
+    pins: set[tuple[str, str]],
+    executable_functions: set[str],
+) -> list[str]:
+    errors = []
+    for policy, function in sorted(gaps):
+        if (policy, function) not in pins:
+            errors.append(f"{label} manifest names an unregistered pin: {policy}::{function}")
+        if function not in executable_functions:
+            errors.append(f"{label} manifest has no executable boundary test: {policy}::{function}")
+    return errors
+
+
 def current_policy_debt() -> tuple[set[tuple[str, str]], set[str], set[str]]:
     register = (PREDEPLOY / "response-policies.md").read_text()
     pins, uncatalogued, non_unit = registered_policy_debt(register)
@@ -127,6 +136,30 @@ def current_policy_debt() -> tuple[set[tuple[str, str]], set[str], set[str]]:
         functions.update(check.executable_test_functions_from_source(path.read_text()))
     missing = {(policy, function) for policy, function in pins if function not in functions}
     return missing, uncatalogued, non_unit
+
+
+def current_pin_gap_manifest_errors() -> list[str]:
+    register = (PREDEPLOY / "response-policies.md").read_text()
+    pins = registered_pins(register)
+    check = load_predeploy_check()
+    functions = set()
+    for path in TESTS.rglob("*.move"):
+        functions.update(check.executable_test_functions_from_source(path.read_text()))
+    errors = pin_gap_manifest_errors(
+        "unreachable branch",
+        EXPECTED_UNREACHABLE_PIN_BRANCHES,
+        pins,
+        functions,
+    )
+    errors.extend(
+        pin_gap_manifest_errors(
+            "accumulator delivery gap",
+            EXPECTED_ACCUMULATOR_DELIVERY_GAPS,
+            pins,
+            functions,
+        )
+    )
+    return errors
 
 
 def current_missing_pins() -> set[tuple[str, str]]:
@@ -202,6 +235,7 @@ def main() -> int:
         non_pin_errors,
         set(warnings),
     )
+    errors.extend(current_pin_gap_manifest_errors())
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
@@ -210,6 +244,8 @@ def main() -> int:
     print(
         "Predict predeploy debt: ok "
         f"({len(missing_pins)} missing registered pin obligations, "
+        f"{len(EXPECTED_UNREACHABLE_PIN_BRANCHES)} unreachable registered branch obligations, "
+        f"{len(EXPECTED_ACCUMULATOR_DELIVERY_GAPS)} accumulator delivery obligations, "
         f"{len(uncatalogued_policies)} uncatalogued policies, "
         f"{len(non_unit_policies)} non-unit policy exemption, {len(warnings)} warnings)"
     )

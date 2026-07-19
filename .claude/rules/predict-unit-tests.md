@@ -17,3 +17,4 @@ paths:
 - Keep exact integer/rounding claims separate from independent true-model accuracy and economic-accounting claims.
 - Numerical reference data proves representative implementation accuracy, not complete envelope calibration; it must have a committed independent generator, committed inputs, a documented regeneration command, an ex-ante precision bound that does not inspect contract output, and a CI stale-output check under a pinned interpreter.
 - Treat an independently valid out-of-bound result as a product/audit finding under `.claude/rules/unit-tests.md`; never widen the bound or snapshot the observed value.
+- Treat an exact registered policy test name as a routing obligation, not semantic proof; assert observable policy outputs, and keep unreachable branches or platform-unobservable custody delivery in the transitional debt controller instead of adding a source seam or declaring the policy complete.
