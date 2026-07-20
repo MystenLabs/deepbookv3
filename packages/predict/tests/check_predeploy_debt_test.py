@@ -182,5 +182,106 @@ class ExactDebtTests(unittest.TestCase):
         )
 
 
+class KnownRedTests(unittest.TestCase):
+    TEST = "deepbook_predict::scope_flow__intent_accounting__pool_tests::finding_is_live"
+
+    def row(self) -> debt.KnownRed:
+        return debt.KnownRed(self.TEST, "P-8", "Phase 7", "Order-dependent split")
+
+    def test_plain_test_catalog_excludes_expected_failures_and_random_tests(self) -> None:
+        source = f"""
+module deepbook_predict::scope_flow__intent_accounting__pool_tests;
+#[test] fun finding_is_live() {{ assert!(false); }}
+#[test, expected_failure] fun normalized_red() {{ abort 1 }}
+#[random_test] fun randomized_red() {{ abort 1 }}
+"""
+        self.assertEqual(debt.plain_tests_from_source(source), {self.TEST})
+
+    def test_manifest_open_item_and_plain_test_form_exact_bijection(self) -> None:
+        self.assertEqual(
+            debt.known_red_bijection_errors(
+                (self.row(),),
+                {"P-8": self.TEST},
+                {self.TEST},
+            ),
+            [],
+        )
+
+    def test_bijection_rejects_orphans_in_each_direction(self) -> None:
+        errors = debt.known_red_bijection_errors(
+            (self.row(),),
+            {"P-13": self.TEST},
+            set(),
+        )
+        self.assertTrue(any("no live plain" in error for error in errors))
+        self.assertTrue(any("manifest/open-item mismatch" in error for error in errors))
+        self.assertTrue(any("no matching manifest" in error for error in errors))
+
+    def test_open_item_fields_are_owned_by_their_heading(self) -> None:
+        text = f"""
+### P-8: Finding
+**Known RED test:** `{self.TEST}`
+### H-7: Coverage
+**Deferred test:** `deepbook_predict::scope_flow__intent_guard__pool_tests::later`
+"""
+        self.assertEqual(
+            debt.open_item_test_fields(text),
+            (
+                {"P-8": self.TEST},
+                {"H-7": "deepbook_predict::scope_flow__intent_guard__pool_tests::later"},
+            ),
+        )
+
+    def test_acceptance_requires_exact_failing_set(self) -> None:
+        output = f"[ FAIL    ] {self.TEST}\nTest result: FAILED. Total tests: 1; passed: 0; failed: 1\n"
+        self.assertEqual(debt.known_red_acceptance_errors(1, output, {self.TEST}), [])
+        self.assertTrue(
+            any(
+                "unlisted" in error
+                for error in debt.known_red_acceptance_errors(1, output, set())
+            )
+        )
+        self.assertTrue(
+            any(
+                "stale" in error
+                for error in debt.known_red_acceptance_errors(
+                    0,
+                    "Test result: OK. Total tests: 1; passed: 1; failed: 0\n",
+                    {self.TEST},
+                )
+            )
+        )
+
+    def test_nonterminal_move_output_cannot_pass_an_empty_manifest(self) -> None:
+        self.assertEqual(
+            debt.known_red_acceptance_errors(1, "error[E04001]: build failed", set()),
+            ["Move test output has no terminal test result"],
+        )
+
+    def test_registered_known_red_is_clean_but_registered_deferral_is_fatal(self) -> None:
+        check = debt.load_predeploy_check()
+        register = """
+## RP-8: Finding
+- **Pinning tests:** `finding_is_live`
+"""
+        rows = [{"test": self.TEST, "open_item": "P-8"}]
+        self.assertEqual(
+            check.known_red_policy_errors(
+                register,
+                rows,
+                {"P-8": self.TEST},
+                {},
+            ),
+            [],
+        )
+        errors = check.known_red_policy_errors(
+            register,
+            rows,
+            {"P-8": self.TEST},
+            {"H-7": self.TEST},
+        )
+        self.assertTrue(any("owner sign-off required" in error for error in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

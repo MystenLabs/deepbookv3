@@ -3,15 +3,36 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
 TESTS = Path(__file__).resolve().parent
 PREDICT = TESTS.parent
 PREDEPLOY = PREDICT / "predeploy"
+KNOWN_RED_MANIFEST = TESTS / "known_red_manifest.csv"
+KNOWN_RED_FIELDS = ("test", "open_item", "phase", "summary")
+QUALIFIED_TEST = re.compile(
+    r"^deepbook_predict::(?P<module>scope_[a-z0-9_]+_tests)::(?P<function>[a-z][a-z0-9_]*)$"
+)
+OPEN_ITEM_HEADING = re.compile(r"^### (?P<item>[A-Z]{1,2}-\d+):", re.MULTILINE)
+OPEN_ITEM_TEST_FIELD = re.compile(
+    r"^\*\*(?P<label>Known RED test|Deferred test):\*\*\s*`(?P<test>[^`]+)`",
+    re.MULTILINE,
+)
+MOVE_TEST_FAILURE = re.compile(r"^\[\s*FAIL\s*\]\s+(?P<test>[a-z0-9_:]+)\s*$", re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class KnownRed:
+    test: str
+    open_item: str
+    phase: str
+    summary: str
 
 EXPECTED_MISSING_PINS = {
     ("RP-1", "finish_flush_with_zero_pool_nav_and_empty_queues_succeeds"),
@@ -71,6 +92,127 @@ def load_predeploy_check() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_known_red_manifest(path: Path = KNOWN_RED_MANIFEST) -> tuple[KnownRed, ...]:
+    with path.open(newline="", encoding="utf-8") as source:
+        reader = csv.DictReader(source)
+        if tuple(reader.fieldnames or ()) != KNOWN_RED_FIELDS:
+            raise ValueError(
+                f"known-RED manifest fields must be {KNOWN_RED_FIELDS}, got {reader.fieldnames}"
+            )
+        return tuple(KnownRed(**row) for row in reader)
+
+
+def open_item_test_fields(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    known_red = {}
+    deferred = {}
+    headings = list(OPEN_ITEM_HEADING.finditer(text))
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        item = heading.group("item")
+        for field in OPEN_ITEM_TEST_FIELD.finditer(text, heading.end(), end):
+            target = known_red if field.group("label") == "Known RED test" else deferred
+            if item in target:
+                raise ValueError(f"open item {item} repeats {field.group('label')}")
+            target[item] = field.group("test")
+    return known_red, deferred
+
+
+def plain_test_catalog() -> set[str]:
+    check = load_predeploy_check()
+    catalog = set()
+    for path in TESTS.rglob("*.move"):
+        catalog.update(plain_tests_from_source(path.read_text(), check))
+    return catalog
+
+
+def plain_tests_from_source(source: str, check: ModuleType | None = None) -> set[str]:
+    check = check or load_predeploy_check()
+    source = check.source_without_comments_and_literals(source)
+    module = re.search(
+        r"\bmodule\s+(?P<module>[a-z][a-z0-9_]*::[a-z][a-z0-9_]*)\s*;",
+        source,
+    )
+    if not module:
+        return set()
+    tests = set()
+    for function in check.ATTRIBUTED_FUNCTION.finditer(source):
+        attributes = function.group("attributes")
+        if not re.search(r"\btest\b", attributes):
+            continue
+        if re.search(r"\b(?:random_test|expected_failure)\b", attributes):
+            continue
+        tests.add(f"{module.group('module')}::{function.group('name')}")
+    return tests
+
+
+def known_red_bijection_errors(
+    rows: tuple[KnownRed, ...],
+    open_item_known_red: dict[str, str],
+    plain_tests: set[str],
+) -> list[str]:
+    errors = []
+    tests = [row.test for row in rows]
+    items = [row.open_item for row in rows]
+    for test in sorted({test for test in tests if tests.count(test) > 1}):
+        errors.append(f"known-RED manifest repeats test: {test}")
+    for item in sorted({item for item in items if items.count(item) > 1}):
+        errors.append(f"known-RED manifest repeats open item: {item}")
+    for row in rows:
+        match = QUALIFIED_TEST.fullmatch(row.test)
+        if not match:
+            errors.append(f"known-RED manifest test is not fully qualified: {row.test}")
+        if not re.fullmatch(r"[A-Z]{1,2}-\d+", row.open_item):
+            errors.append(f"known-RED manifest has invalid open item id: {row.open_item}")
+        if not row.phase.strip() or not row.summary.strip():
+            errors.append(f"known-RED manifest row lacks phase or summary: {row.test}")
+        if row.test not in plain_tests:
+            errors.append(f"known-RED manifest has no live plain #[test]: {row.test}")
+        linked = open_item_known_red.get(row.open_item)
+        if linked != row.test:
+            errors.append(
+                f"known-RED manifest/open-item mismatch: {row.open_item} "
+                f"manifest={row.test} open_item={linked}"
+            )
+    manifest_by_item = {row.open_item: row.test for row in rows}
+    for item, test in sorted(open_item_known_red.items()):
+        if manifest_by_item.get(item) != test:
+            errors.append(f"open item known-RED marker has no matching manifest row: {item}::{test}")
+    return errors
+
+
+def current_known_red_errors() -> list[str]:
+    try:
+        rows = load_known_red_manifest()
+        known_red, _ = open_item_test_fields((PREDEPLOY / "open-items.md").read_text())
+    except (OSError, ValueError) as error:
+        return [str(error)]
+    return known_red_bijection_errors(rows, known_red, plain_test_catalog())
+
+
+def move_test_failures(output: str) -> set[str]:
+    return {match.group("test") for match in MOVE_TEST_FAILURE.finditer(output)}
+
+
+def known_red_acceptance_errors(
+    returncode: int,
+    output: str,
+    expected: set[str],
+) -> list[str]:
+    errors = []
+    if "Test result:" not in output:
+        return ["Move test output has no terminal test result"]
+    actual = move_test_failures(output)
+    for test in sorted(actual - expected):
+        errors.append(f"unlisted Move test failure: {test}")
+    for test in sorted(expected - actual):
+        errors.append(f"stale known-RED row did not fail: {test}")
+    if actual and returncode == 0:
+        errors.append("Move test returned success despite reported failures")
+    if not actual and returncode != 0:
+        errors.append("Move test returned failure without a listed failing test")
+    return errors
 
 
 def registered_policy_debt(
@@ -236,6 +378,7 @@ def main() -> int:
         set(warnings),
     )
     errors.extend(current_pin_gap_manifest_errors())
+    errors.extend(current_known_red_errors())
     if errors:
         for error in errors:
             print(f"ERROR: {error}")

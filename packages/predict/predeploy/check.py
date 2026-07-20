@@ -38,6 +38,7 @@ Exit 1 on any FATAL; warnings print but keep exit 0.
 Run this when a diff touches predeploy/, guards, or tests named here; the
 predict-audit skill runs it in preflight.
 """
+import csv
 import glob
 import os
 import re
@@ -47,6 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath(
     os.path.join(HERE, '..', '..', '..'))
 PREDICT = os.path.join(ROOT, 'packages', 'predict')
+KNOWN_RED_MANIFEST = os.path.join(PREDICT, 'tests', 'known_red_manifest.csv')
 
 DOCS = sorted(glob.glob(os.path.join(HERE, '*.md')) +
               glob.glob(os.path.join(HERE, 'evidence', '*.md')))
@@ -139,6 +141,82 @@ def pinning_test_functions_from_block(block):
         elif re.fullmatch(r'[a-z][a-z0-9_]+', token) and len(token) >= 10 and '_' in token:
             functions.append(token)
     return functions
+
+
+def registered_pins_by_test(register):
+    """Return every registered pin function and the policies that own it."""
+    policies = {}
+    for entry in re.split(r'^## ', register, flags=re.M)[1:]:
+        title = entry.splitlines()[0]
+        policy = re.match(r'(RP-\d+):', title)
+        if not policy:
+            continue
+        block = re.search(
+            r'\*\*Pinning tests[^*]*\*\*(.*?)(?=\n- \*\*|\n## |\Z)',
+            entry,
+            re.S,
+        )
+        if not block:
+            continue
+        for function in pinning_test_functions_from_block(block.group(1)):
+            policies.setdefault(function, set()).add(policy.group(1))
+    return policies
+
+
+def open_item_structured_tests(text):
+    """Return exact known-RED and deferred test fields keyed by open-item id."""
+    known_red, deferred = {}, {}
+    headings = list(re.finditer(r'^### (?P<item>[A-Z]{1,2}-\d+):', text, re.M))
+    field_pattern = re.compile(
+        r'^\*\*(?P<label>Known RED test|Deferred test):\*\*\s*`(?P<test>[^`]+)`',
+        re.M,
+    )
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        item = heading.group('item')
+        for field in field_pattern.finditer(text, heading.end(), end):
+            target = known_red if field.group('label') == 'Known RED test' else deferred
+            target[item] = field.group('test')
+    return known_red, deferred
+
+
+def known_red_manifest_rows(path=KNOWN_RED_MANIFEST):
+    with open(path, newline='', encoding='utf-8') as source:
+        return list(csv.DictReader(source))
+
+
+def known_red_policy_errors(register, rows, known_red_fields, deferred_fields):
+    """Require registered known REDs to be linked and registered deferrals to stay fatal."""
+    errors = []
+    pins = registered_pins_by_test(register)
+    manifest = {row['open_item']: row['test'] for row in rows}
+    for item, test in manifest.items():
+        function = test.rsplit('::', 1)[-1]
+        if function in pins and known_red_fields.get(item) != test:
+            errors.append(
+                f"known-RED registered pin lacks its open-item disposition: "
+                f"{','.join(sorted(pins[function]))}::{function} -> {item}"
+            )
+    for item, test in deferred_fields.items():
+        function = test.rsplit('::', 1)[-1]
+        if function in pins:
+            errors.append(
+                f"open-items.md: deferred test {item}::{test} touches registered "
+                f"response policy {','.join(sorted(pins[function]))}; owner sign-off required"
+            )
+    return errors
+
+
+def check_known_red_policy_dispositions(errors):
+    try:
+        register = read(os.path.join(HERE, 'response-policies.md'))
+        open_items = read(os.path.join(HERE, 'open-items.md'))
+        known_red, deferred = open_item_structured_tests(open_items)
+        rows = known_red_manifest_rows()
+    except (OSError, KeyError, csv.Error) as error:
+        errors.append(f"known-RED control cannot be read: {error}")
+        return
+    errors.extend(known_red_policy_errors(register, rows, known_red, deferred))
 
 
 def defined_ids():
@@ -353,6 +431,7 @@ def check_unique_resolution(errors):
 def run_checks():
     errors, warnings = [], []
     check_pinning_tests(errors)
+    check_known_red_policy_dispositions(errors)
     check_id_refs(errors, warnings)
     check_open_resolved_conflict(errors)
     check_measured_links(errors)
