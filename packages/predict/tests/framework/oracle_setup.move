@@ -8,9 +8,10 @@ module deepbook_predict::oracle_setup;
 
 use block_scholes_oracle::update;
 use deepbook_predict::{
+    market_setup::{Self, MarketHandle},
     oracle_profile::{Self, SurfaceProfile},
     test_values,
-    test_world::{Self, World}
+    test_world::{Self, OwnedResources, World}
 };
 use propbook::{
     block_scholes_forward_feed::{Self as block_scholes_forward_feed, BlockScholesForwardFeed},
@@ -248,4 +249,36 @@ public fun seed_surface(
         ctx,
     );
     seed_bs_svi(bs_svi, expiry_ms, profile, clock, ctx);
+}
+
+public fun seed_market_surface(
+    world: &mut World,
+    resources: &OwnedResources,
+    ids: &OracleIds,
+    market_handle: &MarketHandle,
+    profile: &SurfaceProfile,
+    now_ms: u64,
+) {
+    let market = market_setup::take_market(world, market_handle);
+    let expiry_ms = market.expiry();
+    return_shared(market);
+    let mut pyth = take_pyth(world, ids);
+    let mut bs_spot = take_bs_spot(world, ids);
+    let mut bs_forward = take_bs_forward(world, ids);
+    let mut bs_svi = take_bs_svi(world, ids);
+    seed_surface(
+        &mut pyth,
+        &mut bs_spot,
+        &mut bs_forward,
+        &mut bs_svi,
+        expiry_ms,
+        profile,
+        now_ms,
+        test_world::clock(resources),
+        test_world::ctx(world),
+    );
+    return_shared(bs_svi);
+    return_shared(bs_forward);
+    return_shared(bs_spot);
+    return_shared(pyth);
 }

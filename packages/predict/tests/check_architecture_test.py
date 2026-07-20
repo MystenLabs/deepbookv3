@@ -140,6 +140,7 @@ class ScenarioBoundaryTests(unittest.TestCase):
     def test_transaction_progression_in_helper_body_remains_visible(self) -> None:
         for progression in (
             "world.next_tx(@0xC)",
+            "world.next_tx_with_epoch(@0xC, 2)",
             "world.next_tx_with_gas_price(@0xC, 7)",
             "scenario.next_with_context(builder)",
             "scenario.next_epoch(@0xC)",
@@ -163,6 +164,7 @@ class ScenarioBoundaryTests(unittest.TestCase):
         source = (
             "#[test]\nfun visible() { "
             "world.next_tx(@0xB); "
+            "world.next_tx_with_epoch(@0xB, 2); "
             "world.next_tx_with_gas_price(@0xB, 7); "
             "scenario.next_with_context(builder); "
             "}"
@@ -208,6 +210,7 @@ class ScenarioBoundaryTests(unittest.TestCase):
         allowed = """
             public fun new() { scenario.next_tx(@0xA); }
             public fun next_tx() { scenario.next_tx(@0xB); }
+            public fun next_tx_with_epoch() { scenario.next_with_context(builder); }
             public fun next_tx_with_gas_price() { scenario.next_with_context(builder); }
         """
         self.assertEqual(
@@ -227,6 +230,7 @@ class ScenarioBoundaryTests(unittest.TestCase):
                 source = f"""
                     public fun new() {{ scenario.next_tx(@0xA); }}
                     public fun next_tx() {{ scenario.next_tx(@0xB); }}
+                    public fun next_tx_with_epoch() {{ scenario.next_with_context(builder); }}
                     public fun next_tx_with_gas_price() {{ scenario.next_with_context(builder); }}
                     {wrapper}
                 """
@@ -239,6 +243,7 @@ class ScenarioBoundaryTests(unittest.TestCase):
             use sui::test_scenario::next_tx as conclude;
             public fun new() { scenario.next_tx(@0xA); }
             public fun next_tx() { scenario.next_tx(@0xB); }
+            public fun next_tx_with_epoch() { scenario.next_with_context(builder); }
             public fun next_tx_with_gas_price() { scenario.next_with_context(builder); }
             public fun advance() { conclude(scenario, @0xC); }
         """
@@ -250,6 +255,7 @@ class ScenarioBoundaryTests(unittest.TestCase):
         source = """
             public fun new() { scenario.next_tx(@0xA); }
             public fun next_tx() { scenario.next_tx(@0xB); }
+            public fun next_tx_with_epoch() { scenario.next_with_context(builder); }
             public fun next_tx_with_gas_price() { scenario.next_with_context(builder); }
             public fun take_registry() { registry::new(); }
         """

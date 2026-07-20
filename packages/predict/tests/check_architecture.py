@@ -31,7 +31,7 @@ SCENARIO_PROGRESSION_FUNCTIONS = {
     "later_epoch",
     "skip_to_epoch",
 }
-WORLD_PROGRESSION_FUNCTIONS = {"next_tx", "next_tx_with_gas_price"}
+WORLD_PROGRESSION_FUNCTIONS = {"next_tx", "next_tx_with_epoch", "next_tx_with_gas_price"}
 PROGRESSION_FUNCTION_PATTERN = "|".join(
     sorted(SCENARIO_PROGRESSION_FUNCTIONS | WORLD_PROGRESSION_FUNCTIONS)
 )
@@ -45,6 +45,7 @@ OWNED_RESOURCES = re.compile(
 APPROVED_WORLD_PROGRESSION_FUNCTIONS = {
     "new",
     "next_tx",
+    "next_tx_with_epoch",
     "next_tx_with_gas_price",
 }
 SCENARIO_CONSTRUCTORS = {"begin", "begin_with_context"}

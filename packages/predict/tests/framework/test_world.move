@@ -159,6 +159,18 @@ public fun next_tx_with_gas_price(world: &mut World, sender: address, gas_price:
     world.scenario.next_with_context(builder);
 }
 
+public fun next_tx_with_epoch(world: &mut World, sender: address, epoch: u64) {
+    let epoch_timestamp_ms = world.scenario.ctx().epoch_timestamp_ms();
+    let reference_gas_price = world.scenario.ctx().reference_gas_price();
+    let gas_price = world.scenario.ctx().gas_price();
+    let builder = test::ctx_builder_from_sender(sender)
+        .set_epoch(epoch)
+        .set_epoch_timestamp(epoch_timestamp_ms)
+        .set_reference_gas_price(reference_gas_price)
+        .set_gas_price(gas_price);
+    world.scenario.next_with_context(builder);
+}
+
 public fun take_registry(world: &World): Registry {
     world.scenario.take_shared_by_id<Registry>(world.registry_id)
 }

@@ -5,19 +5,21 @@
 #[test_only]
 module deepbook_predict::scope_flow__intent_accounting__mint_tests;
 
-use account::{account::{Self, AccountWrapper}, account_registry::AccountRegistry};
+use account::account;
 use deepbook_predict::{
+    account_setup,
     constants,
     market_setup,
     oracle_profile,
     oracle_setup,
+    pool_setup,
     predict_account,
     test_values,
     test_world
 };
 use dusdc::dusdc::DUSDC;
 use std::{u64, unit_test::assert_eq};
-use sui::{coin, test_scenario::return_shared};
+use sui::test_scenario::return_shared;
 
 #[test]
 fun mint_preserves_cash_and_liability_accounting() {
@@ -29,7 +31,7 @@ fun mint_preserves_cash_and_liability_accounting() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let predict_admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_default_cadence(&world, &predict_admin_cap);
+    market_setup::configure_trading_defaults(&world, &predict_admin_cap);
     test_world::return_predict_admin_cap(&world, predict_admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
 
@@ -48,74 +50,33 @@ fun mint_preserves_cash_and_liability_accounting() {
     test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let mut vault = test_world::take_vault(&world);
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let capital = coin::mint_for_testing<DUSDC>(
+    pool_setup::fund_market(
+        &mut world,
+        &resources,
+        &market_handle,
         test_values::pool_capital(),
-        test_world::ctx(&mut world),
     );
-    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
-    vault.lock_capital(&config, &predict_admin_cap, capital);
-    test_world::return_predict_admin_cap(&world, predict_admin_cap);
-    vault.rebalance_expiry_cash(
-        &mut market,
-        &config,
-        test_world::clock(&resources),
-    );
-    return_shared(config);
-    return_shared(market);
-    return_shared(vault);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    let mut bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let profile = oracle_profile::smoke();
-    oracle_setup::seed_surface(
-        &mut pyth,
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
-        test_values::expiry_ms(),
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
         &profile,
         test_values::now_ms(),
-        test_world::clock(&resources),
-        test_world::ctx(&mut world),
     );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
 
     test_world::next_tx(&mut world, test_values::alice());
-    let mut account_registry = test_world::take_account_registry(&world);
-    let root = test_world::take_accumulator_root(&world);
-    let mut wrapper = account_registry.new(test_world::ctx(&mut world));
-    let wrapper_id = wrapper.id();
-    let deposit = coin::mint_for_testing<DUSDC>(
-        test_values::trader_deposit(),
-        test_world::ctx(&mut world),
-    );
-    let auth = account::generate_auth(test_world::ctx(&mut world));
-    account::deposit_funds(
-        &mut wrapper,
-        auth,
-        deposit,
-        &root,
-        test_world::clock(&resources),
-    );
-    assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, test_world::clock(&resources)),
+    let account_handle = account_setup::create_funded_account(
+        &mut world,
+        &resources,
         test_values::trader_deposit(),
     );
-    wrapper.share();
-    return_shared(root);
-    return_shared(account_registry);
 
     test_world::next_tx(&mut world, test_values::alice());
-    let mut wrapper = test_world::take_shared_by_id<AccountWrapper>(&world, wrapper_id);
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
