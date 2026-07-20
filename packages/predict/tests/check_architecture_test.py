@@ -78,6 +78,9 @@ class ScenarioBoundaryTests(unittest.TestCase):
             "use sui::test_scenario::{begin}; fun f() { begin(@0xA); }",
             "use sui::test_scenario::{begin as start}; fun f() { start(@0xA); }",
             "use sui::test_scenario::{Self as scenario}; fun f() { scenario::begin(@0xA); }",
+            "use sui::test_scenario::begin_with_context; fun f() { begin_with_context(builder); }",
+            "use sui::test_scenario::{begin_with_context as start}; fun f() { start(builder); }",
+            "use sui::test_scenario as scenario; fun f() { scenario::begin_with_context(builder); }",
         )
         for source in cases:
             with self.subTest(source=source):
@@ -107,11 +110,17 @@ class ScenarioBoundaryTests(unittest.TestCase):
         self.assertTrue(architecture.accesses_scenario_api(source))
 
     def test_comments_do_not_create_hidden_scenario_or_transaction_access(self) -> None:
-        source = architecture.source_without_comments(
-            "// test_scenario::begin(@0xA);\n/* helper.next_tx(@0xB); */\nfun helper() {}"
+        source = (
+            "// test_scenario::begin(@0xA);\n"
+            "/* helper.next_tx_with_gas_price(@0xB, 7); */\n"
+            "fun helper() {}"
         )
-        self.assertFalse(architecture.accesses_scenario_api(source))
-        self.assertIsNone(re.search(r"(?:\.|::)next_tx\s*\(", source))
+        stripped = architecture.source_without_comments(source)
+        self.assertFalse(architecture.accesses_scenario_api(stripped))
+        self.assertEqual(
+            architecture.hidden_transaction_progression_errors("example.move", source),
+            [],
+        )
 
     def test_world_constructor_aliases_are_counted_per_test(self) -> None:
         source = """
@@ -129,22 +138,125 @@ class ScenarioBoundaryTests(unittest.TestCase):
         self.assertEqual(architecture.world_constructor_count(functions[0][1], aliases), 2)
 
     def test_transaction_progression_in_helper_body_remains_visible(self) -> None:
-        source = architecture.source_without_comments(
-            """
-            #[test]
-            fun visible() { world.next_tx(@0xB); }
-            fun hidden(world: &mut World) { world.next_tx(@0xC); }
-            """
-        )
-        outside = architecture.source_outside_test_bodies(source)
-        self.assertIsNotNone(re.search(r"(?:\.|::)next_tx\s*\(", outside))
+        for progression in (
+            "world.next_tx(@0xC)",
+            "world.next_tx_with_gas_price(@0xC, 7)",
+            "scenario.next_with_context(builder)",
+            "scenario.next_epoch(@0xC)",
+            "scenario.later_epoch(2, @0xC)",
+            "scenario.skip_to_epoch(10)",
+        ):
+            with self.subTest(progression=progression):
+                source = f"""
+                    #[test]
+                    fun visible() {{ world.next_tx(@0xB); }}
+                    fun hidden(world: &mut World) {{ {progression}; }}
+                """
+                self.assertTrue(
+                    architecture.hidden_transaction_progression_errors(
+                        "example.move",
+                        source,
+                    )
+                )
 
     def test_transaction_progression_in_test_body_is_removed(self) -> None:
-        source = architecture.source_without_comments(
-            "#[test]\nfun visible() { world.next_tx(@0xB); }"
+        source = (
+            "#[test]\nfun visible() { "
+            "world.next_tx(@0xB); "
+            "world.next_tx_with_gas_price(@0xB, 7); "
+            "scenario.next_with_context(builder); "
+            "}"
         )
-        outside = architecture.source_outside_test_bodies(source)
-        self.assertIsNone(re.search(r"(?:\.|::)next_tx\s*\(", outside))
+        self.assertEqual(
+            architecture.hidden_transaction_progression_errors("example.move", source),
+            [],
+        )
+
+    def test_aliased_transaction_progression_in_helper_is_rejected(self) -> None:
+        for imported in (
+            "use deepbook_predict::test_world::next_tx as advance;",
+            "use deepbook_predict::test_world::{next_tx_with_gas_price as advance};",
+            "use sui::test_scenario::{next_with_context as advance};",
+            "use sui::test_scenario::{next_epoch as advance};",
+        ):
+            with self.subTest(imported=imported):
+                source = f"""
+                    {imported}
+                    #[test]
+                    fun visible() {{ assert!(true); }}
+                    fun hidden(world: &mut World) {{ advance(world, @0xB); }}
+                """
+                self.assertTrue(
+                    architecture.hidden_transaction_progression_errors(
+                        "example.move",
+                        source,
+                    )
+                )
+
+    def test_aliased_transaction_progression_in_test_body_is_allowed(self) -> None:
+        source = """
+            use deepbook_predict::test_world::{next_tx as advance};
+            #[test]
+            fun visible(world: &mut World) { advance(world, @0xB); assert!(true); }
+        """
+        self.assertEqual(
+            architecture.hidden_transaction_progression_errors("example.move", source),
+            [],
+        )
+
+    def test_world_progression_surface_is_frozen(self) -> None:
+        allowed = """
+            public fun new() { scenario.next_tx(@0xA); }
+            public fun next_tx() { scenario.next_tx(@0xB); }
+            public fun next_tx_with_gas_price() { scenario.next_with_context(builder); }
+        """
+        self.assertEqual(
+            architecture.world_progression_api_errors("test_world.move", allowed),
+            [],
+        )
+
+    def test_neutrally_named_world_progression_wrapper_is_rejected(self) -> None:
+        for wrapper in (
+            "public fun advance() { scenario.next_tx(@0xC); }",
+            "public fun advance() { scenario.next_epoch(@0xC); }",
+            "public fun advance() { scenario.later_epoch(2, @0xC); }",
+            "public fun advance() { scenario.skip_to_epoch(10); }",
+            "public fun advance() { next_tx(); }",
+        ):
+            with self.subTest(wrapper=wrapper):
+                source = f"""
+                    public fun new() {{ scenario.next_tx(@0xA); }}
+                    public fun next_tx() {{ scenario.next_tx(@0xB); }}
+                    public fun next_tx_with_gas_price() {{ scenario.next_with_context(builder); }}
+                    {wrapper}
+                """
+                self.assertTrue(
+                    architecture.world_progression_api_errors("test_world.move", source)
+                )
+
+    def test_aliased_scenario_progression_inside_world_is_rejected(self) -> None:
+        source = """
+            use sui::test_scenario::next_tx as conclude;
+            public fun new() { scenario.next_tx(@0xA); }
+            public fun next_tx() { scenario.next_tx(@0xB); }
+            public fun next_tx_with_gas_price() { scenario.next_with_context(builder); }
+            public fun advance() { conclude(scenario, @0xC); }
+        """
+        self.assertTrue(
+            architecture.world_progression_api_errors("test_world.move", source)
+        )
+
+    def test_unrelated_module_new_does_not_create_progression_wrapper(self) -> None:
+        source = """
+            public fun new() { scenario.next_tx(@0xA); }
+            public fun next_tx() { scenario.next_tx(@0xB); }
+            public fun next_tx_with_gas_price() { scenario.next_with_context(builder); }
+            public fun take_registry() { registry::new(); }
+        """
+        self.assertEqual(
+            architecture.world_progression_api_errors("test_world.move", source),
+            [],
+        )
 
     def test_commented_module_cannot_steer_taxonomy_input(self) -> None:
         source = architecture.source_without_comments(
@@ -155,6 +267,48 @@ class ScenarioBoundaryTests(unittest.TestCase):
         self.assertIsNotNone(module)
         assert module is not None
         self.assertEqual(module.group(1), "mechanics_real_behavior_tests")
+
+
+class OwnedResourcesTests(unittest.TestCase):
+    def test_actor_capability_is_rejected_from_owned_resources(self) -> None:
+        errors = architecture.owned_resources_capability_errors(
+            "test_world.move",
+            "public struct OwnedResources { clock: Clock, admin: AdminCap }",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("exactly", errors[0])
+
+    def test_aliased_actor_capability_is_rejected_from_owned_resources(self) -> None:
+        errors = architecture.owned_resources_capability_errors(
+            "test_world.move",
+            "use protocol::AdminCap as Authority;\n"
+            "public struct OwnedResources { authority: Authority }",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("exactly", errors[0])
+
+    def test_actor_capability_wrapper_is_rejected_from_owned_resources(self) -> None:
+        errors = architecture.owned_resources_capability_errors(
+            "test_world.move",
+            "public struct AuthorityBox { admin: AdminCap }\n"
+            "public struct OwnedResources { clock: Clock, authority: AuthorityBox }",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("exactly", errors[0])
+
+    def test_actor_neutral_owned_resources_are_accepted(self) -> None:
+        errors = architecture.owned_resources_capability_errors(
+            "test_world.move",
+            "public struct OwnedResources { clock: Clock }",
+        )
+        self.assertEqual(errors, [])
+
+    def test_comments_cannot_invent_a_capability_field(self) -> None:
+        errors = architecture.owned_resources_capability_errors(
+            "test_world.move",
+            "public struct OwnedResources { clock: Clock /* admin: AdminCap */ }",
+        )
+        self.assertEqual(errors, [])
 
 
 class TaxonomyTests(unittest.TestCase):

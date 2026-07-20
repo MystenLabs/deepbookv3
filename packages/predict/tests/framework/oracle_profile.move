@@ -62,6 +62,10 @@ public fun new(
 }
 
 public fun smoke(): SurfaceProfile {
+    smoke_at(SMOKE_SOURCE_TIMESTAMP_MS)
+}
+
+public fun smoke_at(source_timestamp_ms: u64): SurfaceProfile {
     new(
         SMOKE_SPOT,
         SMOKE_SPOT,
@@ -74,7 +78,7 @@ public fun smoke(): SurfaceProfile {
         false,
         SMOKE_SVI_M_MAGNITUDE,
         false,
-        SMOKE_SOURCE_TIMESTAMP_MS,
+        source_timestamp_ms,
     )
 }
 

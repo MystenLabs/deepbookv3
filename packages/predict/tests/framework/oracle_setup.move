@@ -10,14 +10,14 @@ use block_scholes_oracle::update;
 use deepbook_predict::{
     oracle_profile::{Self, SurfaceProfile},
     test_values,
-    test_world::{Self, OwnedResources, World}
+    test_world::{Self, World}
 };
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
     block_scholes_svi_feed::BlockScholesSVIFeed,
     pyth_feed::{Self, PythFeed},
-    registry
+    registry::{Self, RegistryAdminCap}
 };
 use sui::{clock::Clock, test_scenario::return_shared};
 
@@ -56,7 +56,7 @@ public fun create_default_oracles(world: &mut World): OracleIds {
     OracleIds { pyth_id, bs_spot_id, bs_forward_id, bs_svi_id }
 }
 
-public fun bind_default_oracles(world: &World, resources: &OwnedResources, ids: &OracleIds) {
+public fun bind_default_oracles(world: &World, admin_cap: &RegistryAdminCap, ids: &OracleIds) {
     let mut oracle_registry = test_world::take_oracle_registry(world);
     let pyth = test_world::take_shared_by_id<PythFeed>(world, ids.pyth_id);
     let bs_spot = test_world::take_shared_by_id<BlockScholesSpotFeed>(world, ids.bs_spot_id);
@@ -66,17 +66,17 @@ public fun bind_default_oracles(world: &World, resources: &OwnedResources, ids: 
     );
     let bs_svi = test_world::take_shared_by_id<BlockScholesSVIFeed>(world, ids.bs_svi_id);
     oracle_registry.bind_pyth_to_underlying(
-        test_world::propbook_admin_cap(resources),
+        admin_cap,
         &pyth,
         test_values::propbook_underlying_id(),
     );
     oracle_registry.bind_block_scholes_spot_to_underlying(
-        test_world::propbook_admin_cap(resources),
+        admin_cap,
         &bs_spot,
         test_values::propbook_underlying_id(),
     );
     oracle_registry.bind_block_scholes_surface_to_underlying(
-        test_world::propbook_admin_cap(resources),
+        admin_cap,
         &bs_forward,
         &bs_svi,
         test_values::propbook_underlying_id(),

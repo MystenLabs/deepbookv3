@@ -10,6 +10,7 @@ use std::unit_test::{assert_eq, destroy};
 
 const ONE_X_LEVERAGE: u64 = 1_000_000_000;
 const HALF_PROBABILITY: u64 = 500_000_000;
+const LOW_PROBABILITY: u64 = 100_000_000;
 const QUANTITY: u64 = 1_000_000_000;
 const DEFAULT_HALF_PROBABILITY_CAP: u64 = 2_714_285_714;
 const TWO_POINT_FIVE_X_LEVERAGE: u64 = 2_500_000_000;
@@ -29,6 +30,9 @@ const ONE_ABOVE_LIQUIDATION_PROBABILITY: u64 = 500_000_001;
 const ONE_ABOVE_LIQUIDATION_LEVERAGE: u64 = 1_999_999_996;
 const ONE_ABOVE_LIQUIDATION_NET_PREMIUM: u64 = 250_000_001;
 const ONE_ABOVE_LIQUIDATION_FLOOR_SHARES: u64 = 250_000_000;
+const ONE_POINT_FIVE_X_LEVERAGE: u64 = 1_500_000_000;
+const LOW_PROBABILITY_NET_PREMIUM: u64 = 66_666_666;
+const LOW_PROBABILITY_FLOOR_SHARES: u64 = 33_333_334;
 
 #[test]
 fun probability_endpoints_and_exact_derived_cap_are_admitted() {
@@ -104,6 +108,22 @@ fun admission_returns_independently_derived_premium_and_floor() {
     );
     assert_eq!(admission.net_premium(), TWO_POINT_FIVE_X_NET_PREMIUM);
     assert_eq!(admission.floor_shares(), TWO_POINT_FIVE_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+#[test]
+fun low_probability_curve_admits_one_point_five_x_with_exact_terms() {
+    let config = strike_exposure_config::new();
+    // p = 0.1 makes entry 100m; at 1.5x, premium floors to 66,666,666
+    // and the remaining 33,333,334 entry units become floor shares.
+    let admission = config.assert_mint_admission(
+        LOW_PROBABILITY,
+        QUANTITY,
+        ONE_POINT_FIVE_X_LEVERAGE,
+        config_constants::default_no_leverage_window_ms!(),
+    );
+    assert_eq!(admission.net_premium(), LOW_PROBABILITY_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), LOW_PROBABILITY_FLOOR_SHARES);
     destroy(config);
 }
 

@@ -35,16 +35,17 @@ fun production_market_loads_bound_live_surface() {
     );
 
     test_world::next_tx(&mut world, test_values::admin());
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
     let mut predict_registry = test_world::take_registry(&world);
     let config = test_world::take_config(&world);
     predict_registry.register_underlying(
         &config,
-        test_world::predict_admin_cap(&resources),
+        &predict_admin_cap,
         test_values::propbook_underlying_id(),
     );
     predict_registry.set_template_cadence_config(
         &config,
-        test_world::predict_admin_cap(&resources),
+        &predict_admin_cap,
         test_values::propbook_underlying_id(),
         test_values::cadence_id(),
         test_values::tick_size(),
@@ -73,6 +74,7 @@ fun production_market_loads_bound_live_surface() {
     assert!(market_manager::cadence_enabled(&cadence));
     return_shared(config);
     return_shared(predict_registry);
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     let mut oracle_registry = test_world::take_oracle_registry(&world);
     let pyth_id = registry::create_and_share_pyth_feed(
@@ -98,23 +100,24 @@ fun production_market_loads_bound_live_surface() {
     return_shared(oracle_registry);
 
     test_world::next_tx(&mut world, test_values::admin());
+    let propbook_admin_cap = test_world::take_propbook_admin_cap(&world);
     let mut oracle_registry = test_world::take_oracle_registry(&world);
     let pyth = test_world::take_shared_by_id<PythFeed>(&world, pyth_id);
     let bs_spot = test_world::take_shared_by_id<BlockScholesSpotFeed>(&world, bs_spot_id);
     let bs_forward = test_world::take_shared_by_id<BlockScholesForwardFeed>(&world, bs_forward_id);
     let bs_svi = test_world::take_shared_by_id<BlockScholesSVIFeed>(&world, bs_svi_id);
     oracle_registry.bind_pyth_to_underlying(
-        test_world::propbook_admin_cap(&resources),
+        &propbook_admin_cap,
         &pyth,
         test_values::propbook_underlying_id(),
     );
     oracle_registry.bind_block_scholes_spot_to_underlying(
-        test_world::propbook_admin_cap(&resources),
+        &propbook_admin_cap,
         &bs_spot,
         test_values::propbook_underlying_id(),
     );
     oracle_registry.bind_block_scholes_surface_to_underlying(
-        test_world::propbook_admin_cap(&resources),
+        &propbook_admin_cap,
         &bs_forward,
         &bs_svi,
         test_values::propbook_underlying_id(),
@@ -124,15 +127,17 @@ fun production_market_loads_bound_live_surface() {
     return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
+    test_world::return_propbook_admin_cap(&world, propbook_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
     let mut predict_registry = test_world::take_registry(&world);
     let mut vault = test_world::take_vault(&world);
     let config = test_world::take_config(&world);
     let oracle_registry = test_world::take_oracle_registry(&world);
     let lifecycle_cap = predict_registry.mint_lifecycle_cap(
         &config,
-        test_world::predict_admin_cap(&resources),
+        &predict_admin_cap,
         test_world::ctx(&mut world),
     );
     let market_id = predict_registry.create_and_share_expiry_market(
@@ -155,6 +160,8 @@ fun production_market_loads_bound_live_surface() {
     return_shared(config);
     return_shared(vault);
     return_shared(predict_registry);
+    lifecycle_cap.destroy();
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
     let market = test_world::take_shared_by_id<ExpiryMarket>(&world, market_id);
@@ -251,6 +258,5 @@ fun production_market_loads_bound_live_surface() {
     return_shared(oracle_registry);
     return_shared(config);
     return_shared(market);
-    lifecycle_cap.destroy();
     test_world::finish(world, resources);
 }

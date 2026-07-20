@@ -24,17 +24,24 @@ fun missing_forward_value_aborts_live_pricing() {
     );
 
     test_world::next_tx(&mut world, test_values::admin());
-    market_setup::configure_default_cadence(&mut world, &resources);
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
+    market_setup::configure_default_cadence(&world, &predict_admin_cap);
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
 
     test_world::next_tx(&mut world, test_values::admin());
-    oracle_setup::bind_default_oracles(&world, &resources, &oracles);
+    let propbook_admin_cap = test_world::take_propbook_admin_cap(&world);
+    oracle_setup::bind_default_oracles(&world, &propbook_admin_cap, &oracles);
+    test_world::return_propbook_admin_cap(&world, propbook_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let (market_handle, _lifecycle_cap) = market_setup::create_default_market(
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
+    let market_handle = market_setup::create_default_market(
         &mut world,
         &resources,
+        &predict_admin_cap,
     );
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
     let market = market_setup::take_market(&world, &market_handle);

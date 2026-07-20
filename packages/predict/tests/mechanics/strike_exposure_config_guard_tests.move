@@ -9,6 +9,7 @@ use deepbook_predict::{config_constants, strike_exposure_config};
 
 const FLOAT: u64 = 1_000_000_000;
 const HALF_PROBABILITY: u64 = 500_000_000;
+const LOW_PROBABILITY: u64 = 100_000_000;
 const QUANTITY: u64 = 1_000_000_000;
 const DEFAULT_HALF_PROBABILITY_CAP: u64 = 2_714_285_714;
 const OUTSIDE_NO_LEVERAGE_WINDOW_MS: u64 = 86_400_000;
@@ -210,6 +211,30 @@ fun leverage_one_above_exact_curve_cap_aborts() {
     strike_exposure_config::new().assert_mint_probability_and_leverage_policy(
         HALF_PROBABILITY,
         DEFAULT_HALF_PROBABILITY_CAP + RAW_UNIT,
+        OUTSIDE_NO_LEVERAGE_WINDOW_MS,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun low_probability_curve_rejects_two_x() {
+    strike_exposure_config::new().assert_mint_admission(
+        LOW_PROBABILITY,
+        QUANTITY,
+        TWO_X_LEVERAGE,
+        OUTSIDE_NO_LEVERAGE_WINDOW_MS,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun configured_max_leverage_rescales_curve_cap() {
+    let mut config = strike_exposure_config::new();
+    config.set_max_admission_leverage(TWO_X_LEVERAGE);
+    config.assert_mint_admission(
+        HALF_PROBABILITY,
+        QUANTITY,
+        TWO_X_LEVERAGE,
         OUTSIDE_NO_LEVERAGE_WINDOW_MS,
     );
     abort 999

@@ -11,13 +11,17 @@ use fixed_math::math;
 const SYSTEM: address = @0x0;
 const ADMIN: address = @0xA;
 const ALICE: address = @0xB;
+const BOB: address = @0xC;
 const NOW_MS: u64 = 120_000;
+const LATER_MS: u64 = 121_000;
 const PYTH_SOURCE_ID: u32 = 1;
 const PROBOOK_UNDERLYING_ID: u32 = 42;
 const TICK_SIZE: u64 = 1_000_000_000;
 const ADMISSION_TICK_SIZE: u64 = 10_000_000_000;
 const MAX_EXPIRY_ALLOCATION: u64 = 250_000_000_000;
 const CADENCE_WINDOW_SIZE: u64 = 1;
+const COMPOSITION_CADENCE_WINDOW_SIZE: u64 = 2;
+const CUSTOM_GAS_PRICE: u64 = 17;
 const POOL_CAPITAL: u64 = 20_000_000_000;
 const STRIKE_TICK: u64 = 100;
 const MINT_QUANTITY: u64 = 1_000_000_000;
@@ -29,7 +33,11 @@ public fun admin(): address { ADMIN }
 
 public fun alice(): address { ALICE }
 
+public fun bob(): address { BOB }
+
 public fun now_ms(): u64 { NOW_MS }
+
+public fun later_ms(): u64 { LATER_MS }
 
 public fun pyth_source_id(): u32 { PYTH_SOURCE_ID }
 
@@ -41,7 +49,13 @@ public fun cadence_period_ms(): u64 { constants::one_minute_ms!() }
 
 public fun cadence_window_size(): u64 { CADENCE_WINDOW_SIZE }
 
+public fun composition_cadence_window_size(): u64 { COMPOSITION_CADENCE_WINDOW_SIZE }
+
 public fun expiry_ms(): u64 { NOW_MS + cadence_period_ms() }
+
+public fun second_expiry_ms(): u64 { expiry_ms() + cadence_period_ms() }
+
+public fun custom_gas_price(): u64 { CUSTOM_GAS_PRICE }
 
 public fun tick_size(): u64 { TICK_SIZE }
 

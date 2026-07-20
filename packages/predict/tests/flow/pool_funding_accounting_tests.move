@@ -19,17 +19,24 @@ fun expiry_cash_rebalance_moves_only_the_configured_allocation() {
     );
 
     test_world::next_tx(&mut world, test_values::admin());
-    market_setup::configure_default_cadence(&mut world, &resources);
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
+    market_setup::configure_default_cadence(&world, &predict_admin_cap);
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
 
     test_world::next_tx(&mut world, test_values::admin());
-    oracle_setup::bind_default_oracles(&world, &resources, &oracles);
+    let propbook_admin_cap = test_world::take_propbook_admin_cap(&world);
+    oracle_setup::bind_default_oracles(&world, &propbook_admin_cap, &oracles);
+    test_world::return_propbook_admin_cap(&world, propbook_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let (market_handle, lifecycle_cap) = market_setup::create_default_market(
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
+    let market_handle = market_setup::create_default_market(
         &mut world,
         &resources,
+        &predict_admin_cap,
     );
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
     let mut vault = test_world::take_vault(&world);
@@ -39,11 +46,9 @@ fun expiry_cash_rebalance_moves_only_the_configured_allocation() {
         test_values::pool_capital(),
         test_world::ctx(&mut world),
     );
-    vault.lock_capital(
-        &config,
-        test_world::predict_admin_cap(&resources),
-        capital,
-    );
+    let predict_admin_cap = test_world::take_predict_admin_cap(&world);
+    vault.lock_capital(&config, &predict_admin_cap, capital);
+    test_world::return_predict_admin_cap(&world, predict_admin_cap);
     assert_eq!(vault.idle_balance(), test_values::pool_capital());
     assert_eq!(vault.plp_total_supply(), test_values::pool_capital());
 
@@ -64,6 +69,5 @@ fun expiry_cash_rebalance_moves_only_the_configured_allocation() {
     return_shared(market);
     return_shared(vault);
 
-    lifecycle_cap.destroy();
     test_world::finish(world, resources);
 }

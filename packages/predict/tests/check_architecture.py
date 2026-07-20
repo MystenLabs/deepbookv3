@@ -24,6 +24,30 @@ RESERVED_TAXONOMY_MARKER = re.compile(
     r"(?:scope_(?:framework|mechanics|structure|flow)__|"
     r"intent_(?:behavior|guard|boundary|rounding|accounting|reference|policy)__)")
 DIRECT_ASSERTION = re.compile(r"\bassert(?:_eq)?\s*!")
+SCENARIO_PROGRESSION_FUNCTIONS = {
+    "next_tx",
+    "next_with_context",
+    "next_epoch",
+    "later_epoch",
+    "skip_to_epoch",
+}
+WORLD_PROGRESSION_FUNCTIONS = {"next_tx", "next_tx_with_gas_price"}
+PROGRESSION_FUNCTION_PATTERN = "|".join(
+    sorted(SCENARIO_PROGRESSION_FUNCTIONS | WORLD_PROGRESSION_FUNCTIONS)
+)
+TRANSACTION_PROGRESSION = re.compile(
+    rf"(?:\.|::)(?:{PROGRESSION_FUNCTION_PATTERN})\s*\("
+)
+OWNED_RESOURCES = re.compile(
+    r"public\s+struct\s+OwnedResources\s*\{(?P<body>[^}]*)\}",
+    re.DOTALL,
+)
+APPROVED_WORLD_PROGRESSION_FUNCTIONS = {
+    "new",
+    "next_tx",
+    "next_tx_with_gas_price",
+}
+SCENARIO_CONSTRUCTORS = {"begin", "begin_with_context"}
 ATTRIBUTE_GROUP = re.compile(r"#\s*\[(?P<body>[^]]*)\]", re.DOTALL)
 ATTRIBUTED_PUBLIC_FUNCTION = re.compile(
     r"(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)"
@@ -164,6 +188,7 @@ def missing_approved_source_paths(source_paths: set[str]) -> list[str]:
 
 
 def scenario_constructor_count(source: str) -> int:
+    constructor_pattern = "|".join(sorted(SCENARIO_CONSTRUCTORS))
     namespace_aliases = set(
         re.findall(r"\btest_scenario\s+as\s+([a-z][a-z0-9_]*)\b", source)
     )
@@ -174,20 +199,33 @@ def scenario_constructor_count(source: str) -> int:
             re.findall(r"\bSelf\s+as\s+([a-z][a-z0-9_]*)\b", body)
         )
         for function in re.finditer(
-            r"\bbegin\b(?:\s+as\s+([a-z][a-z0-9_]*))?",
+            rf"\b(?P<function>{constructor_pattern})\b"
+            r"(?:\s+as\s+(?P<alias>[a-z][a-z0-9_]*))?",
             body,
         ):
-            function_aliases.add(function.group(1) or "begin")
+            function_aliases.add(function.group("alias") or function.group("function"))
     for function in re.finditer(
-        r"\buse\s+[^;]*\btest_scenario\s*::\s*begin\b"
-        r"(?:\s+as\s+([a-z][a-z0-9_]*))?\s*;",
+        rf"\buse\s+[^;]*\btest_scenario\s*::\s*"
+        rf"(?P<function>{constructor_pattern})\b"
+        r"(?:\s+as\s+(?P<alias>[a-z][a-z0-9_]*))?\s*;",
         source,
     ):
-        function_aliases.add(function.group(1) or "begin")
+        function_aliases.add(function.group("alias") or function.group("function"))
 
-    count = len(re.findall(r"\btest_scenario\s*::\s*begin\s*\(", source))
+    count = len(
+        re.findall(
+            rf"\btest_scenario\s*::\s*(?:{constructor_pattern})\s*\(",
+            source,
+        )
+    )
     count += sum(
-        len(re.findall(rf"\b{re.escape(alias)}\s*::\s*begin\s*\(", source))
+        len(
+            re.findall(
+                rf"\b{re.escape(alias)}\s*::\s*"
+                rf"(?:{constructor_pattern})\s*\(",
+                source,
+            )
+        )
         for alias in namespace_aliases
     )
     count += sum(
@@ -198,12 +236,16 @@ def scenario_constructor_count(source: str) -> int:
 
 
 def accesses_scenario_api(source: str) -> bool:
-    if re.search(r"\bScenario\b|\btest_scenario\s*::\s*(?:begin|Self)\b", source):
+    if re.search(
+        r"\bScenario\b|\btest_scenario\s*::\s*"
+        r"(?:begin|begin_with_context|Self)\b",
+        source,
+    ):
         return True
     for group in re.finditer(
         r"\btest_scenario\s*::\s*\{(?P<body>[^}]*)\}", source, re.DOTALL
     ):
-        if re.search(r"\b(?:begin|Self)\b", group.group("body")):
+        if re.search(r"\b(?:begin|begin_with_context|Self)\b", group.group("body")):
             return True
     return re.search(r"\btest_scenario\s+as\s+[a-z][a-z0-9_]*\b", source) is not None
 
@@ -259,6 +301,127 @@ def source_outside_test_bodies(source: str) -> str:
     for _, _, start, end in attributed_test_spans(source):
         outside[start:end] = " " * (end - start)
     return "".join(outside)
+
+
+def hidden_transaction_progression_errors(source_path: str, text: str) -> list[str]:
+    source = source_without_comments(text)
+    outside_tests = source_outside_test_bodies(source)
+    function_aliases = progression_function_aliases(
+        source,
+        {"test_world", "test_scenario"},
+        SCENARIO_PROGRESSION_FUNCTIONS | WORLD_PROGRESSION_FUNCTIONS,
+    )
+    aliased_progression = any(
+        re.search(rf"(?<!::)(?<!\.)\b{re.escape(alias)}\s*\(", outside_tests)
+        for alias in function_aliases
+    )
+    if TRANSACTION_PROGRESSION.search(outside_tests) or aliased_progression:
+        return [f"{source_path}: prerequisite helper hides transaction progression"]
+    return []
+
+
+def progression_function_aliases(
+    source: str,
+    modules: set[str],
+    functions: set[str],
+) -> set[str]:
+    module_pattern = "|".join(sorted(re.escape(module) for module in modules))
+    function_pattern = "|".join(sorted(re.escape(function) for function in functions))
+    aliases: set[str] = set()
+    for function in re.finditer(
+        rf"\b(?:{module_pattern})\s*::\s*"
+        rf"(?P<function>{function_pattern})\b"
+        r"(?:\s+as\s+(?P<alias>[a-z][a-z0-9_]*))?\s*;",
+        source,
+    ):
+        aliases.add(function.group("alias") or function.group("function"))
+    for group in re.finditer(
+        rf"\b(?:{module_pattern})\s*::\s*\{{(?P<body>[^}}]*)\}}",
+        source,
+        re.DOTALL,
+    ):
+        for function in re.finditer(
+            rf"\b(?P<function>{function_pattern})\b"
+            r"(?:\s+as\s+(?P<alias>[a-z][a-z0-9_]*))?",
+            group.group("body"),
+        ):
+            aliases.add(function.group("alias") or function.group("function"))
+    return aliases
+
+
+def owned_resources_capability_errors(source_path: str, text: str) -> list[str]:
+    source = source_without_comments(text)
+    resource_struct = OWNED_RESOURCES.search(source)
+    if not resource_struct:
+        return [f"{source_path}: OwnedResources declaration is missing"]
+    body = re.sub(r"\s+", "", resource_struct.group("body")).strip(",")
+    if body != "clock:Clock":
+        return [f"{source_path}: OwnedResources must be exactly {{ clock: Clock }}"]
+    return []
+
+
+def function_bodies(source: str) -> dict[str, str]:
+    functions: dict[str, str] = {}
+    for function in re.finditer(
+        r"\b(?:public(?:\(package\))?\s+)?(?:entry\s+)?fun\s+"
+        r"(?P<name>[a-z][a-z0-9_]*)\b",
+        source,
+    ):
+        body_start = source.find("{", function.end())
+        if body_start < 0:
+            continue
+        depth = 0
+        for index in range(body_start, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    functions[function.group("name")] = source[body_start + 1:index]
+                    break
+    return functions
+
+
+def world_progression_api_errors(source_path: str, text: str) -> list[str]:
+    source = source_without_comments(text)
+    functions = function_bodies(source)
+    aliases = progression_function_aliases(
+        source,
+        {"test_scenario"},
+        SCENARIO_PROGRESSION_FUNCTIONS,
+    )
+    progression_functions = {
+        name
+        for name, body in functions.items()
+        if TRANSACTION_PROGRESSION.search(body)
+        or any(
+            re.search(rf"(?<!::)(?<!\.)\b{re.escape(alias)}\s*\(", body)
+            for alias in aliases
+        )
+    }
+    changed = True
+    while changed:
+        changed = False
+        for name, body in functions.items():
+            if name in progression_functions:
+                continue
+            if any(
+                re.search(
+                    rf"(?<![A-Za-z0-9_:])(?:Self::|test_world::)?"
+                    rf"{re.escape(callee)}\s*\(",
+                    body,
+                )
+                for callee in progression_functions
+            ):
+                progression_functions.add(name)
+                changed = True
+    if progression_functions != APPROVED_WORLD_PROGRESSION_FUNCTIONS:
+        return [
+            f"{source_path}: World transaction progression functions must be exactly "
+            f"{sorted(APPROVED_WORLD_PROGRESSION_FUNCTIONS)}; found "
+            f"{sorted(progression_functions)}"
+        ]
+    return []
 
 
 def world_constructor_aliases(source: str) -> tuple[set[str], set[str]]:
@@ -398,6 +561,8 @@ def main() -> int:
             scenario_fields.append((path, field_count))
         if path == world_file:
             scenario_world_constructor_count = scenario_constructor_count(source)
+            errors.extend(owned_resources_capability_errors(relative(path), text))
+            errors.extend(world_progression_api_errors(relative(path), text))
         elif accesses_scenario_api(source):
             errors.append(f"{relative(path)}: test_world must own all Scenario API access")
         if path != world_file and re.search(r"\btake_shared\s*<", source):
@@ -405,8 +570,7 @@ def main() -> int:
         executable = has_executable_test(source)
         if path != world_file:
             outside_tests = source_outside_test_bodies(source)
-            if re.search(r"(?:\.|::)next_tx\s*\(", outside_tests):
-                errors.append(f"{relative(path)}: prerequisite helper hides next_tx")
+            errors.extend(hidden_transaction_progression_errors(relative(path), text))
             aliases = world_constructor_aliases(source)
             if world_constructor_count(outside_tests, aliases):
                 errors.append(f"{relative(path)}: test World construction must stay in test bodies")
@@ -450,7 +614,7 @@ def main() -> int:
         )
     if scenario_world_constructor_count != 1:
         errors.append(
-            f"{relative(world_file)}: expected exactly one aliased test_scenario::begin constructor; "
+            f"{relative(world_file)}: expected exactly one test_scenario constructor; "
             f"found {scenario_world_constructor_count}"
         )
 

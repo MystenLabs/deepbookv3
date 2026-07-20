@@ -35,11 +35,13 @@ sui move test --path packages/predict --gas-limit 100000000000 scope_flow__
 
 ## Fixture architecture
 
-`framework/test_world.move` is the only Scenario owner. It initializes package roots, owns Clock and administrative capabilities, records stable shared-object IDs, exposes explicit `next_tx`, and tears down the world.
+`framework/test_world.move` is the only Scenario owner. It initializes package roots, records stable shared-object IDs, keeps address-owned capabilities in Scenario inventory, owns only the actor-neutral Clock outside that inventory, exposes explicit transaction progression, and tears down the world.
 
 Create at most one World in a test function. When a test exercises several oracle profiles, reuse that World and seed each successive feed row with a strictly increasing source timestamp; restarting package initialization inside the same Sui test inventory collides with one-time registrations.
 
 Subject setup modules compose production-valid prerequisites in the caller's current transaction. Handles carry identity and immutable metadata only; shared production state remains in Scenario inventory and is taken by ID.
+
+Take a root or delegated capability from the current sender immediately before its production use, then return or explicitly transfer it before advancing the transaction. Never park actor-bound authority in `OwnedResources`. Standard market setup mints, uses, and destroys its lifecycle cap while the Registry is borrowed once; a test whose subject is transfer or revocation may carry that cap across an explicit actor boundary. Sui's Scenario inventory permits a shared object to be taken only once per transaction, so repeated same-root setup belongs in one focused batch helper rather than a chain of helpers that each retakes the root.
 
 Use this decision sequence:
 
@@ -49,7 +51,7 @@ Use this decision sequence:
 4. Add a shared helper only after repeated callers establish the same production-valid prerequisite or identity shape. Keep one-subject builders local.
 5. Never add another Scenario owner, a universal optional builder, or a fixture wrapper that mirrors a production operation.
 
-The test body owns every post-bootstrap actor change and `next_tx`. A setup helper must not advance the transaction. The test calls its production unit under test directly; setup may call earlier production transitions only when those transitions are explicit prerequisites for a different claim.
+The test body owns every post-bootstrap actor change and transaction-context change, including custom gas-price advancement. A setup helper must not advance the transaction. The test calls its production unit under test directly; setup may call earlier production transitions only when those transitions are explicit prerequisites for a different claim.
 
 Executable unit tests and fixture modules live under `packages/predict/tests/**`, never `packages/predict/sources/**`. If the existing production surface and approved irreducible test-only seams cannot reach the required state or flow, stop and raise the testability gap; do not add a source-local test or convenience `#[test_only]` constructor to bypass fixture design.
 
@@ -63,7 +65,7 @@ Generated reference data must identify its generator and regeneration command, i
 
 If independently valid truth falls outside its bound, keep the finding visible and follow the RED protocol in `.claude/rules/unit-tests.md`. Do not change the expected value, widen the tolerance, or convert the mismatch into an expected failure.
 
-An exact registered policy function name is a routing obligation, not proof by itself. Assert the observable policy output, including event identity and reason when custody crosses the funds accumulator; if the Move unit-test platform cannot observe the final settled balance or a production branch is unreachable under public admission constraints, retain that semantic gap in `check_predeploy_debt.py` instead of adding a source seam or declaring the policy complete.
+An exact registered policy function name is a routing obligation, not proof by itself. Assert the observable policy output, including event identity and reason when custody crosses the funds accumulator. The locked Sui `TestScenario` does not execute system accumulator settlement when a transaction advances, so final recipient delivery requires localnet/integration evidence; retain that explicit semantic gap in `check_predeploy_debt.py` instead of adding a source seam or declaring the policy complete. Apply the same treatment when a production branch is unreachable under public admission constraints.
 
 ## Adding a test
 
@@ -75,4 +77,4 @@ An exact registered policy function name is a routing obligation, not proof by i
 6. Return every shared object, destroy or transfer every owned non-droppable value, and finish the World.
 7. Run the scope and intent filters, then the warning-strict build and full Predict suite.
 
-Run `python3 packages/predict/tests/check_architecture.py`, `python3 packages/predict/tests/check_predeploy_debt.py`, `python3 -m unittest discover -s packages/predict/tests -p "*_test.py"`, and `python3 packages/predict/tests/reference/generate_pricing_reference.py --check` before the Move commands. Linux CI pins Python 3.11 for the stale-output check and runs Predict warning-strict. The deterministic structural checks reject executable tests and unapproved new test seams across Predict-cluster production sources and verify the single Scenario owner, ID-based shared retrieval boundary, post-bootstrap transaction progression only in test bodies, at most one World per test, exact executable module taxonomy and category selection, direct positive-test assertions, live generated-data provenance links, and the exact transitional predeploy debt set: missing executable pins, manually reviewed unreachable branches and accumulator-delivery obligations, uncatalogued policies, explicit non-unit exemptions, and stale named paths. The `test_world` bootstrap is the sole transaction-progression exception. The branch remains an intermediate draft until that debt manifest is empty, the wrapper is deleted, and the strict predeploy checker is clean. Structural checks freeze semantic-gap rows but do not prove their meaning.
+Run `python3 packages/predict/tests/check_architecture.py`, `python3 packages/predict/tests/check_predeploy_debt.py`, `python3 -m unittest discover -s packages/predict/tests -p "*_test.py"`, and `python3 packages/predict/tests/reference/generate_pricing_reference.py --check` before the Move commands. Linux CI pins Python 3.11 for the stale-output check and runs Predict warning-strict. The deterministic structural checks reject executable tests and unapproved new test seams across Predict-cluster production sources and verify the single Scenario owner, exact Clock-only `OwnedResources`, the frozen World transaction-progression surface, ID-based shared retrieval, every post-bootstrap transaction-progression call only in test bodies, at most one World per test, exact executable module taxonomy and category selection, direct positive-test assertions, live generated-data provenance links, and the exact transitional predeploy debt set: missing executable pins, manually reviewed unreachable branches and accumulator-delivery obligations, uncatalogued policies, explicit non-unit exemptions, and stale named paths. The branch remains an intermediate draft until that debt manifest is empty, the wrapper is deleted, and the strict predeploy checker is clean. Structural checks freeze semantic-gap rows but do not prove their meaning.

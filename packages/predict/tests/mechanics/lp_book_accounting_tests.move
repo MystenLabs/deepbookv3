@@ -32,6 +32,7 @@ const TOTAL_AFTER_TWO_WITHDRAWS: u64 = 10_000_000;
 const UNIT_MARK_VALUE: u64 = 30_000_000;
 const REQUEST_AMOUNT: u64 = 10_000_000;
 const TWO_FILLED_TOTAL: u64 = 50_000_000;
+const THREE_FILLED_TOTAL: u64 = 60_000_000;
 const CANCELLED_REQUESTS: u64 = 2;
 
 #[test]
@@ -166,6 +167,40 @@ fun bounded_supply_budget_fills_only_that_many_heads() {
     assert_eq!(book.supply_requests_pending(), ONE_COUNT);
     assert_eq!(book.total_supply(), TWO_FILLED_TOTAL);
     assert_eq!(ledger.idle_balance(), TWO_COUNT * REQUEST_AMOUNT);
+    destroy(book);
+    destroy(ledger);
+}
+
+#[test]
+fun unbounded_supply_budget_drains_every_queued_head() {
+    let ctx = &mut tx_context::dummy();
+    let (mut book, mut ledger) = lp_book_test_support::new_book_and_ledger(ctx);
+    book.mint_locked_liquidity(LOCKED_SUPPLY);
+    let mut count = ZERO_COUNT;
+    while (count < THREE_COUNT) {
+        let payment = coin::mint_for_testing<DUSDC>(REQUEST_AMOUNT, ctx);
+        book.request_supply(
+            payment,
+            lp_book_test_support::account_id(),
+            ALICE,
+            NO_MIN_OUTPUT,
+        );
+        count = count + ONE_COUNT;
+    };
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(UNIT_MARK_VALUE, LOCKED_SUPPLY),
+        lp_book_test_support::vault_id(),
+        option::none(),
+        option::none(),
+        ctx,
+    );
+
+    lp_book_test_support::assert_summary(&summary, THREE_COUNT, ZERO_COUNT, THREE_COUNT);
+    assert_eq!(book.supply_requests_pending(), ZERO_COUNT);
+    assert_eq!(book.total_supply(), THREE_FILLED_TOTAL);
+    assert_eq!(ledger.idle_balance(), THREE_COUNT * REQUEST_AMOUNT);
     destroy(book);
     destroy(ledger);
 }
