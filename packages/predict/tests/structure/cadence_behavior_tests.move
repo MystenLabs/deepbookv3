@@ -73,6 +73,17 @@ fun all_zero_cadence_projects_as_disabled() {
         &admin_cap,
         test_values::propbook_underlying_id(),
         market_manager::cadence_five_minute!(),
+        test_values::tick_size(),
+        test_values::admission_tick_size(),
+        test_values::max_expiry_allocation(),
+        test_values::initial_expiry_cash(),
+        test_values::cadence_window_size(),
+    );
+    registry.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        test_values::propbook_underlying_id(),
+        market_manager::cadence_five_minute!(),
         0,
         0,
         0,

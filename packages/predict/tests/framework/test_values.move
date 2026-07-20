@@ -53,8 +53,6 @@ public fun composition_cadence_window_size(): u64 { COMPOSITION_CADENCE_WINDOW_S
 
 public fun expiry_ms(): u64 { NOW_MS + cadence_period_ms() }
 
-public fun second_expiry_ms(): u64 { expiry_ms() + cadence_period_ms() }
-
 public fun custom_gas_price(): u64 { CUSTOM_GAS_PRICE }
 
 public fun tick_size(): u64 { TICK_SIZE }

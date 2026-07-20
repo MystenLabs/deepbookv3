@@ -37,6 +37,7 @@ const LIQUIDATION_BUDGET: u64 = 48;
 const EWMA_ALPHA: u64 = 25_000_000;
 const EWMA_Z_SCORE: u64 = 2_000_000_000;
 const EWMA_PENALTY_RATE: u64 = 1_500_000;
+const ELIGIBLE_REBATE: u64 = 1_000;
 
 #[test]
 fun admin_setters_project_each_live_configuration_value() {
@@ -101,10 +102,18 @@ fun admin_setters_project_each_live_configuration_value() {
     assert_eq!(
         stake_config::rebate_amount(
             config.stake_config(),
-            1_000,
+            ELIGIBLE_REBATE,
             config_constants::min_lower_benefit_power!(),
         ),
         500,
+    );
+    assert_eq!(
+        stake_config::rebate_amount(
+            config.stake_config(),
+            ELIGIBLE_REBATE,
+            config_constants::min_upper_benefit_power!(),
+        ),
+        ELIGIBLE_REBATE,
     );
 
     return_shared(config);
