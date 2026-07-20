@@ -25,6 +25,11 @@ OPEN_ITEM_TEST_FIELD = re.compile(
     re.MULTILINE,
 )
 MOVE_TEST_FAILURE = re.compile(r"^\[\s*FAIL\s*\]\s+(?P<test>[a-z0-9_:]+)\s*$", re.MULTILINE)
+MOVE_TEST_RESULT = re.compile(
+    r"^Test result: (?P<status>OK|FAILED)\. Total tests: (?P<total>\d+); "
+    r"passed: (?P<passed>\d+); failed: (?P<failed>\d+)\s*$",
+    re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -201,17 +206,42 @@ def known_red_acceptance_errors(
     expected: set[str],
 ) -> list[str]:
     errors = []
-    if "Test result:" not in output:
-        return ["Move test output has no terminal test result"]
-    actual = move_test_failures(output)
+    results = list(MOVE_TEST_RESULT.finditer(output))
+    if len(results) != 1:
+        if not results:
+            return ["Move test output has no parseable terminal test result"]
+        return [f"Move test output has {len(results)} terminal test results"]
+    result = results[0]
+    total = int(result.group("total"))
+    passed = int(result.group("passed"))
+    failed = int(result.group("failed"))
+    if total == 0:
+        errors.append("Move test ran zero tests")
+    if passed + failed != total:
+        errors.append(
+            f"Move test totals are inconsistent: total={total} passed={passed} failed={failed}"
+        )
+    if (result.group("status") == "FAILED") != (failed > 0):
+        errors.append(
+            f"Move test status disagrees with failure total: status={result.group('status')} "
+            f"failed={failed}"
+        )
+    failures = [match.group("test") for match in MOVE_TEST_FAILURE.finditer(output)]
+    if len(failures) != failed:
+        errors.append(
+            f"Move test reported {failed} failures but emitted {len(failures)} failure rows"
+        )
+    if len(failures) != len(set(failures)):
+        errors.append("Move test emitted duplicate failure rows")
+    actual = set(failures)
     for test in sorted(actual - expected):
         errors.append(f"unlisted Move test failure: {test}")
     for test in sorted(expected - actual):
         errors.append(f"stale known-RED row did not fail: {test}")
-    if actual and returncode == 0:
+    if failed and returncode == 0:
         errors.append("Move test returned success despite reported failures")
-    if not actual and returncode != 0:
-        errors.append("Move test returned failure without a listed failing test")
+    if not failed and returncode != 0:
+        errors.append("Move test returned failure despite a passing terminal result")
     return errors
 
 

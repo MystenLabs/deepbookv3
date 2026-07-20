@@ -255,8 +255,24 @@ module deepbook_predict::scope_flow__intent_accounting__pool_tests;
     def test_nonterminal_move_output_cannot_pass_an_empty_manifest(self) -> None:
         self.assertEqual(
             debt.known_red_acceptance_errors(1, "error[E04001]: build failed", set()),
-            ["Move test output has no terminal test result"],
+            ["Move test output has no parseable terminal test result"],
         )
+
+    def test_zero_test_run_cannot_pass_an_empty_manifest(self) -> None:
+        errors = debt.known_red_acceptance_errors(
+            0,
+            "Test result: OK. Total tests: 0; passed: 0; failed: 0\n",
+            set(),
+        )
+        self.assertTrue(any("zero tests" in error for error in errors))
+
+    def test_failure_summary_must_match_emitted_failure_rows(self) -> None:
+        output = (
+            f"[ FAIL    ] {self.TEST}\n"
+            "Test result: FAILED. Total tests: 2; passed: 0; failed: 2\n"
+        )
+        errors = debt.known_red_acceptance_errors(1, output, {self.TEST})
+        self.assertTrue(any("emitted 1 failure rows" in error for error in errors))
 
     def test_registered_known_red_is_clean_but_registered_deferral_is_fatal(self) -> None:
         check = debt.load_predeploy_check()
@@ -280,6 +296,42 @@ module deepbook_predict::scope_flow__intent_accounting__pool_tests;
             {"P-8": self.TEST},
             {"H-7": self.TEST},
         )
+        self.assertTrue(any("owner sign-off required" in error for error in errors))
+
+    def test_qualified_registered_pin_cannot_attach_to_same_leaf_in_another_module(self) -> None:
+        check = debt.load_predeploy_check()
+        register = """
+## RP-8: Finding
+- **Pinning tests:** `registered_tests::finding_is_live`
+"""
+        wrong_test = (
+            "deepbook_predict::scope_flow__intent_accounting__other_tests::finding_is_live"
+        )
+        rows = [{"test": wrong_test, "open_item": "P-8"}]
+        self.assertEqual(
+            check.known_red_policy_errors(
+                register,
+                rows,
+                {"P-8": wrong_test},
+                {"H-7": wrong_test},
+            ),
+            [],
+        )
+
+    def test_qualified_registered_pin_matches_only_its_module(self) -> None:
+        check = debt.load_predeploy_check()
+        register = """
+## RP-8: Finding
+- **Pinning tests:** `registered_tests::finding_is_live`
+"""
+        registered_test = "deepbook_predict::registered_tests::finding_is_live"
+        errors = check.known_red_policy_errors(
+            register,
+            [{"test": registered_test, "open_item": "P-8"}],
+            {},
+            {"H-7": registered_test},
+        )
+        self.assertTrue(any("open-item disposition" in error for error in errors))
         self.assertTrue(any("owner sign-off required" in error for error in errors))
 
 

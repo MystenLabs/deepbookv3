@@ -143,8 +143,19 @@ def pinning_test_functions_from_block(block):
     return functions
 
 
+def pinning_test_selectors_from_block(block):
+    """Extract exact module-qualified pins, falling back to naked function selectors."""
+    selectors = []
+    for token in re.findall(r'`([^`]+)`', block):
+        if re.fullmatch(r'[a-z][a-z0-9_]*_tests::[a-z][a-z0-9_]*', token):
+            selectors.append(token)
+        elif re.fullmatch(r'[a-z][a-z0-9_]+', token) and len(token) >= 10 and '_' in token:
+            selectors.append(token)
+    return selectors
+
+
 def registered_pins_by_test(register):
-    """Return every registered pin function and the policies that own it."""
+    """Return exact qualified or legacy naked pin selectors and their policies."""
     policies = {}
     for entry in re.split(r'^## ', register, flags=re.M)[1:]:
         title = entry.splitlines()[0]
@@ -158,8 +169,8 @@ def registered_pins_by_test(register):
         )
         if not block:
             continue
-        for function in pinning_test_functions_from_block(block.group(1)):
-            policies.setdefault(function, set()).add(policy.group(1))
+        for selector in pinning_test_selectors_from_block(block.group(1)):
+            policies.setdefault(selector, set()).add(policy.group(1))
     return policies
 
 
@@ -192,17 +203,21 @@ def known_red_policy_errors(register, rows, known_red_fields, deferred_fields):
     manifest = {row['open_item']: row['test'] for row in rows}
     for item, test in manifest.items():
         function = test.rsplit('::', 1)[-1]
-        if function in pins and known_red_fields.get(item) != test:
+        module_function = '::'.join(test.rsplit('::', 2)[-2:])
+        policies = pins.get(module_function, set()) | pins.get(function, set())
+        if policies and known_red_fields.get(item) != test:
             errors.append(
                 f"known-RED registered pin lacks its open-item disposition: "
-                f"{','.join(sorted(pins[function]))}::{function} -> {item}"
+                f"{','.join(sorted(policies))}::{module_function} -> {item}"
             )
     for item, test in deferred_fields.items():
         function = test.rsplit('::', 1)[-1]
-        if function in pins:
+        module_function = '::'.join(test.rsplit('::', 2)[-2:])
+        policies = pins.get(module_function, set()) | pins.get(function, set())
+        if policies:
             errors.append(
                 f"open-items.md: deferred test {item}::{test} touches registered "
-                f"response policy {','.join(sorted(pins[function]))}; owner sign-off required"
+                f"response policy {','.join(sorted(policies))}; owner sign-off required"
             )
     return errors
 
