@@ -49,9 +49,15 @@ fun block_scholes_surface_binding_rejects_mixed_source_ids() {
     test_world::next_tx(&mut world, test_values::admin());
     let mut oracle_registry = test_world::take_oracle_registry(&world);
     let admin_cap = test_world::take_propbook_admin_cap(&world);
+    let first_spot = oracle_setup::take_bs_spot(&world, &first);
     let first_forward = oracle_setup::take_bs_forward(&world, &first);
     let second_svi = oracle_setup::take_bs_svi(&world, &second);
 
+    oracle_registry.bind_block_scholes_spot_to_underlying(
+        &admin_cap,
+        &first_spot,
+        test_values::propbook_underlying_id(),
+    );
     oracle_registry.bind_block_scholes_surface_to_underlying(
         &admin_cap,
         &first_forward,

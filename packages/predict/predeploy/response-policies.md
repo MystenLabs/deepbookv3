@@ -198,7 +198,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   before value-bearing deployment.
 - **Pinning tests:** `live_pricer_behavior_tests.move` —
   `live_pricer_accepts_pricing_safe_cross_feed_deviation` exercises the accepted
-  absence of a cross-feed deviation guard at the exact Block Scholes basis limit.
+  absence of a cross-feed deviation guard beyond the former Block Scholes basis limit.
 - **Reopen when:** the production verifier lands (S-4) — revisit whether any
   cross-feed sanity band is then worth reintroducing as a skip, not an abort.
 

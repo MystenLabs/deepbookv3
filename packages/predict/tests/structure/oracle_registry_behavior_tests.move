@@ -6,11 +6,32 @@
 module deepbook_predict::scope_structure__intent_behavior__oracle_registry_tests;
 
 use deepbook_predict::{oracle_setup, test_values, test_world};
-use propbook::registry as registry;
+use propbook::registry::{Self as registry, OracleMetadata};
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
 const REPLACEMENT_SOURCE_ID: u32 = 2;
+const KIND_PYTH: u8 = 0;
+const KIND_BLOCK_SCHOLES_SPOT: u8 = 1;
+const KIND_BLOCK_SCHOLES_FORWARD: u8 = 2;
+const KIND_BLOCK_SCHOLES_SVI: u8 = 3;
+const VALUE_KIND_SPOT: u8 = 0;
+const VALUE_KIND_FORWARD: u8 = 1;
+const VALUE_KIND_SVI: u8 = 2;
+
+fun assert_metadata(
+    metadata: OracleMetadata,
+    expected_oracle_kind: u8,
+    expected_source_id: u32,
+    expected_oracle_id: ID,
+    expected_value_kind: u8,
+) {
+    assert_eq!(registry::propbook_underlying_id(&metadata), test_values::propbook_underlying_id());
+    assert_eq!(registry::oracle_kind(&metadata), expected_oracle_kind);
+    assert_eq!(registry::source_id(&metadata), expected_source_id);
+    assert_eq!(registry::propbook_oracle_id(&metadata), expected_oracle_id);
+    assert_eq!(registry::value_kind(&metadata), expected_value_kind);
+}
 
 #[test]
 fun source_creation_records_each_feed_identity_under_its_kind() {
@@ -131,15 +152,42 @@ fun binding_projects_each_canonical_identity_and_metadata_kind() {
             )
             .contains(&oracle_setup::bs_svi_id(&ids)),
     );
-    let svi_metadata = oracle_registry
-        .block_scholes_svi_metadata_for_underlying(test_values::propbook_underlying_id())
-        .destroy_some();
-    assert_eq!(
-        registry::propbook_underlying_id(&svi_metadata),
-        test_values::propbook_underlying_id(),
+    assert_metadata(
+        oracle_registry
+            .pyth_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_PYTH,
+        test_values::pyth_source_id(),
+        oracle_setup::pyth_id(&ids),
+        VALUE_KIND_SPOT,
     );
-    assert_eq!(registry::source_id(&svi_metadata), test_values::pyth_source_id());
-    assert_eq!(registry::propbook_oracle_id(&svi_metadata), oracle_setup::bs_svi_id(&ids));
+    assert_metadata(
+        oracle_registry
+            .block_scholes_spot_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_BLOCK_SCHOLES_SPOT,
+        test_values::pyth_source_id(),
+        oracle_setup::bs_spot_id(&ids),
+        VALUE_KIND_SPOT,
+    );
+    assert_metadata(
+        oracle_registry
+            .block_scholes_forward_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_BLOCK_SCHOLES_FORWARD,
+        test_values::pyth_source_id(),
+        oracle_setup::bs_forward_id(&ids),
+        VALUE_KIND_FORWARD,
+    );
+    assert_metadata(
+        oracle_registry
+            .block_scholes_svi_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_BLOCK_SCHOLES_SVI,
+        test_values::pyth_source_id(),
+        oracle_setup::bs_svi_id(&ids),
+        VALUE_KIND_SVI,
+    );
 
     return_shared(bs_svi);
     return_shared(bs_forward);
@@ -220,6 +268,42 @@ fun replacement_moves_all_canonical_slots_to_the_new_source() {
         !oracle_registry
             .propbook_pyth_id_for_underlying(test_values::propbook_underlying_id())
             .contains(&oracle_setup::pyth_id(&original)),
+    );
+    assert_metadata(
+        oracle_registry
+            .pyth_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_PYTH,
+        REPLACEMENT_SOURCE_ID,
+        oracle_setup::pyth_id(&replacement),
+        VALUE_KIND_SPOT,
+    );
+    assert_metadata(
+        oracle_registry
+            .block_scholes_spot_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_BLOCK_SCHOLES_SPOT,
+        REPLACEMENT_SOURCE_ID,
+        oracle_setup::bs_spot_id(&replacement),
+        VALUE_KIND_SPOT,
+    );
+    assert_metadata(
+        oracle_registry
+            .block_scholes_forward_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_BLOCK_SCHOLES_FORWARD,
+        REPLACEMENT_SOURCE_ID,
+        oracle_setup::bs_forward_id(&replacement),
+        VALUE_KIND_FORWARD,
+    );
+    assert_metadata(
+        oracle_registry
+            .block_scholes_svi_metadata_for_underlying(test_values::propbook_underlying_id())
+            .destroy_some(),
+        KIND_BLOCK_SCHOLES_SVI,
+        REPLACEMENT_SOURCE_ID,
+        oracle_setup::bs_svi_id(&replacement),
+        VALUE_KIND_SVI,
     );
 
     return_shared(bs_svi);

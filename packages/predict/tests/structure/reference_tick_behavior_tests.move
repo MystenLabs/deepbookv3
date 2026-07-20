@@ -5,9 +5,15 @@
 #[test_only]
 module deepbook_predict::scope_structure__intent_behavior__reference_tick_tests;
 
-use deepbook_predict::{market_setup, oracle_setup, test_values, test_world};
+use deepbook_predict::{
+    config_events::ReferenceTickSet,
+    market_setup,
+    oracle_setup,
+    test_values,
+    test_world
+};
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
+use sui::{event, test_scenario::return_shared};
 
 const REFERENCE_SPOT_WITH_DUST: u64 = 101_123_456_789;
 const EXPECTED_REFERENCE_TICK: u64 = 101;
@@ -59,12 +65,14 @@ fun set_reference_tick_floors_spot_and_is_idempotent() {
         &pyth,
         test_world::clock(&resources),
     );
+    assert_eq!(event::events_by_type<ReferenceTickSet>().length(), 1);
     let second = market.set_reference_tick(
         &config,
         &oracle_registry,
         &pyth,
         test_world::clock(&resources),
     );
+    assert_eq!(event::events_by_type<ReferenceTickSet>().length(), 1);
 
     assert_eq!(source_timestamp_ms, test_values::now_ms());
     assert_eq!(first, EXPECTED_REFERENCE_TICK);

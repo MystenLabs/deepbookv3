@@ -43,7 +43,20 @@ fun set_reference_tick_missing_exact_history_aborts() {
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
     let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
+    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
+    let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
+    oracle_setup::seed_pyth(
+        &mut pyth,
+        100_000_000_000,
+        source_timestamp_ms - 2,
+        test_values::now_ms(),
+    );
+    oracle_setup::seed_exact_pyth(
+        &mut pyth,
+        101_000_000_000,
+        source_timestamp_ms - 1,
+        test_values::now_ms(),
+    );
 
     let _ = market.set_reference_tick(
         &config,
