@@ -196,8 +196,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   replaced (deploy gate S-4).
 - **Risk profile:** `BEST-GUESS`; bounded only by the envelope. Gated by S-4
   before value-bearing deployment.
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `live_pricer_behavior_tests.move` —
+  `live_pricer_accepts_pricing_safe_cross_feed_deviation` exercises the accepted
+  absence of a cross-feed deviation guard at the exact Block Scholes basis limit.
 - **Reopen when:** the production verifier lands (S-4) — revisit whether any
   cross-feed sanity band is then worth reintroducing as a skip, not an abort.
 
@@ -513,10 +514,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Risk profile:** `BEST-GUESS` — unreachable by construction at current
   Propbook source; residual risk is semantic drift in that dependency, not an
   accepted reachable market state.
-- **Pinning tests:** `reference_tick_tests.move` —
-  `set_reference_tick_floors_spot_and_is_idempotent`,
-  `set_reference_tick_missing_exact_history_aborts`, and
-  `set_reference_tick_wrong_pyth_feed_aborts`.
+- **Pinning tests:** `reference_tick_behavior_tests.move` —
+  `set_reference_tick_floors_spot_and_is_idempotent`; `reference_tick_guard_tests.move` —
+  `set_reference_tick_missing_exact_history_aborts` and `set_reference_tick_wrong_pyth_feed_aborts`.
 - **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
   normalization semantics, or Predict begins using the exact product across a
   delayed boundary that requires update-time metadata.
@@ -544,7 +544,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   sending an arbitrageable surface that also intersects the active book.
   Production safety depends on replacing the stub verifier before value-bearing
   deployment (S-4).
-- **Pinning tests:** `pricing_guard_tests.move` —
+- **Pinning tests:** `live_valuation_guard_tests.move` —
   `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
   `current_nav_flow_tests.move` —
   `current_nav_rejects_non_monotone_active_book_surface`.

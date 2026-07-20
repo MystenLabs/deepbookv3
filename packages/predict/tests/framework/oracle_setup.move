@@ -13,9 +13,9 @@ use deepbook_predict::{
     test_world::{Self, World}
 };
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
+    block_scholes_forward_feed::{Self as block_scholes_forward_feed, BlockScholesForwardFeed},
+    block_scholes_spot_feed::{Self as block_scholes_spot_feed, BlockScholesSpotFeed},
+    block_scholes_svi_feed::{Self as block_scholes_svi_feed, BlockScholesSVIFeed},
     pyth_feed::{Self, PythFeed},
     registry::{Self, RegistryAdminCap}
 };
@@ -31,25 +31,29 @@ public struct OracleIds has copy, drop {
 }
 
 public fun create_default_oracles(world: &mut World): OracleIds {
+    create_oracles(world, test_values::pyth_source_id())
+}
+
+public fun create_oracles(world: &mut World, source_id: u32): OracleIds {
     let mut oracle_registry = test_world::take_oracle_registry(world);
     let pyth_id = registry::create_and_share_pyth_feed(
         &mut oracle_registry,
-        test_values::pyth_source_id(),
+        source_id,
         test_world::ctx(world),
     );
     let bs_spot_id = registry::create_and_share_block_scholes_spot_feed(
         &mut oracle_registry,
-        test_values::pyth_source_id(),
+        source_id,
         test_world::ctx(world),
     );
     let bs_forward_id = registry::create_and_share_block_scholes_forward_feed(
         &mut oracle_registry,
-        test_values::pyth_source_id(),
+        source_id,
         test_world::ctx(world),
     );
     let bs_svi_id = registry::create_and_share_block_scholes_svi_feed(
         &mut oracle_registry,
-        test_values::pyth_source_id(),
+        source_id,
         test_world::ctx(world),
     );
     return_shared(oracle_registry);
@@ -57,6 +61,20 @@ public fun create_default_oracles(world: &mut World): OracleIds {
 }
 
 public fun bind_default_oracles(world: &World, admin_cap: &RegistryAdminCap, ids: &OracleIds) {
+    bind_oracles(
+        world,
+        admin_cap,
+        ids,
+        test_values::propbook_underlying_id(),
+    )
+}
+
+public fun bind_oracles(
+    world: &World,
+    admin_cap: &RegistryAdminCap,
+    ids: &OracleIds,
+    propbook_underlying_id: u32,
+) {
     let mut oracle_registry = test_world::take_oracle_registry(world);
     let pyth = test_world::take_shared_by_id<PythFeed>(world, ids.pyth_id);
     let bs_spot = test_world::take_shared_by_id<BlockScholesSpotFeed>(world, ids.bs_spot_id);
@@ -68,18 +86,18 @@ public fun bind_default_oracles(world: &World, admin_cap: &RegistryAdminCap, ids
     oracle_registry.bind_pyth_to_underlying(
         admin_cap,
         &pyth,
-        test_values::propbook_underlying_id(),
+        propbook_underlying_id,
     );
     oracle_registry.bind_block_scholes_spot_to_underlying(
         admin_cap,
         &bs_spot,
-        test_values::propbook_underlying_id(),
+        propbook_underlying_id,
     );
     oracle_registry.bind_block_scholes_surface_to_underlying(
         admin_cap,
         &bs_forward,
         &bs_svi,
-        test_values::propbook_underlying_id(),
+        propbook_underlying_id,
     );
     return_shared(bs_svi);
     return_shared(bs_forward);
@@ -87,6 +105,14 @@ public fun bind_default_oracles(world: &World, admin_cap: &RegistryAdminCap, ids
     return_shared(pyth);
     return_shared(oracle_registry);
 }
+
+public fun pyth_id(ids: &OracleIds): ID { ids.pyth_id }
+
+public fun bs_spot_id(ids: &OracleIds): ID { ids.bs_spot_id }
+
+public fun bs_forward_id(ids: &OracleIds): ID { ids.bs_forward_id }
+
+public fun bs_svi_id(ids: &OracleIds): ID { ids.bs_svi_id }
 
 public fun take_pyth(world: &World, ids: &OracleIds): PythFeed {
     test_world::take_shared_by_id<PythFeed>(world, ids.pyth_id)
@@ -117,14 +143,32 @@ public fun seed_pyth(pyth: &mut PythFeed, price: u64, source_timestamp_ms: u64, 
     );
 }
 
+public fun seed_exact_pyth(pyth: &mut PythFeed, price: u64, source_timestamp_ms: u64, now_ms: u64) {
+    pyth_feed::record_raw_for_testing(
+        pyth,
+        price,
+        false,
+        PYTH_EXPONENT_NEGATIVE_NINE,
+        true,
+        source_timestamp_ms * 1000,
+        now_ms,
+        true,
+    );
+}
+
 public fun seed_bs_spot(
     feed: &mut BlockScholesSpotFeed,
     price: u64,
     source_timestamp_ms: u64,
     clock: &Clock,
 ) {
+    let source_id = block_scholes_spot_feed::bs_source_id(feed);
     feed.update(
-        update::new_spot_update(test_values::pyth_source_id(), source_timestamp_ms, price),
+        update::new_spot_update(
+            source_id,
+            source_timestamp_ms,
+            price,
+        ),
         clock,
     );
 }
@@ -137,9 +181,10 @@ public fun seed_bs_forward(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let source_id = block_scholes_forward_feed::bs_source_id(feed);
     feed.update(
         update::new_forward_update(
-            test_values::pyth_source_id(),
+            source_id,
             expiry_ms,
             source_timestamp_ms,
             price,
@@ -156,9 +201,10 @@ public fun seed_bs_svi(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let source_id = block_scholes_svi_feed::bs_source_id(feed);
     feed.update(
         update::new_svi_update(
-            test_values::pyth_source_id(),
+            source_id,
             expiry_ms,
             profile.source_timestamp_ms(),
             profile.svi_a(),

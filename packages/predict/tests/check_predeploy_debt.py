@@ -60,10 +60,6 @@ EXPECTED_MISSING_PINS = {
     ("RP-13", "budget_at_next_lot_premium_mints_the_next_lot"),
     ("RP-13", "budget_fill_below_min_quantity_aborts"),
     ("RP-13", "mint_exact_amount_below_min_quantity_aborts"),
-    ("RP-14", "set_reference_tick_floors_spot_and_is_idempotent"),
-    ("RP-14", "set_reference_tick_missing_exact_history_aborts"),
-    ("RP-14", "set_reference_tick_wrong_pyth_feed_aborts"),
-    ("RP-15", "price_memo_rejects_non_monotone_surface_over_active_ticks"),
     ("RP-15", "current_nav_rejects_non_monotone_active_book_surface"),
 }
 
@@ -71,11 +67,9 @@ EXPECTED_WARNINGS = {
     "response-policies.md: names file `pool_valuation_flow_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `settlement_flow_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `mint_exact_amount_tests.move` not found under packages/predict/ or .claude/",
-    "response-policies.md: names file `reference_tick_tests.move` not found under packages/predict/ or .claude/",
-    "response-policies.md: names file `pricing_guard_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `current_nav_flow_tests.move` not found under packages/predict/ or .claude/",
 }
-EXPECTED_UNCATALOGUED_POLICIES = {"RP-5", "RP-6", "RP-7", "RP-8", "RP-13"}
+EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-7", "RP-8", "RP-13"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
 EXPECTED_UNREACHABLE_PIN_BRANCHES = {
     ("RP-2", "priced_supply_that_rounds_to_zero_shares_refunds"),
