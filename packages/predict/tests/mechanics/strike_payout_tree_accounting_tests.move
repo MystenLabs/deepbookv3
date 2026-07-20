@@ -86,6 +86,20 @@ fun disjoint_ranges_reserve_peak_while_total_sums_both() {
 }
 
 #[test]
+fun open_lower_base_and_finite_prefix_gain_combine_in_the_reserve_peak() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = strike_payout_tree::new(ctx);
+    tree.insert_range(NEG_INF_TICK, MID_HIGH_TICK, FIRST_QUANTITY, ZERO_AMOUNT);
+    tree.insert_range(MID_LOW_TICK, HIGH_TICK, SECOND_QUANTITY, ZERO_AMOUNT);
+
+    let (max_net_payout, total_net_payout) = tree.net_payout_reserve_terms();
+
+    assert_eq!(max_net_payout, FIRST_QUANTITY + SECOND_QUANTITY);
+    assert_eq!(total_net_payout, FIRST_QUANTITY + SECOND_QUANTITY);
+    destroy(tree);
+}
+
+#[test]
 fun overlapping_ranges_reserve_the_overlap_sum() {
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);

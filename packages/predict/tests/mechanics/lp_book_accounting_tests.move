@@ -34,6 +34,14 @@ const REQUEST_AMOUNT: u64 = 10_000_000;
 const TWO_FILLED_TOTAL: u64 = 50_000_000;
 const THREE_FILLED_TOTAL: u64 = 60_000_000;
 const CANCELLED_REQUESTS: u64 = 2;
+const ROUNDING_TOTAL_SUPPLY: u64 = 30_000_001;
+const ROUNDING_POOL_VALUE: u64 = 40_000_000;
+const ROUNDING_SUPPLY_PAYMENT: u64 = 10_000_000;
+const ROUNDED_DOWN_SUPPLY_SHARES: u64 = 7_500_000;
+const ROUNDING_WITHDRAW_TOTAL_SUPPLY: u64 = 30_000_000;
+const ROUNDING_WITHDRAW_POOL_VALUE: u64 = 40_000_001;
+const ROUNDING_WITHDRAW_SHARES: u64 = 10_000_000;
+const ROUNDED_DOWN_WITHDRAW_PAYOUT: u64 = 13_333_333;
 
 #[test]
 fun priced_supply_mints_proportional_shares_and_joins_full_payment() {
@@ -95,6 +103,68 @@ fun priced_withdraw_burns_shares_and_pays_from_idle() {
     assert_eq!(POOL_VALUE_TWO_X - WITHDRAW_PAYOUT, IDLE_AFTER_WITHDRAW);
     assert_eq!(ledger.idle_balance(), IDLE_AFTER_WITHDRAW);
     assert_eq!(book.withdraw_requests_pending(), ZERO_COUNT);
+    destroy(book);
+    destroy(ledger);
+}
+
+#[test]
+fun non_integral_supply_quote_rounds_down() {
+    let ctx = &mut tx_context::dummy();
+    let (mut book, mut ledger) = lp_book_test_support::new_book_and_ledger(ctx);
+    book.mint_locked_liquidity(ROUNDING_TOTAL_SUPPLY);
+    let payment = coin::mint_for_testing<DUSDC>(ROUNDING_SUPPLY_PAYMENT, ctx);
+    book.request_supply(
+        payment,
+        lp_book_test_support::account_id(),
+        ALICE,
+        NO_MIN_OUTPUT,
+    );
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(ROUNDING_POOL_VALUE, ROUNDING_TOTAL_SUPPLY),
+        lp_book_test_support::vault_id(),
+        option::none(),
+        option::none(),
+        ctx,
+    );
+
+    lp_book_test_support::assert_summary(&summary, ONE_COUNT, ZERO_COUNT, ONE_COUNT);
+    assert_eq!(book.total_supply(), ROUNDING_TOTAL_SUPPLY + ROUNDED_DOWN_SUPPLY_SHARES);
+    assert_eq!(ledger.idle_balance(), ROUNDING_SUPPLY_PAYMENT);
+    destroy(book);
+    destroy(ledger);
+}
+
+#[test]
+fun non_integral_withdraw_quote_rounds_down() {
+    let ctx = &mut tx_context::dummy();
+    let (mut book, mut ledger) = lp_book_test_support::new_book_and_ledger(ctx);
+    book.mint_locked_liquidity(ROUNDING_WITHDRAW_TOTAL_SUPPLY);
+    ledger.receive_idle(balance::create_for_testing<DUSDC>(ROUNDING_WITHDRAW_POOL_VALUE));
+    let lp = coin::mint_for_testing<LP_BOOK_TEST_SUPPORT>(ROUNDING_WITHDRAW_SHARES, ctx);
+    book.request_withdraw(
+        lp,
+        lp_book_test_support::account_id(),
+        ALICE,
+        NO_MIN_OUTPUT,
+    );
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(
+            ROUNDING_WITHDRAW_POOL_VALUE,
+            ROUNDING_WITHDRAW_TOTAL_SUPPLY,
+        ),
+        lp_book_test_support::vault_id(),
+        option::none(),
+        option::none(),
+        ctx,
+    );
+
+    lp_book_test_support::assert_summary(&summary, ZERO_COUNT, ONE_COUNT, ONE_COUNT);
+    assert_eq!(ledger.idle_balance(), ROUNDING_WITHDRAW_POOL_VALUE - ROUNDED_DOWN_WITHDRAW_PAYOUT);
+    assert_eq!(book.total_supply(), ROUNDING_WITHDRAW_TOTAL_SUPPLY - ROUNDING_WITHDRAW_SHARES);
     destroy(book);
     destroy(ledger);
 }

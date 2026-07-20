@@ -12,6 +12,7 @@ const LOWER_TICK: u64 = 2;
 const HIGHER_TICK: u64 = 8;
 const FLOOR_SHARES: u64 = 5_000;
 const FIRST_SEQUENCE: u64 = 0;
+const SECOND_SEQUENCE: u64 = 1;
 const ONE_PAGE_PLUS_SIX: u64 = 70;
 const SPLIT_LEFT_LENGTH: u64 = 32;
 const REMOVED_BEFORE_MERGE: u64 = 6;
@@ -25,6 +26,7 @@ const FIRST_INDEX: u64 = 0;
 const SECOND_TAIL_OFFSET: u64 = 20;
 const THIRD_TAIL_OFFSET: u64 = 30;
 const FOURTH_TAIL_OFFSET: u64 = 40;
+const THIRD_SEQUENCE: u64 = 2;
 
 fun leveraged_order(sequence: u64): Order {
     order::new_from_ticks(
@@ -105,6 +107,45 @@ fun removal_that_crosses_merge_threshold_preserves_survivors() {
     assert_eq!(candidates[MERGED_SURVIVORS - 1], inserted[ONE_PAGE_PLUS_SIX - 1]);
     assert!(!book.contains_active_order(&leveraged_order(FIRST_SEQUENCE)));
     assert!(book.contains_active_order(&leveraged_order(REMOVED_BEFORE_MERGE)));
+    destroy(book);
+}
+
+#[test]
+fun mid_page_insert_preserves_the_existing_page_tail() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    let first = leveraged_order(FIRST_SEQUENCE);
+    let middle = leveraged_order(SECOND_SEQUENCE);
+    let tail = leveraged_order(THIRD_SEQUENCE);
+    book.insert_order(&first);
+    book.insert_order(&tail);
+    book.insert_order(&middle);
+
+    assert!(book.contains_active_order(&tail));
+    book.remove_order(&tail);
+    assert!(!book.contains_active_order(&tail));
+    assert!(book.contains_active_order(&middle));
+    destroy(book);
+}
+
+#[test]
+fun non_merging_removal_preserves_the_page_tail() {
+    let ctx = &mut tx_context::dummy();
+    let mut book = liquidation_book::new(ctx);
+    let first = leveraged_order(FIRST_SEQUENCE);
+    let middle = leveraged_order(SECOND_SEQUENCE);
+    let tail = leveraged_order(THIRD_SEQUENCE);
+    book.insert_order(&first);
+    book.insert_order(&middle);
+    book.insert_order(&tail);
+
+    book.remove_order(&middle);
+
+    assert!(!book.contains_active_order(&middle));
+    assert!(book.contains_active_order(&tail));
+    book.remove_order(&tail);
+    assert!(!book.contains_active_order(&tail));
+    assert!(book.contains_active_order(&first));
     destroy(book);
 }
 

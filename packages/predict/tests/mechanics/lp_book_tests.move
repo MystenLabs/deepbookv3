@@ -54,6 +54,7 @@ const LIMIT_WITHDRAW_PASS_POOL_VALUE: u64 = 63_000_000;
 const LIMIT_WITHDRAW_IDLE: u64 = 60_000_000;
 const LIMIT_WITHDRAW_IDLE_AFTER_FILL: u64 = 39_000_000;
 const LIMIT_WITHDRAW_TOTAL_AFTER_FILL: u64 = 20_000_000;
+const EXACT_LIMIT_SUPPLY_QUOTE: u64 = 10_000_000;
 
 #[test]
 fun priced_supply_with_zero_pool_value_refunds() {
@@ -640,6 +641,37 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves() {
     lp_book_test_support::assert_summary(&fill, ONE_COUNT, ZERO_COUNT, ONE_COUNT);
     assert_eq!(book.supply_requests_pending(), ZERO_COUNT);
     assert_eq!(book.total_supply(), LIMIT_TOTAL_SUPPLY + LIMIT_SUPPLY_PASS_QUOTE);
+    assert_eq!(ledger.idle_balance(), LIMIT_SUPPLY_AMOUNT);
+    destroy(book);
+    destroy(ledger);
+}
+
+#[test]
+fun supply_quote_exactly_at_min_output_fills() {
+    let ctx = &mut tx_context::dummy();
+    let (mut book, mut ledger) = lp_book_test_support::new_book_and_ledger(ctx);
+    book.mint_locked_liquidity(LIMIT_TOTAL_SUPPLY);
+    let payment = coin::mint_for_testing<DUSDC>(LIMIT_SUPPLY_AMOUNT, ctx);
+    book.request_supply(
+        payment,
+        lp_book_test_support::account_id(),
+        ALICE,
+        EXACT_LIMIT_SUPPLY_QUOTE,
+    );
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(LIMIT_MISS_POOL_VALUE, LIMIT_TOTAL_SUPPLY),
+        lp_book_test_support::vault_id(),
+        option::none(),
+        option::none(),
+        ctx,
+    );
+
+    lp_book_test_support::assert_summary(&summary, ONE_COUNT, ZERO_COUNT, ONE_COUNT);
+    assert_eq!(EXACT_LIMIT_SUPPLY_QUOTE, LIMIT_SUPPLY_MISS_QUOTE);
+    assert_eq!(book.supply_requests_pending(), ZERO_COUNT);
+    assert_eq!(book.total_supply(), LIMIT_TOTAL_SUPPLY + EXACT_LIMIT_SUPPLY_QUOTE);
     assert_eq!(ledger.idle_balance(), LIMIT_SUPPLY_AMOUNT);
     destroy(book);
     destroy(ledger);

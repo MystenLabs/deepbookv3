@@ -28,6 +28,7 @@ const FIRST_FEE_INCENTIVE: u64 = 40;
 const SECOND_FEE_INCENTIVE_REQUEST: u64 = 80;
 const SECOND_FEE_INCENTIVE_ALLOCATION: u64 = 60;
 const ZERO_AMOUNT: u64 = 0;
+const TWO_COUNT: u64 = 2;
 const TERMINAL_FIRST_RETURN: u64 = 600;
 const TERMINAL_FIRST_GAIN: u64 = 300;
 const TERMINAL_SECOND_GAIN: u64 = 200;
@@ -44,6 +45,11 @@ const FIRST_PROTOCOL_CARRY: u64 = 60;
 const SECOND_PROTOCOL_IDLE: u64 = 50;
 const SECOND_PROTOCOL_CARRY: u64 = 10;
 const FINAL_PROTOCOL_IDLE: u64 = 10;
+const TWO_EXPIRY_IDLE: u64 = 2_000;
+const TWO_TERMINAL_LOSSES: u64 = 800;
+const PROFIT_AFTER_TWO_LOSSES: u64 = 900;
+const PROFITABLE_START_RETURN: u64 = 900;
+const PROFITABLE_START_GAIN: u64 = 200;
 
 fun registered_ledger(ctx: &mut TxContext): (pool_accounting::Ledger, ID) {
     let mut ledger = pool_accounting::new(ctx);
@@ -137,6 +143,59 @@ fun terminal_loss_carries_until_later_gains_refill_it() {
     assert_eq!(TERMINAL_SECOND_GAIN - REMAINING_LOSS, MATERIALIZED_PROFIT);
     assert_eq!(ledger.materialize_expiry_profit(expiry_id), MATERIALIZED_PROFIT);
     assert_eq!(ledger.profit_basis_debits(), FINAL_DEBITS);
+    destroy(ledger);
+}
+
+#[test]
+fun two_terminal_losses_accumulate_before_later_profit() {
+    let ctx = &mut tx_context::dummy();
+    let (mut ledger, expiry_a) = registered_ledger(ctx);
+    let expiry_b = object::id_from_address(EXPIRY_B);
+    ledger.register_expiry(
+        expiry_b,
+        EXPIRY_B_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+    );
+    ledger.receive_idle(balance::create_for_testing<DUSDC>(TWO_EXPIRY_IDLE));
+    destroy(ledger.send_expiry_cash(expiry_a, MAX_EXPIRY_ALLOCATION));
+    destroy(ledger.send_expiry_cash(expiry_b, MAX_EXPIRY_ALLOCATION));
+    ledger.receive_expiry_cash(
+        balance::create_for_testing<DUSDC>(TERMINAL_FIRST_RETURN),
+        expiry_a,
+    );
+    ledger.receive_expiry_cash(
+        balance::create_for_testing<DUSDC>(TERMINAL_FIRST_RETURN),
+        expiry_b,
+    );
+
+    assert_eq!(ledger.materialize_expiry_profit(expiry_a), ZERO_AMOUNT);
+    assert_eq!(ledger.materialize_expiry_profit(expiry_b), ZERO_AMOUNT);
+    assert_eq!(TWO_TERMINAL_LOSSES, TWO_COUNT * TERMINAL_LOSS);
+    ledger.receive_expiry_cash(
+        balance::create_for_testing<DUSDC>(PROFIT_AFTER_TWO_LOSSES),
+        expiry_b,
+    );
+    assert_eq!(ledger.materialize_expiry_profit(expiry_b), MATERIALIZED_PROFIT);
+    assert_eq!(ledger.profit_basis_debits(), TWO_EXPIRY_IDLE + MATERIALIZED_PROFIT);
+    destroy(ledger);
+}
+
+#[test]
+fun profitable_terminal_start_uses_sent_cash_as_its_watermark() {
+    let ctx = &mut tx_context::dummy();
+    let (mut ledger, expiry_id) = registered_ledger(ctx);
+    ledger.receive_idle(balance::create_for_testing<DUSDC>(INITIAL_IDLE));
+    destroy(ledger.send_expiry_cash(expiry_id, SENT_TO_EXPIRY));
+    ledger.receive_expiry_cash(
+        balance::create_for_testing<DUSDC>(PROFITABLE_START_RETURN),
+        expiry_id,
+    );
+
+    assert_eq!(PROFITABLE_START_RETURN - SENT_TO_EXPIRY, PROFITABLE_START_GAIN);
+    assert_eq!(ledger.materialize_expiry_profit(expiry_id), PROFITABLE_START_GAIN);
+    assert_eq!(ledger.profit_basis_debits(), PROFITABLE_START_RETURN);
+    assert_eq!(ledger.materialize_expiry_profit(expiry_id), ZERO_AMOUNT);
     destroy(ledger);
 }
 
