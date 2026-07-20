@@ -472,14 +472,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
   dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
   the BS pricing in the same call.
-- **Pinning tests:** `mint_exact_amount_tests.move` —
+- **Pinning tests:** `mint_budget_accounting_tests.move` —
   `oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
   quotes the lot-cap premium, the former abort domain),
   `budget_mints_largest_fitting_quantity_and_debits_its_exact_cost` and
   `budget_at_next_lot_premium_mints_the_next_lot` (sizing pinned from both
-  sides at the exact ATM probability),
-  `budget_fill_below_min_quantity_aborts` (fill floor);
-  `mint_redeem_guard_tests::mint_exact_amount_below_min_quantity_aborts`
+  sides at the exact ATM probability); `mint_budget_guard_tests.move` —
+  `budget_fill_below_min_quantity_aborts` (fill floor) and
+  `mint_exact_amount_below_min_quantity_aborts`
   (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
   edge needs a rounding-lossy probability no current fixture pins.
 - **Reopen when:** the premium relation changes shape (a fee folded into the

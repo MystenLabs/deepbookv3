@@ -47,26 +47,17 @@ EXPECTED_MISSING_PINS = {
     ("RP-4", "try_settle_without_exact_expiry_spot_returns_false_without_mutation"),
     ("RP-4", "expired_unsettled_standalone_rebalance_moves_no_cash"),
     ("RP-4", "explicit_settlement_unblocks_pool_valuation_sweep"),
-    ("RP-9", "extreme_first_observation_suppresses_penalty_for_later_trades"),
-    ("RP-9", "ewma_penalty_included_in_quote_and_mint_debits_exactly"),
-    ("RP-9", "quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost"),
     ("RP-11", "rebate_claim_requires_settled_market"),
     ("RP-11", "rebate_claim_with_open_position_aborts"),
     ("RP-11", "deauthorized_predict_app_blocks_permissionless_rebate_claim"),
     ("RP-11", "owner_auth_rebate_claim_survives_predict_app_deauth"),
     ("RP-11", "prepare_settled_loss_with_inactive_rebate_stake"),
-    ("RP-13", "oversized_budget_saturates_at_the_lot_cap_without_aborting"),
-    ("RP-13", "budget_mints_largest_fitting_quantity_and_debits_its_exact_cost"),
-    ("RP-13", "budget_at_next_lot_premium_mints_the_next_lot"),
-    ("RP-13", "budget_fill_below_min_quantity_aborts"),
-    ("RP-13", "mint_exact_amount_below_min_quantity_aborts"),
     ("RP-15", "current_nav_rejects_non_monotone_active_book_surface"),
 }
 
 EXPECTED_WARNINGS = {
     "response-policies.md: names file `pool_valuation_flow_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `settlement_flow_tests.move` not found under packages/predict/ or .claude/",
-    "response-policies.md: names file `mint_exact_amount_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `current_nav_flow_tests.move` not found under packages/predict/ or .claude/",
 }
 EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-7", "RP-8", "RP-13"}

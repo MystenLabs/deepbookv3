@@ -83,6 +83,10 @@ public fun smoke_at(source_timestamp_ms: u64): SurfaceProfile {
 }
 
 public fun exact_half(): SurfaceProfile {
+    exact_half_at(SMOKE_SOURCE_TIMESTAMP_MS)
+}
+
+public fun exact_half_at(source_timestamp_ms: u64): SurfaceProfile {
     new(
         SMOKE_SPOT,
         SMOKE_SPOT,
@@ -95,7 +99,7 @@ public fun exact_half(): SurfaceProfile {
         false,
         0,
         false,
-        SMOKE_SOURCE_TIMESTAMP_MS,
+        source_timestamp_ms,
     )
 }
 
