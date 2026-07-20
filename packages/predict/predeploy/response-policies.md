@@ -231,8 +231,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reasoning:** blocking exits during an emergency converts a safety switch
   into a user-fund trap; only new risk creation needs to stop.
 - **Risk profile:** n/a (semantics decision, not a probabilistic risk).
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `trading_pause_guard_tests.move` independently pins global and per-market mint rejection; `redeem_accounting_tests.move` · `global_trading_pause_keeps_exact_full_live_redeem_available` pins exact live-exit accounting with both pauses engaged.
 - **Reopen when:** pause semantics are intentionally changed.
 
 ## RP-8: Deferred protocol profit — defer-and-carry (D033)

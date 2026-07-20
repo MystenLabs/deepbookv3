@@ -60,7 +60,7 @@ EXPECTED_WARNINGS = {
     "response-policies.md: names file `settlement_flow_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `current_nav_flow_tests.move` not found under packages/predict/ or .claude/",
 }
-EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-7", "RP-8", "RP-13"}
+EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-8", "RP-13"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
 EXPECTED_UNREACHABLE_PIN_BRANCHES = {
     ("RP-2", "priced_supply_that_rounds_to_zero_shares_refunds"),
