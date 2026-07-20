@@ -200,6 +200,16 @@ bound and accept the aggregation residual in the rounding policy, add a
 regression covering both directions, and narrow every exact-NAV claim to the
 accepted bound. (2026-07-17 clean-room gap audit)
 
+### P-14: Per-order floor correction can overstate live liability
+
+**Severity:** Low.
+
+`current_nav` subtracts a boundary-aggregated linear value and a correction that is rounded independently for each active leveraged order. When several positions in the same range become liquidatable, each position can have zero recoverable value while the differently rounded aggregate retains a positive liability. The pinned production flow creates four such positions and observes NAV two raw DUSDC units below independently recoverable free cash. The residual can grow by less than one raw unit per active leveraged order, or less than 0.005 DUSDC at the 5,000-order cap, but its direction understates the LP supply mark and can dilute existing LPs.
+
+**Known RED test:** `deepbook_predict::scope_flow__intent_rounding__current_nav_red_tests::liquidatable_orders_leave_positive_aggregate_live_liability`
+
+**Action:** Compute the live floor correction at the same aggregation granularity as the boundary-linear term, or preserve per-order rounded liability through both terms. Keep the exact NAV invariant and its LP-favorable rounding direction when choosing the representation.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
