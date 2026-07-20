@@ -19,8 +19,8 @@ use deepbook_predict::{
 };
 use std::unit_test::assert_eq;
 
-const ATM_ENTRY_PROBABILITY: u64 = 500_000_000;
-const ALL_IN_MINT_COST: u64 = 505_000_000;
+const ATM_ENTRY_PROBABILITY: u64 = 500_000_000; // ATM digital 0.5 * 1e9 (exact_half profile)
+const ALL_IN_MINT_COST: u64 = 505_000_000; // net_premium 5e8 + trading_fee 0.5% * 1e9
 
 #[test, expected_failure(abort_code = expiry_market::EMintCostAboveMax)]
 fun mint_one_below_exact_all_in_cost_aborts() {

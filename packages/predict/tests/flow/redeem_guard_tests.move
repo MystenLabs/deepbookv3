@@ -21,11 +21,11 @@ use deepbook_predict::{
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
-const ATM_GROSS_REDEEM_VALUE: u64 = 500_000_000;
-const CERTAIN_PROBABILITY: u64 = 1_000_000_000;
+const ATM_GROSS_REDEEM_VALUE: u64 = 500_000_000; // ATM gross close value 0.5 * 1e9
+const CERTAIN_PROBABILITY: u64 = 1_000_000_000; // 1.0 * 1e9 (min-probability floor set to certainty)
 
 #[test, expected_failure(abort_code = expiry_market::EMintRedeemSameTimestamp)]
-fun mint_timestamp_redeem_aborts_before_position_mutation() {
+fun same_timestamp_mint_then_live_redeem_aborts() {
     let (mut world, resources) = test_world::new(
         test_values::system(),
         test_values::admin(),

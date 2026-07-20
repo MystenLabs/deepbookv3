@@ -21,13 +21,14 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
-const ALL_IN_MINT_COST: u64 = 505_000_000;
-const PARTIAL_CLOSE_QUANTITY: u64 = 400_000_000;
-const REMAINING_QUANTITY: u64 = 600_000_000;
-const PARTIAL_REDEEM_PROCEEDS: u64 = 198_000_000;
-const REMAINING_REDEEM_PROCEEDS: u64 = 297_000_000;
-const LIVE_REDEEM_PROCEEDS: u64 = 495_000_000;
-const ROUND_TRIP_FEES: u64 = 10_000_000;
+// Exact-half profile: gross close = 0.5 * closed quantity, close fee = 0.5% * closed quantity.
+const ALL_IN_MINT_COST: u64 = 505_000_000; // net_premium 5e8 + trading_fee 5e6
+const PARTIAL_CLOSE_QUANTITY: u64 = 400_000_000; // 4e8 of the 1e9 position
+const REMAINING_QUANTITY: u64 = 600_000_000; // 1e9 - 4e8
+const PARTIAL_REDEEM_PROCEEDS: u64 = 198_000_000; // gross 0.5*4e8 - close fee 0.5%*4e8
+const REMAINING_REDEEM_PROCEEDS: u64 = 297_000_000; // gross 0.5*6e8 - close fee 0.5%*6e8
+const LIVE_REDEEM_PROCEEDS: u64 = 495_000_000; // gross 0.5*1e9 - close fee 0.5%*1e9
+const ROUND_TRIP_FEES: u64 = 10_000_000; // mint fee 5e6 + close fee 5e6
 
 #[test]
 fun global_trading_pause_keeps_exact_full_live_redeem_available() {

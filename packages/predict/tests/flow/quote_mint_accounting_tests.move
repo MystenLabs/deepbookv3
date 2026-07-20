@@ -23,21 +23,23 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::{coin, test_scenario::return_shared};
 
-const ENTRY_PROBABILITY_ATM: u64 = 500_000_000;
-const NET_PREMIUM_ATM: u64 = 500_000_000;
-const MIN_TRADING_FEE: u64 = 5_000_000;
-const ALL_IN_MINT_COST: u64 = 505_000_000;
+// Independent oracles for the exact-half (ATM digital = 0.5) profile; base_fee is
+// forced to 1 so the 0.5% min-fee floor binds. Notional = quantity = 1e9 unless noted.
+const ENTRY_PROBABILITY_ATM: u64 = 500_000_000; // ATM digital 0.5 * 1e9
+const NET_PREMIUM_ATM: u64 = 500_000_000; // prob 0.5 * 1e9 notional
+const MIN_TRADING_FEE: u64 = 5_000_000; // min_fee 0.5% * 1e9 notional
+const ALL_IN_MINT_COST: u64 = 505_000_000; // net_premium 5e8 + trading_fee 5e6
 const BUILDER_CODE_INDEX: u64 = 0;
-const BUILDER_FEE_ATM: u64 = 500_000;
-const ALL_IN_WITH_BUILDER: u64 = 505_500_000;
-const VARIANCE_SEED_QUANTITY: u64 = 100_000_000;
-const VARIANCE_SEED_COST: u64 = 50_500_000;
-const EWMA_PENALTY: u64 = 1_000_000;
-const ALL_IN_WITH_PENALTY: u64 = 506_000_000;
-const DISCOUNTED_TRADING_FEE: u64 = 2_500_000;
-const ALL_IN_WITH_FULL_STAKE_DISCOUNT: u64 = 502_500_000;
-const FEE_INCENTIVE_SUBSIDY: u64 = 1_000_000;
-const ALL_IN_WITH_FEE_INCENTIVE: u64 = 504_000_000;
+const BUILDER_FEE_ATM: u64 = 500_000; // 10% * fee 5e6 (builder_fee_multiplier 1e8), under 0.5%-notional cap
+const ALL_IN_WITH_BUILDER: u64 = 505_500_000; // all_in 505e6 + builder 5e5
+const VARIANCE_SEED_QUANTITY: u64 = 100_000_000; // 1e8 notional used to seed EWMA variance
+const VARIANCE_SEED_COST: u64 = 50_500_000; // net_premium 5e7 + fee 5e5 on 1e8 notional
+const EWMA_PENALTY: u64 = 1_000_000; // penalty_rate 0.1% * 1e9 notional (default_ewma_penalty_rate 1e6)
+const ALL_IN_WITH_PENALTY: u64 = 506_000_000; // all_in 505e6 + penalty 1e6
+const DISCOUNTED_TRADING_FEE: u64 = 2_500_000; // fee 5e6 * (1 - 50% full-stake discount)
+const ALL_IN_WITH_FULL_STAKE_DISCOUNT: u64 = 502_500_000; // net_premium 5e8 + discounted fee 2.5e6
+const FEE_INCENTIVE_SUBSIDY: u64 = 1_000_000; // 20% * fee 5e6 (fee_incentive_subsidy_rate 2e8)
+const ALL_IN_WITH_FEE_INCENTIVE: u64 = 504_000_000; // net_premium 5e8 + (fee 5e6 - subsidy 1e6)
 
 #[test]
 fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {

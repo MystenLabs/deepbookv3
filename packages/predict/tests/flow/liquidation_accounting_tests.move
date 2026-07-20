@@ -21,11 +21,11 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-const MINT_COST: u64 = 255_000_000;
-const LIVE_BACKING: u64 = 750_000_000;
-const DROPPED_SPOT: u64 = 99_000_000_000;
-const DROPPED_SOURCE_MS: u64 = 119_500;
+const LEVERAGE_TWO_X: u64 = 2_000_000_000; // 2x in 1e9 scale
+const MINT_COST: u64 = 255_000_000; // 2x ATM net_premium 2.5e8 (entry 5e8 - financed 2.5e8) + fee 5e6
+const LIVE_BACKING: u64 = 750_000_000; // payout backing = quantity 1e9 - floor_shares 2.5e8 (2x)
+const DROPPED_SPOT: u64 = 99_000_000_000; // 99e9 spot drop to force the order liquidatable
+const DROPPED_SOURCE_MS: u64 = 119_500; // source timestamp for the dropped-spot observation
 
 #[test]
 fun liquidated_order_removes_backing_and_pays_zero_exactly_once() {

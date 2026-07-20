@@ -21,14 +21,15 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
-const BUDGET_BELOW_NEXT_LOT: u64 = 50_004_999;
-const TEN_THOUSAND_LOTS: u64 = 100_000_000;
-const TEN_THOUSAND_LOTS_DEBIT: u64 = 50_500_000;
-const BUDGET_AT_NEXT_LOT: u64 = 50_005_000;
-const NEXT_LOT_QUANTITY: u64 = 100_010_000;
-const NEXT_LOT_DEBIT: u64 = 50_505_050;
-const LOT_CAP_QUANTITY: u64 = 42_949_672_950_000;
-const LOT_CAP_NET_PREMIUM: u64 = 21_474_836_475_000;
+// Exact-half profile: net_premium = 0.5 * quantity, trading_fee = 0.5% * quantity.
+const BUDGET_BELOW_NEXT_LOT: u64 = 50_004_999; // one raw unit below BUDGET_AT_NEXT_LOT
+const TEN_THOUSAND_LOTS: u64 = 100_000_000; // 10_000 lots * 10_000 lot size
+const TEN_THOUSAND_LOTS_DEBIT: u64 = 50_500_000; // net_premium 0.5*1e8 + fee 0.5%*1e8
+const BUDGET_AT_NEXT_LOT: u64 = 50_005_000; // net_premium for 10_001 lots = 0.5 * 100_010_000
+const NEXT_LOT_QUANTITY: u64 = 100_010_000; // 10_001 lots * 10_000 lot size
+const NEXT_LOT_DEBIT: u64 = 50_505_050; // net_premium 50_005_000 + fee 0.5% * 100_010_000
+const LOT_CAP_QUANTITY: u64 = 42_949_672_950_000; // max lots * lot size (position quantity cap)
+const LOT_CAP_NET_PREMIUM: u64 = 21_474_836_475_000; // 0.5 * LOT_CAP_QUANTITY
 
 #[test]
 fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
