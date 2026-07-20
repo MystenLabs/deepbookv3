@@ -102,7 +102,7 @@ fun two_markets_keep_distinct_oracle_sequences() {
         &mut world,
         &resources,
         &predict_admin_cap,
-        vector[test_values::expiry_ms(), test_values::second_expiry_ms()],
+        test_values::composition_cadence_window_size(),
     );
     assert_eq!(handles.length(), test_values::composition_cadence_window_size());
     test_world::return_predict_admin_cap(&world, predict_admin_cap);
@@ -123,7 +123,7 @@ fun two_markets_keep_distinct_oracle_sequences() {
         &mut bs_spot,
         &mut bs_forward,
         &mut bs_svi,
-        market_setup::expiry_ms(first_handle),
+        first_market.expiry(),
         &first_profile,
         test_values::now_ms(),
         test_world::clock(&resources),
@@ -131,7 +131,7 @@ fun two_markets_keep_distinct_oracle_sequences() {
     );
     oracle_setup::seed_bs_forward(
         &mut bs_forward,
-        market_setup::expiry_ms(second_handle),
+        second_market.expiry(),
         second_profile.block_scholes_forward(),
         second_profile.source_timestamp_ms(),
         test_world::clock(&resources),
@@ -139,7 +139,7 @@ fun two_markets_keep_distinct_oracle_sequences() {
     );
     oracle_setup::seed_bs_svi(
         &mut bs_svi,
-        market_setup::expiry_ms(second_handle),
+        second_market.expiry(),
         &second_profile,
         test_world::clock(&resources),
         test_world::ctx(&mut world),

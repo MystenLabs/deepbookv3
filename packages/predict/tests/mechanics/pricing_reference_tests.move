@@ -60,7 +60,7 @@ fun synthetic_profiles_stay_within_independent_precision_contract() {
             &mut bs_spot,
             &mut bs_forward,
             &mut bs_svi,
-            market_setup::expiry_ms(&market_handle),
+            market.expiry(),
             &profile,
             test_values::now_ms(),
             test_world::clock(&resources),

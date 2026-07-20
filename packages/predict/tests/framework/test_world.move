@@ -7,10 +7,11 @@
 #[test_only]
 module deepbook_predict::test_world;
 
-use account::account_registry::{Self as account_registry, AccountRegistry};
+use account::account_registry::{Self as account_registry, AccountAdminCap, AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
     market_lifecycle_cap::MarketLifecycleCap,
+    pause_cap::PauseCap,
     plp::{Self as plp, PoolVault},
     protocol_config::ProtocolConfig,
     registry::{Self as predict_registry, Registry}
@@ -104,6 +105,14 @@ public fun take_predict_admin_cap(world: &World): AdminCap {
     world.scenario.take_from_sender<AdminCap>()
 }
 
+public fun take_account_admin_cap(world: &World): AccountAdminCap {
+    world.scenario.take_from_sender<AccountAdminCap>()
+}
+
+public fun return_account_admin_cap(world: &World, cap: AccountAdminCap) {
+    world.scenario.return_to_sender(cap);
+}
+
 public fun return_predict_admin_cap(world: &World, cap: AdminCap) {
     world.scenario.return_to_sender(cap);
 }
@@ -121,6 +130,14 @@ public fun take_lifecycle_cap(world: &World, id: ID): MarketLifecycleCap {
 }
 
 public fun return_lifecycle_cap(world: &World, cap: MarketLifecycleCap) {
+    world.scenario.return_to_sender(cap);
+}
+
+public fun take_pause_cap(world: &World, id: ID): PauseCap {
+    world.scenario.take_from_sender_by_id<PauseCap>(id)
+}
+
+public fun return_pause_cap(world: &World, cap: PauseCap) {
     world.scenario.return_to_sender(cap);
 }
 

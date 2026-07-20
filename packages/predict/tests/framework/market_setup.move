@@ -16,12 +16,9 @@ use sui::test_scenario::return_shared;
 
 public struct MarketHandle has copy, drop {
     id: ID,
-    expiry_ms: u64,
 }
 
 public fun market_id(handle: &MarketHandle): ID { handle.id }
-
-public fun expiry_ms(handle: &MarketHandle): u64 { handle.expiry_ms }
 
 public fun configure_cadence(world: &World, admin_cap: &AdminCap, window_size: u64) {
     let mut registry = test_world::take_registry(world);
@@ -54,7 +51,7 @@ public fun create_markets(
     world: &mut World,
     resources: &OwnedResources,
     admin_cap: &AdminCap,
-    expected_expiries_ms: vector<u64>,
+    market_count: u64,
 ): vector<MarketHandle> {
     let mut registry = test_world::take_registry(world);
     let mut vault = test_world::take_vault(world);
@@ -67,7 +64,7 @@ public fun create_markets(
     );
     let mut handles = vector[];
     let mut index = 0;
-    while (index < expected_expiries_ms.length()) {
+    while (index < market_count) {
         let id = registry.create_and_share_expiry_market(
             &mut vault,
             &config,
@@ -78,7 +75,7 @@ public fun create_markets(
             test_world::clock(resources),
             test_world::ctx(world),
         );
-        handles.push_back(MarketHandle { id, expiry_ms: expected_expiries_ms[index] });
+        handles.push_back(MarketHandle { id });
         index = index + 1;
     };
     return_shared(oracle_registry);
@@ -98,7 +95,7 @@ public fun create_default_market(
         world,
         resources,
         admin_cap,
-        vector[test_values::expiry_ms()],
+        1,
     );
     handles.pop_back()
 }

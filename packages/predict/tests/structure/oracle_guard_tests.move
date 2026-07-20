@@ -67,7 +67,7 @@ fun missing_forward_value_aborts_live_pricing() {
     );
     oracle_setup::seed_bs_svi(
         &mut bs_svi,
-        market_setup::expiry_ms(&market_handle),
+        market.expiry(),
         &profile,
         test_world::clock(&resources),
         test_world::ctx(&mut world),

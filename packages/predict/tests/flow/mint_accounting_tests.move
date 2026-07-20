@@ -78,7 +78,7 @@ fun mint_preserves_cash_and_liability_accounting() {
         &mut bs_spot,
         &mut bs_forward,
         &mut bs_svi,
-        market_setup::expiry_ms(&market_handle),
+        test_values::expiry_ms(),
         &profile,
         test_values::now_ms(),
         test_world::clock(&resources),
