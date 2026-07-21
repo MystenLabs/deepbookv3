@@ -53,17 +53,8 @@ fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let profile = oracle_profile::new(
-        SPOT,
-        SPOT,
-        SPOT,
-        SVI_A,
-        false,
-        SVI_B,
-        SVI_SIGMA,
-        SVI_RHO_UNIT,
-        false,
-        0,
-        false,
+        oracle_profile::spot_prices(SPOT, SPOT, SPOT),
+        oracle_profile::svi_params(SVI_A, false, SVI_B, SVI_SIGMA, SVI_RHO_UNIT, false, 0, false),
         test_values::now_ms() - 1_000,
     );
     oracle_setup::seed_market_surface(
@@ -118,17 +109,8 @@ fun negative_svi_slope_clamps_adjusted_digital_to_one() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let profile = oracle_profile::new(
-        SPOT,
-        SPOT,
-        SPOT,
-        SVI_A,
-        false,
-        SVI_B,
-        SVI_SIGMA,
-        SVI_RHO_UNIT,
-        true,
-        0,
-        false,
+        oracle_profile::spot_prices(SPOT, SPOT, SPOT),
+        oracle_profile::svi_params(SVI_A, false, SVI_B, SVI_SIGMA, SVI_RHO_UNIT, true, 0, false),
         test_values::now_ms() - 1_000,
     );
     oracle_setup::seed_market_surface(

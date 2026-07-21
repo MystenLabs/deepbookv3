@@ -58,17 +58,8 @@ fun liquidatable_orders_leave_positive_aggregate_live_liability() {
     );
     test_world::next_tx(&mut world, test_values::admin());
     let entry_profile = oracle_profile::new(
-        ENTRY_FORWARD,
-        ENTRY_FORWARD,
-        ENTRY_FORWARD,
-        1,
-        false,
-        0,
-        1_000_000,
-        0,
-        false,
-        0,
-        false,
+        oracle_profile::spot_prices(ENTRY_FORWARD, ENTRY_FORWARD, ENTRY_FORWARD),
+        oracle_profile::svi_params(1, false, 0, 1_000_000, 0, false, 0, false),
         ENTRY_SOURCE_MS,
     );
     oracle_setup::seed_market_surface(

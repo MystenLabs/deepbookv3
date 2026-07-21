@@ -138,17 +138,8 @@ fun sub_scale_strike_ratio_saturates_to_one() {
 #[test]
 fun overflowing_strike_ratio_saturates_to_zero() {
     let profile = oracle_profile::new(
-        RAW_UNIT,
-        RAW_UNIT,
-        RAW_UNIT,
-        RAW_UNIT,
-        false,
-        0,
-        MIN_SVI_SIGMA,
-        0,
-        false,
-        0,
-        false,
+        oracle_profile::spot_prices(RAW_UNIT, RAW_UNIT, RAW_UNIT),
+        oracle_profile::svi_params(RAW_UNIT, false, 0, MIN_SVI_SIGMA, 0, false, 0, false),
         test_values::now_ms() - SOURCE_AGE_MS,
     );
     let (mut world, resources) = test_world::new(

@@ -468,6 +468,17 @@ def move_tick(value: int | None) -> str:
     return move_int(value // TICK_SIZE)
 
 
+def move_call(indent: int, name: str, args: list[str]) -> list[str]:
+    """Emit a call argument in prettier-move layout: joined when the line fits
+    the 100-column width, otherwise one argument per line."""
+    pad = " " * indent
+    joined = f"{pad}{name}({', '.join(args)}),"
+    if len(joined) <= 100:
+        return [joined]
+    inner = " " * (indent + 4)
+    return [f"{pad}{name}(", *[f"{inner}{arg}," for arg in args], f"{pad}),"]
+
+
 def render() -> str:
     validate_profile_sequence()
     all_points = [profile_points(profile) for profile in PROFILES]
@@ -521,17 +532,29 @@ def render() -> str:
                 f"    {prefix} (index == {index}) {{",
                 f"        // {profile.name}",
                 "        oracle_profile::new(",
-                f"            {move_int(profile.pyth_spot)},",
-                f"            {move_int(profile.bs_spot)},",
-                f"            {move_int(profile.bs_forward)},",
-                f"            {move_int(profile.a)},",
-                f"            {move_bool(profile.a_negative)},",
-                f"            {move_int(profile.b)},",
-                f"            {move_int(profile.sigma)},",
-                f"            {move_int(profile.rho)},",
-                f"            {move_bool(profile.rho_negative)},",
-                f"            {move_int(profile.m)},",
-                f"            {move_bool(profile.m_negative)},",
+                *move_call(
+                    12,
+                    "oracle_profile::spot_prices",
+                    [
+                        move_int(profile.pyth_spot),
+                        move_int(profile.bs_spot),
+                        move_int(profile.bs_forward),
+                    ],
+                ),
+                *move_call(
+                    12,
+                    "oracle_profile::svi_params",
+                    [
+                        move_int(profile.a),
+                        move_bool(profile.a_negative),
+                        move_int(profile.b),
+                        move_int(profile.sigma),
+                        move_int(profile.rho),
+                        move_bool(profile.rho_negative),
+                        move_int(profile.m),
+                        move_bool(profile.m_negative),
+                    ],
+                ),
                 f"            {move_int(profile.source_timestamp_ms)},",
                 "        )",
                 "    }",

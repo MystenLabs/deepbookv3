@@ -41,49 +41,40 @@ public fun profile(index: u64): SurfaceProfile {
     if (index == 0) {
         // flat_medium_variance
         oracle_profile::new(
-            100_000_000_000,
-            100_000_000_000,
-            100_000_000_000,
-            10_000_000,
-            false,
-            0,
-            200_000_000,
-            0,
-            false,
-            0,
-            false,
+            oracle_profile::spot_prices(100_000_000_000, 100_000_000_000, 100_000_000_000),
+            oracle_profile::svi_params(10_000_000, false, 0, 200_000_000, 0, false, 0, false),
             119_000,
         )
     } else if (index == 1) {
         // negative_skew_medium_variance
         oracle_profile::new(
-            102_000_000_000,
-            100_000_000_000,
-            101_000_000_000,
-            2_000_000,
-            false,
-            40_000_000,
-            180_000_000,
-            350_000_000,
-            true,
-            15_000_000,
-            false,
+            oracle_profile::spot_prices(102_000_000_000, 100_000_000_000, 101_000_000_000),
+            oracle_profile::svi_params(
+                2_000_000,
+                false,
+                40_000_000,
+                180_000_000,
+                350_000_000,
+                true,
+                15_000_000,
+                false,
+            ),
             119_001,
         )
     } else if (index == 2) {
         // negative_skew_small_variance
         oracle_profile::new(
-            100_000_000_000,
-            100_000_000_000,
-            100_000_000_000,
-            80_000,
-            false,
-            4_000_000,
-            8_000_000,
-            250_000_000,
-            true,
-            5_000_000,
-            true,
+            oracle_profile::spot_prices(100_000_000_000, 100_000_000_000, 100_000_000_000),
+            oracle_profile::svi_params(
+                80_000,
+                false,
+                4_000_000,
+                8_000_000,
+                250_000_000,
+                true,
+                5_000_000,
+                true,
+            ),
             119_002,
         )
     } else {

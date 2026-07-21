@@ -16,8 +16,6 @@ public struct AccountHandle has copy, drop {
     id: ID,
 }
 
-public fun account_id(handle: &AccountHandle): ID { handle.id }
-
 public fun create_account(world: &mut World): AccountHandle {
     let mut registry = test_world::take_account_registry(world);
     let wrapper = registry.new(test_world::ctx(world));
@@ -67,19 +65,6 @@ public fun create_funded_trader(
     return_shared(root);
     return_shared(registry);
     AccountHandle { id }
-}
-
-public fun fund_account(
-    world: &mut World,
-    resources: &OwnedResources,
-    handle: &AccountHandle,
-    amount: u64,
-) {
-    let mut wrapper = take_account(world, handle);
-    let root = test_world::take_accumulator_root(world);
-    fund_wrapper(world, resources, &mut wrapper, &root, amount);
-    return_shared(root);
-    return_shared(wrapper);
 }
 
 public fun take_account(world: &World, handle: &AccountHandle): AccountWrapper {

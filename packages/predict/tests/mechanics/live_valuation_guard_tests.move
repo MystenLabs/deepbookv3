@@ -59,17 +59,8 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
     let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
     let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let profile = oracle_profile::new(
-        100_000_000_000,
-        100_000_000_000,
-        100_000_000_000,
-        SVI_A,
-        false,
-        SVI_B,
-        SVI_SIGMA,
-        SVI_RHO_UNIT,
-        true,
-        0,
-        false,
+        oracle_profile::spot_prices(100_000_000_000, 100_000_000_000, 100_000_000_000),
+        oracle_profile::svi_params(SVI_A, false, SVI_B, SVI_SIGMA, SVI_RHO_UNIT, true, 0, false),
         test_values::now_ms() - 1_000,
     );
     oracle_setup::seed_surface(

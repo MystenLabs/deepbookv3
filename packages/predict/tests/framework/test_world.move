@@ -137,10 +137,6 @@ public fun take_pause_cap(world: &World, id: ID): PauseCap {
     world.scenario.take_from_sender_by_id<PauseCap>(id)
 }
 
-public fun return_pause_cap(world: &World, cap: PauseCap) {
-    world.scenario.return_to_sender(cap);
-}
-
 public fun ctx(world: &mut World): &mut TxContext { world.scenario.ctx() }
 
 public fun next_tx(world: &mut World, sender: address) {

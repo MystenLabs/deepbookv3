@@ -456,5 +456,64 @@ class AssertionPresenceTests(unittest.TestCase):
         )
 
 
+class VacuousAssertionTests(unittest.TestCase):
+    def test_assert_true_is_rejected(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() { assert!(true); }"
+        )
+        self.assertTrue(architecture.vacuous_assertion_errors("example.move", source))
+
+    def test_assert_true_with_abort_code_is_rejected(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() { assert!(true, 7); }"
+        )
+        self.assertTrue(architecture.vacuous_assertion_errors("example.move", source))
+
+    def test_assert_eq_of_same_identifier_is_rejected(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() { assert_eq!(x, x); }"
+        )
+        self.assertTrue(architecture.vacuous_assertion_errors("example.move", source))
+
+    def test_assert_eq_of_same_multiline_identifier_is_rejected(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() { assert_eq!(\n    balance,\n    balance,\n); }"
+        )
+        self.assertTrue(architecture.vacuous_assertion_errors("example.move", source))
+
+    def test_self_comparison_of_integer_literal_is_rejected(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() { assert!(1 == 1); }"
+        )
+        self.assertTrue(architecture.vacuous_assertion_errors("example.move", source))
+
+    def test_structured_operands_are_exempt(self) -> None:
+        source = architecture.source_without_comments(
+            "#[test] fun observed() {\n"
+            "    assert_eq!(market.cash_balance(), market.cash_balance());\n"
+            "    assert_eq!(values[0], values[0]);\n"
+            "    assert_eq!(constants::tick!(), constants::tick!());\n"
+            "    assert!(total - fee == total - fee);\n"
+            "    assert!(flag != done);\n"
+            "    assert!(lower <= lower);\n"
+            "    assert_eq!(left, right);\n"
+            "    assert!(value == expected);\n"
+            "}"
+        )
+        self.assertEqual(
+            architecture.vacuous_assertion_errors("example.move", source),
+            [],
+        )
+
+    def test_assert_true_inside_string_is_ignored(self) -> None:
+        source = architecture.source_without_comments(
+            '#[test] fun observed() { let message = b"assert!(true)"; assert_eq!(value(), 1); }'
+        )
+        self.assertEqual(
+            architecture.vacuous_assertion_errors("example.move", source),
+            [],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

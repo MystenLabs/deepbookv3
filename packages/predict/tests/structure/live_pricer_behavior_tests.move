@@ -160,17 +160,8 @@ fun live_forward_switches_source_one_ms_past_pyth_freshness() {
     let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
     let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let profile = oracle_profile::new(
-        DIVERGED_PYTH_SPOT,
-        BS_SPOT,
-        BS_SPOT,
-        FLAT_SVI_A,
-        false,
-        0,
-        FLAT_SVI_SIGMA,
-        0,
-        false,
-        0,
-        false,
+        oracle_profile::spot_prices(DIVERGED_PYTH_SPOT, BS_SPOT, BS_SPOT),
+        oracle_profile::svi_params(FLAT_SVI_A, false, 0, FLAT_SVI_SIGMA, 0, false, 0, false),
         STALENESS_SOURCE_MS,
     );
     oracle_setup::seed_surface(
@@ -266,17 +257,8 @@ fun live_pricer_accepts_pricing_safe_cross_feed_deviation() {
     let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
     let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let profile = oracle_profile::new(
-        EXTREME_PYTH_SPOT,
-        EXTREME_BS_SPOT,
-        EXTREME_BS_FORWARD,
-        FLAT_SVI_A,
-        false,
-        0,
-        FLAT_SVI_SIGMA,
-        0,
-        false,
-        0,
-        false,
+        oracle_profile::spot_prices(EXTREME_PYTH_SPOT, EXTREME_BS_SPOT, EXTREME_BS_FORWARD),
+        oracle_profile::svi_params(FLAT_SVI_A, false, 0, FLAT_SVI_SIGMA, 0, false, 0, false),
         BS_SVI_SOURCE_MS,
     );
     oracle_setup::seed_surface(

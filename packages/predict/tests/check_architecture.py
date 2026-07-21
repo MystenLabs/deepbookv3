@@ -24,6 +24,10 @@ RESERVED_TAXONOMY_MARKER = re.compile(
     r"(?:scope_(?:framework|mechanics|structure|flow)__|"
     r"intent_(?:behavior|guard|boundary|rounding|accounting|reference|policy)__)")
 DIRECT_ASSERTION = re.compile(r"\bassert(?:_eq)?\s*!")
+ASSERTION_CALL = re.compile(r"\bassert(?P<eq>_eq)?\s*!\s*\(")
+# A bare identifier or integer literal; anything containing ( . :: [ or an
+# operator fails the fullmatch and is exempt from the vacuity check.
+ATOMIC_OPERAND = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d[\dA-Za-z_]*")
 SCENARIO_PROGRESSION_FUNCTIONS = {
     "next_tx",
     "next_with_context",
@@ -507,6 +511,80 @@ def successful_test_assertion_errors(source_path: str, source: str) -> list[str]
     return errors
 
 
+def balanced_call_arguments(source: str, start: int) -> str | None:
+    """Return the argument text of a call whose opening paren precedes `start`."""
+    depth = 1
+    for index in range(start, len(source)):
+        character = source[index]
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return source[start:index]
+    return None
+
+
+def top_level_arguments(arguments: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for character in arguments:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        if character == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(character)
+    parts.append("".join(current).strip())
+    return parts
+
+
+def is_atomic_operand(operand: str) -> bool:
+    return ATOMIC_OPERAND.fullmatch(operand.strip()) is not None
+
+
+def vacuous_assertion_errors(source_path: str, source: str) -> list[str]:
+    """Reject assertions that cannot fail: assert!(true) and self-comparison of
+    one atomic operand (a bare identifier or integer literal). Operands with any
+    structure — calls, field or path access, indexing, arithmetic — are exempt
+    because evaluating them can have observable effects."""
+    errors = []
+    for match in ASSERTION_CALL.finditer(source):
+        arguments = balanced_call_arguments(source, match.end())
+        if arguments is None:
+            continue
+        parts = top_level_arguments(arguments)
+        line = source.count("\n", 0, match.start()) + 1
+        if match.group("eq"):
+            if (
+                len(parts) >= 2
+                and parts[0] == parts[1]
+                and is_atomic_operand(parts[0])
+            ):
+                errors.append(
+                    f"{source_path}:{line}: vacuous assertion: assert_eq! of the same atomic operand"
+                )
+            continue
+        condition = parts[0] if parts else ""
+        if condition == "true":
+            errors.append(f"{source_path}:{line}: vacuous assertion: assert!(true)")
+            continue
+        comparison = re.fullmatch(r"(?P<left>[^=!<>]+)==(?P<right>[^=]+)", condition)
+        if (
+            comparison
+            and comparison.group("left").strip() == comparison.group("right").strip()
+            and is_atomic_operand(comparison.group("left"))
+        ):
+            errors.append(
+                f"{source_path}:{line}: vacuous assertion: self-comparison of an atomic operand"
+            )
+    return errors
+
+
 def selected_modules(
     executable_tests: list[tuple[str, str, str, tuple[str, ...]]],
     filter_marker: str,
@@ -587,6 +665,7 @@ def main() -> int:
         errors.extend(taxonomy_errors(relative(path), scope, module))
         errors.extend(reserved_taxonomy_marker_errors(relative(path), source, module_match))
         errors.extend(successful_test_assertion_errors(relative(path), source))
+        errors.extend(vacuous_assertion_errors(relative(path), source))
         taxonomy = TAXONOMY.fullmatch(module)
         if taxonomy:
             executable_tests.append((

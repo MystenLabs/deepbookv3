@@ -106,17 +106,8 @@ fun liquidated_order_removes_backing_and_pays_zero_exactly_once() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let dropped = oracle_profile::new(
-        DROPPED_SPOT,
-        DROPPED_SPOT,
-        DROPPED_SPOT,
-        1,
-        false,
-        0,
-        1_000_000,
-        0,
-        false,
-        0,
-        false,
+        oracle_profile::spot_prices(DROPPED_SPOT, DROPPED_SPOT, DROPPED_SPOT),
+        oracle_profile::svi_params(1, false, 0, 1_000_000, 0, false, 0, false),
         DROPPED_SOURCE_MS,
     );
     oracle_setup::seed_market_surface(

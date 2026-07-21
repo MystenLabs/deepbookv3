@@ -16,48 +16,63 @@ const SMOKE_SVI_SIGMA: u64 = 1_000_000;
 const EXACT_HALF_SVI_A: u64 = 1;
 const EXACT_HALF_SVI_SIGMA: u64 = 1_000_000;
 
-public struct SurfaceProfile has copy, drop {
+/// The three price inputs: Pyth spot plus the Block Scholes spot/forward pair.
+public struct SpotPrices has copy, drop {
     pyth_spot: u64,
     block_scholes_spot: u64,
     block_scholes_forward: u64,
-    svi_a: u64,
-    svi_a_is_negative: bool,
-    svi_b: u64,
-    svi_sigma: u64,
-    svi_rho_magnitude: u64,
-    svi_rho_is_negative: bool,
-    svi_m_magnitude: u64,
-    svi_m_is_negative: bool,
+}
+
+/// The signed SVI surface parameters, seeded as one block by `seed_bs_svi`.
+/// Signed fields travel as magnitude/sign pairs matching the feed update wire.
+public struct SviParams has copy, drop {
+    a: u64,
+    a_is_negative: bool,
+    b: u64,
+    sigma: u64,
+    rho_magnitude: u64,
+    rho_is_negative: bool,
+    m_magnitude: u64,
+    m_is_negative: bool,
+}
+
+public struct SurfaceProfile has copy, drop {
+    prices: SpotPrices,
+    svi: SviParams,
     source_timestamp_ms: u64,
 }
 
-public fun new(
+public fun new(prices: SpotPrices, svi: SviParams, source_timestamp_ms: u64): SurfaceProfile {
+    SurfaceProfile { prices, svi, source_timestamp_ms }
+}
+
+public fun spot_prices(
     pyth_spot: u64,
     block_scholes_spot: u64,
     block_scholes_forward: u64,
-    svi_a: u64,
-    svi_a_is_negative: bool,
-    svi_b: u64,
-    svi_sigma: u64,
-    svi_rho_magnitude: u64,
-    svi_rho_is_negative: bool,
-    svi_m_magnitude: u64,
-    svi_m_is_negative: bool,
-    source_timestamp_ms: u64,
-): SurfaceProfile {
-    SurfaceProfile {
-        pyth_spot,
-        block_scholes_spot,
-        block_scholes_forward,
-        svi_a,
-        svi_a_is_negative,
-        svi_b,
-        svi_sigma,
-        svi_rho_magnitude,
-        svi_rho_is_negative,
-        svi_m_magnitude,
-        svi_m_is_negative,
-        source_timestamp_ms,
+): SpotPrices {
+    SpotPrices { pyth_spot, block_scholes_spot, block_scholes_forward }
+}
+
+public fun svi_params(
+    a: u64,
+    a_is_negative: bool,
+    b: u64,
+    sigma: u64,
+    rho_magnitude: u64,
+    rho_is_negative: bool,
+    m_magnitude: u64,
+    m_is_negative: bool,
+): SviParams {
+    SviParams {
+        a,
+        a_is_negative,
+        b,
+        sigma,
+        rho_magnitude,
+        rho_is_negative,
+        m_magnitude,
+        m_is_negative,
     }
 }
 
@@ -67,17 +82,17 @@ public fun smoke(): SurfaceProfile {
 
 public fun smoke_at(source_timestamp_ms: u64): SurfaceProfile {
     new(
-        SMOKE_SPOT,
-        SMOKE_SPOT,
-        SMOKE_SPOT,
-        SMOKE_SVI_A,
-        false,
-        SMOKE_SVI_B,
-        SMOKE_SVI_SIGMA,
-        SMOKE_SVI_RHO_MAGNITUDE,
-        false,
-        SMOKE_SVI_M_MAGNITUDE,
-        false,
+        spot_prices(SMOKE_SPOT, SMOKE_SPOT, SMOKE_SPOT),
+        svi_params(
+            SMOKE_SVI_A,
+            false,
+            SMOKE_SVI_B,
+            SMOKE_SVI_SIGMA,
+            SMOKE_SVI_RHO_MAGNITUDE,
+            false,
+            SMOKE_SVI_M_MAGNITUDE,
+            false,
+        ),
         source_timestamp_ms,
     )
 }
@@ -88,41 +103,34 @@ public fun exact_half(): SurfaceProfile {
 
 public fun exact_half_at(source_timestamp_ms: u64): SurfaceProfile {
     new(
-        SMOKE_SPOT,
-        SMOKE_SPOT,
-        SMOKE_SPOT,
-        EXACT_HALF_SVI_A,
-        false,
-        0,
-        EXACT_HALF_SVI_SIGMA,
-        0,
-        false,
-        0,
-        false,
+        spot_prices(SMOKE_SPOT, SMOKE_SPOT, SMOKE_SPOT),
+        svi_params(EXACT_HALF_SVI_A, false, 0, EXACT_HALF_SVI_SIGMA, 0, false, 0, false),
         source_timestamp_ms,
     )
 }
 
-public fun pyth_spot(profile: &SurfaceProfile): u64 { profile.pyth_spot }
+public fun pyth_spot(profile: &SurfaceProfile): u64 { profile.prices.pyth_spot }
 
-public fun block_scholes_spot(profile: &SurfaceProfile): u64 { profile.block_scholes_spot }
+public fun block_scholes_spot(profile: &SurfaceProfile): u64 { profile.prices.block_scholes_spot }
 
-public fun block_scholes_forward(profile: &SurfaceProfile): u64 { profile.block_scholes_forward }
+public fun block_scholes_forward(profile: &SurfaceProfile): u64 {
+    profile.prices.block_scholes_forward
+}
 
-public fun svi_a(profile: &SurfaceProfile): u64 { profile.svi_a }
+public fun svi_a(profile: &SurfaceProfile): u64 { profile.svi.a }
 
-public fun svi_a_is_negative(profile: &SurfaceProfile): bool { profile.svi_a_is_negative }
+public fun svi_a_is_negative(profile: &SurfaceProfile): bool { profile.svi.a_is_negative }
 
-public fun svi_b(profile: &SurfaceProfile): u64 { profile.svi_b }
+public fun svi_b(profile: &SurfaceProfile): u64 { profile.svi.b }
 
-public fun svi_sigma(profile: &SurfaceProfile): u64 { profile.svi_sigma }
+public fun svi_sigma(profile: &SurfaceProfile): u64 { profile.svi.sigma }
 
-public fun svi_rho_magnitude(profile: &SurfaceProfile): u64 { profile.svi_rho_magnitude }
+public fun svi_rho_magnitude(profile: &SurfaceProfile): u64 { profile.svi.rho_magnitude }
 
-public fun svi_rho_is_negative(profile: &SurfaceProfile): bool { profile.svi_rho_is_negative }
+public fun svi_rho_is_negative(profile: &SurfaceProfile): bool { profile.svi.rho_is_negative }
 
-public fun svi_m_magnitude(profile: &SurfaceProfile): u64 { profile.svi_m_magnitude }
+public fun svi_m_magnitude(profile: &SurfaceProfile): u64 { profile.svi.m_magnitude }
 
-public fun svi_m_is_negative(profile: &SurfaceProfile): bool { profile.svi_m_is_negative }
+public fun svi_m_is_negative(profile: &SurfaceProfile): bool { profile.svi.m_is_negative }
 
 public fun source_timestamp_ms(profile: &SurfaceProfile): u64 { profile.source_timestamp_ms }
