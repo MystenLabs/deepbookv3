@@ -62,6 +62,18 @@ public struct PriceMemo has drop {
     prices: vector<u64>,
 }
 
+/// Envelope twin of `PriceMemo` for the interval valuation lane: cached
+/// `up_price_interval` results keyed by finite boundary tick, ascending. The
+/// monotone guard weakens to definite inversion only (a low bound above the
+/// previous high bound): inversions inside overlapping envelopes are honest
+/// width, definite ones are broken surfaces and abort valuation.
+public struct IntervalPriceMemo has drop {
+    /// Finite boundary ticks in ascending order (the in-order walk appends them).
+    ticks: vector<u64>,
+    /// `up_price_interval(ticks[i] * tick_size)`, parallel to `ticks`.
+    prices: vector<Interval>,
+}
+
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const ENonPositiveVariance: u64 = 2;
@@ -105,8 +117,11 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 // and well-conditioned, and a degenerate surface prices with visible uncertainty
 // instead of a silently wrong scalar.
 macro fun saturated_evaluation_error(): u64 { 8 }
+
 macro fun healthy_evaluation_error(): u64 { 48 }
+
 macro fun degenerate_evaluation_error(): u64 { 1_000_000 }
+
 macro fun healthy_minimum_total_variance(): u64 { 10_000_000 }
 
 // === Public Functions ===
@@ -268,6 +283,64 @@ public(package) fun price_and_cache(
         // Higher strikes should not have higher UP prices. NAV's linear tree walk
         // relies on that order; an inverted surface can overstate pool value.
         assert!(price <= previous, ENonMonotonePriceMemo);
+    };
+    memo.ticks.push_back(tick);
+    memo.prices.push_back(price);
+    price
+}
+
+/// Create an empty per-flush envelope price cache (see `IntervalPriceMemo`).
+public(package) fun new_interval_price_memo(): IntervalPriceMemo {
+    IntervalPriceMemo { ticks: vector[], prices: vector[] }
+}
+
+/// Read the cached range-price envelope for one order's tick range. The interval
+/// subtraction clamps the low side at zero — an inversion inside overlapping
+/// envelopes is honest width, not an error — and aborts only when the range is
+/// definitely negative: a surface violation beyond the envelope that slipped the
+/// adjacent-pair guard (possible only via accumulation across many ticks).
+public(package) fun cached_range_price_interval(
+    memo: &IntervalPriceMemo,
+    lower_tick: u64,
+    higher_tick: u64,
+): Interval {
+    memo.cached_up_price_interval(lower_tick).sub(&memo.cached_up_price_interval(higher_tick))
+}
+
+/// Look up a boundary tick's cached UP-price envelope. Infinity sentinels are
+/// mathematically exact and zero-width; every finite tick must be present or the
+/// exposure index is broken.
+public(package) fun cached_up_price_interval(memo: &IntervalPriceMemo, tick: u64): Interval {
+    if (tick == 0) return interval::exact(math::float_scaling!());
+    if (tick == constants::pos_inf_tick!()) return interval::exact(0);
+
+    let ticks = &memo.ticks;
+    let mut lo = 0;
+    let mut hi = ticks.length();
+    while (lo < hi) {
+        let mid = lo + (hi - lo) / 2;
+        let mid_tick = ticks[mid];
+        if (mid_tick == tick) return memo.prices[mid];
+        if (mid_tick < tick) lo = mid + 1 else hi = mid;
+    };
+    abort ETickNotInPriceMemo
+}
+
+/// Price `tick` as an envelope and append it to the cache; the interval twin of
+/// `price_and_cache`. The monotone guard weakens to DEFINITE inversion only
+/// (this price's low bound above the previous price's high bound): an inversion
+/// inside overlapping envelopes is absorbed as width, a definite one means the
+/// surface violates the monotonicity the vendor guarantees and aborts valuation.
+public(package) fun price_and_cache_interval(
+    memo: &mut IntervalPriceMemo,
+    pricer: &Pricer,
+    tick: u64,
+    tick_size: u64,
+): Interval {
+    let price = pricer.up_price_interval(range_codec::strike_from_tick(tick, tick_size));
+    if (!memo.prices.is_empty()) {
+        let previous = memo.prices[memo.prices.length() - 1];
+        assert!(price.lo() <= previous.hi(), ENonMonotonePriceMemo);
     };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);

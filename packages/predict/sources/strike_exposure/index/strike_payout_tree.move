@@ -15,8 +15,8 @@
 /// gap; the tree's max-point term is the floor anchor of that enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
-use fixed_math::math;
+use deepbook_predict::{constants, pricing::{IntervalPriceMemo, Pricer, PriceMemo}, range_codec};
+use fixed_math::{interval::{Self, Interval}, math};
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
@@ -126,6 +126,44 @@ public(package) fun walk_linear(
 public(package) fun walk_linear_cached(tree: &StrikePayoutTree, memo: &PriceMemo): u64 {
     let (start_total, end_total) = walk_linear_cached_subtree(&tree.nodes, tree.root, memo);
     (tree.base.quantity + start_total).saturating_sub(end_total)
+}
+
+/// Envelope walk: prices each boundary once as an interval and accumulates
+/// directed start/end totals per side; the interval twin of `walk_linear`.
+/// The combine's interval subtraction pairs low starts with high ends on the
+/// low side (clamped at zero — a representability floor, true liability is
+/// non-negative) and high starts with low ends on the high side, whose
+/// underflow abort would mean even the most liability-favorable reading is
+/// negative: a definite surface violation, not dust.
+public(package) fun walk_linear_interval(
+    tree: &StrikePayoutTree,
+    pricer: &Pricer,
+    memo: &mut IntervalPriceMemo,
+    tick_size: u64,
+): Interval {
+    let (start_total, end_total) = walk_linear_interval_subtree(
+        &tree.nodes,
+        tree.root,
+        pricer,
+        tick_size,
+        memo,
+    );
+    interval::exact(tree.base.quantity).add(&start_total).sub(&end_total)
+}
+
+/// Re-walk the tree reading each boundary envelope from `memo`; the interval
+/// twin of `walk_linear_cached`, used after the flush kill pass to value the
+/// pruned tree without re-pricing.
+public(package) fun walk_linear_cached_interval(
+    tree: &StrikePayoutTree,
+    memo: &IntervalPriceMemo,
+): Interval {
+    let (start_total, end_total) = walk_linear_cached_interval_subtree(
+        &tree.nodes,
+        tree.root,
+        memo,
+    );
+    interval::exact(tree.base.quantity).add(&start_total).sub(&end_total)
 }
 
 /// Create an empty sparse payout tree.
@@ -462,6 +500,71 @@ fun walk_linear_cached_subtree(
 
     let (right_start, right_end) = walk_linear_cached_subtree(nodes, node.right, memo);
     (start_total + left_start + right_start, end_total + left_end + right_end)
+}
+
+/// `walk_linear_subtree`'s interval twin: every boundary is priced and cached
+/// unconditionally (correction lookups need every finite boundary), equal
+/// start/end quantities skip their cancelling products as zero-width.
+fun walk_linear_interval_subtree(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    pricer: &Pricer,
+    tick_size: u64,
+    memo: &mut IntervalPriceMemo,
+): (Interval, Interval) {
+    if (root.is_none()) return (interval::exact(0), interval::exact(0));
+    let tick = *root.borrow();
+    let node = nodes[tick];
+
+    let (left_start, left_end) = walk_linear_interval_subtree(
+        nodes,
+        node.left,
+        pricer,
+        tick_size,
+        memo,
+    );
+
+    let price = memo.price_and_cache_interval(pricer, tick, tick_size);
+    let mut start_total = interval::exact(0);
+    let mut end_total = interval::exact(0);
+    if (node.local_start.quantity != node.local_end.quantity) {
+        start_total = price.mul(&interval::exact(node.local_start.quantity));
+        end_total = price.mul(&interval::exact(node.local_end.quantity));
+    };
+
+    let (right_start, right_end) = walk_linear_interval_subtree(
+        nodes,
+        node.right,
+        pricer,
+        tick_size,
+        memo,
+    );
+    (start_total.add(&left_start).add(&right_start), end_total.add(&left_end).add(&right_end))
+}
+
+/// `walk_linear_cached_subtree`'s interval twin: identical traversal and skip,
+/// envelope prices read back from the memo.
+fun walk_linear_cached_interval_subtree(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    memo: &IntervalPriceMemo,
+): (Interval, Interval) {
+    if (root.is_none()) return (interval::exact(0), interval::exact(0));
+    let tick = *root.borrow();
+    let node = nodes[tick];
+
+    let (left_start, left_end) = walk_linear_cached_interval_subtree(nodes, node.left, memo);
+
+    let mut start_total = interval::exact(0);
+    let mut end_total = interval::exact(0);
+    if (node.local_start.quantity != node.local_end.quantity) {
+        let price = memo.cached_up_price_interval(tick);
+        start_total = price.mul(&interval::exact(node.local_start.quantity));
+        end_total = price.mul(&interval::exact(node.local_end.quantity));
+    };
+
+    let (right_start, right_end) = walk_linear_cached_interval_subtree(nodes, node.right, memo);
+    (start_total.add(&left_start).add(&right_start), end_total.add(&left_end).add(&right_end))
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {

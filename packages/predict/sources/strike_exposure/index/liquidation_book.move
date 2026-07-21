@@ -9,8 +9,8 @@
 /// same bounded active set supplies the floor-correction term for pool valuation.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo};
-use fixed_math::math;
+use deepbook_predict::{constants, order::{Self, Order}, pricing::{IntervalPriceMemo, PriceMemo}};
+use fixed_math::{interval, math};
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -163,6 +163,73 @@ public(package) fun scan_compact(
                 if (
                     is_under_liquidation_floor(
                         range_value,
+                        order.floor_shares(),
+                        liquidation_ltv,
+                    )
+                ) {
+                    killed.push_back(order);
+                } else {
+                    correction = correction + order.floor_shares();
+                    *(&mut page.order_ids[write]) = order_id;
+                    write = write + 1;
+                };
+                read = read + 1;
+            };
+            while (page.order_ids.length() > write) {
+                page.order_ids.pop_back();
+            };
+            if (write > 0) option::some(page.order_ids[write - 1]) else option::none()
+        };
+
+        if (new_max.is_some()) {
+            *(&mut book.max_order_ids[page_ix]) = new_max.destroy_some();
+            page_ix = page_ix + 1;
+        } else {
+            // Removing the emptied page shifts its successor into `page_ix`;
+            // do not advance.
+            book.remove_page_at(page_ix);
+        };
+    };
+
+    book.active_order_count = book.active_order_count - killed.length();
+    if (book.active_order_count == 0) {
+        book.passive_watermark = option::none();
+    };
+    (correction, killed)
+}
+
+/// Envelope twin of `scan_compact` for the interval valuation lane. The
+/// knock-out test reads the LOW side of each order's gross envelope: an order
+/// that might be at or below its threshold is killed, so the mark never counts
+/// a claim the protocol might not honor (kill-on-possible, protocol-favored).
+/// Survivor correction stays the exact integer `Σ floor_shares`; compaction and
+/// bookkeeping are identical to `scan_compact`.
+public(package) fun scan_compact_interval(
+    book: &mut LiquidationBook,
+    memo: &IntervalPriceMemo,
+    liquidation_ltv: u64,
+): (u64, vector<Order>) {
+    let mut correction = 0;
+    let mut killed = vector[];
+    if (book.active_order_count == 0) return (correction, killed);
+
+    let mut page_ix = 0;
+    while (page_ix < book.page_ids.length()) {
+        let page_id = book.page_ids[page_ix];
+        let new_max = {
+            let page = book.pages.borrow_mut(page_id);
+            let len = page.order_ids.length();
+            let mut read = 0;
+            let mut write = 0;
+            while (read < len) {
+                let order_id = page.order_ids[read];
+                let order = order::from_order_id(order_id);
+                let gross = memo
+                    .cached_range_price_interval(order.lower_tick(), order.higher_tick())
+                    .mul(&interval::exact(order.quantity()));
+                if (
+                    is_under_liquidation_floor(
+                        gross.lo(),
                         order.floor_shares(),
                         liquidation_ltv,
                     )

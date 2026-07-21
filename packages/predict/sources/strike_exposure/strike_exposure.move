@@ -23,7 +23,7 @@ use deepbook_predict::{
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use fixed_math::math;
+use fixed_math::{interval::{Self, Interval}, math};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
@@ -502,6 +502,42 @@ public(package) fun revalue_with_liquidations(
 
     let rewalked = exposure.payout.walk_linear_cached(&memo);
     rewalked.saturating_sub(correction)
+}
+
+/// Envelope twin of `revalue_with_liquidations` for the interval valuation
+/// lane: same walk → kill → settle → re-walk shape, with the knock-out test
+/// reading each gross envelope's low side (kill-on-possible) and the returned
+/// liability carried as an envelope. The final subtraction's low side clamps at
+/// zero (representability floor); its high side aborts only when even the most
+/// liability-favorable reading is below the exact survivor correction — a
+/// definite surface violation. The liquidation event reports the same low-side
+/// gross the kill decision read.
+public(package) fun revalue_with_liquidations_interval(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    clock: &Clock,
+): Interval {
+    let mut memo = pricing::new_interval_price_memo();
+    let linear = exposure.payout.walk_linear_interval(pricer, &mut memo, exposure.tick_size);
+    let (correction, killed) = exposure
+        .liquidation
+        .scan_compact_interval(&memo, exposure.config.liquidation_ltv());
+    // Nothing killed: the tree is untouched, so the first walk already is the
+    // pruned-tree envelope.
+    if (killed.is_empty()) return linear.sub(&interval::exact(correction));
+
+    let liquidated_at_ms = clock.timestamp_ms();
+    killed.do!(|order| {
+        // Same one-observation, decision-side (low) gross the kill test read.
+        let gross_value = memo
+            .cached_range_price_interval(order.lower_tick(), order.higher_tick())
+            .mul(&interval::exact(order.quantity()))
+            .lo();
+        exposure.settle_liquidation(pricer, &order, gross_value, liquidated_at_ms);
+    });
+
+    let rewalked = exposure.payout.walk_linear_cached_interval(&memo);
+    rewalked.sub(&interval::exact(correction))
 }
 
 /// Price and conditionally remove one bounded batch of liquidation candidates.
