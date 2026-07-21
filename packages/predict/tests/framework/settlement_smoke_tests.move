@@ -180,8 +180,11 @@ fun divergent_positions_settle_sweep_and_redeem_with_conserved_pool_cash() {
     return_shared(market);
     return_shared(vault);
 
-    // Settled redeems against the reserved cash: the winner is paid its exact
-    // terminal payout, the loser clears its position for nothing.
+    // Settled redeems against the reserved cash: asserting the balance after
+    // each redeem separately pins winner IDENTITY — the position covering the
+    // settlement price pays, its mirror pays nothing — not just a winner count
+    // (the mirror positions are symmetric, so a lumped total could not tell an
+    // inverted range->winner mapping from the correct one).
     test_world::next_tx(&mut world, test_values::alice());
     let mut wrapper = account_setup::take_account(&world, &account_handle);
     let root = test_world::take_accumulator_root(&world);
@@ -197,6 +200,10 @@ fun divergent_positions_settle_sweep_and_redeem_with_conserved_pool_cash() {
         &root,
         test_world::clock(&resources),
         test_world::ctx(&mut world),
+    );
+    assert_eq!(
+        wrapper.load_account().balance<DUSDC>(&root, test_world::clock(&resources)),
+        WINNER_PAYOUT,
     );
     let auth = account::generate_auth(test_world::ctx(&mut world));
     market.redeem_settled(
