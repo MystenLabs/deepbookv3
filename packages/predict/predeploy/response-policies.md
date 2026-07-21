@@ -68,9 +68,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   those fill-site degeneracies by classifying non-executable queue heads before
   mutating pool state.
 - **Pinning tests:** `pool_valuation_flow_tests.move` —
-  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`,
-  `finish_flush_with_low_plp_price_and_empty_queues_succeeds`,
-  `finish_flush_with_high_plp_price_and_empty_queues_succeeds`.
+  `scope_flow__intent_policy__pool_valuation_tests::finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`,
+  `scope_flow__intent_policy__pool_valuation_tests::finish_flush_with_low_plp_price_and_empty_queues_succeeds`,
+  `scope_flow__intent_policy__pool_valuation_tests::finish_flush_with_high_plp_price_and_empty_queues_succeeds`.
 - **Reopen when:** the fill-site policy (RP-2) turns out not to cover a
   mark-level degeneracy.
 
@@ -107,17 +107,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   candidate: drive NAV collapse and measure the window width and ratchet
   onset.
 - **Pinning tests:** `lp_book_tests.move` —
-  `priced_supply_with_zero_pool_value_refunds`,
-  `priced_supply_that_rounds_to_zero_shares_refunds`,
-  `priced_withdraw_that_rounds_to_zero_payout_refunds`,
-  `supply_at_min_executable_plp_price_fills`,
-  `supply_below_min_executable_plp_price_refunds`,
-  `supply_at_max_executable_plp_price_fills`,
-  `supply_above_max_executable_plp_price_refunds`,
-  `oversized_supply_that_exceeds_u64_shares_refunds`,
-  `non_executable_supply_refunds_spend_supply_budget`,
-  `non_executable_withdraw_refunds_spend_withdraw_budget`, and
-  `withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
+  `scope_mechanics__intent_policy__lp_book_response_tests::priced_supply_with_zero_pool_value_refunds`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::priced_supply_that_rounds_to_zero_shares_refunds`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::priced_withdraw_that_rounds_to_zero_payout_refunds`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::supply_at_min_executable_plp_price_fills`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::supply_below_min_executable_plp_price_refunds`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::supply_at_max_executable_plp_price_fills`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::supply_above_max_executable_plp_price_refunds`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::oversized_supply_that_exceeds_u64_shares_refunds`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::non_executable_supply_refunds_spend_supply_budget`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::non_executable_withdraw_refunds_spend_withdraw_budget`, and
+  `scope_mechanics__intent_policy__lp_book_response_tests::withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, or a new LP request type adds another
@@ -140,10 +140,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Risk profile:** `BEST-GUESS` (requires gross ≤ held-out, i.e. severe
   drawdown after a profitable period).
 - **Pinning tests:** `pool_valuation_flow_tests.move` ·
-  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds` proves the flush
+  `scope_flow__intent_policy__pool_valuation_tests::finish_flush_with_zero_pool_nav_and_empty_queues_succeeds` proves the flush
   survives a NAV==0 mark (gross reaches zero through a backing-floor-exact
   position marked at full probability); and `protocol_profit_flow_tests.move` ·
-  `carried_protocol_profit_is_held_out_of_the_flush_mark` pins the clamp's own
+  `scope_flow__intent_policy__protocol_profit_tests::carried_protocol_profit_is_held_out_of_the_flush_mark` pins the clamp's own
   trigger directly — a carried protocol cut exceeding a positive gross clamps
   the mark to zero instead of underflowing.
 - **Reopen when:** the exclusion basis becomes non-sticky, or RP-2's
@@ -171,9 +171,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
   `risks.md`.
 - **Pinning tests:** `settlement_flow_tests.move` —
-  `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
-  `expired_unsettled_standalone_rebalance_moves_no_cash`, and
-  `explicit_settlement_unblocks_pool_valuation_sweep`.
+  `scope_flow__intent_policy__settlement_tests::try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
+  `scope_flow__intent_policy__settlement_tests::expired_unsettled_standalone_rebalance_moves_no_cash`, and
+  `scope_flow__intent_policy__settlement_tests::explicit_settlement_unblocks_pool_valuation_sweep`.
 - **Reopen when:** settlement-v2 introduces a valuation-safe representation
   for unsettled past-expiry markets.
 
@@ -197,7 +197,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Risk profile:** `BEST-GUESS`; bounded only by the envelope. Gated by S-4
   before value-bearing deployment.
 - **Pinning tests:** `live_pricer_behavior_tests.move` —
-  `live_pricer_accepts_pricing_safe_cross_feed_deviation` exercises the accepted
+  `scope_structure__intent_behavior__live_pricer_tests::live_pricer_accepts_pricing_safe_cross_feed_deviation` exercises the accepted
   absence of a cross-feed deviation guard beyond the former Block Scholes basis limit.
 - **Reopen when:** the production verifier lands (S-4) — revisit whether any
   cross-feed sanity band is then worth reintroducing as a skip, not an abort.
@@ -231,7 +231,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reasoning:** blocking exits during an emergency converts a safety switch
   into a user-fund trap; only new risk creation needs to stop.
 - **Risk profile:** n/a (semantics decision, not a probabilistic risk).
-- **Pinning tests:** `trading_pause_guard_tests.move` independently pins global and per-market mint rejection; `redeem_accounting_tests.move` · `global_trading_pause_keeps_exact_full_live_redeem_available` pins exact live-exit accounting with both pauses engaged.
+- **Pinning tests:** `trading_pause_guard_tests.move` independently pins global and per-market mint rejection; `redeem_accounting_tests.move` · `scope_flow__intent_accounting__redeem_tests::global_trading_pause_keeps_exact_full_live_redeem_available` pins exact live-exit accounting with both pauses engaged.
 - **Reopen when:** pause semantics are intentionally changed.
 
 ## RP-8: Deferred protocol profit — defer-and-carry (D033)
@@ -251,13 +251,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   never preempts funding.
 - **Risk profile:** n/a (accounting-liveness policy).
 - **Pinning tests:** `protocol_profit_flow_tests.move` ·
-  `carried_protocol_profit_is_held_out_of_the_flush_mark` (the cut is capped at
+  `scope_flow__intent_policy__protocol_profit_tests::carried_protocol_profit_is_held_out_of_the_flush_mark` (the cut is capped at
   available idle, the remainder carries, and the carried amount is held out of
   the pool NAV mark) and
-  `carried_protocol_profit_realizes_on_the_next_cash_abundant_sweep` (a later
+  `scope_flow__intent_policy__protocol_profit_tests::carried_protocol_profit_realizes_on_the_next_cash_abundant_sweep` (a later
   sweep that refills idle realizes the carry plus its own cut exactly);
   `settlement_flow_tests.move` ·
-  `owner_auth_rebate_claim_survives_predict_app_deauth` pins the rebate-residual
+  `scope_flow__intent_policy__settlement_tests::owner_auth_rebate_claim_survives_predict_app_deauth` pins the rebate-residual
   re-materialization path; the local carry legs (loss carry-forward, partial
   refill, idle-shortfall realization) are pinned in
   `pool_accounting_accounting_tests.move`.
@@ -287,12 +287,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (`docs/concepts/fees-and-rebates.md` § 4) is unchanged.
 - **Risk profile:** `BEST-GUESS` — spike-onset firing frequency not measured
   (the penalty is disabled by default).
-- **Pinning tests:** `extreme_first_observation_suppresses_penalty_for_later_trades`
+- **Pinning tests:** `scope_mechanics__intent_behavior__ewma_tests::extreme_first_observation_suppresses_penalty_for_later_trades`
   (ewma_tests, charge-then-fold narrative),
-  `ewma_penalty_included_in_quote_and_mint_debits_exactly`
+  `scope_flow__intent_accounting__quote_mint_tests::ewma_penalty_included_in_quote_and_mint_debits_exactly`
   (quote_mint_tests, nonzero pre-fold penalty quoted and charged identically in
   one transaction),
-  `quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost`
+  `scope_flow__intent_accounting__quote_mint_tests::quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost`
   (quote_mint_tests, quote equals the debit with the penalty term at zero).
 - **Reopen when:** the penalty is enabled in production and measured firing
   rates diverge materially from intent, or a redeem-side quote lands (DBU-513
@@ -387,13 +387,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
   `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
   `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
-- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market`
-  and `rebate_claim_with_open_position_aborts` pin the claim preconditions (settled market,
-  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` and
-  `authorized_predict_app_permissionless_rebate_claim_resolves_account` pin the app-auth gate in
+- **Pinning tests:** `settlement_flow_tests.move` — `scope_flow__intent_policy__settlement_tests::rebate_claim_requires_settled_market`
+  and `scope_flow__intent_policy__settlement_tests::rebate_claim_with_open_position_aborts` pin the claim preconditions (settled market,
+  no open positions); `scope_flow__intent_policy__settlement_tests::deauthorized_predict_app_blocks_permissionless_rebate_claim` and
+  `scope_flow__intent_policy__settlement_tests::authorized_predict_app_permissionless_rebate_claim_resolves_account` pin the app-auth gate in
   both directions (an authorized permissionless claim resolves the account; deauthorization
-  revokes it), and `owner_auth_rebate_claim_survives_predict_app_deauth` pins the owner-auth
-  fallback with the exact residual return. `prepare_settled_loss_with_inactive_rebate_stake` is an
+  revokes it), and `scope_flow__intent_policy__settlement_tests::owner_auth_rebate_claim_survives_predict_app_deauth` pins the owner-auth
+  fallback with the exact residual return. `scope_flow__intent_policy__settlement_tests::prepare_settled_loss_with_inactive_rebate_stake` is an
   independent staging pin that asserts the inactive-rebate-stake state the app-auth pins rely on
   (stake added in the market's own epoch stays inactive through settlement). The claim-time-stake
   *pricing* (active stake read at claim, `expiry_market::claim_trading_loss_rebate`) is not pinned
@@ -440,10 +440,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   and NAV volatility. The liveness risk is bounded by the three-attempt expiry,
   and users retain the explicit cancel path while pending.
 - **Pinning tests:** `lp_book_tests.move` —
-  `supply_limit_miss_carries_then_fills_when_mark_improves`,
-  `supply_limit_expires_after_three_misses`,
-  `withdraw_limit_miss_carries_then_fills_when_mark_improves`, and
-  `withdraw_limit_expires_after_three_misses`.
+  `scope_mechanics__intent_policy__lp_book_response_tests::supply_limit_miss_carries_then_fills_when_mark_improves`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::supply_limit_expires_after_three_misses`,
+  `scope_mechanics__intent_policy__lp_book_response_tests::withdraw_limit_miss_carries_then_fills_when_mark_improves`, and
+  `scope_mechanics__intent_policy__lp_book_response_tests::withdraw_limit_expires_after_three_misses`.
 - **Reopen when:** flush cadence changes materially, the retry count becomes
   user-configurable, or LP request limits become mutable in-place.
 
@@ -485,13 +485,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
   the BS pricing in the same call.
 - **Pinning tests:** `mint_budget_accounting_tests.move` —
-  `oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
+  `scope_flow__intent_accounting__mint_budget_tests::oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
   quotes the lot-cap premium, the former abort domain),
-  `budget_mints_largest_fitting_quantity_and_debits_its_exact_cost` and
-  `budget_at_next_lot_premium_mints_the_next_lot` (sizing pinned from both
+  `scope_flow__intent_accounting__mint_budget_tests::budget_mints_largest_fitting_quantity_and_debits_its_exact_cost` and
+  `scope_flow__intent_accounting__mint_budget_tests::budget_at_next_lot_premium_mints_the_next_lot` (sizing pinned from both
   sides at the exact ATM probability); `mint_budget_guard_tests.move` —
-  `budget_fill_below_min_quantity_aborts` (fill floor) and
-  `mint_exact_amount_below_min_quantity_aborts`
+  `scope_flow__intent_guard__mint_budget_tests::budget_fill_below_min_quantity_aborts` (fill floor) and
+  `scope_flow__intent_guard__mint_budget_tests::mint_exact_amount_below_min_quantity_aborts`
   (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
   edge needs a rounding-lossy probability no current fixture pins.
 - **Reopen when:** the premium relation changes shape (a fee folded into the
@@ -527,8 +527,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   Propbook source; residual risk is semantic drift in that dependency, not an
   accepted reachable market state.
 - **Pinning tests:** `reference_tick_behavior_tests.move` —
-  `set_reference_tick_floors_spot_and_is_idempotent`; `reference_tick_guard_tests.move` —
-  `set_reference_tick_missing_exact_history_aborts` and `set_reference_tick_wrong_pyth_feed_aborts`.
+  `scope_structure__intent_behavior__reference_tick_tests::set_reference_tick_floors_spot_and_is_idempotent`; `reference_tick_guard_tests.move` —
+  `scope_structure__intent_guard__reference_tick_tests::set_reference_tick_missing_exact_history_aborts` and `scope_structure__intent_guard__reference_tick_tests::set_reference_tick_wrong_pyth_feed_aborts`.
 - **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
   normalization semantics, or Predict begins using the exact product across a
   delayed boundary that requires update-time metadata.
@@ -557,9 +557,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   Production safety depends on replacing the stub verifier before value-bearing
   deployment (S-4).
 - **Pinning tests:** `live_valuation_guard_tests.move` —
-  `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
+  `scope_mechanics__intent_guard__live_valuation_tests::price_memo_rejects_non_monotone_surface_over_active_ticks`; and
   `current_nav_flow_tests.move` —
-  `current_nav_rejects_non_monotone_active_book_surface`.
+  `scope_flow__intent_guard__current_nav_tests::current_nav_rejects_non_monotone_active_book_surface`.
 - **Reopen when:** NAV valuation gains a safe per-market skip/carry design, the
   LP flush no longer uses one shared mark for both queues, or the production BS
   verifier proves monotonicity before the surface reaches Predict.

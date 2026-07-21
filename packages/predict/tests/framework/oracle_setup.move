@@ -323,6 +323,42 @@ public fun seed_surface(
     seed_bs_svi(bs_svi, expiry_ms, profile, clock, ctx);
 }
 
+/// Seed the market's exact expiry print and drive the permissionless
+/// settlement transition, all in the caller's current transaction. The clock
+/// must already be at or past the market's expiry; the internal assert makes a
+/// failed prerequisite fail fast at construction. Prerequisite only — tests
+/// whose unit under test is `try_settle` drive it directly on their own
+/// borrows instead.
+public fun settle_market_at_exact_print(
+    world: &mut World,
+    resources: &OwnedResources,
+    ids: &OracleIds,
+    market_handle: &MarketHandle,
+    settlement_spot: u64,
+) {
+    let mut market = market_setup::take_market(world, market_handle);
+    let config = test_world::take_config(world);
+    let oracle_registry = test_world::take_oracle_registry(world);
+    let mut pyth = take_pyth(world, ids);
+    let expiry_ms = market.expiry();
+    seed_exact_pyth(
+        &mut pyth,
+        settlement_spot,
+        expiry_ms,
+        test_world::clock(resources).timestamp_ms(),
+    );
+    assert!(market.try_settle(
+        &config,
+        &oracle_registry,
+        &pyth,
+        test_world::clock(resources),
+    ));
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(config);
+    return_shared(market);
+}
+
 public fun seed_market_surface(
     world: &mut World,
     resources: &OwnedResources,

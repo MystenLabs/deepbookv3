@@ -91,7 +91,7 @@ fun support_pin() {}
 class ExactDebtTests(unittest.TestCase):
     def test_unreachable_pin_branch_manifest_requires_registered_executable_boundaries(self) -> None:
         pins = set(debt.EXPECTED_UNREACHABLE_PIN_BRANCHES)
-        functions = {function for _, function in pins}
+        functions = {function.rpartition("::")[2] for _, function in pins}
         self.assertEqual(debt.pin_gap_manifest_errors("unreachable", pins, pins, functions), [])
         policy, function = next(iter(pins))
         self.assertTrue(
@@ -99,13 +99,13 @@ class ExactDebtTests(unittest.TestCase):
                 "unreachable",
                 pins,
                 pins - {(policy, function)},
-                functions - {function},
+                functions - {function.rpartition("::")[2]},
             )
         )
 
     def test_accumulator_delivery_gap_manifest_requires_registered_executable_pins(self) -> None:
         pins = set(debt.EXPECTED_ACCUMULATOR_DELIVERY_GAPS)
-        functions = {function for _, function in pins}
+        functions = {function.rpartition("::")[2] for _, function in pins}
         self.assertEqual(debt.pin_gap_manifest_errors("delivery", pins, pins, functions), [])
 
     def test_register_schema_error_is_not_treated_as_expected_missing_debt(self) -> None:
@@ -375,17 +375,20 @@ class QualifiedPinCollisionTests(unittest.TestCase):
             )
         )
 
-    def test_bare_leaf_pin_in_two_modules_is_ambiguous(self) -> None:
+    def test_bare_leaf_pin_in_two_modules_is_rejected(self) -> None:
         check = debt.load_predeploy_check()
         problem = check.unresolved_pin("same_leaf", set(), {"same_leaf": {"a_tests", "b_tests"}})
         self.assertIsNotNone(problem)
-        self.assertIn("ambiguous", problem)
+        self.assertIn("module-qualified", problem)
 
-    def test_bare_leaf_pin_unique_leaf_resolves(self) -> None:
+    def test_bare_leaf_pin_unique_leaf_is_rejected(self) -> None:
+        # A unique bare leaf used to resolve; it can silently detach from its
+        # cited file by moving the same-named function, so it is now rejected
+        # with a qualification hint.
         check = debt.load_predeploy_check()
-        self.assertIsNone(
-            check.unresolved_pin("same_leaf", set(), {"same_leaf": {"only_tests"}})
-        )
+        problem = check.unresolved_pin("same_leaf", set(), {"same_leaf": {"only_tests"}})
+        self.assertIsNotNone(problem)
+        self.assertIn("only_tests::same_leaf", problem)
 
     def test_bare_leaf_pin_missing_leaf_is_unresolved(self) -> None:
         check = debt.load_predeploy_check()

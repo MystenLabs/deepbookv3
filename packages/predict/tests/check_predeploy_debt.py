@@ -45,14 +45,14 @@ EXPECTED_WARNINGS = set()
 EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-13"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
 EXPECTED_UNREACHABLE_PIN_BRANCHES = {
-    ("RP-2", "priced_supply_that_rounds_to_zero_shares_refunds"),
-    ("RP-2", "priced_withdraw_that_rounds_to_zero_payout_refunds"),
+    ("RP-2", "scope_mechanics__intent_policy__lp_book_response_tests::priced_supply_that_rounds_to_zero_shares_refunds"),
+    ("RP-2", "scope_mechanics__intent_policy__lp_book_response_tests::priced_withdraw_that_rounds_to_zero_payout_refunds"),
 }
 EXPECTED_ACCUMULATOR_DELIVERY_GAPS = {
-    ("RP-2", "non_executable_supply_refunds_spend_supply_budget"),
-    ("RP-2", "non_executable_withdraw_refunds_spend_withdraw_budget"),
-    ("RP-12", "supply_limit_expires_after_three_misses"),
-    ("RP-12", "withdraw_limit_expires_after_three_misses"),
+    ("RP-2", "scope_mechanics__intent_policy__lp_book_response_tests::non_executable_supply_refunds_spend_supply_budget"),
+    ("RP-2", "scope_mechanics__intent_policy__lp_book_response_tests::non_executable_withdraw_refunds_spend_withdraw_budget"),
+    ("RP-12", "scope_mechanics__intent_policy__lp_book_response_tests::supply_limit_expires_after_three_misses"),
+    ("RP-12", "scope_mechanics__intent_policy__lp_book_response_tests::withdraw_limit_expires_after_three_misses"),
 }
 
 
@@ -261,7 +261,8 @@ def pin_gap_manifest_errors(
     for policy, function in sorted(gaps):
         if (policy, function) not in pins:
             errors.append(f"{label} manifest names an unregistered pin: {policy}::{function}")
-        if function not in executable_functions:
+        leaf = function.rpartition("::")[2]
+        if leaf not in executable_functions:
             errors.append(f"{label} manifest has no executable boundary test: {policy}::{function}")
     return errors
 

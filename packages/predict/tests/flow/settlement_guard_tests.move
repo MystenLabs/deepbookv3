@@ -383,23 +383,13 @@ fun settled_redeem_partial_close_aborts() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, IN_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        IN_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     // A settled winner cannot close half its quantity.
     test_world::next_tx(&mut world, test_values::alice());
@@ -497,23 +487,13 @@ fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, IN_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        IN_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     test_world::next_tx(&mut world, test_values::admin());
     let account_admin_cap = test_world::take_account_admin_cap(&world);
@@ -599,7 +579,7 @@ fun order_value_of_live_order_without_pricer_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
+    let (pricer, _feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let auth = account::generate_auth(test_world::ctx(&mut world));
     let order_id = market.mint_exact_quantity(
         &mut wrapper,

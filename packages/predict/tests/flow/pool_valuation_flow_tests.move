@@ -285,23 +285,13 @@ fun finish_flush_with_low_plp_price_and_empty_queues_succeeds() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, IN_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        IN_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     // The flush sweeps the settled market in-flush and freezes the dust mark.
     test_world::next_tx(&mut world, test_values::admin());
@@ -522,23 +512,13 @@ fun finish_flush_with_high_plp_price_and_empty_queues_succeeds() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        OUT_OF_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     // Standalone settled sweep: premium and fees return to idle and the
     // terminal profit's protocol cut is realized before the flush.

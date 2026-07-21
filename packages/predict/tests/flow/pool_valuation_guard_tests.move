@@ -206,7 +206,7 @@ fun live_mint_during_pool_valuation_aborts() {
     let admin_cap = test_world::take_predict_admin_cap(&world);
     let mut registry = test_world::take_registry(&world);
     let mut config = test_world::take_config(&world);
-    let mut vault = test_world::take_vault(&world);
+    let vault = test_world::take_vault(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let mut wrapper = account_setup::take_account(&world, &account_handle);
     let root = test_world::take_accumulator_root(&world);

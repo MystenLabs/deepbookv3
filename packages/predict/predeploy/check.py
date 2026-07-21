@@ -149,8 +149,9 @@ def executable_test_index(paths):
 
 def unresolved_pin(tok, qualified, leaf_modules):
     """None if `tok` resolves to exactly one executable test, else an error phrase.
-    A qualified pin must match its exact module; a bare leaf must be globally unique,
-    so a leaf defined in two modules is a fatal ambiguity rather than a silent match."""
+    Every pin must be module-qualified: a bare leaf can silently detach from its
+    cited file and claim layer by moving the same-named function to another
+    module, so bare selectors are rejected outright rather than resolved."""
     if '::' in tok:
         if tok in qualified:
             return None
@@ -158,10 +159,9 @@ def unresolved_pin(tok, qualified, leaf_modules):
     modules = leaf_modules.get(tok, set())
     if not modules:
         return f'pins test `{tok}` but no executable `fun {tok}` exists under packages/predict/tests/'
-    if len(modules) > 1:
-        return (f'pins ambiguous test `{tok}`: `fun {tok}` is defined in {len(modules)} modules '
-                f"({', '.join(sorted(modules))}); qualify it as `<module>::{tok}`")
-    return None
+    hint = next(iter(sorted(modules)))
+    return (f'pins bare test selector `{tok}`; every register pin must be '
+            f'module-qualified — write `{hint}::{tok}`')
 
 
 def pinning_test_selectors_from_block(block):

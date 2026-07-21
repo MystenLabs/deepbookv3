@@ -1373,23 +1373,13 @@ fun carried_protocol_profit_realizes_on_the_next_cash_abundant_sweep() {
     let b_expiry_ms = test_values::expiry_ms() + test_values::cadence_period_ms();
     test_world::clock_mut(&mut resources).set_for_testing(b_expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &absorb_b);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, PROFIT_SETTLE_SPOT, b_expiry_ms, b_expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &absorb_b,
+        PROFIT_SETTLE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
     test_world::next_tx(&mut world, test_values::admin());
     let mut vault = test_world::take_vault(&world);
     let mut market = market_setup::take_market(&world, &absorb_b);

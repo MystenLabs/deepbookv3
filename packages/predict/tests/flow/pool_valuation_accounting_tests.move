@@ -42,8 +42,8 @@ const ALL_IN_ONE_X_COST: u64 = 505_000_000; // exact-half net_premium 5e8 + fee 
 // liability; market B is untraded at its 10e9 funding floor.
 const TRADED_MARKET_NAV: u64 = 10_002_500_000;
 // The exclusion prices the unrealized protocol share: credits 0 + active NAV
-// 20_002.5e6 - debits 20_000e6 = 2.5e6, times the 0.4 default reserve share.
-const UNREALIZED_PROFIT_EXCLUSION: u64 = 1_000_000;
+// 20_002.5e6 - debits 20_000e6 = 2.5e6, times the 0.4 default reserve share
+// (an exclusion of exactly 1e6 inside the pool NAV below).
 // pool_nav = idle 10e9 + NAV_a + NAV_b 10e9 - exclusion.
 const TWO_MARKET_TRADED_POOL_NAV: u64 = 30_001_500_000;
 const SECOND_SURFACE_TIMESTAMP_MS: u64 = 119_100; // after market A's 119_000 row
@@ -503,23 +503,13 @@ fun supply_fill_at_non_parity_mark_mints_proportional_shares() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, NON_PARITY_SETTLE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        NON_PARITY_SETTLE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
@@ -562,6 +552,250 @@ fun supply_fill_at_non_parity_mark_mints_proportional_shares() {
     assert_eq!(vault.supply_requests_pending(), 0);
     assert_eq!(vault.plp_total_supply(), NON_PARITY_BOOTSTRAP + NON_PARITY_EXPECTED_SHARES);
     assert_eq!(vault.idle_balance(), NON_PARITY_IDLE_AFTER_FLUSH);
+
+    oracle_setup::return_feeds(feeds);
+    return_shared(market);
+    return_shared(vault);
+    return_shared(config);
+    return_shared(registry);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    test_world::finish(world, resources);
+}
+
+// The supply request fills at the frozen parity mark (pool value 20e9 over
+// total supply 20e9), minting shares one-for-one with the escrowed DUSDC.
+const SUPPLY_REQUEST: u64 = 1_000_000_000;
+const EXPECTED_SUPPLY_SHARES: u64 = 1_000_000_000;
+
+#[test]
+fun flush_over_funded_market_with_empty_queues_conserves_pool_nav() {
+    let (mut world, resources) = test_world::new(
+        test_values::system(),
+        test_values::admin(),
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    let oracles = oracle_setup::create_default_oracles(&mut world);
+    test_world::next_tx(&mut world, test_values::admin());
+    let oracle_admin_cap = test_world::take_propbook_admin_cap(&world);
+    oracle_setup::bind_default_oracles(&world, &oracle_admin_cap, &oracles);
+    test_world::return_propbook_admin_cap(&world, oracle_admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let market_handle = market_setup::create_default_market(&mut world, &resources, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    pool_setup::fund_market(
+        &mut world,
+        &resources,
+        &market_handle,
+        test_values::pool_capital(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let profile = oracle_profile::exact_half();
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        &profile,
+        test_values::now_ms(),
+    );
+
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let mut registry = test_world::take_registry(&world);
+    let mut config = test_world::take_config(&world);
+    let mut vault = test_world::take_vault(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let feeds = oracle_setup::borrow_feeds(&world, &oracles);
+
+    let lifecycle_cap = registry.mint_lifecycle_cap(
+        &config,
+        &admin_cap,
+        test_world::ctx(&mut world),
+    );
+    let proof = registry.generate_lifecycle_proof(&lifecycle_cap);
+    let mut valuation = plp::start_pool_valuation(&mut config, &vault, proof);
+    plp::value_expiry(
+        &mut valuation,
+        &mut vault,
+        &mut market,
+        &config,
+        feeds.oracle_registry(),
+        feeds.pyth(),
+        feeds.bs_spot(),
+        feeds.bs_forward(),
+        feeds.bs_svi(),
+        test_world::clock(&resources),
+    );
+    let pool_nav = plp::finish_flush(
+        valuation,
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        test_world::ctx(&mut world),
+    );
+    lifecycle_cap.destroy();
+
+    assert_eq!(pool_nav, test_values::pool_capital());
+
+    oracle_setup::return_feeds(feeds);
+    return_shared(market);
+    return_shared(vault);
+    return_shared(config);
+    return_shared(registry);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    test_world::finish(world, resources);
+}
+
+#[test]
+fun flush_sweeps_settled_market_and_drains_supply_queue_at_frozen_mark() {
+    let (mut world, mut resources) = test_world::new(
+        test_values::system(),
+        test_values::admin(),
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    let oracles = oracle_setup::create_default_oracles(&mut world);
+    test_world::next_tx(&mut world, test_values::admin());
+    let oracle_admin_cap = test_world::take_propbook_admin_cap(&world);
+    oracle_setup::bind_default_oracles(&world, &oracle_admin_cap, &oracles);
+    test_world::return_propbook_admin_cap(&world, oracle_admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let market_handle = market_setup::create_default_market(&mut world, &resources, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    pool_setup::fund_market(
+        &mut world,
+        &resources,
+        &market_handle,
+        test_values::pool_capital(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let profile = oracle_profile::exact_half();
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        &profile,
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::alice());
+    let account_handle = account_setup::create_funded_account(
+        &mut world,
+        &resources,
+        SUPPLY_REQUEST,
+    );
+
+    // Queue the supply request: escrow leaves account custody immediately.
+    test_world::next_tx(&mut world, test_values::alice());
+    let mut vault = test_world::take_vault(&world);
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
+    let root = test_world::take_accumulator_root(&world);
+    let config = test_world::take_config(&world);
+    let auth = account::generate_auth(test_world::ctx(&mut world));
+    vault.request_supply(
+        &mut wrapper,
+        auth,
+        &config,
+        SUPPLY_REQUEST,
+        EXPECTED_SUPPLY_SHARES,
+        &root,
+        test_world::clock(&resources),
+        test_world::ctx(&mut world),
+    );
+    assert_eq!(vault.supply_requests_pending(), 1);
+    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, test_world::clock(&resources)), 0);
+    return_shared(config);
+    return_shared(root);
+    return_shared(wrapper);
+    return_shared(vault);
+
+    // Settle the untraded market at its exact expiry print.
+    let expiry_ms = test_values::expiry_ms();
+    test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
+    test_world::next_tx(&mut world, test_values::admin());
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let oracle_registry = test_world::take_oracle_registry(&world);
+    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
+    oracle_setup::seed_exact_pyth(
+        &mut pyth,
+        oracle_profile::exact_half().pyth_spot(),
+        expiry_ms,
+        expiry_ms,
+    );
+    assert!(
+        market.try_settle(
+            &config,
+            &oracle_registry,
+            &pyth,
+            test_world::clock(&resources),
+        ),
+    );
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(config);
+    return_shared(market);
+
+    // The inlined flush: value_expiry sweeps the settled market (contributing
+    // 0 NAV, returning its full untraded cash to idle), and finish_flush
+    // drains the supply queue at the frozen parity mark.
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let mut registry = test_world::take_registry(&world);
+    let mut config = test_world::take_config(&world);
+    let mut vault = test_world::take_vault(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let feeds = oracle_setup::borrow_feeds(&world, &oracles);
+
+    let lifecycle_cap = registry.mint_lifecycle_cap(
+        &config,
+        &admin_cap,
+        test_world::ctx(&mut world),
+    );
+    let proof = registry.generate_lifecycle_proof(&lifecycle_cap);
+    let mut valuation = plp::start_pool_valuation(&mut config, &vault, proof);
+    plp::value_expiry(
+        &mut valuation,
+        &mut vault,
+        &mut market,
+        &config,
+        feeds.oracle_registry(),
+        feeds.pyth(),
+        feeds.bs_spot(),
+        feeds.bs_forward(),
+        feeds.bs_svi(),
+        test_world::clock(&resources),
+    );
+    let pool_nav = plp::finish_flush(
+        valuation,
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        test_world::ctx(&mut world),
+    );
+    lifecycle_cap.destroy();
+
+    // The untraded settled market conserves the locked capital exactly, so the
+    // frozen mark is parity and the fill mints shares one-for-one.
+    assert_eq!(pool_nav, test_values::pool_capital());
+    assert!(vault.active_expiry_markets().is_empty());
+    assert_eq!(vault.supply_requests_pending(), 0);
+    assert_eq!(vault.plp_total_supply(), test_values::pool_capital() + EXPECTED_SUPPLY_SHARES);
+    assert_eq!(vault.idle_balance(), test_values::pool_capital() + SUPPLY_REQUEST);
+    assert_eq!(market.cash_balance(), 0);
 
     oracle_setup::return_feeds(feeds);
     return_shared(market);

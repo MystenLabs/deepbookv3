@@ -433,23 +433,13 @@ fun rebate_claim_with_open_position_aborts() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        OUT_OF_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     test_world::next_tx(&mut world, test_values::alice());
     let mut vault = test_world::take_vault(&world);
@@ -546,23 +536,13 @@ fun deauthorized_predict_app_blocks_permissionless_rebate_claim() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        OUT_OF_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     test_world::next_tx(&mut world, test_values::alice());
     let mut wrapper = account_setup::take_account(&world, &account_handle);
@@ -697,23 +677,13 @@ fun owner_auth_rebate_claim_survives_predict_app_deauth() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        OUT_OF_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     // Close the losing position, sweep the settled market, then revoke
     // Predict's app authority.
@@ -902,23 +872,13 @@ fun prepare_settled_loss_with_inactive_rebate_stake() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        OUT_OF_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     // The staged state the register's app-auth pins rely on: a settled loss,
     // a closed position, and rebate stake that is still inactive at claim
@@ -1026,23 +986,13 @@ fun authorized_predict_app_permissionless_rebate_claim_resolves_account() {
     let expiry_ms = test_values::expiry_ms();
     test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
     test_world::next_tx(&mut world, test_values::admin());
-    let mut market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
-    assert!(
-        market.try_settle(
-            &config,
-            &oracle_registry,
-            &pyth,
-            test_world::clock(&resources),
-        ),
+    oracle_setup::settle_market_at_exact_print(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        OUT_OF_RANGE_SPOT,
     );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-    return_shared(config);
-    return_shared(market);
 
     test_world::next_tx(&mut world, test_values::alice());
     let mut wrapper = account_setup::take_account(&world, &account_handle);
