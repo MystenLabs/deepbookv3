@@ -8,8 +8,8 @@
 /// same pass. Pins: (a) the flush mark excludes killed orders and removes them
 /// from the liquidation book and payout tree with `OrderLiquidated` emitted;
 /// (b) a zero-liquidatable book marks bit-identical to the read-only
-/// `current_nav`; (d) the holder of a flush-killed order clears it through the
-/// zero-payout Liquidated close arm; (e) 1x orders are never killed.
+/// `current_nav`; (c) the holder of a flush-killed order clears it through the
+/// zero-payout Liquidated close arm; (d) 1x orders are never killed.
 ///
 /// Markets are pool-funded through the production bootstrap + rebalance path
 /// (the `pool_valuation_flow_tests` scaffolding). The band fixture leans on the
