@@ -182,6 +182,28 @@ public fun set_template_max_entry_probability(
     config.strike_exposure_template_config.set_max_entry_probability(value);
 }
 
+/// Set the fraction of an expiry's allocated capital at which the inventory
+/// skew saturates, snapshotted by newly created expiry markets.
+public fun set_template_skew_capital_fraction(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_skew_capital_fraction(value);
+}
+
+/// Set the maximum inventory-skew mid shift snapshotted by newly created expiry
+/// markets. `0` snapshots the skew off.
+public fun set_template_max_skew_shift(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_max_skew_shift(value);
+}
+
 /// Select which source the live forward is built from: `true` carries the Block
 /// Scholes basis on a fresh Pyth spot, `false` uses the Block Scholes forward
 /// directly. Locked during valuation so one flush marks every market on one formula.

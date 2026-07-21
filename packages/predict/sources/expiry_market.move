@@ -29,7 +29,7 @@ use deepbook_predict::{
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{i64::I64, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -183,6 +183,14 @@ public fun tick_size(market: &ExpiryMarket): u64 {
 /// Return the admission-grid step for SDK and devInspect range construction.
 public fun admission_tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.admission_tick_size()
+}
+
+/// Return the pool's net directional position against this expiry, in position
+/// lots, signed in UP-probability space: negative means the pool is net short
+/// UP, so UP quotes sit above the oracle's fair mark. Public for SDK and
+/// devInspect reads — this is the state that explains a quote sitting off fair.
+public fun directional_aggregate(market: &ExpiryMarket): I64 {
+    market.strike_exposure.directional_aggregate()
 }
 
 /// Return the admitted reference tick for SDK and devInspect range construction.
@@ -854,6 +862,7 @@ public(package) fun create_and_share(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    allocated_capital: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -872,6 +881,7 @@ public(package) fun create_and_share(
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
+            allocated_capital,
             strike_exposure_config,
             ctx,
         ),
