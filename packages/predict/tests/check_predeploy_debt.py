@@ -40,10 +40,6 @@ class KnownRed:
     summary: str
 
 EXPECTED_MISSING_PINS = {
-    ("RP-1", "finish_flush_with_zero_pool_nav_and_empty_queues_succeeds"),
-    ("RP-1", "finish_flush_with_low_plp_price_and_empty_queues_succeeds"),
-    ("RP-1", "finish_flush_with_high_plp_price_and_empty_queues_succeeds"),
-    ("RP-3", "finish_flush_with_zero_pool_nav_and_empty_queues_succeeds"),
     ("RP-4", "try_settle_without_exact_expiry_spot_returns_false_without_mutation"),
     ("RP-4", "expired_unsettled_standalone_rebalance_moves_no_cash"),
     ("RP-4", "explicit_settlement_unblocks_pool_valuation_sweep"),
@@ -52,13 +48,10 @@ EXPECTED_MISSING_PINS = {
     ("RP-11", "deauthorized_predict_app_blocks_permissionless_rebate_claim"),
     ("RP-11", "owner_auth_rebate_claim_survives_predict_app_deauth"),
     ("RP-11", "prepare_settled_loss_with_inactive_rebate_stake"),
-    ("RP-15", "current_nav_rejects_non_monotone_active_book_surface"),
 }
 
 EXPECTED_WARNINGS = {
-    "response-policies.md: names file `pool_valuation_flow_tests.move` not found under packages/predict/ or .claude/",
     "response-policies.md: names file `settlement_flow_tests.move` not found under packages/predict/ or .claude/",
-    "response-policies.md: names file `current_nav_flow_tests.move` not found under packages/predict/ or .claude/",
 }
 EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-8", "RP-13"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
