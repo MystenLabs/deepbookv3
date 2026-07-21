@@ -75,10 +75,26 @@ public fun mul(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128)) / F) as u64
 }
 
+/// Multiply two 1e9-scaled fixed-point values, rounding up. `x*y + F - 1` cannot
+/// overflow u128 for any u64 operands, so no intermediate guard is needed.
+/// Directed counterpart of `mul`; interval arithmetic requires both sides.
+public fun mul_up(x: u64, y: u64): u64 {
+    (((x as u128) * (y as u128) + (F - 1)) / F) as u64
+}
+
 /// Divides two 1e9-scaled fixed-point values, rounding down.
 /// Aborts when `y` is zero or the quotient does not fit in `u64`.
 public fun div(x: u64, y: u64): u64 {
     (((x as u128) * F) / (y as u128)) as u64
+}
+
+/// Divides two 1e9-scaled fixed-point values, rounding up.
+/// Aborts when `y` is zero or the quotient does not fit in `u64`. `x*F + y - 1`
+/// cannot overflow u128 for any u64 operands, so no intermediate guard is needed.
+/// Directed counterpart of `div`; interval arithmetic requires both sides.
+public fun div_up(x: u64, y: u64): u64 {
+    assert!(y > 0, EInputZero);
+    (((x as u128) * F + (y as u128) - 1) / (y as u128)) as u64
 }
 
 /// Multiplies two raw integers, divides by a raw denominator, and rounds down.
