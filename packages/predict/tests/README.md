@@ -53,6 +53,65 @@ Use this decision sequence:
 
 The test body owns every post-bootstrap actor change and transaction-context change, including custom gas-price advancement. A setup helper must not advance the transaction. The test calls its production unit under test directly; setup may call earlier production transitions only when those transitions are explicit prerequisites for a different claim.
 
+### Fixture surface
+
+Every helper runs in the caller's current transaction and returns each taken shared object before it finishes, except where the row says otherwise.
+
+| Fixture | Sender | Takes → returns | Config overrides | Returned handles |
+|---|---|---|---|---|
+| `test_world::new` | system, then admin (internal bootstrap transactions) | initializes package roots, captures stable IDs | none | `World`, `OwnedResources` (Clock only) |
+| `market_setup::configure_default_cadence` | admin (passes `&AdminCap`) | Registry, ProtocolConfig | registers the test underlying and template cadence at production defaults | none |
+| `market_setup::configure_low_fee_unrestricted_leverage_market` | admin (passes `&AdminCap`) | Registry, ProtocolConfig | template base fee → 1 (the 0.5% min-fee floor binds) and no-leverage window → 0 (leverage admissible to expiry), plus the default cadence | none |
+| `market_setup::create_default_market` / `create_markets` | admin (passes `&AdminCap`) | Registry, PoolVault, ProtocolConfig, OracleRegistry; mints and destroys the lifecycle cap inside the borrow | none | `MarketHandle`(s) |
+| `pool_setup::fund_market` | admin (takes `AdminCap` from sender inventory) | PoolVault, ExpiryMarket, ProtocolConfig; mints DUSDC, locks it as pool capital, rebalances expiry cash | none | none |
+| `oracle_setup::create_default_oracles` / `create_oracles` | admin | OracleRegistry; creates and shares the Pyth + three Block Scholes feeds | none | `OracleIds` |
+| `oracle_setup::bind_default_oracles` / `bind_oracles` | propbook admin (passes `&RegistryAdminCap`) | OracleRegistry plus all four feeds | binds each feed to the test underlying | none |
+| `oracle_setup::seed_market_surface` | any (permissionless feed updates) | ExpiryMarket plus all four feeds; writes one `SurfaceProfile` row at the market's expiry | none | none |
+| `oracle_setup::borrow_feeds` / `load_pricer` | any | OracleRegistry plus all four feeds → held in a no-drop `BorrowedFeeds` until `return_feeds` | none | `BorrowedFeeds` (+ `Pricer` from `load_pricer`) |
+| `account_setup::create_account` / `create_funded_account` / `create_funded_trader` | the trader (new account belongs to the current sender) | AccountRegistry (+ AccumulatorRoot when funding); mints and deposits DUSDC (+ DEEP for traders) | none | `AccountHandle` |
+| `market_setup::take_market` / `account_setup::take_account` / `oracle_setup::take_*` | any | takes the shared object by handle/ID; the caller returns it | none | the object itself |
+
+### Staged live-market skeleton
+
+The canonical flow-test prologue; each stage is one explicit transaction whose sender is visible in the test body.
+
+```move
+let (mut world, resources) = test_world::new(system, admin, now_ms);
+
+test_world::next_tx(&mut world, admin); // market policy + oracle objects
+let admin_cap = test_world::take_predict_admin_cap(&world);
+market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
+test_world::return_predict_admin_cap(&world, admin_cap);
+let oracles = oracle_setup::create_default_oracles(&mut world);
+
+test_world::next_tx(&mut world, admin); // bind feeds to the underlying
+let oracle_admin_cap = test_world::take_propbook_admin_cap(&world);
+oracle_setup::bind_default_oracles(&world, &oracle_admin_cap, &oracles);
+test_world::return_propbook_admin_cap(&world, oracle_admin_cap);
+
+test_world::next_tx(&mut world, admin); // create the expiry market
+let admin_cap = test_world::take_predict_admin_cap(&world);
+let market_handle = market_setup::create_default_market(&mut world, &resources, &admin_cap);
+test_world::return_predict_admin_cap(&world, admin_cap);
+
+test_world::next_tx(&mut world, admin); // lock pool capital into the market
+pool_setup::fund_market(&mut world, &resources, &market_handle, pool_capital);
+
+test_world::next_tx(&mut world, admin); // seed the oracle surface
+oracle_setup::seed_market_surface(&mut world, &resources, &oracles, &market_handle, &profile, now_ms);
+
+test_world::next_tx(&mut world, alice); // trader account
+let account_handle = account_setup::create_funded_account(&mut world, &resources, deposit);
+
+test_world::next_tx(&mut world, alice); // borrow state, load the pricer, call the UUT
+let mut market = market_setup::take_market(&world, &market_handle);
+let config = test_world::take_config(&world);
+let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
+// call the production unit under test, assert, then:
+oracle_setup::return_feeds(feeds);
+// return the remaining shared objects and finish the World.
+```
+
 Executable unit tests and fixture modules live under `packages/predict/tests/**`, never `packages/predict/sources/**`. If the existing production surface and approved irreducible test-only seams cannot reach the required state or flow, stop and raise the testability gap; do not add a source-local test or convenience `#[test_only]` constructor to bypass fixture design.
 
 ## Expected truth
