@@ -535,6 +535,7 @@ public fun insert_exact_pyth(
         PYTH_EXPONENT_NEG_9,
         true,
         source_timestamp_ms * 1000,
+        source_timestamp_ms * 1000,
         source_timestamp_ms,
         true,
     );
@@ -628,6 +629,7 @@ fun store_pyth_spot(
         false,
         PYTH_EXPONENT_NEG_9,
         true,
+        source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
         false,

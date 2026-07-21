@@ -43,7 +43,8 @@ payloads. Every source module follows the same read pattern:
   observation is absent or cannot produce a usable normalized Propbook value.
 
 For Pyth, the raw payload keeps the source price magnitude/sign, exponent
-magnitude/sign, and microsecond source timestamp. `normalized_spot()` and the
+magnitude/sign, and the microsecond time at which Pyth generated the price.
+`normalized_spot()` and the
 exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
@@ -59,8 +60,10 @@ Propbook does not have a separate settlement or minute-bucket write mode. Feeds
 can insert source-native observations into `exact_reads`, keyed by the exact
 source timestamp derived from the update:
 
-- Pyth uses the Lazer source timestamp in microseconds, rounded up to
-  milliseconds.
+- Pyth uses the Lazer envelope timestamp in microseconds, which must already be an
+  exact whole millisecond. The envelope at a tick carries Pyth's canonical price as
+  of that tick, so a consumer settling at the tick resolves the right mark even when
+  Pyth generated that price earlier and carried it forward.
 - Block Scholes spot, forward, and SVI use each update's published millisecond
   timestamp directly.
 
@@ -78,7 +81,7 @@ the source-native price fields from the Lazer update:
 
 - price magnitude and sign
 - exponent magnitude and sign
-- native source timestamp in microseconds
+- the per-feed `feedUpdateTimestamp` in microseconds: when Pyth generated this price
 
 The 1e9-normalized spot reads are derived from those stored fields. This keeps
 the stored oracle data close to what Pyth actually supplied, while still exposing
@@ -86,6 +89,31 @@ a non-aborting normalized view for consumers.
 
 Pyth Lazer `Update` values are produced by the Pyth verifier package, so the Move
 type system provides provenance for normal Pyth ingestion.
+
+### Two Clocks: Envelope And Generation Time
+
+A Lazer update carries two timestamps. The envelope `timestamp()` is when the signed
+update was published. The per-feed `feedUpdateTimestamp` is when Pyth generated the
+price the update carries. They are equal only when the update carries a freshly
+generated aggregate; when Pyth has no new aggregate for a feed it carries the previous
+price forward under a newer envelope, leaving `feedUpdateTimestamp` at the earlier
+generation time. Subscribing clients must request the `feedUpdateTimestamp` property,
+or ingestion aborts `ELazerValueUnavailable`.
+
+The two lanes key on different clocks because they answer different questions:
+
+- `latest` keys on the generation time, because a consumer asking "how old is this
+  price?" wants its true age. Redelivering a carried price does not advance the
+  generation time, so `lane::update` treats it as non-advancing and leaves `latest`
+  untouched — a carried price ages out of a consumer's freshness window on schedule
+  instead of looking permanently fresh.
+- `exact_reads` keys on the envelope, because a consumer asking "what was the price at
+  tick T?" wants the canonical mark as of T. Pyth guarantees the envelope at T holds
+  the freshest aggregate as of T, so an envelope-keyed row is the right answer even
+  when the price it carries was generated earlier. The stored payload retains the
+  generation time, so the settled price's true age stays legible.
+
+A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvelope`).
 
 ## Block Scholes Feeds
 
@@ -219,10 +247,10 @@ High-frequency cost caveats:
 - `ObservationRecorded` emits for every accepted live update.
 - `exact_reads` are unbounded tables. Storage growth is paid by writers; a
   permissionless prune flow can be added later if long-run retention needs it.
-- Pyth latest updates are ceil-rounded from microseconds to milliseconds, so two
-  source updates inside the same millisecond can collide at the Propbook
+- Pyth latest updates are ceil-rounded from generation microseconds to milliseconds,
+  so two aggregates generated inside the same millisecond can collide at the Propbook
   freshness key and the second live update is a no-op. Exact-history inserts are
-  stricter: `pyth_feed::insert_at` accepts only source timestamps that are
+  stricter: `pyth_feed::insert_at` accepts only envelope timestamps that are
   already exact whole milliseconds.
 
 ## Consumer Responsibilities

@@ -124,7 +124,7 @@ fun update_flows_into_raw_and_normalized_latest_getters() {
     assert!(!pyth_feed::raw_price_is_negative(&raw));
     assert_eq!(pyth_feed::raw_exponent_magnitude(&raw), EXPONENT_NEG_9);
     assert!(pyth_feed::raw_exponent_is_negative(&raw));
-    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), SOURCE_TS_1_US);
+    assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw), SOURCE_TS_1_US);
 
     assert_latest_normalized(&feed, SPOT_65K, SOURCE_TS_1_MS, UPDATE_1_MS);
     assert!(feed.normalized_spot_at(SOURCE_TS_1_MS).is_none());
@@ -312,7 +312,7 @@ fun insert_at_records_exact_read_without_latest() {
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
     assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
     let raw = raw_read.read_value();
-    assert_eq!(pyth_feed::raw_source_timestamp_us(&raw), SOURCE_TS_1_US);
+    assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw), SOURCE_TS_1_US);
     assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
 
     let normalized = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
@@ -337,6 +337,114 @@ fun insert_at_non_exact_source_us_aborts() {
         true,
         SOURCE_TS_NON_EXACT_US,
         UPDATE_1_MS,
+    );
+
+    abort 999
+}
+
+/// A price Pyth carried forward under a newer envelope must not renew `latest`.
+/// Keying on the envelope made the carried row look freshly generated, so a consumer's
+/// wall-clock freshness window never expired while the underlying price was frozen.
+#[test]
+fun carried_price_does_not_refresh_latest() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
+
+    // Pyth generated nothing new: the same price redelivered under a later envelope.
+    store_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        SOURCE_TS_5_US,
+        UPDATE_5_MS,
+    );
+
+    // `latest` still ages from generation time (1ms), not from the envelope (5ms).
+    let raw_read = feed.raw_spot();
+    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
+    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw_read.read_value()), SOURCE_TS_1_US);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+/// A freshly generated price still advances `latest` past a carried predecessor.
+#[test]
+fun fresh_price_after_carry_advances_latest() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(&mut feed, SPOT_65K, false, EXPONENT_NEG_9, true, SOURCE_TS_1_US, UPDATE_1_MS);
+    store_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        SOURCE_TS_3_US,
+        UPDATE_3_MS,
+    );
+    store_raw(&mut feed, ONE_MAGNITUDE, false, EXPONENT_ZERO, false, SOURCE_TS_5_US, UPDATE_5_MS);
+
+    let raw_read = feed.raw_spot();
+    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_5_MS);
+    assert_eq!(pyth_feed::raw_price_magnitude(&raw_read.read_value()), ONE_MAGNITUDE);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+/// Exact history stays keyed by the envelope: the envelope at a tick carries Pyth's
+/// canonical price as of that tick, so a settlement lookup at the tick resolves even
+/// when the price was generated earlier. The row retains the true generation time.
+#[test]
+fun carried_price_inserts_at_envelope_key_and_keeps_true_age() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    insert_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        SOURCE_TS_5_US,
+        UPDATE_5_MS,
+    );
+
+    assert!(feed.normalized_spot_at(SOURCE_TS_1_MS).is_none());
+    let raw_read = feed.raw_spot_at(SOURCE_TS_5_MS);
+    assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_5_MS);
+    assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw_read.read_value()), SOURCE_TS_1_US);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+/// Pyth generates a price at or before the envelope carrying it; the reverse is not
+/// a realizable observation.
+#[test, expected_failure(abort_code = pyth_feed::EFeedTimestampAfterEnvelope)]
+fun feed_timestamp_after_envelope_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_5_US,
+        SOURCE_TS_1_US,
+        UPDATE_5_MS,
     );
 
     abort 999
@@ -422,6 +530,7 @@ fun migrate_current_version_aborts() {
     abort 999
 }
 
+/// Store a freshly generated price: Pyth generated it in the envelope that delivered it.
 fun store_raw(
     feed: &mut PythFeed,
     price_magnitude: u64,
@@ -431,13 +540,37 @@ fun store_raw(
     source_timestamp_us: u64,
     update_timestamp_ms: u64,
 ) {
-    pyth_feed::record_raw_for_testing(
+    store_raw_carried(
         feed,
         price_magnitude,
         price_is_negative,
         exponent_magnitude,
         exponent_is_negative,
         source_timestamp_us,
+        source_timestamp_us,
+        update_timestamp_ms,
+    );
+}
+
+/// Store a price generated at `feed_update_timestamp_us` but delivered under a later envelope.
+fun store_raw_carried(
+    feed: &mut PythFeed,
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+    feed_update_timestamp_us: u64,
+    envelope_timestamp_us: u64,
+    update_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        feed,
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        feed_update_timestamp_us,
+        envelope_timestamp_us,
         update_timestamp_ms,
         false,
     );
@@ -452,13 +585,38 @@ fun insert_raw(
     source_timestamp_us: u64,
     update_timestamp_ms: u64,
 ) {
-    pyth_feed::record_raw_for_testing(
+    insert_raw_carried(
         feed,
         price_magnitude,
         price_is_negative,
         exponent_magnitude,
         exponent_is_negative,
         source_timestamp_us,
+        source_timestamp_us,
+        update_timestamp_ms,
+    );
+}
+
+/// Insert a price generated at `feed_update_timestamp_us` under a later envelope; the
+/// exact-history key is the envelope.
+fun insert_raw_carried(
+    feed: &mut PythFeed,
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+    feed_update_timestamp_us: u64,
+    envelope_timestamp_us: u64,
+    update_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        feed,
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        feed_update_timestamp_us,
+        envelope_timestamp_us,
         update_timestamp_ms,
         true,
     );
