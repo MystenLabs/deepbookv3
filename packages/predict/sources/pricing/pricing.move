@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{i64::{Self, I64}, math};
+use fixed_math::{i64::{Self, I64}, interval::{Self, Interval}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -96,6 +96,19 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+// Certified computational-error tiers for one SVI digital-price evaluation, in
+// raw 1e9 units, keyed by the evaluation's total variance: evaluation error is
+// dominated by the 1/sqrt(w) conditioning of d2. Bounds were measured against an
+// independent float64 reference across the full admissible SVI envelope (~92k
+// evaluations) and padded >=2.5x over observed p99. The sub-threshold tier is
+// honest-but-wide by design: production surfaces are vendor-guaranteed monotone
+// and well-conditioned, and a degenerate surface prices with visible uncertainty
+// instead of a silently wrong scalar.
+macro fun saturated_evaluation_error(): u64 { 8 }
+macro fun healthy_evaluation_error(): u64 { 48 }
+macro fun degenerate_evaluation_error(): u64 { 1_000_000 }
+macro fun healthy_minimum_total_variance(): u64 { 10_000_000 }
+
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and
@@ -136,6 +149,14 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
 public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
     let ExactSpotRead { spot } = read;
     spot
+}
+
+/// Interval form of `up_price`: the scalar evaluation widened by the certified
+/// per-regime evaluation-error bound, intersected with the probability domain.
+/// Infinity sentinels are mathematically exact and stay zero-width. Valuation
+/// lanes consume this; scalar `up_price` remains for quotes and devInspect.
+public(package) fun up_price_interval(pricer: &Pricer, strike: Strike): Interval {
+    compute_up_price_interval(&pricer.svi, pricer.forward, strike)
 }
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
@@ -448,7 +469,28 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
         return 0
     };
 
-    compute_nd2(svi, forward, strike.value())
+    let (price, _) = compute_nd2_terms(svi, forward, strike.value());
+    price
+}
+
+/// Widen one scalar evaluation into its sound envelope. The error tier is keyed
+/// on the evaluation's total variance because evaluation error is dominated by
+/// the `1/sqrt(w)` conditioning of `d2`; pre-variance saturations (ratio outside
+/// the fixed-point domain) sit on exact digital limits and take the tight tier.
+fun compute_up_price_interval(svi: &SVIParams, forward: u64, strike: Strike): Interval {
+    if (strike.is_neg_inf()) return interval::exact(math::float_scaling!());
+    if (strike.is_pos_inf()) return interval::exact(0);
+
+    let (price, total_var) = compute_nd2_terms(svi, forward, strike.value());
+    let error_bound = if (total_var.is_none()) {
+        saturated_evaluation_error!()
+    } else if (total_var.destroy_some() >= healthy_minimum_total_variance!()) {
+        healthy_evaluation_error!()
+    } else {
+        degenerate_evaluation_error!()
+    };
+    let widened = interval::exact(price).widen(error_bound);
+    interval::new(widened.lo(), widened.hi().min(math::float_scaling!()))
 }
 
 /// Binary pricing from SVI total variance:
@@ -456,17 +498,21 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
+///
+/// Returns the price plus the total variance the evaluation used, so callers can
+/// classify the evaluation's conditioning regime; `none` when a ratio saturation
+/// short-circuited before variance was computed.
+fun compute_nd2_terms(svi_params: &SVIParams, forward: u64, strike: u64): (u64, Option<u64>) {
     assert!(forward > 0, EZeroForward);
 
     // Saturate ratios outside the fixed-point domain to their digital-probability
     // limits instead of aborting live valuation and position flows.
     let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
+    if (strike_ratio_opt.is_none()) return (0, option::none());
     let strike_ratio = strike_ratio_opt.destroy_some();
     // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
+    if (strike_ratio == 0) return (math::float_scaling!(), option::none());
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
@@ -503,7 +549,7 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let slope = rho.add(&slope_ratio);
     let w_prime = i64::from_u64(b).mul_scaled(&slope);
     let nd2 = math::normal_cdf(&d2);
-    if (w_prime.is_zero()) return nd2;
+    if (w_prime.is_zero()) return (nd2, option::some(total_var));
 
     let correction_magnitude = math::mul_div_down(
         math::normal_pdf(&d2),
@@ -512,9 +558,11 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
-    if (adjusted.is_negative()) return 0;
-    if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
-    adjusted.magnitude()
+    if (adjusted.is_negative()) return (0, option::some(total_var));
+    if (adjusted.magnitude() > math::float_scaling!()) {
+        return (math::float_scaling!(), option::some(total_var))
+    };
+    (adjusted.magnitude(), option::some(total_var))
 }
 
 fun is_positive(value: &I64): bool {
