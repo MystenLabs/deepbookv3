@@ -154,7 +154,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Trigger state:** an active market is past expiry but Propbook has no
   normalized spot at the exact expiry millisecond yet.
 - **Controller:** external — resolution relayer liveness (Pyth Lazer
-  resolution endpoints supply the exact-timestamp print).
+  resolution endpoints supply the exact-timestamp print), and Pyth aggregate
+  liveness at the boundary, which no relayer can compensate for.
 - **Blast radius:** the whole flush aborts while the market is in the window.
 - **Response:** `pause`-with-recovery — abort and retry; the recovery path is
   the permissionless exact-ms insert followed by `try_settle`. Standalone cash
@@ -163,19 +164,36 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   mark**: a settlement-dependent market has no well-defined true value, and
   the single mark prices both queue directions — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
+- **Recovery is not guaranteed.** `pyth_feed::insert_at` rejects a print
+  generated more than `constants::max_settlement_carry_ms` (2s) before its
+  envelope (`ESettlementCarryExceedsWindow`). Pyth publishes exactly one
+  envelope per tick and never revises it, so a boundary whose canonical print
+  was carried from beyond that window has no admissible settling row and never
+  will: the retry loop above never terminates and the pool's flush is blocked
+  permanently. The bound is deliberate — settling on an arbitrarily stale mark
+  is the worse outcome, and the window is compiled because the insert is
+  permissionless and first-writer-wins. Both window edges are pinned in
+  propbook: `pyth_feed_tests.move` —
+  `insert_at_carry_within_window_claims_the_key`,
+  `insert_at_carry_beyond_window_aborts`.
 - **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` (accepted
   operational assumption, testnet evidence); grid-snap at creation makes the
-  key representable, resolution endpoints make it producible.
-- **Risk profile:** `MEASURED` (testnet evidence in
-  `evidence/rp4-settlement-liveness.md`);
-  residual = prolonged relayer outage blocks LP fills pool-wide, disclosed in
-  `risks.md`.
+  key representable, resolution endpoints make it producible **when Pyth
+  generated a print within the carry window of that boundary**.
+- **Risk profile:** `UNMEASURED` for the unrecoverable case — the evidence in
+  `evidence/rp4-settlement-liveness.md` predates the carry bound and does not
+  cover it. Boundary carry-availability (how often Pyth carries a price across
+  a grid boundary for longer than the window) is not yet measured; measuring it
+  on testnet is a mainnet launch blocker. Residual = prolonged relayer outage
+  blocks LP fills pool-wide, plus permanent pool-wide flush blockage on a
+  beyond-window boundary; both disclosed in `risks.md`.
 - **Pinning tests:** `settlement_flow_tests.move` —
   `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
   `expired_unsettled_standalone_rebalance_moves_no_cash`, and
   `explicit_settlement_unblocks_pool_valuation_sweep`.
 - **Reopen when:** settlement-v2 introduces a valuation-safe representation
-  for unsettled past-expiry markets.
+  for unsettled past-expiry markets, or boundary carry-availability
+  measurement justifies an admin settlement fallback or a different window.
 
 ## RP-5: BS-vs-Pyth basis/deviation circuit breakers removed
 
