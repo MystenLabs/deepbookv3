@@ -950,3 +950,167 @@ fun prepare_settled_loss_with_inactive_rebate_stake() {
     return_shared(wrapper);
     test_world::finish(world, resources);
 }
+
+#[test]
+fun authorized_predict_app_permissionless_rebate_claim_resolves_account() {
+    let (mut world, mut resources) = test_world::new(
+        test_values::system(),
+        test_values::admin(),
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    let oracles = oracle_setup::create_default_oracles(&mut world);
+    test_world::next_tx(&mut world, test_values::admin());
+    let oracle_admin_cap = test_world::take_propbook_admin_cap(&world);
+    oracle_setup::bind_default_oracles(&world, &oracle_admin_cap, &oracles);
+    test_world::return_propbook_admin_cap(&world, oracle_admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let market_handle = market_setup::create_default_market(&mut world, &resources, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    pool_setup::fund_market(
+        &mut world,
+        &resources,
+        &market_handle,
+        SMALL_BOOTSTRAP,
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let profile = oracle_profile::exact_half();
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        &profile,
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::alice());
+    let account_handle = account_setup::create_funded_account(
+        &mut world,
+        &resources,
+        ALL_IN_TRADE_COST,
+    );
+
+    test_world::next_tx(&mut world, test_values::alice());
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
+    let root = test_world::take_accumulator_root(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
+    let auth = account::generate_auth(test_world::ctx(&mut world));
+    let order_id = market.mint_exact_quantity(
+        &mut wrapper,
+        auth,
+        &config,
+        &pricer,
+        LOWER_TICK,
+        test_values::strike_tick(),
+        TRADE_QUANTITY,
+        test_values::leverage_one_x(),
+        ALL_IN_TRADE_COST,
+        std::u64::max_value!(),
+        &root,
+        test_world::clock(&resources),
+        test_world::ctx(&mut world),
+    );
+    oracle_setup::return_feeds(feeds);
+    return_shared(config);
+    return_shared(market);
+    return_shared(root);
+    return_shared(wrapper);
+
+    let expiry_ms = test_values::expiry_ms();
+    test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
+    test_world::next_tx(&mut world, test_values::admin());
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let oracle_registry = test_world::take_oracle_registry(&world);
+    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
+    oracle_setup::seed_exact_pyth(&mut pyth, OUT_OF_RANGE_SPOT, expiry_ms, expiry_ms);
+    assert!(
+        market.try_settle(
+            &config,
+            &oracle_registry,
+            &pyth,
+            test_world::clock(&resources),
+        ),
+    );
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(config);
+    return_shared(market);
+
+    test_world::next_tx(&mut world, test_values::alice());
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
+    let root = test_world::take_accumulator_root(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let auth = account::generate_auth(test_world::ctx(&mut world));
+    market.redeem_settled(
+        &mut wrapper,
+        auth,
+        &config,
+        order_id,
+        TRADE_QUANTITY,
+        &root,
+        test_world::clock(&resources),
+        test_world::ctx(&mut world),
+    );
+    return_shared(config);
+    return_shared(market);
+    return_shared(root);
+    return_shared(wrapper);
+    test_world::next_tx(&mut world, test_values::admin());
+    let mut vault = test_world::take_vault(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    vault.rebalance_expiry_cash(&mut market, &config, test_world::clock(&resources));
+    return_shared(config);
+    return_shared(market);
+    return_shared(vault);
+
+    // With the app AUTHORIZED, anyone can run the cleanout: this is the
+    // positive half the deauthorization pins revoke, so the app-auth gate is
+    // demonstrably effective in both directions.
+    test_world::next_tx(&mut world, test_values::admin());
+    let account_admin_cap = test_world::take_account_admin_cap(&world);
+    let mut account_registry = test_world::take_account_registry(&world);
+    account_registry::authorize_app<predict_account::PredictApp>(
+        &mut account_registry,
+        &account_admin_cap,
+    );
+    return_shared(account_registry);
+    test_world::return_account_admin_cap(&world, account_admin_cap);
+
+    test_world::next_tx(&mut world, test_values::bob());
+    let mut vault = test_world::take_vault(&world);
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
+    let root = test_world::take_accumulator_root(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let account_registry = test_world::take_account_registry(&world);
+    let config = test_world::take_config(&world);
+    vault.claim_trading_loss_rebate_permissionless(
+        &mut market,
+        &mut wrapper,
+        &account_registry,
+        &config,
+        &root,
+        test_world::clock(&resources),
+        test_world::ctx(&mut world),
+    );
+    assert_eq!(market.cash_balance(), 0);
+    assert_eq!(market.rebate_reserve(), 0);
+    assert_eq!(vault.idle_balance(), IDLE_AFTER_RESIDUAL);
+    assert_eq!(vault.protocol_reserve_balance(), PROTOCOL_CUT_AFTER_RESIDUAL);
+    return_shared(config);
+    return_shared(account_registry);
+    return_shared(market);
+    return_shared(root);
+    return_shared(wrapper);
+    return_shared(vault);
+    test_world::finish(world, resources);
+}
