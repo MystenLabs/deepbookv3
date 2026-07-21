@@ -40,7 +40,7 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
     );
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
     test_world::next_tx(&mut world, test_values::admin());
@@ -142,7 +142,7 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
     );
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
     test_world::next_tx(&mut world, test_values::admin());
@@ -244,7 +244,7 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
     );
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
     test_world::next_tx(&mut world, test_values::admin());

@@ -34,7 +34,11 @@ public fun configure_default_cadence(world: &World, admin_cap: &AdminCap) {
     configure_cadence(world, admin_cap, test_values::cadence_window_size());
 }
 
-public fun configure_trading_defaults(world: &World, admin_cap: &AdminCap) {
+/// Two deliberate deviations from production defaults, so callers deriving exact
+/// economics do not assume them: template base fee is set to 1 (the 0.5% min-fee
+/// floor binds instead of the 20,000,000 default) and the near-expiry no-leverage
+/// window is disabled (0), so leverage is admissible up to expiry.
+public fun configure_low_fee_unrestricted_leverage_market(world: &World, admin_cap: &AdminCap) {
     let mut registry = test_world::take_registry(world);
     let mut config = test_world::take_config(world);
     config.set_template_base_fee(admin_cap, 1);

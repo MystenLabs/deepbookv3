@@ -51,7 +51,7 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
 
@@ -179,7 +179,7 @@ fun builder_attribution_raises_account_quote_and_mint_debit_exactly() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
 
@@ -331,7 +331,7 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
 
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
 
@@ -527,7 +527,7 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
     );
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
     test_world::next_tx(&mut world, test_values::admin());
@@ -689,7 +689,7 @@ fun sponsored_fee_incentive_reduces_quote_and_debit_without_reducing_collected_f
     );
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
     test_world::next_tx(&mut world, test_values::admin());

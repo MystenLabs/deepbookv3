@@ -39,7 +39,7 @@ fun global_trading_pause_keeps_exact_full_live_redeem_available() {
     );
     test_world::next_tx(&mut world, test_values::admin());
     let admin_cap = test_world::take_predict_admin_cap(&world);
-    market_setup::configure_trading_defaults(&world, &admin_cap);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
     test_world::return_predict_admin_cap(&world, admin_cap);
     let oracles = oracle_setup::create_default_oracles(&mut world);
     test_world::next_tx(&mut world, test_values::admin());
