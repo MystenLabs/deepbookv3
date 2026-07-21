@@ -544,3 +544,27 @@ fun starting_a_second_pool_valuation_aborts() {
 
     abort 999
 }
+
+#[test, expected_failure(abort_code = plp::ENotBootstrapped)]
+fun flush_before_bootstrap_aborts() {
+    let (mut world, _resources) = test_world::new(
+        test_values::system(),
+        test_values::admin(),
+        test_values::now_ms(),
+    );
+    // No capital was ever locked: the valuation cannot start.
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let mut registry = test_world::take_registry(&world);
+    let mut config = test_world::take_config(&world);
+    let vault = test_world::take_vault(&world);
+    let lifecycle_cap = registry.mint_lifecycle_cap(
+        &config,
+        &admin_cap,
+        test_world::ctx(&mut world),
+    );
+    let proof = registry.generate_lifecycle_proof(&lifecycle_cap);
+    let _valuation = plp::start_pool_valuation(&mut config, &vault, proof);
+
+    abort 999
+}

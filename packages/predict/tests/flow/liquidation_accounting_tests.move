@@ -177,3 +177,158 @@ fun liquidated_order_removes_backing_and_pays_zero_exactly_once() {
     return_shared(wrapper);
     test_world::finish(world, resources);
 }
+
+#[test]
+fun liquidated_order_resolves_liquidated_not_settled_payout() {
+    let (mut world, mut resources) = test_world::new(
+        test_values::system(),
+        test_values::admin(),
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    market_setup::configure_low_fee_unrestricted_leverage_market(&world, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    let oracles = oracle_setup::create_default_oracles(&mut world);
+    test_world::next_tx(&mut world, test_values::admin());
+    let oracle_admin_cap = test_world::take_propbook_admin_cap(&world);
+    oracle_setup::bind_default_oracles(&world, &oracle_admin_cap, &oracles);
+    test_world::return_propbook_admin_cap(&world, oracle_admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let market_handle = market_setup::create_default_market(&mut world, &resources, &admin_cap);
+    test_world::return_predict_admin_cap(&world, admin_cap);
+    test_world::next_tx(&mut world, test_values::admin());
+    pool_setup::fund_market(
+        &mut world,
+        &resources,
+        &market_handle,
+        test_values::pool_capital(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let profile = oracle_profile::exact_half();
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        &profile,
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::alice());
+    let account_handle = account_setup::create_funded_account(
+        &mut world,
+        &resources,
+        test_values::trader_deposit(),
+    );
+
+    test_world::next_tx(&mut world, test_values::alice());
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
+    let root = test_world::take_accumulator_root(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
+    let auth = account::generate_auth(test_world::ctx(&mut world));
+    let order_id = market.mint_exact_quantity(
+        &mut wrapper,
+        auth,
+        &config,
+        &pricer,
+        test_values::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_values::mint_quantity(),
+        LEVERAGE_TWO_X,
+        MINT_COST,
+        std::u64::max_value!(),
+        &root,
+        test_world::clock(&resources),
+        test_world::ctx(&mut world),
+    );
+    let market_id = market.id();
+    oracle_setup::return_feeds(feeds);
+    return_shared(config);
+    return_shared(market);
+    return_shared(root);
+    return_shared(wrapper);
+
+    // Knock the order out pre-expiry, then let its range WIN at settlement:
+    // liquidation must resolve the position, not the settled payout.
+    test_world::next_tx(&mut world, test_values::admin());
+    let dropped = oracle_profile::new(
+        oracle_profile::spot_prices(DROPPED_SPOT, DROPPED_SPOT, DROPPED_SPOT),
+        oracle_profile::svi_params(1, false, 0, 1_000_000, 0, false, 0, false),
+        DROPPED_SOURCE_MS,
+    );
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        &dropped,
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::bob());
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
+    assert!(market.liquidate_order(&config, &pricer, order_id, test_world::clock(&resources)));
+    assert_eq!(market.payout_liability(), 0);
+    oracle_setup::return_feeds(feeds);
+    return_shared(config);
+    return_shared(market);
+
+    let expiry_ms = test_values::expiry_ms();
+    test_world::clock_mut(&mut resources).set_for_testing(expiry_ms);
+    test_world::next_tx(&mut world, test_values::admin());
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let oracle_registry = test_world::take_oracle_registry(&world);
+    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
+    // 101e9 is inside the order's (100, +inf] range: it would have won.
+    oracle_setup::seed_exact_pyth(&mut pyth, 101_000_000_000, expiry_ms, expiry_ms);
+    assert!(
+        market.try_settle(
+            &config,
+            &oracle_registry,
+            &pyth,
+            test_world::clock(&resources),
+        ),
+    );
+    // The liquidated order left the book before settlement, so no terminal
+    // liability materializes for it.
+    assert_eq!(market.payout_liability(), 0);
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(config);
+    return_shared(market);
+
+    test_world::next_tx(&mut world, test_values::alice());
+    let mut wrapper = account_setup::take_account(&world, &account_handle);
+    let root = test_world::take_accumulator_root(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let balance_before = wrapper
+        .load_account()
+        .balance<DUSDC>(&root, test_world::clock(&resources));
+    let auth = account::generate_auth(test_world::ctx(&mut world));
+    market.redeem_settled(
+        &mut wrapper,
+        auth,
+        &config,
+        order_id,
+        test_values::mint_quantity(),
+        &root,
+        test_world::clock(&resources),
+        test_world::ctx(&mut world),
+    );
+    assert_eq!(
+        wrapper.load_account().balance<DUSDC>(&root, test_world::clock(&resources)),
+        balance_before,
+    );
+    assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    return_shared(config);
+    return_shared(market);
+    return_shared(root);
+    return_shared(wrapper);
+    test_world::finish(world, resources);
+}

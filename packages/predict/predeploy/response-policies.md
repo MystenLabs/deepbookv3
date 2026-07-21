@@ -139,13 +139,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   underflow guard.
 - **Risk profile:** `BEST-GUESS` (requires gross ≤ held-out, i.e. severe
   drawdown after a profitable period).
-- **Pinning tests:** partial — `pool_valuation_flow_tests.move` ·
+- **Pinning tests:** `pool_valuation_flow_tests.move` ·
   `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds` proves the flush
-  survives a NAV==0 mark, but reaches it via an underwater market
-  (`setup_underwater_market(0)`, gross=0, exclusion=0), so it does **not**
-  exercise the sticky-exclusion clamp's own trigger (held-out total exceeding a
-  positive-then-collapsed gross). The clamp direction is therefore not directly
-  pinned; add direct sticky-exclusion coverage before changing this clamp.
+  survives a NAV==0 mark (gross reaches zero through a backing-floor-exact
+  position marked at full probability); and `protocol_profit_flow_tests.move` ·
+  `carried_protocol_profit_is_held_out_of_the_flush_mark` pins the clamp's own
+  trigger directly — a carried protocol cut exceeding a positive gross clamps
+  the mark to zero instead of underflowing.
 - **Reopen when:** the exclusion basis becomes non-sticky, or RP-2's
   implementation changes what a zero mark means for the queues.
 
@@ -250,8 +250,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (Rounding policy § R1 below); seniority must be explicit so the deferred cut
   never preempts funding.
 - **Risk profile:** n/a (accounting-liveness policy).
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `protocol_profit_flow_tests.move` ·
+  `carried_protocol_profit_is_held_out_of_the_flush_mark` (the cut is capped at
+  available idle, the remainder carries, and the carried amount is held out of
+  the pool NAV mark) and
+  `carried_protocol_profit_realizes_on_the_next_cash_abundant_sweep` (a later
+  sweep that refills idle realizes the carry plus its own cut exactly);
+  `settlement_flow_tests.move` ·
+  `owner_auth_rebate_claim_survives_predict_app_deauth` pins the rebate-residual
+  re-materialization path; the local carry legs (loss carry-forward, partial
+  refill, idle-shortfall realization) are pinned in
+  `pool_accounting_accounting_tests.move`.
 - **Reopen when:** profit-realization flow is redesigned.
 
 ---
@@ -378,13 +387,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
   `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
   `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
-- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477)
-  and `rebate_claim_with_open_position_aborts` (:496) pin the claim preconditions (settled market,
-  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320) and
-  `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
-  over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
-  inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
-  stake read at claim, `expiry_market::claim_trading_loss_rebate`) is not pinned by a dedicated Move assertion — it
+- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market`
+  and `rebate_claim_with_open_position_aborts` pin the claim preconditions (settled market,
+  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` and
+  `authorized_predict_app_permissionless_rebate_claim_resolves_account` pin the app-auth gate in
+  both directions (an authorized permissionless claim resolves the account; deauthorization
+  revokes it), and `owner_auth_rebate_claim_survives_predict_app_deauth` pins the owner-auth
+  fallback with the exact residual return. `prepare_settled_loss_with_inactive_rebate_stake` is an
+  independent staging pin that asserts the inactive-rebate-stake state the app-auth pins rely on
+  (stake added in the market's own epoch stays inactive through settlement). The claim-time-stake
+  *pricing* (active stake read at claim, `expiry_market::claim_trading_loss_rebate`) is not pinned
+  by a dedicated Move assertion — it
   rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
   is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
   Audit provenance: finding 8b5d5f.
