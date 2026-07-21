@@ -45,6 +45,9 @@ const SOURCE_TS_5_US: u64 = 5_000;
 const SOURCE_TS_5_MS: u64 = 5;
 const SOURCE_TS_FUTURE_US: u64 = 100_000;
 const SOURCE_TS_FUTURE_MS: u64 = 100;
+// Far enough past the carry window that both window edges are representable.
+const CARRY_ENVELOPE_US: u64 = 10_000_000;
+const CARRY_UPDATE_MS: u64 = 10_000;
 const UPDATE_1_MS: u64 = 10;
 const UPDATE_2_MS: u64 = 20;
 const UPDATE_3_MS: u64 = 30;
@@ -424,6 +427,86 @@ fun carried_price_inserts_at_envelope_key_and_keeps_true_age() {
     let raw_read = feed.raw_spot_at(SOURCE_TS_5_MS);
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_5_MS);
     assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw_read.read_value()), SOURCE_TS_1_US);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+/// A carry inside the settlement window is the most-recent price as of that tick, so
+/// it may claim the key; the row keeps the true generation time.
+#[test]
+fun insert_at_carry_within_window_claims_the_key() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    let envelope_us = CARRY_ENVELOPE_US;
+    let feed_us = envelope_us - constants::max_settlement_carry_ms!() * 1000;
+    insert_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        feed_us,
+        envelope_us,
+        CARRY_UPDATE_MS,
+    );
+
+    let raw_read = feed.raw_spot_at(envelope_us / 1000);
+    assert_eq!(raw_read.read_source_timestamp_ms(), envelope_us / 1000);
+    assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw_read.read_value()), feed_us);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+/// One microsecond beyond the window fails closed: being the canonical price for a
+/// tick does not make it a defensible settlement mark, and the key is insert-only.
+#[test, expected_failure(abort_code = pyth_feed::ESettlementCarryExceedsWindow)]
+fun insert_at_carry_beyond_window_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    let envelope_us = CARRY_ENVELOPE_US;
+    let feed_us = envelope_us - constants::max_settlement_carry_ms!() * 1000 - 1;
+    insert_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        feed_us,
+        envelope_us,
+        CARRY_UPDATE_MS,
+    );
+
+    abort 999
+}
+
+/// The bound applies only to exact inserts; a long carry still lands on `latest`
+/// carrying its true age, where read-time freshness ages it out.
+#[test]
+fun long_carry_still_records_on_latest_with_true_age() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    // A whole millisecond beyond the window, so the live path's ceil-rounding to
+    // milliseconds is exact and the assertion below reads the true generation time.
+    let envelope_us = CARRY_ENVELOPE_US;
+    let feed_us = envelope_us - constants::max_settlement_carry_ms!() * 1000 - 1000;
+    store_raw_carried(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        feed_us,
+        envelope_us,
+        CARRY_UPDATE_MS,
+    );
+
+    let raw_read = feed.raw_spot();
+    assert_eq!(raw_read.read_source_timestamp_ms(), feed_us / 1000);
 
     return_shared(feed);
     scenario.end();

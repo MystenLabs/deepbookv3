@@ -113,6 +113,15 @@ The two lanes key on different clocks because they answer different questions:
   when the price it carries was generated earlier. The stored payload retains the
   generation time, so the settled price's true age stays legible.
 
+Canonical is not the same as fresh. The ordering guarantee fixes *which* price belongs
+to a tick; it does not bound how long before that tick the price was generated. During
+a stall the canonical price at a tick can be arbitrarily old, and an exact key is
+insert-only, so the first writer's row owns that tick permanently. Exact inserts
+therefore also require the carry to be within `constants::max_settlement_carry_ms`
+(`ESettlementCarryExceedsWindow`); the bound is compiled rather than caller-supplied
+because the write is permissionless. The bound applies only to exact inserts — a longer
+carry still lands on `latest` with its true age, where read-time freshness ages it out.
+
 A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvelope`).
 
 ## Block Scholes Feeds

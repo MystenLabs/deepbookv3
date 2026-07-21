@@ -19,6 +19,7 @@ const ELazerFeedNotFound: u64 = 3;
 const ELazerValueUnavailable: u64 = 4;
 const EInsertTimestampNotExactMillisecond: u64 = 5;
 const EFeedTimestampAfterEnvelope: u64 = 6;
+const ESettlementCarryExceedsWindow: u64 = 7;
 
 /// Source-native Pyth Lazer spot fields, including the microsecond time at which Pyth generated this price.
 /// The lane adds Propbook's millisecond ordering key and on-chain recording time around this payload.
@@ -137,9 +138,12 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
 /// envelope timestamp. Aborts `EInsertTimestampNotExactMillisecond` if the
 /// envelope timestamp is not a whole millisecond, so the exact-history key is an
-/// unambiguous millisecond a consumer can look up by equality. This does not
-/// mutate `latest`. The first lane-valid raw observation owns the key and cannot
-/// be replaced, even if its normalized projection is unavailable.
+/// unambiguous millisecond a consumer can look up by equality. Aborts
+/// `ESettlementCarryExceedsWindow` if Pyth generated the price more than
+/// `constants::max_settlement_carry_ms` before that envelope, so a long-carried
+/// price cannot claim a settlement key. This does not mutate `latest`. The first
+/// lane-valid raw observation owns the key and cannot be replaced, even if its
+/// normalized projection is unavailable.
 public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock) {
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_insert_read(&update, clock.timestamp_ms());
@@ -252,12 +256,25 @@ fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64): OracleRead<RawSpot> {
 /// tick carries Pyth's canonical price as of that tick, which is the mark a consumer
 /// settling at that tick wants even when the price was generated earlier. The stored
 /// payload retains the generation time so the settled price's true age stays legible.
+///
+/// Being canonical is not the same as being fresh. Pyth's ordering guarantee fixes
+/// *which* price belongs to a tick; it does not bound how long before that tick the
+/// price was generated. During a stall the canonical price at a tick can be
+/// arbitrarily old, and an exact key is insert-only, so the first writer's row
+/// settles the tick permanently. Bounding the carry keeps a permissionless caller
+/// from locking a settlement key to an observation that is not a defensible mark for
+/// that tick.
 fun new_raw_insert_read(
     raw: RawSpot,
     envelope_timestamp_us: u64,
     update_timestamp_ms: u64,
 ): OracleRead<RawSpot> {
     assert!(envelope_timestamp_us % 1000 == 0, EInsertTimestampNotExactMillisecond);
+    let carry_us = envelope_timestamp_us - raw.feed_update_timestamp_us;
+    assert!(
+        carry_us <= constants::max_settlement_carry_ms!() * 1000,
+        ESettlementCarryExceedsWindow,
+    );
     oracle_lane::new_read(envelope_timestamp_us / 1000, update_timestamp_ms, raw)
 }
 
