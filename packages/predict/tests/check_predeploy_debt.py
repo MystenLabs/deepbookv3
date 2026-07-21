@@ -39,20 +39,9 @@ class KnownRed:
     phase: str
     summary: str
 
-EXPECTED_MISSING_PINS = {
-    ("RP-4", "try_settle_without_exact_expiry_spot_returns_false_without_mutation"),
-    ("RP-4", "expired_unsettled_standalone_rebalance_moves_no_cash"),
-    ("RP-4", "explicit_settlement_unblocks_pool_valuation_sweep"),
-    ("RP-11", "rebate_claim_requires_settled_market"),
-    ("RP-11", "rebate_claim_with_open_position_aborts"),
-    ("RP-11", "deauthorized_predict_app_blocks_permissionless_rebate_claim"),
-    ("RP-11", "owner_auth_rebate_claim_survives_predict_app_deauth"),
-    ("RP-11", "prepare_settled_loss_with_inactive_rebate_stake"),
-}
+EXPECTED_MISSING_PINS = set()
 
-EXPECTED_WARNINGS = {
-    "response-policies.md: names file `settlement_flow_tests.move` not found under packages/predict/ or .claude/",
-}
+EXPECTED_WARNINGS = set()
 EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-8", "RP-13"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
 EXPECTED_UNREACHABLE_PIN_BRANCHES = {
