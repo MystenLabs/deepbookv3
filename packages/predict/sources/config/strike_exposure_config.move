@@ -10,7 +10,7 @@
 module deepbook_predict::strike_exposure_config;
 
 use deepbook_predict::{config_constants, constants};
-use fixed_math::math;
+use fixed_math::{interval::Interval, math};
 
 const EOrderBelowLiquidationThreshold: u64 = 0;
 const EEntryProbabilityOutOfBounds: u64 = 1;
@@ -120,15 +120,21 @@ public(package) fun trading_fee(
 /// mint terms. Budget-bias sizing runs this before searching so a policy-invalid
 /// request aborts with its domain code before any division by `leverage`, in the
 /// same order the mint admission itself would report it.
+///
+/// Admission is definite-in-band over the price envelope: a probability whose
+/// envelope straddles either band edge aborts (a user-recoverable single-order
+/// abort; band edges are where the surface is least trustworthy). The leverage
+/// curve is increasing in probability, so the cap is checked at the envelope's
+/// adverse (low) side.
 public(package) fun assert_mint_probability_and_leverage_policy(
     config: &StrikeExposureConfig,
-    entry_probability: u64,
+    entry_probability: &Interval,
     leverage: u64,
     time_to_expiry_ms: u64,
 ) {
     assert!(
-        entry_probability >= config.min_entry_probability
-            && entry_probability <= config.max_entry_probability,
+        entry_probability.lo() >= config.min_entry_probability
+            && entry_probability.hi() <= config.max_entry_probability,
         EEntryProbabilityOutOfBounds,
     );
 
@@ -136,7 +142,7 @@ public(package) fun assert_mint_probability_and_leverage_policy(
     // withheld entirely inside the no-leverage window before expiry.
     assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
     assert!(
-        leverage <= config.admitted_leverage_cap(entry_probability, time_to_expiry_ms),
+        leverage <= config.admitted_leverage_cap(entry_probability.lo(), time_to_expiry_ms),
         ELeverageAboveAdmissionCap,
     );
 }
@@ -152,7 +158,7 @@ public(package) fun assert_mint_probability_and_leverage_policy(
 /// only decides whether the protocol originates the requested leverage.
 public(package) fun assert_mint_admission(
     config: &StrikeExposureConfig,
-    entry_probability: u64,
+    entry_probability: &Interval,
     quantity: u64,
     leverage: u64,
     time_to_expiry_ms: u64,
@@ -163,8 +169,15 @@ public(package) fun assert_mint_admission(
         time_to_expiry_ms,
     );
 
-    let entry_value = math::mul(entry_probability, quantity);
-    let net_premium = math::div(entry_value, leverage);
+    // The committed tuple collapses jointly at the protocol-favored corner of
+    // the price envelope: entry value at the high price (round up), premium as
+    // the protocol inflow (round up — the tuple's one free dust unit lands on
+    // the unconditional inflow, not the settlement-conditional floor), and the
+    // floor by exact identity so `entry_value = net_premium + floor_shares`
+    // holds bit-for-bit. At 1x leverage `div_up(E, F) = E`, so `floor_shares`
+    // is structurally zero.
+    let entry_value = math::mul_up(entry_probability.hi(), quantity);
+    let net_premium = math::div_up(entry_value, leverage);
     assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
     let floor_shares = entry_value - net_premium;
 

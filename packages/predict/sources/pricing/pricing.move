@@ -174,6 +174,18 @@ public(package) fun up_price_interval(pricer: &Pricer, strike: Strike): Interval
     compute_up_price_interval(&pricer.svi, pricer.forward, strike)
 }
 
+/// Interval form of `range_price` for trade admission and per-order pricing
+/// outside the memo'd walk. The subtraction clamps the low side at zero (an
+/// inversion inside overlapping envelopes is honest width) and aborts only on a
+/// definitely negative range — a surface violating the vendor's monotonicity
+/// guarantee beyond the evaluation envelope.
+public(package) fun range_price_interval(pricer: &Pricer, lower: Strike, higher: Strike): Interval {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+    let lower_up = compute_up_price_interval(&pricer.svi, pricer.forward, lower);
+    let higher_up = compute_up_price_interval(&pricer.svi, pricer.forward, higher);
+    lower_up.sub(&higher_up)
+}
+
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
 ///
