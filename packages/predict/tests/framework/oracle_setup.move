@@ -144,10 +144,24 @@ public fun take_bs_svi(world: &World, ids: &OracleIds): BlockScholesSVIFeed {
     test_world::take_shared_by_id<BlockScholesSVIFeed>(world, ids.bs_svi_id)
 }
 
-/// Borrow the oracle registry plus all four feeds and load the market's live
-/// pricer, all in the caller's current transaction. Prerequisite only: tests
-/// whose unit under test is pricer construction call `load_live_pricer`
-/// directly on their own borrows instead.
+/// Borrow the oracle registry plus all four feeds in the caller's current
+/// transaction. Read-only ceremony for functions consuming the whole feed set
+/// (`load_live_pricer`, `plp::value_expiry`); seeding takes feeds `&mut` and
+/// stays on the direct `take_*` helpers.
+public fun borrow_feeds(world: &World, ids: &OracleIds): BorrowedFeeds {
+    BorrowedFeeds {
+        oracle_registry: test_world::take_oracle_registry(world),
+        pyth: take_pyth(world, ids),
+        bs_spot: take_bs_spot(world, ids),
+        bs_forward: take_bs_forward(world, ids),
+        bs_svi: take_bs_svi(world, ids),
+    }
+}
+
+/// Borrow the feed set and load the market's live pricer, all in the caller's
+/// current transaction. Prerequisite only: tests whose unit under test is
+/// pricer construction call `load_live_pricer` directly on their own borrows
+/// instead.
 public fun load_pricer(
     world: &World,
     resources: &OwnedResources,
@@ -155,24 +169,21 @@ public fun load_pricer(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
 ): (Pricer, BorrowedFeeds) {
-    let oracle_registry = test_world::take_oracle_registry(world);
-    let pyth = take_pyth(world, ids);
-    let bs_spot = take_bs_spot(world, ids);
-    let bs_forward = take_bs_forward(world, ids);
-    let bs_svi = take_bs_svi(world, ids);
+    let feeds = borrow_feeds(world, ids);
     let pricer = market.load_live_pricer(
         config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
+        &feeds.oracle_registry,
+        &feeds.pyth,
+        &feeds.bs_spot,
+        &feeds.bs_forward,
+        &feeds.bs_svi,
         test_world::clock(resources),
     );
-    (pricer, BorrowedFeeds { oracle_registry, pyth, bs_spot, bs_forward, bs_svi })
+    (pricer, feeds)
 }
 
-/// Return every object borrowed by `load_pricer` to shared inventory.
+/// Return every object borrowed by `borrow_feeds`/`load_pricer` to shared
+/// inventory.
 public fun return_feeds(feeds: BorrowedFeeds) {
     let BorrowedFeeds { oracle_registry, pyth, bs_spot, bs_forward, bs_svi } = feeds;
     return_shared(bs_svi);
@@ -181,6 +192,16 @@ public fun return_feeds(feeds: BorrowedFeeds) {
     return_shared(pyth);
     return_shared(oracle_registry);
 }
+
+public fun oracle_registry(feeds: &BorrowedFeeds): &OracleRegistry { &feeds.oracle_registry }
+
+public fun pyth(feeds: &BorrowedFeeds): &PythFeed { &feeds.pyth }
+
+public fun bs_spot(feeds: &BorrowedFeeds): &BlockScholesSpotFeed { &feeds.bs_spot }
+
+public fun bs_forward(feeds: &BorrowedFeeds): &BlockScholesForwardFeed { &feeds.bs_forward }
+
+public fun bs_svi(feeds: &BorrowedFeeds): &BlockScholesSVIFeed { &feeds.bs_svi }
 
 public fun seed_pyth(pyth: &mut PythFeed, price: u64, source_timestamp_ms: u64, now_ms: u64) {
     pyth_feed::record_raw_for_testing(

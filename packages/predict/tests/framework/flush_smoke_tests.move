@@ -1,23 +1,26 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Framework smoke test proving the Phase 7 flush driver drives a full-pool flush
-/// end to end. A single funded, un-traded market conserves pool NAV: the flush
-/// returns exactly the locked bootstrap capital (idle plus the market's own cash,
-/// no liabilities, no protocol-profit exclusion).
+/// Framework smoke test proving one World can drive the full privileged flush
+/// end to end: the admin mints the lifecycle cap, proves it, and runs
+/// `start_pool_valuation` -> `value_expiry` -> `finish_flush` in one
+/// transaction. A single funded, un-traded market conserves pool NAV: the
+/// flush returns exactly the locked bootstrap capital (idle plus the market's
+/// own cash, no liabilities, no protocol-profit exclusion).
 #[test_only]
 module deepbook_predict::scope_framework__intent_behavior__flush_tests;
 
 use deepbook_predict::{
-    flush_setup,
     market_setup,
     oracle_profile,
     oracle_setup,
+    plp,
     pool_setup,
     test_values,
     test_world
 };
 use std::unit_test::assert_eq;
+use sui::test_scenario::return_shared;
 
 #[test]
 fun flush_over_funded_market_with_empty_queues_conserves_pool_nav() {
@@ -58,16 +61,49 @@ fun flush_over_funded_market_with_empty_queues_conserves_pool_nav() {
     );
 
     test_world::next_tx(&mut world, test_values::admin());
-    let handles = vector[market_handle];
-    let pool_nav = flush_setup::flush(
-        &mut world,
-        &resources,
-        &oracles,
-        &handles,
-        option::none(),
-        option::none(),
+    let admin_cap = test_world::take_predict_admin_cap(&world);
+    let mut registry = test_world::take_registry(&world);
+    let mut config = test_world::take_config(&world);
+    let mut vault = test_world::take_vault(&world);
+    let mut market = market_setup::take_market(&world, &market_handle);
+    let feeds = oracle_setup::borrow_feeds(&world, &oracles);
+
+    let lifecycle_cap = registry.mint_lifecycle_cap(
+        &config,
+        &admin_cap,
+        test_world::ctx(&mut world),
     );
+    let proof = registry.generate_lifecycle_proof(&lifecycle_cap);
+    let mut valuation = plp::start_pool_valuation(&mut config, &vault, proof);
+    plp::value_expiry(
+        &mut valuation,
+        &mut vault,
+        &mut market,
+        &config,
+        feeds.oracle_registry(),
+        feeds.pyth(),
+        feeds.bs_spot(),
+        feeds.bs_forward(),
+        feeds.bs_svi(),
+        test_world::clock(&resources),
+    );
+    let pool_nav = plp::finish_flush(
+        valuation,
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        test_world::ctx(&mut world),
+    );
+    lifecycle_cap.destroy();
+
     assert_eq!(pool_nav, test_values::pool_capital());
 
+    oracle_setup::return_feeds(feeds);
+    return_shared(market);
+    return_shared(vault);
+    return_shared(config);
+    return_shared(registry);
+    test_world::return_predict_admin_cap(&world, admin_cap);
     test_world::finish(world, resources);
 }
