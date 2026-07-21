@@ -257,7 +257,7 @@ def registered_policy_debt(
             else:
                 uncatalogued.add(policy.group(1))
             continue
-        tokens = check.pinning_test_functions_from_block(body)
+        tokens = check.pinning_test_selectors_from_block(body)
         if "untested" in normalized_body:
             uncatalogued.add(policy.group(1))
         for token in tokens:
@@ -288,10 +288,14 @@ def current_policy_debt() -> tuple[set[tuple[str, str]], set[str], set[str]]:
     register = (PREDEPLOY / "response-policies.md").read_text()
     pins, uncatalogued, non_unit = registered_policy_debt(register)
     check = load_predeploy_check()
-    functions = set()
-    for path in TESTS.rglob("*.move"):
-        functions.update(check.executable_test_functions_from_source(path.read_text()))
-    missing = {(policy, function) for policy, function in pins if function not in functions}
+    qualified, leaf_modules = check.executable_test_index(list(TESTS.rglob("*.move")))
+    missing = set()
+    for policy, token in pins:
+        if "::" in token:
+            if token not in qualified:
+                missing.add((policy, token))
+        elif token not in leaf_modules:
+            missing.add((policy, token))
     return missing, uncatalogued, non_unit
 
 
@@ -299,9 +303,8 @@ def current_pin_gap_manifest_errors() -> list[str]:
     register = (PREDEPLOY / "response-policies.md").read_text()
     pins = registered_pins(register)
     check = load_predeploy_check()
-    functions = set()
-    for path in TESTS.rglob("*.move"):
-        functions.update(check.executable_test_functions_from_source(path.read_text()))
+    _, leaf_modules = check.executable_test_index(list(TESTS.rglob("*.move")))
+    functions = set(leaf_modules)
     errors = pin_gap_manifest_errors(
         "unreachable branch",
         EXPECTED_UNREACHABLE_PIN_BRANCHES,

@@ -335,5 +335,55 @@ module deepbook_predict::scope_flow__intent_accounting__pool_tests;
         self.assertTrue(any("owner sign-off required" in error for error in errors))
 
 
+class QualifiedPinCollisionTests(unittest.TestCase):
+    """A same-named test in the wrong module must not satisfy a policy pin, and a
+    bare-leaf pin whose leaf exists in two modules is a fatal ambiguity."""
+
+    def test_executable_selectors_are_module_qualified(self) -> None:
+        check = debt.load_predeploy_check()
+        source = "module deepbook_predict::right_module_tests;\n#[test] fun same_leaf() { assert!(x); }"
+        self.assertEqual(
+            check.executable_test_selectors_from_source(source),
+            {"right_module_tests::same_leaf"},
+        )
+
+    def test_qualified_pin_not_satisfied_by_wrong_module_same_leaf(self) -> None:
+        check = debt.load_predeploy_check()
+        # Only wrong_module defines `same_leaf`; the pin names right_module::same_leaf.
+        self.assertIsNotNone(
+            check.unresolved_pin(
+                "right_module_tests::same_leaf",
+                {"wrong_module_tests::same_leaf"},
+                {"same_leaf": {"wrong_module_tests"}},
+            )
+        )
+        # The correct module's exact selector resolves.
+        self.assertIsNone(
+            check.unresolved_pin(
+                "right_module_tests::same_leaf",
+                {"right_module_tests::same_leaf"},
+                {"same_leaf": {"right_module_tests"}},
+            )
+        )
+
+    def test_bare_leaf_pin_in_two_modules_is_ambiguous(self) -> None:
+        check = debt.load_predeploy_check()
+        problem = check.unresolved_pin("same_leaf", set(), {"same_leaf": {"a_tests", "b_tests"}})
+        self.assertIsNotNone(problem)
+        self.assertIn("ambiguous", problem)
+
+    def test_bare_leaf_pin_unique_leaf_resolves(self) -> None:
+        check = debt.load_predeploy_check()
+        self.assertIsNone(
+            check.unresolved_pin("same_leaf", set(), {"same_leaf": {"only_tests"}})
+        )
+
+    def test_bare_leaf_pin_missing_leaf_is_unresolved(self) -> None:
+        check = debt.load_predeploy_check()
+        problem = check.unresolved_pin("missing_leaf", set(), {})
+        self.assertIsNotNone(problem)
+        self.assertIn("no executable", problem)
+
+
 if __name__ == "__main__":
     unittest.main()

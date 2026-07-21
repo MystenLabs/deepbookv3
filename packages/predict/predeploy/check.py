@@ -128,6 +128,52 @@ def executable_test_functions_from_source(source):
     }
 
 
+MODULE_NAME = re.compile(r'\bmodule\s+[a-z][a-z0-9_]*::(?P<module>[a-z][a-z0-9_]*)\s*;')
+
+
+def executable_test_selectors_from_source(source):
+    """Module-qualified `<module>::<function>` for each executable test, so a pin
+    cannot be silently satisfied by a same-named test in a different module."""
+    source = source_without_comments_and_literals(source)
+    module_match = MODULE_NAME.search(source)
+    module = module_match.group('module') if module_match else ''
+    selectors = set()
+    for function in ATTRIBUTED_FUNCTION.finditer(source):
+        if re.search(r'\b(?:test|random_test)\b', function.group('attributes')):
+            name = function.group('name')
+            selectors.add(f'{module}::{name}' if module else name)
+    return selectors
+
+
+def executable_test_index(paths):
+    """Return (qualified selector set, {leaf: {modules}}) across all test files."""
+    qualified = set()
+    leaf_modules = {}
+    for path in paths:
+        for selector in executable_test_selectors_from_source(read(path)):
+            qualified.add(selector)
+            module, _, leaf = selector.rpartition('::')
+            leaf_modules.setdefault(leaf, set()).add(module)
+    return qualified, leaf_modules
+
+
+def unresolved_pin(tok, qualified, leaf_modules):
+    """None if `tok` resolves to exactly one executable test, else an error phrase.
+    A qualified pin must match its exact module; a bare leaf must be globally unique,
+    so a leaf defined in two modules is a fatal ambiguity rather than a silent match."""
+    if '::' in tok:
+        if tok in qualified:
+            return None
+        return f'pins test `{tok}` but no executable `fun {tok}` exists under packages/predict/tests/'
+    modules = leaf_modules.get(tok, set())
+    if not modules:
+        return f'pins test `{tok}` but no executable `fun {tok}` exists under packages/predict/tests/'
+    if len(modules) > 1:
+        return (f'pins ambiguous test `{tok}`: `fun {tok}` is defined in {len(modules)} modules '
+                f"({', '.join(sorted(modules))}); qualify it as `<module>::{tok}`")
+    return None
+
+
 def pinning_test_functions_from_block(block):
     """Extract naked test names and explicit `<module>_tests::<test>` pins."""
     functions = []
@@ -286,10 +332,8 @@ def check_pinning_tests(errors):
     reg = os.path.join(HERE, 'response-policies.md')
     if not os.path.exists(reg):
         return
-    test_functions = set()
-    for path in glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'),
-                          recursive=True):
-        test_functions.update(executable_test_functions_from_source(read(path)))
+    paths = glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'), recursive=True)
+    qualified_tests, leaf_modules = executable_test_index(paths)
     text = read(reg)
     # Entry-driven, not block-driven: the register's rule is that EVERY RP entry
     # links a pinning test or explicitly says it doesn't. Iterating only well-formed
@@ -309,7 +353,7 @@ def check_pinning_tests(errors):
         normalized_block = ' '.join(block.lower().split())
         if 'not yet catalogued' in normalized_block:
             continue
-        toks = pinning_test_functions_from_block(block)
+        toks = pinning_test_selectors_from_block(block)
         if not toks:
             if 'untested' in normalized_block:
                 continue
@@ -318,10 +362,9 @@ def check_pinning_tests(errors):
                           f"(nor 'not yet catalogued')")
             continue
         for tok in toks:
-            if tok not in test_functions:
-                errors.append(
-                    f"response-policies.md entry '{title}' pins test `{tok}` but "
-                    f"no executable `fun {tok}` exists under packages/predict/tests/")
+            problem = unresolved_pin(tok, qualified_tests, leaf_modules)
+            if problem:
+                errors.append(f"response-policies.md entry '{title}' {problem}")
 
 
 def check_id_refs(errors, warnings):
