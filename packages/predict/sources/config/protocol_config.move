@@ -168,6 +168,28 @@ public fun set_template_max_entry_probability(
     config.strike_exposure_template_config.set_max_entry_probability(value);
 }
 
+/// Set the inventory-skew depth, in position lots, snapshotted by newly created
+/// expiry markets.
+public fun set_template_skew_depth_lots(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_skew_depth_lots(value);
+}
+
+/// Set the maximum inventory-skew mid shift snapshotted by newly created expiry
+/// markets. `0` snapshots the skew off.
+public fun set_template_max_skew_shift(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_max_skew_shift(value);
+}
+
 /// Set the live Pyth spot freshness threshold.
 public fun set_pyth_spot_freshness_ms(
     config: &mut ProtocolConfig,
