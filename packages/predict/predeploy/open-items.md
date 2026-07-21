@@ -110,6 +110,13 @@ market before an offsetting lossy one and assert
 `protocol_reserve == share × net`; current behavior produces a larger reserve
 when the profitable market is materialized first.
 
+**Known RED test:** `deepbook_predict::scope_flow__intent_policy__protocol_profit_tests::profit_first_sweep_reserves_share_of_net_pool_profit`
+That test builds the cross-market flow above: two settled markets with a
+10.05e6 profit and an offsetting 995e6 loss, swept profit-first, asserting the
+order-independent zero net cut; the current implementation reserves 4.02e6 (the
+0.4 share of the gross profit). Its loss-first sibling in the same module
+passes, documenting the order the accrual basis happens to get right.
+
 ### P-10: current_nav's conservative liquidation band is absent from public risk disclosure
 
 **Severity:** Low.
