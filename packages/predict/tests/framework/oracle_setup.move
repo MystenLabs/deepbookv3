@@ -8,8 +8,11 @@ module deepbook_predict::oracle_setup;
 
 use block_scholes_oracle::update;
 use deepbook_predict::{
+    expiry_market::ExpiryMarket,
     market_setup::{Self, MarketHandle},
     oracle_profile::{Self, SurfaceProfile},
+    pricing::Pricer,
+    protocol_config::ProtocolConfig,
     test_values,
     test_world::{Self, OwnedResources, World}
 };
@@ -18,7 +21,7 @@ use propbook::{
     block_scholes_spot_feed::{Self as block_scholes_spot_feed, BlockScholesSpotFeed},
     block_scholes_svi_feed::{Self as block_scholes_svi_feed, BlockScholesSVIFeed},
     pyth_feed::{Self, PythFeed},
-    registry::{Self, RegistryAdminCap}
+    registry::{Self, OracleRegistry, RegistryAdminCap}
 };
 use sui::{clock::Clock, test_scenario::return_shared};
 
@@ -29,6 +32,16 @@ public struct OracleIds has copy, drop {
     bs_spot_id: ID,
     bs_forward_id: ID,
     bs_svi_id: ID,
+}
+
+/// Shared oracle objects borrowed by `load_pricer`. No abilities: the test body
+/// must hand every borrowed object back through `return_feeds`.
+public struct BorrowedFeeds {
+    oracle_registry: OracleRegistry,
+    pyth: PythFeed,
+    bs_spot: BlockScholesSpotFeed,
+    bs_forward: BlockScholesForwardFeed,
+    bs_svi: BlockScholesSVIFeed,
 }
 
 public fun create_default_oracles(world: &mut World): OracleIds {
@@ -129,6 +142,44 @@ public fun take_bs_forward(world: &World, ids: &OracleIds): BlockScholesForwardF
 
 public fun take_bs_svi(world: &World, ids: &OracleIds): BlockScholesSVIFeed {
     test_world::take_shared_by_id<BlockScholesSVIFeed>(world, ids.bs_svi_id)
+}
+
+/// Borrow the oracle registry plus all four feeds and load the market's live
+/// pricer, all in the caller's current transaction. Prerequisite only: tests
+/// whose unit under test is pricer construction call `load_live_pricer`
+/// directly on their own borrows instead.
+public fun load_pricer(
+    world: &World,
+    resources: &OwnedResources,
+    ids: &OracleIds,
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+): (Pricer, BorrowedFeeds) {
+    let oracle_registry = test_world::take_oracle_registry(world);
+    let pyth = take_pyth(world, ids);
+    let bs_spot = take_bs_spot(world, ids);
+    let bs_forward = take_bs_forward(world, ids);
+    let bs_svi = take_bs_svi(world, ids);
+    let pricer = market.load_live_pricer(
+        config,
+        &oracle_registry,
+        &pyth,
+        &bs_spot,
+        &bs_forward,
+        &bs_svi,
+        test_world::clock(resources),
+    );
+    (pricer, BorrowedFeeds { oracle_registry, pyth, bs_spot, bs_forward, bs_svi })
+}
+
+/// Return every object borrowed by `load_pricer` to shared inventory.
+public fun return_feeds(feeds: BorrowedFeeds) {
+    let BorrowedFeeds { oracle_registry, pyth, bs_spot, bs_forward, bs_svi } = feeds;
+    return_shared(bs_svi);
+    return_shared(bs_forward);
+    return_shared(bs_spot);
+    return_shared(pyth);
+    return_shared(oracle_registry);
 }
 
 public fun seed_pyth(pyth: &mut PythFeed, price: u64, source_timestamp_ms: u64, now_ms: u64) {

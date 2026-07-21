@@ -70,19 +70,12 @@ fun budget_fill_below_min_quantity_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
+    let (pricer, _feeds) = oracle_setup::load_pricer(
+        &world,
+        &resources,
+        &oracles,
+        &market,
         &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
     );
     let auth = account::generate_auth(test_world::ctx(&mut world));
     let _ = market.mint_exact_amount(
@@ -151,19 +144,12 @@ fun mint_exact_amount_below_min_quantity_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
+    let (pricer, _feeds) = oracle_setup::load_pricer(
+        &world,
+        &resources,
+        &oracles,
+        &market,
         &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
     );
     let auth = account::generate_auth(test_world::ctx(&mut world));
     let _ = market.mint_exact_amount(

@@ -73,19 +73,12 @@ fun same_timestamp_mint_then_live_redeem_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
+    let (pricer, _feeds) = oracle_setup::load_pricer(
+        &world,
+        &resources,
+        &oracles,
+        &market,
         &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
     );
     let auth = account::generate_auth(test_world::ctx(&mut world));
     let order_id = market.mint_exact_quantity(
@@ -170,20 +163,7 @@ fun live_redeem_below_min_probability_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let auth = account::generate_auth(test_world::ctx(&mut world));
     let order_id = market.mint_exact_quantity(
         &mut wrapper,
@@ -200,11 +180,7 @@ fun live_redeem_below_min_probability_aborts() {
         test_world::clock(&resources),
         test_world::ctx(&mut world),
     );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);
@@ -226,19 +202,12 @@ fun live_redeem_below_min_probability_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
+    let (pricer, _feeds) = oracle_setup::load_pricer(
+        &world,
+        &resources,
+        &oracles,
+        &market,
         &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
     );
     assert_eq!(market.order_value(option::some(pricer), order_id), ATM_GROSS_REDEEM_VALUE);
     assert!(predict_account::has_position(wrapper.load_account(), market.id(), order_id));
@@ -308,20 +277,7 @@ fun live_redeem_below_min_proceeds_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let auth = account::generate_auth(test_world::ctx(&mut world));
     let order_id = market.mint_exact_quantity(
         &mut wrapper,
@@ -338,11 +294,7 @@ fun live_redeem_below_min_proceeds_aborts() {
         test_world::clock(&resources),
         test_world::ctx(&mut world),
     );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);
@@ -364,19 +316,12 @@ fun live_redeem_below_min_proceeds_aborts() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
+    let (pricer, _feeds) = oracle_setup::load_pricer(
+        &world,
+        &resources,
+        &oracles,
+        &market,
         &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
     );
     assert_eq!(market.order_value(option::some(pricer), order_id), ATM_GROSS_REDEEM_VALUE);
     assert!(predict_account::has_position(wrapper.load_account(), market.id(), order_id));

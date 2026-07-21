@@ -48,32 +48,24 @@ fun synthetic_profiles_stay_within_independent_precision_contract() {
     while (profile_index < reference::profile_count()) {
         let profile = reference::profile(profile_index);
         test_world::next_tx(&mut world, test_values::admin());
-        let market = market_setup::take_market(&world, &market_handle);
-        let config = test_world::take_config(&world);
-        let oracle_registry = test_world::take_oracle_registry(&world);
-        let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-        let mut bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-        let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-        let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-        oracle_setup::seed_surface(
-            &mut pyth,
-            &mut bs_spot,
-            &mut bs_forward,
-            &mut bs_svi,
-            market.expiry(),
+        oracle_setup::seed_market_surface(
+            &mut world,
+            &resources,
+            &oracles,
+            &market_handle,
             &profile,
             test_values::now_ms(),
-            test_world::clock(&resources),
-            test_world::ctx(&mut world),
         );
-        let pricer = market.load_live_pricer(
+
+        test_world::next_tx(&mut world, test_values::admin());
+        let market = market_setup::take_market(&world, &market_handle);
+        let config = test_world::take_config(&world);
+        let (pricer, feeds) = oracle_setup::load_pricer(
+            &world,
+            &resources,
+            &oracles,
+            &market,
             &config,
-            &oracle_registry,
-            &pyth,
-            &bs_spot,
-            &bs_forward,
-            &bs_svi,
-            test_world::clock(&resources),
         );
 
         let points = reference::points(profile_index);
@@ -92,11 +84,7 @@ fun synthetic_profiles_stay_within_independent_precision_contract() {
             point_index = point_index + 1;
         };
 
-        return_shared(bs_svi);
-        return_shared(bs_forward);
-        return_shared(bs_spot);
-        return_shared(pyth);
-        return_shared(oracle_registry);
+        oracle_setup::return_feeds(feeds);
         return_shared(config);
         return_shared(market);
         profile_index = profile_index + 1;

@@ -52,13 +52,6 @@ fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
     test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    let mut bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let profile = oracle_profile::new(
         SPOT,
         SPOT,
@@ -73,34 +66,23 @@ fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
         false,
         test_values::now_ms() - 1_000,
     );
-    oracle_setup::seed_surface(
-        &mut pyth,
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
-        market.expiry(),
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
         &profile,
         test_values::now_ms(),
-        test_world::clock(&resources),
-        test_world::ctx(&mut world),
     );
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+
+    test_world::next_tx(&mut world, test_values::admin());
+    let market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
 
     assert_eq!(pricer.up_price(range_codec::strike_for_testing(SPOT)), 0);
 
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     test_world::finish(world, resources);
@@ -135,13 +117,6 @@ fun negative_svi_slope_clamps_adjusted_digital_to_one() {
     test_world::return_predict_admin_cap(&world, predict_admin_cap);
 
     test_world::next_tx(&mut world, test_values::admin());
-    let market = market_setup::take_market(&world, &market_handle);
-    let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let mut pyth = oracle_setup::take_pyth(&world, &oracles);
-    let mut bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let mut bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let mut bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
     let profile = oracle_profile::new(
         SPOT,
         SPOT,
@@ -156,34 +131,23 @@ fun negative_svi_slope_clamps_adjusted_digital_to_one() {
         false,
         test_values::now_ms() - 1_000,
     );
-    oracle_setup::seed_surface(
-        &mut pyth,
-        &mut bs_spot,
-        &mut bs_forward,
-        &mut bs_svi,
-        market.expiry(),
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
         &profile,
         test_values::now_ms(),
-        test_world::clock(&resources),
-        test_world::ctx(&mut world),
     );
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+
+    test_world::next_tx(&mut world, test_values::admin());
+    let market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
 
     assert_eq!(pricer.up_price(range_codec::strike_for_testing(SPOT)), math::float_scaling!());
 
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     test_world::finish(world, resources);

@@ -80,20 +80,7 @@ fun mint_preserves_cash_and_liability_accounting() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let account_balance_before = wrapper
         .load_account()
         .balance<DUSDC>(&root, test_world::clock(&resources));
@@ -156,11 +143,7 @@ fun mint_preserves_cash_and_liability_accounting() {
         predict_account::trading_fees_paid(account, market_setup::market_id(&market_handle)),
         trading_fees_after,
     );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);

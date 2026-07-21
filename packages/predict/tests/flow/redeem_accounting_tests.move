@@ -79,20 +79,7 @@ fun global_trading_pause_keeps_exact_full_live_redeem_available() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let market_id = market.id();
     let cash_before_mint = market.cash_balance();
     let auth = account::generate_auth(test_world::ctx(&mut world));
@@ -117,11 +104,7 @@ fun global_trading_pause_keeps_exact_full_live_redeem_available() {
     );
     assert_eq!(market.cash_balance() - cash_before_mint, ALL_IN_MINT_COST);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);
@@ -155,20 +138,7 @@ fun global_trading_pause_keeps_exact_full_live_redeem_available() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let balance_before_redeem = wrapper
         .load_account()
         .balance<DUSDC>(&root, test_world::clock(&resources));
@@ -231,11 +201,7 @@ fun global_trading_pause_keeps_exact_full_live_redeem_available() {
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, replacement_id));
     assert_eq!(predict_account::expiry_position_count(wrapper.load_account(), market_id), 0);
 
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);

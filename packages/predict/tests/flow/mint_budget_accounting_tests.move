@@ -80,20 +80,7 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let balance_before = wrapper
         .load_account()
         .balance<DUSDC>(&root, test_world::clock(&resources));
@@ -121,11 +108,7 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
         TEN_THOUSAND_LOTS_DEBIT,
     );
 
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);
@@ -182,20 +165,7 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
     let root = test_world::take_accumulator_root(&world);
     let mut market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let balance_before = wrapper
         .load_account()
         .balance<DUSDC>(&root, test_world::clock(&resources));
@@ -223,11 +193,7 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
         NEXT_LOT_DEBIT,
     );
 
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     return_shared(root);
@@ -269,20 +235,7 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
     test_world::next_tx(&mut world, test_values::alice());
     let market = market_setup::take_market(&world, &market_handle);
     let config = test_world::take_config(&world);
-    let oracle_registry = test_world::take_oracle_registry(&world);
-    let pyth = oracle_setup::take_pyth(&world, &oracles);
-    let bs_spot = oracle_setup::take_bs_spot(&world, &oracles);
-    let bs_forward = oracle_setup::take_bs_forward(&world, &oracles);
-    let bs_svi = oracle_setup::take_bs_svi(&world, &oracles);
-    let pricer = market.load_live_pricer(
-        &config,
-        &oracle_registry,
-        &pyth,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_world::clock(&resources),
-    );
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
     let quote = market.quote_mint(
         &config,
         &pricer,
@@ -298,11 +251,7 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
     assert_eq!(quote.quantity(), LOT_CAP_QUANTITY);
     assert_eq!(quote.net_premium(), LOT_CAP_NET_PREMIUM);
 
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
+    oracle_setup::return_feeds(feeds);
     return_shared(config);
     return_shared(market);
     test_world::finish(world, resources);
