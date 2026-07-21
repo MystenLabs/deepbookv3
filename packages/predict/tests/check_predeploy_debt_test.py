@@ -25,22 +25,26 @@ class RegisteredPinTests(unittest.TestCase):
     def test_support_helpers_and_comments_cannot_satisfy_policy_pins(self) -> None:
         check = debt.load_predeploy_check()
         source = """
+module deepbook_predict::masking_tests;
 // #[test] fun commented_pin() {}
 fun support_pin() {}
 #[test] fun positive_pin() { assert!(true); }
 #[test, expected_failure(abort_code = 7)] fun abort_pin() { abort 7 }
 """
         self.assertEqual(
-            check.executable_test_functions_from_source(source),
-            {"positive_pin", "abort_pin"},
+            check.executable_test_selectors_from_source(source),
+            {"masking_tests::positive_pin", "masking_tests::abort_pin"},
         )
 
     def test_public_entry_test_can_satisfy_policy_pin(self) -> None:
         check = debt.load_predeploy_check()
-        source = "#[test] public entry fun public_entry_pin() { assert!(true); }"
+        source = (
+            "module deepbook_predict::entry_tests;\n"
+            "#[test] public entry fun public_entry_pin() { assert!(true); }"
+        )
         self.assertEqual(
-            check.executable_test_functions_from_source(source),
-            {"public_entry_pin"},
+            check.executable_test_selectors_from_source(source),
+            {"entry_tests::public_entry_pin"},
         )
 
     def test_qualified_test_pin_is_extracted_but_source_function_reference_is_not(self) -> None:
@@ -50,14 +54,14 @@ fun support_pin() {}
             "`expiry_market::claim_trading_loss_rebate`"
         )
         self.assertEqual(
-            check.pinning_test_functions_from_block(block),
-            ["mint_exact_amount_below_min_quantity_aborts"],
+            check.pinning_test_selectors_from_block(block),
+            ["mint_redeem_guard_tests::mint_exact_amount_below_min_quantity_aborts"],
         )
 
     def test_string_literal_cannot_fake_executable_policy_pin(self) -> None:
         check = debt.load_predeploy_check()
         source = 'fun helper() { let fake = b"#[test] fun fake_pin() {}"; }'
-        self.assertEqual(check.executable_test_functions_from_source(source), set())
+        self.assertEqual(check.executable_test_selectors_from_source(source), set())
 
     def test_policy_gap_kinds_are_classified_separately(self) -> None:
         register = """

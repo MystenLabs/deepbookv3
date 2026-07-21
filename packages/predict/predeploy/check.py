@@ -118,16 +118,6 @@ def source_without_comments_and_literals(source):
     return ''.join(masked)
 
 
-def executable_test_functions_from_source(source):
-    """Executable test names only; comments and support helpers cannot satisfy pins."""
-    source = source_without_comments_and_literals(source)
-    return {
-        function.group('name')
-        for function in ATTRIBUTED_FUNCTION.finditer(source)
-        if re.search(r'\b(?:test|random_test)\b', function.group('attributes'))
-    }
-
-
 MODULE_NAME = re.compile(r'\bmodule\s+[a-z][a-z0-9_]*::(?P<module>[a-z][a-z0-9_]*)\s*;')
 
 
@@ -172,21 +162,6 @@ def unresolved_pin(tok, qualified, leaf_modules):
         return (f'pins ambiguous test `{tok}`: `fun {tok}` is defined in {len(modules)} modules '
                 f"({', '.join(sorted(modules))}); qualify it as `<module>::{tok}`")
     return None
-
-
-def pinning_test_functions_from_block(block):
-    """Extract naked test names and explicit `<module>_tests::<test>` pins."""
-    functions = []
-    for token in re.findall(r'`([^`]+)`', block):
-        qualified = re.fullmatch(
-            r'([a-z][a-z0-9_]*_tests)::([a-z][a-z0-9_]*)',
-            token,
-        )
-        if qualified:
-            functions.append(qualified.group(2))
-        elif re.fullmatch(r'[a-z][a-z0-9_]+', token) and len(token) >= 10 and '_' in token:
-            functions.append(token)
-    return functions
 
 
 def pinning_test_selectors_from_block(block):
