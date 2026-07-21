@@ -164,11 +164,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   is paid the storage rebate to run the redeems and the claim, standalone or bundled),
   so accounts resolve without relying on a protocol cron.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
-  protocol profit and exposes no admin withdrawal path. Intentional for now — the
-  reserve is left in the protocol backing solvency, and an explicit admin
-  withdrawal flow can be added later if it is needed. *Rejected (for now):* an
-  admin drain entrypoint. Whether to ship a withdrawal path pre-deploy is still an
-  open decision — tracked as predeploy `open-items.md` P-8.
+  protocol profit and exposes no admin withdrawal path. Decided (2026-07-21,
+  predeploy RP-16): no withdraw entrypoint ships in this package — the reserve's
+  eventual use (buy-and-burn, withdrawal, incentive recycling, solvency backstop)
+  is deliberately undecided and the entrypoint lands with the package upgrade
+  that decides it. The cut's booked-order timing property is accepted in the
+  same entry. *Rejected:* an admin drain entrypoint in the launch package.
 - **Account app-auth is intentionally full-account, package-level authority.** An
   app authorized through `account::AccountRegistry` can mutably load any
   `AccountWrapper` it is handed and use the normal `Account` balance/data APIs — so

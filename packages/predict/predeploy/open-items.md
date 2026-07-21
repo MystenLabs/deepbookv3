@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-17. **The single source of truth for open work.** Anything that
+Updated 2026-07-21. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -71,44 +71,6 @@ guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case.
-
-### P-8: PoolVault.protocol_reserve_balance is accrue-only — no withdraw path
-
-**Severity:** Medium / required decision before deploy.
-
-Materialized protocol profit joins into `PoolVault.protocol_reserve_balance`
-through `pool_accounting::realize_pending_protocol_profit`, but no split/withdraw/claim
-entrypoint exists in the four scoped packages; only a getter and event fields
-read it. The protocol cut is excluded from LP value and can never leave the
-vault without a package upgrade.
-
-**Action:** Add an AdminCap-gated withdraw entrypoint (for example,
-`withdraw_protocol_reserve` splitting from the balance), or record deliberate
-deferral to a post-deploy upgrade as the decision.
-
-**2026-07-07 extension — the cut is order-dependent, not just accrue-only.**
-The protocol cut is realized against a single pool-wide, forward-only
-`net_losses_to_fill` in `pool_accounting`: a loss grows it and only a *later*
-profit shrinks it — a loss never claws back a cut already materialized from an
-earlier profit. Because cross-market materialization order is permissionless
-(`plp::rebalance_expiry_cash` → `sweep_settled_expiry` →
-`materialize_expiry_profit`), a profit-first ordering splits `share × (gross
-profit recognized before losses)` into `protocol_reserve_balance` (join-only,
-never split, matching this item's accrue-only claim) instead of `share × net
-pool profit`. While all offsetting losses remain represented in live marking,
-the cut is NAV-neutral because `plp::lp_pool_value` excludes the pre-reserved
-amount. The excess becomes real when an offsetting loss market is settled but
-unswept at the profit-first instant, so the reserve can accrue on gross
-recognized profit rather than net realized pool profit.
-
-**Action (extension):** Fold into the accrue-only deploy decision — take the
-cut against NET realized pool profit (a pool-level net-profit high-water mark
-realizing the incremental cut of the running net), or make `net_losses`
-symmetrically reduce not-yet-realized/pending protocol profit before any cut is
-split. Verify with a cross-market Move flow test: value/sweep a profitable
-market before an offsetting lossy one and assert
-`protocol_reserve == share × net`; current behavior produces a larger reserve
-when the profitable market is materialized first.
 
 ### P-10: current_nav's conservative liquidation band is absent from public risk disclosure
 
