@@ -147,20 +147,25 @@ class ExactDebtTests(unittest.TestCase):
         )
 
     def test_resolved_pin_requires_manifest_to_shrink(self) -> None:
-        missing = set(debt.EXPECTED_MISSING_PINS)
-        missing.remove(next(iter(missing)))
-        self.assertTrue(
-            any(
-                "resolved pin remains" in error
-                for error in debt.debt_errors(
-                    missing,
-                    set(debt.EXPECTED_UNCATALOGUED_POLICIES),
-                    set(debt.EXPECTED_NON_UNIT_POLICIES),
-                    [],
-                    set(debt.EXPECTED_WARNINGS),
+        # The live manifest is empty, so prove the shrink guard against a
+        # synthetic expected pin whose obligation no longer exists.
+        original = debt.EXPECTED_MISSING_PINS
+        debt.EXPECTED_MISSING_PINS = {("RP-99", "already_landed_pin")}
+        try:
+            self.assertTrue(
+                any(
+                    "resolved pin remains" in error
+                    for error in debt.debt_errors(
+                        set(),
+                        set(debt.EXPECTED_UNCATALOGUED_POLICIES),
+                        set(debt.EXPECTED_NON_UNIT_POLICIES),
+                        [],
+                        set(debt.EXPECTED_WARNINGS),
+                    )
                 )
             )
-        )
+        finally:
+            debt.EXPECTED_MISSING_PINS = original
 
     def test_new_uncatalogued_policy_is_rejected(self) -> None:
         uncatalogued = set(debt.EXPECTED_UNCATALOGUED_POLICIES) | {"RP-99"}
