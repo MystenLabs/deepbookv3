@@ -44,6 +44,10 @@ const MIXED_BOOK_NAV: u64 = 10_005_000_000;
 // Deep-ITM-both-boundaries spot for the underwater re-mark.
 const COLLAPSE_SPOT: u64 = 200_000_000_000;
 const COLLAPSE_SOURCE_TIMESTAMP_MS: u64 = 119_500; // after the exact-half row
+// Same mixed book re-marked at 200e9: the 2x range collapses (its correction
+// contributes min(0, floor) = 0, never the raw floor) while the 1x up order
+// goes deep ITM to full 1e9 liability: cash 10_760e6 - reserve 5e6 - 1e9.
+const MIXED_UNDERWATER_NAV: u64 = 9_755_000_000;
 
 #[test]
 fun untraded_live_market_marks_at_free_cash() {
@@ -599,5 +603,31 @@ fun mixed_one_x_and_leveraged_book_sums_exact_liabilities() {
     return_shared(market);
     return_shared(root);
     return_shared(wrapper);
+
+    // Re-mark far above both ranges: the leveraged order is underwater (its
+    // correction is its zero range value, never the raw floor) while the 1x up
+    // order carries full liability — the two per-order treatments compose.
+    test_world::next_tx(&mut world, test_values::admin());
+    let collapse = oracle_profile::new(
+        oracle_profile::spot_prices(COLLAPSE_SPOT, COLLAPSE_SPOT, COLLAPSE_SPOT),
+        oracle_profile::svi_params(1, false, 0, 1_000_000, 0, false, 0, false),
+        COLLAPSE_SOURCE_TIMESTAMP_MS,
+    );
+    oracle_setup::seed_market_surface(
+        &mut world,
+        &resources,
+        &oracles,
+        &market_handle,
+        &collapse,
+        test_values::now_ms(),
+    );
+    test_world::next_tx(&mut world, test_values::admin());
+    let market = market_setup::take_market(&world, &market_handle);
+    let config = test_world::take_config(&world);
+    let (pricer, feeds) = oracle_setup::load_pricer(&world, &resources, &oracles, &market, &config);
+    assert_eq!(market.current_nav(&pricer), MIXED_UNDERWATER_NAV);
+    oracle_setup::return_feeds(feeds);
+    return_shared(config);
+    return_shared(market);
     test_world::finish(world, resources);
 }
