@@ -11,6 +11,7 @@ module deepbook_predict::expiry_cash;
 
 use deepbook_predict::expiry_cash_config::ExpiryCashConfig;
 use dusdc::dusdc::DUSDC;
+use fixed_math::{interval::{Self, Interval}, math};
 use sui::balance::{Self, Balance};
 
 const EInsufficientCash: u64 = 0;
@@ -45,6 +46,17 @@ public(package) fun rebate_reserve(cash: &ExpiryCash): u64 {
     cash.config.rebate_reserve_for_fee_basis(cash.unresolved_trading_fees_paid)
 }
 
+/// Envelope form of the unresolved rebate reserve: the fixed-point multiply's
+/// single rounding ulp carried as width. Backing asserts consume the high side
+/// (a hold is a liability: never understated).
+public(package) fun rebate_reserve_interval(cash: &ExpiryCash): Interval {
+    let rate = cash.config.trading_loss_rebate_rate();
+    interval::new(
+        math::mul(cash.unresolved_trading_fees_paid, rate),
+        math::mul_up(cash.unresolved_trading_fees_paid, rate),
+    )
+}
+
 /// Return the cash required to cover payout liability plus unresolved rebate reserve.
 public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64 {
     payout_liability + cash.rebate_reserve()
@@ -56,9 +68,17 @@ public(package) fun free_cash(cash: &ExpiryCash): u64 {
     cash.balance().saturating_sub(cash.rebate_reserve())
 }
 
-/// Abort unless current cash covers payout liability plus unresolved rebate reserve.
-public(package) fun assert_backing(cash: &ExpiryCash, payout_liability: u64) {
-    assert!(cash.balance() >= cash.required_cash(payout_liability), EInsufficientCash);
+/// Return the definitely-required cash: the payout liability's high side plus
+/// the rebate reserve's high side. The definite-backing anchor for asserts and
+/// releases; the scalar `required_cash` read keeps today's floor-rounded view.
+public(package) fun required_cash_hi(cash: &ExpiryCash, payout_liability_hi: u64): u64 {
+    payout_liability_hi + cash.rebate_reserve_interval().hi()
+}
+
+/// Abort unless current cash DEFINITELY covers payout liability plus the
+/// unresolved rebate reserve: both holds enter at their envelope high sides.
+public(package) fun assert_backing(cash: &ExpiryCash, payout_liability_hi: u64) {
+    assert!(cash.balance() >= cash.required_cash_hi(payout_liability_hi), EInsufficientCash);
 }
 
 /// Join incoming expiry cash without interpreting why the caller is sending it.
@@ -66,14 +86,18 @@ public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<DUSDC>) {
     cash.cash_balance.join(funds);
 }
 
-/// Release caller-approved surplus while preserving payout and rebate backing.
+/// Release caller-approved surplus while preserving payout and rebate backing;
+/// only the DEFINITELY-surplus portion (above both holds' high sides) may leave.
 public(package) fun release_surplus(
     cash: &mut ExpiryCash,
     amount: u64,
-    payout_liability: u64,
+    payout_liability_hi: u64,
 ): Balance<DUSDC> {
     if (amount == 0) return balance::zero();
-    assert!(cash.balance() >= cash.required_cash(payout_liability) + amount, EInsufficientCash);
+    assert!(
+        cash.balance() >= cash.required_cash_hi(payout_liability_hi) + amount,
+        EInsufficientCash,
+    );
     cash.cash_balance.split(amount)
 }
 

@@ -206,11 +206,44 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     }
 }
 
+/// Envelope form of `payout_liability`: the max-point term and settled
+/// liability are exact integer atoms; only the λ-buffer's fixed-point multiply
+/// carries a rounding ulp as width. Backing asserts consume the high side.
+public(package) fun payout_liability_interval(exposure: &StrikeExposure): Interval {
+    if (exposure.is_settled()) {
+        interval::exact(exposure.settled_payout_liability)
+    } else {
+        let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
+        let gap = total_net_payout - max_net_payout;
+        let lambda = exposure.config.backing_buffer_lambda();
+        interval::exact(max_net_payout).add(
+            &interval::new(
+                math::mul(lambda, gap),
+                math::mul_up(lambda, gap),
+            ),
+        )
+    }
+}
+
 /// Return the live marked liability as the aggregate boundary-linear term minus
 /// `Σ_active_leveraged min(order_range_value, floor_shares)`. Boundary aggregation
 /// and per-order correction round at different points, so subtraction saturates at
 /// zero. A still-active order in the liquidation band contributes its positive
 /// `range_value - floor_shares` until a close or liquidation pass removes it.
+/// Envelope form of `exact_live_liability` for the read-only interval lane:
+/// the liability envelope of the CURRENT book, liquidatable orders included at
+/// their min-capped envelopes (no mutation; the flush lane's
+/// `revalue_with_liquidations_interval` owns the mark invariant).
+public(package) fun exact_live_liability_interval(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+): Interval {
+    let mut memo = pricing::new_interval_price_memo();
+    let linear = exposure.payout.walk_linear_interval(pricer, &mut memo, exposure.tick_size);
+    let correction = exposure.liquidation.correction_value_interval(&memo);
+    linear.sub(&correction)
+}
+
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);

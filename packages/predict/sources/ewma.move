@@ -16,6 +16,9 @@ use sui::clock::Clock;
 
 /// Smoothed gas-price estimate for one expiry market. `mean` and `variance` are
 /// scaled by `float_scaling`.
+/// Stored EWMA state is recurrence-exact by definition: the protocol quantity
+/// IS this integer recurrence, rounding included, so the stored scalars carry
+/// no envelope and re-enter valuation as exact atoms.
 public struct EwmaState has copy, drop, store {
     mean: u64,
     variance: u64,

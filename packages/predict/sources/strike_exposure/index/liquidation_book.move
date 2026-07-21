@@ -10,7 +10,7 @@
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::{IntervalPriceMemo, PriceMemo}};
-use fixed_math::{interval, math};
+use fixed_math::{interval::{Self, Interval}, math};
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -88,6 +88,27 @@ public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): 
             order.quantity(),
         );
         correction = correction + range_value.min(order.floor_shares());
+        cursor = book.next_cursor(scan);
+    };
+    correction
+}
+
+/// Envelope twin of `correction_value` for the read-only interval lane:
+/// `Σ min(gross envelope, floor_shares)` with pointwise interval min against
+/// the exact static floor.
+public(package) fun correction_value_interval(
+    book: &LiquidationBook,
+    memo: &IntervalPriceMemo,
+): Interval {
+    let mut correction = interval::exact(0);
+    let mut cursor = book.first_cursor();
+    while (cursor.is_some()) {
+        let scan = cursor.destroy_some();
+        let order = order::from_order_id(book.order_id_at(scan));
+        let gross = memo
+            .cached_range_price_interval(order.lower_tick(), order.higher_tick())
+            .mul(&interval::exact(order.quantity()));
+        correction = correction.add(&gross.min(&interval::exact(order.floor_shares())));
         cursor = book.next_cursor(scan);
     };
     correction
