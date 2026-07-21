@@ -558,7 +558,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 - **Trigger state:** an expiry materializes terminal profit
   (`pool_accounting::materialize_expiry_profit`, reached from a settled-market
-  sweep); the protocol's share (`protocol_reserve_profit_share`) is split from
+  sweep or a settled rebate-claim residual return); the protocol's share (`protocol_reserve_profit_share`) is split from
   idle into `PoolVault.protocol_reserve_balance`, which has no
   split/withdraw/claim entrypoint in the scoped packages. Separately,
   cross-market sweep order is permissionless (`plp::rebalance_expiry_cash`), so
@@ -581,28 +581,33 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   running peak of booked net P&L (`net_losses_to_fill` ≡ peak − current booked
   net), so the lifetime cut equals the share of lifetime net whenever later
   profits refill the carry — a profit-first ordering front-loads the cut and is
-  then repaid one-for-one by suppressed cuts on subsequent profits. Reaching
-  the front-load requires a mixed-sign sweep backlog (a settlement or keeper
-  outage) AND a near-zero existing carry AND profit-first order; at one-minute
-  settlement cadence with prompt sweeping, the unbooked-loss window is roughly
-  one cadence interval. Residuals: LPs who exit between a front-loaded cut and
+  then repaid one-for-one by suppressed cuts on subsequent profits. A material
+  front-load requires a mixed-sign sweep backlog AND a near-zero existing carry
+  AND profit-first order; even with prompt sweeping there is a small
+  ever-present window (roughly one settlement interval — coinciding cadence
+  grids can settle a profit and a loss in the same window, and the booking
+  order inside it is permissionlessly choosable), bounded by
+  `share × losses settling in that window`. Residuals: LPs who exit between a front-loaded cut and
   the carry refill bear a small one-time timing transfer (suppliers inside the
   window pick it up), and the front-load becomes permanent only if the pool
   winds down or stays loss-making so the carry never refills. LP pricing is
   structurally unaffected: `plp::lp_pool_value` already excludes
   `share × max(0, live unrealized net − carry)` — the net-basis anticipation of
   the future cut — and already-materialized cuts have left the pricing basis.
-- **Risk profile:** `ANALYTICAL` — the peak-of-booked-net invariant follows
-  from the carry algebra in `materialize_expiry_profit`; the ordering example
-  is direct computation (at a 20% share, sweeping +100 before an unswept −50
-  reserves 20 instead of 10, and the next +50 of profit materializes uncut,
-  repaying the difference). Magnitude scales with losses concurrent in a
-  backlog window, so it is outage-shaped, not steady-state.
-- **Pinning tests:** untested — gap. The accepted-semantics pin lands with the
-  unit-test rebuild in flight (DBU-599): profit-first sweep reserves the share
-  of gross recognized profit, the later loss carries, and subsequent profit
-  materializes only above the carry. Until that test lands, the carry algebra
-  above is the record; no fixture stands in as a pin.
+- **Risk profile:** `BEST-GUESS` — the peak-of-booked-net invariant itself is
+  algebraic (it follows from the carry algebra in `materialize_expiry_profit`,
+  and the ordering example is direct computation: at a 20% share, sweeping
+  +100 before an unswept −50 reserves 20 instead of 10, and the next +50 of
+  profit refills the carry and reaches LPs uncut, repaying the difference);
+  the best-guess half is reachability and magnitude — exposure scales with
+  losses concurrent in a sweep window, so material exposure is backlog-shaped.
+- **Pinning tests:** partial — `pool_accounting_tests.move` —
+  `materialize_carries_loss_forward_before_recognizing_profit` pins the carry
+  legs (the loss carries; subsequent profit materializes only above the
+  carry), and `tests/flows/protocol_profit_deferral_tests.move` pins the
+  idle-capped realization deferral. Untested — gap: the cross-market ordering
+  leg (a profit-first sweep reserves the share of gross recognized profit);
+  that pin lands with the unit-test rebuild in flight (DBU-599).
 - **Reopen when:** a package upgrade adds the withdraw path (decide then
   whether over-accrued reserve reconciles to LPs before funds leave); or
   market shape makes mixed-sign sweep backlogs a normal state rather than an
