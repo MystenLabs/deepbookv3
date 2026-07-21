@@ -211,6 +211,27 @@ public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher
     memo.cached_up_price(lower_tick).saturating_sub(memo.cached_up_price(higher_tick))
 }
 
+/// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
+/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
+/// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
+/// Package-visible for the pruned-tree re-walk (`strike_payout_tree::walk_linear_cached`),
+/// which reads node prices from the memo instead of re-pricing.
+public(package) fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
+    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
+    if (tick == constants::pos_inf_tick!()) return 0;
+
+    let ticks = &memo.ticks;
+    let mut lo = 0;
+    let mut hi = ticks.length();
+    while (lo < hi) {
+        let mid = lo + (hi - lo) / 2;
+        let mid_tick = ticks[mid];
+        if (mid_tick == tick) return memo.prices[mid];
+        if (mid_tick < tick) lo = mid + 1 else hi = mid;
+    };
+    abort ETickNotInPriceMemo
+}
+
 /// Price `tick` through `pricer` and append it to the cache. Called once per node by
 /// the in-order linear walk, so `ticks` stays ascending for `cached_up_price`'s
 /// binary search. Only finite ticks are stored (the tree never holds inf boundaries).
@@ -233,25 +254,6 @@ public(package) fun price_and_cache(
 }
 
 // === Private Functions ===
-
-/// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
-/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
-/// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
-fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
-    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
-    if (tick == constants::pos_inf_tick!()) return 0;
-
-    let ticks = &memo.ticks;
-    let mut lo = 0;
-    let mut hi = ticks.length();
-    while (lo < hi) {
-        let mid = lo + (hi - lo) / 2;
-        let mid_tick = ticks[mid];
-        if (mid_tick == tick) return memo.prices[mid];
-        if (mid_tick < tick) lo = mid + 1 else hi = mid;
-    };
-    abort ETickNotInPriceMemo
-}
 
 fun assert_current_oracles(
     propbook_registry: &OracleRegistry,

@@ -72,25 +72,6 @@ positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case.
 
-### P-10: current_nav's conservative liquidation band is absent from public risk disclosure
-
-**Severity:** Low.
-
-Liquidatable-but-still-active leveraged orders (live gross in
-`(floor, floor/ltv]`) are marked at holder value (gross-floor) by
-`liquidation_book::correction_value`'s min-cap, and `plp::value_expiry` runs no
-pre-valuation liquidation pass, so `expiry_market::current_nav` understates
-recoverable value by up to the LTV buffer. This contradicts the settled "exact
-`current_nav`, no conservative band" framing (RP-1 reasoning) and dilutes
-incumbent LPs on a same-flush supply (NAV reads low → the supplier mints too many
-shares). P-13 tracks the opposite, rounding-only direction where aggregate
-liability is one raw unit low.
-
-**Action:** Decide whether to accept and disclose the conservative band in
-`docs/risks.md` (reconciling the "exact NAV" framing), or run a
-pre-valuation liquidation pass so the flush marks liquidatable orders at their
-liquidated value.
-
 ### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
 
 **Severity:** Open envelope-hardening item; non-blocking for the skew-pricing
@@ -133,7 +114,7 @@ loss estimate.
 evaluate a source-level butterfly/monotonicity admission check. The active-book
 price-memo guard prevents the known NAV overstatement by aborting valuation on a
 non-monotone active boundary set, so the completed-valuation-discrepancy risk is
-closed (only P-10 and P-13 now describe live valuation gaps). Because the guard
+closed (only P-13 now describes a live valuation gap). Because the guard
 aborts rather than reprices, and the pool flush values every active market in one
 transaction, an admitted non-monotone surface now stalls that flush until the
 surface is replaced — the residual is a surface-quality admission gap plus this
@@ -154,7 +135,7 @@ upper strike price individually at `463 + 410 = 873` raw DUSDC units, while
 `strike_payout_tree::walk_linear` produces `9583 + 9530 - 18241 = 872`. The
 aggregate live liability is therefore one raw unit below the sum of the two
 order liabilities, and `current_nav` is one raw unit high. This is distinct from
-P-11's non-monotone-surface netting failure and P-10's conservative low-NAV band.
+P-11's non-monotone-surface netting failure.
 
 **Action:** Decide whether live liability must reproduce per-order rounding. If
 yes, preserve per-range rounded terms in the valuation representation. If not,

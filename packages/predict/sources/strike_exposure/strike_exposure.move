@@ -466,6 +466,44 @@ public(package) fun process_close(
     }
 }
 
+/// Value live liability while enforcing the flush mark invariant: every active
+/// leveraged order at or below its knock-out threshold at these prices is
+/// liquidated in this same pass, so the resulting liability never prices a
+/// claim the protocol would not honor. After the kills, the pruned tree is
+/// re-walked with the memo's cached prices — no re-pricing, and exactly
+/// `exact_live_liability`'s rounding and clamp — so a book with zero
+/// liquidatable orders returns a value bit-identical to `exact_live_liability`.
+/// Survivor correction degenerates to `Σ floor_shares`: every survivor's gross
+/// exceeds its floor multiple, so the min-cap never binds (see `scan_compact`).
+public(package) fun revalue_with_liquidations(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    clock: &Clock,
+): u64 {
+    let mut memo = pricing::new_price_memo();
+    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
+    let (correction, killed) = exposure
+        .liquidation
+        .scan_compact(&memo, exposure.config.liquidation_ltv());
+    // Nothing killed: the tree is untouched, so the first walk already is the
+    // pruned-tree value and the common flush path costs exactly what
+    // `exact_live_liability` costs.
+    if (killed.is_empty()) return linear.saturating_sub(correction);
+
+    let liquidated_at_ms = clock.timestamp_ms();
+    killed.do!(|order| {
+        // Same one-observation gross the scan's kill test read.
+        let gross_value = math::mul(
+            memo.cached_range_price(order.lower_tick(), order.higher_tick()),
+            order.quantity(),
+        );
+        exposure.settle_liquidation(pricer, &order, gross_value, liquidated_at_ms);
+    });
+
+    let rewalked = exposure.payout.walk_linear_cached(&memo);
+    rewalked.saturating_sub(correction)
+}
+
 /// Price and conditionally remove one bounded batch of liquidation candidates.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
@@ -704,13 +742,13 @@ fun liquidate_order_if_under_floor(
     true
 }
 
-/// The single liquidation mutation: remove the order's full `(quantity, floor)`
-/// terms from the active index and the payout tree, and emit the liquidation
-/// event atomically with the removal. Shared by the close flow
-/// (`process_close`) and the ambient sweep, so the book, tree, and event can
-/// never diverge. Callers own the liquidation decision; only leveraged orders
-/// reach here — the classifier by its explicit guard, the sweep because the
-/// active index holds exactly the leveraged orders (1x inserts are no-ops).
+/// The single liquidation mutation for index-resident orders: remove from the
+/// active index, then settle against the tree and emit. Shared by the close flow
+/// (`process_close`) and the ambient sweep. The flush valuation scan calls
+/// `settle_liquidation` directly because its compaction already removed the
+/// order from the index. Callers own the liquidation decision; only leveraged
+/// orders reach here — the classifier by its explicit guard, the sweep because
+/// the active index holds exactly the leveraged orders (1x inserts are no-ops).
 fun apply_liquidation(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -719,6 +757,19 @@ fun apply_liquidation(
     liquidated_at_ms: u64,
 ) {
     exposure.liquidation.remove_order(order);
+    exposure.settle_liquidation(pricer, order, gross_value, liquidated_at_ms);
+}
+
+/// Remove the order's full `(quantity, floor)` terms from the payout tree and
+/// emit the liquidation event atomically with the removal, so the tree and the
+/// event stream can never diverge.
+fun settle_liquidation(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+    gross_value: u64,
+    liquidated_at_ms: u64,
+) {
     exposure
         .payout
         .remove_range(
@@ -744,8 +795,14 @@ fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
 
 /// Return whether live gross value is at or below the configured multiple of the
 /// static floor. The reserve independently backs the order's full net payout.
+/// Delegates to the shared knock-out test so the close flow, the ambient sweep,
+/// and the flush valuation scan can never apply different thresholds.
 fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_amount: u64): bool {
-    gross_value <= math::div(floor_amount, exposure.config.liquidation_ltv())
+    liquidation_book::is_under_liquidation_floor(
+        gross_value,
+        floor_amount,
+        exposure.config.liquidation_ltv(),
+    )
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {

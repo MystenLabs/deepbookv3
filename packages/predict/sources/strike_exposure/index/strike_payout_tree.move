@@ -117,6 +117,17 @@ public(package) fun walk_linear(
     (tree.base.quantity + start_total).saturating_sub(end_total)
 }
 
+/// Re-walk the tree reading each boundary price from `memo` instead of the
+/// pricer: no re-pricing, no memo mutation, and exactly `walk_linear`'s rounding
+/// and clamp (`math::mul` per boundary product, one saturating floor at the top).
+/// Used by the flush valuation pass to value the pruned tree after liquidations:
+/// every remaining finite node's tick was cached by the first walk, so a memo
+/// miss aborts (`pricing::ETickNotInPriceMemo`) as a broken-index invariant.
+public(package) fun walk_linear_cached(tree: &StrikePayoutTree, memo: &PriceMemo): u64 {
+    let (start_total, end_total) = walk_linear_cached_subtree(&tree.nodes, tree.root, memo);
+    (tree.base.quantity + start_total).saturating_sub(end_total)
+}
+
 /// Create an empty sparse payout tree.
 public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
@@ -424,6 +435,32 @@ fun walk_linear_subtree(
     };
 
     let (right_start, right_end) = walk_linear_subtree(nodes, node.right, pricer, tick_size, memo);
+    (start_total + left_start + right_start, end_total + left_end + right_end)
+}
+
+/// `walk_linear_subtree` with memo-cached prices: identical traversal, identical
+/// per-node skip of cancelling equal start/end quantities, identical `math::mul`
+/// rounding — only the price source differs (binary-search lookup, no caching).
+fun walk_linear_cached_subtree(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    memo: &PriceMemo,
+): (u64, u64) {
+    if (root.is_none()) return (0, 0);
+    let tick = *root.borrow();
+    let node = nodes[tick];
+
+    let (left_start, left_end) = walk_linear_cached_subtree(nodes, node.left, memo);
+
+    let mut start_total = 0;
+    let mut end_total = 0;
+    if (node.local_start.quantity != node.local_end.quantity) {
+        let price = memo.cached_up_price(tick);
+        start_total = math::mul(price, node.local_start.quantity);
+        end_total = math::mul(price, node.local_end.quantity);
+    };
+
+    let (right_start, right_end) = walk_linear_cached_subtree(nodes, node.right, memo);
     (start_total + left_start + right_start, end_total + left_end + right_end)
 }
 

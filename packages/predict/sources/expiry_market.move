@@ -747,6 +747,24 @@ public fun try_settle(
 
 // === Public-Package Functions ===
 
+/// Flush-lane NAV: `current_nav`'s inputs, decomposition, and rounding, plus the
+/// mark invariant the flush requires — every active leveraged order at or below
+/// its knock-out threshold at the valuation prices is liquidated in the same
+/// pass, so the mark never prices a claim the protocol would not honor. For a
+/// book with zero liquidatable orders the result is bit-identical to
+/// `current_nav`. Package-only: quotes and devInspect reads stay on the
+/// read-only `current_nav`.
+public(package) fun current_nav_with_liquidations(
+    market: &mut ExpiryMarket,
+    pricer: &Pricer,
+    clock: &Clock,
+): u64 {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.revalue_with_liquidations(pricer, clock);
+    // Same clamp as `current_nav`: negative marked NAV is represented as zero.
+    market.cash.free_cash().saturating_sub(liability)
+}
+
 /// Force `mint_paused = true` through the registry's `PauseCap` path. This cannot
 /// unpause and does not apply the package-version gate.
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
