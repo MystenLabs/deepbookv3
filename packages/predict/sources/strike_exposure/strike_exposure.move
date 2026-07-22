@@ -562,7 +562,8 @@ fun admitted_entry_probability(
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
     let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
     let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
-    pricer.range_price(lower, higher)
+    // Trade path: abort if the entry price is too imprecise to execute at.
+    pricer.range_price_checked(lower, higher)
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
