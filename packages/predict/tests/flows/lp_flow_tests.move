@@ -87,7 +87,7 @@ fun flush_with_budgets(
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let val = fx.start_flush(&mut config, &vault);
-    let _ = val.finish_flush(
+    let (_, _) = val.finish_flush(
         &mut vault,
         &mut config,
         supply_budget,

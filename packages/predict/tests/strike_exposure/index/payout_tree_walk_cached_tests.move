@@ -109,7 +109,7 @@ fun cached_rewalk_of_pruned_tree_matches_repriced_walk_and_reference() {
 
 #[test, expected_failure(abort_code = pricing::ETickNotInPriceMemo)]
 fun cached_rewalk_with_uncached_node_tick_aborts() {
-    let (mut fixture, oracle, pricer) = live_pricer();
+    let (mut fixture, _oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
     let (t0, t1, t2) = clustered_ticks();
     insert_mixed_book(&mut tree, t0, t1, t2);

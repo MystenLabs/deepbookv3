@@ -85,6 +85,7 @@ fun supply_drain_mints_at_mark_and_joins_idle() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -111,6 +112,7 @@ fun priced_supply_mints_proportional_shares() {
     book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         vault_id(),
         option::none(),
         option::none(),
@@ -135,6 +137,7 @@ fun priced_withdraw_burns_and_pays_from_idle() {
     // dusdc = 10e6 * 60e6 / 30e6 = 20e6.
     book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         lp_book::new_flush_mark(60_000_000, 30_000_000),
         vault_id(),
         option::none(),
@@ -162,6 +165,7 @@ fun two_withdrawals_share_one_frozen_mark() {
     // If the second repriced post-first it would round to 16_666_667.
     book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(50_000_000, 30_000_000),
         lp_book::new_flush_mark(50_000_000, 30_000_000),
         vault_id(),
         option::none(),
@@ -192,6 +196,7 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
         vault_id(),
         option::none(),
         option::none(),
@@ -219,6 +224,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         vault_id(),
         option::none(),
         option::none(),
@@ -233,6 +239,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves() {
     // Improved mark 1.0 -> supply quotes 20e6 shares, satisfying the same queued request.
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
         lp_book::new_flush_mark(30_000_000, 30_000_000),
         vault_id(),
         option::none(),
@@ -261,6 +268,7 @@ fun supply_limit_expires_after_three_misses() {
         let summary = book.drain(
             &mut ledger,
             lp_book::new_flush_mark(60_000_000, 30_000_000),
+            lp_book::new_flush_mark(60_000_000, 30_000_000),
             vault_id(),
             option::none(),
             option::none(),
@@ -273,6 +281,7 @@ fun supply_limit_expires_after_three_misses() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         lp_book::new_flush_mark(60_000_000, 30_000_000),
         vault_id(),
         option::none(),
@@ -304,6 +313,7 @@ fun withdraw_limit_miss_carries_then_fills_when_mark_improves() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         vault_id(),
         option::none(),
         option::none(),
@@ -318,6 +328,7 @@ fun withdraw_limit_miss_carries_then_fills_when_mark_improves() {
     // Improved mark 2.1 -> withdraw quotes exactly 21e6 DUSDC, satisfying the request.
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(63_000_000, 30_000_000),
         lp_book::new_flush_mark(63_000_000, 30_000_000),
         vault_id(),
         option::none(),
@@ -351,6 +362,7 @@ fun withdraw_limit_expires_after_three_misses() {
         let summary = book.drain(
             &mut ledger,
             lp_book::new_flush_mark(60_000_000, 30_000_000),
+            lp_book::new_flush_mark(60_000_000, 30_000_000),
             vault_id(),
             option::none(),
             option::none(),
@@ -363,6 +375,7 @@ fun withdraw_limit_expires_after_three_misses() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
         lp_book::new_flush_mark(60_000_000, 30_000_000),
         vault_id(),
         option::none(),
@@ -395,6 +408,7 @@ fun unbounded_flush_drains_every_queued_supply() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::none(),
@@ -438,6 +452,7 @@ fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
     // head_page_id and tail_page_id still point at a coherent single page.
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::none(),
@@ -484,6 +499,7 @@ fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
     // `next`, so all 65 survivors (page 0's 64 + page 2's 1) fill.
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::none(),
@@ -532,6 +548,7 @@ fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -558,6 +575,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::some(2),
         option::none(),
@@ -571,6 +589,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     // The carried supply fills on the next unbounded drain.
     book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(2 * min_supply!(), 3 * min_supply!()),
         lp_book::new_flush_mark(2 * min_supply!(), 3 * min_supply!()),
         vault_id(),
         option::none(),
@@ -600,6 +619,7 @@ fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
         lp_book::new_flush_mark(30_000_000, 30_000_000),
         vault_id(),
         option::some(1),
@@ -679,6 +699,7 @@ fun cancelled_supply_requests_do_not_spend_drain_budget() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_flush_mark(min_supply!(), min_supply!()),
         vault_id(),
         option::some(1),
         option::none(),
@@ -728,6 +749,7 @@ fun priced_supply_with_zero_pool_value_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(0, min_supply!()),
+        lp_book::new_flush_mark(0, min_supply!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -753,6 +775,7 @@ fun priced_supply_that_rounds_to_zero_shares_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
+        lp_book::new_flush_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
         vault_id(),
         option::none(),
         option::none(),
@@ -776,6 +799,7 @@ fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
     // payout = floor(min_withdraw * 1 / (min_withdraw + 1)) = 0.
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         vault_id(),
         option::none(),
@@ -802,6 +826,7 @@ fun supply_at_min_executable_plp_price_fills() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
         vault_id(),
         option::none(),
         option::none(),
@@ -824,6 +849,7 @@ fun supply_below_min_executable_plp_price_refunds() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
         vault_id(),
         option::none(),
@@ -850,6 +876,7 @@ fun supply_at_max_executable_plp_price_fills() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE, ONE_PLP),
         vault_id(),
         option::none(),
         option::none(),
@@ -872,6 +899,7 @@ fun supply_above_max_executable_plp_price_refunds() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE + 1, ONE_PLP),
         lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE + 1, ONE_PLP),
         vault_id(),
         option::none(),
@@ -899,6 +927,7 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
         vault_id(),
         option::none(),
         option::none(),
@@ -925,6 +954,7 @@ fun supply_that_exceeds_remaining_plp_headroom_refunds() {
     // but only 5_000_000 PLP raw units remain before the treasury supply cap.
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(near_max_total_supply, near_max_total_supply),
         lp_book::new_flush_mark(near_max_total_supply, near_max_total_supply),
         vault_id(),
         option::none(),
@@ -954,6 +984,7 @@ fun non_executable_supply_refunds_spend_supply_budget() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
+        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
         vault_id(),
         option::some(2),
         option::none(),
@@ -977,6 +1008,7 @@ fun non_executable_withdraw_refunds_spend_withdraw_budget() {
 
     let summary = book.drain(
         &mut ledger,
+        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         vault_id(),
         option::none(),
