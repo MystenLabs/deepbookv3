@@ -183,30 +183,51 @@ public fun div_scaled(a: &Approx, b: &Approx): Approx {
     Approx { value, error }
 }
 
-/// Fused scaled `a * b / c`, matching `math::mul_div_down`'s single-floor value so
-/// the center stays bit-identical to the scalar path. Propagates via
-/// `d(ab/c) = (|b| da + |a| db)/c + (|ab|/c)(dc/c)`, every term rounded up and
-/// computed division-first at the worst-corner denominator `|c| - dc`. A denominator
-/// that can reach zero cannot be certified; its error saturates.
+/// Fused `a * b / c`, matching `math::mul_div_down`'s single-floor magnitude so
+/// the center stays bit-identical to the scalar path. The radius comes from exact
+/// outward corner evaluation over the three input balls, not a linearization: when
+/// both numerator factors retain their signs, their quotient magnitude lies in
+/// `[(|a|-da)(|b|-db)/(|c|+dc), (|a|+da)(|b|+db)/(|c|-dc)]`;
+/// otherwise the numerator may cross zero and either output sign is covered. A
+/// denominator that can reach zero, or an endpoint that cannot be represented in
+/// the u64 error domain, saturates so every downstream precision gate rejects it.
 public fun mul_div_down(a: &Approx, b: &Approx, c: &Approx): Approx {
     let ma = a.value.magnitude();
     let mb = b.value.magnitude();
     let mc = c.value.magnitude();
+    let value_magnitude = math::mul_div_down(ma, mb, mc);
     let value = i64::from_parts(
-        math::mul_div_down(ma, mb, mc),
-        a.value.is_negative() != b.value.is_negative(),
+        value_magnitude,
+        a.value.is_negative() != b.value.is_negative() != c.value.is_negative(),
     );
     if (mc <= c.error) {
         return Approx { value, error: std::u64::max_value!() }
     };
-    let denom = mc - c.error;
-    let num_error = saturating_add(
-        ceil_mul_div(mb, a.error, denom),
-        ceil_mul_div(ma, b.error, denom),
-    );
-    let quotient = ceil_mul_div(ma, mb, denom);
-    let denom_error = ceil_mul_div(quotient, c.error, denom);
-    let error = saturating_add(saturating_add(num_error, denom_error), round_leaf!());
+    let max = std::u64::max_value!();
+    if (ma > max - a.error || mb > max - b.error) {
+        return Approx { value, error: max }
+    };
+
+    let upper = ceil_mul_div(ma + a.error, mb + b.error, mc - c.error);
+    if (upper == max) {
+        return Approx { value, error: max }
+    };
+    let numerator_sign_is_fixed = ma > a.error && mb > b.error;
+    let error = if (numerator_sign_is_fixed) {
+        let lower = if (mc > max - c.error) {
+            0
+        } else {
+            math::mul_div_down(ma - a.error, mb - b.error, mc + c.error)
+        };
+        let lower_distance = value_magnitude - lower;
+        let upper_distance = if (upper > value_magnitude) upper - value_magnitude else 0;
+        if (lower_distance >= upper_distance) lower_distance else upper_distance
+    } else {
+        // Crossing either numerator factor through zero can reverse the quotient's
+        // sign relative to the canonical center, so the farthest endpoint is the
+        // sum of their magnitudes.
+        saturating_add(value_magnitude, upper)
+    };
     Approx { value, error }
 }
 
