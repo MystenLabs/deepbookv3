@@ -1,2 +1,3 @@
 test,open_item,phase,summary
 deepbook_predict::scope_flow__intent_rounding__current_nav_red_tests::liquidatable_orders_leave_positive_aggregate_live_liability,P-14,6,Per-order floor correction leaves positive liability after every order is liquidatable
+deepbook_predict::scope_flow__intent_rounding__knockout_decision_tests::knockout_threshold_inside_the_pricing_error_band_forfeits_real_equity,P-15,8,Knock-out threshold inside the certified pricing error band knocks out a solvent position and forfeits its equity

@@ -172,6 +172,21 @@ accepted bound. (2026-07-17 clean-room gap audit)
 
 **Action:** Compute the live floor correction at the same aggregation granularity as the boundary-linear term, or preserve per-order rounded liability through both terms. Keep the exact NAV invariant and its LP-favorable rounding direction when choosing the representation.
 
+### P-15: The knock-out decision is taken on a point estimate, so pricing error can decide it
+
+**Severity:** High.
+
+`strike_exposure::under_liquidation_floor` liquidates a leveraged order when its computed gross value is at or below `floor(floor_amount * 1e9 / liquidation_ltv)`. The comparison treats the computed range probability as the position's value, but that probability is a fixed-point approximation of the pricing model, and the package's own reference data certifies the approximation error at up to 3,610 units at 1e9 scale. Scaled by position quantity, the error spans many whole DUSDC units, so a knock-out threshold can fall strictly between the computed gross and the true gross. When it does, the liquidation decision is determined by the sign of the approximation error rather than by whether the position is actually solvent.
+
+The consequence is not proportional to the error. A knocked-out holder forfeits their entire equity above the floor, so an error of a few parts per hundred million can cost a position its whole remaining value. The pinned flow holds a 1e9-quantity contract on `(90, 110]` whose committed floor is 581,663,191, giving a knock-out threshold of 684,309,636. The computed gross on the reference surface is 684,309,632 — at or below the threshold, so the contract knocks the order out and pays zero — while the independently computed true gross is 684,309,642, above the threshold, leaving the holder solvent and owed 102,646,451 raw units, roughly ten percent of the position. The same band is reachable in the opposite direction, where the pool carries a position past its true knock-out point and absorbs the shortfall.
+
+This is distinct from the rounding policy's dust concerns (R1, R2), which govern how money-moving expressions round. No policy currently governs how a *discrete* decision behaves when its inputs carry certified approximation error, and the decision has no directional bias: it is as likely to harm the holder as the pool.
+
+**Known RED test:** `deepbook_predict::scope_flow__intent_rounding__knockout_decision_tests::knockout_threshold_inside_the_pricing_error_band_forfeits_real_equity`
+The test grants the payout its full certified pricing error and the close fee before asserting, so it fails only on the classification, never on payout dust.
+
+**Action:** Give the knock-out predicate an explicit direction under uncertainty rather than a point comparison — evaluate the threshold test against a bound on the price that makes the answer definite, so an order that might be above its threshold is never knocked out, and record the residual (the pool carries a possibly-liquidatable order for one valuation cycle) as the accepted side. The same treatment applies to every other discrete comparison over a computed price. If instead the point estimate is retained, the decision needs a registered response policy stating who bears the misclassification and why the exposure is acceptable at the certified error bound.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
