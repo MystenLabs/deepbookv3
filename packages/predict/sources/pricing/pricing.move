@@ -60,6 +60,9 @@ public struct PriceMemo has drop {
     ticks: vector<u64>,
     /// `up_price(ticks[i] * tick_size)`, parallel to `ticks`.
     prices: vector<u64>,
+    /// Certified evaluation error of each `prices[i]`, parallel to `prices`, so the
+    /// NAV walk can accumulate the pool mark's error alongside its value.
+    errors: vector<u64>,
 }
 
 const EZeroForward: u64 = 0;
@@ -136,6 +139,11 @@ public fun range_price_checked(pricer: &Pricer, lower: Strike, higher: Strike): 
     let (price, error) = compute_range_price(&pricer.svi, pricer.forward, lower, higher);
     assert!(error <= math::mul(max_contract_price_deviation!(), price), EPriceTooImprecise);
     price
+}
+
+/// UP price and its certified evaluation error, for the NAV walk's price memo.
+public(package) fun up_price_with_error(pricer: &Pricer, strike: Strike): (u64, u64) {
+    compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
 // === Public-Package Functions ===
@@ -228,27 +236,35 @@ public(package) fun load_exact_spot_read(
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
 public(package) fun new_price_memo(): PriceMemo {
-    PriceMemo { ticks: vector[], prices: vector[] }
+    PriceMemo { ticks: vector[], prices: vector[], errors: vector[] }
 }
 
-/// Read the cached range price `up_price(lower) - up_price(higher)` for one order's
-/// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
-/// Both finite boundaries must have been cached by the linear walk; a finite miss
-/// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
-public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher_tick: u64): u64 {
-    memo.cached_up_price(lower_tick).saturating_sub(memo.cached_up_price(higher_tick))
+/// Read the cached range price `up_price(lower) - up_price(higher)` and its error
+/// for one order's tick range, mirroring `range_price`'s infinity sentinels and
+/// saturating floor. Both finite boundaries must have been cached by the linear
+/// walk; a finite miss aborts (the order's tick is not a payout-tree node — a
+/// broken index, not dust). The range's error is the sum of the two boundary errors.
+public(package) fun cached_range_price(
+    memo: &PriceMemo,
+    lower_tick: u64,
+    higher_tick: u64,
+): (u64, u64) {
+    let (lower_price, lower_error) = memo.cached_up_price(lower_tick);
+    let (higher_price, higher_error) = memo.cached_up_price(higher_tick);
+    (lower_price.saturating_sub(higher_price), lower_error + higher_error)
 }
 
-/// Price `tick` through `pricer` and append it to the cache. Called once per node by
-/// the in-order linear walk, so `ticks` stays ascending for `cached_up_price`'s
-/// binary search. Only finite ticks are stored (the tree never holds inf boundaries).
+/// Price `tick` through `pricer`, appending the price and its certified error to
+/// the cache, and return both. Called once per node by the in-order linear walk, so
+/// `ticks` stays ascending for `cached_up_price`'s binary search. Only finite ticks
+/// are stored (the tree never holds inf boundaries).
 public(package) fun price_and_cache(
     memo: &mut PriceMemo,
     pricer: &Pricer,
     tick: u64,
     tick_size: u64,
-): u64 {
-    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+): (u64, u64) {
+    let (price, error) = pricer.up_price_with_error(range_codec::strike_from_tick(tick, tick_size));
     if (!memo.prices.is_empty()) {
         let previous = memo.prices[memo.prices.length() - 1];
         // Higher strikes should not have higher UP prices. NAV's linear tree walk
@@ -257,17 +273,19 @@ public(package) fun price_and_cache(
     };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
-    price
+    memo.errors.push_back(error);
+    (price, error)
 }
 
 // === Private Functions ===
 
-/// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
-/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
-/// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
-fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
-    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
-    if (tick == constants::pos_inf_tick!()) return 0;
+/// Look up a boundary tick's cached UP price and its error. Infinity boundaries
+/// are never tree nodes, so they short-circuit to `compute_up_price`'s exact
+/// sentinels (`P(-inf) = 1`, `P(+inf) = 0`, zero error); every finite tick must be
+/// present or the exposure index is broken.
+fun cached_up_price(memo: &PriceMemo, tick: u64): (u64, u64) {
+    if (tick == 0) return (math::float_scaling!(), 0); // tick 0 is the neg-inf sentinel
+    if (tick == constants::pos_inf_tick!()) return (0, 0);
 
     let ticks = &memo.ticks;
     let mut lo = 0;
@@ -275,7 +293,7 @@ fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
     while (lo < hi) {
         let mid = lo + (hi - lo) / 2;
         let mid_tick = ticks[mid];
-        if (mid_tick == tick) return memo.prices[mid];
+        if (mid_tick == tick) return (memo.prices[mid], memo.errors[mid]);
         if (mid_tick < tick) lo = mid + 1 else hi = mid;
     };
     abort ETickNotInPriceMemo

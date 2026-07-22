@@ -212,17 +212,19 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// flush mark never prices a claim above what the protocol honors once the
 /// ambient sweep liquidates it; every other order contributes its positive
 /// `range_value - floor_shares`. Boundary aggregation and per-order correction
-/// round at different points, so the subtraction saturates at zero.
-public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
+/// round at different points, so the subtraction saturates at zero. Also returns
+/// the certified liability error — the walk and correction errors sum, since the
+/// subtraction adds their widths.
+public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): (u64, u64) {
     let mut memo = pricing::new_price_memo();
-    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
-    let correction = exposure
+    let (linear, linear_error) = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
+    let (correction, correction_error) = exposure
         .liquidation
         .correction_value(
             &memo,
             exposure.config.liquidation_ltv(),
         );
-    linear.saturating_sub(correction)
+    (linear.saturating_sub(correction), linear_error + correction_error)
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.

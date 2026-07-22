@@ -237,11 +237,18 @@ public fun load_live_pricer(
 /// `Pricer`; an expired but unsettled market cannot be valued through this path.
 /// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
+    let (nav, _) = market.current_nav_with_error(pricer);
+    nav
+}
+
+/// `current_nav` plus its certified error, for the flush's pool mark. Free cash is
+/// exact, so the NAV error equals the liability error.
+public(package) fun current_nav_with_error(market: &ExpiryMarket, pricer: &Pricer): (u64, u64) {
     market.assert_pricer_bound(pricer);
-    let liability = market.strike_exposure.exact_live_liability(pricer);
+    let (liability, error) = market.strike_exposure.exact_live_liability(pricer);
     // Marked liability and free cash are computed through different rounded
     // aggregates; negative marked NAV is represented as zero.
-    market.cash.free_cash().saturating_sub(liability)
+    (market.cash.free_cash().saturating_sub(liability), error)
 }
 
 /// Return one order's close value before fees. Liquidated or currently
