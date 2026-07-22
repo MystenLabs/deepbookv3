@@ -55,6 +55,12 @@ const EBelowMinBootstrapLiquidity: u64 = 6;
 const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
+const EPlpPriceTooImprecise: u64 = 10;
+
+/// Max relative deviation the PLP flush mark may carry from true NAV before the
+/// flush aborts (1% at 1e9). Checked against the certified pool-NAV error before
+/// the mark fills any queue (`predeploy/response-policies.md` deviation bounds).
+macro fun max_plp_price_deviation(): u64 { 10_000_000 }
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -91,6 +97,9 @@ public struct PoolValuation {
     valued_expiry_markets: vector<ID>,
     /// Running Σ of each valued market's NAV (settled markets contribute 0).
     total_nav: u64,
+    /// Running Σ of each valued market's certified NAV error, so the flush can
+    /// reject a pool mark whose deviation from true NAV exceeds the bound.
+    total_nav_error: u64,
 }
 
 // === Package Initializer ===
@@ -241,8 +250,8 @@ public fun value_expiry(
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    let nav = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
-        0
+    let (nav, nav_error) = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
+        (0, 0)
     } else {
         let pricer = market.load_live_pricer(
             config,
@@ -253,10 +262,11 @@ public fun value_expiry(
             bs_svi,
             clock,
         );
-        market.current_nav(&pricer)
+        market.current_nav_with_error(&pricer)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;
+    valuation.total_nav_error = valuation.total_nav_error + nav_error;
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -287,13 +297,21 @@ public fun finish_flush(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
     );
-    let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
+    let PoolValuation { total_nav, total_nav_error, valued_expiry_markets, .. } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
         vault,
         config.protocol_reserve_profit_share(),
         total_nav,
+    );
+    // The flush prices both LP queues off this one mark, so abort the whole flush
+    // if the certified pool-NAV error exceeds the deviation bound rather than fill
+    // at a mark that could be off by more than 1% of true NAV. Idle cash and
+    // exclusions are exact, so the mark's error equals the pool-NAV error.
+    assert!(
+        total_nav_error <= math::mul(max_plp_price_deviation!(), pool_nav),
+        EPlpPriceTooImprecise,
     );
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
@@ -955,6 +973,7 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
         expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
         total_nav: 0,
+        total_nav_error: 0,
     }
 }
 

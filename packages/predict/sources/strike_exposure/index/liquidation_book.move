@@ -72,16 +72,18 @@ public(package) fun correction_value(
     book: &LiquidationBook,
     memo: &PriceMemo,
     liquidation_ltv: u64,
-): u64 {
+): (u64, u64) {
     let mut correction = 0;
+    let mut correction_error = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
-        let range_value = math::mul(
-            memo.cached_range_price(order.lower_tick(), order.higher_tick()),
-            order.quantity(),
+        let (range_price, range_price_error) = memo.cached_range_price(
+            order.lower_tick(),
+            order.higher_tick(),
         );
+        let range_value = math::mul(range_price, order.quantity());
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.
@@ -91,9 +93,12 @@ public(package) fun correction_value(
             range_value.min(order.floor_shares())
         };
         correction = correction + cap;
+        // The cap never exceeds the range value, so its error is at most the range
+        // value's error — summing those bounds the correction's error.
+        correction_error = correction_error + math::mul(range_price_error, order.quantity());
         cursor = book.next_cursor(scan);
     };
-    correction
+    (correction, correction_error)
 }
 
 public(package) fun new(ctx: &mut TxContext): LiquidationBook {

@@ -104,8 +104,8 @@ public(package) fun walk_linear(
     pricer: &Pricer,
     memo: &mut PriceMemo,
     tick_size: u64,
-): u64 {
-    let (start_total, end_total) = walk_linear_subtree(
+): (u64, u64) {
+    let (start_total, end_total, error_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
@@ -113,8 +113,10 @@ public(package) fun walk_linear(
         memo,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
-    // once. This can differ from pricing and flooring each order independently.
-    (tree.base.quantity + start_total).saturating_sub(end_total)
+    // once. This can differ from pricing and flooring each order independently. The
+    // liability error is the sum of each node's price error against its quantities
+    // (errors add through the signed aggregate; the floor never widens them).
+    ((tree.base.quantity + start_total).saturating_sub(end_total), error_total)
 }
 
 /// Create an empty sparse payout tree.
@@ -408,23 +410,43 @@ fun walk_linear_subtree(
     pricer: &Pricer,
     tick_size: u64,
     memo: &mut PriceMemo,
-): (u64, u64) {
-    if (root.is_none()) return (0, 0);
+): (u64, u64, u64) {
+    if (root.is_none()) return (0, 0, 0);
     let tick = *root.borrow();
     let node = nodes[tick];
 
-    let (left_start, left_end) = walk_linear_subtree(nodes, node.left, pricer, tick_size, memo);
+    let (left_start, left_end, left_error) = walk_linear_subtree(
+        nodes,
+        node.left,
+        pricer,
+        tick_size,
+        memo,
+    );
 
-    let price = memo.price_and_cache(pricer, tick, tick_size);
+    let (price, error) = memo.price_and_cache(pricer, tick, tick_size);
     let mut start_total = 0;
     let mut end_total = 0;
+    let mut node_error = 0;
     if (node.local_start.quantity != node.local_end.quantity) {
         start_total = math::mul(price, node.local_start.quantity);
         end_total = math::mul(price, node.local_end.quantity);
+        // One node price shifts both terms, so its net liability contribution is
+        // `price * (start - end)` and the error rides `|start - end|`.
+        node_error = math::mul(error, node.local_start.quantity.diff(node.local_end.quantity));
     };
 
-    let (right_start, right_end) = walk_linear_subtree(nodes, node.right, pricer, tick_size, memo);
-    (start_total + left_start + right_start, end_total + left_end + right_end)
+    let (right_start, right_end, right_error) = walk_linear_subtree(
+        nodes,
+        node.right,
+        pricer,
+        tick_size,
+        memo,
+    );
+    (
+        start_total + left_start + right_start,
+        end_total + left_end + right_end,
+        node_error + left_error + right_error,
+    )
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {

@@ -60,6 +60,9 @@ public struct PriceMemo has drop {
     ticks: vector<u64>,
     /// `up_price(ticks[i] * tick_size)`, parallel to `ticks`.
     prices: vector<u64>,
+    /// Certified evaluation error of each `prices[i]`, parallel to `prices`, so the
+    /// NAV walk can accumulate the pool mark's error alongside its value.
+    errors: vector<u64>,
 }
 
 const EZeroForward: u64 = 0;
@@ -80,6 +83,7 @@ const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
 const EBlockScholesMinVarianceInvalid: u64 = 16;
 const ENonMonotonePriceMemo: u64 = 17;
+const EPriceTooImprecise: u64 = 18;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -96,18 +100,50 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+/// Max relative deviation a contract price may carry from its true value before a
+/// trade aborts (0.1% at 1e9). The error is certified per call from the fixed-point
+/// evaluation; availability, not silent mispricing, is the failure mode when
+/// precision is insufficient (`predeploy/response-policies.md` deviation bounds).
+macro fun max_contract_price_deviation(): u64 { 1_000_000 }
+
+/// Documented per-primitive fixed-point error budgets (raw @1e9) from `fixed_math`,
+/// used to certify the up_price evaluation error.
+macro fun ln_error(): u64 { 15 }
+
+macro fun sqrt_error(): u64 { 1 }
+
+macro fun normal_cdf_error(): u64 { 8 }
+
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and
 /// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
-    compute_up_price(&pricer.svi, pricer.forward, strike)
+    let (price, _) = compute_up_price(&pricer.svi, pricer.forward, strike);
+    price
 }
 
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+    let (price, _) = compute_range_price(&pricer.svi, pricer.forward, lower, higher);
+    price
+}
+
+/// `range_price` for the trade path: aborts `EPriceTooImprecise` when the
+/// certified evaluation error exceeds `max_contract_price_deviation` of the price,
+/// so mint and close never execute at a price whose true value could be off by
+/// more than the ratified bound. Availability is the failure mode; precision is
+/// the lever that recovers it (`predeploy/response-policies.md` deviation bounds).
+public fun range_price_checked(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
+    let (price, error) = compute_range_price(&pricer.svi, pricer.forward, lower, higher);
+    assert!(error <= math::mul(max_contract_price_deviation!(), price), EPriceTooImprecise);
+    price
+}
+
+/// UP price and its certified evaluation error, for the NAV walk's price memo.
+public(package) fun up_price_with_error(pricer: &Pricer, strike: Strike): (u64, u64) {
+    compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
 // === Public-Package Functions ===
@@ -200,27 +236,35 @@ public(package) fun load_exact_spot_read(
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
 public(package) fun new_price_memo(): PriceMemo {
-    PriceMemo { ticks: vector[], prices: vector[] }
+    PriceMemo { ticks: vector[], prices: vector[], errors: vector[] }
 }
 
-/// Read the cached range price `up_price(lower) - up_price(higher)` for one order's
-/// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
-/// Both finite boundaries must have been cached by the linear walk; a finite miss
-/// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
-public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher_tick: u64): u64 {
-    memo.cached_up_price(lower_tick).saturating_sub(memo.cached_up_price(higher_tick))
+/// Read the cached range price `up_price(lower) - up_price(higher)` and its error
+/// for one order's tick range, mirroring `range_price`'s infinity sentinels and
+/// saturating floor. Both finite boundaries must have been cached by the linear
+/// walk; a finite miss aborts (the order's tick is not a payout-tree node — a
+/// broken index, not dust). The range's error is the sum of the two boundary errors.
+public(package) fun cached_range_price(
+    memo: &PriceMemo,
+    lower_tick: u64,
+    higher_tick: u64,
+): (u64, u64) {
+    let (lower_price, lower_error) = memo.cached_up_price(lower_tick);
+    let (higher_price, higher_error) = memo.cached_up_price(higher_tick);
+    (lower_price.saturating_sub(higher_price), lower_error + higher_error)
 }
 
-/// Price `tick` through `pricer` and append it to the cache. Called once per node by
-/// the in-order linear walk, so `ticks` stays ascending for `cached_up_price`'s
-/// binary search. Only finite ticks are stored (the tree never holds inf boundaries).
+/// Price `tick` through `pricer`, appending the price and its certified error to
+/// the cache, and return both. Called once per node by the in-order linear walk, so
+/// `ticks` stays ascending for `cached_up_price`'s binary search. Only finite ticks
+/// are stored (the tree never holds inf boundaries).
 public(package) fun price_and_cache(
     memo: &mut PriceMemo,
     pricer: &Pricer,
     tick: u64,
     tick_size: u64,
-): u64 {
-    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+): (u64, u64) {
+    let (price, error) = pricer.up_price_with_error(range_codec::strike_from_tick(tick, tick_size));
     if (!memo.prices.is_empty()) {
         let previous = memo.prices[memo.prices.length() - 1];
         // Higher strikes should not have higher UP prices. NAV's linear tree walk
@@ -229,17 +273,19 @@ public(package) fun price_and_cache(
     };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
-    price
+    memo.errors.push_back(error);
+    (price, error)
 }
 
 // === Private Functions ===
 
-/// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
-/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
-/// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
-fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
-    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
-    if (tick == constants::pos_inf_tick!()) return 0;
+/// Look up a boundary tick's cached UP price and its error. Infinity boundaries
+/// are never tree nodes, so they short-circuit to `compute_up_price`'s exact
+/// sentinels (`P(-inf) = 1`, `P(+inf) = 0`, zero error); every finite tick must be
+/// present or the exposure index is broken.
+fun cached_up_price(memo: &PriceMemo, tick: u64): (u64, u64) {
+    if (tick == 0) return (math::float_scaling!(), 0); // tick 0 is the neg-inf sentinel
+    if (tick == constants::pos_inf_tick!()) return (0, 0);
 
     let ticks = &memo.ticks;
     let mut lo = 0;
@@ -247,7 +293,7 @@ fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
     while (lo < hi) {
         let mid = lo + (hi - lo) / 2;
         let mid_tick = ticks[mid];
-        if (mid_tick == tick) return memo.prices[mid];
+        if (mid_tick == tick) return (memo.prices[mid], memo.errors[mid]);
         if (mid_tick < tick) lo = mid + 1 else hi = mid;
     };
     abort ETickNotInPriceMemo
@@ -427,23 +473,25 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): (u64, u64) {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
+    let (lower_up_price, lower_error) = compute_up_price(svi, forward, lower);
+    let (higher_up_price, higher_error) = compute_up_price(svi, forward, higher);
     // Fixed-point approximation or a non-monotone SVI surface can invert the
-    // boundary prices; the range probability is floored at zero.
-    lower_up_price.saturating_sub(higher_up_price)
+    // boundary prices; the range probability is floored at zero. The range's error
+    // is the sum of the two boundary evaluation errors.
+    (lower_up_price.saturating_sub(higher_up_price), lower_error + higher_error)
 }
 
-/// Compute the adjusted UP digital probability for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+/// Compute the adjusted UP digital probability for `strike` and its certified
+/// evaluation error. The open-ended sentinels are exact, so they carry no error.
+fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): (u64, u64) {
     if (strike.is_neg_inf()) {
-        return math::float_scaling!()
+        return (math::float_scaling!(), 0)
     };
     if (strike.is_pos_inf()) {
-        return 0
+        return (0, 0)
     };
 
     compute_nd2(svi, forward, strike.value())
@@ -454,17 +502,22 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
+///
+/// Returns the price and a certified upper bound on `|price - true price|` (raw
+/// @1e9) at these inputs, so callers can abort a trade whose price is too
+/// imprecise instead of executing at it.
+fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): (u64, u64) {
     assert!(forward > 0, EZeroForward);
 
     // Saturate ratios outside the fixed-point domain to their digital-probability
-    // limits instead of aborting live valuation and position flows.
+    // limits instead of aborting live valuation and position flows. These limits
+    // are exact digital values, so they carry zero evaluation error.
     let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
+    if (strike_ratio_opt.is_none()) return (0, 0);
     let strike_ratio = strike_ratio_opt.destroy_some();
     // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
+    if (strike_ratio == 0) return (math::float_scaling!(), 0);
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
@@ -497,11 +550,15 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
     let d2 = d2.neg();
 
+    // Certified error at these inputs; the 1/sqrt(w) conditioning makes it grow at
+    // low variance, which is where the trade abort fires.
+    let error = up_price_error_bound(total_var, sqrt_var, &d2, b);
+
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
     let w_prime = i64::from_u64(b).mul_scaled(&slope);
     let nd2 = math::normal_cdf(&d2);
-    if (w_prime.is_zero()) return nd2;
+    if (w_prime.is_zero()) return (nd2, error);
 
     let correction_magnitude = math::mul_div_down(
         math::normal_pdf(&d2),
@@ -510,9 +567,24 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
-    if (adjusted.is_negative()) return 0;
-    if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
-    adjusted.magnitude()
+    if (adjusted.is_negative()) return (0, error);
+    if (adjusted.magnitude() > math::float_scaling!()) return (math::float_scaling!(), error);
+    (adjusted.magnitude(), error)
+}
+
+/// Certified upper bound on `|computed up_price - true up_price|` (raw @1e9) from
+/// the fixed-point evaluation at these intermediates. `b * inner` floors to 1e9,
+/// so the total variance `w` carries up to one raw unit plus the ln/sqrt
+/// uncertainty in `inner`; that `w` uncertainty and the ln uncertainty in `k`
+/// both feed `d2 = -(k + w/2)/sqrt(w)` amplified by `1/sqrt(w)`, and `phi(d2)`
+/// maps the `d2` error onto the price. Doubled to fold the second-order and skew
+/// terms in conservatively: a loose but sound bound only ever over-aborts.
+fun up_price_error_bound(total_var: u64, sqrt_var: u64, d2: &I64, b: u64): u64 {
+    let dw = math::mul(b, ln_error!() + sqrt_error!()) + 1;
+    let d_numerator = ln_error!() + dw / 2;
+    let dd2 =
+        math::div(d_numerator, sqrt_var) + math::mul(d2.magnitude(), math::div(dw, 2 * total_var));
+    2 * (math::mul(math::normal_pdf(d2), dd2) + normal_cdf_error!())
 }
 
 fun is_positive(value: &I64): bool {
