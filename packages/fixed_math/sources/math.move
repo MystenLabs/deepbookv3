@@ -68,6 +68,11 @@ const INV_13_U128: u128 = 76_923_077;
 /// Returns the fixed-point scale: `500_000_000` is 50% and `1_000_000_000` is 100%.
 public macro fun float_scaling(): u64 { 1_000_000_000 }
 
+/// `|x|` beyond which `normal_cdf`/`normal_pdf` saturate to their exact tail
+/// limits. Callers that clamp a `normal_cdf` argument share this bound so the
+/// clamp cannot drift from the saturation threshold.
+public macro fun normal_cdf_saturation(): u64 { 8 * float_scaling!() }
+
 // === Public Functions ===
 
 /// Multiply two 1e9-scaled fixed-point values, rounding down.
@@ -169,7 +174,7 @@ public fun exp(x: &i64::I64): u64 {
 public fun normal_cdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
-    if (x_mag > 8 * float_scaling!()) {
+    if (x_mag > normal_cdf_saturation!()) {
         return if (x_negative) { 0 } else { float_scaling!() }
     };
     (normal_cdf_u128((x_mag as u128), x_negative) as u64)
@@ -179,7 +184,7 @@ public fun normal_cdf(x: &i64::I64): u64 {
 /// Returns a 1e9-scaled density with absolute error at most 50 raw units; tails beyond `|8|` round to zero.
 public fun normal_pdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
-    if (x_mag > 8 * float_scaling!()) return 0;
+    if (x_mag > normal_cdf_saturation!()) return 0;
 
     let x_sq_half = (((x_mag as u128) * (x_mag as u128)) / (2 * F)) as u64;
     let exponent = i64::from_parts(x_sq_half, true);
