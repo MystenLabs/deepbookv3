@@ -9,6 +9,7 @@ module deepbook_core_account::deepbook_core_account;
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook::{
     account::Account as CoreAccount,
+    constants,
     order::Order,
     order_info::OrderInfo,
     pool::Pool,
@@ -17,6 +18,8 @@ use deepbook::{
 use deepbook_core_account::account_data;
 use sui::{accumulator::AccumulatorRoot, clock::Clock, vec_set::{Self as vec_set, VecSet}};
 use token::deep::DEEP;
+
+const EMarketOrderPriceLimitExceeded: u64 = 0;
 
 /// Return whether this account's embedded manager has DeepBook core pool account data.
 public fun pool_account_exists<BaseAsset, QuoteAsset>(
@@ -149,7 +152,9 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     info
 }
 
-/// Place a DeepBook market order using account custody.
+/// Place a DeepBook market order using account custody. `price_limit` is the
+/// maximum average execution price for a bid and the minimum for an ask, in
+/// DeepBook's fixed-point price units. Orders with no fills skip the price check.
 public fun place_market_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -158,6 +163,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
+    price_limit: u64,
     is_bid: bool,
     pay_with_deep: bool,
     root: &AccumulatorRoot,
@@ -189,6 +195,15 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
+    if (info.executed_quantity() > 0) {
+        let quote_value =
+            (info.cumulative_quote_quantity() as u128) * constants::float_scaling_u128();
+        let limit_value = (info.executed_quantity() as u128) * (price_limit as u128);
+        assert!(
+            if (is_bid) quote_value <= limit_value else quote_value >= limit_value,
+            EMarketOrderPriceLimitExceeded,
+        );
+    };
     let (base_swept, quote_swept, deep_swept) = account_data::sweep_all<BaseAsset, QuoteAsset>(
         d,
         ctx,
