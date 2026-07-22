@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{i64::{Self, I64}, math};
+use fixed_math::{i64::{Self, I64}, interval::{Self, Interval}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -62,6 +62,18 @@ public struct PriceMemo has drop {
     prices: vector<u64>,
 }
 
+/// Envelope twin of `PriceMemo` for the interval valuation lane: cached
+/// `up_price_interval` results keyed by finite boundary tick, ascending. The
+/// monotone guard weakens to definite inversion only (a low bound above the
+/// previous high bound): inversions inside overlapping envelopes are honest
+/// width, definite ones are broken surfaces and abort valuation.
+public struct IntervalPriceMemo has drop {
+    /// Finite boundary ticks in ascending order (the in-order walk appends them).
+    ticks: vector<u64>,
+    /// `up_price_interval(ticks[i] * tick_size)`, parallel to `ticks`.
+    prices: vector<Interval>,
+}
+
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const ENonPositiveVariance: u64 = 2;
@@ -80,6 +92,7 @@ const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
 const EBlockScholesMinVarianceInvalid: u64 = 16;
 const ENonMonotonePriceMemo: u64 = 17;
+const EBlockScholesSkewExceedsVariance: u64 = 18;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -94,7 +107,34 @@ macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_f
 
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 
-macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
+// Upper bound on |a|, |m|, and sigma. Kept tight (not a loose sanity cap) so the
+// total variance stays bounded: the deep-ITM/OTM ratio saturations return the
+// exact digital limits (0 or 1) only when variance is small enough that those
+// limits are actually exact — a high-variance surface can have a ~0.5 true price
+// at an extreme strike. Real Block Scholes surfaces sit far inside (|a| <= 2e-3,
+// sigma <= 0.3). Verified sound with `b <= max_svi_b` over the full moneyness
+// range (predeploy pricing_error_certificate.py).
+macro fun max_svi_input(): u64 { math::float_scaling!() }
+
+// Upper bound on b (the SVI slope). Tighter than the others because b scales the
+// variance by log-moneyness at extreme strikes; `b <= 0.1` keeps the saturation
+// limits exact and the skew correction in band. Real b <= 0.03.
+macro fun max_svi_b(): u64 { math::float_scaling!() / 10 }
+
+// The sound widen applied to one admitted `up_price` evaluation, in raw 1e9
+// units. Set to the adversarial-maximum high-precision pricing error over the
+// admission-gated SVI box (~9.5e-5) times a ~3x margin for the sampling gap.
+// One value suffices because the admission gate bounds the error across the
+// whole admitted domain; saturated evaluations (ratio outside the fixed-point
+// domain) sit on exact digital limits and are returned exact. Interval
+// branch-and-bound verification of this bound is planned hardening (predeploy
+// interval-arithmetic doc).
+macro fun up_price_evaluation_error(): u64 { 300_000 }
+
+// `beta^2 <= skew_to_variance_bound * min_tv` is the admission gate keeping the
+// skew correction clear of the [0,1] price clamp: it is the fixed-point form of
+// `beta/(2*sqrt(min_tv)) <= 1.5`, so the bound is `(2 * 1.5)^2 = 9`.
+macro fun skew_to_variance_bound(): u64 { 9 }
 
 // === Public Functions ===
 
@@ -136,6 +176,26 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
 public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
     let ExactSpotRead { spot } = read;
     spot
+}
+
+/// Interval form of `up_price`: the scalar evaluation widened by the single
+/// certified evaluation-error bound, intersected with the probability domain.
+/// Infinity sentinels and saturated digital limits are exact and stay zero-width.
+/// Valuation lanes consume this; scalar `up_price` remains for quotes and devInspect.
+public(package) fun up_price_interval(pricer: &Pricer, strike: Strike): Interval {
+    compute_up_price_interval(&pricer.svi, pricer.forward, strike)
+}
+
+/// Interval form of `range_price` for trade admission and per-order pricing
+/// outside the memo'd walk. The subtraction clamps the low side at zero (an
+/// inversion inside overlapping envelopes is honest width) and aborts only on a
+/// definitely negative range — a surface violating the vendor's monotonicity
+/// guarantee beyond the evaluation envelope.
+public(package) fun range_price_interval(pricer: &Pricer, lower: Strike, higher: Strike): Interval {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+    let lower_up = compute_up_price_interval(&pricer.svi, pricer.forward, lower);
+    let higher_up = compute_up_price_interval(&pricer.svi, pricer.forward, higher);
+    lower_up.sub(&higher_up)
 }
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
@@ -247,6 +307,64 @@ public(package) fun price_and_cache(
         // Higher strikes should not have higher UP prices. NAV's linear tree walk
         // relies on that order; an inverted surface can overstate pool value.
         assert!(price <= previous, ENonMonotonePriceMemo);
+    };
+    memo.ticks.push_back(tick);
+    memo.prices.push_back(price);
+    price
+}
+
+/// Create an empty per-flush envelope price cache (see `IntervalPriceMemo`).
+public(package) fun new_interval_price_memo(): IntervalPriceMemo {
+    IntervalPriceMemo { ticks: vector[], prices: vector[] }
+}
+
+/// Read the cached range-price envelope for one order's tick range. The interval
+/// subtraction clamps the low side at zero — an inversion inside overlapping
+/// envelopes is honest width, not an error — and aborts only when the range is
+/// definitely negative: a surface violation beyond the envelope that slipped the
+/// adjacent-pair guard (possible only via accumulation across many ticks).
+public(package) fun cached_range_price_interval(
+    memo: &IntervalPriceMemo,
+    lower_tick: u64,
+    higher_tick: u64,
+): Interval {
+    memo.cached_up_price_interval(lower_tick).sub(&memo.cached_up_price_interval(higher_tick))
+}
+
+/// Look up a boundary tick's cached UP-price envelope. Infinity sentinels are
+/// mathematically exact and zero-width; every finite tick must be present or the
+/// exposure index is broken.
+public(package) fun cached_up_price_interval(memo: &IntervalPriceMemo, tick: u64): Interval {
+    if (tick == 0) return interval::exact(math::float_scaling!());
+    if (tick == constants::pos_inf_tick!()) return interval::exact(0);
+
+    let ticks = &memo.ticks;
+    let mut lo = 0;
+    let mut hi = ticks.length();
+    while (lo < hi) {
+        let mid = lo + (hi - lo) / 2;
+        let mid_tick = ticks[mid];
+        if (mid_tick == tick) return memo.prices[mid];
+        if (mid_tick < tick) lo = mid + 1 else hi = mid;
+    };
+    abort ETickNotInPriceMemo
+}
+
+/// Price `tick` as an envelope and append it to the cache; the interval twin of
+/// `price_and_cache`. The monotone guard weakens to DEFINITE inversion only
+/// (this price's low bound above the previous price's high bound): an inversion
+/// inside overlapping envelopes is absorbed as width, a definite one means the
+/// surface violates the monotonicity the vendor guarantees and aborts valuation.
+public(package) fun price_and_cache_interval(
+    memo: &mut IntervalPriceMemo,
+    pricer: &Pricer,
+    tick: u64,
+    tick_size: u64,
+): Interval {
+    let price = pricer.up_price_interval(range_codec::strike_from_tick(tick, tick_size));
+    if (!memo.prices.is_empty()) {
+        let previous = memo.prices[memo.prices.length() - 1];
+        assert!(price.lo() <= previous.hi(), ENonMonotonePriceMemo);
     };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
@@ -399,7 +517,7 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
-    assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    assert!(svi.b() <= max_svi_b!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(
@@ -414,6 +532,18 @@ fun assert_min_total_variance_positive(svi: &SVIParams) {
     let a = svi.a();
     let min_total_var = i64::from_u64(min_variance_increment).add(&a);
     assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+    // Skew/variance admission gate. `beta = b*(1+|rho|)` bounds the skew
+    // correction; requiring `beta^2 <= skew_to_variance_bound * min_tv` keeps the
+    // correction clear of the [0,1] price clamp so the pricing error stays within
+    // the single certified widen. Real Block Scholes surfaces clear this ~2x.
+    // `beta` uses `mul_up` so the bound is never under-stated.
+    let beta = svi.b() + math::mul_up(svi.b(), svi.rho().magnitude());
+    let min_tv = min_total_var.magnitude() as u128;
+    assert!(
+        (beta as u128) * (beta as u128)
+            <= (skew_to_variance_bound!() as u128) * min_tv * (math::float_scaling!() as u128),
+        EBlockScholesSkewExceedsVariance,
+    );
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -448,7 +578,22 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
         return 0
     };
 
-    compute_nd2(svi, forward, strike.value())
+    let (price, _) = compute_nd2_terms(svi, forward, strike.value());
+    price
+}
+
+/// Widen one scalar evaluation into its sound envelope. A saturated evaluation
+/// (ratio outside the fixed-point domain) sits on an exact digital limit and is
+/// returned exact; every other admitted evaluation carries the single certified
+/// widen `up_price_evaluation_error`.
+fun compute_up_price_interval(svi: &SVIParams, forward: u64, strike: Strike): Interval {
+    if (strike.is_neg_inf()) return interval::exact(math::float_scaling!());
+    if (strike.is_pos_inf()) return interval::exact(0);
+
+    let (price, saturated) = compute_nd2_terms(svi, forward, strike.value());
+    if (saturated) return interval::exact(price);
+    let widened = interval::exact(price).widen(up_price_evaluation_error!());
+    interval::new(widened.lo(), widened.hi().min(math::float_scaling!()))
 }
 
 /// Binary pricing from SVI total variance:
@@ -456,17 +601,21 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
+///
+/// Returns the price and whether it saturated on an exact digital limit (ratio
+/// outside the fixed-point domain, price 0 or 1) — which the interval lane
+/// returns exact rather than widening.
+fun compute_nd2_terms(svi_params: &SVIParams, forward: u64, strike: u64): (u64, bool) {
     assert!(forward > 0, EZeroForward);
 
     // Saturate ratios outside the fixed-point domain to their digital-probability
     // limits instead of aborting live valuation and position flows.
     let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
+    if (strike_ratio_opt.is_none()) return (0, true);
     let strike_ratio = strike_ratio_opt.destroy_some();
     // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
+    if (strike_ratio == 0) return (math::float_scaling!(), true);
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
@@ -485,25 +634,17 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b();
-    let variance_increment = math::mul(b, inner.magnitude());
     let a = svi_params.a();
-    let total_var = i64::from_u64(variance_increment).add(&a);
-    // Total variance must be positive because pricing takes sqrt(w) below.
-    assert!(is_positive(&total_var), ENonPositiveVariance);
-    let total_var = total_var.magnitude();
-
-    let sqrt_var = math::sqrt(total_var, math::float_scaling!());
-    let sqrt_var_i64 = i64::from_u64(sqrt_var);
-    let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = k.add(&half_var_i64);
-    let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
-    let d2 = d2.neg();
+    // Variance, sqrt(w), and d2 are carried at 1e18 in u128: flooring the
+    // `b * inner` product to 1e9 discards the whole low-variance signal (a
+    // 5-minute surface has w ~ 1e-8, about ten raw units at 1e9).
+    let (sqrt_var, d2) = variance_sqrt_and_d2(&a, b, inner.magnitude(), &k);
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
     let w_prime = i64::from_u64(b).mul_scaled(&slope);
     let nd2 = math::normal_cdf(&d2);
-    if (w_prime.is_zero()) return nd2;
+    if (w_prime.is_zero()) return (nd2, false);
 
     let correction_magnitude = math::mul_div_down(
         math::normal_pdf(&d2),
@@ -512,9 +653,49 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
-    if (adjusted.is_negative()) return 0;
-    if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
-    adjusted.magnitude()
+    if (adjusted.is_negative()) return (0, false);
+    if (adjusted.magnitude() > math::float_scaling!()) {
+        return (math::float_scaling!(), false)
+    };
+    (adjusted.magnitude(), false)
+}
+
+/// Total variance, `sqrt(w)`, and `d2` computed at `u128`/`1e18` precision.
+/// Flooring `b * inner` to `1e9` (as `math::mul` would) discards the entire
+/// low-variance signal — a 5-minute surface has `w ~ 1e-8`, about ten raw units
+/// at `1e9` — so the variance path runs at `1e18` and only `d2` (which is
+/// `O(1..8)` and read by `normal_cdf`) is narrowed back to `1e9`. Returns
+/// `(sqrt(w) at 1e9, d2)`; aborts `ENonPositiveVariance` when `w <= 0`.
+fun variance_sqrt_and_d2(a: &I64, b: u64, inner: u64, k: &I64): (u64, I64) {
+    let f = math::float_scaling!() as u128;
+    // b * inner kept at 1e18 (no floor to 1e9)
+    let increment = (b as u128) * (inner as u128);
+    let a_scaled = (a.magnitude() as u128) * f;
+    let total_var = if (a.is_negative()) {
+        assert!(increment > a_scaled, ENonPositiveVariance);
+        increment - a_scaled
+    } else {
+        assert!(increment + a_scaled > 0, ENonPositiveVariance);
+        increment + a_scaled
+    };
+    // sqrt(w) at 1e9 scale = floor(sqrt(w * 1e18))
+    let sqrt_var = math::isqrt(total_var) as u64;
+    // d2 = -(k + w/2) / sqrt(w); numerator carried at 1e18, sign tracked by hand
+    let half_var = total_var / 2;
+    let k_scaled = (k.magnitude() as u128) * f;
+    let (numerator, numerator_negative) = if (k.is_negative()) {
+        if (half_var >= k_scaled) { (half_var - k_scaled, false) } else { (k_scaled - half_var, true) }
+    } else {
+        (k_scaled + half_var, false)
+    };
+    // numerator_1e18 / sqrt_w_1e9 = (value / sqrt(w)) * 1e9 = d2 at 1e9. Cap at
+    // the shared `normal_cdf` saturation input so d2 stays in u64 and beyond it
+    // saturates identically to `normal_cdf`.
+    let saturation = (math::normal_cdf_saturation!() as u128) + 1;
+    let d2_magnitude_u128 = numerator / (sqrt_var as u128);
+    let d2_magnitude = (if (d2_magnitude_u128 > saturation) saturation else d2_magnitude_u128) as u64;
+    let d2 = i64::from_parts(d2_magnitude, !numerator_negative);
+    (sqrt_var, d2)
 }
 
 fun is_positive(value: &I64): bool {

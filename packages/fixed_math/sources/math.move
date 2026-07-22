@@ -68,6 +68,11 @@ const INV_13_U128: u128 = 76_923_077;
 /// Returns the fixed-point scale: `500_000_000` is 50% and `1_000_000_000` is 100%.
 public macro fun float_scaling(): u64 { 1_000_000_000 }
 
+/// `|x|` beyond which `normal_cdf`/`normal_pdf` saturate to their exact tail
+/// limits. Callers that clamp a `normal_cdf` argument share this bound so the
+/// clamp cannot drift from the saturation threshold.
+public macro fun normal_cdf_saturation(): u64 { 8 * float_scaling!() }
+
 // === Public Functions ===
 
 /// Multiply two 1e9-scaled fixed-point values, rounding down.
@@ -75,10 +80,26 @@ public fun mul(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128)) / F) as u64
 }
 
+/// Multiply two 1e9-scaled fixed-point values, rounding up. `x*y + F - 1` cannot
+/// overflow u128 for any u64 operands, so no intermediate guard is needed.
+/// Directed counterpart of `mul`; interval arithmetic requires both sides.
+public fun mul_up(x: u64, y: u64): u64 {
+    (((x as u128) * (y as u128) + (F - 1)) / F) as u64
+}
+
 /// Divides two 1e9-scaled fixed-point values, rounding down.
 /// Aborts when `y` is zero or the quotient does not fit in `u64`.
 public fun div(x: u64, y: u64): u64 {
     (((x as u128) * F) / (y as u128)) as u64
+}
+
+/// Divides two 1e9-scaled fixed-point values, rounding up.
+/// Aborts when `y` is zero or the quotient does not fit in `u64`. `x*F + y - 1`
+/// cannot overflow u128 for any u64 operands, so no intermediate guard is needed.
+/// Directed counterpart of `div`; interval arithmetic requires both sides.
+public fun div_up(x: u64, y: u64): u64 {
+    assert!(y > 0, EInputZero);
+    (((x as u128) * F + (y as u128) - 1) / (y as u128)) as u64
 }
 
 /// Multiplies two raw integers, divides by a raw denominator, and rounds down.
@@ -153,7 +174,7 @@ public fun exp(x: &i64::I64): u64 {
 public fun normal_cdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
-    if (x_mag > 8 * float_scaling!()) {
+    if (x_mag > normal_cdf_saturation!()) {
         return if (x_negative) { 0 } else { float_scaling!() }
     };
     (normal_cdf_u128((x_mag as u128), x_negative) as u64)
@@ -163,7 +184,7 @@ public fun normal_cdf(x: &i64::I64): u64 {
 /// Returns a 1e9-scaled density with absolute error at most 50 raw units; tails beyond `|8|` round to zero.
 public fun normal_pdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
-    if (x_mag > 8 * float_scaling!()) return 0;
+    if (x_mag > normal_cdf_saturation!()) return 0;
 
     let x_sq_half = (((x_mag as u128) * (x_mag as u128)) / (2 * F)) as u64;
     let exponent = i64::from_parts(x_sq_half, true);
@@ -177,6 +198,13 @@ public fun sqrt(x: u64, precision: u64): u64 {
     let multiplier = (float_scaling!() / precision) as u128;
     let scaled = (x as u128) * multiplier * F;
     (sqrt_u128(scaled) / multiplier) as u64
+}
+
+/// Integer square root (floor) of a `u128`. For a value scaled by `1e18` the
+/// result is its `1e9`-scaled square root; the pricing variance path relies on
+/// this to keep `sqrt(w)` precise where `w` is only a few raw units at `1e9`.
+public fun isqrt(x: u128): u128 {
+    sqrt_u128(x)
 }
 
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.

@@ -114,7 +114,7 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     fx.value_expiry(&mut val, &mut vault, &mut m_a, &config, &oracle_registry, &pyth, &bs);
     fx.value_expiry(&mut val, &mut vault, &mut m_b, &config, &oracle_registry, &pyth, &bs);
     // Reaching here proves the flush did not brick on A's under-idle materialize.
-    let pool_nav = val.finish_flush(
+    let (pool_nav, _) = val.finish_flush(
         &mut vault,
         &mut config,
         option::none(),

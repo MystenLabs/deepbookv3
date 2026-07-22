@@ -29,7 +29,7 @@ use deepbook_predict::{
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{interval::{Self, Interval}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -242,6 +242,17 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     // Marked liability and free cash are computed through different rounded
     // aggregates; negative marked NAV is represented as zero.
     market.cash.free_cash().saturating_sub(liability)
+}
+
+/// Return the exposure book's live marked-liability envelope as `(lo, hi)`
+/// bounds. A valuation read exposes both bounds because any single scalar is a
+/// policy pick the consumer cannot undo; bounds are primitives so no envelope
+/// type enters the public ABI. Same pricer requirements as `current_nav`.
+/// Public for devInspect valuation reads.
+public fun current_liability_bounds(market: &ExpiryMarket, pricer: &Pricer): (u64, u64) {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.exact_live_liability_interval(pricer);
+    (liability.lo(), liability.hi())
 }
 
 /// Return one order's close value before fees. Liquidated or currently
@@ -765,6 +776,24 @@ public(package) fun current_nav_with_liquidations(
     market.cash.free_cash().saturating_sub(liability)
 }
 
+/// Envelope twin of `current_nav_with_liquidations` for the pool flush lane:
+/// the defined quantity `max(0, free_cash - liability)` bounded per corner —
+/// low free cash against high liability and vice versa, each side floored at
+/// zero (the semantic NAV floor; the mandatory flush never aborts here).
+public(package) fun current_nav_with_liquidations_interval(
+    market: &mut ExpiryMarket,
+    pricer: &Pricer,
+    clock: &Clock,
+): Interval {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.revalue_with_liquidations_interval(pricer, clock);
+    let free_cash = market.cash.free_cash_interval();
+    interval::new(
+        free_cash.lo().saturating_sub(liability.hi()),
+        free_cash.hi().saturating_sub(liability.lo()),
+    )
+}
+
 /// Force `mint_paused = true` through the registry's `PauseCap` path. This cannot
 /// unpause and does not apply the package-version gate.
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
@@ -800,6 +829,10 @@ public(package) fun claim_trading_loss_rebate(
         return (balance::zero(), 0)
     };
 
+    // Collapse row: the resolved reserve releases at its floor (low) corner —
+    // the whole claim chain (eligible rebate -> user payout -> pool residual)
+    // derives from one committed scalar, so the split conserves cash exactly and
+    // the reserve's rounding dust stays in expiry cash (protocol side).
     let resolved_rebate_reserve = market
         .cash
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
@@ -834,8 +867,8 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     if (amount == 0) {
         return balance::zero()
     };
-    let payout_liability = market.payout_liability();
-    let released_cash = market.cash.release_surplus(amount, payout_liability);
+    let payout_liability_hi = market.strike_exposure.payout_liability_interval().hi();
+    let released_cash = market.cash.release_surplus(amount, payout_liability_hi);
     market.assert_cash_backing();
     released_cash
 }
@@ -843,7 +876,9 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Release settled cash above payout liability and unresolved rebate reserve.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
-    let reserved_cash = market.cash.required_cash(settled_liability);
+    // Reserve at the definite (high) side so the computed release amount always
+    // passes release_surplus's definite-backing gate.
+    let reserved_cash = market.cash.required_cash_hi(settled_liability);
     market.cash.assert_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
@@ -1336,5 +1371,5 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {
-    market.cash.assert_backing(market.payout_liability());
+    market.cash.assert_backing(market.strike_exposure.payout_liability_interval().hi());
 }

@@ -82,7 +82,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(
+    let (pool_nav, _) = val.finish_flush(
         &mut vault,
         &mut config,
         option::none(),
@@ -134,7 +134,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(
+    let (pool_nav, _) = val.finish_flush(
         &mut vault,
         &mut config,
         option::none(),
@@ -179,7 +179,7 @@ fun empty_pool_valuation_returns_idle() {
 
     // No active markets: start then finish with no value steps returns idle.
     let val = fx.start_flush(&mut config, &vault);
-    let pool_nav = val.finish_flush(
+    let (pool_nav, _) = val.finish_flush(
         &mut vault,
         &mut config,
         option::none(),
@@ -347,7 +347,7 @@ fun finish_with_wrong_vault_aborts() {
     // A second, unrelated vault created through the normal test init path:
     // finishing against it must fail the binding check.
     let mut wrong_vault = fx.scenario_mut().take_shared_by_id<PoolVault>(wrong_vault_id);
-    let _ = val.finish_flush(
+    let (_, _) = val.finish_flush(
         &mut wrong_vault,
         &mut config,
         option::none(),

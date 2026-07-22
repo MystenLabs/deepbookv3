@@ -23,7 +23,7 @@ use deepbook_predict::{
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use fixed_math::math;
+use fixed_math::{interval::{Self, Interval}, math};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
@@ -206,11 +206,44 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     }
 }
 
+/// Envelope form of `payout_liability`: the max-point term and settled
+/// liability are exact integer atoms; only the λ-buffer's fixed-point multiply
+/// carries a rounding ulp as width. Backing asserts consume the high side.
+public(package) fun payout_liability_interval(exposure: &StrikeExposure): Interval {
+    if (exposure.is_settled()) {
+        interval::exact(exposure.settled_payout_liability)
+    } else {
+        let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
+        let gap = total_net_payout - max_net_payout;
+        let lambda = exposure.config.backing_buffer_lambda();
+        interval::exact(max_net_payout).add(
+            &interval::new(
+                math::mul(lambda, gap),
+                math::mul_up(lambda, gap),
+            ),
+        )
+    }
+}
+
 /// Return the live marked liability as the aggregate boundary-linear term minus
 /// `Σ_active_leveraged min(order_range_value, floor_shares)`. Boundary aggregation
 /// and per-order correction round at different points, so subtraction saturates at
 /// zero. A still-active order in the liquidation band contributes its positive
 /// `range_value - floor_shares` until a close or liquidation pass removes it.
+/// Envelope form of `exact_live_liability` for the read-only interval lane:
+/// the liability envelope of the CURRENT book, liquidatable orders included at
+/// their min-capped envelopes (no mutation; the flush lane's
+/// `revalue_with_liquidations_interval` owns the mark invariant).
+public(package) fun exact_live_liability_interval(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+): Interval {
+    let mut memo = pricing::new_interval_price_memo();
+    let linear = exposure.payout.walk_linear_interval(pricer, &mut memo, exposure.tick_size);
+    let correction = exposure.liquidation.correction_value_interval(&memo);
+    linear.sub(&correction)
+}
+
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
@@ -312,20 +345,24 @@ public(package) fun quote_mint_terms(
         exposure
             .config
             .assert_mint_probability_and_leverage_policy(
-                entry_probability,
+                &entry_probability,
                 leverage,
                 time_to_expiry_ms,
             );
-        // The single-floor probe overstates the admitted two-floor premium by at
-        // most one unit. The configured probability floor keeps that difference
-        // below one lot, so sizing never exceeds the budget and may undershoot the
+        // The probe reproduces the admission's committed-corner premium exactly
+        // (entry value at the envelope's high price rounded up, premium rounded
+        // up), so a sized fill can never exceed the budget and undershoots the
         // largest admissible quantity by at most one lot.
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
-            if (math::mul_div_down(entry_probability, mid * lot, leverage) <= max_premium) {
+            let corner_premium = math::div_up(
+                math::mul_up(entry_probability.hi(), mid * lot),
+                leverage,
+            );
+            if (corner_premium <= max_premium) {
                 lo = mid
             } else {
                 hi = mid - 1
@@ -338,7 +375,7 @@ public(package) fun quote_mint_terms(
     let admission = exposure
         .config
         .assert_mint_admission(
-            entry_probability,
+            &entry_probability,
             quantity,
             leverage,
             time_to_expiry_ms,
@@ -351,7 +388,9 @@ public(package) fun quote_mint_terms(
         higher_tick,
         quantity,
         leverage,
-        entry_probability,
+        // The committed trade probability: the envelope corner the tuple was
+        // priced at; fee math and events read this committed scalar.
+        entry_probability: entry_probability.hi(),
         net_premium: admission.net_premium(),
         floor_shares: admission.floor_shares(),
     }
@@ -413,10 +452,13 @@ public(package) fun quote_close(
         return exposure.close_terms(order, CloseOutcome::Settled { payout })
     };
     assert!(pricer.is_some(), EPricerRequired);
-    // Price the range exactly once; the knock-out test and the live terms both
-    // read this one observation.
-    let range_probability = exposure.order_range_price(pricer.borrow(), order);
-    let gross_value = math::mul(range_probability, order.quantity());
+    // Price the range envelope exactly once; the knock-out test and the live
+    // terms both read this one observation. The knock-out test reads the LOW
+    // side (kill-on-possible), the same predicate side as the flush scan and
+    // the ambient sweep, so no order is liquidatable in one lane and safe in
+    // another; the reported gross is the decision-side value.
+    let range_probability = exposure.order_range_price_interval(pricer.borrow(), order);
+    let gross_value = range_probability.mul(&interval::exact(order.quantity())).lo();
     // Leveraged only: a 1x order has a zero floor, so the threshold test would
     // spuriously classify a currently-worthless 1x order as liquidatable.
     if (
@@ -426,7 +468,7 @@ public(package) fun quote_close(
     };
     exposure.close_terms(
         order,
-        CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
+        CloseOutcome::Live(quote_live_close(order, close_quantity, &range_probability)),
     )
 }
 
@@ -502,6 +544,42 @@ public(package) fun revalue_with_liquidations(
 
     let rewalked = exposure.payout.walk_linear_cached(&memo);
     rewalked.saturating_sub(correction)
+}
+
+/// Envelope twin of `revalue_with_liquidations` for the interval valuation
+/// lane: same walk → kill → settle → re-walk shape, with the knock-out test
+/// reading each gross envelope's low side (kill-on-possible) and the returned
+/// liability carried as an envelope. The final subtraction's low side clamps at
+/// zero (representability floor); its high side aborts only when even the most
+/// liability-favorable reading is below the exact survivor correction — a
+/// definite surface violation. The liquidation event reports the same low-side
+/// gross the kill decision read.
+public(package) fun revalue_with_liquidations_interval(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    clock: &Clock,
+): Interval {
+    let mut memo = pricing::new_interval_price_memo();
+    let linear = exposure.payout.walk_linear_interval(pricer, &mut memo, exposure.tick_size);
+    let (correction, killed) = exposure
+        .liquidation
+        .scan_compact_interval(&memo, exposure.config.liquidation_ltv());
+    // Nothing killed: the tree is untouched, so the first walk already is the
+    // pruned-tree envelope.
+    if (killed.is_empty()) return linear.sub(&interval::exact(correction));
+
+    let liquidated_at_ms = clock.timestamp_ms();
+    killed.do!(|order| {
+        // Same one-observation, decision-side (low) gross the kill test read.
+        let gross_value = memo
+            .cached_range_price_interval(order.lower_tick(), order.higher_tick())
+            .mul(&interval::exact(order.quantity()))
+            .lo();
+        exposure.settle_liquidation(pricer, &order, gross_value, liquidated_at_ms);
+    });
+
+    let rewalked = exposure.payout.walk_linear_cached_interval(&memo);
+    rewalked.sub(&interval::exact(correction))
 }
 
 /// Price and conditionally remove one bounded batch of liquidation candidates.
@@ -589,11 +667,11 @@ fun admitted_entry_probability(
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
-): u64 {
+): Interval {
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
     let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
     let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
-    pricer.range_price(lower, higher)
+    pricer.range_price_interval(lower, higher)
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
@@ -641,10 +719,16 @@ fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
 }
 
 /// Quote one prospective live close as pure terms from the already-priced
-/// range probability: the floor-share split and the redeem facts, touching
-/// neither the book nor the oracle. The trade fee is recovered via
-/// `trading_fee` from the returned `range_probability`.
-fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64): LiveCloseTerms {
+/// range envelope: the floor-share split and the redeem facts, touching
+/// neither the book nor the oracle. The redeem commits at the envelope's LOW
+/// corner (user outflow); the returned `range_probability` is that committed
+/// scalar, and the trade fee is recovered from it (fees price the committed
+/// trade, not the envelope).
+fun quote_live_close(
+    order: &Order,
+    close_quantity: u64,
+    range_probability: &Interval,
+): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
@@ -663,7 +747,7 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
     );
     let remove_floor_shares = old_floor_shares - remaining_floor_shares;
 
-    let gross_redeem_amount = math::mul(range_probability, close_quantity);
+    let gross_redeem_amount = range_probability.mul(&interval::exact(close_quantity)).lo();
     // Clamp, don't abort: a full close cannot saturate (a non-knocked-out order's
     // gross value strictly exceeds its full floor), but a partial close's slice
     // can owe up to one unit of round-down dust more floor than its own gross
@@ -674,7 +758,7 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
         close_quantity,
         remove_floor_shares,
         redeem_amount,
-        range_probability,
+        range_probability: range_probability.lo(),
     }
 }
 
@@ -790,7 +874,9 @@ fun settle_liquidation(
 }
 
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    math::mul(exposure.order_range_price(pricer, order), order.quantity())
+    // Decision-side (low) gross: the ambient sweep shares the flush scan's and
+    // close classifier's kill-on-possible predicate side.
+    exposure.order_range_price_interval(pricer, order).mul(&interval::exact(order.quantity())).lo()
 }
 
 /// Return whether live gross value is at or below the configured multiple of the
@@ -805,8 +891,12 @@ fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_a
     )
 }
 
-fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    pricer.range_price(
+fun order_range_price_interval(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): Interval {
+    pricer.range_price_interval(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )

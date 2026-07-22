@@ -1833,13 +1833,14 @@ public fun finish_flush_bundle(
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
 ): u64 {
-    valuation.finish_flush(
+    let (supply_nav, _withdraw_nav) = valuation.finish_flush(
         &mut market.vault,
         &mut market.config,
         supply_budget,
         withdraw_budget,
         self.scenario.ctx(),
-    )
+    );
+    supply_nav
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===

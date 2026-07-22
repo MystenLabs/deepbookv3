@@ -22,7 +22,7 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use fixed_math::math::float_scaling as float;
+use fixed_math::{interval, math::float_scaling as float};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
@@ -184,7 +184,7 @@ fun mint_admission_probability_one_above_max_entry_probability_aborts() {
     let config = strike_exposure_config::new();
     // p = 1.0 is above the default max entry probability 0.99.
     config.assert_mint_admission(
-        float!(),
+        &interval::exact(float!()),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
         FAR_FROM_EXPIRY_MS,
@@ -199,7 +199,7 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
     // cleared 1% after the min fee was added. Admission now gates raw
     // probability directly.
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_BELOW_MIN,
+        &interval::exact(ENTRY_PROBABILITY_BELOW_MIN),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
         FAR_FROM_EXPIRY_MS,
@@ -213,7 +213,7 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
 fun mint_admission_leverage_below_one_x_aborts() {
     let config = strike_exposure_config::new();
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_BELOW_ONE_X,
         FAR_FROM_EXPIRY_MS,
@@ -226,7 +226,7 @@ fun mint_admission_low_probability_two_x_above_curve_aborts() {
     let config = strike_exposure_config::new();
     // With default max leverage 3x and k = 0.2, p = 0.1 gives cap 1.8x.
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_LOW,
+        &interval::exact(ENTRY_PROBABILITY_LOW),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
         FAR_FROM_EXPIRY_MS,
@@ -240,7 +240,7 @@ fun mint_admission_template_cap_scales_curve_aborts() {
     config.set_max_admission_leverage(LEVERAGE_TWO_X);
     // With max leverage 2x and k = 0.2, p = 0.5 gives cap 1.857142857x.
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
         FAR_FROM_EXPIRY_MS,
@@ -256,7 +256,7 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
     // At 2.5x, net premium = 500_000_000 / 2.5 = 200_000_000 and
     // floor shares = 500_000_000 - 200_000_000 = 300_000_000.
     let admission = config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
         FAR_FROM_EXPIRY_MS,
@@ -274,7 +274,7 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
     // At p = 0.5 and 1x leverage, quantity 1_990_000 gives net premium
     // 995_000, one position lot below the 1_000_000 minimum.
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         2 * constants::min_net_premium!() - constants::position_lot_size!(),
         test_constants::leverage_one_x(),
         FAR_FROM_EXPIRY_MS,
@@ -287,7 +287,7 @@ fun mint_admission_net_premium_at_minimum_succeeds() {
     let config = strike_exposure_config::new();
 
     let admission = config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         2 * constants::min_net_premium!(),
         test_constants::leverage_one_x(),
         FAR_FROM_EXPIRY_MS,
@@ -313,7 +313,7 @@ fun mint_admission_net_premium_at_minimum_succeeds() {
 fun no_leverage_window_rejects_two_x_admitted_far_from_expiry() {
     let config = strike_exposure_config::new();
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
         config_constants::default_no_leverage_window_ms!() - 1,
@@ -329,7 +329,7 @@ fun no_leverage_window_boundary_admits_full_cap() {
     let config = strike_exposure_config::new();
 
     let admission = config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
         config_constants::default_no_leverage_window_ms!(),
@@ -345,7 +345,7 @@ fun no_leverage_window_boundary_admits_full_cap() {
 fun no_leverage_window_rejects_smallest_leverage_above_one_x() {
     let config = strike_exposure_config::new();
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_JUST_ABOVE_ONE_X,
         AT_EXPIRY_MS,
@@ -361,7 +361,7 @@ fun no_leverage_window_admits_one_x_at_expiry() {
     let config = strike_exposure_config::new();
 
     let admission = config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
         AT_EXPIRY_MS,
@@ -379,7 +379,7 @@ fun no_leverage_window_zero_disables_block() {
     config.set_no_leverage_window_ms(config_constants::min_no_leverage_window_ms!());
 
     let admission = config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_AND_HALF_X,
         AT_EXPIRY_MS,
@@ -397,7 +397,7 @@ fun low_probability_one_point_five_x_admitted_far_from_expiry() {
     let config = strike_exposure_config::new();
 
     let admission = config.assert_mint_admission(
-        ENTRY_PROBABILITY_LOW,
+        &interval::exact(ENTRY_PROBABILITY_LOW),
         test_constants::mint_quantity(),
         LEVERAGE_ONE_POINT_FIVE_X,
         FAR_FROM_EXPIRY_MS,
@@ -415,7 +415,7 @@ fun low_probability_one_point_five_x_admitted_far_from_expiry() {
 fun no_leverage_window_overrides_low_probability_curve() {
     let config = strike_exposure_config::new();
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_LOW,
+        &interval::exact(ENTRY_PROBABILITY_LOW),
         test_constants::mint_quantity(),
         LEVERAGE_ONE_POINT_FIVE_X,
         AT_EXPIRY_MS,
@@ -433,7 +433,7 @@ fun mint_admission_liquidation_ltv_still_controls_open_threshold() {
     // liquidation LTV set to 0.5, the open threshold equals entry value, so the
     // strict above-threshold check fails even though 2x passes admission cap.
     config.assert_mint_admission(
-        ENTRY_PROBABILITY_HALF,
+        &interval::exact(ENTRY_PROBABILITY_HALF),
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
         FAR_FROM_EXPIRY_MS,

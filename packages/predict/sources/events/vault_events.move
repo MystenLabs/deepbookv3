@@ -163,13 +163,17 @@ public struct WithdrawFilled has copy, drop, store {
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
-    /// LP-attributable pool NAV every fill was priced at: idle plus
-    /// `active_market_nav`, excluding unrealized and pending protocol profit.
-    pool_value: u64,
-    /// PLP supply in the frozen pre-drain mark used to price every fill.
+    /// LP-attributable pool NAV envelope: idle plus the active-market NAV
+    /// bounds, excluding unrealized and pending protocol profit. Supplies were
+    /// priced at the high bound, withdrawals at the low bound; the width is the
+    /// flush's bid/ask spread.
+    pool_value_lo: u64,
+    pool_value_hi: u64,
+    /// PLP supply in the frozen pre-drain marks used to price every fill.
     total_supply: u64,
-    /// Sum of the marked NAV contributed by each active market; settled markets add zero.
-    active_market_nav: u64,
+    /// Bounds of the summed marked NAV over active markets; settled markets add zero.
+    active_market_nav_lo: u64,
+    active_market_nav_hi: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
     /// Idle DUSDC held by the pool at valuation time, before the drain.
@@ -447,9 +451,11 @@ public(package) fun emit_withdraw_filled(
 public(package) fun emit_flush_executed(
     pool_vault_id: ID,
     epoch: u64,
-    pool_value: u64,
+    pool_value_lo: u64,
+    pool_value_hi: u64,
     total_supply: u64,
-    active_market_nav: u64,
+    active_market_nav_lo: u64,
+    active_market_nav_hi: u64,
     market_count: u64,
     idle_balance_before: u64,
     supplies_filled: u64,
@@ -461,9 +467,11 @@ public(package) fun emit_flush_executed(
     event::emit(FlushExecuted {
         pool_vault_id,
         epoch,
-        pool_value,
+        pool_value_lo,
+        pool_value_hi,
         total_supply,
-        active_market_nav,
+        active_market_nav_lo,
+        active_market_nav_hi,
         market_count,
         idle_balance_before,
         supplies_filled,
