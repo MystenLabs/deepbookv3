@@ -732,6 +732,33 @@ tradeoff explicitly.
 
 ---
 
+## Pricing and valuation deviation bounds (ratified 2026-07-22)
+
+Ratified accuracy ceilings for every derived price and valuation, distinct from
+the R1–R3 accounting-dust policy above (which governs one-ulp money-movement
+rounding, not model-evaluation accuracy):
+
+- **Contract price:** a computed range / UP price must not deviate from its true
+  real-math value by more than **0.1%** (relative, in the 1c–99c tradeable band).
+- **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
+  more than **1%** (relative).
+
+Enforcement is by independent-reference test, not model judgment, and is in fact
+tighter than the ceilings. The price bound is guarded by the generated pricing
+reference (`packages/predict/tests/pricing/pricing_reference_data.move`, built by
+`generate_pricing_reference.py` from real Block Scholes surfaces against a
+true-math reference), whose per-scenario analytic fixed-point tolerance sits well
+inside 0.1% — but only where the dataset has scenarios. It must therefore cover
+the full deployed variance range, short-dated included, or the bound goes
+unenforced exactly where it is tightest: `1/sqrt(w)` conditioning makes low
+variance the worst case, which is the gap open item P-14 records. The NAV bound
+is guarded by the `current_nav_flow_tests` independent oracle. A pricer or
+valuation change that would breach either ceiling on any deployable surface is a
+defect to fix, not an accepted tradeoff — this is the line between negligible and
+worth-fixing.
+
+---
+
 ## Update rules
 
 - New entries come from: closing an `open-items.md` item that embodied a
