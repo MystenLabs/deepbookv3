@@ -29,7 +29,7 @@ use deepbook_predict::{
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{interval::{Self, Interval}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -774,6 +774,24 @@ public(package) fun current_nav_with_liquidations(
     let liability = market.strike_exposure.revalue_with_liquidations(pricer, clock);
     // Same clamp as `current_nav`: negative marked NAV is represented as zero.
     market.cash.free_cash().saturating_sub(liability)
+}
+
+/// Envelope twin of `current_nav_with_liquidations` for the pool flush lane:
+/// the defined quantity `max(0, free_cash - liability)` bounded per corner —
+/// low free cash against high liability and vice versa, each side floored at
+/// zero (the semantic NAV floor; the mandatory flush never aborts here).
+public(package) fun current_nav_with_liquidations_interval(
+    market: &mut ExpiryMarket,
+    pricer: &Pricer,
+    clock: &Clock,
+): Interval {
+    market.assert_pricer_bound(pricer);
+    let liability = market.strike_exposure.revalue_with_liquidations_interval(pricer, clock);
+    let free_cash = market.cash.free_cash_interval();
+    interval::new(
+        free_cash.lo().saturating_sub(liability.hi()),
+        free_cash.hi().saturating_sub(liability.lo()),
+    )
 }
 
 /// Force `mint_paused = true` through the registry's `PauseCap` path. This cannot

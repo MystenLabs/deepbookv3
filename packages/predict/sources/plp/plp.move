@@ -28,7 +28,7 @@ use deepbook_predict::{
     vault_events
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{interval::{Self, Interval}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -89,8 +89,9 @@ public struct PoolValuation {
     expected_expiry_markets: vector<ID>,
     /// Markets valued so far this flow; folded against `expected` at finish.
     valued_expiry_markets: vector<ID>,
-    /// Running Σ of each valued market's NAV (settled markets contribute 0).
-    total_nav: u64,
+    /// Running Σ of each valued market's NAV envelope (settled markets
+    /// contribute exact zero).
+    total_nav: Interval,
 }
 
 // === Package Initializer ===
@@ -245,7 +246,7 @@ public fun value_expiry(
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     let nav = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
-        0
+        interval::exact(0)
     } else {
         let pricer = market.load_live_pricer(
             config,
@@ -256,10 +257,10 @@ public fun value_expiry(
             bs_svi,
             clock,
         );
-        market.current_nav_with_liquidations(&pricer, clock)
+        market.current_nav_with_liquidations_interval(&pricer, clock)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
-    valuation.total_nav = valuation.total_nav + nav;
+    valuation.total_nav = valuation.total_nav.add(&nav);
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -282,7 +283,7 @@ public fun finish_flush(
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     ctx: &mut TxContext,
-): u64 {
+): (u64, u64) {
     config.assert_version();
     config.assert_valuation_in_progress();
     valuation.assert_pool_vault(vault);
@@ -293,25 +294,31 @@ public fun finish_flush(
     let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
-    let pool_nav = lp_pool_value(
-        vault,
-        config.protocol_reserve_profit_share(),
-        total_nav,
-    );
+    // Corner-wise evaluation: `lp_pool_value` is monotone non-decreasing in the
+    // active NAV (slope 1 or 1 - share; the integer floor only absorbs steps),
+    // so evaluating the existing scalar pipeline at each corner yields the exact
+    // pool-value envelope with no correlated-width inflation between the gross
+    // and exclusion terms.
+    let share = config.protocol_reserve_profit_share();
+    let pool_nav_lo = lp_pool_value(vault, share, total_nav.lo());
+    let pool_nav_hi = lp_pool_value(vault, share, total_nav.hi());
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Snapshot the share price once (frozen pair), drain both queues against it, then
-    // release the valuation lock at the very end. The flush IS the full-pool
-    // valuation, so the single FlushExecuted event carries the priced mark and its
-    // idle + active-NAV breakdown.
+    // Two frozen marks from one envelope: supply mints at the high side (a
+    // supplier can never over-mint against true value), withdrawals pay at the
+    // low side (the pool never overpays an exit). Executability is per side, so
+    // a degenerate low bound routes withdrawals into the existing
+    // non-executable retry/cancel machinery without stalling supplies.
     let vault_id = vault.id();
-    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
+    let supply_mark = lp_book::new_flush_mark(pool_nav_hi, total_supply);
+    let withdraw_mark = lp_book::new_flush_mark(pool_nav_lo, total_supply);
     let drain_summary = vault
         .lp
         .drain(
             &mut vault.expiry_accounting,
-            mark,
+            supply_mark,
+            withdraw_mark,
             vault_id,
             supply_budget,
             withdraw_budget,
@@ -322,9 +329,11 @@ public fun finish_flush(
     vault_events::emit_flush_executed(
         vault_id,
         ctx.epoch(),
-        pool_nav,
+        pool_nav_lo,
+        pool_nav_hi,
         total_supply,
-        total_nav,
+        total_nav.lo(),
+        total_nav.hi(),
         market_count,
         idle_balance_before,
         drain_summary.supplies_filled(),
@@ -333,7 +342,7 @@ public fun finish_flush(
         vault.expiry_accounting.idle_balance(),
         total_supply_after,
     );
-    pool_nav
+    (pool_nav_lo, pool_nav_hi)
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the new
@@ -957,7 +966,7 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
         pool_vault_id: vault.id(),
         expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
-        total_nav: 0,
+        total_nav: interval::exact(0),
     }
 }
 

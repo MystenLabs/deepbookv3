@@ -68,6 +68,17 @@ public(package) fun free_cash(cash: &ExpiryCash): u64 {
     cash.balance().saturating_sub(cash.rebate_reserve())
 }
 
+/// Envelope of the defined quantity `max(0, balance - rebate reserve)`: the
+/// reserve's high side floors the low bound and vice versa; both sides clamp at
+/// zero because the defined quantity does.
+public(package) fun free_cash_interval(cash: &ExpiryCash): Interval {
+    let reserve = cash.rebate_reserve_interval();
+    interval::new(
+        cash.balance().saturating_sub(reserve.hi()),
+        cash.balance().saturating_sub(reserve.lo()),
+    )
+}
+
 /// Return the definitely-required cash: the payout liability's high side plus
 /// the rebate reserve's high side. The definite-backing anchor for asserts and
 /// releases; the scalar `required_cash` read keeps today's floor-rounded view.

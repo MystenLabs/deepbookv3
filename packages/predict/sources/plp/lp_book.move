@@ -184,7 +184,8 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
-    mark: FlushMark,
+    supply_mark: FlushMark,
+    withdraw_mark: FlushMark,
     pool_vault_id: ID,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
@@ -193,14 +194,14 @@ public(package) fun drain<LP>(
     let (supplies_filled, supplies_processed) = drain_supply_queue(
         book,
         ledger,
-        &mark,
+        &supply_mark,
         pool_vault_id,
         &supply_budget,
     );
     let (withdrawals_filled, withdrawals_processed) = drain_withdraw_queue(
         book,
         ledger,
-        &mark,
+        &withdraw_mark,
         pool_vault_id,
         &withdraw_budget,
         ctx,

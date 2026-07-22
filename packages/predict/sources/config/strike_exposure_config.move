@@ -101,7 +101,7 @@ public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
 }
 
-/// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
+/// Returns the raw trade fee for a live probability and quantity, rounded up so the protocol keeps sub-unit dust (fees are protocol inflows).
 ///
 /// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
 /// before passing timestamps because the fee-rate helper derives time-to-expiry
@@ -113,7 +113,7 @@ public(package) fun trading_fee(
     quantity: u64,
     timestamp_ms: u64,
 ): u64 {
-    math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
+    math::mul_up(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
 /// Assert entry probability and leverage policy without deriving quantity-dependent
