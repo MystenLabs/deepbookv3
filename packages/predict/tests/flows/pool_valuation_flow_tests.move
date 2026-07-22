@@ -384,6 +384,45 @@ fun value_expiry_for_inactive_market_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = plp::ENavTooImprecise)]
+fun finish_flush_rejects_an_uncertifiable_active_nav() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, expiry_id);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    // Valid but cancellation-heavy SVI: the ATM center remains admissible while
+    // its numerical certificate saturates. The order was minted on the default
+    // surface above, so this isolates the valuation gate from mint admission.
+    fx.seed_bs_surface_with_svi_bundle(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        1,
+        false,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
+        float!(),
+        true,
+        test_constants::pricing_max_svi_input(),
+        true,
+        test_constants::live_source_timestamp_ms() + 1,
+    );
+
+    let mut valuation = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut valuation, &mut market);
+    fx.finish_flush_bundle(
+        valuation,
+        &mut market,
+        option::none(),
+        option::none(),
+    );
+    abort 999
+}
+
 #[test]
 fun finish_flush_with_zero_pool_nav_and_empty_queues_succeeds() {
     let (mut fx, e) = setup_underwater_market(0);
