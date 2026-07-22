@@ -142,6 +142,7 @@ REFERENCE_GRID_TICKS = 100_000       # Reference ladder width used to choose str
 MARKET_TICK_SIZE_UNIT = 10_000       # constants::market_tick_size_unit!()
 TICK_SIZE = 1_000_000_000            # $1 ticks: spot/tick in (50000, 100000] for ~$75k spot
 CUSHION_UNITS = 2                    # reference integer rounding + 2nd-order propagation
+REFERENCE_GUARD_UNITS = 2            # outward guard around the float64 true-math result
 NORMAL_CDF_ABS = 2e-8
 NORMAL_PDF_ABS = 50.0 / F
 ULP = 1.0 / F
@@ -313,6 +314,26 @@ POS_INF = (1 << 64) - 1
 NEG_INF = 0
 
 
+def reference_fields(value):
+    """Integer center plus an outward raw-unit enclosure of a true-math value."""
+    scaled = value * F
+    return dict(
+        reference=round(scaled),
+        reference_lower=max(0, math.floor(scaled) - REFERENCE_GUARD_UNITS),
+        reference_upper=min(F, math.ceil(scaled) + REFERENCE_GUARD_UNITS),
+    )
+
+
+def point(lower, higher, true_value, tolerance, note):
+    return dict(
+        lower=lower,
+        higher=higher,
+        tolerance=tolerance,
+        note=note,
+        **reference_fields(true_value),
+    )
+
+
 def build_points(s):
     """Return (list_of_point_dicts, max_delta_up_units_for_this_scenario)."""
     points = []
@@ -332,10 +353,15 @@ def build_points(s):
         du = s.delta_up(strike)
         tol = math.ceil(du * F) + CUSHION_UNITS
         worst = max(worst, du)
-        ref = round(s.up_true(strike) * F)
-        correction = s.up_true(strike) - phi(s.d2_of_strike(strike)[2])
-        points.append(dict(lower=strike, higher=POS_INF, reference=ref, tolerance=tol,
-                           note=f"d2~{d2:+.1f} adjusted UP(K) skew={correction:+.3e}"))
+        true_price = s.up_true(strike)
+        correction = true_price - phi(s.d2_of_strike(strike)[2])
+        points.append(point(
+            strike,
+            POS_INF,
+            true_price,
+            tol,
+            f"d2~{d2:+.1f} adjusted UP(K) skew={correction:+.3e}",
+        ))
 
     # clamp wings (strike, +inf): contract CDF/PDF tails clamp, adjusted UP rounds to 0 / F
     for d2 in WING_D2:
@@ -344,20 +370,30 @@ def build_points(s):
             continue
         seen.add(strike)
         _, _, d2t = s.d2_of_strike(strike)
-        ref = round(s.up_true(strike) * F)
+        true_price = s.up_true(strike)
+        ref = round(true_price * F)
         assert ref in (0, F), f"wing d2={d2t} did not round to clamp (ref={ref})"
         assert abs(d2t) >= 6.0, f"wing |d2|={abs(d2t)} not deep enough to clamp"
-        points.append(dict(lower=strike, higher=POS_INF, reference=ref,
-                           tolerance=CUSHION_UNITS, note=f"clamp wing d2~{d2:+.0f}"))
+        points.append(point(
+            strike,
+            POS_INF,
+            true_price,
+            CUSHION_UNITS,
+            f"clamp wing d2~{d2:+.0f}",
+        ))
 
     # neg_inf one-sided range (-inf, strike@ATM): range = 1 - adjusted UP(d2)
     atm = d2_to_strike[0.0]
     du = s.delta_up(atm)
     tol = math.ceil(du * F) + CUSHION_UNITS
     worst = max(worst, du)
-    ref = round((1.0 - s.up_true(atm)) * F)
-    points.append(dict(lower=NEG_INF, higher=atm, reference=ref, tolerance=tol,
-                       note="(-inf, K_atm] = 1 - adjusted UP(d2)"))
+    points.append(point(
+        NEG_INF,
+        atm,
+        1.0 - s.up_true(atm),
+        tol,
+        "(-inf, K_atm] = 1 - adjusted UP(d2)",
+    ))
 
     # finite-finite range (K@d2=+1, K@d2=-1): both endpoints approximate -> 2 budgets
     lo = d2_to_strike[1.0]
@@ -365,9 +401,13 @@ def build_points(s):
     assert lo < hi
     du2 = s.delta_up(lo) + s.delta_up(hi)
     tol = math.ceil(du2 * F) + CUSHION_UNITS
-    ref = round((s.up_true(lo) - s.up_true(hi)) * F)
-    points.append(dict(lower=lo, higher=hi, reference=ref, tolerance=tol,
-                       note="(K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)"))
+    points.append(point(
+        lo,
+        hi,
+        s.up_true(lo) - s.up_true(hi),
+        tol,
+        "(K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)",
+    ))
 
     return points, worst
 
@@ -400,6 +440,8 @@ def emit_move(scenarios, scen_points, budget_units):
     w("//")
     w(f"// `baseline_center` is the exact scalar output observed at parent commit {BASELINE_COMMIT}.")
     w("// It detects value drift only; the independent reference + tolerance above decides correctness.")
+    w("// `reference_lower` / `reference_upper` add a two-unit outward guard around the")
+    w("// float64 true-math result; the Approx radius must enclose both endpoints.")
     w("//")
     w(f"// Worst-case per-endpoint budget across all scenarios/strikes: {fmt_u64(budget_units)} units (@1e9).")
     w("// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w)")
@@ -421,6 +463,8 @@ def emit_move(scenarios, scen_points, budget_units):
     w("    lower: u64,")
     w("    higher: u64,")
     w("    reference: u64,")
+    w("    reference_lower: u64,")
+    w("    reference_upper: u64,")
     w("    tolerance: u64,")
     w("    baseline_center: u64,")
     w("}")
@@ -431,12 +475,32 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("public fun reference(p: &RefPoint): u64 { p.reference }")
     w("")
+    w("public fun reference_lower(p: &RefPoint): u64 { p.reference_lower }")
+    w("")
+    w("public fun reference_upper(p: &RefPoint): u64 { p.reference_upper }")
+    w("")
     w("public fun tolerance(p: &RefPoint): u64 { p.tolerance }")
     w("")
     w("public fun baseline_center(p: &RefPoint): u64 { p.baseline_center }")
     w("")
-    w("fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64, baseline_center: u64): RefPoint {")
-    w("    RefPoint { lower, higher, reference, tolerance, baseline_center }")
+    w("fun pt(")
+    w("    lower: u64,")
+    w("    higher: u64,")
+    w("    reference: u64,")
+    w("    reference_lower: u64,")
+    w("    reference_upper: u64,")
+    w("    tolerance: u64,")
+    w("    baseline_center: u64,")
+    w("): RefPoint {")
+    w("    RefPoint {")
+    w("        lower,")
+    w("        higher,")
+    w("        reference,")
+    w("        reference_lower,")
+    w("        reference_upper,")
+    w("        tolerance,")
+    w("        baseline_center,")
+    w("    }")
     w("}")
     w("")
     w("/// Number of real-data scenarios.")
@@ -492,7 +556,7 @@ def emit_move(scenarios, scen_points, budget_units):
     emit_u64_selector("svi_m_magnitude", [s.m_mag for s in scenarios], "Real SVI `m` magnitude (1e9) seeded through the Block Scholes surface update.")
     emit_bool_selector("svi_m_is_negative", [s.m_neg for s in scenarios], "Sign flag for real SVI `m` (true == negative).")
 
-    w("/// Points for scenario `s` (range, true reference, tolerance, parent scalar center).")
+    w("/// Points for scenario `s` (range, true reference enclosure, tolerance, parent center).")
     w("public fun points(s: u64): vector<RefPoint> {")
     for i, s in enumerate(scenarios):
         kw = "if" if i == 0 else "} else if"
@@ -502,7 +566,15 @@ def emit_move(scenarios, scen_points, budget_units):
             lo = "constants::neg_inf!()" if p["lower"] == NEG_INF else fmt_u64(p["lower"])
             hi = "constants::pos_inf!()" if p["higher"] == POS_INF else fmt_u64(p["higher"])
             w(f"            // {p['note']}")
-            w(f"            pt({lo}, {hi}, {fmt_u64(p['reference'])}, {fmt_u64(p['tolerance'])}, {fmt_u64(p['baseline_center'])}),")
+            w("            pt(")
+            w(f"                {lo},")
+            w(f"                {hi},")
+            w(f"                {fmt_u64(p['reference'])},")
+            w(f"                {fmt_u64(p['reference_lower'])},")
+            w(f"                {fmt_u64(p['reference_upper'])},")
+            w(f"                {fmt_u64(p['tolerance'])},")
+            w(f"                {fmt_u64(p['baseline_center'])},")
+            w("            ),")
         w("        ]")
     w("    } else {")
     w("        abort ENoSuchScenario")

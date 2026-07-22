@@ -79,9 +79,14 @@ fun run_scenario(s: u64) {
     let mut i = 0;
     while (i < n) {
         let p = &points[i];
-        let actual = pricer.range_price(strike(p.lower()), strike(p.higher()));
+        let priced = pricer.range_price_approx(strike(p.lower()), strike(p.higher()));
+        assert!(!priced.is_negative());
+        assert!(priced.error() < std::u64::max_value!());
+        let actual = priced.magnitude();
         assert_eq!(actual, p.baseline_center());
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
+        test_helpers::assert_within(actual, p.reference_lower(), priced.error());
+        test_helpers::assert_within(actual, p.reference_upper(), priced.error());
         i = i + 1;
     };
 
