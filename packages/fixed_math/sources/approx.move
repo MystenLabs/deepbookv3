@@ -258,13 +258,13 @@ public fun sqrt(a: &Approx): Approx {
 }
 
 /// `Phi(x)` for a signed ball. `Phi' = phi`, maximized over the ball at the point
-/// nearest zero; `phi(nearest) * dx` (rounded up) bounds the propagated error, plus
-/// `normal_cdf`'s own approximation error.
+/// nearest zero. The PDF primitive's own error is added before using it as an upper
+/// derivative bound; `phi_upper * dx` is rounded up, then the CDF leaf error is added.
 public fun normal_cdf(a: &Approx): Approx {
     let value = i64::from_u64(math::normal_cdf(&a.value));
     let m = a.value.magnitude();
     let nearest = if (m > a.error) i64::from_u64(m - a.error) else i64::zero();
-    let sup_phi = math::normal_pdf(&nearest);
+    let sup_phi = saturating_add(math::normal_pdf(&nearest), pdf_leaf!());
     let error = saturating_add(ceil_mul(sup_phi, a.error), cdf_leaf!());
     Approx { value, error }
 }

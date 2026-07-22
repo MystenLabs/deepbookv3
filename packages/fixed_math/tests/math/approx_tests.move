@@ -223,6 +223,18 @@ fun transcendental_balls_enclose_independent_endpoint_references() {
 }
 
 #[test]
+fun normal_cdf_uses_a_certified_upper_bound_for_its_derivative() {
+    // At x=0.024, independent Python true math gives phi(x)=398_827_401.568...
+    // raw units, so 398_827_402 is an outward integer upper bound. The ball spans
+    // [0.024, 20.024], making x=0.024 the exact maximum-density corner.
+    let radius = 10 * float!();
+    let input = approx::from_parts(i64::from_u64(10_024_000_000), radius);
+    let result = input.normal_cdf();
+    let required_propagation = math::mul_div_up(398_827_402, radius, float!());
+    assert!(result.error() >= required_propagation + 20);
+}
+
+#[test]
 fun error_arithmetic_saturates_instead_of_wrapping() {
     let saturated = approx::from_parts(i64::from_u64(float!()), std::u64::max_value!());
     let exact = approx::exact_u64(float!());
