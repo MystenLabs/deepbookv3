@@ -9,7 +9,7 @@
 /// exactly one lot — RP-13's registered one-lot-conservative edge, pinned here
 /// with budgets derived independently from the contract's admitted
 /// probability. The edge needs a NON-INTEGER leverage multiple: at integer
-/// multiples the nested-floor identity floor(floor(X/1e9)/n) == floor(X/n·1e9)
+/// multiples the nested-floor identity floor(floor(X/1e9)/n) == floor(X/(n·1e9))
 /// makes probe and committed premium bit-identical, so no atom is ever lost.
 #[test_only]
 module deepbook_predict::scope_flow__intent_rounding__mint_budget_tests;

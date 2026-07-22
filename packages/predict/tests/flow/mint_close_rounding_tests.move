@@ -11,7 +11,7 @@
 /// retains exactly the two fees. Any one-atom deviation on any profile is a
 /// lane-disagreement or conservation finding, not tolerance.
 #[test_only]
-module deepbook_predict::scope_flow__intent_rounding__mint_close_roundtrip_tests;
+module deepbook_predict::scope_flow__intent_rounding__mint_close_tests;
 
 use account::account;
 use deepbook_predict::{
