@@ -16,7 +16,7 @@
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
-use fixed_math::math;
+use fixed_math::approx::{Self, Approx};
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
@@ -93,19 +93,35 @@ public(package) fun settled_payout_liability(
 /// once. The in-order walk records boundary prices in `memo` for the leveraged
 /// correction scan.
 ///
-/// The start and end sides accumulate as two non-negative totals: a node's net
-/// `local_start - local_end` quantity is signed, so a single running `u64` would
-/// underflow mid-walk. They combine once at the top:
-/// `base.quantity + start_total - end_total`. `tree.base` is the `P(-inf) = 1`
-/// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
-/// are never stored (`P = 0`).
+/// Boundary products are rounded separately, then accumulated in one signed
+/// approximate total. `tree.base` is the `P(-inf) = 1` anchor for `(-inf, h]`
+/// ranges (its quantity enters at face value); `+inf` ends are never stored
+/// (`P = 0`).
 public(package) fun walk_linear(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
     memo: &mut PriceMemo,
     tick_size: u64,
 ): u64 {
-    let (start_total, end_total) = walk_linear_subtree(
+    tree
+        .walk_linear_approx(
+            pricer,
+            memo,
+            tick_size,
+        )
+        .magnitude()
+}
+
+/// Return the linear liability with its certified absolute error. The scalar center
+/// is bit-identical to `walk_linear`; the approximate value retains the error for
+/// the correction and NAV path.
+public(package) fun walk_linear_approx(
+    tree: &StrikePayoutTree,
+    pricer: &Pricer,
+    memo: &mut PriceMemo,
+    tick_size: u64,
+): Approx {
+    let running = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
@@ -114,7 +130,8 @@ public(package) fun walk_linear(
     );
     // Boundary products are rounded per node and the signed aggregate is floored
     // once. This can differ from pricing and flooring each order independently.
-    (tree.base.quantity + start_total).saturating_sub(end_total)
+    let base = approx::exact_u64(tree.base.quantity);
+    base.add(&running).clamp_nonnegative()
 }
 
 /// Create an empty sparse payout tree.
@@ -399,32 +416,44 @@ fun settlement_prefix_terms(
     settlement_prefix_terms(nodes, node.right, limit_tick, running)
 }
 
-/// Accumulate start and end boundary products separately during an in-order walk.
-/// Every node is cached even when its equal local start and end quantities cancel,
-/// because leveraged-order correction lookups require every finite boundary.
+/// Accumulate signed, separately rounded boundary products during an in-order
+/// walk. Every node is cached even when its equal local start and end quantities
+/// cancel, because leveraged-order correction lookups require every finite boundary.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
     tick_size: u64,
     memo: &mut PriceMemo,
-): (u64, u64) {
-    if (root.is_none()) return (0, 0);
+): Approx {
+    if (root.is_none()) return approx::exact_u64(0);
     let tick = *root.borrow();
     let node = nodes[tick];
 
-    let (left_start, left_end) = walk_linear_subtree(nodes, node.left, pricer, tick_size, memo);
+    let left = walk_linear_subtree(
+        nodes,
+        node.left,
+        pricer,
+        tick_size,
+        memo,
+    );
 
     let price = memo.price_and_cache(pricer, tick, tick_size);
-    let mut start_total = 0;
-    let mut end_total = 0;
+    let mut local = approx::exact_u64(0);
     if (node.local_start.quantity != node.local_end.quantity) {
-        start_total = math::mul(price, node.local_start.quantity);
-        end_total = math::mul(price, node.local_end.quantity);
+        let start_quantity = approx::exact_u64(node.local_start.quantity);
+        let end_quantity = approx::exact_u64(node.local_end.quantity);
+        local = price.mul_scaled(&start_quantity).sub(&price.mul_scaled(&end_quantity));
     };
 
-    let (right_start, right_end) = walk_linear_subtree(nodes, node.right, pricer, tick_size, memo);
-    (start_total + left_start + right_start, end_total + left_end + right_end)
+    let right = walk_linear_subtree(
+        nodes,
+        node.right,
+        pricer,
+        tick_size,
+        memo,
+    );
+    left.add(&local).add(&right)
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {

@@ -1,0 +1,289 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// A 1e9-scaled fixed-point value carried with a certified numerical-error bound —
+/// a center-radius "ball". `value` is the protocol's canonical fixed-point result;
+/// `error` bounds continuous numerical approximation along that selected value path.
+/// Protocol comparisons and branches use `value` exactly as the scalar code does;
+/// the ball does not represent counterfactual outcomes from taking another branch.
+///
+/// The `value` is bit-for-bit the scalar `fixed_math::math` result, so a ball flows
+/// through downstream arithmetic exactly as the scalar does today; `error` is a
+/// passenger read only where a bound must be enforced.
+///
+/// Leaf error comes from each `math` primitive's documented accuracy; continuous
+/// propagation uses derivative bounds or endpoint evaluation. Every error term
+/// rounds UP, the quotient-rule term is computed division-first so it cannot
+/// underflow, and error arithmetic saturates at `u64::MAX` rather than overflowing.
+module fixed_math::approx;
+
+use fixed_math::{i64::{Self, I64}, math};
+
+/// A fixed-point value with a certified absolute error radius (raw 1e9 units).
+public struct Approx has copy, drop {
+    value: I64,
+    error: u64,
+}
+
+// Leaf approximation error of each `math` primitive, in raw 1e9 units, taken from
+// the primitive's documented accuracy in `fixed_math::math`.
+macro fun cdf_leaf(): u64 { 20 }
+
+macro fun pdf_leaf(): u64 { 50 }
+
+macro fun sqrt_leaf(): u64 { 1 }
+
+// `mul`/`div` and the scaled `i64` ops carry at most one raw unit of rounding.
+macro fun round_leaf(): u64 { 1 }
+
+// Global bound on `|phi'(x)| = |x| * phi(x)`, maximized at `|x| = 1`
+// (`phi(1) = 0.241971`), rounded up. Bounds `normal_pdf`'s sensitivity to its input.
+macro fun max_pdf_slope(): u64 { 242_000_000 }
+
+// === Constructors and accessors ===
+
+/// A ball with zero error: an exact signed input.
+public fun exact(value: I64): Approx {
+    Approx { value, error: 0 }
+}
+
+/// A ball with zero error from a nonnegative u64 input.
+public fun exact_u64(value: u64): Approx {
+    Approx { value: i64::from_u64(value), error: 0 }
+}
+
+/// A ball from a value and an explicit error radius.
+public fun from_parts(value: I64, error: u64): Approx {
+    Approx { value, error }
+}
+
+public fun value(a: &Approx): I64 {
+    a.value
+}
+
+public fun error(a: &Approx): u64 {
+    a.error
+}
+
+/// The magnitude of the center value (its error is unaffected by the sign).
+public fun magnitude(a: &Approx): u64 {
+    a.value.magnitude()
+}
+
+public fun is_negative(a: &Approx): bool {
+    a.value.is_negative()
+}
+
+/// Clamp to zero. This continuous projection is 1-Lipschitz, so it retains the
+/// numerical radius even when the canonical center is on the zero branch.
+public fun clamp_nonnegative(a: &Approx): Approx {
+    if (a.value.is_negative()) {
+        Approx { value: i64::zero(), error: a.error }
+    } else {
+        *a
+    }
+}
+
+/// Clamp a probability to `[0, 1]`; both continuous projections retain radius.
+public fun clamp_unit_interval(a: &Approx): Approx {
+    let nonnegative = a.clamp_nonnegative();
+    nonnegative.clamp_upper(math::float_scaling!())
+}
+
+/// Clamp to an exact upper bound. Negative centers already lie below every
+/// nonnegative upper bound; the continuous projection retains radius.
+public fun clamp_upper(a: &Approx, upper: u64): Approx {
+    if (!a.value.is_negative() && a.value.magnitude() > upper) {
+        Approx {
+            value: i64::from_u64(upper),
+            error: a.error,
+        }
+    } else {
+        *a
+    }
+}
+
+// === Linear operations ===
+
+/// Sum. Absolute errors add (saturating).
+public fun add(a: &Approx, b: &Approx): Approx {
+    Approx { value: a.value.add(&b.value), error: saturating_add(a.error, b.error) }
+}
+
+/// Difference. Absolute errors add (subtraction cannot cancel uncertainty).
+public fun sub(a: &Approx, b: &Approx): Approx {
+    Approx { value: a.value.sub(&b.value), error: saturating_add(a.error, b.error) }
+}
+
+/// Negation. The error radius is unchanged.
+public fun neg(a: &Approx): Approx {
+    Approx { value: a.value.neg(), error: a.error }
+}
+
+/// Exact doubling: value and error both double (integer addition, no truncation).
+public fun double(a: &Approx): Approx {
+    add(a, a)
+}
+
+/// Halving by an exact factor of two. The value truncates toward zero (one raw
+/// unit); the error is kept in full — a sound over-estimate of the true half-error,
+/// negligible where used (the `d2` numerator, dominated by the `1/sqrt(w)` term).
+public fun half(a: &Approx): Approx {
+    Approx {
+        value: i64::from_parts(a.value.magnitude() / 2, a.value.is_negative()),
+        error: saturating_add(a.error, round_leaf!()),
+    }
+}
+
+// === Scaled multiplicative operations ===
+
+/// Scaled product. Propagates via the product rule
+/// `d(ab) = |a| db + |b| da + da db`, each term rounded up, plus one raw unit.
+public fun mul_scaled(a: &Approx, b: &Approx): Approx {
+    let ma = a.value.magnitude();
+    let mb = b.value.magnitude();
+    let error = saturating_add(
+        saturating_add(
+            saturating_add(ceil_mul(ma, b.error), ceil_mul(mb, a.error)),
+            ceil_mul(a.error, b.error),
+        ),
+        round_leaf!(),
+    );
+    Approx { value: a.value.mul_scaled(&b.value), error }
+}
+
+/// Scaled square of a signed ball, returning a nonnegative ball.
+/// Propagates via `d(x^2) = 2|x| dx + dx^2`, rounded up, plus one raw unit.
+public fun square_scaled(a: &Approx): Approx {
+    let m = a.value.magnitude();
+    let cross = ceil_mul(m, a.error);
+    let error = saturating_add(
+        saturating_add(saturating_add(cross, cross), ceil_mul(a.error, a.error)),
+        round_leaf!(),
+    );
+    Approx { value: i64::from_u64(a.value.square_scaled()), error }
+}
+
+/// Scaled quotient. Propagates via the quotient rule with the denominator taken at
+/// the worst corner `|b| - db`. The `|a| db / b^2` term is computed division-first
+/// (`ceil(|a| db / b)` then `/ b`) so a small numerator cannot underflow it to zero.
+/// A denominator that can reach zero (`|b| <= db`) cannot be certified; its error
+/// saturates so any downstream gate rejects it.
+public fun div_scaled(a: &Approx, b: &Approx): Approx {
+    let ma = a.value.magnitude();
+    let mb = b.value.magnitude();
+    let value = a.value.div_scaled(&b.value);
+    if (mb <= b.error) {
+        return Approx { value, error: std::u64::max_value!() }
+    };
+    let denom = mb - b.error;
+    let first = ceil_div(a.error, denom); // |da / b|
+    let second = ceil_div(ceil_mul_div(ma, b.error, denom), denom); // |a| |db| / b^2
+    let error = saturating_add(saturating_add(first, second), round_leaf!());
+    Approx { value, error }
+}
+
+/// Fused scaled `a * b / c`, matching `math::mul_div_down`'s single-floor value so
+/// the center stays bit-identical to the scalar path. Propagates via
+/// `d(ab/c) = (|b| da + |a| db)/c + (|ab|/c)(dc/c)`, every term rounded up and
+/// computed division-first at the worst-corner denominator `|c| - dc`. A denominator
+/// that can reach zero cannot be certified; its error saturates.
+public fun mul_div_down(a: &Approx, b: &Approx, c: &Approx): Approx {
+    let ma = a.value.magnitude();
+    let mb = b.value.magnitude();
+    let mc = c.value.magnitude();
+    let value = i64::from_parts(
+        math::mul_div_down(ma, mb, mc),
+        a.value.is_negative() != b.value.is_negative(),
+    );
+    if (mc <= c.error) {
+        return Approx { value, error: std::u64::max_value!() }
+    };
+    let denom = mc - c.error;
+    let num_error = saturating_add(
+        ceil_mul_div(mb, a.error, denom),
+        ceil_mul_div(ma, b.error, denom),
+    );
+    let quotient = ceil_mul_div(ma, mb, denom);
+    let denom_error = ceil_mul_div(quotient, c.error, denom);
+    let error = saturating_add(saturating_add(num_error, denom_error), round_leaf!());
+    Approx { value, error }
+}
+
+// === Transcendental operations ===
+
+/// `ln` of a positive u64 ball. Value error is bounded by `dx / (x - dx)`
+/// (worst-corner `1/x`, rounded up) plus `ln`'s approximation error: `1e-7` relative
+/// plus a three-raw-unit margin covering the near-`ln(1)` quantization regime.
+public fun ln(x: u64, x_error: u64): Approx {
+    let value = math::ln(x);
+    let leaf = value.magnitude() / 10_000_000 + 3;
+    let propagated = if (x > x_error) ceil_div(x_error, x - x_error) else std::u64::max_value!();
+    Approx { value, error: saturating_add(propagated, leaf) }
+}
+
+/// `sqrt` of a nonnegative ball (operand scale 1e9). Monotone, so the true value is
+/// enclosed by `[sqrt(x - dx), sqrt(x + dx)]`; the error is the larger endpoint
+/// deviation from `sqrt(x)`, plus one raw unit for `sqrt`'s own rounding. Uses the
+/// center magnitude; callers guard nonnegativity of the center.
+public fun sqrt(a: &Approx): Approx {
+    let x = a.value.magnitude();
+    let root = math::sqrt(x, math::float_scaling!());
+    let low = if (x > a.error) math::sqrt(x - a.error, math::float_scaling!()) else 0;
+    let upper = if (a.error > std::u64::max_value!() - x) std::u64::max_value!() else x + a.error;
+    let high = math::sqrt(upper, math::float_scaling!());
+    let spread = if (root - low >= high - root) { root - low } else { high - root };
+    Approx { value: i64::from_u64(root), error: spread + sqrt_leaf!() }
+}
+
+/// `Phi(x)` for a signed ball. `Phi' = phi`, maximized over the ball at the point
+/// nearest zero; `phi(nearest) * dx` (rounded up) bounds the propagated error, plus
+/// `normal_cdf`'s own approximation error.
+public fun normal_cdf(a: &Approx): Approx {
+    let value = i64::from_u64(math::normal_cdf(&a.value));
+    let m = a.value.magnitude();
+    let nearest = if (m > a.error) i64::from_u64(m - a.error) else i64::zero();
+    let sup_phi = math::normal_pdf(&nearest);
+    let error = saturating_add(ceil_mul(sup_phi, a.error), cdf_leaf!());
+    Approx { value, error }
+}
+
+/// `phi(x)` for a signed ball. `|phi'|` is bounded globally by `max_pdf_slope`, so
+/// `max_pdf_slope * dx` (rounded up) bounds the propagated error, plus `normal_pdf`'s
+/// own approximation error.
+public fun normal_pdf(a: &Approx): Approx {
+    let value = i64::from_u64(math::normal_pdf(&a.value));
+    let error = saturating_add(ceil_mul(max_pdf_slope!(), a.error), pdf_leaf!());
+    Approx { value, error }
+}
+
+// === Private ===
+
+/// `ceil(x * y / 1e9)`, saturating to `u64::MAX`. Scaled error products round up.
+fun ceil_mul(x: u64, y: u64): u64 {
+    ceil_mul_div(x, y, math::float_scaling!())
+}
+
+/// `ceil(x * 1e9 / y)`, saturating to `u64::MAX`. Scaled error quotients round up.
+fun ceil_div(x: u64, y: u64): u64 {
+    ceil_mul_div(x, math::float_scaling!(), y)
+}
+
+/// `ceil(x * y / d)`, saturating to `u64::MAX` and guarding the u128 product so a
+/// saturated (`u64::MAX`) error operand cannot overflow. `d == 0` saturates.
+fun ceil_mul_div(x: u64, y: u64, d: u64): u64 {
+    if (d == 0) return std::u64::max_value!();
+    let xu = x as u128;
+    let yu = y as u128;
+    if (yu != 0 && xu > std::u128::max_value!() / yu) return std::u64::max_value!();
+    let num = xu * yu;
+    let du = d as u128;
+    let quotient = num / du;
+    if (quotient >= (std::u64::max_value!() as u128)) return std::u64::max_value!();
+    (if (num % du > 0) { quotient + 1 } else { quotient }) as u64
+}
+
+fun saturating_add(a: u64, b: u64): u64 {
+    let max = std::u64::max_value!();
+    if (a > max - b) max else a + b
+}

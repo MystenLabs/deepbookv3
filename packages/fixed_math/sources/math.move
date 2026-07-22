@@ -179,6 +179,23 @@ public fun sqrt(x: u64, precision: u64): u64 {
     (sqrt_u128(scaled) / multiplier) as u64
 }
 
+/// Integer square root rounded down for a wide nonnegative intermediate.
+/// Formula-specific callers retain ownership of their scale and range invariants.
+public fun sqrt_u128(x: u128): u128 {
+    if (x == 0) return 0;
+    if (x < 4) return 1;
+    let mut g = sqrt_initial_guess_u128(x);
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    if (g > x / g) { g = g - 1; };
+    g
+}
+
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
 public fun pow10(n: u64): u64 {
     assert!(n <= 18, EPow10ExponentTooLarge);
@@ -327,22 +344,6 @@ fun normalize(x: u64): (u64, u64) {
 /// Multiply two 1e9-scaled values using a u128 intermediate.
 fun mul_scaled_u128(x: u128, y: u128): u128 {
     x * y / F
-}
-
-/// Integer square root for u128 values.
-fun sqrt_u128(x: u128): u128 {
-    if (x == 0) return 0;
-    if (x < 4) return 1;
-    let mut g = sqrt_initial_guess_u128(x);
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    if (g * g > x) { g = g - 1; };
-    g
 }
 
 /// Initial power-of-two guess for Newton square root.

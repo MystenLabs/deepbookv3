@@ -761,6 +761,16 @@ rounding, not model-evaluation accuracy):
 - **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
   more than **1%** (relative).
 
+**Runtime response.** The pricing ball retains a numerical-error certificate on
+the canonical scalar control path. A mint quote whose contract-price certificate
+exceeds 0.1% aborts before it can create an order; the user can retry after a fresh
+oracle surface. A full-pool flush whose final pool-NAV certificate exceeds 1%
+aborts before it creates a frozen mark; a keeper retries after fresh pricing inputs
+or settlement. A zero scalar pool NAV proceeds under RP-1/RP-3: zero-value fills
+are already classified at the drain, and a purely relative NAV bound has no
+denominator. These checks do not reinterpret liquidation or other protocol
+branches: those continue to use the scalar center exactly as the protocol defines.
+
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
 reference (`packages/predict/tests/pricing/pricing_reference_data.move`, built by
