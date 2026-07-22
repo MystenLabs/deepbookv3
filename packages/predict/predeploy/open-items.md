@@ -143,6 +143,36 @@ bound and accept the aggregation residual in the rounding policy, add a
 regression covering both directions, and narrow every exact-NAV claim to the
 accepted bound. (2026-07-17 clean-room gap audit)
 
+### P-14: Digital up_price mispriced on short-dated markets — variance increment floored to 1e9
+
+**Severity:** Medium.
+
+`pricing::compute_nd2` forms the SVI variance increment as `math::mul(b, inner)`
+= `(b · inner) / 1e9`, truncating the sub-unit fraction to an integer 1e9 unit.
+At the low total variance of short-dated markets that fraction is a material
+share of total variance, so `total_var` is biased systematically downward
+(truncation toward zero, not zero-mean noise) and the digital `up_price` is
+mispriced. `up_price` feeds entry price, the live NAV mark, and liquidation
+thresholds, so short-dated markets carry a systematic mark bias.
+
+Measured against a 30-digit reference over a moneyness grid on real Block Scholes
+SVI surfaces (1c–99c band): one-minute worst-case relative error 1.12% /
+absolute 5.15e-4; five-minute (the dominant published cadence) worst-case 3.28% /
+2.09e-3; daily below 0.27%. A worst-case one-minute surface at `k = -0.0005`
+discards 0.806 of 51.806 raw variance-increment units (1.56%): `up_price`
+0.89080 versus 0.89028 exact.
+
+Reachable on any deployed one-minute or five-minute cadence
+(`CadenceConfig.window_size > 0`); the near-expiry no-leverage gate (P-2, O-1)
+caps admission leverage but does not disable pricing. Not covered by the R1–R3
+rounding policy (scoped to one-ulp accounting dust) or the pricing-safe input
+envelope (bounds inputs, not output precision).
+
+**Action:** carry the variance, `sqrt(w)`, and `d2` computation at u128 / 1e18
+precision instead of flooring the `b · inner` product to 1e9. Pin with a
+regression on a low-total-variance surface asserting `up_price` relative error
+below a stated tolerance versus a high-precision reference.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
