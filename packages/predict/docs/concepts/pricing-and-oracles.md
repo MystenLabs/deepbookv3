@@ -17,14 +17,16 @@ The `pricing` module is a stateless read layer over these feeds. It resolves the
 
 ### Pyth Lazer spot (`PythFeed`)
 
-A `PythFeed` is bound to exactly one Pyth Lazer feed (identified by a `u32` feed id) and stores the latest source-native price payload for that feed — one global spot source, not a per-expiry value. Its permissionless `update` decodes a verified Lazer payload, finds the matching feed, reads its `(price, exponent)` pair, and stores the raw sign/magnitude fields. Raw getters expose those fields; `normalized_spot()` is the Propbook-normalized read that converts to Predict's 1e9 fixed-point scaling (`price_1e9 = magnitude × 10^(exponent + 9)`) and returns `none` when no latest row exists or the raw value cannot produce a positive normalized spot.
+A `PythFeed` is bound to exactly one Pyth Lazer feed (identified by a `u32` feed id) and stores the latest source-native price payload for that feed — one global spot source, not a per-expiry value. Its permissionless `update` decodes a verified Lazer payload, finds the matching feed, reads its `(price, exponent, feedUpdateTimestamp)` fields, and stores the raw sign/magnitude fields. Raw getters expose those fields; `normalized_spot()` is the Propbook-normalized read that converts to Predict's 1e9 fixed-point scaling (`price_1e9 = magnitude × 10^(exponent + 9)`) and returns `none` when no latest row exists or the raw value cannot produce a positive normalized spot.
 
 Two timestamps are recorded on every accepted update, and the distinction is load-bearing:
 
-- The **publisher timestamp** — the Lazer published-at time embedded in the verified payload (converted from microseconds to milliseconds, rounding up). This is when the data was *observed off-chain*.
+- The **generation timestamp** — the per-feed `feedUpdateTimestamp` embedded in the verified payload (converted from microseconds to milliseconds, rounding up). This is when Pyth *generated the price*, which is not the same as when the envelope carrying it was published: when Pyth has no new aggregate it carries the previous price forward under a newer envelope, and only `feedUpdateTimestamp` reveals the price's true age.
 - The **on-chain landing timestamp** — `clock.timestamp_ms()` captured when the update *landed on chain*.
 
-The generic Propbook lane records a latest update only when the publisher timestamp is positive, not in the future relative to the on-chain landing time, and strictly advances the previous latest row. Future, zero, stale, or duplicate source timestamps are no-ops rather than aborts. Freshness is a read-time concern: Predict compares the `source_timestamp_ms` in the returned `OracleRead` against the current clock and the configured freshness window.
+The generic Propbook lane records a latest update only when the generation timestamp is positive, not in the future relative to the on-chain landing time, and strictly advances the previous latest row. Future, zero, stale, or duplicate generation timestamps are no-ops rather than aborts — so a carried price leaves `latest` untouched and cannot renew Predict's freshness window. Freshness is a read-time concern: Predict compares the `source_timestamp_ms` in the returned `OracleRead` against the current clock and the configured freshness window.
+
+Because that window is measured against generation time, a Pyth stall longer than `pyth_spot_freshness_ms` correctly expires the Pyth spot and live pricing falls back to the Block Scholes forward, rather than re-anchoring the forward on a frozen spot.
 
 `PythFeed` deliberately does not decide whether Pyth is authoritative, derive a forward, or settle anything. It ingests, time-stamps, and exposes raw plus normalized source facts; freshness and feed binding are the consumer's responsibility.
 

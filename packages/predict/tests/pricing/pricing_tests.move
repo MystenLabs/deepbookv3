@@ -161,6 +161,49 @@ fun digital_above_probability_is_non_increasing_in_strike() {
     fx.finish();
 }
 
+/// A price Pyth carried forward must not resurrect the live re-anchor. Pyth
+/// delivers on a fixed cadence whether or not it has a fresh aggregate; when it
+/// has none it re-publishes the previous price under a newer envelope. Keying
+/// `latest` on the envelope let that redelivery renew the freshness window for
+/// as long as the stall lasted, so pricing re-anchored the Block Scholes forward
+/// on a frozen spot (`forward = bs_forward * pyth_spot / bs_spot`). Keying on the
+/// generation time makes redelivery a no-op, so the fallback that the staleness
+/// boundary below establishes actually holds.
+#[test]
+fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    // Block Scholes spot = forward = 100e9, so basis = 1.0 exactly.
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS);
+
+    let pyth_budget = oracle_fixture::config(&oracle).pricing_config().pyth_spot_freshness_ms();
+
+    // Pyth stalls: one ms past the budget the diverged print is stale, so the
+    // forward is the stored Block Scholes forward = 100e9.
+    let now = DIVERGED_PYTH_SOURCE_MS + pyth_budget + 1;
+    fx.set_clock_for_testing(now);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
+
+    // Pyth still has no fresh aggregate, so it carries the same 102e9 print
+    // forward under an envelope stamped at the current clock. Nothing about the
+    // observation is newer — only its delivery.
+    fx.carry_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS, now);
+
+    // The carried delivery must change nothing: `latest` still ages from the
+    // generation time, so the forward stays on the Block Scholes fallback rather
+    // than snapping back to the frozen 102e9 re-anchor.
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
+    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 /// Decision-pinned: the live forward switches source exactly at the Pyth
 /// staleness boundary (`pricing::load_live_pricer`, fallback documented in-code).
 /// While Pyth is fresh — inclusive: `now − freshness_ts == max_age` — the
