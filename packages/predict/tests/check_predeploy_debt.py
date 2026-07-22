@@ -42,7 +42,7 @@ class KnownRed:
 EXPECTED_MISSING_PINS = set()
 
 EXPECTED_WARNINGS = set()
-EXPECTED_UNCATALOGUED_POLICIES = {"RP-6", "RP-13"}
+EXPECTED_UNCATALOGUED_POLICIES = {"RP-6"}
 EXPECTED_NON_UNIT_POLICIES = {"RP-10"}
 EXPECTED_UNREACHABLE_PIN_BRANCHES = {
     ("RP-2", "scope_mechanics__intent_policy__lp_book_response_tests::priced_supply_that_rounds_to_zero_shares_refunds"),

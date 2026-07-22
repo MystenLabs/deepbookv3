@@ -492,8 +492,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   sides at the exact ATM probability); `mint_budget_guard_tests.move` —
   `scope_flow__intent_guard__mint_budget_tests::budget_fill_below_min_quantity_aborts` (fill floor) and
   `scope_flow__intent_guard__mint_budget_tests::mint_exact_amount_below_min_quantity_aborts`
-  (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
-  edge needs a rounding-lossy probability no current fixture pins.
+  (dust budget rejects on the floor); `mint_budget_rounding_tests.move` —
+  `scope_flow__intent_rounding__mint_budget_tests::budget_probe_never_overfills_and_undershoots_at_most_one_lot`
+  pins the one-lot-conservative edge: a budget one atom under the probe of a
+  lot count whose committed premium loses an atom to the probe's single
+  flooring still affords that lot at commitment, and the search stops one lot
+  under it — never overfilling, with quote-execution agreement, across the
+  fractional reference profiles. The edge requires a non-integer leverage
+  multiple: at integer multiples the nested-floor identity makes the probe and
+  the committed premium bit-identical, so no probability alone can reach it.
 - **Reopen when:** the premium relation changes shape (a fee folded into the
   budget, a rounding flip — the probe must move with it or the one-sided bound
   breaks), the `min_min_entry_probability` envelope floor is lowered (the
