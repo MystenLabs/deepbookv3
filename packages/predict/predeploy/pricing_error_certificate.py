@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Pricing evaluation-error certificate for the interval (envelope) pricing lane.
 
-This is the calibration harness behind two things in `pricing.move`:
+This is the calibration harness behind three things in `pricing.move`:
 
   * the u128/1e18 variance path in `compute_nd2_terms` (`variance_sqrt_and_d2`),
     which keeps `sqrt(w)` and `d2` precise where total variance `w` is only a
-    few raw units at 1e9 (short-dated surfaces), and
-  * the `evaluation_error_for_variance` widen table plus the
-    `beta^2 <= 9 * min_tv` admission gate.
+    few raw units at 1e9 (short-dated surfaces),
+  * the single `up_price_evaluation_error` widen and the `beta^2 <= 9 * min_tv`
+    admission gate, and
+  * the tight `a`/`b`/`m`/`sigma` caps, which bound total variance so the
+    deep-ITM/OTM digital-limit saturations are genuinely exact.
 
 It carries a byte-faithful integer mirror of the Move pricing chain (Cody
 `normal_cdf`, series `exp`/`ln`, Newton `sqrt`, i64 arithmetic — the same code
@@ -22,13 +24,13 @@ What it shows:
   1. The leaf approximation constants (`normal_cdf`, `normal_pdf`, `ln`) the
      error bound rests on, verified against mpmath.
   2. The HP precision gain: lo vs hp error across the admissible variance range.
-  3. The evaluation error e(w) over the admission-gated admissible SVI box, the
-     conservative public envelope for the shipped tier table.
+  3. The pricing error over the admission-gated admissible SVI box (full caps,
+     wide moneyness including the ratio saturation cases), confirming the single
+     widen covers the sampled domain maximum.
 
-The shipped tier values are set from the high-precision error measured over
-representative vendor SVI surfaces (the 5-minute/1-minute regime) with margin;
-interval-branch-and-bound verification of the bands over the full admissible box
-is planned hardening. This script reproduces the method and the gate on the
+The single widen is the adversarial-sampled domain maximum times a ~3x margin;
+interval-branch-and-bound verification of the bound over the full box is planned
+hardening. This script reproduces the method, the gate, and the caps on the
 public admissible box; it does not contain vendor data.
 """
 import math
@@ -53,7 +55,8 @@ INV = [333_333_333, 200_000_000, 142_857_143, 111_111_111, 90_909_091, 76_923_07
 
 # Admissible SVI input box (mirror assert_inputs_pricing_safe caps)
 MIN_SVI_SIGMA = 1_000_000          # 1e-3
-MAX_SVI_INPUT = 100 * F            # 100.0
+MAX_SVI_INPUT = F                  # 1.0  (tight: bounds |a|, |m|, sigma)
+MAX_SVI_B = F // 10                # 0.1  (tighter: b scales variance at extreme strikes)
 SKEW_VARIANCE_RATIO = 9            # beta^2 <= 9 * min_tv  (beta/(2 sqrt(min_tv)) <= 1.5)
 
 
@@ -352,21 +355,23 @@ def sample_gated_admissible(n=200_000, seed=7):
     lo_gain = {}
     made = 0
     while made < n:
-        sig = 10 ** rnd.uniform(math.log10(1e-3), math.log10(0.3))
+        sig = 10 ** rnd.uniform(math.log10(1e-3), 0.0)   # up to MAX_SVI_INPUT = 1.0
         rho = rnd.uniform(0, 0.999) * (1 if rnd.random() < 0.5 else -1)
-        b = 10 ** rnd.uniform(-7, -1)
-        a = 10 ** rnd.uniform(-9, math.log10(2e-3))
-        m = rnd.uniform(-0.08, 0.08)
+        b = 10 ** rnd.uniform(-7, -1)                    # up to MAX_SVI_B = 0.1
+        a = 10 ** rnd.uniform(-9, 0.0)                   # up to MAX_SVI_INPUT = 1.0
+        m = rnd.uniform(-1.0, 1.0)                       # up to MAX_SVI_INPUT = 1.0
         svi = {"a": i(int(round(a * F)), False), "b": int(round(b * F)),
                "rho": i(int(round(abs(rho) * F)), rho < 0),
                "m": i(int(round(abs(m) * F)), m < 0), "sigma": int(round(sig * F))}
-        if svi["b"] <= 0 or svi["sigma"] < MIN_SVI_SIGMA or not gate_admits(svi):
+        if (svi["b"] <= 0 or svi["b"] > MAX_SVI_B or svi["a"][0] > MAX_SVI_INPUT
+                or svi["sigma"] < MIN_SVI_SIGMA or svi["sigma"] > MAX_SVI_INPUT
+                or svi["m"][0] > MAX_SVI_INPUT or not gate_admits(svi)):
             continue
         made += 1
         if rnd.random() < 0.85:
             k = m + (10 ** rnd.uniform(-6, -2)) * (1 if rnd.random() < 0.5 else -1)
         else:
-            k = rnd.uniform(-0.7, 0.7)
+            k = rnd.uniform(-30, 30)   # wide, includes deep-ITM/OTM ratio saturation
         strike = max(1, int(math.exp(k) * fwd))
         ref = price_ref(svi, fwd, strike)
         if ref is None:

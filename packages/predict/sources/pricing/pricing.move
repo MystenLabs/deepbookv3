@@ -107,7 +107,19 @@ macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_f
 
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 
-macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
+// Upper bound on |a|, |m|, and sigma. Kept tight (not a loose sanity cap) so the
+// total variance stays bounded: the deep-ITM/OTM ratio saturations return the
+// exact digital limits (0 or 1) only when variance is small enough that those
+// limits are actually exact — a high-variance surface can have a ~0.5 true price
+// at an extreme strike. Real Block Scholes surfaces sit far inside (|a| <= 2e-3,
+// sigma <= 0.3). Verified sound with `b <= max_svi_b` over the full moneyness
+// range (predeploy pricing_error_certificate.py).
+macro fun max_svi_input(): u64 { math::float_scaling!() }
+
+// Upper bound on b (the SVI slope). Tighter than the others because b scales the
+// variance by log-moneyness at extreme strikes; `b <= 0.1` keeps the saturation
+// limits exact and the skew correction in band. Real b <= 0.03.
+macro fun max_svi_b(): u64 { math::float_scaling!() / 10 }
 
 // The sound widen applied to one admitted `up_price` evaluation, in raw 1e9
 // units. Set to the adversarial-maximum high-precision pricing error over the
@@ -505,7 +517,7 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
-    assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    assert!(svi.b() <= max_svi_b!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(
