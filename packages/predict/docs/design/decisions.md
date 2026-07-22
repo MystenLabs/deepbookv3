@@ -22,17 +22,33 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   orders; liquidation remains mark-based against the order's current range value.
   *Rejected:* spot-dependent rates.
 - **Pure knock-out liquidation.** A leveraged order is removed without paying the
-  holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
-  persists until the holder redeems and clears it. *Rejected:* residual-paying
-  liquidation.
+  holder once it falls to/below `floor_amount / liquidation_ltv`; the holder's
+  account position is the only remaining record, redeemed later for zero payout
+  (the liquidated state is derived from the order's absence from the active
+  index, not stored). *Rejected:* residual-paying liquidation; a stored
+  tombstone table (removed as a duplicate of the account position).
 - **The ask-price band applies to mint only — redeems price at the live mark.**
-  The mint-time `[min_ask, max_ask]` band is admission policy: the protocol
+  The mint-time `[min_entry_probability, max_entry_probability]` band is admission policy: the protocol
   declines to become counterparty in the tail price regions where the curve is
   least reliable. Once a contract is live, redeeming at the live mark is the
   holder's right; a redeem clamp would systematically underpay legitimate
   deep-ITM winners near expiry (range probability legitimately approaches 1,
   consistent with settlement paying full quantity). *Rejected:* a symmetric
   redeem-side price band.
+- **Adjusted one-sided digital prices clamp to probability bounds.** The
+  pricing-safe envelope bounds each SVI parameter independently and enforces no
+  butterfly/no-arbitrage condition, so an admissible surface can push the raw
+  skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any moneyness
+  (open-items P-11). The one-sided UP price saturates to `[0, 1]` and range
+  differencing floors at zero rather than aborting live mint, redeem, or
+  liquidation reads; surface quality is the Block Scholes feed's responsibility.
+  NAV valuation additionally rejects an active-book surface whose cached finite
+  boundary UP prices are non-monotone, because the aggregate payout-tree walk
+  nets signed boundary contributions across orders.
+- **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
+  and utilization-based financing rates are excluded from v1 — exact strike-level
+  liquidation indexing requires monotonic single-sided payoffs and history-independent
+  floors, which those break.
 
 ## Data structures
 
@@ -43,7 +59,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   *Rejected:* unpacking to a sequence + `Table<u64, Order>`.
 - **Mint-admission policy is kept out of the order id.** Admission caps and price
   thresholds live in config, not in order decoding, so a future policy change can
-  never retroactively invalidate an existing packed id.
+  never retroactively invalidate an existing packed id. *Rejected:* also packing the
+  entry price (`entry_probability` / `leverage_rank`) into the id — `floor_shares`
+  reconstructs everything needed; revisit only if a flow needs the lossless entry
+  price on-chain.
+- **`admin` is a dependency-leaf capability module.** *Rejected:* folding
+  `admin`/`AdminCap` into `registry` — it creates a Move import cycle
+  (`registry → protocol_config → admin`).
 - **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
   (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
   book coexist; the exact live NAV is read by decomposing the per-order liability
@@ -72,10 +94,18 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Per-expiry config is snapshotted immutable at creation**, so admin changes to
   the global template never reprice live orders.
+- **The contract defaults ARE the genesis values (AUD-002).** There is no separate
+  launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.25, caps,
+  budgets) ship as-is unless an open item changes one. Configured values live in
+  [configuration.md](./configuration.md).
 - **Uniform round-down math** at 1e9 scale; solvency rests on bit-identical
   reserve↔payout pairing (a reserve and its payout derive from the same quantity
   via the *identical* helper). *Rejected:* mixed ceil/floor primitives, which
   introduced super-additivity drift and were deleted.
+- **Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
+  the `u64` mul ceiling is accepted because the failure mode is a graceful per-tx
+  mint abort at extreme strike×quantity (never a brick), and inline `u128` casts
+  duplicated `fixed_math` semantics inside a core module. *Rejected:* the widening.
 - **DUSDC pools with a pool-coordinated settled-market sweep.** The sweep returns
   LP cash to the pool, unregisters the expiry from active valuation, and
   materializes terminal profit — there is no expiry-only path that can strand
@@ -127,14 +157,60 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   uses Predict app-auth so a keeper cron can resolve accounts after settlement.
   Intentional: post-settlement cleanout must not depend on each user acting, but
   deauthorizing `PredictApp` should stop keeper automation without blocking owner
-  claims. *Accepted residual:* a keeper can resolve an account's rebate at a
-  less-favorable active-stake snapshot; the prompt post-settlement sweep bounds
-  the window.
+  claims. *Accepted residual (now measured — predeploy RP-11):* a keeper resolves at
+  the claim-time active-stake snapshot, but the ~24h stake-activation gate makes
+  gaming that snapshot structurally unreachable on the sub-epoch cadences (1m/5m/1h),
+  and the permissionless cleanout is self-incentivized (negative net gas — a searcher
+  is paid the storage rebate to run the redeems and the claim, standalone or bundled),
+  so accounts resolve without relying on a protocol cron.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
-  protocol profit and exposes no admin withdrawal path. Intentional for now — the
-  reserve is left in the protocol backing solvency, and an explicit admin
-  withdrawal flow can be added later if it is needed. *Rejected (for now):* an
-  admin drain entrypoint.
+  protocol profit and exposes no admin withdrawal path. Decided (2026-07-21,
+  predeploy RP-16): no withdraw entrypoint ships in this package — the reserve's
+  eventual use (buy-and-burn, withdrawal, incentive recycling, solvency backstop)
+  is deliberately undecided and the entrypoint lands with the package upgrade
+  that decides it. The cut's booked-order timing property is accepted in the
+  same entry. *Rejected:* an admin drain entrypoint in the launch package.
+- **Account app-auth is intentionally full-account, package-level authority.** An
+  app authorized through `account::AccountRegistry` can mutably load any
+  `AccountWrapper` it is handed and use the normal `Account` balance/data APIs — so
+  predict-user solvency depends on the account admin's app-authorization hygiene and
+  every co-authorized app's honesty. *Rejected:* per-user/per-coin app scoping —
+  don't add it unless a future account-margining design needs dependency-aware user
+  app grants (e.g. blocking app revocation while open margin obligations require
+  cross-app liquidation).
+
+## Fees, staking, and rebates (recent)
+
+- **Staking is a gaming-resistance gate for the loss rebate, not a reward per se.**
+  The trading-loss rebate exists to move value from winners toward net losers; it
+  must target *aggregate* net losers (per trader), else a balanced (50/50) book
+  harvests it on its losing legs. Aggregation is sybil-gameable (one address per
+  order), so the rebate is scaled by `benefit_ratio(active_stake)` — faking N loser
+  accounts then costs N stakes. *Accepted limit:* stake is a refundable, plutocratic
+  gate, porous to correlated/directional bundling; genuinely reaching unstaked retail
+  would need off-chain identity (out of contract scope).
+- **Stake benefit is applied twice, by design.** `benefit_ratio(active_stake)` scales
+  both the mint-time fee discount (`× max_fee_discount`) and the settled loss rebate
+  (`× trading_loss_rebate_rate`), which are independent config knobs sharing the one
+  benefit curve. A high staker pays a small net fee — intended loyalty compounding, not
+  a double-count bug.
+- **Stake is account-global, not per-expiry.** One `active_stake` scales benefits
+  across all of an account's concurrent expiries; it is a discount multiplier, not a
+  per-market budget. It amortizes the sybil-gate cost across markets — accepted, same
+  as the fee discount.
+- **The rebate reserve is conservative by construction, and intrinsically so.** During
+  a market's life the full `unresolved_trading_fees_paid × trading_loss_rebate_rate` is
+  held out of NAV, because "did this trader net a loss" is unknowable until settlement,
+  so the max payable must be reserved. This is the unavoidable cost of an aggregate-net-
+  loss rebate; the residual (winners, unstaked, partial-benefit) returns to the pool as
+  each account resolves. *Rejected:* removing the reserve (would require downgrading the
+  rebate from a hard-guaranteed liability).
+- **Unstaking before the cleanout forfeits a pending rebate.** The rebate reads
+  `active_stake` at claim; an owner who unstakes post-settlement, pre-claim, is scaled
+  to zero. Accepted (self-inflicted; the prompt incentivized sweep bounds the window).
+- **`stake_deep` / `unstake_deep` carry no valuation-lock gate.** Staked DEEP is
+  excluded from `lp_pool_value`, so neither can move the flush mark; gating them would
+  add lock contention for no solvency benefit.
 
 ## Oracle extraction (recent)
 
@@ -146,21 +222,23 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  `propbook::block_scholes_spot_feed::BlockScholesSpotFeed`, and source-level
 	  `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` /
 	  `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` objects with per-expiry
-	  rows. Each is updated permissionlessly from a self-authenticating verified
-	  update, so there is no writer capability.
+	  rows. Each is updated permissionlessly — the design intent is that a verified
+	  update is self-authenticating, so there is no writer capability (the current
+	  `block_scholes_oracle` payload is an unvalidated stub until the production
+	  verifier lands; see risks.md).
   *Rationale:* the oracle suite is reusable by the wider ecosystem and has a clean,
   Predict-agnostic boundary; possessing a verified `Update` is the only proof
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
-- **Ownership split: the market owns flow state, `pricing` owns the live oracle
-  boundary.** `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the
-  current oracle object IDs. Every priced flow asks `pricing::load_live_pricer` to
-  validate the passed feeds against Propbook's current canonical binding, reject a
-  past-expiry live price, apply freshness and Predict's pricing-safe envelope, and
-  return a value-typed `Pricer`. *Rationale:* Propbook owns source identity and
-  canonical binding; Predict pricing owns the only conversion from Propbook objects
-  into business logic.
+- **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
+  `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
+  oracle object IDs. `pricing` validates passed feeds against Propbook's current
+  canonical binding and issues either an exact-history `ExactSpotRead` for reference
+  tick and settlement or a live `Pricer` after applying liveness, freshness, and the
+  pricing-safe envelope. *Rationale:* Propbook owns source identity and canonical
+  binding; Predict pricing owns the only conversion from Propbook objects into
+  business logic.
 - **Pyth-stale/unusable is a fallback, not an abort.** Live forward is
   `pyth_spot * (bs.forward / bs.spot)` when normalized Pyth spot is present and
   fresh, else the normalized Block Scholes `forward`. The BS spot and forward must
@@ -179,6 +257,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   own version policy; a stale feed caller is harmless (it just reads an old, still
   migratable feed). This removed the per-object `allowed_versions` mirror and
   `sync_*` entry that the old in-package oracle objects carried.
+- **No inventory-aware mid shift.** *Rejected:* skewing the quoted mid by pool
+  inventory — the aggregate drifts when the SVI surface moves and it carried an `i64`
+  overflow risk (built, then fully reverted). Revisit only if the drift and overflow
+  are solved AND skew is shown to help LPs.
 
 ## One canonical strike representation — absolute ticks (recent)
 
@@ -211,7 +293,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the `u64` cast. *Rationale:* the widened tick domain makes a deep tail reachable by
   a forward drift alone, and the NAV walk prices every live boundary — one
   unpriceable order would otherwise brick NAV, redeem, and liquidation for the whole
-  market until settlement. Saturation keeps those reads live; the `[min_ask, max_ask]`
+  market until settlement. Saturation keeps those reads live; the `[min_entry_probability, max_entry_probability]`
   admission band, not an abort, is what keeps the protocol from writing a tail it
   prices poorly. *Rejected:* a standalone reject-at-mint strike-range guard (redundant
   with the ask band on mint, and it would not cover redeem / NAV / liquidation, which
@@ -221,7 +303,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **LP supply/withdraw is asynchronous; the daily flush values the pool exactly.**
   LPs queue escrowed `request_supply`/`request_withdraw` (cancellable for an
-  immediate refund), and a daily flush drains both queues at one frozen mark.
+  immediate refund, with request-time minimum-output limits), and a daily flush
+  fills eligible queued heads at one frozen mark.
   *Rationale:* moving valuation off the trading hot path lets the flush afford an
   exact brute-force NAV, which deletes the entire approximate-NAV mitigation stack;
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
@@ -256,15 +339,21 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
 
-## Passive exact-timestamp settlement (recent)
+## Explicit exact-timestamp settlement (recent)
 
-- **Settlement is passive, not a public operator action.** Normal flows that branch
-  on settlement call `expiry_market::ensure_settled` first. It validates the supplied
-  Pyth feed against Propbook's canonical binding for the market's underlying and
-  records `pyth.normalized_spot_at(expiry)` when present. *Rationale:* terminal
-  settlement should use Propbook exact timestamp history, and users/keepers should
-  continue through ordinary redeem or pool-maintenance flows rather than calling a
-  separate settle-only API. *Rejected:* a public `settle_if_possible` entrypoint.
+- **Settlement is one public permissionless transition.** `expiry_market::try_settle`
+  consumes pricing's canonical exact-history read and calls
+  `StrikeExposure::record_settlement`, which stores the terminal price and exact
+  remaining payout liability together. The exposure's settlement-price option is
+  the phase discriminator; settled redeem, rebate claim, pool rebalance, and valuation
+  consume only that recorded phase. Keepers compose settlement first in the same PTB
+  when needed. *Rationale:* one writer makes the market phase transition atomic,
+  keeps price and book liability under one owner, and removes oracle ingress from
+  every later settled consumer. *Rejected:* implicit settlement inside each consumer.
+- **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
+  expiry moves no cash until `try_settle` succeeds; valuation still aborts through
+  live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
+  while an unsettled market has no exact terminal liability from which to sweep.
 - **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
   missing after expiry, the market remains unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —
@@ -303,3 +392,49 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   a delegation trace. The admin `ProtocolConfig` setters and the registry creation
   entrypoints were brought under the gate; per-account custody and builder-code
   config stay ungated so user exits survive a freeze.
+- **Two deliberate pause/valuation-gate exemptions.** `rebalance_expiry_cash`'s grow
+  direction (`top_up_live_expiry_cash`) is NOT trading-pause-gated — pause blocks risk
+  creation at the mint gate, while top-up only backs existing exposure and keeps exits
+  fundable (gating it could starve redeems mid-emergency). `plp::lock_capital` carries
+  no valuation-lock gate — it is legal only at `total_supply == 0` (both LP request
+  entrypoints abort `ENotBootstrapped` until supply > 0), so nothing the lock protects
+  can exist when it runs.
+
+## Near-expiry leverage block (recent)
+
+- **Leverage origination stops entirely inside a window before expiry.** Within the
+  expiry's snapshotted `no_leverage_window_ms` the mint-admission cap is exactly 1x,
+  regardless of entry probability. Near expiry a contract's probability can move far
+  in a single tick, which can carry a leveraged order past its knockout before
+  liquidation can fire — the LP absorbs that gap, so leverage is riskiest exactly
+  where it is least useful.
+  *Rejected:* a linear taper of the cap down to 1x at expiry. The taper's case was
+  that a hard cutoff concentrates max-leverage opens just before the boundary, but
+  both designs gate origination only — a position opened before the window carries
+  full leverage into expiry either way — so the taper does not actually remove that
+  incentive, and it prices a range of near-expiry leverage the block simply declines
+  to originate.
+- **The block replaces the low-probability curve inside the window, rather than
+  scaling it.** The cap is 1x flat, not `1 + (max - 1) * risk_curve * taper`, so the
+  policy reads as one sentence and the window is the only thing to reason about near
+  expiry.
+- **Admin-tunable per template, snapshotted per expiry, `0` disables.** It is a
+  contract term like `max_admission_leverage`: future markets pick up a new value,
+  live markets keep the one they snapshotted, so an admin cannot retroactively
+  change a live market's economics. `0` is a deliberate escape hatch, mirroring how
+  `expiry_fee_max_multiplier = 1x` disables the fee ramp.
+- **Origination only; no repricing and no forced deleveraging.** Admitted orders keep
+  their frozen floor `F` and their terms, and closing / liquidation / settlement are
+  untouched. Reducing risk on positions already open into the window would need a
+  different lever (e.g. a near-expiry `liquidation_ltv` tightening), not an admission
+  gate.
+- **This does NOT resolve O-1, and O-1 is not one of its arms.** O-1's exploit is a
+  *1x buy-and-hold* of systematically underpriced contracts in `[0.60, 0.95)`
+  (`evidence/o1-oracle-calibration.md`: +0.05 per contract at 0% fee, confirmed
+  on-chain), and unleveraged minting stays open inside the window by design — so the
+  mispricing edge itself is untouched. What the block removes is the leverage
+  *amplifier* on that edge: across O-1's own price range the admission cap is
+  ~2.8-3.0x, so leverage roughly tripled the exploit's return on capital and now does
+  not. O-1's stated mitigations remain recalibrating the near-expiry surface or
+  blocking the affected market shape outright; it stays OPEN, and near-expiry markets
+  are still gated on it. Bounding the residual 1x exposure is a separate decision.

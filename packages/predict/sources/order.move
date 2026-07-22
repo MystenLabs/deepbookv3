@@ -21,8 +21,9 @@ const EInvalidRange: u64 = 3;
 const EInvalidQuantity: u64 = 4;
 const EInvalidSequence: u64 = 5;
 
-// Active order id fields are dense in the low bits. Any unused bits are leading
-// bits rejected by ORDER_ID_BITS during decode validation.
+// Fields are dense in the low bits; higher bits are rejected during validation.
+// Quantity and floor are complemented so ascending IDs sort larger quantities,
+// then larger floors, first for liquidation scanning.
 const QUANTITY_LOTS_OFFSET: u8 = 164;
 const FLOOR_SHARES_OFFSET: u8 = 100;
 const LOWER_TICK_OFFSET: u8 = 70;
@@ -101,7 +102,7 @@ public(package) fun new_from_ticks(
     )
 }
 
-/// Construct a lower-quantity order that inherits the original floor coverage invariant.
+/// Construct a lower-quantity order with the same range and new floor and sequence.
 public(package) fun replacement(
     old_order: &Order,
     quantity: u64,

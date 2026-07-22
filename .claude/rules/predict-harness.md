@@ -15,10 +15,18 @@ user-facing overview; this file is the editing-critical knowledge.
 - Python: `python3 -m py_compile harness/*.py` from `packages/predict/`.
 - Validate behavior with a real localnet run (`python3 -m harness up --traders N --seconds S`)
   then `python3 -m harness analyze`. Run these in the **main loop or background, never a
-  blocking subagent** (long runs trip watchdogs). `up`/`campaign` auto-trim the heavy scratch
-  (validator DB `localnet/` + staged closure `workspace/`) on teardown and keep only the trace +
-  last-state JSONs, so instances don't accumulate; `python3 -m harness cleanup --instances`
-  clears the leftover traces.
+  blocking subagent** (long runs trip watchdogs). Retention/teardown model: README.
+- **On a PTB abort, read the real VM error, not the framework tag.** A
+  `MovePrimitiveRuntimeError` in `0x2::dynamic_field::borrow_child_object` names only the
+  framework fn; the true cause is the dry-run `executionErrorSource` in the saved
+  `artifacts/failed_transactions/*.json` (now also printed live by `runtime.ts` and by the
+  `analyze` bug oracle). The C-1 object-cache ceiling was chased for days off the truncated
+  framework string while that field read `Object runtime cached objects limit (1000 entries)
+  reached` all along — the trace's `errorTag` only kept its first 120 chars.
+- **`sui move test` does NOT enforce Sui execution-layer limits.** The object-runtime
+  cached-objects cap (1,000 dynamic-field children/tx), per-tx gas, and max object size are
+  full-node checks — a unit test loads 1,100+ children without aborting. Reproduce these on
+  localnet (a harness strategy), never in `sui move test`.
 - **Never blind-`rm` `.localnets/instances/` while a run may be live.** A bare `rm -rf` deletes a
   *running* campaign's dir out from under it — its keeper/updater then `ENOENT` on every write and
   the trace is lost. Check `python3 -m harness status` first (non-empty slots = a live run), then
@@ -51,19 +59,8 @@ user-facing overview; this file is the editing-critical knowledge.
   off the hour, 1m the rest) makes `keeperService.cadenceOf(expiry)` exact.
 
 ## Strategies & campaign
-- **A strategy is a code module** `ts/strategies/<name>.ts` exporting a `Strategy` (`name`,
-  `tickMs`, `maxOps` (0 = duration-only), `fund` (DUSDC the keeper grants its trader), and an
-  `async tick(ctx)`). `traderService.ts` is a thin **runner**: reads the `STRATEGY`
-  env (default `fuzz`), loads the module from `strategies/index.ts`, builds the `StrategyCtx`,
-  and ticks until `maxOps` (run-to-completion) or `DURATION_MS`. Add a strategy = drop a module
-  + register it in `index.ts`; `meta.ts` exposes it to the campaign automatically.
-- **Strategies only touch the `StrategyCtx`** (`strategy.ts`) — never call builders/`submit`
-  directly. The ctx wraps them with bookkeeping: `mint` (resolve+submit+track+trace), `redeem`
-  (partial or full — tracks the replacement order id on a partial close), `supply`/`withdraw`,
-  low-level `submitMint` (adversarial probes) + `submitMintBatch` (N mints in ONE PTB — the
-  `#cap-mintbatch` scaling probe), `refreshPlp`, `currentNav`/`idleBalance` (devInspect NAV-mark
-  reads for lp-adversary), `pruneSettled`, `resolve`, utils.
-  Every traced record is auto-tagged with the strategy (analyze labels blocks by it).
+- **A strategy is a self-contained module** under `ts/strategies/` — the model and add-procedure live in README § Strategies & campaigns (and the `harness-strategy` rule for building one). Keep `traderService.ts` a thin runner: no strategy logic in the runner.
+- **Strategies only touch the `StrategyCtx`** — never call builders/`submit` directly. `ts/strategy.ts` is the authoritative ctx surface; the ctx wraps submission with bookkeeping and strategy-tagged tracing, which direct calls silently skip.
 - **Supply is custody-only; withdraw must read first.** `supply()` uses
   `requestSupplyFromCustodyTx` (pulls from the trader's funded account balance) — NOT
   `requestSupplyTx`, which mints fresh DUSDC and needs the publisher's TreasuryCap (keeper-only; a
@@ -73,19 +70,12 @@ user-facing overview; this file is the editing-critical knowledge.
   (realized only by the keeper flush), so a strategy supplies, then withdraws on a LATER tick.
 - **One op per tick, `tickMs ≥ ~1s`** — the open+close same-`Clock`-ms guard
   (`EMintRedeemSameTimestamp`) aborts a mint+redeem of one order in the same ms; pacing avoids it.
-- **`campaign S1 S2 …`** (`live.campaign`) runs each strategy on its OWN localnet (named by the
-  strategy → `analyze` labels each block) off ONE shared hub, run-to-completion (waits for the
-  trader procs to self-exit at `maxOps`, or `--timeout`), then tears down + auto-runs `analyze`.
-  Per-strategy trader funding is read from `strategies/meta.ts`, which also emits the prod cadence
-  set (1m/5m/1h, window 3) every keeper runs — keep that the single source (don't duplicate in Python).
+- **`campaign S1 S2 …`** runs each strategy on its own localnet off one shared hub (model: README). `strategies/meta.ts` is the single source for per-strategy funding AND the prod cadence set every keeper runs — don't duplicate either in Python.
 
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**
   (NOT 1e9). Leverage and probability are `1e9`-scaled. Mixing these is the #1 scaling bug.
-- The localnet `Clock` is the validator's **real wall-clock — not warpable**. The sim is
-  real-time; markets expire at real boundaries; throughput scales via parallel localnets, not
-  time compression.
-- Testnet oracle freshness is 10s (vs the contract's 2s/3s default) — the one config divergence.
+- Real-time only: the localnet `Clock` is not warpable (README § Note). Testnet oracle freshness is 10s (vs the contract's 2s/3s default) — the one config divergence.
 
 ## Resilience invariants
 - Shared files (`snapshot/feeds/markets.json`, `hub-snapshot.json`) are written with
@@ -128,4 +118,4 @@ user-facing overview; this file is the editing-critical knowledge.
   `gasOf`) against that cap; the flush's `InsufficientGas` deferral at that book size is the
   nav-stress BREAKPOINT (the measurement) and is excluded from the oracle — don't reintroduce a
   gas-budget ceiling (it both mis-reports the breakpoint and false-flags the OOGs as bugs). See
-  `packages/predict/predeploy/stress/nav-stress-findings-2026-06-30.md`.
+  `packages/predict/predeploy/evidence/c1-nav-stress-2026-06-30.md`.

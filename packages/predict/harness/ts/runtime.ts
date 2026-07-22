@@ -43,6 +43,7 @@ export interface GasUsage {
     computationCost: number;
     storageCost: number;
     storageRebate: number;
+    nonRefundableStorageFee: number;
     gasTotal: number;
 }
 
@@ -257,6 +258,14 @@ async function collectTransactionDebug(params: {
     const path = failedTransactionArtifactPath(params.label, params.attempt);
     writeJson(path, artifact);
     process.stderr.write(`[${ts()}]   Failed transaction artifact: ${path}\n`);
+    // Surface the REAL VM error, not just the artifact path. A framework-level MovePrimitiveRuntimeError
+    // (e.g. 0x2::dynamic_field::borrow_child_object) names only the framework fn, hiding the true cause;
+    // the dry-run's `executionErrorSource` states it in plain English (e.g. "Object runtime cached objects
+    // limit (1000 entries) reached"). This line is why: the C-1 flush ceiling was debugged for days off the
+    // truncated framework string while this exact message sat unsurfaced in the artifact. Always print it.
+    const dr = artifact.dry_run as any;
+    const vmError = dr?.executionErrorSource ?? dr?.effects?.status?.error ?? (artifact.status as any)?.error ?? null;
+    if (vmError) process.stderr.write(`[${ts()}]   VM error: ${String(vmError).slice(0, 300)}\n`);
     return path;
 }
 
@@ -280,11 +289,16 @@ function gasSummaryFromEffects(effects: any): GasUsage {
     const computationCost = Number(gasUsed.computationCost ?? 0);
     const storageCost = Number(gasUsed.storageCost ?? 0);
     const storageRebate = Number(gasUsed.storageRebate ?? 0);
+    const nonRefundableStorageFee = Number(gasUsed.nonRefundableStorageFee ?? 0);
 
     return {
         computationCost,
         storageCost,
         storageRebate,
+        nonRefundableStorageFee,
+        // Net MIST the sender's gas coin is charged: comp + storage - rebate. Goes
+        // NEGATIVE (a refund) when a delete-heavy tx's storage rebate dominates —
+        // the cleanout-incentive measurement (rebate-vs-compute) turns on this sign.
         gasTotal: computationCost + storageCost - storageRebate,
     };
 }
@@ -421,6 +435,17 @@ export async function readActiveMarketIds(): Promise<string[]> {
     return parseVectorId(await devInspectFirstReturn(tx));
 }
 
+// On-chain settlement flag for one market (devInspect `expiry_market::is_settled`). The
+// cleanout measurement waits on this: `redeem_settled` / `claim_trading_loss_rebate` both
+// require a settled market, and a settled market drops out of `active_expiry_markets`, so a
+// settled-but-still-present read is the safe "ready to clean out" signal. BCS bool = 1 byte.
+export async function readIsSettled(marketId: string): Promise<boolean> {
+    const tx = new Transaction();
+    tx.moveCall({ target: target("expiry_market", "is_settled"), arguments: [tx.object(marketId)] });
+    const bytes = await devInspectFirstReturn(tx);
+    return (bytes[0] ?? 0) !== 0;
+}
+
 // On-chain PLP total supply. NOTE: lock_capital mints the min-liquidity lock, so this is
 // >0 after genesis step 2 of 4 — it is NOT a "fully bootstrapped" signal on its own.
 export async function readPlpTotalSupply(): Promise<bigint> {
@@ -524,6 +549,7 @@ interface OracleRefreshParams {
     forward: bigint;
     svi: {
         a: bigint;
+        aNegative: boolean;
         b: bigint;
         rho: bigint;
         rhoNegative: boolean;
@@ -698,8 +724,7 @@ function addPythFeedUpdate(
 }
 
 // Settlement observation: same re-signed Lazer spot update as addPythFeedUpdate, but
-// stored via `insert_at` at the exact whole-second expiry timestamp so the flush's
-// `value_expiry` -> `ensure_settled` can read the terminal price and settle the market.
+// stored via `insert_at` at the exact whole-second expiry timestamp for `try_settle`.
 function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, expiryMs: bigint): void {
     const updateBytes = lazerUpdateFromConfig(localPythConfig(), PYTH_FEED_ID, spot, expiryMs);
     const update = tx.moveCall({
@@ -709,6 +734,22 @@ function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, ex
     tx.moveCall({
         target: propbookTarget("pyth_feed", "insert_at"),
         arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
+    });
+}
+
+function addTrySettle(
+    tx: Transaction,
+    params: { marketId: string; protocolConfigId: string; pythFeedId: string },
+): void {
+    tx.moveCall({
+        target: target("expiry_market", "try_settle"),
+        arguments: [
+            tx.object(params.marketId),
+            tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(CLOCK_ID),
+        ],
     });
 }
 
@@ -761,6 +802,7 @@ function addBsExpiryUpdate(
             tx.pure.u64(expiry),
             tx.pure.u64(publishedAtMs),
             tx.pure.u64(svi.a),
+            tx.pure.bool(svi.aNegative),
             tx.pure.u64(svi.b),
             tx.pure.u64(svi.sigma),
             tx.pure.u64(svi.rho),
@@ -821,7 +863,7 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
 // privileged `start_pool_valuation` (started via a market-deployer `MarketLifecycleCap`
 // proof — the sole flush authority) -> one `value_expiry` for our market ->
 // `finish_flush`, which drains the supply/withdraw request queues at the frozen mark.
-// The two `finish_flush` budgets are `None` (drain both queues fully). The harness has
+// The two `finish_flush` budgets are `None` (unbounded). The harness has
 // exactly one expiry market, so the snapshot covers one `value_expiry`. (Multi-market
 // topologies must call `value_expiry` once per active market between start and finish.)
 function addFlush(tx: Transaction, params: FlushParams): void {
@@ -854,8 +896,8 @@ function addFlush(tx: Transaction, params: FlushParams): void {
             valuation,
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (drain fully)
-            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (drain fully)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (unbounded)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (unbounded)
         ],
     });
 }
@@ -915,6 +957,111 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             tx.object(CLOCK_ID),
         ],
     });
+}
+
+// === Account cleanout (rebate gas-incentive measurement, E1) ===
+// One PTB that redeems every settled position on `wrapper` (permissionless full-close) then
+// claims its trading-loss rebate (permissionless). This is the maximally-incentivized keeper
+// /MEV cleanout: it deletes the N position dynamic-field entries + the ExpiryTradingSummary
+// entry, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
+// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoints derive
+// PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
+// account's wrapper — the actual on-chain keeper surface, priced as-is.
+export interface CleanoutPosition {
+    orderId: string;
+    quantity: bigint; // redeem_settled requires close_quantity == the position's full quantity
+}
+export interface CleanoutParams {
+    expiryMarketId: string;
+    wrapperId: string;
+    positions: CleanoutPosition[];
+}
+
+function addRedeemSettledPermissionless(
+    tx: Transaction,
+    p: { expiryMarketId: string; wrapperId: string; orderId: string; quantity: bigint },
+): void {
+    // redeem_settled_permissionless(market, account_registry, wrapper, config, order_id,
+    //   close_quantity, root, clock, ctx). Settlement is a separate PTB transition; this
+    // consumer needs no oracle objects or live pricer.
+    tx.moveCall({
+        target: target("expiry_market", "redeem_settled_permissionless"),
+        arguments: [
+            tx.object(p.expiryMarketId),
+            tx.object(ACCOUNT_REGISTRY_ID),
+            tx.object(p.wrapperId),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.pure.u256(BigInt(p.orderId)),
+            tx.pure.u64(p.quantity),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
+function addClaimRebatePermissionless(
+    tx: Transaction,
+    p: { expiryMarketId: string; wrapperId: string },
+): void {
+    // claim_trading_loss_rebate_permissionless(vault, market, wrapper, account_registry, config,
+    //   root, clock, ctx). resolve_expiry_summary asserts open_position_count == 0, so this
+    // MUST follow the redeems in the same PTB.
+    tx.moveCall({
+        target: target("plp", "claim_trading_loss_rebate_permissionless"),
+        arguments: [
+            tx.object(POOL_VAULT_ID),
+            tx.object(p.expiryMarketId),
+            tx.object(p.wrapperId),
+            tx.object(ACCOUNT_REGISTRY_ID),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
+// N settled-redeems (drive open_position_count -> 0) THEN one rebate claim, in ONE PTB whose
+// single gas summary is the measurement. Order matters (claim asserts count == 0).
+export function cleanoutAccountTx(params: CleanoutParams): Transaction {
+    const tx = new Transaction();
+    for (const pos of params.positions) {
+        addRedeemSettledPermissionless(tx, {
+            expiryMarketId: params.expiryMarketId,
+            wrapperId: params.wrapperId,
+            orderId: pos.orderId,
+            quantity: pos.quantity,
+        });
+    }
+    addClaimRebatePermissionless(tx, {
+        expiryMarketId: params.expiryMarketId,
+        wrapperId: params.wrapperId,
+    });
+    return tx;
+}
+
+// The cleanout split into its two halves, to measure the rebate claim's OWN economics (P-9 /
+// RP-11 follow-up): a gas-maximizing searcher includes the claim in its redeem PTB only if the
+// claim's MARGINAL net gas is <= 0. `redeemSettledAllTx` is the N redeems WITHOUT the claim (it
+// drives open_position_count -> 0, leaving an unresolved summary); `claimRebateOnlyTx` is the
+// claim ALONE (removes only the summary), runnable once positions are closed. Measuring both
+// isolates: standalone-claim net = claimRebateOnly; in-bundle marginal = cleanout - redeemSettledAll.
+export function redeemSettledAllTx(params: CleanoutParams): Transaction {
+    const tx = new Transaction();
+    for (const pos of params.positions) {
+        addRedeemSettledPermissionless(tx, {
+            expiryMarketId: params.expiryMarketId,
+            wrapperId: params.wrapperId,
+            orderId: pos.orderId,
+            quantity: pos.quantity,
+        });
+    }
+    return tx;
+}
+
+export function claimRebateOnlyTx(params: { expiryMarketId: string; wrapperId: string }): Transaction {
+    const tx = new Transaction();
+    addClaimRebatePermissionless(tx, params);
+    return tx;
 }
 
 export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
@@ -1194,7 +1341,6 @@ export function rebalanceExpiryCashTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    pythFeedId: string;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -1203,8 +1349,6 @@ export function rebalanceExpiryCashTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
             tx.object(CLOCK_ID),
         ],
     });
@@ -1222,6 +1366,7 @@ export function requestSupplyTx(params: {
     protocolConfigId: string;
     wrapperId: string;
     amount: bigint;
+    minPlpOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const dusdc = mintDusdc(tx, params.amount);
@@ -1246,6 +1391,7 @@ export function requestSupplyTx(params: {
             supplyAuth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.amount),
+            tx.pure.u64(params.minPlpOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1262,6 +1408,7 @@ export function requestSupplyFromCustodyTx(params: {
     protocolConfigId: string;
     wrapperId: string;
     amount: bigint;
+    minPlpOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const supplyAuth = generateAuth(tx);
@@ -1273,6 +1420,7 @@ export function requestSupplyFromCustodyTx(params: {
             supplyAuth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.amount),
+            tx.pure.u64(params.minPlpOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1290,6 +1438,7 @@ export function requestWithdrawTx(params: {
     protocolConfigId: string;
     wrapperId: string;
     shares: bigint;
+    minDusdcOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const auth = generateAuth(tx);
@@ -1301,6 +1450,7 @@ export function requestWithdrawTx(params: {
             auth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.shares),
+            tx.pure.u64(params.minDusdcOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1357,25 +1507,28 @@ export interface KeeperFeeds {
     bsSviFeedId: string;
 }
 
-// The keeper's flush+settle PTB. First inserts the exact-expiry Pyth observation for
-// each expired market (so `value_expiry`'s `ensure_settled` settles + sweeps it), then
-// runs ONE full-pool flush valuing EVERY active market between start and finish. A
-// settled market contributes 0 and is swept (cash back to pool); a live market is
-// rebalanced + valued. Relies on the running updater to keep live-market feeds fresh.
+// The keeper's pool-flush PTB: value EVERY active market between start and finish. The durable
+// settlement lane (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
+// are only the boundary-race STRAGGLERS that expired since. Their exact-expiry observations are
+// inserted and explicitly settled before valuation. These commands are race-avoidance, not the
+// durable path: a BS outage aborts this whole PTB (reverting them), but the settlement lane already
+// settled durably, so no brick. Live-market valuation reads the updater-maintained fresh BS feed.
 export function keeperFlushTx(params: {
     feeds: KeeperFeeds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
     lifecycleCapId: string;
-    settlements: { expiryMs: bigint; price: bigint }[];
+    settlements: { marketId: string; expiryMs: bigint; price: bigint }[];
 }): Transaction {
     const tx = new Transaction();
-    // Insert each expired market's terminal observation so value_expiry's ensure_settled
-    // settles + sweeps it; live-market valuation reads the updater-maintained fresh feed.
-    // One atomic flush values EVERY active market.
     for (const s of params.settlements) {
         addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
+        addTrySettle(tx, {
+            marketId: s.marketId,
+            protocolConfigId: params.protocolConfigId,
+            pythFeedId: params.feeds.pythFeedId,
+        });
     }
     const proof = tx.moveCall({
         target: target("registry", "generate_lifecycle_proof"),
@@ -1415,6 +1568,39 @@ export function keeperFlushTx(params: {
     return tx;
 }
 
+// Settle ONE expired market in its own PTB (decoupled from the flush): insert its exact-expiry Pyth
+// observation, call try_settle, then rebalance_expiry_cash to sweep the settled market from
+// active_expiry_markets. Needs only the exact Pyth spot, NOT
+// live BS pricing, so it proceeds even while the flush defers on a BS outage — no settlement backlog,
+// no beyond-retention brick. Mirrors the production keeper's settlement lane (deepbook-services
+// decision 0010). Per-market so one bad market's settle fails alone.
+export function keeperSettleTx(params: {
+    pythFeedId: string;
+    expiryMs: bigint;
+    price: bigint;
+    marketId: string;
+    poolVaultId: string;
+    protocolConfigId: string;
+}): Transaction {
+    const tx = new Transaction();
+    addPythFeedInsert(tx, params.pythFeedId, params.price, params.expiryMs);
+    addTrySettle(tx, {
+        marketId: params.marketId,
+        protocolConfigId: params.protocolConfigId,
+        pythFeedId: params.pythFeedId,
+    });
+    tx.moveCall({
+        target: target("plp", "rebalance_expiry_cash"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.marketId),
+            tx.object(params.protocolConfigId),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
 // One bounded liquidation pass over each live market. Reads the updater-maintained
 // fresh feed via load_live_pricer (no self-refresh).
 export function keeperLiquidateTx(params: {
@@ -1428,7 +1614,13 @@ export function keeperLiquidateTx(params: {
         const pricer = loadLivePricer(tx, { expiryMarketId: marketId, protocolConfigId: params.protocolConfigId, ...params.feeds });
         tx.moveCall({
             target: target("expiry_market", "liquidate"),
-            arguments: [tx.object(marketId), tx.object(params.protocolConfigId), pricer, tx.pure.u64(params.budget)],
+            arguments: [
+                tx.object(marketId),
+                tx.object(params.protocolConfigId),
+                pricer,
+                tx.pure.u64(params.budget),
+                tx.object(CLOCK_ID),
+            ],
         });
     }
     return tx;

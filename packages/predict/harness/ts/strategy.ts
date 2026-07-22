@@ -12,14 +12,19 @@ import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
-import { abortInfo, appendTrace, computationOf, gasOf } from "./trace.js";
+import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
+  type CleanoutPosition,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  claimRebateOnlyTx,
+  cleanoutAccountTx,
   mintBatchTx,
   mintTx,
   readCurrentNav,
   readIdleBalance,
+  readIsSettled,
+  redeemSettledAllTx,
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
@@ -54,6 +59,13 @@ export interface MintLeg {
   maxProbability: bigint;
 }
 export type OpKind = "mint" | "redeem" | "supply" | "withdraw";
+export interface GasBreakdown {
+  computationCost: number;
+  storageCost: number;
+  storageRebate: number;
+  nonRefundableStorageFee: number;
+  net: number; // comp + storage - rebate; NEGATIVE = the cleaner is paid (refund)
+}
 
 // Everything a strategy can read + do in one tick. The runner owns the actual deps; a
 // strategy only sees this interface.
@@ -84,6 +96,18 @@ export interface StrategyCtx {
   currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
   idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
 
+  // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
+  // position on THIS account then claims its rebate, and return + trace the full gas breakdown
+  // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
+  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
+  // Cleanout split (claim-marginal test): redeemAll = the N redeems WITHOUT the claim (leaves an
+  // unresolved summary); claimRebate = the claim ALONE (once positions are closed). Diffing them
+  // isolates whether a searcher's marginal cost of adding the claim is a refund (bundles it) or a
+  // cost (skips it, leaving non-owed accounts' reserve unresolved).
+  redeemAll(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown>;
+  claimRebate(marketId: string): Promise<GasBreakdown>;
+  isSettled(marketId: string): Promise<boolean>; // devInspect expiry_market::is_settled
+
   // utils
   rand(lo: number, hi: number): number;
   pick<T>(a: T[]): T;
@@ -103,6 +127,12 @@ export interface Strategy {
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
+  // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
+  // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
+  // (e.g. the object-cache limit "cached objects limit", which bricks a normal flush but is the whole
+  // point here) is expected, not a bug oracle hit; a run that never reaches a declared wall fails as
+  // VACUOUS (a stress that did not stress). Scope narrowly — this whitelist is per-strategy, not global.
+  expect?: { terminal: string[]; note?: string };
   tick(ctx: StrategyCtx): Promise<OpKind | null>;
 }
 
@@ -288,6 +318,47 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
     async idleBalance() {
       return readIdleBalance();
+    },
+
+    async cleanout(marketId, positions) {
+      const res = await deps.submit(
+        cleanoutAccountTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, positions }),
+        "cleanout",
+      );
+      const g = gasBreakdownOf(res);
+      // Split by redeem path: a LIQUIDATED position had its book state (payout-tree node +
+      // active-index entry) removed at liquidation time (apply_liquidation), so its cleanout frees
+      // only the account position; a SETTLED (surviving) one's cleanout also removes its active-index
+      // entry (process_settled_close removes the index entry and adjusts cached liability; the
+      // payout-tree node persists under the settled-liability model). The per-position gas profiles
+      // differ, so the fit counts each. NB: the P-9/RP-11 gas figures predate the tombstone removal
+      // (DBU-592) — the per-position rebate structure needs re-measurement under the derived-state model.
+      const evs = (res.events ?? []) as any[];
+      const nLiquidated = evs.filter((e) => e.type?.includes("LiquidatedOrderRedeemed")).length;
+      const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;
+      ctx.trace({ type: "cleanout", n: positions.length, nLiquidated, nSettled, ...g });
+      return { ...g, nLiquidated, nSettled };
+    },
+    async redeemAll(marketId, positions) {
+      const res = await deps.submit(
+        redeemSettledAllTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, positions }),
+        "redeemAll",
+      );
+      const g = gasBreakdownOf(res);
+      ctx.trace({ type: "redeemAll", n: positions.length, ...g });
+      return g;
+    },
+    async claimRebate(marketId) {
+      const res = await deps.submit(
+        claimRebateOnlyTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId }),
+        "claimRebate",
+      );
+      const g = gasBreakdownOf(res);
+      ctx.trace({ type: "claimRebate", ...g });
+      return g;
+    },
+    async isSettled(marketId) {
+      return readIsSettled(marketId);
     },
 
     rand,

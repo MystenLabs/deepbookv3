@@ -16,7 +16,7 @@ Some structural constants are real and stable enough to state directly:
 - **1e9 fixed-point scaling** (`float_scaling`): `500_000_000` is 50%, `1_000_000_000` is 100%. Prices, probabilities, fee rates, ratios, and benefit fractions all use this scale.
 - **DUSDC settlement asset has 6 decimals**; contract quantities are 6-decimal quote units, so `1_000_000` is one contract.
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
-- **Leverage is continuous** in 1e9-scaled multipliers: any value at or above 1x can be requested, subject to the expiry's snapshotted `max_admission_leverage` and the upgrade-required dynamic admission curve constant.
+- **Leverage is continuous** in 1e9-scaled multipliers: any value at or above 1x can be requested, subject to the expiry's snapshotted `max_admission_leverage` and the upgrade-required dynamic admission curve constant. Within the expiry's snapshotted `no_leverage_window_ms` of expiry the cap is exactly 1x regardless of probability; a `0` window disables that block.
 - **The minimum per-expiry allocation cap** is an upgrade-required floor. The actual per-expiry cap is admin-tuned per cadence and snapshotted into pool accounting when a market is created.
 - **Market tick sizes** are admin-tuned per cadence and must be positive and within the protocol's overflow-safe bounds. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 30-bit tick domain.
 ## Three classes of configuration

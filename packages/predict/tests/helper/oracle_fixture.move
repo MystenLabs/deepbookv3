@@ -330,6 +330,7 @@ public fun prepare_live_oracle(
         live_price,
         live_price,
         test_constants::default_svi_a(),
+        false,
         test_constants::default_svi_b(),
         test_constants::default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
@@ -357,7 +358,8 @@ public fun prepare_real_oracle(
     pyth: &mut PythFeed,
     spot: u64,
     forward: u64,
-    svi_a: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
     svi_b: u64,
     svi_sigma: u64,
     svi_rho_magnitude: u64,
@@ -393,7 +395,8 @@ public fun prepare_real_oracle(
                 bs_source_id,
                 self.expiry,
                 live_ts,
-                svi_a,
+                svi_a_magnitude,
+                svi_a_is_negative,
                 svi_b,
                 svi_sigma,
                 svi_rho_magnitude,
@@ -412,7 +415,8 @@ public fun prepare_real_oracle_bundle(
     oracle: &mut OracleBundle,
     spot: u64,
     forward: u64,
-    svi_a: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
     svi_b: u64,
     svi_sigma: u64,
     svi_rho_magnitude: u64,
@@ -425,7 +429,8 @@ public fun prepare_real_oracle_bundle(
         &mut oracle.pyth,
         spot,
         forward,
-        svi_a,
+        svi_a_magnitude,
+        svi_a_is_negative,
         svi_b,
         svi_sigma,
         svi_rho_magnitude,
@@ -516,6 +521,29 @@ public fun set_pyth_bundle(
     self.set_pyth(&mut oracle.pyth, price, source_timestamp_ms);
 }
 
+/// Deliver `price` under an envelope stamped `envelope_timestamp_ms` while Pyth
+/// generated it at `feed_update_timestamp_ms` — a price Pyth carried forward
+/// because it had no fresh aggregate for this feed.
+public fun carry_pyth_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    price: u64,
+    feed_update_timestamp_ms: u64,
+    envelope_timestamp_ms: u64,
+) {
+    pyth_feed::record_raw_for_testing(
+        &mut oracle.pyth,
+        price,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        feed_update_timestamp_ms * 1000,
+        envelope_timestamp_ms * 1000,
+        self.clock.timestamp_ms(),
+        false,
+    );
+}
+
 /// Insert an exact historical Pyth spot keyed by `source_timestamp_ms`.
 public fun insert_exact_pyth(
     _self: &OracleFixture,
@@ -529,6 +557,7 @@ public fun insert_exact_pyth(
         false,
         PYTH_EXPONENT_NEG_9,
         true,
+        source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
         source_timestamp_ms,
         true,
@@ -623,6 +652,7 @@ fun store_pyth_spot(
         false,
         PYTH_EXPONENT_NEG_9,
         true,
+        source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
         false,

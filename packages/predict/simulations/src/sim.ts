@@ -132,7 +132,6 @@ const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
 interface SimulationCapital {
     vaultSeed: bigint;
     managerSeed: bigint;
-    initialTotalPlpSupply: bigint;
 }
 
 interface EconomicState {
@@ -145,6 +144,8 @@ interface EconomicState {
     profitBasisDebits: bigint;
     profitBasisCredits: bigint;
     vaultTotalPlpSupply: bigint;
+    supplyRequestsPending: bigint;
+    withdrawRequestsPending: bigint;
     openOrderCount: bigint;
     openOrderQuantity: bigint;
     liquidatedOrderCount: bigint;
@@ -266,12 +267,14 @@ function initialEconomicState(
         managerBalance: capital.managerSeed,
         expiryCashBalance: initialExpiryCash,
         expiryUnresolvedTradingFees: 0n,
-        vaultIdleBalance: capital.vaultSeed - initialExpiryCash,
+        vaultIdleBalance: capital.vaultSeed + MIN_BOOTSTRAP_LIQUIDITY - initialExpiryCash,
         vaultProtocolReserveBalance: 0n,
         vaultPendingProtocolProfit: 0n,
         profitBasisDebits: initialExpiryCash,
         profitBasisCredits: 0n,
-        vaultTotalPlpSupply: capital.initialTotalPlpSupply,
+        vaultTotalPlpSupply: capital.vaultSeed + MIN_BOOTSTRAP_LIQUIDITY,
+        supplyRequestsPending: 0n,
+        withdrawRequestsPending: 0n,
         openOrderCount: 0n,
         openOrderQuantity: 0n,
         liquidatedOrderCount: 0n,
@@ -388,7 +391,7 @@ function findEvents(events: any[], name: string): any[] {
 
 function sviInput(row: MintRow | OracleRefreshData) {
     return {
-        a: row.a.toString(),
+        a: signedValue(row.a, row.aNegative),
         b: row.b.toString(),
         rho: signedValue(row.rho, row.rhoNegative),
         m: signedValue(row.m, row.mNegative),
@@ -548,7 +551,7 @@ function recordBlockScholesSVI(
     const raw = eventObservationValue(event);
     const svi = raw.svi?.fields ?? raw.svi ?? {};
     pending.svi = {
-        a: decimal(svi.a),
+        a: signedI64(svi.a),
         b: decimal(svi.b),
         rho: signedI64(svi.rho),
         m: signedI64(svi.m),
@@ -573,6 +576,17 @@ function normalizeOrderMinted(event: any, orderRef: string | null): Record<strin
         fee_incentive_subsidy: decimal(json.fee_incentive_subsidy ?? 0),
         builder_fee: decimal(json.builder_fee),
         penalty_fee: decimal(json.penalty_fee),
+        minted_at_ms: decimal(json.minted_at_ms),
+        ...normalizePricingSourceTimestamps(json),
+    };
+}
+
+function normalizePricingSourceTimestamps(json: any): Record<string, string> {
+    return {
+        pyth_spot_source_timestamp_ms: decimal(json.pyth_spot_source_timestamp_ms),
+        block_scholes_spot_source_timestamp_ms: decimal(json.block_scholes_spot_source_timestamp_ms),
+        block_scholes_forward_source_timestamp_ms: decimal(json.block_scholes_forward_source_timestamp_ms),
+        block_scholes_svi_source_timestamp_ms: decimal(json.block_scholes_svi_source_timestamp_ms),
     };
 }
 
@@ -587,6 +601,8 @@ function normalizeOrderLiquidated(event: any, aliases: AliasState): Record<strin
         gross_value: decimal(json.gross_value),
         floor_amount: decimal(json.floor_amount),
         liquidation_ltv: decimal(json.liquidation_ltv),
+        liquidated_at_ms: decimal(json.liquidated_at_ms),
+        ...normalizePricingSourceTimestamps(json),
     };
 }
 
@@ -610,6 +626,8 @@ function normalizeLiveOrderRedeemed(event: any, row: ScenarioRow): Record<string
         trading_fee: decimal(json.trading_fee),
         builder_fee: decimal(json.builder_fee),
         penalty_fee: decimal(json.penalty_fee),
+        redeemed_at_ms: decimal(json.redeemed_at_ms),
+        ...normalizePricingSourceTimestamps(json),
     };
 }
 
@@ -620,6 +638,7 @@ function normalizeLiquidatedOrderRedeemed(event: any, row: ScenarioRow): Record<
         order_ref: row.action === "redeem" ? row.orderRef : null,
         order_sequence: orderSequence(decimal(json.order_id)),
         quantity_closed: decimal(json.quantity_closed),
+        redeemed_at_ms: decimal(json.redeemed_at_ms),
     };
 }
 
@@ -632,6 +651,7 @@ function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<str
         quantity_closed: decimal(json.quantity_closed),
         settlement_price: decimal(json.settlement_price),
         payout_amount: decimal(json.payout_amount),
+        redeemed_at_ms: decimal(json.redeemed_at_ms),
     };
 }
 
@@ -639,8 +659,9 @@ function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<str
 // row escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
 // queues at one frozen mark, emitting per-request SupplyFilled / WithdrawFilled and a
 // single FlushExecuted that carries the frozen valuation (the former PoolValued fields
-// were folded into it). Cancels emit RequestCancelled, which the sim never triggers.
-// The `index` queue handle is the request alias key (no PLP coin is returned).
+// were folded into it). Generated rows do not request cancellation, but protocol
+// refunds can still emit RequestCancelled. The `index` queue handle is the request
+// alias key (no PLP coin is returned).
 
 function normalizeSupplyRequested(event: any, row: ScenarioRow): Record<string, unknown> {
     const json = event.parsedJson ?? {};
@@ -649,6 +670,7 @@ function normalizeSupplyRequested(event: any, row: ScenarioRow): Record<string, 
         lp_ref: row.action === "supply" ? row.lpRef : null,
         index: decimal(json.index),
         amount: decimal(json.amount),
+        requests_pending_after: decimal(json.requests_pending_after),
     };
 }
 
@@ -659,6 +681,19 @@ function normalizeWithdrawRequested(event: any, row: ScenarioRow): Record<string
         lp_ref: row.action === "withdraw" ? row.lpRef : null,
         index: decimal(json.index),
         amount: decimal(json.amount),
+        requests_pending_after: decimal(json.requests_pending_after),
+    };
+}
+
+function normalizeRequestCancelled(event: any): Record<string, unknown> {
+    const json = event.parsedJson ?? {};
+    return {
+        type: "request_cancelled",
+        index: decimal(json.index),
+        amount: decimal(json.amount),
+        is_supply: booleanField(json.is_supply),
+        reason: decimal(json.reason),
+        requests_pending_after: decimal(json.requests_pending_after),
     };
 }
 
@@ -669,6 +704,7 @@ function normalizeSupplyFilled(event: any): Record<string, unknown> {
         index: decimal(json.index),
         dusdc_amount: decimal(json.dusdc_amount),
         shares_minted: decimal(json.shares_minted),
+        requests_pending_after: decimal(json.requests_pending_after),
     };
 }
 
@@ -679,6 +715,7 @@ function normalizeWithdrawFilled(event: any): Record<string, unknown> {
         index: decimal(json.index),
         shares_burned: decimal(json.shares_burned),
         dusdc_amount: decimal(json.dusdc_amount),
+        requests_pending_after: decimal(json.requests_pending_after),
     };
 }
 
@@ -698,6 +735,7 @@ function normalizeFlushExecuted(event: any): Record<string, unknown> {
         withdrawals_filled: decimal(json.withdrawals_filled),
         requests_processed: decimal(json.requests_processed),
         idle_balance_after: decimal(json.idle_balance_after),
+        total_supply_after: decimal(json.total_supply_after),
     };
 }
 
@@ -791,6 +829,7 @@ function normalizeUpdates(
             updates.push(normalizeSettledOrderRedeemed(event, row));
         else if (name === "SupplyRequested") updates.push(normalizeSupplyRequested(event, row));
         else if (name === "WithdrawRequested") updates.push(normalizeWithdrawRequested(event, row));
+        else if (name === "RequestCancelled") updates.push(normalizeRequestCancelled(event));
         else if (name === "SupplyFilled") updates.push(normalizeSupplyFilled(event));
         else if (name === "WithdrawFilled") updates.push(normalizeWithdrawFilled(event));
         else if (name === "FlushExecuted") updates.push(normalizeFlushExecuted(event));
@@ -886,24 +925,40 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
         // A supply fill mints PLP and joins its escrowed DUSDC into idle. PLP supply
         // grows by shares_minted; idle is reconciled by the FlushExecuted snapshot.
         state.vaultTotalPlpSupply += BigInt(decimal(update.shares_minted));
+        state.supplyRequestsPending = BigInt(decimal(update.requests_pending_after));
     } else if (update.type === "withdraw_filled") {
         // A withdraw fill burns PLP and pays DUSDC from idle. PLP supply shrinks by
         // shares_burned; idle is reconciled by the FlushExecuted snapshot.
         state.vaultTotalPlpSupply -= BigInt(decimal(update.shares_burned));
+        state.withdrawRequestsPending = BigInt(decimal(update.requests_pending_after));
+    } else if (update.type === "supply_requested") {
+        state.supplyRequestsPending = BigInt(decimal(update.requests_pending_after));
+    } else if (update.type === "withdraw_requested") {
+        state.withdrawRequestsPending = BigInt(decimal(update.requests_pending_after));
+    } else if (update.type === "request_cancelled") {
+        if (update.is_supply === true) {
+            state.supplyRequestsPending = BigInt(decimal(update.requests_pending_after));
+        } else {
+            state.withdrawRequestsPending = BigInt(decimal(update.requests_pending_after));
+        }
     } else if (update.type === "flush_executed") {
         // FlushExecuted carries the post-drain idle balance; trust it as the
         // authoritative idle after both queues drain at the frozen mark.
         state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+        const totalSupplyAfter = BigInt(decimal(update.total_supply_after));
+        if (state.vaultTotalPlpSupply !== totalSupplyAfter) {
+            throw new Error(
+                `flush total supply mismatch: deltas=${state.vaultTotalPlpSupply} event=${totalSupplyAfter}`,
+            );
+        }
+        state.vaultTotalPlpSupply = totalSupplyAfter;
     }
     // NOTE: supply_requested / withdraw_requested escrow funds OUTSIDE the tracked
     // vault/account balances (the request queue holds them); they move balances only
     // at the flush. They carry no state delta here.
-    // TODO(sim-parity): the async request -> flush split changes WHEN PLP supply and
-    // account balances move relative to the old synchronous supply/withdraw. The
-    // account-side credit of a supply fill / withdraw payout now lands via the
+    // The account-side credit of a supply fill / withdraw payout lands via the
     // balance accumulator (send_funds) and is absorbed lazily on the account's next
-    // capital op, NOT in this tx. Confirm the exact manager_balance + PLP-supply
-    // timing against a localnet run before trusting LP-row parity.
+    // capital op, so it does not change manager_balance in the flush record.
 }
 
 function stateSnapshot(state: EconomicState): Record<string, string> {
@@ -917,6 +972,8 @@ function stateSnapshot(state: EconomicState): Record<string, string> {
         profit_basis_debits: state.profitBasisDebits.toString(),
         profit_basis_credits: state.profitBasisCredits.toString(),
         vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),
+        supply_requests_pending: state.supplyRequestsPending.toString(),
+        withdraw_requests_pending: state.withdrawRequestsPending.toString(),
         open_order_count: state.openOrderCount.toString(),
         open_order_quantity: state.openOrderQuantity.toString(),
         liquidated_order_count: state.liquidatedOrderCount.toString(),
@@ -939,6 +996,31 @@ function economicRecord(
         step: row.step,
         action: row.action,
         input: rowInput(row),
+        updates,
+        state: stateSnapshot(state),
+    };
+}
+
+function economicMaintenanceRecord(
+    afterRow: number,
+    action: "flush" | "rebalance_expiry_cash",
+    row: ScenarioRow,
+    receipt: ExecutionReceipt,
+    state: EconomicState,
+    aliases: AliasState,
+): EconomicRecord {
+    const updates = normalizeUpdates(row, receipt, aliases, []);
+    for (const update of updates) {
+        applyUpdate(state, update);
+    }
+    if (action === "flush" && !updates.some((update) => update.type === "flush_executed")) {
+        throw new Error(`flush after row ${afterRow} emitted no FlushExecuted event`);
+    }
+
+    return {
+        step: row.step,
+        action,
+        input: { after_row: afterRow },
         updates,
         state: stateSnapshot(state),
     };
@@ -1118,7 +1200,6 @@ function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapi
     return {
         vaultSeed,
         managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
-        initialTotalPlpSupply: vaultSeed,
     };
 }
 
@@ -1129,7 +1210,6 @@ function scaleSimulationCapital(
     return {
         vaultSeed: capital.vaultSeed * multiplier,
         managerSeed: capital.managerSeed * multiplier,
-        initialTotalPlpSupply: capital.initialTotalPlpSupply * multiplier,
     };
 }
 
@@ -1152,6 +1232,7 @@ interface OracleSeedData {
     forward: bigint;
     svi: {
         a: bigint;
+        aNegative: boolean;
         b: bigint;
         rho: bigint;
         rhoNegative: boolean;
@@ -1172,6 +1253,7 @@ function firstOracleData(row: ScenarioRow): OracleSeedData {
         forward: o.forward,
         svi: {
             a: o.a,
+            aNegative: o.aNegative,
             b: o.b,
             rho: o.rho,
             rhoNegative: o.rhoNegative,
@@ -1428,7 +1510,7 @@ async function setupSimulation(
     console.log(`[${ts()}]   Bootstrap flush: PLP minted 1:1, idle funded`);
 
     await executeAndWait(
-        rebalanceExpiryCashTx({ poolVaultId, protocolConfigId, expiryMarketId, pythFeedId }),
+        rebalanceExpiryCashTx({ poolVaultId, protocolConfigId, expiryMarketId }),
         "bootstrap_rebalance_expiry_cash",
     );
     console.log(`[${ts()}]   Expiry cash rebalanced toward floor`);
@@ -1487,6 +1569,7 @@ async function executeStressMintBatch(
                 forward: row.forward,
                 svi: {
                     a: row.a,
+                    aNegative: row.aNegative,
                     b: row.b,
                     rho: row.rho,
                     rhoNegative: row.rhoNegative,
@@ -1518,6 +1601,7 @@ async function executeRow(
                     forward: row.forward,
                     svi: {
                         a: row.a,
+                        aNegative: row.aNegative,
                         b: row.b,
                         rho: row.rho,
                         rhoNegative: row.rhoNegative,
@@ -1668,12 +1752,22 @@ async function executeScenario(
                 parsedJson: event.parsedJson ?? {},
             })),
         });
+        records.push(
+            economicMaintenanceRecord(
+                afterRow,
+                "flush",
+                row,
+                receipt,
+                economicState,
+                aliases,
+            ),
+        );
         process.stdout.write(
             `[${ts()}]   -- flush after row ${afterRow} (drained LP queues, gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
         );
     };
 
-    const runCashRebalance = async (afterRow: number) => {
+    const runCashRebalance = async (afterRow: number, row: ScenarioRow) => {
         const startedAt = performance.now();
         const receipt = await execute(
             () =>
@@ -1681,7 +1775,6 @@ async function executeScenario(
                     poolVaultId: state.poolVaultId,
                     protocolConfigId: state.protocolConfigId,
                     expiryMarketId: state.expiryMarketId,
-                    pythFeedId: state.pythFeedId,
                 }),
             `rebalance_expiry_cash_after_row_${afterRow}`,
         );
@@ -1698,6 +1791,16 @@ async function executeScenario(
                 parsedJson: event.parsedJson ?? {},
             })),
         });
+        records.push(
+            economicMaintenanceRecord(
+                afterRow,
+                "rebalance_expiry_cash",
+                row,
+                receipt,
+                economicState,
+                aliases,
+            ),
+        );
         process.stdout.write(
             `[${ts()}]   -- rebalance expiry cash after row ${afterRow} (gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
         );
@@ -1707,7 +1810,7 @@ async function executeScenario(
         if (flushAfter.has(afterRow)) {
             await runFlush(afterRow, row);
         } else if (rebalanceAfter.has(afterRow)) {
-            await runCashRebalance(afterRow);
+            await runCashRebalance(afterRow, row);
         }
     };
 

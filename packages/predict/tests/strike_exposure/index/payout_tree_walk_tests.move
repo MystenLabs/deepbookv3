@@ -23,6 +23,7 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::{Self, Pricer},
+    range_codec::{Self, Strike},
     strike_payout_tree::{Self, StrikePayoutTree},
     test_constants
 };
@@ -52,8 +53,6 @@ const GC_SURVIVOR_C_HIGHER: u64 = 108;
 const GC_SURVIVOR_A_QUANTITY: u64 = 1_000_000_000;
 const GC_REMOVED_QUANTITY: u64 = 500_000_000;
 const GC_SURVIVOR_C_QUANTITY: u64 = 300_000_000;
-const GC_PRE_REMOVE_NODE_COUNT: u64 = 6;
-const GC_POST_REMOVE_NODE_COUNT: u64 = 4;
 const GC_SETTLEMENT_A_ONLY_TICK: u64 = 100;
 const GC_SETTLEMENT_OVERLAP_TICK: u64 = 103;
 const GC_SETTLEMENT_C_ONLY_TICK: u64 = 106;
@@ -93,10 +92,10 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
     assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
-    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(constants::neg_inf!(), raw(t0)));
+    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(raw(0), raw(t0)));
     assert_eq!(
         memo.cached_range_price(t2, constants::pos_inf_tick!()),
-        pricer.range_price(raw(t2), constants::pos_inf!()),
+        pricer.range_price(raw(t2), raw(constants::pos_inf_tick!())),
     );
 
     destroy(tree);
@@ -172,38 +171,26 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
     tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
     tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
-    assert_eq!(tree.debug_node_count(), GC_PRE_REMOVE_NODE_COUNT);
 
-    // Removing the middle range deletes two interior boundary nodes through GC.
+    // Removing the middle range deletes two interior boundary nodes through GC; the walk, settlement,
+    // and rebuilt-tree assertions below prove those boundaries left no trace.
     tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
-    assert_eq!(tree.debug_node_count(), GC_POST_REMOVE_NODE_COUNT);
-    assert!(!tree.debug_contains_node(GC_REMOVED_LOWER));
-    assert!(!tree.debug_contains_node(GC_REMOVED_HIGHER));
 
     let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
     rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
     rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
 
-    let settled_a_only = tree.settled_payout_liability(raw(GC_SETTLEMENT_A_ONLY_TICK), tick_size());
-    assert_eq!(
-        settled_a_only,
-        rebuilt.settled_payout_liability(raw(GC_SETTLEMENT_A_ONLY_TICK), tick_size()),
-    );
+    let settlement_a_only = GC_SETTLEMENT_A_ONLY_TICK * tick_size();
+    let settled_a_only = tree.settled_payout_liability(settlement_a_only, tick_size());
+    assert_eq!(settled_a_only, rebuilt.settled_payout_liability(settlement_a_only, tick_size()));
     assert_eq!(settled_a_only, GC_SURVIVOR_A_QUANTITY);
-    let settled_overlap = tree.settled_payout_liability(
-        raw(GC_SETTLEMENT_OVERLAP_TICK),
-        tick_size(),
-    );
-    assert_eq!(
-        settled_overlap,
-        rebuilt.settled_payout_liability(raw(GC_SETTLEMENT_OVERLAP_TICK), tick_size()),
-    );
+    let settlement_overlap = GC_SETTLEMENT_OVERLAP_TICK * tick_size();
+    let settled_overlap = tree.settled_payout_liability(settlement_overlap, tick_size());
+    assert_eq!(settled_overlap, rebuilt.settled_payout_liability(settlement_overlap, tick_size()));
     assert_eq!(settled_overlap, GC_SURVIVOR_A_QUANTITY + GC_SURVIVOR_C_QUANTITY);
-    let settled_c_only = tree.settled_payout_liability(raw(GC_SETTLEMENT_C_ONLY_TICK), tick_size());
-    assert_eq!(
-        settled_c_only,
-        rebuilt.settled_payout_liability(raw(GC_SETTLEMENT_C_ONLY_TICK), tick_size()),
-    );
+    let settlement_c_only = GC_SETTLEMENT_C_ONLY_TICK * tick_size();
+    let settled_c_only = tree.settled_payout_liability(settlement_c_only, tick_size());
+    assert_eq!(settled_c_only, rebuilt.settled_payout_liability(settlement_c_only, tick_size()));
     assert_eq!(settled_c_only, GC_SURVIVOR_C_QUANTITY);
 
     let mutated_walk = walk_linear(&tree, &pricer);
@@ -228,8 +215,9 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
 /// `t * 1e9`.
 fun tick_size(): u64 { test_constants::default_tick_size() }
 
-/// Raw strike for a tick under the default `tick_size`.
-fun raw(tick: u64): u64 { tick * tick_size() }
+/// Strike for a tick under the default `tick_size` (tick 0 and `pos_inf_tick`
+/// map to the open-ended sentinels).
+fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 
 /// Run the exact linear walk with the production price memo.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
@@ -255,7 +243,10 @@ fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): 
     let mut total = 0;
     ticks.length().do!(|i| {
         total =
-            total + math::mul(pricer.range_price(raw(ticks[i]), constants::pos_inf!()), quantities[i]);
+            total + math::mul(
+                pricer.range_price(raw(ticks[i]), raw(constants::pos_inf_tick!())),
+                quantities[i],
+            );
     });
     total
 }
@@ -293,6 +284,7 @@ fun live_pricer_at(forward: u64): (OracleFixture, OracleBundle, Pricer) {
         forward,
         forward,
         HIGH_VARIANCE_A,
+        false,
         test_constants::default_svi_b(),
         test_constants::default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),

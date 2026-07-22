@@ -3,15 +3,10 @@
 
 /// Priority-sorted liquidation index for active leveraged Predict orders.
 ///
-/// The active index stores order IDs in ascending order. `Order` encodes its
-/// liquidation priority in the high bits, so the front of this index contains the
-/// orders that should be checked first. Beyond serving liquidation candidates, the
-/// book owns exactly one valuation read: `correction_value` walks its active
-/// leveraged set to value the NAV floor-correction term — the only place this
-/// module touches floor math, and it reads range prices back from a caller-supplied
-/// `PriceMemo`, never owning the pricing model itself. It does not own payout backing,
-/// cash, or account positions. Liquidated tombstones persist until the holder
-/// redeems the worthless order and clears their account position.
+/// Order IDs sort larger quantities and then larger static floors first because
+/// those fields are inverse-encoded. Candidate selection repeatedly checks that
+/// head while rotating a smaller scan across the remaining leveraged orders. The
+/// same bounded active set supplies the floor-correction term for pool valuation.
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo};
@@ -20,13 +15,11 @@ use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
 const EActiveOrderNotFound: u64 = 1;
-const ELiquidatedOrderAlreadyExists: u64 = 2;
-const ELiquidatedOrderNotFound: u64 = 3;
-const EMaxActiveLeveragedOrders: u64 = 4;
+const EMaxActiveLeveragedOrders: u64 = 2;
 
 const PAGE_CAPACITY: u64 = 64;
 
-/// Active leveraged-order scan source plus liquidated-order tombstones.
+/// Active leveraged-order scan source.
 public struct LiquidationBook has store {
     pages: Table<u64, OrderIdPage>,
     /// Page IDs in ascending order-ID order.
@@ -37,8 +30,6 @@ public struct LiquidationBook has store {
     active_order_count: u64,
     /// Last order ID visited by the passive liquidation scan.
     passive_watermark: Option<u256>,
-    /// Orders already removed from live exposure indexes but not yet redeemed.
-    liquidated_orders: Table<u256, bool>,
 }
 
 /// One bounded sorted page of active liquidation candidate order IDs.
@@ -54,10 +45,6 @@ public struct ScanCursor has copy, drop {
 
 // === Public-Package Functions ===
 
-public(package) fun is_liquidated(book: &LiquidationBook, order: &Order): bool {
-    book.liquidated_orders.contains(order.id())
-}
-
 public(package) fun contains_active_order(book: &LiquidationBook, order: &Order): bool {
     if (!order.is_leveraged() || book.active_order_count == 0) return false;
 
@@ -70,19 +57,22 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
     offset < page.order_ids.length() && page.order_ids[offset] == order_id
 }
 
-/// Sum the NAV floor-correction term over the active leveraged book:
-/// `Σ min(qty·range_price(lower, higher), floor_shares)`.
+/// Sum the NAV floor-correction term over the active leveraged book. A leveraged
+/// order at or below its knock-out threshold at these prices (`gross <= floor /
+/// ltv`) will be liquidated by the ambient sweep and owes nothing above its
+/// separately reserved floor, so the flush marks its live liability at zero by
+/// crediting the full `range_value`; every other order keeps the
+/// `min(range_value, floor_shares)` floor cap. With zero knocked-out orders the
+/// sum is identical to the plain `Σ min(qty·range_price(lower, higher), floor_shares)`.
 ///
-/// The active index already holds exactly the leveraged orders (1x mints are
-/// no-ops, liquidated orders are tombstoned out), so this scan needs no extra
-/// filtering. Each active order's range price is read back from `memo` — the price
-/// cache the NAV linear walk filled for every tree node — so no order is re-priced.
-/// The `min` is the order's limited-recourse static floor: a knocked-out order's
-/// range value is capped at its floor and nets to zero against the linear term, so
-/// NAV needs no liquidation pass for an exact mark. All terms are non-negative — a
-/// plain `u64` sum. Every leveraged boundary is a tree node, so every lookup hits;
-/// `cached_range_price` aborts if one does not (a broken exposure index).
-public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): u64 {
+/// One-x orders are never inserted and already-liquidated orders are removed.
+/// Boundary prices come from the payout walk's memo, and every finite leveraged
+/// boundary must be present there.
+public(package) fun correction_value(
+    book: &LiquidationBook,
+    memo: &PriceMemo,
+    liquidation_ltv: u64,
+): u64 {
     let mut correction = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
@@ -92,7 +82,15 @@ public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): 
             memo.cached_range_price(order.lower_tick(), order.higher_tick()),
             order.quantity(),
         );
-        correction = correction + range_value.min(order.floor_shares());
+        // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
+        // owes nothing above its separately reserved floor, so mark its live
+        // liability at zero — credit the full range value, not the floor cap.
+        let cap = if (range_value <= math::div(order.floor_shares(), liquidation_ltv)) {
+            range_value
+        } else {
+            range_value.min(order.floor_shares())
+        };
+        correction = correction + cap;
         cursor = book.next_cursor(scan);
     };
     correction
@@ -106,11 +104,12 @@ public(package) fun new(ctx: &mut TxContext): LiquidationBook {
         next_page_id: 0,
         active_order_count: 0,
         passive_watermark: option::none(),
-        liquidated_orders: table::new(ctx),
     }
 }
 
-/// Return a bounded liquidation candidate batch and advance passive scan state.
+/// Return at most `budget` candidates. Most come from the priority head; the
+/// remainder advances a persistent cursor through the tail so lower-priority
+/// active orders are eventually reconsidered.
 public(package) fun select_liquidation_candidates(
     book: &mut LiquidationBook,
     budget: u64,
@@ -128,17 +127,15 @@ public(package) fun select_liquidation_candidates(
     candidates
 }
 
-/// Index a leveraged order for liquidation scanning; no-op for 1x orders, aborts if already liquidated.
+/// Index a leveraged order for liquidation scanning; no-op for 1x orders.
 public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
     if (!order.is_leveraged()) return;
 
-    let order_id = order.id();
-    assert!(!book.liquidated_orders.contains(order_id), ELiquidatedOrderAlreadyExists);
     assert!(
         book.active_order_count < constants::max_active_leveraged_orders!(),
         EMaxActiveLeveragedOrders,
     );
-    book.insert_active_order_id(order_id);
+    book.insert_active_order_id(order.id());
 }
 
 /// Remove a leveraged order from the active scan index; no-op for 1x orders.
@@ -146,21 +143,6 @@ public(package) fun remove_order(book: &mut LiquidationBook, order: &Order) {
     if (!order.is_leveraged()) return;
 
     book.remove_active_order_id(order.id());
-}
-
-/// Remove the order from the active scan index and record a liquidated tombstone.
-public(package) fun mark_liquidated(book: &mut LiquidationBook, order: &Order) {
-    let order_id = order.id();
-    book.remove_active_order_id(order_id);
-    assert!(!book.liquidated_orders.contains(order_id), ELiquidatedOrderAlreadyExists);
-    book.liquidated_orders.add(order_id, true);
-}
-
-/// Clear a liquidated tombstone once the holder has redeemed the worthless order.
-public(package) fun clear_liquidated(book: &mut LiquidationBook, order: &Order) {
-    let order_id = order.id();
-    assert!(book.liquidated_orders.contains(order_id), ELiquidatedOrderNotFound);
-    book.liquidated_orders.remove(order_id);
 }
 
 // === Private Functions ===

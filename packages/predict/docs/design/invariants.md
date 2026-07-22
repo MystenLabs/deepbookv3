@@ -29,9 +29,9 @@ and contributors. For *how* each mechanism works, follow the links into
   would push cash below the reserve aborts; smaller closes, later retries, and
   the full settlement payout remain available. Closing a position releases its
   own share of the buffer, so exit liquidity cannot be monopolized.
-- **Settled liability is exact.** After settlement, payout liability becomes the
-  exact liability at the settlement price (`materialize_settled_liability`,
-  idempotent), which is always ≤ the settlement floor (hence ≤ the live reserve).
+- **Settled liability is exact.** `StrikeExposure::record_settlement` records the
+  terminal price and exact payout liability together; the liability is always ≤
+  the settlement floor (hence ≤ the live reserve).
 - **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
   market that never receives another top-up still pays every settlement winner
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
@@ -92,12 +92,13 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Settlement
 
-- **Passive exact settlement.** Normal flows that branch on settlement call
-  `expiry_market::ensure_settled` first. It records the exact normalized Pyth spot
-  at the market's expiry timestamp from Propbook if present; otherwise the market
-  remains unsettled. There is no public settle-only entrypoint.
+- **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
+  settlement-price writer. It records the exact normalized Pyth spot at the market's
+  expiry timestamp and exact terminal payout liability atomically; otherwise it
+  returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays `quantity − floor_shares` if the settlement price is in
-  `(lower, higher]`, else 0 (`close_settled_order`).
+  `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
+  applied by `strike_exposure::process_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
   prices against tick boundaries through one threshold tick, `prefix_limit_tick =
   ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is
@@ -108,9 +109,9 @@ and contributors. For *how* each mechanism works, follow the links into
   wins at `higher`. `prefix_limit_tick` is a plain `u64` comparison bound (it can
   legitimately exceed `pos_inf_tick` when settlement is above the encodable range)
   and is never validated as a domain tick.
-- `materialize_settled_liability` is idempotent and caches the exact terminal
-  liability at the settlement price; live indexes survive until the settled-market
-  sweep deactivates the expiry.
+- `StrikeExposure` owns the settled phase: its settlement-price option is the phase
+  discriminator, and its cached liability decreases as settled winners redeem.
+  Live indexes survive until the settled-market sweep deactivates the expiry.
 
 ## Liquidation
 
@@ -118,8 +119,18 @@ and contributors. For *how* each mechanism works, follow the links into
   liquidation_ltv`. Only leveraged orders (`floor_shares > 0`) are ever
   liquidatable.
 - Liquidation is **permissionless and bounded** per call by a candidate budget.
-  Liquidated orders become tombstones until the holder redeems the worthless
-  position and clears it.
+  Liquidation removes all of the order's book state; the holder's account
+  position is the only remaining record until it is redeemed for zero payout.
+  The liquidated state is derived, not stored: every flow that removes an order
+  from the active index also removes its position in the same transaction,
+  except liquidation — so a leveraged order absent from the index while its
+  position exists is liquidated. This derivation replaces the former
+  `liquidated_orders` tombstone table and its `ELiquidatedOrderAlreadyExists` /
+  `ELiquidatedOrderNotFound` guards, which prevented double-insert / double-clear
+  of that table. With the table gone, the invariant is protected instead by
+  monotonic per-expiry sequence allocation: order ids are never reused, so a
+  liquidated order's id can never be re-inserted into the active index to flip
+  its derived state back to live.
 - Liquidation **priority is encoded in the order-id high bits**: the packed
   quantity field stores the complement (`U32_MASK − quantity_lots`), so an
   ascending `u256` sort over raw order ids liquidates larger quantities first,
@@ -131,8 +142,12 @@ and contributors. For *how* each mechanism works, follow the links into
   max_entry_probability]`; fees are not included in this admission bound.
 - Leverage is continuous at 1e9 scale: any requested `leverage ≥ 1×` is allowed
   only if it is no greater than the dynamic admission cap derived from entry
-  probability, the expiry's snapshotted `max_admission_leverage`, and the
-  upgrade-required curve-shape constant.
+  probability, time to expiry, the expiry's snapshotted `max_admission_leverage`,
+  and the upgrade-required curve-shape constant.
+- Within the expiry's snapshotted `no_leverage_window_ms` of expiry the admission
+  cap is exactly 1×, regardless of entry probability; a `0` window disables the
+  block. This bounds origination only — an order opened before the window keeps its
+  leverage into expiry.
 - `net_premium = entry_probability × quantity / leverage ≥
   min_net_premium`; the pool seeds the remainder (`financed_amount`).
 
@@ -160,7 +175,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Fees
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
-  min_fee) × expiry_ramp_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
+  min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
 - PLP supply and withdraw carry **no fee**. The former uncertainty-band withdraw

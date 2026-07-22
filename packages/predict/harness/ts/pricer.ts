@@ -8,11 +8,12 @@
 //
 //   k    = ln(strike / forward)
 //   w(k) = a + b·(rho·(k-m) + sqrt((k-m)^2 + sigma^2))   // SVI total variance
+//   w'(k)= b·(rho + (k-m) / sqrt((k-m)^2 + sigma^2))       // smile skew
 //   d2   = -((k + w/2) / sqrt(w))
-//   up_price(strike) = Phi(d2)                            // P(settle > strike)
+//   up_price(strike) = clamp01(Phi(d2) - phi(d2)·w'(k)/(2·sqrt(w)))
 
 export interface Svi {
-  a: number; // SVI alpha
+  a: number; // signed SVI alpha
   b: number; // SVI beta
   rho: number; // signed
   m: number; // signed
@@ -22,6 +23,10 @@ export interface Svi {
 // Standard normal CDF via erf (Abramowitz-Stegun 7.1.26, |err| < 1.5e-7).
 export function normalCdf(x: number): number {
   return 0.5 * (1 + erf(x / Math.SQRT2));
+}
+
+export function normalPdf(x: number): number {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 }
 
 function erf(x: number): number {
@@ -47,10 +52,14 @@ export function upPrice(svi: Svi, forward: number, strike: number): number {
   if (strike <= 0) return 1; // neg-inf limit
   const k = Math.log(strike / forward);
   const km = k - svi.m;
-  const w = svi.a + svi.b * (svi.rho * km + Math.sqrt(km * km + svi.sigma * svi.sigma));
-  if (w <= 0) return k < 0 ? 1 : 0; // degenerate variance → tail limit
-  const d2 = -((k + w / 2) / Math.sqrt(w));
-  return normalCdf(d2);
+  const sq = Math.sqrt(km * km + svi.sigma * svi.sigma);
+  const w = svi.a + svi.b * (svi.rho * km + sq);
+  if (w <= 0) return k < 0 ? 1 : 0; // degenerate variance -> tail limit (contract rejects unsafe surfaces; intentional float-pricer divergence)
+  const sqrtW = Math.sqrt(w);
+  const d2 = -((k + w / 2) / sqrtW);
+  const wPrime = svi.b * (svi.rho + km / sq);
+  const raw = normalCdf(d2) - (normalPdf(d2) * wPrime) / (2 * sqrtW);
+  return Math.min(1, Math.max(0, raw));
 }
 
 /** Probability of a binary order in a direction at `strike`: UP = P(>strike), DOWN = P(<strike). */

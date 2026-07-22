@@ -5,138 +5,37 @@ paths:
   - "crates/indexer/**"
 ---
 
-# Indexer Development Rules
+# Core Indexer Rules (thin stub)
 
-> **Scope:** this file covers the core DeepBook Rust crates that remain in this repo: `crates/{server,indexer,schema}`.
+Deliberately minimal after the 2026-07-06 rules cleanup: this file covers only the core DeepBook Rust crates that remain in this repo (`crates/{server,indexer,schema}`), and retires entirely when those crates migrate out. Full retired guidance is recoverable at `git show 9439529a~1:.claude/rules/indexer.md`.
 
-**Update this file** when you discover new indexer insights, performance issues, or debugging tips during sessions.
+- `/ticker` (and `/summary`, which calls it) is the 504 hotspot: `fetch_historical_volume()` runs twice over 24h of `order_fills` plus a DISTINCT ON last-price query, with no pagination or caching — treat `crates/server/src/server.rs` changes there as performance-critical.
+- The composite indexes for those query shapes already exist via migration `2026-02-03-000000-0000_add_ticker_performance_indexes` — do not re-add them.
+- Diesel migrations run inside a transaction: `CREATE INDEX CONCURRENTLY` cannot be used in them; use `IF NOT EXISTS` for idempotency. For zero-downtime index creation on production, run `CREATE INDEX CONCURRENTLY` manually via psql first, then the `IF NOT EXISTS` migration is a no-op.
+- PostgreSQL function matching needs exact parameter types: `to_timestamp()` returns `TIMESTAMPTZ`; cast `to_timestamp($3)::timestamp` when the function expects `TIMESTAMP`.
+- `ParameterUtil` defaults `limit=1` when no limit is passed — it silently truncates ~24 list endpoints; don't mistake one-row responses for missing data.
+- `/margin_manager_states` returns ALL rows (no pagination) — memory/timeout risk against large tables.
+- The server creates 3 separate connection pools (reader / writer / margin poller) against the same Postgres — monitor total connections when diagnosing pool exhaustion.
+- Pre-push: `cargo fmt -p deepbook-server` (CI fails on formatting) and `cargo build -p deepbook-server`.
 
-## Codebase Structure
+## Full-node reads are gRPC, not JSON-RPC
 
-- `crates/server/src/server.rs` - Route handlers and API endpoints
-- `crates/server/src/reader.rs` - Database query functions
-- `crates/schema/migrations/` - Diesel database migrations
-- `crates/indexer/` - Indexer logic and OpenAPI spec
+Sui deactivated JSON-RPC on 2026-07-31. The server reads the chain over `sui.rpc.v2` gRPC (`sui-rpc` crate); `crates/server/src/grpc.rs` owns every call. The indexer never talked to a node — it ingests checkpoints from the remote store — so it was never affected. Three gotchas, each of which fails *silently or misleadingly*:
 
-## Common Commands
+- **`read_mask` defaults are lossy.** `GetObject` defaults to `object_id,version,digest`, so `owner` comes back **empty unless you ask for it** — and `owner` is the only reason we fetch the object (it carries `initial_shared_version`). Likewise `SimulateTransaction` only populates `command_outputs` when the mask requests it. A forgotten mask reads as "not a shared object" / "no results", not as an error.
+- **`checks: DISABLED` does NOT skip gas-object resolution.** The node still tries to load the gas coin, so a placeholder like `ObjectInput::owned(Address::ZERO, ..)` fails with `Could not find the referenced object 0x0`. `TransactionBuilder::try_build()` *requires* a gas coin, so build with one and then `transaction.gas_payment.objects.clear()` before simulating. That empty-gas-list posture is what actually reproduces `dev_inspect`.
+- **`Owner.version` is overloaded** — `initial_shared_version` when `kind == SHARED`, `start_version` when `CONSENSUS_ADDRESS`. Check the kind before trusting it.
 
-- Build: `cargo build -p deepbook-server`
-- Test: `cargo test -p deepbook-server`
-- Format: `cargo fmt -p deepbook-server`
+`sui-sdk-types` 0.3.x made `StructTag`'s fields private: use `StructTag::new(..)` and the `.address()` / `.module()` / `.name()` accessors.
 
-## Pre-Push Checklist
+## Running the indexer snapshot tests locally
 
-Before committing/pushing Rust changes or creating a PR, always run:
-1. `cargo fmt -p deepbook-server` — CI runs `rustfmt` and will fail on formatting issues
-2. `cargo build -p deepbook-server` — catch compile errors locally
+They spin up a temporary Postgres, which needs the **server** binary — `libpq` alone is not enough, and `initdb` fails with `program "postgres" is needed by initdb but was not found`. All 35 tests then fail for a reason that has nothing to do with your change. Fix:
 
-## Performance-Critical Endpoints
-
-### /ticker Endpoint (`ticker` in `crates/server/src/server.rs`)
-Heavy operations that can cause 504 timeouts:
-1. `fetch_historical_volume()` called twice (base and quote) - scans 24h of `order_fills`
-2. Complex DISTINCT ON query for last prices
-3. No pagination or caching
-
-### /summary Endpoint
-Calls `/ticker` internally, so inherits all its performance issues.
-
-## Database Query Patterns
-
-### order_fills Table (Heaviest)
-- Volume queries: filter by `pool_id` + `checkpoint_timestamp_ms` range
-- Last price queries: DISTINCT ON with ORDER BY `pool_id`, `checkpoint_timestamp_ms DESC`
-- Fill lookups: filter by `maker_balance_manager_id` or `taker_balance_manager_id`
-
-### order_updates Table
-- Order history: filter by `pool_id`, `status`, `balance_manager_id`
-
-### balances Table
-- Deposited assets: filter by `balance_manager_id`, `asset`, `deposit = true`
-
-### collateral_events Table
-- Event history: filter by `margin_manager_id`, `checkpoint_timestamp_ms` range
-
-### margin_manager_state Table
-- Manager lookups: filter/join by `deepbook_pool_id`
-
-## Performance Indices (already applied)
-
-These composite indices exist via migration
-`2026-02-03-000000-0000_add_ticker_performance_indexes` — do not re-add them.
-Kept here as the query-pattern reference for new endpoints:
-
-```sql
--- order_fills: volume and ticker queries
-CREATE INDEX idx_order_fills_pool_id_checkpoint_timestamp_ms
-    ON order_fills (pool_id, checkpoint_timestamp_ms);
-
-CREATE INDEX idx_order_fills_pool_id_checkpoint_timestamp_ms_desc
-    ON order_fills (pool_id, checkpoint_timestamp_ms DESC);
-
-CREATE INDEX idx_order_fills_maker_balance_manager_id
-    ON order_fills (maker_balance_manager_id);
-
-CREATE INDEX idx_order_fills_taker_balance_manager_id
-    ON order_fills (taker_balance_manager_id);
-
--- order_updates: order history
-CREATE INDEX idx_order_updates_pool_id_status_balance_manager_id
-    ON order_updates (pool_id, status, balance_manager_id);
-
--- balances: deposited assets (partial index)
-CREATE INDEX idx_balances_balance_manager_id_asset_deposit
-    ON balances (balance_manager_id, asset) WHERE deposit = true;
-
--- collateral_events: event history
-CREATE INDEX idx_collateral_events_margin_manager_id_checkpoint_timestamp_ms
-    ON collateral_events (margin_manager_id, checkpoint_timestamp_ms DESC);
-
--- margin_manager_state: joins
-CREATE INDEX idx_margin_manager_state_deepbook_pool_id
-    ON margin_manager_state (deepbook_pool_id);
+```
+brew install postgresql@16
+export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
+cargo test -p deepbook-indexer
 ```
 
-## Diesel Migration Notes
-
-- **Cannot use `CREATE INDEX CONCURRENTLY`** - Diesel migrations run inside a transaction
-- Use `IF NOT EXISTS` for idempotent migrations
-- For zero-downtime index creation on production:
-  1. Run `CREATE INDEX CONCURRENTLY` manually via psql (outside transaction)
-  2. Then run migration with `IF NOT EXISTS` which will be a no-op
-
-## Common Issues
-
-### 504 Gateway Timeout
-Usually caused by:
-1. Missing composite indices on `order_fills`
-2. Large time range queries (24h default)
-3. Sequential queries that could be parallelized
-
-### PostgreSQL Function Type Mismatch
-PostgreSQL function matching requires **exact parameter types**. `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` are different types.
-
-`to_timestamp()` returns `TIMESTAMPTZ`, so if a function expects `TIMESTAMP`, you must cast:
-```sql
--- Wrong: function get_ohclv(text, text, timestamptz, ...) does not exist
-to_timestamp($3)
-
--- Correct: cast to match function signature
-to_timestamp($3)::timestamp
-```
-
-### Default Limit of 1
-The `ParameterUtil` trait in `crates/server/src/server.rs` defaults to `limit=1` when not provided. This affects 24 endpoints:
-- `order_updates`, `trades`, `margin_manager_created`, `loan_borrowed`, `loan_repaid`, `liquidation`, `asset_supplied`, `asset_withdrawn`, `deepbook_pool_updated`, `interest_params_updated`, `margin_pool_config_updated`, `maintainer_cap_updated`, `maintainer_fees_withdrawn`, `protocol_fees_withdrawn`, `supplier_cap_minted`, `supply_referral_minted`, `pause_cap_updated`, `protocol_fees_increased`, `referral_fees_claimed`, `referral_fee_events`, `deepbook_pool_registered`, `deepbook_pool_updated_registry`, `deepbook_pool_config_updated`, `collateral_events`
-
-### No Pagination on /margin_manager_states
-Returns ALL rows without limit. Can cause timeouts/memory issues with large tables.
-
-## Connection Pools
-
-The server creates **3 separate connection pools**:
-1. **Reader** - API read queries
-2. **Writer** - Admin writes
-3. **margin_db** - Margin poller
-
-Each pool has its own connections. Monitor total connections if experiencing pool exhaustion.
+These snapshot tests are the real regression net for `traits.rs` event-type matching — every handler decodes real checkpoint events through it, so run them after touching event matching or the `sui-sdk-types` pin.

@@ -13,7 +13,8 @@ const EXPIRY_MS: u64 = 1_700_100_000_000;
 const PUBLISHED_AT_MS: u64 = 1_700_000_000_000;
 const SPOT: u64 = 65_000_000_000_000;
 const FORWARD: u64 = 65_100_000_000_000;
-const SVI_A: u64 = 40_000_000;
+const SVI_A_MAG: u64 = 40_000_000;
+const SVI_A_NEG: bool = true;
 const SVI_B: u64 = 120_000_000;
 const SVI_SIGMA: u64 = 90_000_000;
 const RHO_MAG: u64 = 300_000_000;
@@ -46,7 +47,8 @@ fun svi_update_getters_round_trip_inputs() {
         SOURCE_ID,
         EXPIRY_MS,
         PUBLISHED_AT_MS,
-        SVI_A,
+        SVI_A_MAG,
+        SVI_A_NEG,
         SVI_B,
         SVI_SIGMA,
         RHO_MAG,
@@ -58,7 +60,8 @@ fun svi_update_getters_round_trip_inputs() {
     assert_eq!(upd.svi_source_id(), SOURCE_ID);
     assert_eq!(upd.svi_expiry_ms(), EXPIRY_MS);
     assert_eq!(upd.svi_published_at_ms(), PUBLISHED_AT_MS);
-    assert_eq!(upd.svi_a(), SVI_A);
+    assert_eq!(upd.svi_a_magnitude(), SVI_A_MAG);
+    assert_eq!(upd.svi_a_is_negative(), SVI_A_NEG);
     assert_eq!(upd.svi_b(), SVI_B);
     assert_eq!(upd.svi_sigma(), SVI_SIGMA);
     assert_eq!(upd.svi_rho_magnitude(), RHO_MAG);

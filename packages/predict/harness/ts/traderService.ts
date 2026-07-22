@@ -83,6 +83,9 @@ async function main() {
     feeds, instanceDir: INSTANCE_DIR, wrapperId, label: LABEL, strategyName: strategy.name,
     submit, readPlpBalance, traderAddress: TRADER_ADDRESS,
   });
+  // Declare the strategy's expected terminal wall(s) into the trace so `analyze` can whitelist the
+  // declared abort (not a bug) and fail the run as vacuous if the wall was never reached.
+  if (strategy.expect) ctx.trace({ type: "expect", terminal: strategy.expect.terminal, note: strategy.expect.note });
   let ops = 0;
   let skips = 0;
   const deadline = DURATION_MS > 0 ? Date.now() + DURATION_MS : 0;

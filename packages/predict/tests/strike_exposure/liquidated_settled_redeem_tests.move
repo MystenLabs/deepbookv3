@@ -3,16 +3,15 @@
 
 /// Regression coverage for the exposure invariant behind post-settlement
 /// liquidated-order redemption: a liquidated leveraged order has already been
-/// removed from active exposure, so settled-market cleanup must clear its tombstone
-/// instead of trying to close it as a settled active order.
+/// removed from active exposure, so the classifier must resolve it to the
+/// liquidated outcome instead of a settled-active close.
 #[test_only]
 module deepbook_predict::liquidated_settled_redeem_tests;
 
 use deepbook_predict::{
     constants,
-    liquidation_book,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
-    order::Order,
+    order::{Self, Order},
     strike_exposure::{Self, StrikeExposure},
     strike_exposure_config,
     test_constants
@@ -35,32 +34,52 @@ const DROPPED_SOURCE_TIMESTAMP_MS: u64 = 119_500;
 const SETTLED_WINNING_SPOT: u64 = 101_000_000_000;
 
 #[test]
-fun liquidated_order_uses_tombstone_cleanup_not_settled_close() {
+fun liquidated_order_resolves_liquidated_not_settled_close() {
     let (fx, oracle, mut harness, order) = liquidated_order_fixture();
 
-    assert!(harness.exposure.is_liquidated_order(&order));
+    assert!(!harness.exposure.is_active_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
-    assert_eq!(harness.exposure.materialize_settled_liability(SETTLED_WINNING_SPOT), 0);
+    harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
+    assert_eq!(harness.exposure.payout_liability(), 0);
 
-    harness.exposure.clear_liquidated_order(&order);
+    // Even in the settled phase, the classifier resolves a liquidated order
+    // before the settled outcome, so the close can only be the zero-payout
+    // no-op — the incorrect settled-active close is unrepresentable.
+    let terms = harness.exposure.quote_close(option::none(), &order, order.quantity());
+    assert!(terms.is_liquidated());
+    harness.exposure.process_close(option::none(), terms, fx.clock());
 
-    assert!(!harness.exposure.is_liquidated_order(&order));
+    // Liquidation already removed all book state, so the close changed nothing
+    // and the classification is stable.
+    assert!(!harness.exposure.is_active_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
 
     cleanup(fx, oracle, harness);
 }
 
-#[test, expected_failure(abort_code = liquidation_book::EActiveOrderNotFound)]
-fun settled_close_of_liquidated_order_aborts_because_order_is_not_active() {
-    let (_fx, _oracle, mut harness, order) = liquidated_order_fixture();
+#[test]
+fun repeated_settlement_after_close_preserves_first_price_and_remaining_liability() {
+    let (fx, oracle, mut harness, order) = active_order_fixture();
+    let payout = order.quantity() - order.floor_shares();
 
-    harness.exposure.materialize_settled_liability(SETTLED_WINNING_SPOT);
-    harness.exposure.close_settled_order(&order, SETTLED_WINNING_SPOT);
+    harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
+    assert_eq!(harness.exposure.payout_liability(), payout);
+    let terms = harness.exposure.quote_close(option::none(), &order, order.quantity());
+    assert_eq!(terms.settled_payout(), payout);
+    harness.exposure.process_close(option::none(), terms, fx.clock());
+    assert_eq!(harness.exposure.payout_liability(), 0);
 
-    abort 999
+    // The package-level phase transition is itself idempotent: even after a
+    // settled close mutates the cached liability, another call cannot recompute
+    // it from the retained live payout tree or replace the first terminal price.
+    harness.exposure.record_settlement(test_constants::default_live_price());
+    assert_eq!(harness.exposure.settlement_price(), SETTLED_WINNING_SPOT);
+    assert_eq!(harness.exposure.payout_liability(), 0);
+
+    cleanup(fx, oracle, harness);
 }
 
-fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
+fun active_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -80,14 +99,27 @@ fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, O
             &pricer,
             test_constants::default_strike_tick(),
             constants::pos_inf_tick!(),
+            0,
             test_constants::mint_quantity(),
+            true,
             LEVERAGE_TWO_X,
+            fx.clock(),
         );
     let order = harness.exposure.allocate_mint_order(terms);
 
+    (fx, oracle, harness, order)
+}
+
+fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
+    let (fx, mut oracle, mut harness, order) = active_order_fixture();
+
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);
-    assert!(harness.exposure.liquidate_live_order(&liquidation_pricer, &order));
+    let terms = harness
+        .exposure
+        .quote_close(option::some(liquidation_pricer), &order, order.quantity());
+    assert!(terms.is_liquidatable());
+    harness.exposure.process_close(option::some(liquidation_pricer), terms, fx.clock());
 
     (fx, oracle, harness, order)
 }
@@ -97,13 +129,20 @@ fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let expiry_ms = fx.expiry();
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
+    // This fixture mints a leveraged order on a short-lived market to reach the
+    // liquidation path, and that expiry sits inside the default no-leverage window.
+    // Disable the block here (a valid `window == 0` config) so the fixture exercises
+    // liquidation mechanics rather than mint admission, which the config unit tests
+    // cover.
+    let mut config = strike_exposure_config::new();
+    config.set_no_leverage_window_ms(0);
     let exposure = strike_exposure::new(
         expiry_market_id,
         expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
-        strike_exposure_config::new(),
+        config,
         fx.scenario_mut().ctx(),
     );
     transfer::share_object(ExposureHarness { id, exposure });

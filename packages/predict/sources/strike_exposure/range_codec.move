@@ -3,45 +3,74 @@
 
 /// Canonical strike-range codec for Predict.
 ///
-/// Predict's canonical strike representation is an absolute tick from zero
-/// (`finite_strike = tick * tick_size`). Ranges travel as the pair
-/// `(lower_tick, higher_tick)` everywhere on-chain — public entrypoints, events,
-/// and (packed) order IDs — so there is no standalone packed range key. This module
-/// owns only the boundary conversions: tick-to-raw strike for the pricing/settlement
-/// boundary and the settlement prefix threshold. It is stateless: every conversion
-/// takes the owning market's `tick_size`. Range-shape validity (lower < higher,
-/// sentinels) is enforced by `order` when ticks are packed into an order ID, so this
-/// codec does not re-check it. Finite ticks occupy
-/// `1..pos_inf_tick - 1`; tick `0` is the negative-infinity sentinel as a lower tick
-/// and `pos_inf_tick` is the positive-infinity sentinel as a higher tick.
+/// Finite strikes are absolute ticks from zero: `strike = tick * tick_size`.
+/// Ranges use `(lower_tick, higher_tick)` in entrypoints, events, and order IDs.
+/// Tick zero and `pos_inf_tick` are the open lower and upper sentinels. This
+/// module owns conversion between those ticks and raw oracle-price coordinates;
+/// `order` owns range-shape validation.
 module deepbook_predict::range_codec;
 
 use deepbook_predict::constants;
 
-/// Convert an order's `(lower_tick, higher_tick)` to raw `(lower_strike,
-/// higher_strike)` for pricing, mapping the open-ended sentinels: lower tick `0`
-/// is `neg_inf`, higher tick `pos_inf_tick` is `pos_inf`.
-public(package) fun strikes_from_ticks(
-    lower_tick: u64,
-    higher_tick: u64,
-    tick_size: u64,
-): (u64, u64) {
-    let lower = if (lower_tick == 0) constants::neg_inf!() else lower_tick * tick_size;
-    let higher = if (higher_tick == constants::pos_inf_tick!()) {
-        constants::pos_inf!()
-    } else {
-        higher_tick * tick_size
-    };
-    (lower, higher)
+/// A raw price-axis value derived from a tick. Range validity is enforced when
+/// production orders are constructed, not by this wrapper.
+public struct Strike(u64) has copy, drop;
+
+/// Convert a boundary tick to its raw strike, including the open-end sentinels.
+/// Non-sentinel ticks multiply directly by `tick_size`; public PTB and devInspect
+/// callers are responsible for supplying the intended market domain.
+public fun strike_from_tick(tick: u64, tick_size: u64): Strike {
+    if (tick == 0) return Strike(constants::neg_inf!());
+    if (tick == constants::pos_inf_tick!()) return Strike(constants::pos_inf!());
+    Strike(tick * tick_size)
+}
+
+/// Raw value for pricing math; consumers re-enter the raw domain only through this.
+public(package) fun value(strike: Strike): u64 {
+    strike.0
+}
+
+public(package) fun is_neg_inf(strike: Strike): bool {
+    strike.0 == constants::neg_inf!()
+}
+
+public(package) fun is_pos_inf(strike: Strike): bool {
+    strike.0 == constants::pos_inf!()
+}
+
+#[test_only]
+/// Raw-strike constructor for reference-fixture tests that price arbitrary raw
+/// points; production strikes are only ever tick-derived via `strike_from_tick`.
+public fun strike_for_testing(raw: u64): Strike {
+    Strike(raw)
 }
 
 /// Smallest tick whose strike is `>= settlement`: every finite boundary with
 /// `tick < prefix_limit_tick` satisfies `tick * tick_size < settlement` and is
 /// therefore active in the settlement prefix walk, which preserves the half-open
-/// `(lower, higher]` payoff (settlement equal to a higher boundary does not apply
+/// `(lower, higher]` payoff (settlement equal to a lower boundary does not apply
 /// it). Equals `ceil(settlement / tick_size)`, which can legitimately exceed
 /// `pos_inf_tick` (settlement above the encodable range) and so is a plain `u64`
 /// comparison bound, never validated as a domain tick.
 public(package) fun prefix_limit_tick(settlement: u64, tick_size: u64): u64 {
     settlement.div_ceil(tick_size)
+}
+
+/// Tick whose grid interval contains a raw spot (floor). Rounds the opposite way
+/// from `prefix_limit_tick`: the prefix threshold is a strict-inequality boundary
+/// and rounds up; the grid snap places a spot on the fine grid and rounds down.
+public(package) fun grid_tick(spot: u64, tick_size: u64): u64 {
+    spot / tick_size
+}
+
+/// Return whether a positive normalized settlement lies in `(lower, higher]`,
+/// using the same rounded-up boundary as the aggregate settlement prefix.
+public(package) fun settlement_in_range(
+    lower_tick: u64,
+    higher_tick: u64,
+    settlement: u64,
+    tick_size: u64,
+): bool {
+    let limit = prefix_limit_tick(settlement, tick_size);
+    lower_tick < limit && (higher_tick == constants::pos_inf_tick!() || limit <= higher_tick)
 }

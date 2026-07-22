@@ -1,11 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Block Scholes forward oracle: one shared object per source id, storing
-/// per-expiry forward streams keyed by expiry timestamp.
-///
-/// Predict-unaware: this module stores raw source facts and leaves feed binding,
-/// freshness, and pricing-safe envelopes to consumers.
+/// Stores Block Scholes forward streams for one source, partitioned by expiry into independent Propbook oracle lanes.
+/// Writes require the verifier-produced `ForwardUpdate` type and must match the feed's immutable source ID.
+/// Canonical feed binding, freshness, and pricing policy remain consumer responsibilities.
 module propbook::block_scholes_forward_feed;
 
 use block_scholes_oracle::update::ForwardUpdate;
@@ -17,15 +15,14 @@ const ERawForwardNotFound: u64 = 1;
 const EWrongVersion: u64 = 2;
 const ENotNewerVersion: u64 = 3;
 
-/// Source-native Block Scholes forward fields. The generic oracle lane stores
-/// Propbook's canonical millisecond timestamps around this payload.
+/// Source-native Block Scholes forward fields; the lane supplies publication and recording timestamps.
 public struct RawForward has copy, drop, store {
     bs_source_id: u32,
     expiry_ms: u64,
     forward: u64,
 }
 
-/// One Block Scholes forward feed: version gate plus one generic oracle lane per expiry.
+/// A versioned Block Scholes forward feed with one lane per expiry.
 public struct BlockScholesForwardFeed has key {
     id: UID,
     bs_source_id: u32,
@@ -37,25 +34,24 @@ public struct BlockScholesForwardFeed has key {
 
 // === Read Functions ===
 
-// Raw reads (`raw_*`) are public provenance/observability API (devInspect and
-// external composition); validated consumers use the `normalized_*` reads.
+// Raw reads expose source-native fields for external inspection; normalized reads expose positive 1e9-scaled forward values.
 
-/// Return the feed object ID.
+/// Returns the feed identity for external composition and canonical-binding discovery.
 public fun id(feed: &BlockScholesForwardFeed): ID {
     feed.id.to_inner()
 }
 
-/// Return the Block Scholes source id this feed is bound to.
+/// Returns the immutable Block Scholes source ID for external feed inspection.
 public fun bs_source_id(feed: &BlockScholesForwardFeed): u32 {
     feed.bs_source_id
 }
 
-/// Return the package version this feed runs at.
+/// Returns the write-gating storage version for external feed inspection.
 public fun version(feed: &BlockScholesForwardFeed): u64 {
     feed.version
 }
 
-/// Latest raw BS forward read for `expiry_ms`. Aborts if no live update has landed.
+/// Latest raw BS forward for external inspection; aborts if none has landed.
 public fun raw_forward(feed: &BlockScholesForwardFeed, expiry_ms: u64): OracleRead<RawForward> {
     assert!(feed.expiries.contains(expiry_ms), ERawForwardNotFound);
     let read = feed.expiries.borrow(expiry_ms).latest_read();
@@ -74,7 +70,7 @@ public fun normalized_forward(
     normalized_forward_from_read(&read.destroy_some())
 }
 
-/// Exact raw BS forward read for `(expiry_ms, timestamp_ms)`.
+/// Exact raw BS forward for external timestamp inspection.
 public fun raw_forward_at(
     feed: &BlockScholesForwardFeed,
     expiry_ms: u64,
@@ -86,7 +82,7 @@ public fun raw_forward_at(
     read.destroy_some()
 }
 
-/// Exact Propbook-normalized forward in 1e9 price scaling for `(expiry_ms, timestamp_ms)`.
+/// Exact normalized forward for external timestamp inspection, in 1e9 scaling.
 public fun normalized_forward_at(
     feed: &BlockScholesForwardFeed,
     expiry_ms: u64,
@@ -98,21 +94,27 @@ public fun normalized_forward_at(
     normalized_forward_from_read(&read.destroy_some())
 }
 
+/// Return the provider source ID for external raw-feed inspection.
 public fun raw_bs_source_id(raw: &RawForward): u32 {
     raw.bs_source_id
 }
 
+/// Return the quoted expiry timestamp for external raw-feed inspection.
 public fun raw_expiry_ms(raw: &RawForward): u64 {
     raw.expiry_ms
 }
 
+/// Return the source-native forward value for external raw-feed inspection.
 public fun raw_forward_value(raw: &RawForward): u64 {
     raw.forward
 }
 
 // === Write Functions ===
 
-/// Ingest a verified BS forward update into the oracle lane for the update's expiry.
+/// Record a verifier-produced raw forward in its expiry lane. After the version
+/// and source checks, a zero, future, duplicate, or stale source timestamp is
+/// ignored without changing `latest` or emitting an event. A zero forward is
+/// stored when its timestamp advances, but its normalized read is `none`.
 public fun update(
     feed: &mut BlockScholesForwardFeed,
     update: ForwardUpdate,
@@ -128,8 +130,9 @@ public fun update(
     feed.update_expiry(expiry, id, read, ctx);
 }
 
-/// Insert an exact BS forward observation keyed by the update-derived source
-/// timestamp. This does not mutate the live latest observation.
+/// Insert a verifier-produced raw forward at its exact source timestamp without
+/// changing `latest`. The first lane-valid value owns the key; zero still owns
+/// the key even though its normalized read is `none`.
 public fun insert_at(
     feed: &mut BlockScholesForwardFeed,
     update: ForwardUpdate,
@@ -196,7 +199,7 @@ fun update_expiry(
     if (feed.expiries.contains(expiry_ms)) {
         feed.expiries.borrow_mut(expiry_ms).update(read, propbook_oracle_id);
     } else {
-        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
         lane.update(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);
@@ -213,7 +216,7 @@ fun insert_expiry_at(
     if (feed.expiries.contains(expiry_ms)) {
         feed.expiries.borrow_mut(expiry_ms).insert_at(read, propbook_oracle_id);
     } else {
-        if (!oracle_lane::read_has_valid_timestamp(&read)) return;
+        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
         lane.insert_at(read, propbook_oracle_id);
         feed.expiries.add(expiry_ms, lane);

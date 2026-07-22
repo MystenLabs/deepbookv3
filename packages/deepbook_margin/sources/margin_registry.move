@@ -47,6 +47,7 @@ const EToleranceTooHigh: u64 = 20;
 const EMaxPriceAgeTooLow: u64 = 21;
 const EMaxPriceAgeTooHigh: u64 = 22;
 const EInvalidOrderTtl: u64 = 23;
+const EPriceToleranceExceedsLiquidationBuffer: u64 = 24;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -101,6 +102,11 @@ public struct CurrentPriceData has store {
 /// Dynamic field key for storing the per-pool max limit-order TTL (in ms).
 /// Stored value is `u64`; absent means use `margin_constants::default_max_order_ttl_ms()`.
 public struct MaxOrderTtlKey(ID) has copy, drop, store;
+
+/// Dynamic field key for the per-pool `min_open_risk_ratio` override (9
+/// decimals). Stored value is `u64`; absent means use the midpoint of
+/// `liquidation_risk_ratio` and `min_borrow_risk_ratio`.
+public struct MinOpenRiskRatioKey(ID) has copy, drop, store;
 
 // === Caps ===
 public struct MarginAdminCap has key, store {
@@ -172,6 +178,12 @@ public struct MaxPriceAgeUpdated has copy, drop {
 public struct MaxOrderTtlUpdated has copy, drop {
     pool_id: ID,
     max_order_ttl_ms: u64,
+    timestamp: u64,
+}
+
+public struct MinOpenRiskRatioUpdated has copy, drop {
+    pool_id: ID,
+    min_open_risk_ratio: u64,
     timestamp: u64,
 }
 
@@ -251,6 +263,21 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     let pool_id = pool.id();
     assert!(!inner.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
 
+    // A fresh pool runs at `default_price_tolerance()` until `set_price_tolerance`
+    // overrides it, so its liquidation buffer must cover that default: a single
+    // self-fill overpays by up to the tolerance, and `buffer >= tolerance` bounds the
+    // worst-case deferred fill to `1 - tolerance^2` (a `tolerance^2` sliver, negligible
+    // at sane tolerances; see move.md). This is gated here (admission), NOT in the
+    // `new_pool_config` builder — `set_price_tolerance` / `update_risk_params` re-check
+    // against the pool's *actual* tolerance, so a higher-leverage pool (liquidation
+    // below `1 + default_tolerance`) is reachable by tightening the tolerance first and
+    // then lowering liquidation via `update_risk_params`.
+    assert!(
+        margin_constants::default_price_tolerance() + constants::float_scaling()
+            <= pool_config.risk_ratios.liquidation_risk_ratio,
+        EPriceToleranceExceedsLiquidationBuffer,
+    );
+
     inner.pool_registry.add(pool_id, pool_config);
 
     event::emit(DeepbookPoolRegistered {
@@ -312,6 +339,23 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     pool_config: PoolConfig,
     clock: &Clock,
 ) {
+    // Lowering liquidation shrinks the buffer; re-check it still covers the effective
+    // price tolerance (the stored override if set, else the default a fresh price uses)
+    // so the pair can't drift into `buffer < tolerance` (see register_deepbook_pool).
+    let price_key = CurrentPriceKey { pool_id: pool.id() };
+    let effective_tolerance = if (
+        self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(price_key)
+    ) {
+        self.id.borrow<CurrentPriceKey, CurrentPriceData>(price_key).tolerance
+    } else {
+        margin_constants::default_price_tolerance()
+    };
+    assert!(
+        effective_tolerance + constants::float_scaling()
+            <= pool_config.risk_ratios.liquidation_risk_ratio,
+        EPriceToleranceExceedsLiquidationBuffer,
+    );
+
     let inner = self.load_inner_mut();
     let pool_id = pool.id();
     assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
@@ -470,6 +514,14 @@ public fun set_price_tolerance<BaseAsset, QuoteAsset>(
 
     assert!(self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key), EPriceNotInitialized);
 
+    // Keep the tolerance within the liquidation buffer (see register_deepbook_pool): a single
+    // self-fill can lower a danger-band short's ratio by ~tolerance, so require
+    // `tolerance + 1.0 <= liquidation_risk_ratio`.
+    assert!(
+        tolerance + constants::float_scaling() <= self.liquidation_risk_ratio(pool_id),
+        EPriceToleranceExceedsLiquidationBuffer,
+    );
+
     let price_data: &mut CurrentPriceData = self.id.borrow_mut(key);
     price_data.tolerance = tolerance;
 
@@ -539,6 +591,43 @@ public fun set_max_order_ttl<BaseAsset, QuoteAsset>(
     event::emit(MaxOrderTtlUpdated {
         pool_id,
         max_order_ttl_ms,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+/// Set the per-pool `min_open_risk_ratio` override — the post-trade solvency
+/// floor enforced on opening (risk-increasing) orders. Must sit in
+/// `(liquidation_risk_ratio, min_borrow_risk_ratio]`: above liquidation so an
+/// open can't land in the liquidatable zone, at or below the borrow floor.
+/// Absent an override the floor defaults to the midpoint of liquidation and
+/// min_borrow. Only Admin can set it.
+public fun set_min_open_risk_ratio<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    min_open_risk_ratio: u64,
+    clock: &Clock,
+) {
+    self.load_inner();
+    let pool_id = pool.id();
+    let liquidation = self.liquidation_risk_ratio(pool_id);
+    let min_borrow = self.min_borrow_risk_ratio(pool_id);
+    assert!(
+        min_open_risk_ratio > liquidation && min_open_risk_ratio <= min_borrow,
+        EInvalidRiskParam,
+    );
+
+    let key = MinOpenRiskRatioKey(pool_id);
+    if (self.id.exists_with_type<MinOpenRiskRatioKey, u64>(key)) {
+        let stored: &mut u64 = self.id.borrow_mut(key);
+        *stored = min_open_risk_ratio;
+    } else {
+        self.id.add(key, min_open_risk_ratio);
+    };
+
+    event::emit(MinOpenRiskRatioUpdated {
+        pool_id,
+        min_open_risk_ratio,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -688,6 +777,28 @@ public fun liquidation_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): 
 public fun target_liquidation_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
     let config = self.get_pool_config(deepbook_pool_id);
     config.risk_ratios.target_liquidation_risk_ratio
+}
+
+/// Post-trade solvency floor for *opening* (risk-increasing) orders, sitting in
+/// `(liquidation_risk_ratio, min_borrow_risk_ratio]`. Lets a max-leverage open
+/// absorb the opening trade's spread — which lands the post-trade ratio just
+/// under the borrow floor — without aborting, while staying above the
+/// liquidatable zone. Defaults to the midpoint of liquidation and min_borrow; an
+/// admin override (`set_min_open_risk_ratio`) is honored only while it stays in
+/// the valid band, so a later risk-param change can't strand it below
+/// liquidation.
+public fun min_open_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let liquidation = self.liquidation_risk_ratio(deepbook_pool_id);
+    let min_borrow = self.min_borrow_risk_ratio(deepbook_pool_id);
+    let default = (liquidation + min_borrow) / 2;
+
+    let key = MinOpenRiskRatioKey(deepbook_pool_id);
+    if (self.id.exists_with_type<MinOpenRiskRatioKey, u64>(key)) {
+        let stored = *self.id.borrow<MinOpenRiskRatioKey, u64>(key);
+        if (stored > liquidation && stored <= min_borrow) stored else default
+    } else {
+        default
+    }
 }
 
 public fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {

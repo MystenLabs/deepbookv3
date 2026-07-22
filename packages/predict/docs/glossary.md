@@ -108,7 +108,8 @@ Predict reads it but does not own it.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are
   differenced off. Predict enforces its pricing-safe SVI envelope at read time
-  (`|rho| <= 1`, bounded inputs, bounded sigma). Code `SVIParams`.
+  (`|rho| <= 1`, bounded magnitudes, bounded sigma, positive minimum total
+  variance). Code `SVIParams`.
 - **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
   (`i64`) math package both Predict and propbook depend on (formerly
   `predict_math`). Code package/address `fixed_math`.
@@ -141,17 +142,17 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 - **Knock-out** — the extinguishing of a leveraged contract once its gross
   value reaches the knock-out level. Code and event vocabulary: liquidation,
   `OrderLiquidated`. Predict's knock-out pays **zero order payout**: the holder
-  receives nothing from the knocked-out order, and a tombstone remains until
-  cleared. The separate settled trading-loss rebate still follows the normal
+  receives nothing from the knocked-out order, and the account position
+  remains until cleared for zero payout. The separate settled trading-loss rebate still follows the normal
   expiry-level PnL and fee-basis rules.
 - **Knock-out level** — `floor_amount / liquidation_ltv`, the gross value at
   which the contract is extinguished. It sits above the financing balance by
   the LTV buffer; that gap is the pool's recovery margin against gap risk.
 - **Knock-out probability** — the same barrier in probability space:
-  `p*(t) = floor_amount(t) / (liquidation_ltv × quantity)`. The contract knocks
-  out when its range probability falls to `p*(t)`. Because the financing
-  balance accretes, `p*` rises with time — a position can knock out with no
-  price move at all.
+  `p* = floor_amount / (liquidation_ltv × quantity)`. The contract knocks
+  out when its range probability falls to `p*`. The floor is static, so `p*`
+  is constant for the life of the order — knock-out requires the range
+  probability to fall (a price or vol move), never time alone.
 - **Liquidation LTV** — the loan-to-value bound that `floor / gross value` may
   reach before knock-out; code `liquidation_ltv`, snapshotted per expiry. A
   smaller value knocks out earlier.
@@ -195,16 +196,18 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 - **Supply / withdraw queue** — the two FIFO request queues on `PoolVault`
   (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP
   enqueues with `request_supply` / `request_withdraw` (routed through its
-  account, returning a cancellable index) and the flush drains them. Code
-  `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
+  account, with a minimum-output limit and a cancellable index), and the flush
+  fills eligible heads. Code `RequestQueue`, events `SupplyRequested` /
+  `WithdrawRequested`.
 - **The flush** — the transaction-local valuation-and-drain cycle that marks the
-  whole pool once and settles the queues at that mark. It is a **hot potato**:
+  whole pool once and fills eligible queued heads at that mark. It is a **hot potato**:
   `start_pool_valuation` opens it (engaging the valuation lock), `value_expiry`
   is called once per active market to accumulate `Σ current_nav`, and
   `finish_flush` computes `pool_nav`, then `lp_book::drain` mints/burns PLP
   and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
-  up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`; a
-  degenerate dust head request currently aborts the flush, tracked as C-4).
+  up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`;
+  non-executable queue heads are protocol-cancelled and refunded; live
+  request-limit misses carry until the third miss expires and refunds them).
   Fills are delivered to each account through the balance accumulator
   (`send_funds`); the account absorbs them lazily on its next capital op. The flush is
   **privileged** — started only by a market deployer's `MarketLifecycleCap`
@@ -217,5 +220,5 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
-| `redeem_settled` | cash settlement | An expired in-range contract settles for `notional − floor_shares`; an out-of-range contract settles at zero. The call passively records the exact Propbook Pyth expiry spot if needed. |
+| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records the exact Propbook Pyth expiry spot and terminal payout liability; `redeem_settled` then pays `notional − floor_shares` in range and zero out of range without reading an oracle. |
 | `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |

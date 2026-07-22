@@ -9,10 +9,9 @@
 /// custody lives in `Account`. The `PredictApp` witness namespaces this slot, so
 /// only Predict writes it.
 ///
-/// Flow-driven state (positions, summaries, stake) is exposed through
-/// `public(package)` primitives that mutate Predict app data directly. User-facing
-/// builder-code config takes an already-loaded account, so the account package
-/// remains the authority boundary.
+/// Position, summary, and stake mutations are package-internal. Builder-code
+/// configuration accepts an account `Auth`; the account package decides which
+/// owner or authorized application may obtain that mutable borrow.
 module deepbook_predict::predict_account;
 
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
@@ -82,13 +81,13 @@ public struct PredictData has store {
 
 // === Public Functions ===
 
-/// Return whether this account holds an open position for an order in one expiry market.
+/// Return whether an account holds a position for SDK and devInspect state reads.
 public fun has_position(account: &Account, expiry_market_id: ID, order_id: u256): bool {
     if (!account.has_data<PredictApp>()) return false;
     data(account).positions.contains(position_key(expiry_market_id, order_id))
 }
 
-/// Return the open position row count for one expiry market.
+/// Return an expiry's open-position count for SDK and devInspect state reads.
 public fun expiry_position_count(account: &Account, expiry_market_id: ID): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     let d = data(account);
@@ -99,7 +98,7 @@ public fun expiry_position_count(account: &Account, expiry_market_id: ID): u64 {
     }
 }
 
-/// Return aggregate pool trading fees this account paid for one expiry market.
+/// Return an account's aggregate expiry trading fees for SDK and devInspect reads.
 public fun trading_fees_paid(account: &Account, expiry_market_id: ID): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     let d = data(account);
@@ -110,13 +109,15 @@ public fun trading_fees_paid(account: &Account, expiry_market_id: ID): u64 {
     }
 }
 
-/// Return active staked DEEP (the amount that earns benefits).
+/// Return the stored active-stake split from the account's last epoch reconciliation.
+/// This read does not roll newly eligible inactive stake forward.
 public fun active_stake(account: &Account): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     data(account).active_stake
 }
 
-/// Return inactive staked DEEP (activates next epoch).
+/// Return the stored inactive-stake split from the account's last epoch reconciliation.
+/// This read does not roll stake that became eligible after an epoch boundary.
 public fun inactive_stake(account: &Account): u64 {
     if (!account.has_data<PredictApp>()) return 0;
     data(account).inactive_stake
@@ -128,8 +129,8 @@ public fun builder_code_id(account: &Account): Option<ID> {
     data(account).builder_code_id
 }
 
-/// Set sticky builder-code attribution for future trades. Consumes account owner
-/// auth and attaches the Predict slot if the account has none.
+/// Set sticky builder-code attribution for future trades using valid account auth.
+/// Owner auth and authorized-app auth both satisfy the account borrow boundary.
 public fun set_builder_code(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -146,7 +147,7 @@ public fun set_builder_code(
     );
 }
 
-/// Clear sticky builder-code attribution after consuming account owner auth.
+/// Clear sticky builder-code attribution using valid owner or authorized-app auth.
 public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(auth);
     data_mut(account, ctx).builder_code_id = option::none();
@@ -159,7 +160,7 @@ public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mu
 
 // === Public-Package Functions ===
 
-/// Generate Predict app authority through the account registry.
+/// Generate Predict's package-issued authority to mutably load any account.
 public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
     registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
 }
@@ -207,7 +208,7 @@ public(package) fun remove_position(
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(d.positions.contains(key), EPositionNotFound);
-    let Position { root_id, opened_at_ms: _ } = d.positions.remove(key);
+    let Position { root_id, .. } = d.positions.remove(key);
     d.ensure_summary(expiry_market_id);
     let summary = &mut d.expiry_summaries[expiry_market_id];
     assert!(summary.open_position_count > 0, EInsufficientPosition);
@@ -304,7 +305,8 @@ public(package) fun roll_active_stake(account: &mut Account, ctx: &mut TxContext
     d.active_stake
 }
 
-/// Add freshly staked DEEP as inactive; it activates next epoch.
+/// Add freshly staked DEEP as inactive after the caller reconciles the current
+/// epoch with `roll_active_stake`; the new amount activates in a later epoch.
 public(package) fun add_inactive_stake(account: &mut Account, stake: u64, ctx: &mut TxContext) {
     let d = data_mut(account, ctx);
     d.inactive_stake = d.inactive_stake + stake;

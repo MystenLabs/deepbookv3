@@ -16,10 +16,15 @@ export interface CadenceConfig {
 }
 
 // Per cadence id: 0=1m, 1=5m, 2=1h. 3/4/5 (1d/7d/30d) are disabled on testnet.
+// Allocation caps are raised ~10x above the testnet values (50k/10k, 250k/50k) so capacity stress
+// runs measure the FLUSH GAS wall, not the capital wall: at the 5,000-order per-market cap the
+// reserve demand (~$70k+) exceeded the old 1m/5m 50k allocation and the pool-total run OOG'd
+// entangled with expiry_cash::EInsufficientCash (stress/capacity-and-gas-findings.md, C-1 follow-up).
+// Worst-case total allocation (9 live markets) stays under BOOTSTRAP_SUPPLY.
 export const CADENCES: Record<number, CadenceConfig> = {
-  0: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 50_000_000_000n, initialExpiryCash: 10_000_000_000n, windowSize: 3n },
-  1: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 50_000_000_000n, initialExpiryCash: 10_000_000_000n, windowSize: 3n },
-  2: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 250_000_000_000n, initialExpiryCash: 50_000_000_000n, windowSize: 3n },
+  0: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 500_000_000_000n, initialExpiryCash: 100_000_000_000n, windowSize: 3n },
+  1: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 500_000_000_000n, initialExpiryCash: 100_000_000_000n, windowSize: 3n },
+  2: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 1_000_000_000_000n, initialExpiryCash: 200_000_000_000n, windowSize: 3n },
 };
 
 // Oracle read freshness (ms) — the one place testnet diverges from contract defaults.

@@ -106,6 +106,7 @@ high gas budget because this mode does not benchmark individual mint gas;
 -   `python_replay.py`: Python economic mirror and derived metric generator.
     Pricing values used by replay, such as base fee, min fee, and ask bounds,
     are read from `data/scenario_config.json` with Python defaults as fallback.
+-   `compare_parity.py`: canonical parity projection and first-difference reporter for localnet/Python economic data.
 -   `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
 -   `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
     the legacy gas benchmark `results.json`.
@@ -132,14 +133,10 @@ high gas budget because this mode does not benchmark individual mint gas;
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
-7. Replays the same normal scenario against localnet. The runner also
-   synthesizes privileged maintenance transactions: standalone expiry-cash
-   rebalances every 100 rows and LP flushes at the configured flush checkpoints.
-   These are real localnet transactions recorded in `local_trace.json`, but they
-   are not CSV row actions.
+7. Replays the same normal scenario against localnet. The runner also synthesizes privileged maintenance transactions: standalone expiry-cash rebalances every 100 rows and LP flushes at the configured flush checkpoints. These are real localnet transactions recorded in `local_trace.json` and `local_data.json`, but they are not CSV row actions.
 8. Writes `local_trace.json` and `local_data.json`.
 9. Renders gas charts from `local_trace.json`.
-10. Compares `local_data.json` against `python_data.json`.
+10. Compares the canonical parity projections of `local_data.json` and `python_data.json`.
 11. If parity holds, generates `data/generated/long_scenario.csv`.
 12. Runs long Python replay with exact source timestamps and terminal closeout.
 13. Writes `economic_summary.json` and renders charts.
@@ -293,13 +290,9 @@ Full localnet runs can produce:
 
 ## Parity Contract
 
-Localnet/Python parity is a confidence gate, not a proof of every possible
-terminal state. The normal replay validates that Python and localnet agree on
-canonical live economics for the same generated CSV rows: oracle refreshes,
-mints, redeems, passive liquidations, supply, withdraw, normalized event fields,
-and tracked state deltas. Runner-synthesized maintenance transactions such as
-LP flushes and expiry-cash rebalances are traced for gas and to keep localnet
-flows executable under the configured cadence; they are not generated CSV rows.
+Localnet/Python parity is a confidence gate, not a proof of every possible terminal state. The normal replay validates that Python and localnet agree on canonical live economics for the same generated CSV rows and runner-synthesized maintenance transactions: oracle refreshes, mints, redeems, passive liquidations, supply, withdraw, queue drains, expiry-cash rebalances, normalized event fields, and tracked state deltas.
+
+`compare_parity.py` removes chain-clock landing timestamps and oracle source timestamps because localnet rebases feed timestamps onto its live `Clock` while Python replays the economic inputs without reproducing that wall clock. It also removes `FlushExecuted.pool_value` and `active_market_nav`: Python's independently aggregated mark can differ from Move by fixed-point dust, while the priced fill outputs and resulting state must still match exactly. Both artifacts retain their full fields; queue depths, pre/post LP supply, fill amounts, maintenance records, and every tracked state value remain parity-gated.
 
 Live pool-sync sweeps increase aggregate pricing credits and can also realize
 previously carried protocol profit into the reserve when returned idle cash is
@@ -373,6 +366,34 @@ Important fields:
     divided by live liability.
 
 ## Maintenance Rules
+
+-   Do not add unit tests under `packages/predict/simulations/**`. Verify changes
+    with `npx tsc --noEmit`, `bash -n run.sh`, a Python replay, or a small
+    `bash run.sh --sim_max_rows=N --skip-analysis` smoke run instead.
+-   If a Move entrypoint used by the simulation changes generic parameters or its
+    signature, audit `src/runtime.ts` for stale `typeArguments` or argument
+    lists; otherwise benchmark CI fails only as an external
+    `sim exited with code 1`.
+-   Gas verdicts must respect run-to-run noise: different `run.sh` invocations
+    use different generated scenarios, so treat per-action deltas below the noise
+    floor (watch an untouched action like `supply`/`withdraw`) as neutral — only
+    a pinned-scenario A/B is a trustworthy signal. Per-op gas is also
+    data-dependent (`normal_cdf` has cheap and expensive branches by moneyness)
+    and multi-command PTBs amplify per-command cost, so sweep scenarios and
+    measure batched ops separately; measured capacity numbers live in
+    `../predeploy/evidence/` and the open-items C-1 capacity model.
+-   The capacity wall is per-tx computation (`max_gas_computation_bucket`), not
+    the gas budget: a tx over it fails `InsufficientGas` regardless of
+    `--gas-budget`.
+-   One localnet per git worktree: `run.sh` mutates `Move.toml` during publish,
+    so concurrent runs must not share a checkout. `SIM_PORT_OFFSET` gives each
+    run its own ports; never rewrite the genesis `.blob`/swarm ports (that
+    desyncs config from the baked committee). `stress/` holds the parallel
+    stress/fuzz infra (read `stress/README.md` first, including the
+    `SIM_STRESS_*` knobs in `src/sim.ts`); stress runs need `--skip-analysis`,
+    and `SIM_STRESS_LEVERAGE>1` aborting via
+    `assert_mint_probability_and_leverage_policy` is correct moneyness-capping,
+    not a harness bug.
 
 -   Keep `run.sh` limited to the four documented manual command forms. The hidden
     benchmark compatibility path exists only for the Docker benchmark worker and

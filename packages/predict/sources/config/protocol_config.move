@@ -54,29 +54,29 @@ public struct ProtocolConfig has key {
 
 // === Public Functions ===
 
-/// Return the protocol config object ID.
+/// Return the protocol config object ID for external discovery and PTB construction.
 public fun id(config: &ProtocolConfig): ID {
     config.id.to_inner()
 }
 
-/// Return whether trading is currently paused.
+/// Return the global trading-pause state for SDK and devInspect reads.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
 }
 
-/// Set the base fee multiplier snapshotted by future expiry markets.
+/// Set the base fee multiplier snapshotted by newly created expiry markets.
 public fun set_template_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_version();
     config.strike_exposure_template_config.set_base_fee(fee);
 }
 
-/// Set the minimum fee floor snapshotted by future expiry markets.
+/// Set the minimum fee floor snapshotted by newly created expiry markets.
 public fun set_template_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_version();
     config.strike_exposure_template_config.set_min_fee(fee);
 }
 
-/// Set the expiry-fee ramp window snapshotted by future expiry markets.
+/// Set the expiry-fee ramp window snapshotted by newly created expiry markets.
 public fun set_template_expiry_fee_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -86,7 +86,7 @@ public fun set_template_expiry_fee_window_ms(
     config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
 }
 
-/// Set the expiry-fee max multiplier snapshotted by future expiry markets.
+/// Set the expiry-fee max multiplier snapshotted by newly created expiry markets.
 public fun set_template_expiry_fee_max_multiplier(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -96,7 +96,17 @@ public fun set_template_expiry_fee_max_multiplier(
     config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
 }
 
-/// Set the liquidation LTV snapshotted by future expiry markets.
+/// Set the near-expiry no-leverage window snapshotted by newly created expiry markets.
+public fun set_template_no_leverage_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    window_ms: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_no_leverage_window_ms(window_ms);
+}
+
+/// Set the liquidation LTV snapshotted by newly created expiry markets.
 public fun set_template_liquidation_ltv(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -106,7 +116,7 @@ public fun set_template_liquidation_ltv(
     config.strike_exposure_template_config.set_liquidation_ltv(value);
 }
 
-/// Set the max admission leverage snapshotted by future expiry markets.
+/// Set the max admission leverage snapshotted by newly created expiry markets.
 public fun set_template_max_admission_leverage(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -116,7 +126,7 @@ public fun set_template_max_admission_leverage(
     config.strike_exposure_template_config.set_max_admission_leverage(value);
 }
 
-/// Set the backing-buffer lambda snapshotted by future expiry markets.
+/// Set the backing-buffer lambda snapshotted by newly created expiry markets.
 public fun set_template_backing_buffer_lambda(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -138,7 +148,7 @@ public fun set_benefit_powers(
     config.stake_config.set_benefit_powers(lower, upper);
 }
 
-/// Set the minimum raw entry probability snapshotted by future expiry markets.
+/// Set the minimum raw entry probability snapshotted by newly created expiry markets.
 public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -148,7 +158,7 @@ public fun set_template_min_entry_probability(
     config.strike_exposure_template_config.set_min_entry_probability(value);
 }
 
-/// Set the maximum raw entry probability snapshotted by future expiry markets.
+/// Set the maximum raw entry probability snapshotted by newly created expiry markets.
 public fun set_template_max_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -191,7 +201,7 @@ public fun set_block_scholes_svi_freshness_ms(
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the trading loss rebate rate template used by future expiry markets.
+/// Set the trading loss rebate rate snapshotted by newly created expiry markets.
 public fun set_template_trading_loss_rebate_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -236,16 +246,11 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused_internal(paused);
 }
 
-/// Advance the version watermark to this package's compiled-in `current_version!()`,
-/// retiring every older version (a running version below the floor is dead — see
-/// `assert_version`).
+/// Advance the version floor to this package's compiled-in `current_version!()`.
 ///
-/// Takes no target: the floor can only ever move to a version a published binary
-/// actually embeds, so admin can never set it above the running package and brick
-/// it. Raising the floor therefore requires executing this against the upgraded
-/// package, where `current_version!()` is higher. Aborts if the running version
-/// does not exceed the current watermark (nothing to retire). Ungated so it stays
-/// callable across an upgrade.
+/// The floor cannot be set above the executing package's version. This function
+/// is ungated so an upgraded package can retire older versions; it aborts unless
+/// the executing version is strictly greater than the existing floor.
 public fun bump_version_watermark(config: &mut ProtocolConfig, _admin_cap: &AdminCap) {
     let version = constants::current_version!();
     assert!(version > config.version_watermark, EVersionWatermarkNotAdvanced);
@@ -307,9 +312,7 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
 
 /// Abort unless the running package version is at or above the watermark floor.
 ///
-/// The single version gate for the package: every version-gated flow threads the
-/// shared `ProtocolConfig` and calls this first. Replaces the former per-object
-/// `allowed_versions` mirrors.
+/// Version-gated flows thread the shared `ProtocolConfig` through this check.
 public(package) fun assert_version(config: &ProtocolConfig) {
     assert!(constants::current_version!() >= config.version_watermark, EPackageVersionDisabled);
 }
@@ -383,6 +386,3 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         valuation_in_progress: false,
     }
 }
-
-// Tests obtain the ProtocolConfig that `registry::init_for_testing` shares via
-// `create_and_share`, taken with `take_shared<ProtocolConfig>()`.

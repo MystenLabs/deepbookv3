@@ -17,7 +17,7 @@ SEV = {  # unify the two severity vocabularies into one rank (higher = worse)
     'critical': 6, 'high': 5, 'medium': 4, 'correctness': 4, 'low': 3, 'cleanup': 2, 'info': 2, '': 1,
 }
 
-MARKERS = {'summary', 'kept', 'confirmed', 'findings', 'violations', 'settled', 'refuted', 'coverage', 'responsibility_map'}
+MARKERS = {'summary', 'kept', 'confirmed', 'findings', 'violations', 'settled', 'refuted', 'coverage', 'responsibility_map', 'error'}
 
 def load(path):
     """Scan ALL successive '{' and raw_decode, but accept ONLY an object that looks like a harness RESULT
@@ -122,6 +122,11 @@ def main():
             empty_harnesses.append((hname, '0 findings — confirm it ran, not silently scoped out'))
         for u in (res.get('summary') or {}).get('unmapped_units', []) or []:  # walk map-failures = real holes
             coverage_blocks.append((hname, u, '⚠ NOT EXAMINED — map agent failed; resume to fill', []))
+        # single-pass harnesses report agent failures in summary — render each as a coverage hole too
+        for u in (res.get('summary') or {}).get('failed_check_units', []) or []:
+            coverage_blocks.append((hname, u, '⚠ NOT EXAMINED — check agent failed; resume to fill', []))
+        for u in (res.get('summary') or {}).get('failed_families', []) or []:
+            coverage_blocks.append((hname, u, '⚠ NOT EXAMINED — sweep agent failed; resume to fill', []))
         for c in res.get('coverage', []) or []:
             coverage_blocks.append((hname, c.get('lane', ''), c.get('coverage', ''), c.get('top3', [])))
         # ownership-walk also carries a responsibility_map worth keeping

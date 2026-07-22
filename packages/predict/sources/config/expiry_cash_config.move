@@ -23,7 +23,9 @@ public(package) fun trading_loss_rebate_rate(config: &ExpiryCashConfig): u64 {
     config.trading_loss_rebate_rate
 }
 
-/// Return the 1e9-scaled trading-fee carve-out reserved for loss rebates.
+/// Return the DUSDC reserve implied by a trading-fee basis:
+/// `trading_fees_paid * trading_loss_rebate_rate`, rounded down (base units in,
+/// base units out; the 1e9-scaled rate is consumed by the fixed-point multiply).
 public(package) fun rebate_reserve_for_fee_basis(
     config: &ExpiryCashConfig,
     trading_fees_paid: u64,

@@ -10,7 +10,8 @@
 /// is not production-safe until the real verifier lands.
 module block_scholes_oracle::update;
 
-/// A verified BS spot update for one source id.
+/// Operator-supplied BS spot update for one source id (signature verification
+/// arrives with the production verifier — see module doc; forgeable until then).
 public struct SpotUpdate has copy, drop {
     source_id: u32,
     /// Publisher snapshot timestamp, in milliseconds.
@@ -19,7 +20,8 @@ public struct SpotUpdate has copy, drop {
     spot: u64,
 }
 
-/// A verified BS forward update for one source id and expiry.
+/// Operator-supplied BS forward update for one source id and expiry (signature
+/// verification arrives with the production verifier — see module doc).
 public struct ForwardUpdate has copy, drop {
     source_id: u32,
     expiry_ms: u64,
@@ -29,15 +31,17 @@ public struct ForwardUpdate has copy, drop {
     forward: u64,
 }
 
-/// A verified BS SVI update for one source id and expiry. SVI `rho`/`m` are
-/// signed, carried as magnitude + sign primitives so this package stays
-/// dependency-free.
+/// Operator-supplied BS SVI update for one source id and expiry (signature
+/// verification arrives with the production verifier — see module doc). SVI
+/// `a`/`rho`/`m` are signed, carried as magnitude + sign primitives so this
+/// package stays dependency-free.
 public struct SVIUpdate has copy, drop {
     source_id: u32,
     expiry_ms: u64,
     /// Publisher snapshot timestamp, in milliseconds.
     published_at_ms: u64,
-    svi_a: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
     svi_b: u64,
     svi_sigma: u64,
     svi_rho_magnitude: u64,
@@ -66,7 +70,8 @@ public fun new_svi_update(
     source_id: u32,
     expiry_ms: u64,
     published_at_ms: u64,
-    svi_a: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
     svi_b: u64,
     svi_sigma: u64,
     svi_rho_magnitude: u64,
@@ -78,7 +83,8 @@ public fun new_svi_update(
         source_id,
         expiry_ms,
         published_at_ms,
-        svi_a,
+        svi_a_magnitude,
+        svi_a_is_negative,
         svi_b,
         svi_sigma,
         svi_rho_magnitude,
@@ -134,8 +140,12 @@ public fun svi_published_at_ms(update: &SVIUpdate): u64 {
     update.published_at_ms
 }
 
-public fun svi_a(update: &SVIUpdate): u64 {
-    update.svi_a
+public fun svi_a_magnitude(update: &SVIUpdate): u64 {
+    update.svi_a_magnitude
+}
+
+public fun svi_a_is_negative(update: &SVIUpdate): bool {
+    update.svi_a_is_negative
 }
 
 public fun svi_b(update: &SVIUpdate): u64 {

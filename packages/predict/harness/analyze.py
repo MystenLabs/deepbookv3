@@ -122,6 +122,55 @@ def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]
     return expected, transient, flagged
 
 
+def _vm_summary(src: str, fallback: str) -> str:
+    """A legible one-line summary of a VM error: its status + the human `and message` tail, skipping
+    the long module-address noise. A bare [:160] truncation lands mid-address and DROPS the actual
+    cause (the message sits at ~index 228, past the 64-char address) — the same truncation anti-pattern
+    this whole surfacing exists to kill. E.g. `MEMORY_LIMIT_EXCEEDED — Object runtime cached objects
+    limit (1000 entries) reached`."""
+    status_m = re.search(r"status (\w+)", src)
+    msg_m = re.search(r"and message (.+?)(?: at code offset| in function|$)", src)
+    parts = [status_m.group(1) if status_m else None, msg_m.group(1).strip() if msg_m else None]
+    return (" — ".join(p for p in parts if p) or fallback or "")[:200]
+
+
+def _vm_errors(inst: Path) -> Counter:
+    """Distinct non-MoveAbort VM errors from this instance's saved failed-tx artifacts — the
+    plain-English cause a framework-level MovePrimitiveRuntimeError tag hides. Summarised via
+    `_vm_summary`; MoveAbort guards (legible in the tag) are excluded."""
+    out: Counter = Counter()
+    art = inst / "artifacts" / "failed_transactions"
+    if not art.is_dir():
+        return out
+    for f in sorted(art.glob("*.json")):
+        try:
+            o = json.loads(f.read_text())
+        except Exception:
+            continue
+        dr = o.get("dry_run") or {}
+        status = (dr.get("effects") or {}).get("status") or {}
+        src = dr.get("executionErrorSource") or ""
+        # Skip ordinary Move aborts (guards): a MoveAbort shows as `status ABORTED` in
+        # executionErrorSource and `MoveAbort(...)` in status.error (its executionErrorSource does NOT
+        # contain the literal "MoveAbort"); a framework/VM error (e.g. MEMORY_LIMIT_EXCEEDED) shows a
+        # different status. Filter on both fields.
+        is_abort = "status ABORTED" in src or "MoveAbort" in str(status.get("error") or "")
+        msg = _vm_summary(src, status.get("error") or "")
+        if msg and not is_abort:
+            out[msg] += 1
+    return out
+
+
+def _declared_terminals(recs: list[dict]) -> list[str]:
+    """Terminal-wall substrings a stress strategy declared via its `expect` trace record — the aborts
+    it is deliberately probing. Matched (as substrings) against abort tags and `_vm_errors` summaries."""
+    out: list[str] = []
+    for r in recs:
+        if r.get("type") == "expect":
+            out.extend(str(t) for t in (r.get("terminal") or []))
+    return out
+
+
 def _analyze_one(inst: Path) -> list[str]:
     """Print one instance's report; return the list of bug-signal tags (empty = clean)."""
     recs = _load(inst / "trace")
@@ -316,6 +365,28 @@ def _analyze_one(inst: Path) -> list[str]:
     # bug oracle (code-aware; tags are module:code). nav-stress breakpoint deferrals excluded (above).
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]
     expected, transient, flagged = _classify(fails)
+    # B — per-strategy declared terminal wall (the `expect` trace record). A stress strategy's declared
+    # wall is EXPECTED for THIS run only (not a bug oracle hit): the object-cache limit bricks a normal
+    # flush, so it must never be a global whitelist. A declared wall NEVER reached fails the run as
+    # VACUOUS (a stress that did not stress — Antithesis "sometimes" reachability).
+    declared = _declared_terminals(recs)
+    if declared:
+        vm_msgs = list(_vm_errors(inst))  # the run's real VM-error summaries (framework aborts' true cause)
+        undeclared_vm = [m for m in vm_msgs if not any(d in m for d in declared)]
+        reached = {d for d in declared
+                   if any(d in m for m in vm_msgs) or any(d in t for t in flagged + list(expected))}
+        kept: list[str] = []
+        for t in flagged:
+            if any(d in t for d in declared):
+                expected[f"declared:{t[:32]}"] += 1            # tag itself names a declared wall
+            elif not _MOVE_ABORT.match(t) and reached and not undeclared_vm:
+                expected["declared-wall (framework)"] += 1     # framework tag whose real cause IS a declared VM wall
+            else:
+                kept.append(t)                                 # a clean module:code abort, or an UNdeclared framework error
+        flagged = kept
+        for d in declared:
+            if d not in reached:
+                flagged.append(f"VACUOUS: declared wall '{d[:48]}' never reached")
     print(f"\nfailures: {len(fails)} ({sum(expected.values())} expected guards, {sum(transient.values())} transient)")
     if expected:
         print("  expected guards:", dict(expected.most_common(6)))
@@ -325,6 +396,11 @@ def _analyze_one(inst: Path) -> list[str]:
         print(f"  *** BUG ORACLE: {len(flagged)} invariant/non-package abort(s) ***")
         for tag, n in Counter(flagged).most_common(10):
             print(f"     {n}x  {tag}")
+        # A framework-level tag (dynamic_field::borrow_child_object etc.) names only the framework fn.
+        # Surface the dry-run's executionErrorSource from the saved artifacts — the plain-English VM
+        # cause the tag hides (e.g. "Object runtime cached objects limit (1000 entries) reached").
+        for msg, n in _vm_errors(inst).most_common(6):
+            print(f"       -> {n}x  {msg}")
     else:
         print("  bug oracle clean (no invariant/non-package aborts)")
 

@@ -31,7 +31,7 @@ below.
   free invariant check). DO add named guards for semantic bounds, division-by-zero with a real zero, and
   solvency/accounting invariants.
 - Rounding direction is a money decision: user-facing outflows round DOWN, protocol-held reserves/liabilities
-  round UP or bit-equal (`packages/predict/predeploy/rounding-policy.md` R2). A `>=` that can become `<` by one ulp on a backing path is the
+  round UP or bit-equal (`packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)` R2). A `>=` that can become `<` by one ulp on a backing path is the
   R1 liveness bug class.
 - `saturating_sub` is a policy clamp, not a bug-hide; `a - a.min(b)` / hand-rolled sat-sub are smells. Fixed-
   point intermediates (`i64` magnitude = u64 with u128 intermediates) can truncate on cast-back.

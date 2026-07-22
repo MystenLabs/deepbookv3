@@ -79,7 +79,7 @@ Trading and capital movement are mediated by `AccountWrapper` plus account `Auth
 
 ## Position lifecycle
 
-A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement is recorded passively by normal settled-branch flows (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
+A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement is recorded explicitly through `try_settle` before settled consumers run (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
 
 ```mermaid
 stateDiagram-v2
@@ -109,7 +109,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). There is no public settle-only entrypoint. `redeem_settled`, `redeem_settled_permissionless`, pool rebalance, and pool valuation passively try to settle immediately before choosing settled vs live behavior. If the exact expiry spot is missing, the market remains unsettled and live pricing rejects the past-expiry market.
+Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). `try_settle` is the single permissionless transition: it records the price and terminal payout liability together. `redeem_settled`, `redeem_settled_permissionless`, rebate claim, pool rebalance, and pool valuation only consume the current phase, so transaction builders compose `try_settle` before them when settlement may be due. If the exact expiry spot is missing, the market remains unsettled, standalone rebalance moves no cash, and live pricing rejects the past-expiry market.
 
 ### Settled redeem
 
@@ -117,13 +117,13 @@ After settlement, a position is closed for its settled payout. `redeem_settled` 
 
 ### Liquidation
 
-While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the current Propbook `PythFeed` plus BS spot/forward/SVI feed objects, which `pricing::load_live_pricer` validates against Propbook's canonical bindings for the market's underlying and expiry. Liquidation is permissionless, removes the order from live indexes, and **does not touch any account** — it emits **`OrderLiquidated`** (with no owner/account fields, since they are unknown to the pass) and leaves a tombstone. The holder later clears the liquidated position through owner-auth `redeem_live` while the market is live, or through a settled redeem path after settlement; cleanup removes the account position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in [leverage and the floor](./leverage-and-floor.md), [liquidation](./liquidation.md), and [risks](../risks.md).
+While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the current Propbook `PythFeed` plus BS spot/forward/SVI feed objects, which `pricing::load_live_pricer` validates against Propbook's canonical bindings for the market's underlying and expiry. Liquidation is permissionless, removes the order from live indexes, and **does not touch any account** — it emits **`OrderLiquidated`** (with no owner/account fields, since they are unknown to the pass) and leaves only the holder's account position as the order's remaining record. The holder later clears the liquidated position through owner-auth `redeem_live` while the market is live, or through a settled redeem path after settlement; cleanup removes the account position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in [leverage and the floor](./leverage-and-floor.md), [liquidation](./liquidation.md), and [risks](../risks.md).
 
 ## Object relationships at a glance
 
 | Object | Owns | Created by | Sharing |
 | --- | --- | --- | --- |
-| `Registry` | Underlying approval, minimum tick sizes, expiry uniqueness, versions, pause caps, creation entrypoints | package init | shared |
+| `Registry` | Underlying approval, cadence deployment configs (tick sizes, caps, windows), expiry uniqueness, pause caps, creation entrypoints (versioning lives on `ProtocolConfig.version_watermark`) | package init | shared |
 | `PythFeed` (propbook) | One Pyth Lazer feed's global spot | `propbook` (permissionless) | shared |
 | `BlockScholesSpotFeed` (propbook) | One source id's BS spot + exact timestamp history | `propbook` (permissionless) | shared |
 | `BlockScholesForwardFeed` / `BlockScholesSVIFeed` (propbook) | One source id's BS forward and SVI surfaces with per-expiry streams + exact timestamp history | `propbook` (permissionless) | shared |

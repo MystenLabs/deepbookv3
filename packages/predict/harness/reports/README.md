@@ -20,4 +20,4 @@ testnet AND mainnet, verified via `getProtocolConfig`). The SUI cost differs by 
 network-independent. `>30 SUI` txs are storage-heavy; the flush's NAV walk is pure computation.
 
 Context: `packages/predict/predeploy/open-items.md` (`C-1`) and
-`packages/predict/predeploy/stress/nav-stress-findings-2026-06-30.md`.
+`packages/predict/predeploy/evidence/c1-nav-stress-2026-06-30.md`.

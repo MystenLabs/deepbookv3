@@ -7,6 +7,9 @@ pricing tests (`pricing_exact_tests.move`) assert against. Run:
 
     python3 generate_pricing_reference.py        # no third-party deps (stdlib only)
 
+Set `PREDICT_SCENARIO_DATASET=/path/to/scenario_dataset.csv` when regenerating
+from a worktree that does not have the ignored scenario CSV locally.
+
 Per Predict unit-test rule 16 the generator is committed for provenance and is
 NOT in the CI path: CI runs only the Move tests against the emitted constants.
 
@@ -23,12 +26,13 @@ total-variance curve; d2 and Phi are derived from first principles:
     k       = ln(strike / forward)                         (log-moneyness)
     w(k)    = a + b*( rho*(k-m) + sqrt((k-m)^2 + sigma^2) ) (SVI total variance)
     d2      = -(k + w/2) / sqrt(w)                          (Black digital d2)
-    UP(K)   = Phi(d2) = P(S_T > K)        Phi(x)=0.5*(1+erf(x/sqrt2))
+    w'(k)   = b*(rho + (k-m)/sqrt((k-m)^2 + sigma^2))
+    UP(K)   = clamp01(Phi(d2) - phi(d2)*w'(k)/(2*sqrt(w(k))))
     range   = max(0, UP(lower) - UP(higher))   with UP(-inf)=1, UP(+inf)=0
 
-`erf`-based Phi is independent of the contract's Cody rational approximation, so
-a formula bug in the contract (wrong d2 sign, wrong SVI assembly, etc.) is caught,
-not masked.
+`erf`-based Phi and the analytic density are independent of the contract's Cody
+rational / fixed-point PDF approximations, so a formula bug in the contract
+(wrong d2 sign, wrong SVI assembly, wrong skew sign, etc.) is caught, not masked.
 
 ============================================================================
 INPUT FIDELITY (never truncate)
@@ -44,20 +48,21 @@ The *forward the contract actually prices with* is NOT the raw pushed forward: i
     forward_live = mul(spot, div(forward, spot))            (two fixed_math floors)
 This is the dominant production path (Pyth spot fresh). We reproduce that floor
 round-trip below to obtain the byte-identical forward the model prices at, then
-compute the TRUE Phi(d2) from it. The round-trip is INPUT CONSTRUCTION (it builds
-the model's forward input), not the pricer; ref and contract therefore price the
-identical forward, so the round-trip contributes NO error to the budget.
+compute the TRUE adjusted digital from it. The round-trip is INPUT CONSTRUCTION
+(it builds the model's forward input), not the pricer; ref and contract therefore
+price the identical forward, so the round-trip contributes NO error to the budget.
 
 ============================================================================
 PRECISION BUDGET (derived, never measured from contract output)
 ============================================================================
 Each test tolerance is the analytic worst-case absolute error of the contract's
-fixed-point evaluation of UP(K)=Phi(d2), propagated from the math layer's
+fixed-point evaluation of the skew-adjusted UP(K), propagated from the math layer's
 DOCUMENTED per-primitive budgets (math.move "Precision contract"):
     ln   : relative error <= 1e-7        (k = ln(strike/forward))
     sqrt : floor, <= 1 ULP (1e-9)
     mul / div / square (predict math, i64): floor, <= 1 ULP (1e-9) each
     normal_cdf : absolute error <= 2e-8  (reaches the quote 1:1)
+    normal_pdf : absolute error <= 50/F  (scaled density primitive)
 
 evaluated at the TRUE (reference) values — NOT read from the contract. The
 composition is, with F=1e9 and all quantities in real (un-scaled) units:
@@ -82,7 +87,16 @@ composition is, with F=1e9 and all quantities in real (un-scaled) units:
           + |N/w| * e_S_floor                      (sqrt_var independent floor; dd2/dS=N/S^2=N/w)
           + 1/F                                    (div_scaled floor on d2)
         where  dd2/dw = 0.5*w^(-3/2)*(k - w/2)
-    d_up  = 2e-8 + phi(d2)*d_d2                    (normal_cdf abs + Phi sensitivity)
+    slope = rho + km/sq
+      e_slope = |sigma^2/sq^3|*d_k + |km/sq^2|*e_sq + 1/F
+    wp    = b*slope
+      e_wp = b*e_slope + 1/F                       (slope-ratio + mul_scaled floors)
+    pdf   = phi(d2)
+      e_pdf = 50/F + |d2|*pdf*d_d2                 (normal_pdf abs + d2 sensitivity)
+    q     = wp/(2*S)
+      e_corr = |wp|/(2*S)*e_pdf + pdf/(2*S)*e_wp
+             + pdf*|wp|/(2*w)*(e_w/(2*S) + 1/F) + 1/F
+    d_up  = 2e-8 + pdf*d_d2 + e_corr               (cdf + skew-correction error)
 
 KEY RESULT: the budget is dominated NOT by any single primitive (~1e-7) but by the
 `|dd2/dw|*e_w` term: at small total variance w (near-expiry scenarios) and moderate
@@ -106,6 +120,9 @@ REFERENCE_GRID_TICKS = 100_000       # Reference ladder width used to choose str
 MARKET_TICK_SIZE_UNIT = 10_000       # constants::market_tick_size_unit!()
 TICK_SIZE = 1_000_000_000            # $1 ticks: spot/tick in (50000, 100000] for ~$75k spot
 CUSHION_UNITS = 2                    # reference integer rounding + 2nd-order propagation
+NORMAL_CDF_ABS = 2e-8
+NORMAL_PDF_ABS = 50.0 / F
+ULP = 1.0 / F
 
 # SVI production bounds (constants.move) the chosen rows must satisfy so the
 # fixture can seed them through the production cap path (assert_valid_svi).
@@ -125,7 +142,8 @@ INTERIOR_D2 = [3.0, 2.0, 1.0, 0.5, 0.0, -0.5, -1.0, -2.0, -3.0]
 WING_D2 = [8.0, -8.0]                 # deep ITM / OTM -> contract clamps to F / 0
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(HERE, "..", "..", "..", "simulations", "data", "scenario_dataset.csv")
+DEFAULT_CSV_PATH = os.path.join(HERE, "..", "..", "..", "simulations", "data", "scenario_dataset.csv")
+CSV_PATH = os.environ.get("PREDICT_SCENARIO_DATASET", DEFAULT_CSV_PATH)
 OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "pricing_reference_data.move")
 
 
@@ -188,15 +206,23 @@ class Scenario:
         km = k - self.mf
         return self.af + self.bf * (self.rf * km + math.sqrt(km * km + self.sf * self.sf))
 
+    def w_prime_of_k(self, k):
+        km = k - self.mf
+        sq = math.sqrt(km * km + self.sf * self.sf)
+        return self.bf * (self.rf + km / sq)
+
     def d2_of_strike(self, strike):
         # strike and forward_live are both 1e9-scaled integers -> ratio is dimensionless.
         k = math.log(strike / self.forward_live)
         w = self.w_of_k(k)
         return k, w, -(k + w / 2.0) / math.sqrt(w)
 
+    def up_raw(self, strike):
+        k, w, d2 = self.d2_of_strike(strike)
+        return phi(d2) - phi_pdf(d2) * self.w_prime_of_k(k) / (2.0 * math.sqrt(w))
+
     def up_true(self, strike):
-        _, _, d2 = self.d2_of_strike(strike)
-        return phi(d2)
+        return max(0.0, min(1.0, self.up_raw(strike)))
 
     # --- analytic absolute error budget for UP(strike)=Phi(d2) at one strike ---
     def delta_up(self, strike):
@@ -226,7 +252,23 @@ class Scenario:
             + abs(N / w) * (1.0 / F)
             + 1.0 / F
         )
-        return 2e-8 + phi_pdf(d2) * d_d2
+        pdf = phi_pdf(d2)
+        w_prime = self.w_prime_of_k(k)
+        # Skew-correction sensitivity:
+        #   correction = pdf(d2) * w_prime / (2*sqrt(w)).
+        # The reference keeps true-math w_prime; the contract floors both slope_ratio
+        # and mul_scaled(b, slope), so the tolerance absorbs that quantization.
+        e_slope = (self.sf * self.sf / (si ** 1.5)) * d_k + abs(km) / si * e_sq + ULP
+        e_w_prime = self.bf * e_slope + ULP
+        e_pdf = NORMAL_PDF_ABS + abs(d2) * pdf * d_d2
+        e_s_total = e_w / (2.0 * S) + ULP
+        e_correction = (
+            abs(w_prime) / (2.0 * S) * e_pdf
+            + pdf / (2.0 * S) * e_w_prime
+            + pdf * abs(w_prime) / (2.0 * w) * e_s_total
+            + ULP
+        )
+        return NORMAL_CDF_ABS + pdf * d_d2 + e_correction
 
     def snap(self, strike):
         rel = strike - self.min_strike
@@ -259,7 +301,7 @@ def build_points(s):
         d2_to_strike[d2] = s.strike_for_d2(d2)
     seen = set()
 
-    # interior single-sided (strike, +inf): UP(strike) = Phi(d2)
+    # interior single-sided (strike, +inf): adjusted digital UP(strike)
     for d2 in INTERIOR_D2:
         strike = d2_to_strike[d2]
         if strike in seen:
@@ -269,10 +311,11 @@ def build_points(s):
         tol = math.ceil(du * F) + CUSHION_UNITS
         worst = max(worst, du)
         ref = round(s.up_true(strike) * F)
+        correction = s.up_true(strike) - phi(s.d2_of_strike(strike)[2])
         points.append(dict(lower=strike, higher=POS_INF, reference=ref, tolerance=tol,
-                           note=f"d2~{d2:+.1f} UP(K)=Phi(d2)"))
+                           note=f"d2~{d2:+.1f} adjusted UP(K) skew={correction:+.3e}"))
 
-    # clamp wings (strike, +inf): contract clamps, Phi rounds to exactly 0 / F
+    # clamp wings (strike, +inf): contract CDF/PDF tails clamp, adjusted UP rounds to 0 / F
     for d2 in WING_D2:
         strike = s.strike_for_d2(d2)
         if strike in seen:
@@ -285,14 +328,14 @@ def build_points(s):
         points.append(dict(lower=strike, higher=POS_INF, reference=ref,
                            tolerance=CUSHION_UNITS, note=f"clamp wing d2~{d2:+.0f}"))
 
-    # neg_inf one-sided range (-inf, strike@ATM): range = 1 - Phi(d2)
+    # neg_inf one-sided range (-inf, strike@ATM): range = 1 - adjusted UP(d2)
     atm = d2_to_strike[0.0]
     du = s.delta_up(atm)
     tol = math.ceil(du * F) + CUSHION_UNITS
     worst = max(worst, du)
     ref = round((1.0 - s.up_true(atm)) * F)
     points.append(dict(lower=NEG_INF, higher=atm, reference=ref, tolerance=tol,
-                       note="(-inf, K_atm] = 1 - Phi(d2)"))
+                       note="(-inf, K_atm] = 1 - adjusted UP(d2)"))
 
     # finite-finite range (K@d2=+1, K@d2=-1): both endpoints approximate -> 2 budgets
     lo = d2_to_strike[1.0]
@@ -302,7 +345,7 @@ def build_points(s):
     tol = math.ceil(du2 * F) + CUSHION_UNITS
     ref = round((s.up_true(lo) - s.up_true(hi)) * F)
     points.append(dict(lower=lo, higher=hi, reference=ref, tolerance=tol,
-                       note="(K@d2=+1, K@d2=-1] = Phi(+1)-Phi(-1)"))
+                       note="(K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)"))
 
     return points, worst
 
@@ -327,14 +370,15 @@ def emit_move(scenarios, scen_points, budget_units):
     w("//")
     w("// Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract")
     w("// and NOT python_replay's fixed-point pricer) for Pricer.range_price.")
-    w("// Each point's `tolerance` is the analytic worst-case fixed-point error of UP=Phi(d2),")
+    w("// Each point's `tolerance` is the analytic worst-case fixed-point error of the")
+    w("// skew-adjusted UP=N(d2)-phi(d2)*w'(k)/(2*sqrt(w)),")
     w("// propagated from math.move's documented per-primitive budgets at the TRUE values; see")
     w("// the generator header for the full derivation. The forward priced is the fresh-Pyth")
     w("// round-trip mul(spot, div(forward, spot)).")
     w("//")
     w(f"// Worst-case per-endpoint budget across all scenarios/strikes: {fmt_u64(budget_units)} units (@1e9).")
-    w("// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w) is")
-    w("// ill-conditioned in w (w^-3/2), so a 1-ULP variance rounding moves the quote ~1e-6.")
+    w("// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w)")
+    w("// and the skew term's 1/sqrt(w) denominator amplify fixed-point variance / slope dust.")
     w("//")
     w("// Provenance (svi_event_digest @ svi_timestamp, sqrt(w_atm)):")
     for i, s in enumerate(scenarios):

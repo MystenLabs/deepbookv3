@@ -32,7 +32,8 @@ public struct Ledger has store {
     profit_basis_debits: u64,
     /// Pricing credit basis: all DUSDC received back from expiries.
     profit_basis_credits: u64,
-    /// Aggregate terminal losses that future terminal profits must recover first.
+    /// Aggregate terminal losses that later terminal profits must recover first;
+    /// losses do not claw back profit that was already materialized.
     net_losses_to_fill: u64,
     /// Protocol profit already materialized into the debit basis but not yet
     /// physically moved to the reserve because idle was deployed in other active
@@ -221,7 +222,8 @@ public(package) fun receive_expiry_cash(
 
 /// Materialize one terminal expiry's unapplied raw profit. Terminal losses are
 /// carried forward in `net_losses_to_fill` and must be refilled by later gains
-/// before any profit is recognized into the debit basis.
+/// before more profit is recognized. Materialization is forward-only: a later
+/// loss does not reduce profit recognized from an earlier expiry.
 public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     let (initial_loss, profit) = {

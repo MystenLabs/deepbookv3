@@ -9,8 +9,8 @@ edition = "2021"
 [dependencies]
 tokio.workspace = true
 sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
-sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
-sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
+sui-sdk-types = { version = "0.3.1", features = ["serde"] }
+sui-transaction-builder = "0.3.1"
 clap = { workspace = true, features = ["env"] }
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }

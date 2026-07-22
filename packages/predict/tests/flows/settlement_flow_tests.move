@@ -9,16 +9,20 @@ module deepbook_predict::settlement_flow_tests;
 use account::account_registry;
 use deepbook_predict::{
     config_constants,
+    config_events,
     constants,
     expiry_market,
     flow_test_helpers as helpers,
     plp,
     predict_account,
+    pricing,
+    strike_exposure,
     test_constants
 };
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
+use sui::{event, test_scenario::return_shared};
+use token::deep::DEEP;
 
 const SECOND_SOURCE_ID: u32 = 2;
 const IDLE_SEED: u64 = 1_200_000_000_000;
@@ -39,12 +43,13 @@ const CASH_AFTER_LOSING_REDEEM: u64 = 300_505_000_000;
 const POST_REBATE_CLAIM_BALANCE: u64 = 497_500_000;
 /// CASH_AFTER_LOSING_REDEEM minus the paid 2.5m rebate.
 const CASH_AFTER_REBATE_CLAIM: u64 = 300_502_500_000;
+const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
+const ACTIVE_MARKET_COUNT: u64 = 1;
 
-/// At expiry with no exact Propbook spot recorded, the market cannot settle, so the
-/// permissionless `redeem_settled` aborts on its settled-state precondition rather
-/// than mispricing against a missing terminal.
+/// Even with the exact Propbook spot recorded, permissionless `redeem_settled`
+/// requires the explicit settlement transition instead of settling implicitly.
 #[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
-fun passive_settlement_requires_exact_expiry_spot() {
+fun settled_redeem_requires_explicit_settlement() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
@@ -63,6 +68,10 @@ fun passive_settlement_requires_exact_expiry_spot() {
     );
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_inside_default_finite_range(),
+    );
     fx.redeem_settled_bundle(
         &mut market,
         &mut account,
@@ -73,8 +82,51 @@ fun passive_settlement_requires_exact_expiry_spot() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
-fun passive_settlement_with_wrong_pyth_feed_aborts() {
+#[test]
+fun try_settle_before_expiry_returns_false_without_mutation() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        SECOND_SOURCE_ID,
+        fx.scenario_mut().ctx(),
+    );
+    return_shared(oracle_registry);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
+    // Expiry is checked before the pricing-owned oracle binding check.
+    assert_eq!(fx.try_settle_bundle_with_pyth(&mut market, &wrong_pyth), false);
+    assert!(!helpers::market(&market).is_settled());
+    assert_eq!(helpers::market(&market).try_settlement_price(), option::none());
+
+    helpers::return_market_bundle(market);
+    return_shared(wrong_pyth);
+    fx.finish();
+}
+
+#[test]
+fun try_settle_without_exact_expiry_spot_returns_false_without_mutation() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    assert!(!helpers::market(&market).is_settled());
+    assert_eq!(helpers::market(&market).try_settlement_price(), option::none());
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
+fun try_settle_with_wrong_pyth_feed_aborts() {
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
@@ -92,13 +144,13 @@ fun passive_settlement_with_wrong_pyth_feed_aborts() {
     let mut market = fx.take_market_bundle(expiry_id);
     let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
-    fx.rebalance_expiry_cash_bundle_with_pyth(&mut market, &wrong_pyth);
+    fx.try_settle_bundle_with_pyth(&mut market, &wrong_pyth);
 
     abort 999
 }
 
-#[test, expected_failure(abort_code = expiry_market::EWrongPythFeed)]
-fun passive_settlement_rejects_old_pyth_after_propbook_rebind() {
+#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
+fun try_settle_rejects_old_pyth_after_propbook_rebind() {
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     let _rebound_pyth_id = fx.create_and_rebind_pyth(SECOND_SOURCE_ID);
@@ -107,13 +159,13 @@ fun passive_settlement_rejects_old_pyth_after_propbook_rebind() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(expiry_id);
 
-    fx.ensure_settled_bundle(&mut market);
+    fx.try_settle_bundle(&mut market);
 
     abort 999
 }
 
 #[test]
-fun passive_settlement_uses_rebound_pyth_after_exact_backfill() {
+fun try_settle_uses_rebound_pyth_after_exact_backfill() {
     let settlement_price = settlement_inside_default_finite_range();
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
@@ -125,7 +177,7 @@ fun passive_settlement_uses_rebound_pyth_after_exact_backfill() {
     assert!(!helpers::market(&market).is_settled());
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
 
-    assert_eq!(fx.ensure_settled_bundle(&mut market), true);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
     assert_eq!(expiry_market::settlement_price(helpers::market(&market)), settlement_price);
     assert!(helpers::market(&market).is_settled());
     assert_eq!(helpers::market(&market).try_settlement_price(), option::some(settlement_price));
@@ -135,7 +187,137 @@ fun passive_settlement_uses_rebound_pyth_after_exact_backfill() {
 }
 
 #[test]
-fun passive_settled_redeem_pays_terminal_payout() {
+fun try_settle_materializes_exact_terminal_liability() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    assert_eq!(helpers::market(&market).payout_liability(), test_constants::mint_quantity());
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_below_default_finite_range(),
+    );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).payout_liability(), 0);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A settled order is valued through the same classifier with NO pricer: a
+/// `Pricer` is live-only, so once the market has settled this `none` path is the
+/// only way to read `order_value`, and it returns the exact terminal payout a
+/// settled redeem would pay. Regression for the settled `order_value` branch,
+/// which is unreachable while the reader forces a (live-only) `Pricer`.
+#[test]
+fun order_value_reads_settled_winner_terminal_payout() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_inside_default_finite_range());
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    // 1x winner: terminal payout = quantity − floor_shares = mint_quantity − 0.
+    assert_eq!(
+        helpers::settled_order_value_bundle(&market, order_id),
+        test_constants::mint_quantity(),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A settled loser (settlement below its range) is worth zero through the same
+/// pricer-free read.
+#[test]
+fun order_value_reads_settled_loser_as_zero() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_below_default_finite_range());
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    assert_eq!(helpers::settled_order_value_bundle(&market, order_id), 0);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The pricer-free read is settled-only: valuing a LIVE order with `none` aborts
+/// `EPricerRequired`, since the live classification needs the live price. This
+/// pins the phase contract of the `Option<Pricer>` reader.
+#[test, expected_failure(abort_code = strike_exposure::EPricerRequired)]
+fun order_value_of_live_order_without_pricer_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+
+    helpers::settled_order_value_bundle(&market, order_id);
+    abort 999
+}
+
+#[test]
+fun explicitly_settled_redeem_pays_terminal_payout() {
     let settlement_price = settlement_inside_default_finite_range();
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
@@ -161,6 +343,7 @@ fun passive_settled_redeem_pays_terminal_payout() {
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.redeem_settled_bundle(
         &mut market,
@@ -210,6 +393,7 @@ fun settled_redeem_partial_close_aborts() {
     );
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.redeem_settled_bundle(
         &mut market,
@@ -249,6 +433,7 @@ fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.redeem_settled_bundle(
         &mut market,
@@ -288,6 +473,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.redeem_settled_with_owner_auth_bundle(
         &mut market,
@@ -362,15 +548,26 @@ fun owner_auth_rebate_claim_survives_predict_app_deauth() {
 }
 
 #[test]
-fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
+fun try_settle_is_idempotent_and_keeps_settlement_price() {
     let settlement_price = settlement_inside_default_finite_range();
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
+        &mut oracle_registry,
+        SECOND_SOURCE_ID,
+        fx.scenario_mut().ctx(),
+    );
+    return_shared(oracle_registry);
+
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -385,14 +582,19 @@ fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
 
     // First call records the settlement price from the exact expiry spot.
-    assert_eq!(fx.ensure_settled_bundle(&mut market), true);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
     // Second call (clock now far past expiry) must early-return true via the
-    // already-settled gate without re-reading the oracle or changing the price.
+    // already-settled gate without validating the substituted feed, re-reading
+    // the oracle, or changing the price.
     fx.set_clock_for_testing(test_constants::short_expiry_ms() * 2);
-    assert_eq!(fx.ensure_settled_bundle(&mut market), true);
+    assert_eq!(fx.try_settle_bundle_with_pyth(&mut market, &wrong_pyth), true);
+    assert_eq!(
+        event::events_by_type<config_events::MarketSettled>().length(),
+        MARKET_SETTLED_EVENT_COUNT,
+    );
 
     // The redeem pays the terminal in-range payout, proving the recorded settlement
-    // price is unchanged by the second `ensure_settled`.
+    // price is unchanged by the second `try_settle`.
     fx.redeem_settled_bundle(
         &mut market,
         &mut account,
@@ -407,11 +609,12 @@ fun ensure_settled_is_idempotent_and_keeps_settlement_price() {
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
+    return_shared(wrong_pyth);
     fx.finish();
 }
 
 #[test]
-fun passive_settled_market_sweep_unblocks_pool_valuation() {
+fun explicit_settlement_unblocks_pool_valuation_sweep() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
     bootstrap_pool(&mut fx, IDLE_SEED);
@@ -425,6 +628,7 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
         &mut market,
         settlement_inside_default_finite_range(),
     );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     let mut valuation = fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut valuation, &mut market);
@@ -439,7 +643,7 @@ fun passive_settled_market_sweep_unblocks_pool_valuation() {
 }
 
 #[test]
-fun passive_settled_standalone_rebalance_sweeps_market() {
+fun explicit_settlement_then_standalone_rebalance_sweeps_market() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
     bootstrap_pool(&mut fx, IDLE_SEED);
@@ -453,11 +657,36 @@ fun passive_settled_standalone_rebalance_sweeps_market() {
         &mut market,
         settlement_inside_default_finite_range(),
     );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.rebalance_expiry_cash_bundle(&mut market);
 
     assert_eq!(helpers::vault(&market).idle_balance(), IDLE_SEED);
     assert_eq!(helpers::vault(&market).active_expiry_markets().length(), 0);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun expired_unsettled_standalone_rebalance_moves_no_cash() {
+    let mut fx = helpers::setup_market_default();
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_empty_market(&mut fx, expiry_id);
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let idle_before = helpers::vault(&market).idle_balance();
+    let market_cash_before = helpers::market(&market).cash_balance();
+
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    assert_eq!(helpers::vault(&market).idle_balance(), idle_before);
+    assert_eq!(helpers::market(&market).cash_balance(), market_cash_before);
+    assert_eq!(helpers::vault(&market).active_expiry_markets().length(), ACTIVE_MARKET_COUNT);
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -471,8 +700,8 @@ fun settlement_below_default_finite_range(): u64 {
     (helpers::strike_tick() - 1) * test_constants::default_tick_size()
 }
 
-/// The plp rebate-claim wrapper's own settled gate: past expiry with no exact
-/// Propbook spot recorded, the claim aborts before touching rebate or account state.
+/// Even with the exact Propbook spot recorded, the rebate claim requires the
+/// explicit settlement transition instead of settling implicitly.
 #[test, expected_failure(abort_code = plp::EMarketNotSettled)]
 fun rebate_claim_requires_settled_market() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
@@ -484,6 +713,10 @@ fun rebate_claim_requires_settled_market() {
     let mut account = fx.take_account_bundle(&trader);
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_below_default_finite_range(),
+    );
     fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
 
     abort 999
@@ -515,6 +748,7 @@ fun rebate_claim_with_open_position_aborts() {
         &mut market,
         settlement_below_default_finite_range(),
     );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
     // The position is never redeemed, so summary resolution must refuse the claim.
     fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
 
@@ -546,6 +780,12 @@ fun unstake_deep_returns_all_staked_custody() {
 
     // All staked DEEP custody (active and inactive) left the vault for the account.
     assert_eq!(helpers::vault(&market).staked_deep(), 0);
+    // ...and arrived in the account's stored balance — the receiving side, so a vault-debit that
+    // failed to credit the account would fail here, not pass silently.
+    assert_eq!(
+        fx.account_balance_bundle<DEEP>(&account),
+        config_constants::default_upper_benefit_power!(),
+    );
     fx.check_manager_bundle(
         &account,
         expiry_id,
@@ -579,6 +819,7 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, he
         &mut market,
         settlement_below_default_finite_range(),
     );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
     fx.redeem_settled_with_owner_auth_bundle(
         &mut market,
         &mut account,

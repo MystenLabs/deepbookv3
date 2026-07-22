@@ -17,15 +17,17 @@ use std::unit_test::assert_eq;
 // derived from downstream pricing sensitivity, NOT measured from contract output:
 //   - exp, ln:    relative, 1e-7 (magnitude-scaled) via `assert_within_relative`.
 //   - normal_cdf: absolute, 20 units @1e9 (2e-8) via `assert_within`.
+//   - normal_pdf: absolute, 50 units @1e9 via `assert_within`.
 //   - sqrt:       absolute, 1 ULP (integer floor-sqrt is near-exact).
 // A deviation beyond budget is a genuine finding (see BUGS_FOUND.md). Exact
-// points (identities, clamps, perfect squares, Phi(0)) use `assert_eq!`.
+// points (identities, clamps, perfect squares, Phi(0), phi(0)) use `assert_eq!`.
 
 // Per-primitive precision budgets — the contract documented in math.move.
 // Derived from downstream pricing sensitivity, never from contract output.
 const EXP_BUDGET_REL: u64 = 100; // 1e-7 relative (parts per FLOAT_SCALING)
 const LN_BUDGET_REL: u64 = 100; // 1e-7 relative (parts per FLOAT_SCALING)
 const CDF_BUDGET_ABS: u64 = 20; // 2e-8 of full scale; Cody rational truncation
+const PDF_BUDGET_ABS: u64 = 50; // phi(0)*1e-7 ≈ 40 units + exponent/final-mul floor dust
 const SQRT_BUDGET_ABS: u64 = 1; // 1 ULP; integer floor-sqrt
 
 const LN_2: u64 = 693_147_181;
@@ -46,6 +48,12 @@ const CDF_2: u64 = 977_249_868;
 const CDF_NEG_2: u64 = 22_750_132;
 const CDF_3: u64 = 998_650_102;
 const CDF_NEG_3: u64 = 1_349_898;
+const PDF_0: u64 = 398_942_280;
+const PDF_HALF: u64 = 352_065_327;
+const PDF_1: u64 = 241_970_725;
+const PDF_NEG_1: u64 = 241_970_725;
+const PDF_2: u64 = 53_990_967;
+const PDF_3: u64 = 4_431_848;
 
 const SQRT_2: u64 = 1_414_213_562;
 const SQRT_3: u64 = 1_732_050_808;
@@ -59,6 +67,10 @@ const CDF_066291: u64 = 746_305_902; // Phi at the small/medium split
 const CDF_SQRT32: u64 = 999_999_992; // Phi at the medium/clamp split (sqrt(32))
 const CDF_4: u64 = 999_968_329;
 const CDF_5: u64 = 999_999_713;
+const PDF_4: u64 = 133_830;
+const PDF_5: u64 = 1_487;
+const PDF_6: u64 = 6;
+const PDF_8: u64 = 0;
 const LN_1EM9_MAG: u64 = 20_723_265_837; // |ln(1e-9)|; smallest input x = 1
 const LN_U64MAX: u64 = 23_638_153_719; // ln(u64::MAX / 1e9)
 const LN_1_5: u64 = 405_465_108; // ln(1.5); x in (F, 2F): non-degenerate Horner series
@@ -110,6 +122,36 @@ fun mul_div_down_uses_u128_intermediate() {
 }
 
 #[test]
+fun try_mul_div_down_returns_floor_when_result_fits() {
+    // floor(10 * 10 / 6) = 16, matching the aborting helper.
+    assert_eq!(math::try_mul_div_down(10, 10, 6), option::some(16));
+}
+
+#[test]
+fun try_mul_div_down_returns_zero_when_floor_is_zero() {
+    // floor(1 * 1 / 2) = 0; zero is a valid result, not a failed computation.
+    assert_eq!(math::try_mul_div_down(1, 1, 2), option::some(0));
+}
+
+#[test]
+fun try_mul_div_down_returns_max_u64_when_exactly_in_range() {
+    assert_eq!(
+        math::try_mul_div_down(std::u64::max_value!(), 1, 1),
+        option::some(std::u64::max_value!()),
+    );
+}
+
+#[test]
+fun try_mul_div_down_returns_none_on_zero_denominator() {
+    assert_eq!(math::try_mul_div_down(10, 10, 0), option::none());
+}
+
+#[test]
+fun try_mul_div_down_returns_none_when_result_exceeds_u64() {
+    assert_eq!(math::try_mul_div_down(std::u64::max_value!(), 2, 1), option::none());
+}
+
+#[test]
 fun mul_div_up_ceils_raw_integer_ratio() {
     // ceil(10 * 10 / 6) = ceil(16.666...) = 17 (mul_div_down gives 16).
     assert_eq!(math::mul_div_up(10, 10, 6), 17);
@@ -149,9 +191,50 @@ fun mul_div_up_uses_u128_intermediate() {
     assert_eq!(math::mul_div_up(10_000_000_000, 10_000_000_000, 10_000_000_000), 10_000_000_000);
 }
 
+#[test]
+fun try_mul_div_up_returns_ceiling_when_result_fits() {
+    // ceil(10 * 10 / 6) = 17, matching the aborting helper.
+    assert_eq!(math::try_mul_div_up(10, 10, 6), option::some(17));
+}
+
+#[test]
+fun try_mul_div_up_exact_division_does_not_round() {
+    assert_eq!(math::try_mul_div_up(10, 10, 5), option::some(20));
+}
+
+#[test]
+fun try_mul_div_up_returns_zero_for_zero_numerator() {
+    // ceil(0 / 6) = 0; zero is a valid result, not a failed computation.
+    assert_eq!(math::try_mul_div_up(0, 1_000_000_000, 6), option::some(0));
+}
+
+#[test]
+fun try_mul_div_up_returns_max_u64_when_exactly_in_range() {
+    assert_eq!(
+        math::try_mul_div_up(std::u64::max_value!(), 2, 2),
+        option::some(std::u64::max_value!()),
+    );
+}
+
+#[test]
+fun try_mul_div_up_returns_none_on_zero_denominator() {
+    assert_eq!(math::try_mul_div_up(10, 10, 0), option::none());
+}
+
+#[test]
+fun try_mul_div_up_returns_none_when_result_exceeds_u64() {
+    assert_eq!(math::try_mul_div_up(std::u64::max_value!(), 2, 1), option::none());
+}
+
 #[test, expected_failure(abort_code = math::EInputZero)]
 fun mul_div_up_zero_denominator_aborts() {
     math::mul_div_up(10, 10, 0);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = math::EInputZero)]
+fun mul_div_down_zero_denominator_aborts() {
+    math::mul_div_down(10, 10, 0);
     abort 999
 }
 
@@ -506,6 +589,90 @@ fun normal_cdf_clamps_low_to_zero() {
     // |x| > 8 short-circuits to 0 for negative inputs.
     assert_eq!(math::normal_cdf(&i64::from_parts(8 * float!() + 1, true)), 0);
     assert_eq!(math::normal_cdf(&i64::from_parts(100 * float!(), true)), 0);
+}
+
+// === normal_pdf ===
+
+#[test]
+fun normal_pdf_of_zero_is_inv_sqrt_2pi() {
+    // Exact: exp(0) = 1 and PDF_0 is the correctly-rounded fixed-point 1/sqrt(2pi).
+    assert_eq!(math::normal_pdf(&i64::zero()), PDF_0);
+}
+
+#[test]
+fun normal_pdf_of_half_within_reference() {
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_u64(float!() / 2)),
+        PDF_HALF,
+        PDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_pdf_of_one_within_reference() {
+    test_helpers::assert_within(math::normal_pdf(&i64::from_u64(float!())), PDF_1, PDF_BUDGET_ABS);
+}
+
+#[test]
+fun normal_pdf_of_negative_one_within_reference() {
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_parts(float!(), true)),
+        PDF_NEG_1,
+        PDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_pdf_of_two_within_reference() {
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_u64(2 * float!())),
+        PDF_2,
+        PDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_pdf_of_three_within_reference() {
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_u64(3 * float!())),
+        PDF_3,
+        PDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_pdf_tail_points_within_reference() {
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_u64(4 * float!())),
+        PDF_4,
+        PDF_BUDGET_ABS,
+    );
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_u64(5 * float!())),
+        PDF_5,
+        PDF_BUDGET_ABS,
+    );
+    test_helpers::assert_within(
+        math::normal_pdf(&i64::from_u64(6 * float!())),
+        PDF_6,
+        PDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_pdf_at_eight_boundary_rounds_to_zero() {
+    // x_mag == 8F exactly falls through to exp(-32), which rounds to 0 at 1e9 scale.
+    assert_eq!(math::normal_pdf(&i64::from_u64(8 * float!())), PDF_8);
+    assert_eq!(math::normal_pdf(&i64::from_parts(8 * float!(), true)), PDF_8);
+}
+
+#[test]
+fun normal_pdf_clamps_past_eight_to_zero() {
+    // |x| > 8 short-circuits to 0 before squaring.
+    assert_eq!(math::normal_pdf(&i64::from_u64(8 * float!() + 1)), 0);
+    assert_eq!(math::normal_pdf(&i64::from_parts(8 * float!() + 1, true)), 0);
+    assert_eq!(math::normal_pdf(&i64::from_u64(100 * float!())), 0);
+    assert_eq!(math::normal_pdf(&i64::from_parts(100 * float!(), true)), 0);
 }
 
 // === sqrt ===

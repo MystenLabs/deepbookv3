@@ -1,34 +1,28 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Generic Propbook oracle lane. A lane is one advancing source stream with:
-/// - one latest source observation,
-/// - insert-only exact timestamp history, and
-/// - the normal latest / exact insertion events.
-///
-/// `source_timestamp_ms` is Propbook's canonical freshness key. Source modules
-/// may keep richer native timestamps inside `Payload`, but lane ordering,
-/// exact-history keys, and future-source checks are all millisecond-denominated;
-/// lane writes that are future, zero, stale, or duplicate are no-ops.
+/// Stores one advancing latest observation and an independent insert-only exact-timestamp history for a Propbook feed.
+/// `source_timestamp_ms` is the canonical ordering, freshness, and exact-history key; source adapters may retain richer native timestamps inside the payload.
+/// Latest updates ignore invalid or non-advancing timestamps, while exact inserts ignore invalid or previously occupied keys without changing the latest value.
 module propbook::oracle_lane;
 
 use sui::{event, table::{Self, Table}};
 
-/// Timestamped oracle read. Raw and normalized reads use the same timestamp
-/// envelope, so consumers can apply one freshness policy regardless of which
-/// projection they read.
+/// A source value paired with its source publication time and on-chain recording time.
+/// Raw and normalized projections preserve this envelope so consumers can apply one freshness policy.
 public struct OracleRead<Value: copy + drop + store> has copy, drop, store {
-    /// Publisher/source observation time carried in the pushed update.
+    /// Source publication time in Unix milliseconds and the key used for exact reads.
     source_timestamp_ms: u64,
-    /// On-chain landing time (`clock.timestamp_ms()` when recorded); the freshness
-    /// invariant is `0 < source_timestamp_ms <= update_timestamp_ms`.
+    /// Sui clock time in Unix milliseconds when the update transaction executed.
     update_timestamp_ms: u64,
     value: Value,
 }
 
-/// One advancing oracle lane.
+/// Latest and exact-timestamp storage for one feed stream.
 public struct OracleLane<Payload: copy + drop + store> has store {
+    /// Most recent valid source observation submitted through `update`.
     latest: Option<OracleRead<Payload>>,
+    /// First accepted observation at each exact source timestamp; entries are never overwritten.
     exact_reads: Table<u64, OracleRead<Payload>>,
 }
 
@@ -47,6 +41,8 @@ public struct ObservationInserted<Observation: copy + drop> has copy, drop {
 }
 
 // === Read Functions ===
+
+// External inspection and feed adapters use these accessors without depending on the envelope's field layout.
 
 public fun read_source_timestamp_ms<Value: copy + drop + store>(read: &OracleRead<Value>): u64 {
     read.source_timestamp_ms
@@ -104,6 +100,8 @@ public(package) fun new_read<Value: copy + drop + store>(
 
 // === Public-Package Write Functions ===
 
+/// Replaces the latest observation only when the timestamps are valid and the source time strictly advances.
+/// Invalid, duplicate, and stale observations are ignored without aborting.
 public(package) fun update<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
     read: OracleRead<Payload>,
@@ -121,6 +119,8 @@ public(package) fun update<Payload: copy + drop + store>(
     });
 }
 
+/// Inserts an observation at its exact source timestamp without changing `latest`.
+/// Invalid timestamps and occupied exact keys are ignored without aborting.
 public(package) fun insert_at<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
     read: OracleRead<Payload>,

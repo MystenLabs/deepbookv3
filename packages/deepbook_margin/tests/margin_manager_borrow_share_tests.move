@@ -19,7 +19,7 @@ use deepbook_margin::{
         destroy_2,
         return_shared_2,
         return_shared_3,
-        supply_to_pool
+        supply_to_pool,
     }
 };
 use std::unit_test::destroy;

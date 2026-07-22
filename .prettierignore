@@ -1,0 +1,5 @@
+# Move build output: generated, and it vendors dependency sources (wormhole, pyth,
+# sui framework) that this repo does not own. CI never sees these because it checks
+# out fresh; ignoring them keeps a local run honest against the same file set.
+build/
+**/build/

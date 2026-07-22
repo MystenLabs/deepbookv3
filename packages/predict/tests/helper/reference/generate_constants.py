@@ -37,6 +37,10 @@ def phi(x: float) -> float:  # standard normal CDF via stdlib erf
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
+def pdf(x: float) -> float:  # standard normal PDF
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
 POINTS = [
     ("LN_2", scaled(math.log(2))),
     ("LN_10", scaled(math.log(10))),
@@ -54,6 +58,12 @@ POINTS = [
     ("CDF_NEG_2", scaled(phi(-2.0))),
     ("CDF_3", scaled(phi(3.0))),
     ("CDF_NEG_3", scaled(phi(-3.0))),
+    ("PDF_0", scaled(pdf(0.0))),
+    ("PDF_HALF", scaled(pdf(0.5))),
+    ("PDF_1", scaled(pdf(1.0))),
+    ("PDF_NEG_1", scaled(pdf(-1.0))),
+    ("PDF_2", scaled(pdf(2.0))),
+    ("PDF_3", scaled(pdf(3.0))),
     ("SQRT_2", scaled(math.sqrt(2))),
     ("SQRT_3", scaled(math.sqrt(3))),
     ("SQRT_HALF", scaled(math.sqrt(0.5))),
@@ -69,6 +79,11 @@ POINTS = [
     ("CDF_SQRT32", scaled(phi(5_656_854_249 / F))),
     ("CDF_4", scaled(phi(4.0))),
     ("CDF_5", scaled(phi(5.0))),
+    # normal_pdf: tail points and the |x|=8 public-guard boundary.
+    ("PDF_4", scaled(pdf(4.0))),
+    ("PDF_5", scaled(pdf(5.0))),
+    ("PDF_6", scaled(pdf(6.0))),
+    ("PDF_8", scaled(pdf(8.0))),
     # ln: smallest input (value 1e-9, magnitude) and the u64::MAX input.
     ("LN_1EM9_MAG", abs(scaled(math.log(1e-9)))),
     ("LN_U64MAX", scaled(math.log((2**64 - 1) / F))),

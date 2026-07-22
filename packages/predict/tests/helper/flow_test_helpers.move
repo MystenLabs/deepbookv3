@@ -16,8 +16,7 @@
 /// through `pyth_feed::record_raw_for_testing` because a real `pyth_lazer::Update`
 /// has no public Move constructor; the BS feeds use the stub verifier's split
 /// public update constructors. Exact settlement spots are inserted through the same
-/// Pyth testing seam; production settlement is passive inside the normal redeem and
-/// pool-rebalance flows.
+/// Pyth testing seam; production settlement is an explicit `try_settle` transition.
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
@@ -140,7 +139,6 @@ public fun setup_market(tick: u64): Fixture {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_template_base_fee(&admin_cap, 1);
-    config.set_template_min_entry_probability(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -194,12 +192,18 @@ public fun setup_market(tick: u64): Fixture {
         bs_svi_id,
     );
     let mut registry = scenario.take_shared<Registry>();
-    let config = scenario.take_shared<ProtocolConfig>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
     );
+    // Flow fixtures exercise leverage / close / liquidation mechanics on short-lived
+    // markets, which sit inside the default 1h no-leverage window and so could not
+    // mint leveraged orders at all. Disable the block by default (a valid
+    // `window == 0` admin config); it is covered by the config unit tests and by
+    // dedicated flow tests that re-enable it.
+    config.set_template_no_leverage_window_ms(&admin_cap, 0);
     return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
@@ -408,6 +412,16 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_max_admission_leverage(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Re-enable the near-expiry no-leverage block that `setup_market` disables. Call
+/// before creating the expiry that should snapshot it.
+public fun set_template_no_leverage_window_ms(self: &mut Fixture, window_ms: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_no_leverage_window_ms(&self.admin_cap, window_ms);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -756,6 +770,73 @@ public fun seed_bs_surface(
     forward: u64,
     source_timestamp_ms: u64,
 ) {
+    self.seed_bs_surface_with_svi(
+        market,
+        bs,
+        spot,
+        forward,
+        test_constants::default_svi_a(),
+        false,
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+        source_timestamp_ms,
+    )
+}
+
+/// Write split Block Scholes rows for a market bundle with explicit SVI values.
+public fun seed_bs_surface_with_svi_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    spot: u64,
+    forward: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+    source_timestamp_ms: u64,
+) {
+    self.seed_bs_surface_with_svi(
+        &market.market,
+        &mut market.bs,
+        spot,
+        forward,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+        source_timestamp_ms,
+    )
+}
+
+/// Write split Block Scholes spot, forward, and explicit SVI rows for `market`.
+public fun seed_bs_surface_with_svi(
+    self: &mut Fixture,
+    market: &ExpiryMarket,
+    bs: &mut BlockScholesFeed,
+    spot: u64,
+    forward: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+    source_timestamp_ms: u64,
+) {
     bs
         .spot_mut()
         .update(
@@ -781,13 +862,14 @@ public fun seed_bs_surface(
                 test_constants::pyth_feed_id(),
                 market.expiry(),
                 source_timestamp_ms,
-                test_constants::default_svi_a(),
-                test_constants::default_svi_b(),
-                test_constants::default_svi_sigma(),
-                test_constants::default_svi_rho_magnitude(),
-                false,
-                test_constants::default_svi_m(),
-                false,
+                svi_a_magnitude,
+                svi_a_is_negative,
+                svi_b,
+                svi_sigma,
+                svi_rho_magnitude,
+                svi_rho_is_negative,
+                svi_m_magnitude,
+                svi_m_is_negative,
             ),
             &self.clock,
             self.scenario.ctx(),
@@ -939,7 +1021,47 @@ public fun quote_mint_bundle(
             &pricer,
             lower_tick,
             higher_tick,
+            0,
             quantity,
+            true,
+            leverage,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Anonymous read-only budget-bias mint quote through a market bundle: quotes
+/// the largest lot-rounded quantity whose net premium fits `max_premium`.
+public fun quote_mint_amount_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint(
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            false,
             leverage,
             &self.clock,
             self.scenario.ctx(),
@@ -975,8 +1097,52 @@ public fun quote_mint_for_account_bundle(
             &pricer,
             lower_tick,
             higher_tick,
+            0,
             quantity,
+            true,
             leverage,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// Account-aware read-only budget-bias mint quote: the budget is capped to the
+/// account's current balance exactly as `mint_exact_amount` caps it.
+public fun quote_mint_for_account_amount_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    leverage: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.spot(),
+            market.bs.forward(),
+            market.bs.svi(),
+            &self.clock,
+        );
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            false,
+            leverage,
+            &account.root,
             &self.clock,
             self.scenario.ctx(),
         )
@@ -1217,11 +1383,9 @@ public fun redeem_bundle_with_limits(
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
@@ -1230,8 +1394,6 @@ public fun redeem_settled(
         &account_registry,
         wrapper,
         config,
-        oracle_registry,
-        pyth,
         order_id,
         close_quantity,
         root,
@@ -1247,11 +1409,9 @@ public fun redeem_settled(
 public fun redeem_settled_with_owner_auth(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
-    pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
 ): (u256, Option<u256>) {
@@ -1260,8 +1420,6 @@ public fun redeem_settled_with_owner_auth(
         wrapper,
         auth,
         config,
-        oracle_registry,
-        pyth,
         order_id,
         close_quantity,
         root,
@@ -1280,11 +1438,9 @@ public fun redeem_settled_bundle(
 ): (u256, Option<u256>) {
     self.redeem_settled(
         &market.config,
-        &market.oracle_registry,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
-        &market.pyth,
         order_id,
         close_quantity,
     )
@@ -1300,30 +1456,49 @@ public fun redeem_settled_with_owner_auth_bundle(
 ): (u256, Option<u256>) {
     self.redeem_settled_with_owner_auth(
         &market.config,
-        &market.oracle_registry,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
-        &market.pyth,
         order_id,
         close_quantity,
     )
 }
 
-/// Run the passive settlement gate against the fixture clock and return whether the
-/// market is settled after the attempt.
-public fun ensure_settled(
+/// Try the explicit settlement transition against the fixture clock and return
+/// whether the market is settled after the attempt.
+public fun try_settle(
     self: &Fixture,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
 ): bool {
-    market.ensure_settled(oracle_registry, pyth, &self.clock)
+    market.try_settle(config, oracle_registry, pyth, &self.clock)
 }
 
-/// Run the passive settlement gate through a market bundle.
-public fun ensure_settled_bundle(self: &Fixture, market: &mut MarketBundle): bool {
-    self.ensure_settled(&mut market.market, &market.oracle_registry, &market.pyth)
+/// Try the explicit settlement transition through a market bundle.
+public fun try_settle_bundle(self: &Fixture, market: &mut MarketBundle): bool {
+    self.try_settle(
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+    )
+}
+
+/// Try settlement through a market bundle while substituting an explicit Pyth
+/// feed for binding-guard tests.
+public fun try_settle_bundle_with_pyth(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    pyth: &PythFeed,
+): bool {
+    self.try_settle(
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        pyth,
+    )
 }
 
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
@@ -1346,7 +1521,7 @@ public fun liquidate(
         bs.svi(),
         &self.clock,
     );
-    market.liquidate(config, &pricer, budget)
+    market.liquidate(config, &pricer, budget, &self.clock)
 }
 
 /// Run a budgeted liquidation pass through a market bundle.
@@ -1385,6 +1560,7 @@ public fun liquidate_order(
         config,
         &pricer,
         order_id,
+        &self.clock,
     )
 }
 
@@ -1445,10 +1621,8 @@ public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    pyth: &PythFeed,
 ) {
-    vault.rebalance_expiry_cash(market, config, oracle_registry, pyth, &self.clock);
+    vault.rebalance_expiry_cash(market, config, &self.clock);
 }
 
 /// Rebalance expiry cash through a market bundle.
@@ -1457,24 +1631,6 @@ public fun rebalance_expiry_cash_bundle(self: &Fixture, market: &mut MarketBundl
         &mut market.vault,
         &mut market.market,
         &market.config,
-        &market.oracle_registry,
-        &market.pyth,
-    );
-}
-
-/// Rebalance expiry cash through a market bundle while substituting an explicit
-/// Pyth feed for binding-guard tests.
-public fun rebalance_expiry_cash_bundle_with_pyth(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    pyth: &PythFeed,
-) {
-    self.rebalance_expiry_cash(
-        &mut market.vault,
-        &mut market.market,
-        &market.config,
-        &market.oracle_registry,
-        pyth,
     );
 }
 
@@ -1532,8 +1688,6 @@ public fun claim_trading_loss_rebate_bundle(
             &mut account_bundle.wrapper,
             auth,
             &market.config,
-            &market.oracle_registry,
-            &market.pyth,
             &account_bundle.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1554,8 +1708,6 @@ public fun claim_trading_loss_rebate_permissionless_bundle(
             &mut account_bundle.wrapper,
             &account_registry,
             &market.config,
-            &market.oracle_registry,
-            &market.pyth,
             &account_bundle.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1597,7 +1749,14 @@ public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
 /// Read one order's gross-of-fees live holder value through a market bundle.
 public fun order_value_bundle(self: &Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.order_value(&pricer, order_id)
+    market.market.order_value(option::some(pricer), order_id)
+}
+
+/// Read one settled or already-closed order's terminal holder value with no
+/// pricer — the only way to value an order once the market has settled, since no
+/// `Pricer` can be constructed post-expiry.
+public fun settled_order_value_bundle(market: &MarketBundle, order_id: u256): u64 {
+    market.market.order_value(option::none(), order_id)
 }
 
 public fun load_pricer(
@@ -1867,6 +2026,7 @@ public fun insert_exact_settlement_spot(
         PYTH_EXPONENT_NEG_9,
         true,
         expiry_ms * 1000,
+        expiry_ms * 1000,
         self.clock.timestamp_ms(),
         true,
     );
@@ -1923,6 +2083,7 @@ fun store_pyth_spot(
         false,
         PYTH_EXPONENT_NEG_9,
         true,
+        source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
         false,

@@ -3,11 +3,16 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 export type ScenarioActionName = "oracle_mint_ptb" | "redeem" | "supply" | "withdraw";
+export type SimulationActionName =
+    | ScenarioActionName
+    | "flush"
+    | "rebalance_expiry_cash";
 
 export interface OracleRefreshData {
     spot: bigint;
     forward: bigint;
     a: bigint;
+    aNegative: boolean;
     b: bigint;
     rho: bigint;
     rhoNegative: boolean;
@@ -25,6 +30,7 @@ export type ScenarioRow =
           spot: bigint;
           forward: bigint;
           a: bigint;
+          aNegative: boolean;
           b: bigint;
           rho: bigint;
           rhoNegative: boolean;
@@ -67,9 +73,7 @@ export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
     step: number;
-    // Synthetic runner maintenance txs are not CSV row actions, so they widen
-    // the trace action set without touching `ScenarioActionName`.
-    action: ScenarioActionName | "flush" | "rebalance_expiry_cash";
+    action: SimulationActionName;
     digest: string;
     wallMs: number;
     gas: GasLike;
@@ -104,7 +108,7 @@ export interface EconomicDataFile {
 
 export interface EconomicRecord {
     step: number;
-    action: ScenarioActionName;
+    action: SimulationActionName;
     input: Record<string, unknown>;
     updates: Record<string, unknown>[];
     state: Record<string, string>;
@@ -238,6 +242,22 @@ function parseBoolean(row: RawScenarioRow, field: string, lineNumber: number): b
     return value === "true";
 }
 
+function parseOptionalBoolean(
+    row: RawScenarioRow,
+    field: string,
+    lineNumber: number,
+    defaultValue: boolean,
+): boolean {
+    const value = row[field] ?? "";
+    if (value === "") return defaultValue;
+    if (value !== "true" && value !== "false") {
+        throw new Error(
+            `Scenario line ${lineNumber}: expected ${field} to be true/false, got "${value}"`,
+        );
+    }
+    return value === "true";
+}
+
 function parseOptionalString(row: RawScenarioRow, field: string): string | null {
     const value = row[field] ?? "";
     return value === "" ? null : value;
@@ -252,6 +272,7 @@ function parseOracleRefresh(row: RawScenarioRow, lineNumber: number): OracleRefr
         spot: parseUnsignedInteger(row, "spot", lineNumber),
         forward: parseUnsignedInteger(row, "forward", lineNumber),
         a: parseUnsignedInteger(row, "a", lineNumber),
+        aNegative: parseOptionalBoolean(row, "a_negative", lineNumber, false),
         b: parseUnsignedInteger(row, "b", lineNumber),
         rho: parseUnsignedInteger(row, "rho", lineNumber),
         rhoNegative: parseBoolean(row, "rho_negative", lineNumber),
@@ -305,6 +326,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             spot: parseUnsignedInteger(row, "spot", lineNumber),
             forward: parseUnsignedInteger(row, "forward", lineNumber),
             a: parseUnsignedInteger(row, "a", lineNumber),
+            aNegative: parseOptionalBoolean(row, "a_negative", lineNumber, false),
             b: parseUnsignedInteger(row, "b", lineNumber),
             rho: parseUnsignedInteger(row, "rho", lineNumber),
             rhoNegative: parseBoolean(row, "rho_negative", lineNumber),

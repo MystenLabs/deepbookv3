@@ -3,15 +3,15 @@
 
 /// Pricing for Predict markets.
 ///
-/// This module is the app-facing read layer for oracle data. It reads the
-/// standalone propbook Pyth and Block Scholes feeds on demand and computes SVI
-/// range prices. It does not mutate feed, pool, expiry, or position state, and it
-/// owns the live pricing boundary: current Propbook feed binding, pre-expiry
-/// market liveness, feed freshness, and Predict's pricing-safe BS input envelope.
+/// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
+/// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
+/// Scholes spot, forward, and SVI observations. A fresh positive Pyth spot reanchors
+/// the Block Scholes forward basis; otherwise pricing uses that forward directly.
+/// Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, pricing_config::PricingConfig};
-use fixed_math::{i64, math};
+use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
+use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -19,17 +19,32 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use sui::{clock::Clock, object::ID};
+use sui::clock::Clock;
 
-/// Value snapshot of live oracle inputs for one market's price calculations.
+/// Validated live oracle inputs bound to one expiry market. `Pricer` has no
+/// `store` ability and must be created again in each transaction that prices.
 public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
     forward: u64,
     svi: SVIParams,
+    /// Source timestamps of the oracle observations present when this snapshot
+    /// was loaded. Pyth is `0` only when no usable normalized observation exists.
+    pyth_spot_source_timestamp_ms: u64,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
 }
 
-/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending.
+/// Canonical normalized Pyth spot read at one exact source timestamp.
+/// Constructed only by `load_exact_spot_read`; consumers decide whether an
+/// absent exact-history row is a no-op or an abort.
+public struct ExactSpotRead has drop {
+    spot: Option<u64>,
+}
+
+/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending
+/// and non-increasing in price.
 ///
 /// The NAV linear walk (`strike_payout_tree::walk_linear`) fills it once per node
 /// as it prices the payout tree in-order; the correction walk
@@ -38,6 +53,8 @@ public struct Pricer has copy, drop {
 /// leveraged order's finite boundary ticks are payout-tree nodes, so every finite
 /// lookup MUST hit: a miss is a broken exposure index, not a cache fallback, and
 /// `cached_range_price` aborts `ETickNotInPriceMemo` rather than silently repricing.
+/// The same cache rejects non-monotone UP prices during NAV valuation, because
+/// `walk_linear` tree-wide netting is exact only on a monotone active surface.
 public struct PriceMemo has drop {
     /// Finite boundary ticks in ascending order (the in-order walk appends them).
     ticks: vector<u64>,
@@ -47,7 +64,7 @@ public struct PriceMemo has drop {
 
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
-const EZeroVariance: u64 = 2;
+const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesPriceStale: u64 = 4;
 const EBlockScholesInputsInvalid: u64 = 5;
@@ -61,47 +78,74 @@ const EWrongBlockScholesSVIFeed: u64 = 12;
 const ETickNotInPriceMemo: u64 = 13;
 const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
+const EBlockScholesMinVarianceInvalid: u64 = 16;
+const ENonMonotonePriceMemo: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
 /// tightly enough that Predict's fixed-point pricing math remains live and
 /// meaningful.
-macro fun max_pricing_basis(): u64 { 100 * math::float_scaling!() }
-// max_pricing_spot * max_pricing_basis / float_scaling == u64::max by
-// construction: the re-anchored forward (spot * basis) can't overflow u64.
-macro fun max_pricing_spot(): u64 { std::u64::max_value!() / 100 }
+macro fun max_pricing_basis_factor(): u64 { 100 }
+
+// Co-designed with the basis factor: forward <= factor * spot (envelope) and
+// spot <= u64::max / factor, so the re-anchored forward spot * bs_forward /
+// bs_spot <= factor * spot can't overflow u64.
+macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
+
 macro fun min_svi_sigma(): u64 { 1_000_000 }
+
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
 
-/// Return the current UP tail price for one strike. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
-public fun up_price(pricer: &Pricer, strike: u64): u64 {
+/// Return the current UP digital probability for a typed strike. Public PTB and
+/// devInspect reads can compose it with a transaction-local `Pricer`.
+public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
-/// Return the current raw probability for a live range. Public read for
-/// SDK/devInspect board pricing off a legitimately loaded `Pricer`.
-public fun range_price(pricer: &Pricer, lower: u64, higher: u64): u64 {
+/// Return the current probability for `(lower, higher]`, floored at zero if the
+/// two approximated boundary probabilities invert.
+public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
     compute_range_price(&pricer.svi, pricer.forward, lower, higher)
 }
+
+// === Public-Package Functions ===
 
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
-// === Public-Package Functions ===
+public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.pyth_spot_source_timestamp_ms
+}
+
+public(package) fun block_scholes_spot_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_spot_source_timestamp_ms
+}
+
+public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_forward_source_timestamp_ms
+}
+
+public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_svi_source_timestamp_ms
+}
+
+public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
+    let ExactSpotRead { spot } = read;
+    spot
+}
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
 ///
-/// This is the only path from raw Propbook oracle objects into Predict business
-/// logic. It first checks that `pyth`, `bs_spot`, `bs_forward`, and `bs_svi` are
-/// the current canonical Propbook oracles for `propbook_underlying_id`, then
-/// rejects past-expiry markets, then reads live oracle inputs under Predict's
-/// freshness and pricing-safe envelope.
+/// The supplied feeds must be the current Propbook bindings for the underlying,
+/// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
+/// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
+/// pricing-safe envelope. A fresh positive normalized Pyth spot reanchors the Block
+/// Scholes forward basis; a missing, non-normalizable, or stale Pyth spot is ignored.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -123,8 +167,35 @@ public(package) fun load_live_pricer(
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    let (forward, svi) = live_inputs(config, pyth, bs_spot, bs_forward, bs_svi, expiry, clock);
-    Pricer { expiry_market_id, forward, svi }
+    resolve_live_pricer(
+        config,
+        pyth,
+        bs_spot,
+        bs_forward,
+        bs_svi,
+        expiry_market_id,
+        expiry,
+        clock,
+    )
+}
+
+/// Validate the canonical Pyth binding and read its normalized spot at exactly
+/// `source_timestamp_ms`. The product preserves absence so the reference-tick
+/// and settlement flows can retain their distinct missing-data policies.
+public(package) fun load_exact_spot_read(
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    propbook_underlying_id: u32,
+    source_timestamp_ms: u64,
+): ExactSpotRead {
+    assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
+    let read = pyth.normalized_spot_at(source_timestamp_ms);
+    let spot = if (read.is_some()) {
+        option::some(read.destroy_some().read_value())
+    } else {
+        option::none()
+    };
+    ExactSpotRead { spot }
 }
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
@@ -149,7 +220,13 @@ public(package) fun price_and_cache(
     tick: u64,
     tick_size: u64,
 ): u64 {
-    let price = pricer.up_price(tick * tick_size);
+    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+    if (!memo.prices.is_empty()) {
+        let previous = memo.prices[memo.prices.length() - 1];
+        // Higher strikes should not have higher UP prices. NAV's linear tree walk
+        // relies on that order; an inverted surface can overstate pool value.
+        assert!(price <= previous, ENonMonotonePriceMemo);
+    };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
     price
@@ -184,12 +261,7 @@ fun assert_current_oracles(
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
 ) {
-    assert!(
-        propbook_registry
-            .propbook_pyth_id_for_underlying(propbook_underlying_id)
-            .contains(&pyth.id()),
-        EWrongPythFeed,
-    );
+    assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
     assert!(
         propbook_registry
             .propbook_block_scholes_spot_id_for_underlying(propbook_underlying_id)
@@ -210,28 +282,39 @@ fun assert_current_oracles(
     );
 }
 
-/// Resolve the live forward/SVI tuple used by all live pricing paths.
-///
-/// Fresh Pyth spot is canonical for spot; forward is then derived from this
-/// expiry's Block Scholes basis. If Pyth is stale or has no positive normalized
-/// spot, pricing falls back to the Block Scholes forward. The Block Scholes
-/// spot/forward pair must be fresh enough for basis math; SVI has its own looser
-/// freshness threshold. All inputs must be inside Predict's pricing-safe envelope.
-fun live_inputs(
+fun assert_current_pyth(
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    pyth: &PythFeed,
+) {
+    assert!(
+        propbook_registry
+            .propbook_pyth_id_for_underlying(propbook_underlying_id)
+            .contains(&pyth.id()),
+        EWrongPythFeed,
+    );
+}
+
+/// Resolve live forward and SVI inputs and retain every feed's source timestamp.
+/// A fresh positive normalized Pyth spot re-anchors the Block Scholes forward
+/// basis; otherwise the Block Scholes forward is used directly.
+fun resolve_live_pricer(
     config: &PricingConfig,
     pyth: &PythFeed,
     bs_spot: &BlockScholesSpotFeed,
     bs_forward: &BlockScholesForwardFeed,
     bs_svi: &BlockScholesSVIFeed,
+    expiry_market_id: ID,
     expiry: u64,
     clock: &Clock,
-): (u64, SVIParams) {
+): Pricer {
     let bs_spot_read = bs_spot.normalized_spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
+    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
-            bs_spot_read.read_source_timestamp_ms(),
+            block_scholes_spot_source_timestamp_ms,
             config.block_scholes_price_freshness_ms(),
             clock,
         ),
@@ -242,9 +325,10 @@ fun live_inputs(
     let bs_forward_read = bs_forward.normalized_forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
+    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
-            bs_forward_read.read_source_timestamp_ms(),
+            block_scholes_forward_source_timestamp_ms,
             config.block_scholes_price_freshness_ms(),
             clock,
         ),
@@ -255,9 +339,10 @@ fun live_inputs(
     let svi_read = bs_svi.normalized_svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
+    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
-            svi_read.read_source_timestamp_ms(),
+            block_scholes_svi_source_timestamp_ms,
             config.block_scholes_svi_freshness_ms(),
             clock,
         ),
@@ -267,29 +352,37 @@ fun live_inputs(
     assert_inputs_pricing_safe(bs_spot, bs_forward, &svi);
 
     let pyth_spot = pyth.normalized_spot();
-    let forward = if (
+    let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
+        pyth_spot.borrow().read_source_timestamp_ms()
+    } else {
+        0
+    };
+    let mut forward = bs_forward;
+    if (
         pyth_spot.is_some()
             && timestamp_is_fresh(
-                pyth_spot.borrow().read_source_timestamp_ms(),
+                pyth_spot_source_timestamp_ms,
                 config.pyth_spot_freshness_ms(),
                 clock,
             )
     ) {
-        let spot = pyth_spot.destroy_some().read_value();
+        let pyth_spot = pyth_spot.destroy_some();
+        let spot = pyth_spot.read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
-        // Re-anchored forward = spot * (bs_forward / bs_spot) is intentionally
-        // NOT re-bounded to max_pricing_spot: with basis up to max_pricing_basis
-        // (100x), a legitimate contango forward exceeds the spot ceiling. The two
-        // envelope ceilings are co-designed so spot * basis <= u64::max (no
-        // overflow), and compute_nd2's deep-tail saturations keep pricing live
-        // (P->1) there. A forward ceiling here would abort valid mint/redeem/NAV
-        // reads (R1 liveness).
-        math::mul(spot, math::div(bs_forward, bs_spot))
-    } else {
-        bs_forward
+        // The re-anchored forward may exceed the input spot ceiling. The basis and
+        // spot bounds still guarantee this multiplication and result fit in u64.
+        forward = math::mul_div_down(spot, bs_forward, bs_spot);
     };
 
-    (forward, svi)
+    Pricer {
+        expiry_market_id,
+        forward,
+        svi,
+        pyth_spot_source_timestamp_ms,
+        block_scholes_spot_source_timestamp_ms,
+        block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms,
+    }
 }
 
 fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
@@ -300,12 +393,10 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
 fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    assert!(
-        ((forward as u128) * (math::float_scaling!() as u128)) / (spot as u128)
-            <= (max_pricing_basis!() as u128),
-        EBlockScholesInputsInvalid,
-    );
-    assert!(svi.a() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
+    // without an overflowing multiplication.
+    assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
+    assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -313,50 +404,67 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
         svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
         EBlockScholesInputsInvalid,
     );
+    assert_min_total_variance_positive(svi);
 }
 
-/// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
+fun assert_min_total_variance_positive(svi: &SVIParams) {
+    let min_variance_increment = min_svi_variance_increment(svi);
+    let a = svi.a();
+    let min_total_var = i64::from_u64(min_variance_increment).add(&a);
+    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+}
+
+// SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
+// `x = k - m`. This returns the smallest possible non-`a` part over all strikes:
+// `b * sigma * sqrt(1 - rho^2)`, or 0 at the `|rho| == 1` boundary.
+fun min_svi_variance_increment(svi: &SVIParams): u64 {
+    let rho_mag = svi.rho().magnitude();
+    if (rho_mag == math::float_scaling!()) return 0;
+
+    let one_minus_rho_squared = math::float_scaling!() - math::mul(rho_mag, rho_mag);
+    let sqrt_one_minus_rho_squared = math::sqrt(one_minus_rho_squared, math::float_scaling!());
+    math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
+}
+
+/// Compute the approximated probability for `(lower, higher]`.
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+    assert!(lower.value() < higher.value(), EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
-    // inversion should price 0, not abort a legitimate mint/redeem.
+    // Fixed-point approximation or a non-monotone SVI surface can invert the
+    // boundary prices; the range probability is floored at zero.
     lower_up_price.saturating_sub(higher_up_price)
 }
 
-/// Compute the fair UP tail price for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
-    if (strike == constants::neg_inf!()) {
+/// Compute the adjusted UP digital probability for `strike`.
+fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+    if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
-    if (strike == constants::pos_inf!()) {
+    if (strike.is_pos_inf()) {
         return 0
     };
 
-    compute_nd2(svi, forward, strike)
+    compute_nd2(svi, forward, strike.value())
 }
 
 /// Binary pricing from SVI total variance:
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
+/// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // strike / forward in 1e9 fixed point, computed in u128 so both deep tails
-    // saturate instead of underflowing to 0 (which would abort) or wrapping the u64
-    // cast. Reaching either tail needs the forward to leave the entire encodable
-    // strike ladder by orders of magnitude; saturating keeps NAV / redeem /
-    // liquidation reads live there rather than aborting the whole market.
-    let strike_ratio_scaled =
-        ((strike as u128) * (math::float_scaling!() as u128)) / (forward as u128);
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio_scaled == 0) return math::float_scaling!();
+    // Saturate ratios outside the fixed-point domain to their digital-probability
+    // limits instead of aborting live valuation and position flows.
+    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
     // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_scaled > (std::u64::max_value!() as u128)) return 0;
-    let strike_ratio = strike_ratio_scaled as u64;
+    if (strike_ratio_opt.is_none()) return 0;
+    let strike_ratio = strike_ratio_opt.destroy_some();
+    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
+    if (strike_ratio == 0) return math::float_scaling!();
     let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
@@ -370,17 +478,17 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let rho = svi_params.rho();
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
-    // Analytically non-negative inside the pricing-safe envelope: |rho| <= 1 and
-    // sqrt((k-m)^2 + sigma^2) >= |k-m| >= |rho·(k-m)|. Kept as defense-in-depth
-    // against fixed-point rounding at the |rho| = 1 corner; no production input
-    // is known to reach it, so it carries no expected_failure test.
+    // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
+    // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let a = svi_params.a();
     let b = svi_params.b();
-    let wing_var = math::mul(b, inner.magnitude());
-    let total_var = a + wing_var;
-    assert!(total_var > 0, EZeroVariance);
+    let variance_increment = math::mul(b, inner.magnitude());
+    let a = svi_params.a();
+    let total_var = i64::from_u64(variance_increment).add(&a);
+    // Total variance must be positive because pricing takes sqrt(w) below.
+    assert!(is_positive(&total_var), ENonPositiveVariance);
+    let total_var = total_var.magnitude();
 
     let sqrt_var = math::sqrt(total_var, math::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
@@ -389,5 +497,24 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
     let d2 = d2.neg();
 
-    math::normal_cdf(&d2)
+    let slope_ratio = k_minus_m.div_scaled(&sq_i64);
+    let slope = rho.add(&slope_ratio);
+    let w_prime = i64::from_u64(b).mul_scaled(&slope);
+    let nd2 = math::normal_cdf(&d2);
+    if (w_prime.is_zero()) return nd2;
+
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        2 * sqrt_var,
+    );
+    let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
+    let adjusted = i64::from_u64(nd2).sub(&correction);
+    if (adjusted.is_negative()) return 0;
+    if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
+    adjusted.magnitude()
+}
+
+fun is_positive(value: &I64): bool {
+    !value.is_negative() && !value.is_zero()
 }

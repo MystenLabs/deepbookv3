@@ -1,19 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// A pure, reusable on-chain account: a shared wrapper owns the account data and
-/// controls who can borrow it mutably.
-///
-/// Owner, object-owner, and app flows consume an `Auth` hot potato to load
-/// `&mut Account` from the wrapper. Once a caller has a mutable account reference,
-/// value movement needs no extra proof: the borrow itself is the authority
-/// boundary. Coin reads include funds delivered to this account's accumulator
-/// address, and coin writes first settle those funds into the account.
-///
-/// Apps also store opaque per-account state through the app-data lane
-/// (`attach` / `borrow_data` / `detach`): a dynamic field namespaced by the app's
-/// witness type, so apps cannot collide. Mutations require `Permit<App>`; reads
-/// are open.
+/// Owns shared account wrappers, typed coin custody, accumulator settlement, and application-scoped data.
+/// Consuming `Auth` is the mutable-borrow boundary: owner auth is checked against the account, while package-issued app auth yields the same full `&mut Account` and is not bound to an owner or operation.
+/// The wrapper address receives accumulator funds; a distinct derived account UID identifies the account and anchors app data, while typed balances remain embedded in the account.
+/// App data is namespaced by witness type, requires `Permit<App>` to mutate, and remains publicly readable.
 module account::account;
 
 use account::account_events;
@@ -38,28 +29,29 @@ use fun df::remove as UID.remove;
 const EInvalidOwner: u64 = 0;
 const EBalanceTooLow: u64 = 1;
 const EInvalidAuth: u64 = 2;
+
+// === Auth Kinds ===
 const AUTH_OWNER: u8 = 0;
 const AUTH_APP: u8 = 1;
 
 // === Structs ===
-/// Shared account wrapper: owner-gated shell around the reusable account state.
+/// Addressable shell that receives accumulator funds and gates mutable access to the embedded account.
 public struct AccountWrapper has key {
     id: UID,
     account: Account,
 }
 
-/// Wrapped account state and custody. Its ID is the canonical account identity,
-/// receive address, and app-data storage root.
+/// Account state and custody; `account_id` is the canonical identity and app-data root, while `receive_address` is the wrapper address used for accumulator delivery.
 public struct Account has store {
+    /// Dynamic-field parent for account-owned application data.
     account_id: UID,
     /// EOA address or object-ID-as-address that owns this account.
     owner: address,
-    /// The wrapper object's address: the accumulator/funds-receive anchor. Funds are
-    /// delivered here and settled out via `&mut AccountWrapper.id` — a real shared
-    /// object the runtime can authenticate, unlike the nested `account_id` UID, which
-    /// can never back an address-balance withdrawal.
+    /// Wrapper-object address used as the accumulator delivery and withdrawal anchor.
     receive_address: address,
+    /// Type-indexed stored `Balance<T>` values.
     balances: Bag,
+    /// Type-indexed timestamps of the latest settlement attempt.
     settlements: Bag,
 }
 
@@ -70,7 +62,7 @@ public struct DataKey<phantom App>() has copy, drop, store;
 /// Per-coin bag key.
 public struct CoinKey<phantom T>() has copy, drop, store;
 
-/// Hot-potato authority to mutably open an `AccountWrapper`.
+/// Single-use authority to mutably open an `AccountWrapper` as its owner or as an authorized app.
 public struct Auth {
     kind: u8,
     owner: address,
@@ -82,7 +74,7 @@ public fun id(self: &AccountWrapper): ID {
     self.id.to_inner()
 }
 
-/// Borrow the wrapped account for read-only use.
+/// Borrows the wrapped account for read-only composition.
 public fun load_account(self: &AccountWrapper): &Account {
     &self.account
 }
@@ -109,22 +101,23 @@ public fun receive_address(self: &Account): address {
     self.receive_address
 }
 
-/// Generate owner authority from the transaction sender.
-public fun generate_auth(ctx: &TxContext): Auth {
+/// Creates owner authority bound to the transaction sender.
+public fun generate_auth(ctx: &mut TxContext): Auth {
     Auth { kind: AUTH_OWNER, owner: ctx.sender() }
 }
 
-/// Generate owner authority from an owning object's UID.
+/// Creates owner authority bound to an owning object's address.
 public fun generate_auth_as_object(uid: &mut UID): Auth {
     Auth { kind: AUTH_OWNER, owner: uid.to_inner().to_address() }
 }
 
-/// Share a newly created account object.
+/// Shares a newly created account wrapper.
 public fun share(self: AccountWrapper) {
     transfer::share_object(self);
 }
 
-/// Borrow the wrapped account mutably by consuming an `Auth` hot potato.
+/// Consumes owner or app authority and returns the account's full mutable surface.
+/// Owner authority must match the stored owner; app authority is package-issued after registry authorization and carries no owner or operation restriction.
 public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account {
     let Auth { kind, owner } = auth;
     if (kind == AUTH_OWNER) {
@@ -135,14 +128,9 @@ public fun load_account_mut(self: &mut AccountWrapper, auth: Auth): &mut Account
     &mut self.account
 }
 
-/// Fold any accumulator-delivered funds for `T` (sent to this account's receive
-/// address) into stored balance. Withdrawing the address balance uses `&mut wrapper.id`
-/// — a real shared object the runtime authenticates as a transaction input. Each
-/// public flow that touches `T` settles at its boundary, where the wrapper is in
-/// scope, so the deep `&mut Account` custody ops below stay pure stored-balance.
-///
-/// Permissionless: it only consolidates the account's own funds and moves nothing out,
-/// so it needs no `Auth`; pulling funds out still requires `load_account_mut(auth)`.
+/// Permissionlessly folds accumulator-delivered `T` at the wrapper address into stored account balance.
+/// The per-coin timestamp is latched before reading the accumulator, preventing duplicate withdrawal and same-timestamp double counting even when no funds are available.
+/// Only the wrapper UID can authenticate the address-balance withdrawal; value leaving the account still requires a mutable borrow through `Auth`.
 public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock: &Clock) {
     if (wrapper.account.settled_this_timestamp<T>(clock)) return;
     let now = clock.timestamp_ms();
@@ -152,8 +140,6 @@ public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock
     if (amount == 0) return;
     let withdrawal = balance::withdraw_funds_from_object<T>(&mut wrapper.id, amount);
     wrapper.account.deposit_balance(balance::redeem_funds(withdrawal));
-    // NOTE(barrier): a nonzero settlement needs barrier-delivered funds, which has no
-    // Move test seam — covered by the localnet simulation, see ACCUMULATOR_TESTING_STATUS.md.
     account_events::emit_funds_settled(
         wrapper.account.account_id(),
         type_name::with_defining_ids<T>().into_string(),
@@ -162,9 +148,7 @@ public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock
     );
 }
 
-/// Deposit `coin` into the wrapped account's stored `T` balance. Pure stored-balance:
-/// callers settle accumulator funds at the flow boundary via `settle` (the deep
-/// `&mut Account` here cannot reach the wrapper id needed to authenticate a settle).
+/// Deposits into stored balance only; callers that include accumulator funds must settle through the wrapper first.
 public fun deposit<T>(self: &mut Account, coin: Coin<T>) {
     let amount = coin.value();
     self.deposit_balance(coin.into_balance());
@@ -176,8 +160,7 @@ public fun deposit<T>(self: &mut Account, coin: Coin<T>) {
     );
 }
 
-/// Withdraw `amount` of `T` from stored balance. Pure stored-balance (see `deposit`):
-/// callers settle accumulator funds at the flow boundary via `settle` first.
+/// Withdraws from stored balance only; callers that include accumulator funds must settle through the wrapper first.
 public fun withdraw<T>(self: &mut Account, amount: u64, ctx: &mut TxContext): Coin<T> {
     let coin = self.withdraw_balance<T>(amount).into_coin(ctx);
     account_events::emit_withdrawn(
@@ -189,10 +172,7 @@ public fun withdraw<T>(self: &mut Account, amount: u64, ctx: &mut TxContext): Co
     coin
 }
 
-/// Deposit `coin` into the wrapped account's stored `T` balance from a transaction.
-/// `deposit` borrows `&mut Account`, which a PTB cannot carry across commands out of
-/// `load_account_mut`, so this folds settle → authorize → load → deposit into one
-/// entrypoint (the same shape predict's `mint`/`redeem` use for account-authorized flows).
+/// PTB entrypoint that settles accumulator funds, consumes authority, and deposits into stored balance in one call.
 public fun deposit_funds<T>(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -204,8 +184,7 @@ public fun deposit_funds<T>(
     wrapper.load_account_mut(auth).deposit(coin);
 }
 
-/// PTB-callable withdraw: folds settle → authorize → load → withdraw into one
-/// entrypoint (see `deposit_funds`).
+/// PTB entrypoint that settles accumulator funds, consumes authority, and withdraws from stored balance in one call.
 public fun withdraw_funds<T>(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -250,9 +229,7 @@ public fun detach<App, Data: store>(self: &mut Account, _permit: Permit<App>): D
 }
 
 // === Public-Package Functions ===
-/// Create an account from the registry derivation root. The UID is claimed here
-/// because Sui requires key objects to be built in the same function that obtains
-/// their fresh UID.
+/// Claims distinct wrapper and account UIDs from the registry root and constructs the wrapper where the derived key-object UIDs are obtained.
 public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: copy + drop + store>(
     parent: &mut UID,
     wrapper_key: WrapperKey,
@@ -274,7 +251,7 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
     }
 }
 
-/// Mint app authority after the registry has checked its app whitelist.
+/// Constructs app authority for the package-level caller that owns the registry authorization check.
 public(package) fun new_app_auth(): Auth {
     Auth { kind: AUTH_APP, owner: @0x0 }
 }

@@ -71,9 +71,9 @@ public(package) fun net_payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64
     (max_net_payout, net_payout(total_terms))
 }
 
-/// Evaluate exact settled payout liability at one settlement price. `settlement` is
-/// a raw oracle price; finite boundaries with `tick < ceil(settlement / tick_size)`
-/// are active in the prefix, preserving the half-open `(lower, higher]` payoff.
+/// Evaluate payout liability at one positive normalized settlement price.
+/// Open-lower ranges live in `base`; finite boundaries below
+/// `ceil(settlement / tick_size)` are folded into that prefix.
 public(package) fun settled_payout_liability(
     tree: &StrikePayoutTree,
     settlement: u64,
@@ -89,11 +89,9 @@ public(package) fun settled_payout_liability(
     net_payout(terms)
 }
 
-/// Value the NAV linear term — `Σ_orders qty·P(strike)` — by walking the whole
-/// tree and pricing each distinct boundary once through `pricer` (converting its
-/// tick to a raw strike with `tick_size`). Every priced tick is recorded into
-/// `memo` in ascending order so the correction walk can read boundary prices back
-/// by binary search instead of re-pricing each leveraged order.
+/// Value the quantity-weighted linear liability by pricing each distinct boundary
+/// once. The in-order walk records boundary prices in `memo` for the leveraged
+/// correction scan.
 ///
 /// The start and end sides accumulate as two non-negative totals: a node's net
 /// `local_start - local_end` quantity is signed, so a single running `u64` would
@@ -114,13 +112,8 @@ public(package) fun walk_linear(
         tick_size,
         memo,
     );
-    // For any mint-admitted book the start side dominates the end side by a wide
-    // margin: each order's min net premium forces P(lower) well above P(higher), so
-    // its start contribution exceeds its end contribution by >> the per-boundary
-    // rounding. saturating_sub floors the residual valuation ulp dust (<= ~1 ulp per
-    // shared higher boundary) that thin partial-close survivors clustered in a flat
-    // price region could otherwise drive negative — §8.4 dust, re-floored by the
-    // caller — instead of aborting the read.
+    // Boundary products are rounded per node and the signed aggregate is floored
+    // once. This can differ from pricing and flooring each order independently.
     (tree.base.quantity + start_total).saturating_sub(end_total)
 }
 
@@ -145,11 +138,8 @@ public(package) fun insert_range(
     let terms = payout_terms(quantity, floor_shares);
     if (terms.is_zero_terms()) return;
 
-    // Cap pre-count. `(0, pos_inf]` (the whole line) is rejected upstream at `order` shape validation,
-    // so `lower_tick == 0` here always implies a FINITE `higher_tick`, for which this pre-count and
-    // `apply_range` agree (both create the higher node). The pos_inf-skip below would undercount only
-    // for that unreachable `(0, pos_inf]` case; if the upstream shape guard ever changes, count the
-    // higher boundary in the `lower == 0` branch here too.
+    // Whole-line ranges are rejected by `order`, so this pre-count matches the
+    // finite boundaries `apply_range` can create.
     let mut new_nodes = 0;
     if (lower_tick != 0 && !tree.nodes.contains(lower_tick)) {
         new_nodes = new_nodes + 1;
@@ -187,22 +177,8 @@ public(package) fun remove_range(
 }
 
 #[test_only]
-public(package) fun debug_contains_node(tree: &StrikePayoutTree, tick: u64): bool {
-    tree.nodes.contains(tick)
-}
-
-#[test_only]
-public(package) fun debug_node_count(tree: &StrikePayoutTree): u64 {
-    tree.node_count
-}
-
-// Seed `node_count` for the exact 1000-node cap-BOUNDARY tests. Genuinely irreducible (unit-tests.md
-// Rule 18): ~1000 REAL treap inserts (each hashes a priority + rebalances a growing Table) time out
-// the Move test framework, so the boundary tests fake the count to reach the cap fast, then insert one
-// more to assert `EMaxPayoutTreeNodes`. `node_count_tracks_real_boundary_accumulation` inserts a
-// moderate REAL batch to prove the counter tracks genuine accumulation, not just this setter.
-#[test_only]
-public(package) fun debug_set_node_count(tree: &mut StrikePayoutTree, node_count: u64) {
+/// Seed the stored count so tests can exercise the node-cap boundary directly.
+public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node_count: u64) {
     tree.node_count = node_count;
 }
 
@@ -423,19 +399,9 @@ fun settlement_prefix_terms(
     settlement_prefix_terms(nodes, node.right, limit_tick, running)
 }
 
-/// Accumulate `(start_total, end_total)` over a subtree for `walk_linear`: each
-/// node adds `P(tick·ts)·local_start.quantity` to the start side and
-/// `P(tick·ts)·local_end.quantity` to the end side. Visits every node and recurses
-/// both children — a node is priced at its own strike, so a subtree summary cannot
-/// stand in for pricing each boundary (the summary aggregates quantity, not
-/// quantity·price).
-///
-/// Traversal is in-order (left, node, right): the tree is a BST keyed by tick, so
-/// this caches ascending ticks into `memo` for the correction walk's binary search.
-/// Every node is priced exactly once and recorded UNCONDITIONALLY, so the memo
-/// covers every leveraged boundary the correction can look up; the start/end muls
-/// are still skipped when `local_start.quantity == local_end.quantity`, since equal
-/// `P·q` on both sides cancels in `walk_linear`'s top-level subtraction (exact).
+/// Accumulate start and end boundary products separately during an in-order walk.
+/// Every node is cached even when its equal local start and end quantities cancel,
+/// because leveraged-order correction lookups require every finite boundary.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,

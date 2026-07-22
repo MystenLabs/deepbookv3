@@ -133,8 +133,8 @@ The packed layout is also reused as a deterministic liquidation priority key; se
 
 Minting quotes the live entry probability, computes the mint economics, validates
 them, derives `floor_shares`, and inserts the order into the expiry's live
-indexes. Beyond the price-band check on the all-in execution price (entry
-probability plus the live trade fee), mint admission enforces leverage-specific
+indexes. Beyond the admission band on the raw entry probability (fees are charged
+on top and excluded from the bound), mint admission enforces leverage-specific
 gates.
 
 ### Dynamic admission cap
@@ -154,6 +154,19 @@ constant. Low-probability contracts get a cap closer to 1x; higher-probability
 contracts approach the configured maximum smoothly. Actual liquidation still uses
 the expiry's fixed `liquidation_ltv`; admission only decides whether the protocol
 originates the requested leverage.
+
+### The near-expiry no-leverage window
+
+Within `no_leverage_window_ms` of expiry the curve above does not apply: the
+admission cap is exactly 1x, so the protocol originates no leverage at all,
+regardless of entry probability. Near expiry a contract's probability can move far
+in a single tick, which can carry a leveraged order past its knockout before
+liquidation can fire, leaving the gap with the LP.
+
+The window is snapshotted into the expiry at market creation and is emitted on
+`MarketCreated`; `0` disables the block. It gates origination only — an order
+opened before the window keeps its leverage into expiry, and closing, liquidation,
+and settlement are unaffected.
 
 ### The entry-value gate
 

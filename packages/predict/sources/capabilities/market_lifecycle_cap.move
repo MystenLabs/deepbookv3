@@ -1,24 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Market lifecycle capability. Authorizes market lifecycle operations without
-/// granting any oracle write authority. `Registry` owns the allowlist of valid
-/// lifecycle caps and the admin mint/revoke entrypoints; this module owns the cap
-/// object and the transaction-local proof consumed by cross-module lifecycle
-/// actions.
+/// Defines revocable authority for market creation and coordinated pool valuation without granting oracle-write or root-admin power.
+/// `Registry` owns the allowlist and converts a valid capability into the ability-less proof consumed by cross-module lifecycle flows.
 module deepbook_predict::market_lifecycle_cap;
 
-/// Capability authorized for privileged market lifecycle operations.
+/// Capability authorized for privileged market lifecycle operations while its ID remains allowlisted.
 public struct MarketLifecycleCap has key, store {
     id: UID,
 }
 
-/// Transaction-local proof that a `MarketLifecycleCap` was valid in the
-/// registry allowlist when the proof was created. It has no abilities, so the
-/// lifecycle action that accepts it must consume it in the same transaction.
+/// Transaction-local proof that a lifecycle capability was allowlisted when checked.
+/// With no abilities, it must be consumed by the authorized lifecycle flow in the same transaction.
 public struct MarketLifecycleProof {}
 
-/// Return the lifecycle cap object ID.
+/// Returns the capability identity used by the registry allowlist.
 public fun id(cap: &MarketLifecycleCap): ID {
     cap.id.to_inner()
 }
@@ -31,13 +27,12 @@ public fun destroy(cap: MarketLifecycleCap) {
 
 // === Public-Package Functions ===
 
-/// Construct a cap. Allow-listing is `registry::mint_lifecycle_cap`'s job.
+/// Constructs a capability for the registry to allowlist atomically.
 public(package) fun new(ctx: &mut TxContext): MarketLifecycleCap {
     MarketLifecycleCap { id: object::new(ctx) }
 }
 
-/// Construct a transaction-local lifecycle proof after the caller validates the
-/// cap against the authoritative allowlist.
+/// Constructs a transaction-local proof after the caller validates the capability against the registry allowlist.
 public(package) fun new_proof(_cap: &MarketLifecycleCap): MarketLifecycleProof {
     MarketLifecycleProof {}
 }

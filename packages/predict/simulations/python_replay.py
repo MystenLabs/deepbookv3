@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -60,7 +61,8 @@ MIN_NET_PREMIUM = 1_000_000
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
-INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
+MIN_BOOTSTRAP_LIQUIDITY = 10 * DUSDC_DECIMALS
+INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
 INITIAL_EXPIRY_CASH = 50_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
 MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
@@ -92,6 +94,7 @@ LEVERAGE_THREE_X = 3_000_000_000
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
 LN2_U128 = 693_147_180
+INV_SQRT_2PI = 398_942_280
 SMALL_THRESHOLD = 662_910_000
 A0 = 2_235_252_035
 A1 = 161_028_231_069
@@ -169,7 +172,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     capital_mode = "long" if long_run else "normal"
     VAULT_SEED = _capital_int(config, capital_mode, "vault_seed", VAULT_SEED)
     MANAGER_SEED = _capital_int(config, capital_mode, "manager_seed", MANAGER_SEED)
-    INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
+    INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
 
     BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
     MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
@@ -331,7 +334,7 @@ def binary_range_ticks(strike: int, is_up: bool) -> tuple[int, int]:
 
 
 def strikes_from_ticks(lower_tick: int, higher_tick: int) -> tuple[int, int]:
-    # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strikes_from_ticks):
+    # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strike_from_tick per boundary):
     # lower_tick 0 -> NEG_INF_STRIKE; higher_tick POS_INF_TICK -> POS_INF_STRIKE.
     lower = NEG_INF_STRIKE if lower_tick == 0 else lower_tick * ORACLE_TICK_SIZE
     higher = POS_INF_STRIKE if higher_tick == POS_INF_TICK else higher_tick * ORACLE_TICK_SIZE
@@ -401,6 +404,15 @@ def _bool(row: dict[str, str], field: str, line_number: int) -> bool:
     return value == "true"
 
 
+def _optional_bool(row: dict[str, str], field: str, line_number: int, default: bool = False) -> bool:
+    value = row.get(field, "")
+    if value == "":
+        return default
+    if value not in ("true", "false"):
+        raise ValueError(f'Scenario line {line_number}: expected {field} to be true/false, got "{value}"')
+    return value == "true"
+
+
 def _oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
     present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
     if len(present) != len(ORACLE_REFRESH_FIELDS):
@@ -410,6 +422,7 @@ def _oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
             "spot": _uint(row, "spot", line_number),
             "forward": _uint(row, "forward", line_number),
             "a": _uint(row, "a", line_number),
+            "aNegative": _optional_bool(row, "a_negative", line_number),
             "b": _uint(row, "b", line_number),
             "rho": _uint(row, "rho", line_number),
             "rhoNegative": _bool(row, "rho_negative", line_number),
@@ -442,6 +455,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "spot": _uint(row, "spot", index),
                     "forward": _uint(row, "forward", index),
                     "a": _uint(row, "a", index),
+                    "aNegative": _optional_bool(row, "a_negative", index),
                     "b": _uint(row, "b", index),
                     "rho": _uint(row, "rho", index),
                     "rhoNegative": _bool(row, "rho_negative", index),
@@ -784,9 +798,25 @@ def normal_cdf(value: I64) -> int:
     return normal_cdf_u128(value.magnitude, value.is_negative)
 
 
+def normal_pdf(value: I64) -> int:
+    x = value.magnitude
+    if x > 8 * FLOAT_SCALING:
+        return 0
+    x_sq_half = x * x // (2 * FLOAT_SCALING)
+    n = x_sq_half // LN2_U128
+    r = x_sq_half - n * LN2_U128
+    return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
+
+
 def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
-    strike_ratio = deepbook_div(strike, forward)
-    k = ln_fixed(strike_ratio)
+    # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
+    # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
+    strike_ratio_scaled = strike * FLOAT_SCALING // forward
+    if strike_ratio_scaled == 0:
+        return FLOAT_SCALING
+    if strike_ratio_scaled > 2**64 - 1:
+        return 0
+    k = ln_fixed(strike_ratio_scaled)
     m = I64(svi["m"], svi["mNegative"])
     k_minus_m = k.sub(m)
     k_minus_m_squared = k_minus_m.square_scaled()
@@ -799,16 +829,32 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     if inner.is_negative:
         raise ValueError("SVI inner term cannot be negative")
     wing_var = deepbook_mul(svi["b"], inner.magnitude)
-    total_var = svi["a"] + wing_var
+    a = I64(svi["a"], svi.get("aNegative", False))
+    total_var_i64 = I64(wing_var).add(a)
+    if total_var_i64.is_negative or total_var_i64.magnitude == 0:
+        raise ValueError("SVI total variance must be positive")
+    total_var = total_var_i64.magnitude
     sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
     d2_numerator = k.add(I64(total_var // 2))
     d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
-    return normal_cdf(d2)
+    nd2 = normal_cdf(d2)
+
+    slope_ratio = k_minus_m.div_scaled(I64(sq))
+    slope = rho.add(slope_ratio)
+    w_prime = I64(svi["b"]).mul_scaled(slope)
+    if w_prime.magnitude == 0:
+        return nd2
+
+    correction = mul_div_round_down(normal_pdf(d2), w_prime.magnitude, 2 * sqrt_var)
+    if w_prime.is_negative:
+        return min(FLOAT_SCALING, nd2 + correction)
+    return nd2 - correction if nd2 > correction else 0
 
 
-def svi_cache_key(svi: dict[str, Any]) -> tuple[int, int, int, bool, int, bool, int]:
+def svi_cache_key(svi: dict[str, Any]) -> tuple[int, bool, int, int, bool, int, bool, int]:
     return (
         svi["a"],
+        svi.get("aNegative", False),
         svi["b"],
         svi["rho"],
         svi["rhoNegative"],
@@ -822,6 +868,7 @@ def svi_cache_key(svi: dict[str, Any]) -> tuple[int, int, int, bool, int, bool, 
 def compute_up_price_cached(
     forward: int,
     a: int,
+    a_negative: bool,
     b: int,
     rho: int,
     rho_negative: bool,
@@ -837,6 +884,7 @@ def compute_up_price_cached(
     return compute_nd2(
         {
             "a": a,
+            "aNegative": a_negative,
             "b": b,
             "rho": rho,
             "rhoNegative": rho_negative,
@@ -857,6 +905,7 @@ def compute_up_price(svi: dict[str, Any], forward: int, strike: int) -> int:
 def compute_range_price_cached(
     forward: int,
     a: int,
+    a_negative: bool,
     b: int,
     rho: int,
     rho_negative: bool,
@@ -866,11 +915,31 @@ def compute_range_price_cached(
     lower: int,
     higher: int,
 ) -> int:
-    lower_up = compute_up_price_cached(forward, a, b, rho, rho_negative, m, m_negative, sigma, lower)
-    higher_up = compute_up_price_cached(forward, a, b, rho, rho_negative, m, m_negative, sigma, higher)
-    if lower_up < higher_up:
-        raise ValueError("range price underflow")
-    return lower_up - higher_up
+    lower_up = compute_up_price_cached(
+        forward,
+        a,
+        a_negative,
+        b,
+        rho,
+        rho_negative,
+        m,
+        m_negative,
+        sigma,
+        lower,
+    )
+    higher_up = compute_up_price_cached(
+        forward,
+        a,
+        a_negative,
+        b,
+        rho,
+        rho_negative,
+        m,
+        m_negative,
+        sigma,
+        higher,
+    )
+    return max(0, lower_up - higher_up)
 
 
 def compute_range_price(svi: dict[str, Any], forward: int, lower: int, higher: int) -> int:
@@ -1013,8 +1082,9 @@ def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
         floor_shares,
     )
     # The payout tree owns both the linear quantity walk and max-point net payout
-    # reserve reads. NAV is the exact order-sum walk_linear - correction, which
-    # reads model["orders"] directly and needs no per-order NAV index.
+    # reserve reads. The replay mirrors NAV from model["orders"] directly after
+    # checking the same active-book monotonicity precondition as the on-chain
+    # price memo, so it needs no per-order NAV index.
     model["payout"].insert_range(order["lower"], order["higher"], quantity, floor_shares)
     invalidate_valuation_cache(model)
     track_minted_boundaries(model, order["lower"], order["higher"])
@@ -1051,7 +1121,9 @@ def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
     return remove_closed_live_order(model, order, order["quantity"], None)
 
 
-def valuation_curve_key(model: dict[str, Any]) -> tuple[int, int, int, int, bool, int, bool, int, int, int] | None:
+def valuation_curve_key(
+    model: dict[str, Any],
+) -> tuple[int, int, bool, int, int, bool, int, bool, int, int, int] | None:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     if model["minted_min_strike"] is None or model["minted_max_strike"] is None:
@@ -1085,24 +1157,40 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
 
 
 # --- Exact NAV liability (replaces the deleted dense StrikeNavMatrix + curve). ---
-# The contract's `strike_exposure::exact_live_liability` is `linear - correction`,
-# where the payout-tree `walk_linear` and the leveraged-book `correction_value` are
-# just efficient on-chain aggregations of per-order sums. Mirrored here order-by-
-# order (the simulation has one book, so the O(n) walk is fine and EXACT — it does
-# not depend on the deleted grid/curve interpolation at all):
+# The contract's `strike_exposure::exact_live_liability` is `linear - correction`.
+# The payout-tree `walk_linear` and leveraged-book `correction_value` are efficient
+# on-chain aggregations of per-order sums when the active boundary UP prices are
+# monotone. The contract rejects non-monotone active boundary sets during the price
+# memo walk; mirror that precondition, then sum order-by-order here (the simulation
+# has one book, so the O(n) walk is fine and exact):
 #   linear     = Σ_active           quantity · range_price(lower, higher)
 #   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
 #                                       floor_shares)
 #   exact_live_liability = max(0, linear - correction)
-# walk_linear over all orders equals Σ qty·range_price because each `(lower, higher]`
-# order contributes q·P(lower) - q·P(higher) = q·(up(lower) - up(higher)) =
-# q·range_price(lower, higher) to the tree's start/end totals (neg-inf rides base
-# P=1, pos-inf ends are P=0). There is NO conservative band anymore (deleted with
-# the approximate-NAV world): the flush prices one EXACT mark for both supply and
-# withdraw.
+# There is NO conservative band anymore (deleted with the approximate-NAV world):
+# the flush prices one exact mark for both supply and withdraw.
+def assert_active_book_monotone(model: dict[str, Any]) -> None:
+    boundaries = sorted(
+        {
+            strike
+            for order in model["orders"].values()
+            if order["status"] == "active"
+            for strike in (order["lower"], order["higher"])
+            if strike not in (NEG_INF_STRIKE, POS_INF_STRIKE)
+        },
+    )
+    previous: int | None = None
+    for strike in boundaries:
+        price = compute_up_price(model["current_svi"], model["current_forward"], strike)
+        if previous is not None and price > previous:
+            raise ValueError("non-monotone active-book SVI surface")
+        previous = price
+
+
 def exact_live_liability(model: dict[str, Any]) -> int:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
+    assert_active_book_monotone(model)
     linear = 0
     correction = 0
     for order in model["orders"].values():
@@ -1285,11 +1373,8 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
 # one exact `current_nav` for both supply and withdraw (DOCS_CONSOLIDATED_FACTS §3,
 # move.md NAV-mark invariant). Returns (cash-rebalance updates, pool_value,
 # synced_state).
-# TODO(sim-parity): in the contract this is finish_flush's `pool_nav = lp_pool_value(
-# idle, credits, debits, share, Σ current_nav)` computed once after value_expiry over
-# every active market, then used to drain BOTH queues. The async cadence (when the
-# flush runs relative to request rows) and the per-request FIFO/until-idle-dry drain
-# are not modelled here; confirm against a localnet run.
+# The parity replay calls this once per synthetic flush, then uses the frozen pool
+# value and pre-drain total supply for both FIFO queues.
 def flush_valuation(
     model: dict[str, Any],
     state: dict[str, int],
@@ -1348,7 +1433,7 @@ def initial_state() -> dict[str, int]:
         "manager_balance": MANAGER_SEED,
         "expiry_cash_balance": INITIAL_EXPIRY_CASH,
         "expiry_unresolved_trading_fees": 0,
-        "vault_idle_balance": VAULT_SEED - INITIAL_EXPIRY_CASH,
+        "vault_idle_balance": VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY - INITIAL_EXPIRY_CASH,
         "vault_protocol_reserve_balance": 0,
         "pending_protocol_profit": 0,
         "expiry_sent_to_expiry": INITIAL_EXPIRY_CASH,
@@ -1359,6 +1444,8 @@ def initial_state() -> dict[str, int]:
         "profit_basis_debits": INITIAL_EXPIRY_CASH,
         "profit_basis_credits": 0,
         "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
+        "supply_requests_pending": 0,
+        "withdraw_requests_pending": 0,
         "open_order_count": 0,
         "open_order_quantity": 0,
         "liquidated_order_count": 0,
@@ -1375,6 +1462,8 @@ CANONICAL_STATE_KEYS = (
     "profit_basis_debits",
     "profit_basis_credits",
     "vault_total_plp_supply",
+    "supply_requests_pending",
+    "withdraw_requests_pending",
     "open_order_count",
     "open_order_quantity",
     "liquidated_order_count",
@@ -1387,7 +1476,7 @@ def state_snapshot(state: dict[str, int]) -> dict[str, str]:
 
 def svi_input(row: dict[str, Any]) -> dict[str, str]:
     return {
-        "a": str(row["a"]),
+        "a": signed_svi_value(row["a"], row.get("aNegative", False)),
         "b": str(row["b"]),
         "rho": signed_svi_value(row["rho"], row["rhoNegative"]),
         "m": signed_svi_value(row["m"], row["mNegative"]),
@@ -1462,7 +1551,7 @@ def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
 
 
 def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
-    oracle = row["oracleRefresh"]
+    oracle = row if row["action"] == "oracle_mint_ptb" else row["oracleRefresh"]
     model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
     model["current_svi"] = oracle
     updates.append(pyth_feed_update(oracle))
@@ -1573,9 +1662,35 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         state["vault_protocol_reserve_balance"] = reserve_after
         state["pending_protocol_profit"] = pending_after
         state["profit_basis_debits"] = profit_basis_after
-    elif update["type"] in ("supply_filled", "withdraw_filled"):
+    elif update["type"] == "supply_requested":
+        state["supply_requests_pending"] = int(update["requests_pending_after"])
+    elif update["type"] == "withdraw_requested":
+        state["withdraw_requests_pending"] = int(update["requests_pending_after"])
+    elif update["type"] == "request_cancelled":
+        key = "supply_requests_pending" if update["is_supply"] else "withdraw_requests_pending"
+        state[key] = int(update["requests_pending_after"])
+    elif update["type"] == "supply_filled":
+        if "requests_pending_after" in update:
+            state["vault_total_plp_supply"] += int(update["shares_minted"])
+            state["supply_requests_pending"] = int(update["requests_pending_after"])
+        else:
+            state["vault_idle_balance"] = int(update["idle_balance_after"])
+            state["vault_total_plp_supply"] = int(update["total_supply_after"])
+    elif update["type"] == "withdraw_filled":
+        if "requests_pending_after" in update:
+            state["vault_total_plp_supply"] -= int(update["shares_burned"])
+            state["withdraw_requests_pending"] = int(update["requests_pending_after"])
+        else:
+            state["vault_idle_balance"] = int(update["idle_balance_after"])
+            state["vault_total_plp_supply"] = int(update["total_supply_after"])
+    elif update["type"] == "flush_executed":
         state["vault_idle_balance"] = int(update["idle_balance_after"])
-        state["vault_total_plp_supply"] = int(update["total_supply_after"])
+        total_supply_after = int(update["total_supply_after"])
+        if state["vault_total_plp_supply"] != total_supply_after:
+            raise ValueError(
+                "flush total supply mismatch: "
+                f"deltas={state['vault_total_plp_supply']} event={total_supply_after}"
+            )
 
 
 def active_refs(model: dict[str, Any]) -> list[str]:
@@ -1820,16 +1935,8 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 # the approximate-NAV world). Both round down; a dust request that prices to 0 is
 # refunded.
 #
-# TODO(sim-parity): this models a request and its flush fill TOGETHER in one record
-# (as if the runner ran request_supply + flush back-to-back), but the contract
-# split is genuinely async — the fill lands on the manager via the balance
-# accumulator (send_funds) and is absorbed lazily, and many requests can batch into
-# one flush draining supplies-first-then-withdrawals-FIFO-until-idle-dry. The exact
-# update sequence + balance timing the localnet runner emits (SupplyRequested then,
-# at a later flush, PoolValued/FlushExecuted/SupplyFilled) must be confirmed against
-# a real run before this is trusted for parity. The TS runner currently only
-# enqueues the request (see executeRow TODO(sim-parity)), so the two mirrors are not
-# yet aligned on the flush half.
+# These synchronous helpers are for the long Python-only replay. Normal parity
+# queues requests and drains them later in `parity_flush_updates`.
 def supply_update(
     model: dict[str, Any],
     row: dict[str, Any],
@@ -1913,16 +2020,13 @@ def apply_manager_summary_update(summary: dict[str, int], update: dict[str, Any]
 
 
 def settled_order_payout(order: dict[str, Any], settlement_price: int) -> int:
-    # Half-open (lower, higher] winner test on raw strikes. The Python payout tree is
-    # raw-strike-keyed, so this and the tree's settled_payout_liability use the same
-    # raw `settlement_price` threshold and agree with each other (the indexed==scanned
-    # cross-check still holds). TODO(sim-parity): the contract's tree is TICK-keyed and
-    # uses prefix_limit_tick = ceil(settlement / tick_size) (range_codec); for a
-    # settlement that is NOT a whole tick multiple the raw-strike threshold here can
-    # differ by up to one tick from the contract's. Settlement is stubbed on-chain
-    # (is_settled() always false), so this terminal-closeout path is Python-only and
-    # cannot be localnet-parity-checked until settlement-v2 — confirm the
-    # prefix_limit_tick equivalence then.
+    # Half-open (lower, higher] winner test on raw strikes. Bit-equivalent to the
+    # contract's tick-domain predicate (range_codec::settlement_in_range, the single
+    # owner both settlement surfaces derive from): for integer boundaries at exact
+    # tick multiples, settlement > l*ts <=> l < ceil(settlement/ts) and
+    # settlement <= h*ts <=> ceil(settlement/ts) <= h, with sentinel ends mapping to
+    # 0 / u64::MAX — so the raw and tick thresholds agree for EVERY settlement,
+    # whole-tick multiple or not.
     if settlement_price > order["lower"] and settlement_price <= order["higher"]:
         return order["quantity"] - order_floor_shares(order)
     return 0
@@ -2202,7 +2306,7 @@ def normalized_flow_action(action: str) -> str:
     return "mint" if action == "oracle_mint_ptb" else action
 
 
-def analytics_oracle_key(model: dict[str, Any]) -> tuple[int, int, int, int, bool, int, bool, int]:
+def analytics_oracle_key(model: dict[str, Any]) -> tuple[int, int, bool, int, int, bool, int, bool, int]:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("liquidation requires prior price and SVI updates")
     return (model["current_forward"], *svi_cache_key(model["current_svi"]))
@@ -2619,6 +2723,136 @@ def exact_row_timestamp_ms(row: dict[str, Any]) -> int:
     return int(timestamp)
 
 
+def flush_checkpoints(row_count: int) -> set[int]:
+    raw = os.environ.get("SIM_FLUSH_AFTER", "")
+    if raw:
+        return {
+            int(value)
+            for part in raw.split(",")
+            if (value := part.strip()).isdigit() and int(value) > 0
+        }
+    return {checkpoint for checkpoint in (300, 999) if checkpoint <= row_count}
+
+
+def cash_rebalance_checkpoints(row_count: int, flush_after: set[int]) -> set[int]:
+    return {
+        checkpoint
+        for checkpoint in range(100, row_count + 1, 100)
+        if checkpoint not in flush_after
+    }
+
+
+def parity_flush_updates(
+    model: dict[str, Any],
+    state: dict[str, int],
+    row: dict[str, Any],
+    supply_queue: list[dict[str, Any]],
+    withdraw_queue: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    updates: list[dict[str, Any]] = []
+    apply_inline_oracle_refresh(model, row, updates)
+    updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
+    sync_updates, pool_value, synced_state = flush_valuation(model, state)
+    updates.extend(sync_updates)
+
+    total_supply = synced_state["vault_total_plp_supply"]
+    idle_balance_before = synced_state["vault_idle_balance"]
+    idle_balance_after = idle_balance_before
+    total_supply_after = total_supply
+    supplies_filled = 0
+    withdrawals_filled = 0
+    requests_processed = 0
+
+    while supply_queue:
+        request = supply_queue.pop(0)
+        shares = (
+            mul_div_round_down(request["amount"], total_supply, pool_value)
+            if pool_value > 0
+            else 0
+        )
+        requests_pending_after = len(supply_queue)
+        if shares == 0:
+            updates.append(
+                {
+                    "type": "request_cancelled",
+                    "index": str(request["index"]),
+                    "amount": str(request["amount"]),
+                    "is_supply": True,
+                    "reason": "1",
+                    "requests_pending_after": str(requests_pending_after),
+                }
+            )
+        else:
+            updates.append(
+                {
+                    "type": "supply_filled",
+                    "index": str(request["index"]),
+                    "dusdc_amount": str(request["amount"]),
+                    "shares_minted": str(shares),
+                    "requests_pending_after": str(requests_pending_after),
+                }
+            )
+            model["lp_refs"][request["ref"]] = shares
+            idle_balance_after += request["amount"]
+            total_supply_after += shares
+            supplies_filled += 1
+        requests_processed += 1
+
+    while withdraw_queue:
+        request = withdraw_queue[0]
+        payout = (
+            mul_div_round_down(request["shares"], pool_value, total_supply)
+            if total_supply > 0
+            else 0
+        )
+        if payout > idle_balance_after:
+            break
+        withdraw_queue.pop(0)
+        requests_pending_after = len(withdraw_queue)
+        if payout == 0:
+            updates.append(
+                {
+                    "type": "request_cancelled",
+                    "index": str(request["index"]),
+                    "amount": str(request["shares"]),
+                    "is_supply": False,
+                    "reason": "1",
+                    "requests_pending_after": str(requests_pending_after),
+                }
+            )
+        else:
+            updates.append(
+                {
+                    "type": "withdraw_filled",
+                    "index": str(request["index"]),
+                    "shares_burned": str(request["shares"]),
+                    "dusdc_amount": str(payout),
+                    "requests_pending_after": str(requests_pending_after),
+                }
+            )
+            idle_balance_after -= payout
+            total_supply_after -= request["shares"]
+            withdrawals_filled += 1
+        requests_processed += 1
+
+    updates.append(
+        {
+            "type": "flush_executed",
+            "pool_value": str(pool_value),
+            "total_supply": str(total_supply),
+            "active_market_nav": str(current_nav(model, synced_state)),
+            "market_count": "1",
+            "idle_balance_before": str(idle_balance_before),
+            "supplies_filled": str(supplies_filled),
+            "withdrawals_filled": str(withdrawals_filled),
+            "requests_processed": str(requests_processed),
+            "idle_balance_after": str(idle_balance_after),
+            "total_supply_after": str(total_supply_after),
+        }
+    )
+    return updates
+
+
 def replay(
     rows: list[dict[str, Any]],
     collect_derived: bool = False,
@@ -2696,6 +2930,42 @@ def replay(
     withdraw_queue_index = 0
     available_settled_plp = VAULT_SEED
     lp_request_amounts: dict[str, int] = {}
+    supply_queue: list[dict[str, Any]] = []
+    withdraw_queue: list[dict[str, Any]] = []
+    flush_after = set() if exact_time else flush_checkpoints(total_steps)
+    rebalance_after = (
+        set() if exact_time else cash_rebalance_checkpoints(total_steps, flush_after)
+    )
+
+    def append_maintenance_record(after_row: int, row: dict[str, Any]) -> None:
+        if after_row in flush_after:
+            maintenance_action = "flush"
+            maintenance_updates = parity_flush_updates(
+                model,
+                state,
+                row,
+                supply_queue,
+                withdraw_queue,
+            )
+        elif after_row in rebalance_after:
+            maintenance_action = "rebalance_expiry_cash"
+            maintenance_updates = sync_active_expiry_cash_updates(model, dict(state))
+        else:
+            return
+
+        for maintenance_update in maintenance_updates:
+            apply_update(state, maintenance_update)
+            apply_manager_summary_update(manager_summary, maintenance_update)
+        records.append(
+            {
+                "step": row["step"],
+                "action": maintenance_action,
+                "input": {"after_row": after_row},
+                "updates": maintenance_updates,
+                "state": state_snapshot(state),
+            }
+        )
+
     for step_index, row in enumerate(rows):
         updates: list[dict[str, Any]] = []
         action = row["action"]
@@ -2734,12 +3004,20 @@ def replay(
                 ref = row["lpRef"]
                 amount = row["amount"]
                 lp_request_amounts[ref] = amount
+                supply_queue.append(
+                    {
+                        "ref": ref,
+                        "index": supply_queue_index,
+                        "amount": amount,
+                    }
+                )
                 updates.append(
                     {
                         "type": "supply_requested",
                         "lp_ref": ref,
                         "index": str(supply_queue_index),
                         "amount": str(amount),
+                        "requests_pending_after": str(len(supply_queue)),
                     }
                 )
                 supply_queue_index += 1
@@ -2756,14 +3034,23 @@ def replay(
                 ref = row["lpRef"]
                 shares = lp_request_amounts.get(ref, 0)
                 if shares == 0 or shares > available_settled_plp:
+                    append_maintenance_record(step_index + 1, row)
                     continue
                 available_settled_plp -= shares
+                withdraw_queue.append(
+                    {
+                        "ref": ref,
+                        "index": withdraw_queue_index,
+                        "shares": shares,
+                    }
+                )
                 updates.append(
                     {
                         "type": "withdraw_requested",
                         "lp_ref": ref,
                         "index": str(withdraw_queue_index),
                         "amount": str(shares),
+                        "requests_pending_after": str(len(withdraw_queue)),
                     }
                 )
                 withdraw_queue_index += 1
@@ -2805,6 +3092,7 @@ def replay(
                     time_ctx,
                 )
             )
+        append_maintenance_record(step_index + 1, row)
 
     if terminal_closeout:
         assert expiry_ms is not None

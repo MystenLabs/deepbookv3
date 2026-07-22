@@ -16,7 +16,7 @@ async function main() {
   const { wrapperId } = await bootstrapPool(lifecycleCapId);
   const { marketId, expiryMs, snap } = await createAndSeedMarket(feeds, lifecycleCapId, CADENCE_1H);
   await executeAndWait(
-    rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId, pythFeedId: feeds.pythFeedId }),
+    rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
     "rebalance",
   );
   await executeAndWait(depositToAccountTx(wrapperId, 1_000_000n * DUSDC), "deposit");

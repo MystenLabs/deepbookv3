@@ -1,19 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Emergency pause capability. `Registry` owns the allowlist of valid pause
-/// caps and the admin mint/revoke entrypoints; this module owns only the cap
-/// object itself.
+/// Defines revocable emergency authority that can engage global trading or per-market mint pauses but cannot unpause.
+/// `Registry` owns the allowlist and all state transitions authorized by this capability.
 module deepbook_predict::pause_cap;
 
-/// Capability for emergency pause operations. Admin can mint these for
-/// trusted operators; holders can disable versions, pause global trading,
-/// and pause per-market minting. Cannot unpause anything.
+/// Capability authorized for one-way emergency pauses while its ID remains allowlisted.
 public struct PauseCap has key, store {
     id: UID,
 }
 
-/// Return the pause cap object ID.
+/// Returns the capability identity used by the registry allowlist.
 public fun id(cap: &PauseCap): ID {
     cap.id.to_inner()
 }
@@ -26,7 +23,7 @@ public fun destroy(cap: PauseCap) {
 
 // === Public-Package Functions ===
 
-/// Construct a cap. Allow-listing is `registry::mint_pause_cap`'s job.
+/// Constructs a capability for the registry to allowlist atomically.
 public(package) fun new(ctx: &mut TxContext): PauseCap {
     PauseCap { id: object::new(ctx) }
 }

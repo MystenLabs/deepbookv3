@@ -1,9 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault events for Predict: DEEP staking, expiry cash/profit, fee
-/// incentives, and the async LP supply/withdraw request → flush lifecycle (the
-/// flush event carries the full-pool valuation it priced fills at).
+/// Pool-vault events for staking, expiry cash and profit, fee incentives, and the
+/// queued LP request lifecycle. A flush records the frozen pool mark used by fills.
 module deepbook_predict::vault_events;
 
 use sui::event;
@@ -52,6 +51,8 @@ public struct TradingLossRebateClaimed has copy, drop, store {
     account_id: ID,
     rebate_amount: u64,
     residual_returned: u64,
+    trading_fees_paid: u64,
+    gross_profit: u64,
 }
 
 /// Emitted when an account stakes DEEP for trading benefits.
@@ -74,28 +75,35 @@ public struct DeepUnstaked has copy, drop, store {
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
-/// `index` is the queue handle used to cancel.
+/// `min_plp_out` is the minimum PLP the frozen mark must mint before the request
+/// fills. `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
+    min_plp_out: u64,
+    requests_pending_after: u64,
 }
 
 /// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC will be delivered to `recipient` at a later flush.
+/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is the
+/// minimum DUSDC the frozen mark must pay before the request fills.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
     index: u64,
     amount: u64,
+    min_dusdc_out: u64,
+    requests_pending_after: u64,
 }
 
-/// Emitted when an LP cancels a still-pending request before it is flushed: the
-/// escrow (`amount` of DUSDC if `is_supply`, else PLP) is refunded straight into the
-/// requesting account.
+/// Emitted when a still-pending request is cancelled and the escrow (`amount` of
+/// DUSDC if `is_supply`, else PLP) is refunded straight into the requesting account.
+/// Cancellation can be user-requested before flush or protocol-triggered when the
+/// frozen mark makes the request non-executable, or after repeated limit misses.
 public struct RequestCancelled has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -103,6 +111,24 @@ public struct RequestCancelled has copy, drop, store {
     index: u64,
     amount: u64,
     is_supply: bool,
+    /// 0=user, 1=non-executable frozen mark, 2=limit expired.
+    reason: u8,
+    requests_pending_after: u64,
+}
+
+/// Emitted when a queued LP request reaches the head during a flush but the frozen
+/// mark output misses its request-time limit and the request remains queued.
+public struct RequestLimitMissed has copy, drop, store {
+    pool_vault_id: ID,
+    account_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+    quoted_output: u64,
+    min_output: u64,
+    missed_flushes: u64,
+    max_misses: u64,
 }
 
 /// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
@@ -116,6 +142,7 @@ public struct SupplyFilled has copy, drop, store {
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
+    requests_pending_after: u64,
 }
 
 /// Emitted when a withdraw request fills: `shares_burned` PLP were burned and
@@ -128,22 +155,20 @@ public struct WithdrawFilled has copy, drop, store {
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    requests_pending_after: u64,
 }
 
-/// Emitted once per flush after both queues drain. The flush IS the full-pool
-/// valuation, so this single event carries the frozen mark every fill was priced at
-/// (`pool_value` over `total_supply`), its valuation breakdown (`idle_balance_before`
-/// plus `active_market_nav` over `market_count` active markets), how many of each
-/// kind filled, the total live requests processed against the per-flush cap, and the
-/// idle balance after the drain.
+/// Emitted once after a flush drains both queues. `pool_value / total_supply` is
+/// the frozen pre-drain mark used by every fill in the flush.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
     /// LP-attributable pool NAV every fill was priced at: idle plus
     /// `active_market_nav`, excluding unrealized and pending protocol profit.
     pool_value: u64,
+    /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
-    /// Σ of each active market's exact NAV at valuation (settled markets contribute 0).
+    /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
@@ -153,6 +178,8 @@ public struct FlushExecuted has copy, drop, store {
     withdrawals_filled: u64,
     requests_processed: u64,
     idle_balance_after: u64,
+    /// PLP supply after the drain's completed mints and burns.
+    total_supply_after: u64,
 }
 
 /// Emitted once when the pool is bootstrapped via `plp::lock_capital`: `amount`
@@ -251,6 +278,8 @@ public(package) fun emit_trading_loss_rebate_claimed(
     account_id: ID,
     rebate_amount: u64,
     residual_returned: u64,
+    trading_fees_paid: u64,
+    gross_profit: u64,
 ) {
     event::emit(TradingLossRebateClaimed {
         pool_vault_id,
@@ -258,6 +287,8 @@ public(package) fun emit_trading_loss_rebate_claimed(
         account_id,
         rebate_amount,
         residual_returned,
+        trading_fees_paid,
+        gross_profit,
     });
 }
 
@@ -291,6 +322,8 @@ public(package) fun emit_supply_requested(
     recipient: address,
     index: u64,
     amount: u64,
+    min_plp_out: u64,
+    requests_pending_after: u64,
 ) {
     event::emit(SupplyRequested {
         pool_vault_id,
@@ -298,6 +331,8 @@ public(package) fun emit_supply_requested(
         recipient,
         index,
         amount,
+        min_plp_out,
+        requests_pending_after,
     });
 }
 
@@ -307,6 +342,8 @@ public(package) fun emit_withdraw_requested(
     recipient: address,
     index: u64,
     amount: u64,
+    min_dusdc_out: u64,
+    requests_pending_after: u64,
 ) {
     event::emit(WithdrawRequested {
         pool_vault_id,
@@ -314,6 +351,8 @@ public(package) fun emit_withdraw_requested(
         recipient,
         index,
         amount,
+        min_dusdc_out,
+        requests_pending_after,
     });
 }
 
@@ -324,6 +363,8 @@ public(package) fun emit_request_cancelled(
     index: u64,
     amount: u64,
     is_supply: bool,
+    reason: u8,
+    requests_pending_after: u64,
 ) {
     event::emit(RequestCancelled {
         pool_vault_id,
@@ -332,6 +373,34 @@ public(package) fun emit_request_cancelled(
         index,
         amount,
         is_supply,
+        reason,
+        requests_pending_after,
+    });
+}
+
+public(package) fun emit_request_limit_missed(
+    pool_vault_id: ID,
+    account_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+    quoted_output: u64,
+    min_output: u64,
+    missed_flushes: u64,
+    max_misses: u64,
+) {
+    event::emit(RequestLimitMissed {
+        pool_vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        is_supply,
+        quoted_output,
+        min_output,
+        missed_flushes,
+        max_misses,
     });
 }
 
@@ -342,6 +411,7 @@ public(package) fun emit_supply_filled(
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
+    requests_pending_after: u64,
 ) {
     event::emit(SupplyFilled {
         pool_vault_id,
@@ -350,6 +420,7 @@ public(package) fun emit_supply_filled(
         index,
         dusdc_amount,
         shares_minted,
+        requests_pending_after,
     });
 }
 
@@ -360,6 +431,7 @@ public(package) fun emit_withdraw_filled(
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    requests_pending_after: u64,
 ) {
     event::emit(WithdrawFilled {
         pool_vault_id,
@@ -368,6 +440,7 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
+        requests_pending_after,
     });
 }
 
@@ -383,6 +456,7 @@ public(package) fun emit_flush_executed(
     withdrawals_filled: u64,
     requests_processed: u64,
     idle_balance_after: u64,
+    total_supply_after: u64,
 ) {
     event::emit(FlushExecuted {
         pool_vault_id,
@@ -396,6 +470,7 @@ public(package) fun emit_flush_executed(
         withdrawals_filled,
         requests_processed,
         idle_balance_after,
+        total_supply_after,
     });
 }
 

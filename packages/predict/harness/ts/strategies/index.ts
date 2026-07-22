@@ -3,6 +3,9 @@
 import { type Strategy } from "../strategy.js";
 import batchMaxBook from "./batchMaxBook.js";
 import batchMaxMarkets from "./batchMaxMarkets.js";
+import cleanoutGas from "./cleanoutGas.js";
+import claimMarginal from "./claimMarginal.js";
+import cleanoutGasLiq from "./cleanoutGasLiq.js";
 import fuzz from "./fuzz.js";
 import liqChurn from "./liqChurn.js";
 import mintBatch from "./mintBatch.js";
@@ -11,6 +14,9 @@ import mixedChurn from "./mixedChurn.js";
 import navStress from "./navStress.js";
 import navStressAtm from "./navStressAtm.js";
 import navStressMulti from "./navStressMulti.js";
+import navStressNodes from "./navStressNodes.js";
+import treeNodeCumulative from "./treeNodeCumulative.js";
+import treeNodeSweep from "./treeNodeSweep.js";
 
 export const STRATEGIES: Record<string, Strategy> = {
   [fuzz.name]: fuzz,
@@ -20,9 +26,15 @@ export const STRATEGIES: Record<string, Strategy> = {
   [navStress.name]: navStress,
   [navStressAtm.name]: navStressAtm,
   [navStressMulti.name]: navStressMulti,
+  [navStressNodes.name]: navStressNodes,
   [mintBatch.name]: mintBatch,
   [batchMaxBook.name]: batchMaxBook,
   [batchMaxMarkets.name]: batchMaxMarkets,
+  [treeNodeSweep.name]: treeNodeSweep,
+  [treeNodeCumulative.name]: treeNodeCumulative,
+  [cleanoutGas.name]: cleanoutGas,
+  [cleanoutGasLiq.name]: cleanoutGasLiq,
+  [claimMarginal.name]: claimMarginal,
 };
 
 export function getStrategy(name: string): Strategy {

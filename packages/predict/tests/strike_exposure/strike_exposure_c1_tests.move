@@ -7,7 +7,7 @@
 ///
 /// Before the fix, a partial close removed `close_q - mul(remove_fs, T)` from the
 /// payout tree, leaving residual `R = remaining_q - mul(old_fs,T) + mul(remove_fs,T)`,
-/// while `close_settled_order` recomputes `P = remaining_q - mul(remaining_fs,T)`.
+/// while `quote_settled_close` recomputes `P = remaining_q - mul(remaining_fs,T)`.
 /// Round-down `mul` is sub-additive (`mul(old_fs,T) >= mul(remove_fs,T) + mul(remaining_fs,T)`,
 /// gap in {0,1}), so `R <= P` and `settled_payout_liability - payout` underflowed
 /// when the gap was 1, stranding the payout. The fix removes the order's full
@@ -21,7 +21,13 @@
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
+use deepbook_predict::{
+    constants,
+    flow_test_helpers as helpers,
+    order,
+    strike_exposure_config,
+    test_constants
+};
 use std::unit_test::assert_eq;
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
@@ -52,6 +58,101 @@ fun partial_close_survivor_stays_backed() {
 #[test]
 fun double_partial_close_survivor_reinsertion_stays_backed() {
     run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE]);
+}
+
+// === Near-expiry no-leverage window (end-to-end through the real entrypoints) ===
+//
+// The config unit tests pass `time_to_expiry_ms` directly, so they cannot prove the
+// mint flow derives it from the clock. These drive the real entrypoints against a
+// market ~2 minutes from expiry (`short_expiry_ms - now_ms`), well inside the 1h
+// window, and so pin the clock threading itself.
+
+/// A 2x mint through `mint_exact_quantity` is refused inside the window.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun near_expiry_leverage_exact_quantity_mint_rejected() {
+    let mut fx = helpers::setup_market_default();
+    // Re-enable the block (flow fixtures disable it) BEFORE market creation so the
+    // market snapshots the 1h window.
+    fx.set_template_no_leverage_window_ms(constants::one_hour_ms!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_X,
+    );
+    abort 999
+}
+
+/// The sizing path reaches the cap through a different interior gate than the
+/// exact path — `quote_mint_terms` runs the pre-probe policy assert before its
+/// budget search — so it needs its own end-to-end proof: a 2x sized mint inside
+/// the window is refused through `mint_exact_amount` too.
+#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
+fun near_expiry_leverage_exact_amount_mint_rejected() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_no_leverage_window_ms(constants::one_hour_ms!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        constants::position_lot_size!(),
+        LEVERAGE_TWO_X,
+    );
+    abort 999
+}
+
+/// The window withholds leverage, it does not halt trading: an unleveraged mint on
+/// the same near-expiry market still succeeds end-to-end and opens a real position
+/// with a zero floor.
+///
+/// Needs more market cash than the leveraged tests above: payout backing is
+/// `quantity - floor_shares`, and a 1x order's floor is zero, so it backs its full
+/// quantity where a 2x order of the same size backs only half.
+#[test]
+fun near_expiry_one_x_mint_still_succeeds() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_no_leverage_window_ms(constants::one_hour_ms!());
+    fx.set_default_cadence_allocation(LARGE_MARKET_CASH, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(helpers::market_mut(&mut market), LARGE_MARKET_CASH);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+
+    // 1x carries no financed amount, so the minted order's static floor is zero.
+    let minted = order::from_order_id(order_id);
+    assert_eq!(minted.quantity(), test_constants::mint_quantity());
+    assert_eq!(minted.floor_shares(), 0);
+    assert!(!minted.is_leveraged());
+    assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 /// Closing a max-sized 6x ATM order down to one lot must leave a valid replacement.

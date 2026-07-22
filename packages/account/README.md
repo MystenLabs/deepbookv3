@@ -24,6 +24,7 @@ public struct AccountWrapper has key {
 public struct Account has store {
     account_id: UID,
     owner: address,
+    receive_address: address,
     balances: Bag,
     settlements: Bag,
 }
@@ -33,10 +34,12 @@ public struct Account has store {
 to load an account. `Account` is embedded inside it and is not a standalone shared
 object.
 
-`Account.account_id()` returns the canonical account ID. This is also the object
-address used for accumulator settlement and the dynamic-field root used for app
-data. `Account.receive_address()` returns the same identity as an address, suitable
-for `balance::send_funds`.
+`Account.account_id()` returns the canonical account ID: the dynamic-field root
+used for app data and the identity events emit. `Account.receive_address()` returns
+the **wrapper object's address** — the accumulator/funds-receive anchor. Coins are
+delivered to and settled from the wrapper address, because only a real shared
+object's UID can back an address-balance withdrawal (the nested `account_id` UID
+never can). Use `receive_address` for `balance::send_funds`, never the account ID.
 
 ### `account::account_registry`
 
@@ -62,25 +65,29 @@ public fun derived_address(registry: &AccountRegistry, owner: address): address
 public fun derived_wrapper_address(registry: &AccountRegistry, owner: address): address
 ```
 
-`derived_address` is the canonical account identity. Use it for events,
-account-local storage, and accumulator delivery. `derived_wrapper_address`
-identifies the shared wrapper object that must be passed to load the account.
+`derived_address` is the canonical account identity. Use it for events and
+account-local storage. `derived_wrapper_address` identifies the shared wrapper
+object that must be passed to load the account — and, because the wrapper is the
+funds-receive anchor, its address is also where accumulator funds are delivered.
 Call `.to_id()` on either address when an object ID is needed.
 
 ## Identity Model
 
 Each owner gets two derived IDs under the registry root:
 
-- canonical account ID: app data root, accumulator receive address, and event
-  `account_id`
-- wrapper ID: shared object handle that gates account loading
+- canonical account ID: app data root and event `account_id`
+- wrapper ID: shared object handle that gates account loading; its address is the
+  accumulator/funds-receive anchor (`Account.receive_address`)
 
 The canonical account ID is the account's public identity. The wrapper ID is an
 implementation detail needed because Sui shared objects are what transactions pass
-and borrow.
+and borrow — and, for the same reason, the only identity that can anchor
+address-balance custody.
 
-This split keeps LP fills and other accumulator-delivered funds consistent with
-events: when an event emits `account_id`, that ID's address is also where coins are
+LP fills and other accumulator-delivered funds therefore land at the wrapper
+address (`receive_address`), not at the `account_id` address: an event's
+`account_id` names *which* account, and `receive_address` (read it off the account,
+or derive it via `derived_wrapper_address`) names *where* that account's coins are
 delivered.
 
 The wrapper model intentionally serializes mutable access to one account: two

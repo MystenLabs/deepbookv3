@@ -85,6 +85,13 @@ public struct ConditionalOrderPriceOutOfBounds has copy, drop {
     timestamp: u64,
 }
 
+public struct ConditionalOrderBelowLiquidation has copy, drop {
+    manager_id: ID,
+    conditional_order_id: u64,
+    conditional_order: ConditionalOrder,
+    timestamp: u64,
+}
+
 // === Public Functions ===
 public fun new_condition(trigger_below_price: bool, trigger_price: u64): Condition {
     Condition {
@@ -461,6 +468,26 @@ public(package) fun emit_price_out_of_bounds_event(
     let conditional_order = self.get_conditional_order(conditional_order_id);
     if (conditional_order.is_some()) {
         event::emit(ConditionalOrderPriceOutOfBounds {
+            manager_id,
+            conditional_order_id,
+            conditional_order: conditional_order.destroy_some(),
+            timestamp: clock.timestamp_ms(),
+        });
+    };
+}
+
+/// Emitted when a triggered conditional *limit* order is cancelled because the manager
+/// is below the liquidation floor — distinct from a price-band cancel, so the reason
+/// surfaced to the user is accurate rather than a misleading `PriceOutOfBounds`.
+public(package) fun emit_below_liquidation_event(
+    self: &TakeProfitStopLoss,
+    manager_id: ID,
+    conditional_order_id: u64,
+    clock: &Clock,
+) {
+    let conditional_order = self.get_conditional_order(conditional_order_id);
+    if (conditional_order.is_some()) {
+        event::emit(ConditionalOrderBelowLiquidation {
             manager_id,
             conditional_order_id,
             conditional_order: conditional_order.destroy_some(),

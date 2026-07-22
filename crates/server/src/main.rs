@@ -22,6 +22,7 @@ struct Args {
         default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
     )]
     database_url: Url,
+    /// Full node gRPC endpoint (`sui.rpc.v2`). Same host/port as the old JSON-RPC URL.
     #[clap(env, long, default_value = "https://fullnode.mainnet.sui.io:443")]
     rpc_url: Url,
     #[clap(

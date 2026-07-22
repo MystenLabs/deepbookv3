@@ -25,19 +25,19 @@ PLP is registered as a 6-decimal currency, matching DUSDC's 6 decimals. Fixed-po
 
 LPs do not mint or burn PLP synchronously against a live valuation. Instead they **queue a request** that a later flush prices and fills at one pool-wide mark. This decouples the LP's transaction from the (privileged, oracle-reading) valuation, so an LP can never time their entry or exit against a self-supplied oracle snapshot.
 
-- **`request_supply`** escrows a DUSDC payment and records the requesting account's receive address as the fill recipient. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
-- **`request_withdraw`** escrows PLP and likewise records the account recipient, returning a queue index.
+- **`request_supply`** escrows a DUSDC payment, records the requesting account's receive address as the fill recipient, and stores `min_plp_out`, the minimum PLP the frozen mark must mint. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
+- **`request_withdraw`** escrows PLP, records the account recipient, and stores `min_dusdc_out`, the minimum DUSDC the frozen mark must pay. It returns a queue index.
 - **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
 
-Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush drains them or the LP cancels.
+Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush fills or refunds the request, a live limit miss carries it, or the LP cancels it.
 
 ## The flush: one frozen mark for both sides
 
-A daily **flush** values the whole pool once and drains both queues against that single frozen mark. It is a transaction-local **hot potato** with a strict three-phase shape:
+A daily **flush** values the whole pool once and attempts to drain both queues against that single frozen mark, filling only eligible heads. It is a transaction-local **hot potato** with a strict three-phase shape:
 
 1. **`start_pool_valuation`** engages the valuation lock in `ProtocolConfig` and snapshots the set of active expiry markets into the potato (`PoolValuation`).
 2. **`value_expiry`** is called once per snapshotted market. Each call rebalances that market's cash against the pool (top up / sweep, described below), then folds the market's NAV into a running total — a settled market contributes `0`; a live market contributes its exact `current_nav`.
-3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, drains both queues against it, releases the lock, and consumes the potato.
+3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, runs the queue drain against it, releases the lock, and consumes the potato.
 
 The potato has no abilities, so the sequence cannot be left half-finished: the only way to release the lock is to finish.
 
@@ -75,7 +75,7 @@ There is **no band, no separate supply/withdraw pricing, and no optimistic/conse
 
 ```mermaid
 flowchart TD
-  CAP[AdminCap / MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
+  CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
   LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
   EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
   NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]
@@ -85,10 +85,10 @@ flowchart TD
 
 ### Draining the queues
 
-`lp_book::drain` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` drains that queue fully. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
+`lp_book::drain` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` makes that queue unbounded. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
 
-- **Supplies pass (FIFO from the head).** Each request mints `supply_shares(amount, total_supply, pool_nav)` PLP and joins the escrowed DUSDC into idle. A request whose shares round to **zero** (dust, reachable only at a near-zero pool NAV) currently aborts the whole flush with `EInvalidDrainMark`; it is unblocked only by the request owner cancelling. Skipping or refunding the degenerate head instead is intended but not yet implemented (tracked as open item C-4).
-- **Withdrawals pass (FIFO until idle is dry).** Each request burns its escrowed PLP and pays `withdraw_dusdc(shares, total_supply, pool_nav)` DUSDC out of idle. A dust request that rounds to zero payout has the same current abort behavior as a dust supply (C-4). If idle cannot cover the head request's payout, the drain **stops** and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.
+- **Supplies pass (FIFO from the head).** Each executable request whose quote satisfies `min_plp_out` mints `supply_shares(amount, total_supply, pool_nav)` PLP and joins the escrowed DUSDC into idle. A head supply whose mark or quote is non-executable — PLP price outside the executable band, zero-share output, or u64 overflow — is protocol-cancelled and refunded instead of aborting the flush; it counts against the supply budget because the queue head was processed. If the quote is executable but below `min_plp_out`, the request records a limit miss, remains queued at the head, spends one processed-budget unit, and stops the supply pass for this flush. On its third miss it expires and is refunded instead of carrying again.
+- **Withdrawals pass (FIFO until idle is dry).** Each executable request whose quote satisfies `min_dusdc_out` burns its escrowed PLP and pays `withdraw_dusdc(shares, total_supply, pool_nav)` DUSDC out of idle. A head withdrawal whose mark or quote is non-executable is protocol-cancelled and refunded, counting against the withdraw budget. If the quote is executable but below `min_dusdc_out`, the request follows the same three-miss carry-then-refund rule as supply. If the quote is valid and limit-satisfying but idle cannot cover the head request's payout, the drain **stops** without spending withdraw budget and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.
 
 Because supplies run before withdrawals, the DUSDC supplied this flush is available to pay this flush's withdrawals. Cash funded into expiries is not directly redeemable until it returns through rebalance or settlement, so a large exit can be bounded by idle and deferred — it cannot force-drain a live market.
 
@@ -121,7 +121,7 @@ Subtracting `correction_value` is the leveraged contracts' floor offset, applied
 
 ### Past-expiry settlement liveness
 
-`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Before `value_expiry` chooses the live branch, it passively calls `ensure_settled`: if Propbook has an exact normalized Pyth spot at the expiry timestamp, the market records settlement, is swept off the active set, and contributes `0` to that flush's active NAV.
+`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Settlement is a separate PTB command: the keeper inserts the exact normalized Pyth spot and calls `try_settle` before `value_expiry`. A settled market is swept off the active set and contributes `0`; an expired unsettled market moves no cash and then aborts through `current_nav` until settlement succeeds.
 
 If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
 
