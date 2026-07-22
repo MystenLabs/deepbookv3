@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-08. This is the tracked register of **settled response-policy
+Updated 2026-07-21. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -634,6 +634,66 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-17: The NAV mark values a knocked-out order at its liquidated worth (resolves P-10)
+
+- **Trigger state:** at the valuation prices, an active leveraged order's live
+  gross value is at or below its knock-out threshold
+  (`gross <= floor_shares / liquidation_ltv`) — the liquidatable band
+  `(floor, floor/ltv]` plus the underwater tail — while a NAV mark is computed
+  (every `current_nav`, including the flush lane `plp::value_expiry`).
+- **Controller:** market (prices move orders into the band between keeper
+  sweeps) × protocol (whether the mark prices those claims at holder value).
+- **Blast radius:** the single frozen mark that fills both LP queues. Marking a
+  liquidatable order at holder value (`range_value - floor`) understates
+  recoverable value by up to the LTV buffer per order, diluting incumbent LPs on
+  a same-flush supply and contradicting the exact-mark framing (RP-1; the
+  NAV-mark directional invariant).
+- **Response:** value the knock-out at its liquidated worth in the read-only NAV
+  correction, without touching the book. `exact_live_liability` already walks the
+  payout tree once and subtracts the leveraged floor correction
+  (`liquidation_book::correction_value`); that correction now credits a
+  knocked-out order's full `range_value` — using the same threshold the close
+  flow and ambient sweep apply (`gross <= div(floor_shares, liquidation_ltv)`) —
+  instead of the `min(range_value, floor)` floor cap, so the order's live
+  liability marks at zero. The order is not liquidated here: the existing ambient
+  sweep liquidates it on its own cadence, so valuation stays a pure read with no
+  tree mutation, no event, and no per-flush kill pass. A book with zero
+  knocked-out orders produces a correction identical to the prior formula, so the
+  mark is unchanged for healthy books.
+- **Reasoning:** the mark must never price a claim the protocol would not honor.
+  Crediting the knock-out at its liquidated value removes the conservative band
+  in the lane where the mark moves money (LP fills), matching what the sweep will
+  realize, while keeping NAV a side-effect-free read. Deferring the actual
+  liquidation to the sweep leaves a window where the mark anticipates a
+  liquidation the book has not yet applied — the same window the sweep lag
+  already carries, and one that moves no money, because the mark only sets LP
+  fill prices, not holder payouts.
+- **Residual:** the credit uses each order's per-order `range_value`, which
+  differs from that order's aggregated payout-tree contribution by the
+  boundary-aggregation rounding of P-13 (at most one raw unit per boundary), so a
+  flush that credits a knock-out lands within P-13's band on the same side. This
+  is the accepted P-13 residual, not a new class.
+- **Risk profile:** `BEST-GUESS` — reachability depends on prices moving orders
+  into the band between sweeps. Cost is the read-only scan over the active
+  leveraged set that `correction_value` already walks on every valuation; no tree
+  mutation, event, or extra traversal enters the C-1 budget, so the worst case is
+  cost-identical to a healthy flush.
+- **Pinning tests:** `current_nav_flow_tests.move` —
+  `single_leveraged_order_above_floor` (a survivor above the band keeps the floor
+  cap, so the correction is unchanged) and
+  `single_leveraged_order_underwater_nets_to_zero` (the deep-underwater tail,
+  which both formulas zero) constrain the endpoints. The band case `(floor,
+  floor/ltv]`, where the credit differs from the old floor cap, still needs a
+  dedicated pin on a high-variance surface (a leveraged order priced into the
+  band marks at zero live liability, raising NAV above the floor-capped value);
+  tracked as the follow-up test for this policy.
+- **Reopen when:** the LP flush stops using one shared mark for both queues; or a
+  product decision requires the book to be liquidated in-pass rather than by the
+  sweep (reintroducing the mutation and its gas profile); or the P-13
+  boundary-aggregation residual is closed and the credit must become exact.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
@@ -687,6 +747,33 @@ contribution, live redeem, settled payout, liquidation, fees and discounts,
 rebate reserve, LP supply/withdraw pricing, NAV floor correction. If a flow
 can underflow or round toward the user, fix it or document the accepted
 tradeoff explicitly.
+
+---
+
+## Pricing and valuation deviation bounds (ratified 2026-07-22)
+
+Ratified accuracy ceilings for every derived price and valuation, distinct from
+the R1–R3 accounting-dust policy above (which governs one-ulp money-movement
+rounding, not model-evaluation accuracy):
+
+- **Contract price:** a computed range / UP price must not deviate from its true
+  real-math value by more than **0.1%** (relative, in the 1c–99c tradeable band).
+- **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
+  more than **1%** (relative).
+
+Enforcement is by independent-reference test, not model judgment, and is in fact
+tighter than the ceilings. The price bound is guarded by the generated pricing
+reference (`packages/predict/tests/pricing/pricing_reference_data.move`, built by
+`generate_pricing_reference.py` from real Block Scholes surfaces against a
+true-math reference), whose per-scenario analytic fixed-point tolerance sits well
+inside 0.1% — but only where the dataset has scenarios. It must therefore cover
+the full deployed variance range, short-dated included, or the bound goes
+unenforced exactly where it is tightest: `1/sqrt(w)` conditioning makes low
+variance the worst case, which is the gap open item P-14 records. The NAV bound
+is guarded by the `current_nav_flow_tests` independent oracle. A pricer or
+valuation change that would breach either ceiling on any deployable surface is a
+defect to fix, not an accepted tradeoff — this is the line between negligible and
+worth-fixing.
 
 ---
 

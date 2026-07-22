@@ -57,14 +57,22 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
     offset < page.order_ids.length() && page.order_ids[offset] == order_id
 }
 
-/// Sum the NAV floor-correction term over the active leveraged book:
-/// `Σ min(qty·range_price(lower, higher), floor_shares)`.
+/// Sum the NAV floor-correction term over the active leveraged book. A leveraged
+/// order at or below its knock-out threshold at these prices (`gross <= floor /
+/// ltv`) will be liquidated by the ambient sweep and owes nothing above its
+/// separately reserved floor, so the flush marks its live liability at zero by
+/// crediting the full `range_value`; every other order keeps the
+/// `min(range_value, floor_shares)` floor cap. With zero knocked-out orders the
+/// sum is identical to the plain `Σ min(qty·range_price(lower, higher), floor_shares)`.
 ///
-/// One-x orders are never inserted and liquidated orders are removed. Boundary
-/// prices come from the payout walk's memo, and every finite leveraged boundary
-/// must be present there. The correction is rounded and capped independently for
-/// each still-active leveraged order; it does not apply the liquidation threshold.
-public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): u64 {
+/// One-x orders are never inserted and already-liquidated orders are removed.
+/// Boundary prices come from the payout walk's memo, and every finite leveraged
+/// boundary must be present there.
+public(package) fun correction_value(
+    book: &LiquidationBook,
+    memo: &PriceMemo,
+    liquidation_ltv: u64,
+): u64 {
     let mut correction = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
@@ -74,7 +82,15 @@ public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): 
             memo.cached_range_price(order.lower_tick(), order.higher_tick()),
             order.quantity(),
         );
-        correction = correction + range_value.min(order.floor_shares());
+        // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
+        // owes nothing above its separately reserved floor, so mark its live
+        // liability at zero — credit the full range value, not the floor cap.
+        let cap = if (range_value <= math::div(order.floor_shares(), liquidation_ltv)) {
+            range_value
+        } else {
+            range_value.min(order.floor_shares())
+        };
+        correction = correction + cap;
         cursor = book.next_cursor(scan);
     };
     correction

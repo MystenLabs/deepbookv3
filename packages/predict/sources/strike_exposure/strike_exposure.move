@@ -207,14 +207,21 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 }
 
 /// Return the live marked liability as the aggregate boundary-linear term minus
-/// `Σ_active_leveraged min(order_range_value, floor_shares)`. Boundary aggregation
-/// and per-order correction round at different points, so subtraction saturates at
-/// zero. A still-active order in the liquidation band contributes its positive
-/// `range_value - floor_shares` until a close or liquidation pass removes it.
+/// the leveraged floor correction. A knocked-out order (gross at or below
+/// `floor_shares / liquidation_ltv`) is marked at zero live liability, so the
+/// flush mark never prices a claim above what the protocol honors once the
+/// ambient sweep liquidates it; every other order contributes its positive
+/// `range_value - floor_shares`. Boundary aggregation and per-order correction
+/// round at different points, so the subtraction saturates at zero.
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
-    let correction = exposure.liquidation.correction_value(&memo);
+    let correction = exposure
+        .liquidation
+        .correction_value(
+            &memo,
+            exposure.config.liquidation_ltv(),
+        );
     linear.saturating_sub(correction)
 }
 
