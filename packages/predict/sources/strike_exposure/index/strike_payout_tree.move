@@ -439,12 +439,11 @@ fun walk_linear_subtree(
     );
 
     let price = memo.price_and_cache(pricer, tick, tick_size);
-    let mut local = approx::exact_u64(0);
-    if (node.local_start.quantity != node.local_end.quantity) {
-        let start_quantity = approx::exact_u64(node.local_start.quantity);
-        let end_quantity = approx::exact_u64(node.local_end.quantity);
-        local = price.mul_scaled(&start_quantity).sub(&price.mul_scaled(&end_quantity));
-    };
+    let local = boundary_linear_value(
+        &price,
+        node.local_start.quantity,
+        node.local_end.quantity,
+    );
 
     let right = walk_linear_subtree(
         nodes,
@@ -454,6 +453,23 @@ fun walk_linear_subtree(
         memo,
     );
     left.add(&local).add(&right)
+}
+
+/// Price one signed boundary delta while retaining the scalar path's two separate
+/// product floors. The same uncertain price multiplies both sides, so its error is
+/// correlated and scales with `|start - end|`, not `start + end`; two raw units
+/// conservatively cover the independently rounded scalar products.
+fun boundary_linear_value(price: &Approx, start_quantity: u64, end_quantity: u64): Approx {
+    if (start_quantity == end_quantity) return approx::exact_u64(0);
+
+    let start = price.mul_scaled(&approx::exact_u64(start_quantity));
+    let end = price.mul_scaled(&approx::exact_u64(end_quantity));
+    let net_quantity = start_quantity.diff(end_quantity);
+    let correlated_error = price
+        .mul_scaled(&approx::exact_u64(net_quantity))
+        .error()
+        .saturating_add(1);
+    approx::from_parts(start.value().sub(&end.value()), correlated_error)
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {

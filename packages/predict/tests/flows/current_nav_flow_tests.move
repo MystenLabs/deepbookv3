@@ -31,7 +31,7 @@ use deepbook_predict::{
     range_codec,
     test_constants
 };
-use fixed_math::math::{Self, float_scaling as float};
+use fixed_math::{approx::Approx, math::{Self, float_scaling as float}};
 use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
@@ -64,6 +64,10 @@ fun empty_live_market_values_at_free_cash() {
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, test_constants::default_seeded_expiry_cash());
     check_nav(&fx, &market, vector[], float!());
+    let pricer = fx.load_pricer_bundle(&market);
+    let approximate = helpers::market(&market).current_nav_approx(&pricer);
+    assert_eq!(approximate.magnitude(), nav);
+    assert_eq!(approximate.error(), 0);
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -86,6 +90,7 @@ fun single_one_x_up_order() {
     );
 
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -111,6 +116,7 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -171,6 +177,7 @@ fun single_leveraged_order_above_floor() {
     // value = mul(0.5, 2e9) = 1e9 > floor = mul(floor_shares 5e8, 1.0) = 5e8, so the
     // correction min() picks the floor and the order's net liability is 5e8.
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -203,6 +210,7 @@ fun single_leveraged_order_underwater_nets_to_zero() {
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve()));
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -264,6 +272,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     // so NAV rises to the knock-out-aware reference — above the old floor-capped
     // mark. `check_nav` asserts `current_nav` equals that independent reference.
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -378,6 +387,53 @@ fun check_nav(
     let expiry_market = helpers::market(market);
     assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids, index_now));
     helpers::assert_market_backed(expiry_market);
+}
+
+/// Compose the certified range-price ball through one order's quantity, fixed
+/// correction branch, liability clamp, and cash subtraction. Pricing correctness
+/// is covered independently; this checks that the NAV layer encloses both outward
+/// price endpoints without changing its scalar center.
+fun check_single_order_nav_enclosure(
+    fx: &helpers::Fixture,
+    market: &helpers::MarketBundle,
+    order_id: u256,
+) {
+    let pricer = fx.load_pricer_bundle(market);
+    let expiry_market = helpers::market(market);
+    let decoded = order::from_order_id(order_id);
+    let lower = range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size());
+    let higher = range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size());
+    let price = pricer.range_price_approx(lower, higher);
+    let price_low = price.magnitude().saturating_sub(price.error());
+    let price_high = price.magnitude().saturating_add(price.error()).min(float!());
+
+    let canonical_gross = math::mul(price.magnitude(), decoded.quantity());
+    let knocked_out =
+        decoded.floor_shares() > 0
+            && canonical_gross <= math::div(decoded.floor_shares(), expiry_market.liquidation_ltv());
+    let (liability_low, liability_high) = if (knocked_out) {
+        (0, 0)
+    } else {
+        let gross_low = math::mul_div_down(price_low, decoded.quantity(), float!());
+        let gross_high = math::mul_div_up(price_high, decoded.quantity(), float!());
+        (
+            gross_low.saturating_sub(decoded.floor_shares()),
+            gross_high.saturating_sub(decoded.floor_shares()),
+        )
+    };
+
+    let free_cash = expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve());
+    let nav_low = free_cash.saturating_sub(liability_high);
+    let nav_high = free_cash.saturating_sub(liability_low);
+    let approximate = expiry_market.current_nav_approx(&pricer);
+    assert_eq!(approximate.magnitude(), expiry_market.current_nav(&pricer));
+    assert_contains(&approximate, nav_low);
+    assert_contains(&approximate, nav_high);
+}
+
+fun assert_contains(ball: &Approx, candidate: u64) {
+    assert!(!ball.is_negative());
+    assert!(ball.magnitude().diff(candidate) <= ball.error());
 }
 
 /// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ contribution` per

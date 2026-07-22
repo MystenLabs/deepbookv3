@@ -38,6 +38,8 @@ const Q0: u64 = 10_000_000_000;
 const Q1: u64 = 2_000_000_000;
 const Q2: u64 = 2_000_000_000;
 const ADJACENT_QUANTITY: u64 = 5_000_000_000;
+const CORRELATED_LEFT_QUANTITY: u64 = 5_000_000_000;
+const CORRELATED_RIGHT_QUANTITY: u64 = 4_000_000_000;
 /// Forward far above the grid so low strikes sit in the deep-ITM flat price tail
 /// where adjacent ticks price within a floor bucket — the dust-underflow regime.
 const FLAT_REGION_FORWARD: u64 = 435_000_000_000;
@@ -135,6 +137,45 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
 }
 
 #[test]
+fun shared_boundary_error_scales_with_net_not_gross_quantity() {
+    let (mut fixture, oracle, pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let (t0, t1, t2) = clustered_ticks();
+    tree.insert_range(t0, t1, CORRELATED_LEFT_QUANTITY, 0);
+    tree.insert_range(t1, t2, CORRELATED_RIGHT_QUANTITY, 0);
+
+    let mut memo = pricing::new_price_memo();
+    let approximate = tree.walk_linear_approx(&pricer, &mut memo, tick_size());
+    assert_eq!(
+        approximate.magnitude(),
+        range_reference(
+            &pricer,
+            vector[t0, t1],
+            vector[t1, t2],
+            vector[CORRELATED_LEFT_QUANTITY, CORRELATED_RIGHT_QUANTITY],
+        ),
+    );
+
+    let shared_net = CORRELATED_LEFT_QUANTITY - CORRELATED_RIGHT_QUANTITY;
+    let expected_shared = expected_boundary_error(&memo, t1, shared_net);
+    let uncorrelated_shared = expected_boundary_error(
+        &memo,
+        t1,
+        CORRELATED_LEFT_QUANTITY + CORRELATED_RIGHT_QUANTITY,
+    );
+    assert!(expected_shared < uncorrelated_shared);
+    assert_eq!(
+        approximate.error(),
+        expected_boundary_error(&memo, t0, CORRELATED_LEFT_QUANTITY)
+            + expected_shared
+            + expected_boundary_error(&memo, t2, CORRELATED_RIGHT_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test]
 fun walk_linear_clamps_boundary_aggregation_dust() {
     let (mut fixture, oracle, pricer) = live_pricer_at(FLAT_REGION_FORWARD);
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
@@ -223,6 +264,13 @@ fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     tree.walk_linear(pricer, &mut memo, tick_size())
+}
+
+/// Independent error budget for one boundary with one shared uncertain UP price:
+/// `ceil(price_error * |start-end| / 1e9)` plus two product-floor units.
+fun expected_boundary_error(memo: &pricing::PriceMemo, tick: u64, net_quantity: u64): u64 {
+    let price = memo.cached_range_price_approx(tick, constants::pos_inf_tick!());
+    math::mul_div_up(price.error(), net_quantity, math::float_scaling!()) + 2
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
