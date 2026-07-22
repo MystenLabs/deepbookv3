@@ -216,10 +216,12 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
     let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
-    let correction = exposure.liquidation.correction_value(
-        &memo,
-        exposure.config.liquidation_ltv(),
-    );
+    let correction = exposure
+        .liquidation
+        .correction_value(
+            &memo,
+            exposure.config.liquidation_ltv(),
+        );
     linear.saturating_sub(correction)
 }
 
