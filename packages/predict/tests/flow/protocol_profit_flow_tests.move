@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Cross-market terminal profit ordering: the protocol cut should reserve the
-/// share of NET pool profit regardless of which settled expiry is swept first.
-/// The loss-first order does; the profit-first order books the cut against the
-/// gross profit before the offsetting loss is carried, so its sibling fails —
-/// the enrolled production finding on the reserve's accrual basis.
+/// Cross-market terminal profit ordering (RP-16 accepted timing property):
+/// the loss-first sweep order books the loss into the carry first, so the
+/// offset profit takes no cut; the profit-first order front-loads the cut on
+/// the gross recognized profit and the later loss never claws it back — the
+/// front-load is repaid by suppressed cuts on subsequent profits.
 #[test_only]
 module deepbook_predict::scope_flow__intent_policy__protocol_profit_tests;
 
@@ -38,11 +38,18 @@ const TRADER_DEPOSIT: u64 = 1_020_100_000; // both all-in costs
 const PROFIT_SETTLE_SPOT: u64 = 200_000_000_000; // above (90, 100]: trader loses
 const LOSS_SETTLE_SPOT: u64 = 95_000_000_000; // inside (90, 100]: trader wins
 const LOSS_SURFACE_TIMESTAMP_MS: u64 = 119_100; // after the profit market's row
-// Net pool P&L is 10.05e6 profit minus 995e6 loss: negative, so the
-// order-independent protocol cut is zero.
+// Net pool P&L is 10.05e6 profit minus 995e6 loss: negative, so the loss-first
+// order (loss books into the carry before the profit) takes no cut.
 const NET_POOL_PROFIT_CUT: u64 = 0;
 // Sweeps return 10_010.05e6 and 9_005e6; with a zero cut all of it is idle.
 const IDLE_AFTER_BOTH_SWEEPS: u64 = 19_015_050_000;
+// Profit-first order: the cut books at the profit sweep against the gross
+// 10.05e6 recognized profit with an empty carry — 0.4 x 10.05e6 = 4.02e6.
+const GROSS_PROFIT_CUT: u64 = 4_020_000;
+// Idle after the profit sweep alone: 10_010.05e6 minus the 4.02e6 cut.
+const IDLE_AFTER_PROFIT_SWEEP: u64 = 10_006_030_000;
+// Idle after both sweeps in profit-first order: 19_015.05e6 minus 4.02e6.
+const IDLE_AFTER_PROFIT_FIRST_SWEEPS: u64 = 19_011_030_000;
 
 #[test]
 fun loss_first_sweep_reserves_share_of_net_pool_profit() {
@@ -237,9 +244,8 @@ fun loss_first_sweep_reserves_share_of_net_pool_profit() {
     test_world::finish(world, resources);
 }
 
-// KNOWN-FAILING: P-8
 #[test]
-fun profit_first_sweep_reserves_share_of_net_pool_profit() {
+fun profit_first_sweep_front_loads_cut_on_gross_recognized_profit() {
     let (mut world, mut resources) = test_world::new(
         test_values::system(),
         test_values::admin(),
@@ -406,26 +412,27 @@ fun profit_first_sweep_reserves_share_of_net_pool_profit() {
     return_shared(l_market);
     return_shared(p_market);
 
-    // Profit-first sweep order: sweeping the profitable expiry before the
-    // offsetting loss should still reserve only the share of NET pool profit
-    // (zero here). The permissionless ordering must not change what the
-    // protocol keeps — this is the enrolled production finding: the cut books
-    // against gross recognized profit and the later loss never claws it back.
+    // Profit-first sweep order (RP-16): the cut books at the profit sweep
+    // against the gross recognized profit — the carry is empty, so the full
+    // 0.4 share of 10.05e6 is reserved immediately.
     test_world::next_tx(&mut world, test_values::admin());
     let mut vault = test_world::take_vault(&world);
     let mut p_market = market_setup::take_market(&world, &profit_market);
     let config = test_world::take_config(&world);
     vault.rebalance_expiry_cash(&mut p_market, &config, test_world::clock(&resources));
+    assert_eq!(vault.protocol_reserve_balance(), GROSS_PROFIT_CUT);
+    assert_eq!(vault.idle_balance(), IDLE_AFTER_PROFIT_SWEEP);
     return_shared(config);
     return_shared(p_market);
     return_shared(vault);
+    // The later loss books into the carry and never claws the cut back.
     test_world::next_tx(&mut world, test_values::admin());
     let mut vault = test_world::take_vault(&world);
     let mut l_market = market_setup::take_market(&world, &loss_market);
     let config = test_world::take_config(&world);
     vault.rebalance_expiry_cash(&mut l_market, &config, test_world::clock(&resources));
-    assert_eq!(vault.protocol_reserve_balance(), NET_POOL_PROFIT_CUT);
-    assert_eq!(vault.idle_balance(), IDLE_AFTER_BOTH_SWEEPS);
+    assert_eq!(vault.protocol_reserve_balance(), GROSS_PROFIT_CUT);
+    assert_eq!(vault.idle_balance(), IDLE_AFTER_PROFIT_FIRST_SWEEPS);
     return_shared(config);
     return_shared(l_market);
     return_shared(vault);

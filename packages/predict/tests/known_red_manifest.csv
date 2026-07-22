@@ -1,3 +1,2 @@
 test,open_item,phase,summary
 deepbook_predict::scope_flow__intent_rounding__current_nav_red_tests::liquidatable_orders_leave_positive_aggregate_live_liability,P-14,6,Per-order floor correction leaves positive liability after every order is liquidatable
-deepbook_predict::scope_flow__intent_policy__protocol_profit_tests::profit_first_sweep_reserves_share_of_net_pool_profit,P-8,7,Permissionless profit-first sweep ordering reserves the protocol share of gross recognized profit instead of net pool profit

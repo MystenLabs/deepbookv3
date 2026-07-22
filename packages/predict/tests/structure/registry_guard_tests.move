@@ -55,6 +55,20 @@ fun cadence_configuration_requires_registered_underlying() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = market_manager::EUnderlyingNotRegistered)]
+fun cadence_enumeration_requires_registered_underlying() {
+    let (world, resources) = test_world::new(
+        test_values::system(),
+        test_values::admin(),
+        test_values::now_ms(),
+    );
+    let registry = test_world::take_registry(&world);
+    let _configs = registry.cadence_configs(test_values::propbook_underlying_id());
+    return_shared(registry);
+    test_world::finish(world, resources);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = market_manager::EInvalidCadenceConfig)]
 fun partially_zero_cadence_configuration_aborts() {
     let (world, resources) = test_world::new(

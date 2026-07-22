@@ -566,6 +566,77 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-16: Protocol reserve is accrue-only; the cut is taken on booked terminal profit — accept + disclose (resolves P-8)
+
+- **Trigger state:** an expiry materializes terminal profit
+  (`pool_accounting::materialize_expiry_profit`, reached from a settled-market
+  sweep or a settled rebate-claim residual return); the protocol's share (`protocol_reserve_profit_share`) is split from
+  idle into `PoolVault.protocol_reserve_balance`, which has no
+  split/withdraw/claim entrypoint in the scoped packages. Separately,
+  cross-market sweep order is permissionless (`plp::rebalance_expiry_cash`), so
+  a profitable expiry can be swept while an offsetting loss — settled but not
+  yet swept, or still live — is not yet booked into `net_losses_to_fill`, and a
+  cut taken at that moment is never clawed back.
+- **Controller:** protocol (the materialization + loss-carry mechanism) ×
+  anyone (sweep ordering is a permissionless trigger).
+- **Blast radius:** LP-borne only. Reserve over-accrual per episode is bounded
+  by `share × losses concurrently unbooked at the sweep`; no holder funds, no
+  liveness path. The reserve itself is excluded from LP value at all times.
+- **Response:** accept both properties + disclose (`docs/risks.md`
+  § Liquidity-provider (PLP) risk). No withdraw path ships in this package:
+  the reserve's eventual use (buy-and-burn, withdrawal, incentive recycling,
+  solvency backstop) is deliberately undecided, and the entrypoint lands with
+  the package upgrade that decides it — a purely additive upgrade, so nothing
+  is reserved for it now. No cut-basis change ships either: the ordering
+  effect is accepted as a timing property, not queued as a fix.
+- **Reasoning:** cumulative materialized profit is structurally pinned to the
+  running peak of booked net P&L (`net_losses_to_fill` ≡ peak − current booked
+  net), so the lifetime cut equals the share of lifetime net whenever later
+  profits refill the carry — a profit-first ordering front-loads the cut and is
+  then repaid one-for-one by suppressed cuts on subsequent profits. A material
+  front-load requires a mixed-sign sweep backlog AND a near-zero existing carry
+  AND profit-first order; even with prompt sweeping there is a small
+  ever-present window (roughly one settlement interval — coinciding cadence
+  grids can settle a profit and a loss in the same window, and the booking
+  order inside it is permissionlessly choosable), bounded by
+  `share × losses settling in that window`. Residuals: LPs who exit between a front-loaded cut and
+  the carry refill bear a small one-time timing transfer (suppliers inside the
+  window pick it up), and the front-load becomes permanent only if the pool
+  winds down or stays loss-making so the carry never refills. LP pricing is
+  structurally unaffected: `plp::lp_pool_value` already excludes
+  `share × max(0, live unrealized net − carry)` — the net-basis anticipation of
+  the future cut — and already-materialized cuts have left the pricing basis.
+- **Risk profile:** `BEST-GUESS` — the peak-of-booked-net invariant itself is
+  algebraic (it follows from the carry algebra in `materialize_expiry_profit`,
+  and the ordering example is direct computation: at a 20% share, sweeping
+  +100 before an unswept −50 reserves 20 instead of 10, and the next +50 of
+  profit refills the carry and reaches LPs uncut, repaying the difference);
+  the best-guess half is reachability and magnitude — exposure scales with
+  losses concurrent in a sweep window, so material exposure is backlog-shaped.
+- **Pinning tests:**
+  `scope_mechanics__intent_accounting__pool_accounting_tests::terminal_loss_carries_until_later_gains_refill_it`
+  and
+  `scope_mechanics__intent_accounting__pool_accounting_tests::later_expiry_profit_refills_prior_expiry_loss_before_materializing`
+  pin the carry legs (the loss carries; subsequent profit materializes only
+  above the carry);
+  `scope_mechanics__intent_accounting__pool_accounting_tests::protocol_profit_realization_carries_only_the_idle_shortfall`
+  and
+  `scope_flow__intent_policy__protocol_profit_tests::carried_protocol_profit_realizes_on_the_next_cash_abundant_sweep`
+  pin the idle-capped realization deferral;
+  `scope_flow__intent_policy__protocol_profit_tests::profit_first_sweep_front_loads_cut_on_gross_recognized_profit`
+  pins the cross-market ordering leg (the cut books at the profit sweep
+  against gross recognized profit and the later loss never claws it back),
+  with its loss-first sibling
+  `scope_flow__intent_policy__protocol_profit_tests::loss_first_sweep_reserves_share_of_net_pool_profit`
+  pinning the zero-cut net basis in the other order.
+- **Reopen when:** a package upgrade adds the withdraw path (decide then
+  whether over-accrued reserve reconciles to LPs before funds leave); or
+  market shape makes mixed-sign sweep backlogs a normal state rather than an
+  outage artifact (long-dated expiries, multi-hour settlement gaps); or a
+  wind-down is contemplated while `net_losses_to_fill` is nonzero.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
