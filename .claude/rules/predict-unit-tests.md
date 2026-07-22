@@ -1,0 +1,25 @@
+---
+paths:
+  - "packages/predict/tests/**"
+---
+
+# Predict Unit-Test Architecture
+
+- Put every executable test module under one scope path: `framework`, `mechanics`, `structure`, or `flow`.
+- Name every executable module `scope_<scope>__intent_<intent>__<subject>_tests`, where intent is `behavior`, `guard`, `boundary`, `rounding`, `accounting`, `reference`, or `policy`; reserved `scope_*__` and `intent_*__` markers appear only in the module segment so Sui substring filters remain exact.
+- Use `test_world` as the only owner of `test_scenario::Scenario`; capture shared identities once and retrieve them by ID after bootstrap.
+- Create at most one World in each test; reuse it across profiles and seed successive feed rows with strictly increasing source timestamps.
+- Keep address-owned capabilities in Scenario inventory and take them as the current sender immediately before use; `OwnedResources` remains actor-neutral, and capability transfer or revocation crosses only explicit test-body transaction boundaries.
+- Take each shared object at most once per transaction; batch repeated same-root setup behind one focused current-transaction borrow instead of composing helpers that retake the root.
+- Keep post-bootstrap actor and transaction-context changes in test bodies, including custom gas-price progression. Prerequisite helpers operate only in the caller's current transaction.
+- Fixtures construct state and return identity/capability handles; they do not compute expected truth or mirror production business APIs.
+- Keep executable unit tests and fixture modules under `packages/predict/tests/**`; never add test functions to `sources/**`. If existing production APIs and approved irreducible test-only seams cannot express the required state or flow, stop and flag the testability gap instead of adding a source-local test or convenience seam.
+- Call the production unit under test in the test body. A prerequisite helper may call production transitions only when a different function is the declared unit under test.
+- Every successful executable test contains a direct `assert!` or `assert_eq!` in its own body; expected-failure tests use their abort annotation as the oracle and are exempt.
+- Keep exact integer/rounding claims separate from independent true-model accuracy and economic-accounting claims.
+- Numerical reference data proves representative implementation accuracy, not complete envelope calibration; it must have a committed independent generator, committed inputs, a documented regeneration command, an ex-ante precision bound that does not inspect contract output, and a CI stale-output check under a pinned interpreter.
+- Treat an independently valid out-of-bound result as a product/audit finding under `.claude/rules/unit-tests.md`; never widen the bound or snapshot the observed value.
+- Treat an exact registered policy test name as a routing obligation, not semantic proof; assert observable policy outputs, and keep unreachable branches or platform-unobservable custody delivery in the transitional debt controller instead of adding a source seam or declaring the policy complete.
+- Route final accumulator-delivery claims to localnet/integration evidence because the locked Sui `TestScenario` does not execute system accumulator settlement on transaction advancement.
+- Keep every confirmed production finding as a live plain `#[test]`: do not use `expected_failure`, `random_test`, ignore/comment it out, or normalize the fixture. Add exactly one row to `packages/predict/tests/known_red_manifest.csv` and exactly one matching `**Known RED test:**` field on its `packages/predict/predeploy/open-items.md` entry; `check_known_red.py` accepts only the manifest's exact failing set after a warning-strict build.
+- Mark a test that remains to be written with a structured `**Deferred test:**` field only when its open item owns that debt. A deferred function that is also a registered response-policy pin is an escalation requiring policy-owner sign-off; the strict predeploy checker must not downgrade it to ordinary test debt.

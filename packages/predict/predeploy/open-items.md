@@ -162,6 +162,37 @@ bound and accept the aggregation residual in the rounding policy, add a
 regression covering both directions, and narrow every exact-NAV claim to the
 accepted bound. (2026-07-17 clean-room gap audit)
 
+### P-14: Per-order floor correction can overstate live liability
+
+**Severity:** Low.
+
+`current_nav` subtracts a boundary-aggregated linear value and a correction that is rounded independently for each active leveraged order. When several positions in the same range become liquidatable, each position can have zero recoverable value while the differently rounded aggregate retains a positive liability. The pinned production flow creates four such positions and observes NAV two raw DUSDC units below independently recoverable free cash. The residual can grow by less than one raw unit per active leveraged order, or less than 0.005 DUSDC at the 5,000-order cap, but its direction understates the LP supply mark and can dilute existing LPs.
+
+**Known RED test:** `deepbook_predict::scope_flow__intent_rounding__current_nav_red_tests::liquidatable_orders_leave_positive_aggregate_live_liability`
+
+**Action:** Compute the live floor correction at the same aggregation granularity as the boundary-linear term, or preserve per-order rounded liability through both terms. Keep the exact NAV invariant and its LP-favorable rounding direction when choosing the representation.
+
+### P-15: The knock-out decision is taken on a point estimate, so pricing error can decide it
+
+**Severity:** High.
+
+`strike_exposure::under_liquidation_floor` liquidates a leveraged order when its computed gross value is at or below `floor(floor_amount * 1e9 / liquidation_ltv)`. The comparison treats the computed range probability as the position's value, but that probability is a fixed-point approximation of the pricing model, and the package's own reference data certifies the approximation error at up to 3,610 units at 1e9 scale. Scaled by position quantity, the error spans many whole DUSDC units, so a knock-out threshold can fall strictly between the computed gross and the true gross. When it does, the liquidation decision is determined by the sign of the approximation error rather than by whether the position is actually solvent.
+
+The consequence is not proportional to the error. A knocked-out holder forfeits their entire equity above the floor, so an error of a few parts per hundred million can cost a position its whole remaining value. The pinned flow holds a 1e9-quantity contract on `(90, 110]` whose committed floor is 581,663,191, giving a knock-out threshold of 684,309,636. The computed gross on the reference surface is 684,309,632 — at or below the threshold, so the contract knocks the order out and pays zero — while the independently computed true gross is 684,309,642, above the threshold, leaving the holder solvent and owed 102,646,451 raw units, roughly ten percent of the position. The same band is reachable in the opposite direction, where the pool carries a position past its true knock-out point and absorbs the shortfall.
+
+This is distinct from the rounding policy's dust concerns (R1, R2), which govern how money-moving expressions round. No policy currently governs how a *discrete* decision behaves when its inputs carry certified approximation error, and the decision has no directional bias: it is as likely to harm the holder as the pool.
+
+**Known RED test:** `deepbook_predict::scope_flow__intent_rounding__knockout_decision_tests::knockout_threshold_inside_the_pricing_error_band_forfeits_real_equity`
+The test grants the payout its full certified pricing error and the close fee before asserting, so it fails only on the classification, never on payout dust.
+
+**Action:** Give the knock-out predicate an explicit direction under uncertainty rather than a point comparison, and choose that direction deliberately, because the two available directions are not symmetric in cost.
+
+Resolving toward the pool — knock out whenever the position *might* be at or below its threshold — does not remove the exposure; it makes it systematic. Any bound wide enough to be sound is wider than the point estimate's actual error, so the band in which a solvent holder is knocked out grows rather than shrinks, and every position landing in it is forfeited rather than roughly half of them. What that buys is protection of the pool's ability to recover the floor. But the LTV buffer already covers that risk by an enormous margin: in the pinned flow the holder's equity above the floor is 102,646,451 raw units while the pricing uncertainty is about 105 units at the same scale — the buffer is roughly 977,000 times the uncertainty. Spending the whole buffer to defend against an error five to six orders of magnitude smaller than it is not a favorable trade.
+
+Resolving toward the holder — knock out only when the position is *definitely* at or below its threshold — leaves the pool carrying a possibly-liquidatable order for at most one valuation cycle, bounded by the same uncertainty and absorbed by the LTV buffer that exists for it. That is the recommended direction for this predicate specifically. Other discrete comparisons over a computed price should be classified the same way, one at a time, by asking which side's residual the surrounding buffer already covers; a single global "favor the protocol" rule gets this one wrong.
+
+Either way the chosen direction and its residual need a registered response policy. Retaining the point estimate also needs one, stating who bears the misclassification and why the exposure is acceptable at the certified error bound.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
@@ -351,3 +382,6 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   (zero builder fee / subsidy). Strengthen each to assert the passing boundary.
   (`unstake_deep` receiving-side assertion — that the account received the DEEP —
   added on PR #1106.)
+- **EWMA gas-price arithmetic has narrow protocol headroom.** The squared-deviation fold fits at gas price 135,818 and overflows at 135,819. A boundary test pins those adjacent arithmetic inputs; whether the overflow is reachable in a transaction depends on Sui's maximum admissible gas price. If that protocol limit reaches the boundary, every mint and live redeem can self-abort before the feature-enable flag is consulted because the EWMA state update always runs.
+- **Settlement does not carry the valuation lock used by other market mutations.** `try_settle` can be called between per-market valuation commands in the same operator PTB even though the documented sequence describes settlement as a separate PTB step. No permissionless exploit is established because the lock is transaction-local and the flush operator is already trusted, but the code and sequencing contract should either enforce the same lock or explicitly permit this interleaving.
+- **Expired-unsettled markets are outside the live-market cap but remain in the flush walk.** The creation cap counts only pre-expiry markets, while an expired market stays in the pool's active index until it settles and is swept. A settlement outage can therefore accumulate an expired backlog and still admit the full live-market allowance; once settlement resumes, the one-PTB flush can be asked to walk more markets than the cap names. The backlog is recoverable through permissionless per-market rebalance before the flush, but the cap is not a bound on the flush's complete active set.

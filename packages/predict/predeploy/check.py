@@ -6,7 +6,8 @@ machine-check each other instead of relying on anyone remembering. This script
 is that check. It verifies, deterministically and stdlib-only:
 
   1. PINNING TESTS (FATAL) — every test function named in a response-policies.md
-     "Pinning tests" field exists as `fun <name>` under packages/predict/tests/.
+     "Pinning tests" field exists as an executable `#[test]` or `#[random_test]`
+     under packages/predict/tests/.
      A register decision whose pinning test vanished is un-enforced: the exact
      drift class that let risks.md promise unshipped behavior.
   2. ID CROSS-REFS — every `RP-n` reference in the predeploy docs resolves to a
@@ -37,6 +38,7 @@ Exit 1 on any FATAL; warnings print but keep exit 0.
 Run this when a diff touches predeploy/, guards, or tests named here; the
 predict-audit skill runs it in preflight.
 """
+import csv
 import glob
 import os
 import re
@@ -46,6 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath(
     os.path.join(HERE, '..', '..', '..'))
 PREDICT = os.path.join(ROOT, 'packages', 'predict')
+KNOWN_RED_MANIFEST = os.path.join(PREDICT, 'tests', 'known_red_manifest.csv')
 
 DOCS = sorted(glob.glob(os.path.join(HERE, '*.md')) +
               glob.glob(os.path.join(HERE, 'evidence', '*.md')))
@@ -57,11 +60,199 @@ HISTORICAL = re.compile(
 # Lines naming paths that live outside this repository.
 EXTERNAL = re.compile(r"external|not part of this repo|deployment repo|another repo",
                       re.IGNORECASE)
+ATTRIBUTED_FUNCTION = re.compile(
+    r'(?P<attributes>(?:#\s*\[[^]]*\]\s*)+)'
+    r'(?:public(?:\(package\))?\s+)?(?:entry\s+)?fun\s+(?P<name>[a-z][a-z0-9_]*)',
+    re.S)
 
 
 def read(path):
     with open(path, encoding='utf-8') as f:
         return f.read()
+
+
+def source_without_comments_and_literals(source):
+    """Mask comments and string literals while preserving source positions."""
+    masked = list(source)
+    index = 0
+    while index < len(source):
+        if source[index] == '"':
+            masked[index] = ' '
+            index += 1
+            while index < len(source):
+                character = source[index]
+                if character != '\n':
+                    masked[index] = ' '
+                index += 1
+                if character == '\\' and index < len(source):
+                    if source[index] != '\n':
+                        masked[index] = ' '
+                    index += 1
+                elif character == '"':
+                    break
+            continue
+        if source.startswith('//', index):
+            while index < len(source) and source[index] != '\n':
+                masked[index] = ' '
+                index += 1
+            continue
+        if source.startswith('/*', index):
+            depth = 1
+            masked[index:index + 2] = [' ', ' ']
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith('/*', index):
+                    depth += 1
+                    masked[index:index + 2] = [' ', ' ']
+                    index += 2
+                elif source.startswith('*/', index):
+                    depth -= 1
+                    masked[index:index + 2] = [' ', ' ']
+                    index += 2
+                else:
+                    if source[index] != '\n':
+                        masked[index] = ' '
+                    index += 1
+            continue
+        index += 1
+    return ''.join(masked)
+
+
+MODULE_NAME = re.compile(r'\bmodule\s+[a-z][a-z0-9_]*::(?P<module>[a-z][a-z0-9_]*)\s*;')
+
+
+def executable_test_selectors_from_source(source):
+    """Module-qualified `<module>::<function>` for each executable test, so a pin
+    cannot be silently satisfied by a same-named test in a different module."""
+    source = source_without_comments_and_literals(source)
+    module_match = MODULE_NAME.search(source)
+    module = module_match.group('module') if module_match else ''
+    selectors = set()
+    for function in ATTRIBUTED_FUNCTION.finditer(source):
+        if re.search(r'\b(?:test|random_test)\b', function.group('attributes')):
+            name = function.group('name')
+            selectors.add(f'{module}::{name}' if module else name)
+    return selectors
+
+
+def executable_test_index(paths):
+    """Return (qualified selector set, {leaf: {modules}}) across all test files."""
+    qualified = set()
+    leaf_modules = {}
+    for path in paths:
+        for selector in executable_test_selectors_from_source(read(path)):
+            qualified.add(selector)
+            module, _, leaf = selector.rpartition('::')
+            leaf_modules.setdefault(leaf, set()).add(module)
+    return qualified, leaf_modules
+
+
+def unresolved_pin(tok, qualified, leaf_modules):
+    """None if `tok` resolves to exactly one executable test, else an error phrase.
+    Every pin must be module-qualified: a bare leaf can silently detach from its
+    cited file and claim layer by moving the same-named function to another
+    module, so bare selectors are rejected outright rather than resolved."""
+    if '::' in tok:
+        if tok in qualified:
+            return None
+        return f'pins test `{tok}` but no executable `fun {tok}` exists under packages/predict/tests/'
+    modules = leaf_modules.get(tok, set())
+    if not modules:
+        return f'pins test `{tok}` but no executable `fun {tok}` exists under packages/predict/tests/'
+    hint = next(iter(sorted(modules)))
+    return (f'pins bare test selector `{tok}`; every register pin must be '
+            f'module-qualified — write `{hint}::{tok}`')
+
+
+def pinning_test_selectors_from_block(block):
+    """Extract exact module-qualified pins, falling back to naked function selectors."""
+    selectors = []
+    for token in re.findall(r'`([^`]+)`', block):
+        if re.fullmatch(r'[a-z][a-z0-9_]*_tests::[a-z][a-z0-9_]*', token):
+            selectors.append(token)
+        elif re.fullmatch(r'[a-z][a-z0-9_]+', token) and len(token) >= 10 and '_' in token:
+            selectors.append(token)
+    return selectors
+
+
+def registered_pins_by_test(register):
+    """Return exact qualified or legacy naked pin selectors and their policies."""
+    policies = {}
+    for entry in re.split(r'^## ', register, flags=re.M)[1:]:
+        title = entry.splitlines()[0]
+        policy = re.match(r'(RP-\d+):', title)
+        if not policy:
+            continue
+        block = re.search(
+            r'\*\*Pinning tests[^*]*\*\*(.*?)(?=\n- \*\*|\n## |\Z)',
+            entry,
+            re.S,
+        )
+        if not block:
+            continue
+        for selector in pinning_test_selectors_from_block(block.group(1)):
+            policies.setdefault(selector, set()).add(policy.group(1))
+    return policies
+
+
+def open_item_structured_tests(text):
+    """Return exact known-RED and deferred test fields keyed by open-item id."""
+    known_red, deferred = {}, {}
+    headings = list(re.finditer(r'^### (?P<item>[A-Z]{1,2}-\d+):', text, re.M))
+    field_pattern = re.compile(
+        r'^\*\*(?P<label>Known RED test|Deferred test):\*\*\s*`(?P<test>[^`]+)`',
+        re.M,
+    )
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        item = heading.group('item')
+        for field in field_pattern.finditer(text, heading.end(), end):
+            target = known_red if field.group('label') == 'Known RED test' else deferred
+            target[item] = field.group('test')
+    return known_red, deferred
+
+
+def known_red_manifest_rows(path=KNOWN_RED_MANIFEST):
+    with open(path, newline='', encoding='utf-8') as source:
+        return list(csv.DictReader(source))
+
+
+def known_red_policy_errors(register, rows, known_red_fields, deferred_fields):
+    """Require registered known REDs to be linked and registered deferrals to stay fatal."""
+    errors = []
+    pins = registered_pins_by_test(register)
+    manifest = {row['open_item']: row['test'] for row in rows}
+    for item, test in manifest.items():
+        function = test.rsplit('::', 1)[-1]
+        module_function = '::'.join(test.rsplit('::', 2)[-2:])
+        policies = pins.get(module_function, set()) | pins.get(function, set())
+        if policies and known_red_fields.get(item) != test:
+            errors.append(
+                f"known-RED registered pin lacks its open-item disposition: "
+                f"{','.join(sorted(policies))}::{module_function} -> {item}"
+            )
+    for item, test in deferred_fields.items():
+        function = test.rsplit('::', 1)[-1]
+        module_function = '::'.join(test.rsplit('::', 2)[-2:])
+        policies = pins.get(module_function, set()) | pins.get(function, set())
+        if policies:
+            errors.append(
+                f"open-items.md: deferred test {item}::{test} touches registered "
+                f"response policy {','.join(sorted(policies))}; owner sign-off required"
+            )
+    return errors
+
+
+def check_known_red_policy_dispositions(errors):
+    try:
+        register = read(os.path.join(HERE, 'response-policies.md'))
+        open_items = read(os.path.join(HERE, 'open-items.md'))
+        known_red, deferred = open_item_structured_tests(open_items)
+        rows = known_red_manifest_rows()
+    except (OSError, KeyError, csv.Error) as error:
+        errors.append(f"known-RED control cannot be read: {error}")
+        return
+    errors.extend(known_red_policy_errors(register, rows, known_red, deferred))
 
 
 def defined_ids():
@@ -116,10 +307,8 @@ def check_pinning_tests(errors):
     reg = os.path.join(HERE, 'response-policies.md')
     if not os.path.exists(reg):
         return
-    test_src = ''
-    for path in glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'),
-                          recursive=True):
-        test_src += read(path)
+    paths = glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'), recursive=True)
+    qualified_tests, leaf_modules = executable_test_index(paths)
     text = read(reg)
     # Entry-driven, not block-driven: the register's rule is that EVERY RP entry
     # links a pinning test or explicitly says it doesn't. Iterating only well-formed
@@ -136,20 +325,21 @@ def check_pinning_tests(errors):
                           f"'not yet catalogued')")
             continue
         block = block_m.group(1)
-        if 'not yet catalogued' in block or 'untested' in block:
+        normalized_block = ' '.join(block.lower().split())
+        if 'not yet catalogued' in normalized_block:
             continue
-        toks = [t for t in re.findall(r'`([a-z][a-z0-9_]+)`', block)
-                if '.' not in t and len(t) >= 10 and '_' in t]
+        toks = pinning_test_selectors_from_block(block)
         if not toks:
+            if 'untested' in normalized_block:
+                continue
             errors.append(f"response-policies.md entry '{title}' has a Pinning "
                           f"tests field that names no backticked test function "
                           f"(nor 'not yet catalogued')")
             continue
         for tok in toks:
-            if not re.search(r'\bfun\s+' + re.escape(tok) + r'\b', test_src):
-                errors.append(
-                    f"response-policies.md entry '{title}' pins test `{tok}` but "
-                    f"no `fun {tok}` exists under packages/predict/tests/")
+            problem = unresolved_pin(tok, qualified_tests, leaf_modules)
+            if problem:
+                errors.append(f"response-policies.md entry '{title}' {problem}")
 
 
 def check_id_refs(errors, warnings):
@@ -271,15 +461,21 @@ def check_unique_resolution(errors):
         resolved[item] = rp
 
 
-def main():
+def run_checks():
     errors, warnings = [], []
     check_pinning_tests(errors)
+    check_known_red_policy_dispositions(errors)
     check_id_refs(errors, warnings)
     check_open_resolved_conflict(errors)
     check_measured_links(errors)
     check_paths(errors, warnings)
     check_evidence(errors)
     check_unique_resolution(errors)
+    return errors, warnings
+
+
+def main():
+    errors, warnings = run_checks()
     for w in warnings:
         print(f"WARNING: {w}")
     for e in errors:

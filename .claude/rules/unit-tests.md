@@ -192,7 +192,7 @@ assert_eq!(up, 399_512_345);
 (`ln`, `exp`, `normal_cdf`, SVI/binary pricing) has *fundamental* approximation
 error: the fixed-point result cannot equal the true real value exactly. There,
 and ONLY there, assert the contract is within a bound of the INDEPENDENT
-reference via `test_helpers::assert_within(actual, reference, max_abs_diff)`.
+reference via a narrowly scoped `assert_within(actual, reference, max_abs_diff)` helper.
 The bound must be:
 - **Independent of the contract** — derived from the function's *documented
   intended precision* OR a *principled numerical derivation* (e.g. the fixed-
@@ -281,12 +281,12 @@ be able to break.
 
 Math fixtures come from a committed generator (e.g.
 `tests/helper/reference/generate_constants.py`) that uses an independent source
-(Python `math`/`scipy`/`mpmath`) with a fixed seed and pinned versions. Independence
+(Python `math`/`scipy`/`mpmath`) with a fixed seed and reproducible runtime/dependency versions. Independence
 must be **executable** (the test asserts against the generated value), not
 documentary (the true value sitting in a comment while the test asserts contract
-output — Rule 1). The generator is committed for provenance/reproducibility but is
-**not** in the CI path: CI runs only Move tests against the committed values, so no
-Python dependency in CI.
+output — Rule 1). Commit the generated values. A hermetic, cheap generator should run
+in CI as a stale-output check; a generator whose runtime or dependencies cannot be
+made reliable in CI must document the pinned regeneration environment instead.
 
 ### 17. Hot flows assert invariants, not just happy-path returns
 

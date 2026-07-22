@@ -25,15 +25,29 @@ jobs:
         with:
           fetch-depth: 1
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install Sui CLI
         run: |
           curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${SUI_VERSION}/sui-${SUI_VERSION}-ubuntu-x86_64.tgz" \
             | sudo tar -xz -C /usr/local/bin
           sui --version
 
+      - name: Check Predict test architecture
+        run: |
+          python3 packages/predict/tests/check_architecture.py
+          python3 packages/predict/tests/check_predeploy_debt.py
+          python3 -m unittest discover -s packages/predict/tests -p "*_test.py"
+          python3 packages/predict/tests/reference/generate_pricing_reference.py --check
+
       - name: Run Move tests
         run: |
+          echo "Running warning-strict sui move test in packages/predict"
+          sui move test --gas-limit 100000000000 --warnings-are-errors --path packages/predict
           for dir in packages/*; do
+            if [ "$dir" = "packages/predict" ]; then continue; fi
             echo "Running sui move test in $dir"
             sui move test --gas-limit 100000000000 --path "$dir"
           done
