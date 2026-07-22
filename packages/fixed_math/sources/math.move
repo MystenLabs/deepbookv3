@@ -195,6 +195,13 @@ public fun sqrt(x: u64, precision: u64): u64 {
     (sqrt_u128(scaled) / multiplier) as u64
 }
 
+/// Integer square root (floor) of a `u128`. For a value scaled by `1e18` the
+/// result is its `1e9`-scaled square root; the pricing variance path relies on
+/// this to keep `sqrt(w)` precise where `w` is only a few raw units at `1e9`.
+public fun isqrt(x: u128): u128 {
+    sqrt_u128(x)
+}
+
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
 public fun pow10(n: u64): u64 {
     assert!(n <= 18, EPow10ExponentTooLarge);

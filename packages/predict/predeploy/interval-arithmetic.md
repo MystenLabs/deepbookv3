@@ -34,14 +34,23 @@ modeled quantity is non-negative.
 
 1. Fixed-point operation rounding: one ulp per multiply/divide.
 2. Transcendental approximation: the documented per-primitive error constants
-   (`fixed_math::math` module doc), folded in as certified per-regime tiers on
-   `up_price` keyed by the evaluation's total variance (saturated / healthy /
-   degenerate: 8 / 48 / 1,000,000 raw units at the 0.01 variance threshold).
-   Tier bounds are measured against an independent float64 reference across
-   the admissible SVI envelope (~92k evaluations, ≥2.5× pad over p99); an
-   analytic certificate is planned hardening work.
+   (`fixed_math::math` module doc), folded in as a certified `e(w)` widen keyed
+   on the evaluation's total variance `w` (`evaluation_error_for_variance`).
+   `w`, `sqrt(w)`, and `d2` are computed at u128/1e18 precision — flooring the
+   `b * inner` product to 1e9 was the entire low-variance error — so the bands
+   are ~3× the high-precision pricing error measured over representative Block
+   Scholes SVI surfaces (down to `w ~ 1e-8`, the 5-minute regime) under the
+   `beta^2 <= 9 * min_tv` admission gate. Interval-B&B verification of the bands
+   is planned hardening.
 3. Oracle observation error: currently zero-width (feeds publish no confidence
    figure); a deliberate open decision.
+
+The pricer admission gate (`assert_inputs_pricing_safe`) bounds the surface to
+the certified domain: total variance stays positive and `beta^2 <= 9 * min_tv`
+(`beta = b*(1+|rho|)`), which holds the skew correction clear of the `[0,1]`
+clamp so every admitted evaluation lands inside an `e(w)` band. A surface
+outside the gate aborts pricer construction — the flush's only value-domain
+abort, recoverable on the next vendor post; real vendor surfaces clear it ~2×.
 
 Exact protocol atoms — quantities, floor shares, balances, tick strikes,
 committed contract terms, settled liabilities — enter as zero-width intervals.
@@ -129,7 +138,8 @@ itself never appears in a `public` signature.
 - Scalar read lane (`current_nav`, `payout_liability`, `required_cash`,
   `up_price`/`range_price`) and the superseded scalar flush lane: convert to
   bounds reads or delete; pending with the test re-pin.
-- Analytic evaluation-error certificate; oracle-surface tolerated-domain
-  bounds for the data vendor; oracle confidence as an input width; a width
-  sanity breaker at the drain (threat: a width-computation bug enabling
-  supplier over-mint).
+- Interval-B&B verification of the `e(w)` bands (they are ~3× the measured HP
+  error, not yet a proof over the full admissible box); oracle confidence as an
+  input width; a width sanity breaker at the drain (threat: a width-computation
+  bug enabling supplier over-mint). The oracle-surface tolerated domain is
+  settled: `beta^2 <= 9 * min_tv` at pricer construction.

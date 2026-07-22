@@ -108,21 +108,15 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
-// Certified computational-error tiers for one SVI digital-price evaluation, in
-// raw 1e9 units, keyed by the evaluation's total variance: evaluation error is
-// dominated by the 1/sqrt(w) conditioning of d2. Bounds were measured against an
-// independent float64 reference across the full admissible SVI envelope (~92k
-// evaluations) and padded >=2.5x over observed p99. The sub-threshold tier is
-// honest-but-wide by design: production surfaces are vendor-guaranteed monotone
-// and well-conditioned, and a degenerate surface prices with visible uncertainty
-// instead of a silently wrong scalar.
+// Certified evaluation-error widen for one SVI digital-price evaluation, in raw
+// 1e9 units. The saturated tier covers evaluations pinned to the exact digital
+// limits (ratio outside the fixed-point domain, price on 0 or 1); every other
+// evaluation is widened by `evaluation_error_for_variance`, a table keyed on the
+// evaluation's total variance w (error is dominated by the 1/sqrt(w) conditioning
+// of d2). Bands are ~3x the HP pricing error measured over real Block Scholes
+// surfaces under the `beta^2 <= 9 * min_tv` admission gate (predeploy
+// interval-arithmetic doc).
 macro fun saturated_evaluation_error(): u64 { 8 }
-
-macro fun healthy_evaluation_error(): u64 { 48 }
-
-macro fun degenerate_evaluation_error(): u64 { 1_000_000 }
-
-macro fun healthy_minimum_total_variance(): u64 { 10_000_000 }
 
 // === Public Functions ===
 
@@ -520,6 +514,18 @@ fun assert_min_total_variance_positive(svi: &SVIParams) {
     let a = svi.a();
     let min_total_var = i64::from_u64(min_variance_increment).add(&a);
     assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+    // Skew/variance admission gate. `beta = b*(1+|rho|)` bounds the skew
+    // correction; require `beta^2 <= 9 * min_tv` (i.e. `beta/(2*sqrt(min_tv)) <= 1.5`)
+    // so the correction stays far from the [0,1] clamp and the pricing error
+    // stays inside the certified e(w) bands. Real Block Scholes surfaces clear
+    // this ~2x; it rejects the near-clamp degenerate corner the tiers are not
+    // calibrated for. `beta` uses `mul_up` so the bound is never under-stated.
+    let beta = svi.b() + math::mul_up(svi.b(), svi.rho().magnitude());
+    let min_tv = min_total_var.magnitude() as u128;
+    assert!(
+        (beta as u128) * (beta as u128) <= 9 * min_tv * (math::float_scaling!() as u128),
+        EBlockScholesMinVarianceInvalid,
+    );
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -569,13 +575,26 @@ fun compute_up_price_interval(svi: &SVIParams, forward: u64, strike: Strike): In
     let (price, total_var) = compute_nd2_terms(svi, forward, strike.value());
     let error_bound = if (total_var.is_none()) {
         saturated_evaluation_error!()
-    } else if (total_var.destroy_some() >= healthy_minimum_total_variance!()) {
-        healthy_evaluation_error!()
     } else {
-        degenerate_evaluation_error!()
+        evaluation_error_for_variance(total_var.destroy_some())
     };
     let widened = interval::exact(price).widen(error_bound);
     interval::new(widened.lo(), widened.hi().min(math::float_scaling!()))
+}
+
+/// Certified evaluation-error widen keyed on the evaluation's total variance
+/// `total_var` (1e9-scaled). Bands trace the `1/sqrt(w)` conditioning of the
+/// high-precision pricing path, each ~3x the measured sup over real Block
+/// Scholes surfaces under the `beta^2 <= 9 * min_tv` admission gate.
+fun evaluation_error_for_variance(total_var: u64): u64 {
+    if (total_var >= 10_000_000) { 200 } // w >= 1e-2
+    else if (total_var >= 1_000_000) { 1_000 } // w ~ 1e-3
+    else if (total_var >= 100_000) { 22_000 } // w ~ 1e-4
+    else if (total_var >= 10_000) { 30_000 } // w ~ 1e-5
+    else if (total_var >= 1_000) { 40_000 } // w ~ 1e-6
+    else if (total_var >= 100) { 100_000 } // w ~ 1e-7
+    else if (total_var >= 10) { 170_000 } // w ~ 1e-8
+    else { 500_000 } // w < 1e-8 (ultra-short tail)
 }
 
 /// Binary pricing from SVI total variance:
@@ -616,19 +635,11 @@ fun compute_nd2_terms(svi_params: &SVIParams, forward: u64, strike: u64): (u64, 
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b();
-    let variance_increment = math::mul(b, inner.magnitude());
     let a = svi_params.a();
-    let total_var = i64::from_u64(variance_increment).add(&a);
-    // Total variance must be positive because pricing takes sqrt(w) below.
-    assert!(is_positive(&total_var), ENonPositiveVariance);
-    let total_var = total_var.magnitude();
-
-    let sqrt_var = math::sqrt(total_var, math::float_scaling!());
-    let sqrt_var_i64 = i64::from_u64(sqrt_var);
-    let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = k.add(&half_var_i64);
-    let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
-    let d2 = d2.neg();
+    // Variance, sqrt(w), and d2 are carried at 1e18 in u128: flooring the
+    // `b * inner` product to 1e9 discards the whole low-variance signal (a
+    // 5-minute surface has w ~ 1e-8, about ten raw units at 1e9).
+    let (total_var, sqrt_var, d2) = variance_sqrt_and_d2(&a, b, inner.magnitude(), &k);
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
@@ -648,6 +659,43 @@ fun compute_nd2_terms(svi_params: &SVIParams, forward: u64, strike: u64): (u64, 
         return (math::float_scaling!(), option::some(total_var))
     };
     (adjusted.magnitude(), option::some(total_var))
+}
+
+/// Total variance, `sqrt(w)`, and `d2` computed at `u128`/`1e18` precision.
+/// Flooring `b * inner` to `1e9` (as `math::mul` would) discards the entire
+/// low-variance signal — a 5-minute surface has `w ~ 1e-8`, about ten raw units
+/// at `1e9` — so the variance path runs at `1e18` and only `d2` (which is
+/// `O(1..8)` and read by `normal_cdf`) is narrowed back to `1e9`. Returns
+/// `(w at 1e9, sqrt(w) at 1e9, d2)`; aborts `ENonPositiveVariance` when `w <= 0`.
+fun variance_sqrt_and_d2(a: &I64, b: u64, inner: u64, k: &I64): (u64, u64, I64) {
+    let f = math::float_scaling!() as u128;
+    // b * inner kept at 1e18 (no floor to 1e9)
+    let increment = (b as u128) * (inner as u128);
+    let a_scaled = (a.magnitude() as u128) * f;
+    let total_var = if (a.is_negative()) {
+        assert!(increment > a_scaled, ENonPositiveVariance);
+        increment - a_scaled
+    } else {
+        assert!(increment + a_scaled > 0, ENonPositiveVariance);
+        increment + a_scaled
+    };
+    // sqrt(w) at 1e9 scale = floor(sqrt(w * 1e18))
+    let sqrt_var = math::isqrt(total_var) as u64;
+    // d2 = -(k + w/2) / sqrt(w); numerator carried at 1e18, sign tracked by hand
+    let half_var = total_var / 2;
+    let k_scaled = (k.magnitude() as u128) * f;
+    let (numerator, numerator_negative) = if (k.is_negative()) {
+        if (half_var >= k_scaled) { (half_var - k_scaled, false) } else { (k_scaled - half_var, true) }
+    } else {
+        (k_scaled + half_var, false)
+    };
+    // numerator_1e18 / sqrt_w_1e9 = (value / sqrt(w)) * 1e9 = d2 at 1e9.
+    // normal_cdf/pdf saturate beyond |x| > 8; cap there so d2 stays in u64.
+    let saturation = 8 * f + 1;
+    let d2_magnitude_u128 = numerator / (sqrt_var as u128);
+    let d2_magnitude = (if (d2_magnitude_u128 > saturation) saturation else d2_magnitude_u128) as u64;
+    let d2 = i64::from_parts(d2_magnitude, !numerator_negative);
+    ((total_var / f) as u64, sqrt_var, d2)
 }
 
 fun is_positive(value: &I64): bool {
