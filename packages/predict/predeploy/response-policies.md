@@ -616,68 +616,63 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-17: The flush valuation liquidates every knocked-out order in its own pass (resolves P-10)
+## RP-17: The NAV mark values a knocked-out order at its liquidated worth (resolves P-10)
 
-- **Trigger state:** at the flush's valuation prices, an active leveraged
-  order's live gross value is at or below its knock-out threshold
+- **Trigger state:** at the valuation prices, an active leveraged order's live
+  gross value is at or below its knock-out threshold
   (`gross <= floor_shares / liquidation_ltv`) — the liquidatable band
-  `(floor, floor/ltv]` plus the underwater tail — while `plp::value_expiry`
-  computes that market's NAV mark.
+  `(floor, floor/ltv]` plus the underwater tail — while a NAV mark is computed
+  (every `current_nav`, including the flush lane `plp::value_expiry`).
 - **Controller:** market (prices move orders into the band between keeper
   sweeps) × protocol (whether the mark prices those claims at holder value).
 - **Blast radius:** the single frozen mark that fills both LP queues. Marking a
-  liquidatable order at holder value (`gross - floor`) understates recoverable
-  value by up to the LTV buffer per order, diluting incumbent LPs on a
-  same-flush supply and contradicting the exact-mark framing (RP-1; the
+  liquidatable order at holder value (`range_value - floor`) understates
+  recoverable value by up to the LTV buffer per order, diluting incumbent LPs on
+  a same-flush supply and contradicting the exact-mark framing (RP-1; the
   NAV-mark directional invariant).
-- **Response:** liquidate inside the valuation pass. The flush lane
-  (`plp::value_expiry` → `expiry_market::current_nav_with_liquidations` →
-  `strike_exposure::revalue_with_liquidations`) walks the payout tree once
-  (filling the price memo), scan-compacts the whole active leveraged book
-  against those memo prices (`liquidation_book::scan_compact`, threshold
-  single-sourced in `liquidation_book::is_under_liquidation_floor` — the same
-  test the close flow and ambient sweep apply), removes each killed order's
-  exact terms from the payout tree with its `OrderLiquidated` event
-  (`strike_exposure::settle_liquidation`, shared with the close flow), re-walks
-  the pruned tree from the memo with unchanged rounding
-  (`strike_payout_tree::walk_linear_cached`), and marks
-  `free_cash - (rewalked_linear - Σ survivor floors)` under the same clamps as
-  `current_nav`. A zero-liquidatable book returns the first walk directly, so
-  the mark is bit-identical to `current_nav` and the healthy-book flush cost is
-  unchanged. Quotes and devInspect reads stay on the read-only `current_nav`;
-  holders of flush-killed orders clear them through the existing zero-payout
-  Liquidated close arm.
-- **Reasoning:** the mark must never price a claim the protocol would not
-  honor. The former conservative band was the last deviation from the settled
-  "exact `current_nav`, no conservative band" framing; folding the knock-out
-  into valuation restores exactness in the one lane where the mark moves money
-  (LP fills), instead of disclosing a dilution bias. The scan visits exactly
-  the active set `correction_value` already walked on every flush, so no new
-  traversal class enters the C-1 budget; kills add per-order tree removals
-  bounded by the active-leveraged cap.
-- **Risk profile:** `BEST-GUESS` — the healthy-book path is cost-identical by
-  construction, but the worst-case kill pass (thousands of simultaneous
-  knock-outs in one flush PTB) is not gas-measured under the C-1 object-cache
-  model; harness candidate before deploy.
-- **Pinning tests:** `liquidation_scan_tests.move` —
-  `kills_at_exact_threshold_and_spares_one_unit_above` (boundary: gross exactly
-  at `div(floor, ltv)` is killed, one unit above survives),
-  `zero_liquidatable_scan_matches_correction_value_and_leaves_book_intact`,
-  `compaction_across_pages_preserves_survivor_bookkeeping`,
-  `empty_book_scan_is_a_noop`; `payout_tree_walk_cached_tests.move` —
-  `cached_rewalk_of_unchanged_tree_matches_fresh_walk_and_reference`,
-  `cached_rewalk_of_pruned_tree_matches_repriced_walk_and_reference`,
-  `cached_rewalk_with_uncached_node_tick_aborts`,
-  `cached_rewalk_clamps_boundary_aggregation_dust`;
-  `liquidate_during_flush_tests.move` —
-  `flush_kills_band_orders_excludes_them_from_mark_and_holder_clears_at_zero`,
-  `zero_liquidatable_valuation_is_bit_identical_to_current_nav`,
-  `flush_never_liquidates_worthless_one_x_orders`.
-- **Reopen when:** the C-1 joint-budget fix constrains per-flush work such that
-  an unbounded same-pass kill sweep no longer fits (a budgeted valuation kill
-  would reintroduce a conservative band and its disclosure); or the LP flush
-  stops using one shared mark for both queues; or a measured kill-pass gas
-  profile contradicts the cost-unchanged assumption above.
+- **Response:** value the knock-out at its liquidated worth in the read-only NAV
+  correction, without touching the book. `exact_live_liability` already walks the
+  payout tree once and subtracts the leveraged floor correction
+  (`liquidation_book::correction_value`); that correction now credits a
+  knocked-out order's full `range_value` — using the same threshold the close
+  flow and ambient sweep apply (`gross <= div(floor_shares, liquidation_ltv)`) —
+  instead of the `min(range_value, floor)` floor cap, so the order's live
+  liability marks at zero. The order is not liquidated here: the existing ambient
+  sweep liquidates it on its own cadence, so valuation stays a pure read with no
+  tree mutation, no event, and no per-flush kill pass. A book with zero
+  knocked-out orders produces a correction identical to the prior formula, so the
+  mark is unchanged for healthy books.
+- **Reasoning:** the mark must never price a claim the protocol would not honor.
+  Crediting the knock-out at its liquidated value removes the conservative band
+  in the lane where the mark moves money (LP fills), matching what the sweep will
+  realize, while keeping NAV a side-effect-free read. Deferring the actual
+  liquidation to the sweep leaves a window where the mark anticipates a
+  liquidation the book has not yet applied — the same window the sweep lag
+  already carries, and one that moves no money, because the mark only sets LP
+  fill prices, not holder payouts.
+- **Residual:** the credit uses each order's per-order `range_value`, which
+  differs from that order's aggregated payout-tree contribution by the
+  boundary-aggregation rounding of P-13 (at most one raw unit per boundary), so a
+  flush that credits a knock-out lands within P-13's band on the same side. This
+  is the accepted P-13 residual, not a new class.
+- **Risk profile:** `BEST-GUESS` — reachability depends on prices moving orders
+  into the band between sweeps. Cost is the read-only scan over the active
+  leveraged set that `correction_value` already walks on every valuation; no tree
+  mutation, event, or extra traversal enters the C-1 budget, so the worst case is
+  cost-identical to a healthy flush.
+- **Pinning tests:** `current_nav_flow_tests.move` —
+  `single_leveraged_order_above_floor` (a survivor above the band keeps the floor
+  cap, so the correction is unchanged) and
+  `single_leveraged_order_underwater_nets_to_zero` (the deep-underwater tail,
+  which both formulas zero) constrain the endpoints. The band case `(floor,
+  floor/ltv]`, where the credit differs from the old floor cap, still needs a
+  dedicated pin on a high-variance surface (a leveraged order priced into the
+  band marks at zero live liability, raising NAV above the floor-capped value);
+  tracked as the follow-up test for this policy.
+- **Reopen when:** the LP flush stops using one shared mark for both queues; or a
+  product decision requires the book to be liquidated in-pass rather than by the
+  sweep (reintroducing the mutation and its gas profile); or the P-13
+  boundary-aggregation residual is closed and the credit must become exact.
 
 ---
 

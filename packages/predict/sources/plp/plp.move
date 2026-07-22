@@ -220,10 +220,7 @@ public fun start_pool_valuation(
 /// the running total. The market must be in the snapshot and not already valued.
 /// A settled market is swept
 /// (deactivated, cash returned, profit materialized) and contributes 0; a live
-/// market is rebalanced to target and valued on its current cash, liquidating
-/// every leveraged order at or below its knock-out threshold at the valuation
-/// prices in the same pass so the folded mark never prices a claim the protocol
-/// would not honor.
+/// market is rebalanced to target and valued on its current cash.
 ///
 /// Settlement is a separate PTB step through `expiry_market::try_settle`. An
 /// expired unsettled market cannot produce the live pricer required here.
@@ -256,7 +253,7 @@ public fun value_expiry(
             bs_svi,
             clock,
         );
-        market.current_nav_with_liquidations(&pricer, clock)
+        market.current_nav(&pricer)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;

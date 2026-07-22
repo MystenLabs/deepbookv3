@@ -45,19 +45,6 @@ public struct ScanCursor has copy, drop {
 
 // === Public-Package Functions ===
 
-/// The single definition of the liquidation knock-out test: live gross value at
-/// or below the configured multiple of the static floor (`gross <= floor / ltv`).
-/// The policy value (`liquidation_ltv`) is supplied from the caller's config
-/// snapshot; this module holds no policy state. Leveraged-only is the caller's
-/// duty — a 1x order's zero floor would spuriously pass this test.
-public(package) fun is_under_liquidation_floor(
-    gross_value: u64,
-    floor_amount: u64,
-    liquidation_ltv: u64,
-): bool {
-    gross_value <= math::div(floor_amount, liquidation_ltv)
-}
-
 public(package) fun contains_active_order(book: &LiquidationBook, order: &Order): bool {
     if (!order.is_leveraged() || book.active_order_count == 0) return false;
 
@@ -70,14 +57,22 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
     offset < page.order_ids.length() && page.order_ids[offset] == order_id
 }
 
-/// Sum the NAV floor-correction term over the active leveraged book:
-/// `Σ min(qty·range_price(lower, higher), floor_shares)`.
+/// Sum the NAV floor-correction term over the active leveraged book. A leveraged
+/// order at or below its knock-out threshold at these prices (`gross <= floor /
+/// ltv`) will be liquidated by the ambient sweep and owes nothing above its
+/// separately reserved floor, so the flush marks its live liability at zero by
+/// crediting the full `range_value`; every other order keeps the
+/// `min(range_value, floor_shares)` floor cap. With zero knocked-out orders the
+/// sum is identical to the plain `Σ min(qty·range_price(lower, higher), floor_shares)`.
 ///
-/// One-x orders are never inserted and liquidated orders are removed. Boundary
-/// prices come from the payout walk's memo, and every finite leveraged boundary
-/// must be present there. The correction is rounded and capped independently for
-/// each still-active leveraged order; it does not apply the liquidation threshold.
-public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): u64 {
+/// One-x orders are never inserted and already-liquidated orders are removed.
+/// Boundary prices come from the payout walk's memo, and every finite leveraged
+/// boundary must be present there.
+public(package) fun correction_value(
+    book: &LiquidationBook,
+    memo: &PriceMemo,
+    liquidation_ltv: u64,
+): u64 {
     let mut correction = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
@@ -87,7 +82,15 @@ public(package) fun correction_value(book: &LiquidationBook, memo: &PriceMemo): 
             memo.cached_range_price(order.lower_tick(), order.higher_tick()),
             order.quantity(),
         );
-        correction = correction + range_value.min(order.floor_shares());
+        // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
+        // owes nothing above its separately reserved floor, so mark its live
+        // liability at zero — credit the full range value, not the floor cap.
+        let cap = if (range_value <= math::div(order.floor_shares(), liquidation_ltv)) {
+            range_value
+        } else {
+            range_value.min(order.floor_shares())
+        };
+        correction = correction + cap;
         cursor = book.next_cursor(scan);
     };
     correction
@@ -122,80 +125,6 @@ public(package) fun select_liquidation_candidates(
     let scan_budget = budget - candidates.length();
     book.collect_passive_candidates(&mut candidates, scan_budget, tail_start);
     candidates
-}
-
-/// Fused valuation scan: visit every active leveraged order once, accumulate the
-/// NAV floor-correction over survivors, and compact away every order at or below
-/// the knock-out threshold at the memo's prices. Killed orders are returned for
-/// the caller to settle against the payout tree and events — this module owns
-/// only their index removal. Survivor correction is exactly `Σ floor_shares` —
-/// bit-identical to `correction_value`'s min-cap for every survivor (surviving
-/// means gross exceeds `floor / ltv >= floor` because a valid LTV is below 1.0,
-/// so the min always picks the floor) — and compaction preserves each page's
-/// sort order, so lookups stay valid. Page sizes are left as compacted (later
-/// removals re-merge small pages); the passive scan watermark survives — it is
-/// an order ID resolved against current geometry — and clears only when the
-/// book empties, mirroring removal.
-public(package) fun scan_compact(
-    book: &mut LiquidationBook,
-    memo: &PriceMemo,
-    liquidation_ltv: u64,
-): (u64, vector<Order>) {
-    let mut correction = 0;
-    let mut killed = vector[];
-    if (book.active_order_count == 0) return (correction, killed);
-
-    let mut page_ix = 0;
-    while (page_ix < book.page_ids.length()) {
-        let page_id = book.page_ids[page_ix];
-        let new_max = {
-            let page = book.pages.borrow_mut(page_id);
-            let len = page.order_ids.length();
-            let mut read = 0;
-            let mut write = 0;
-            while (read < len) {
-                let order_id = page.order_ids[read];
-                let order = order::from_order_id(order_id);
-                let range_value = math::mul(
-                    memo.cached_range_price(order.lower_tick(), order.higher_tick()),
-                    order.quantity(),
-                );
-                if (
-                    is_under_liquidation_floor(
-                        range_value,
-                        order.floor_shares(),
-                        liquidation_ltv,
-                    )
-                ) {
-                    killed.push_back(order);
-                } else {
-                    correction = correction + order.floor_shares();
-                    *(&mut page.order_ids[write]) = order_id;
-                    write = write + 1;
-                };
-                read = read + 1;
-            };
-            while (page.order_ids.length() > write) {
-                page.order_ids.pop_back();
-            };
-            if (write > 0) option::some(page.order_ids[write - 1]) else option::none()
-        };
-
-        if (new_max.is_some()) {
-            *(&mut book.max_order_ids[page_ix]) = new_max.destroy_some();
-            page_ix = page_ix + 1;
-        } else {
-            // Removing the emptied page shifts its successor into `page_ix`;
-            // do not advance.
-            book.remove_page_at(page_ix);
-        };
-    };
-
-    book.active_order_count = book.active_order_count - killed.length();
-    if (book.active_order_count == 0) {
-        book.passive_watermark = option::none();
-    };
-    (correction, killed)
 }
 
 /// Index a leveraged order for liquidation scanning; no-op for 1x orders.
