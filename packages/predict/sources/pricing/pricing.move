@@ -612,7 +612,7 @@ fun certify_nd2_error(
     if (sqrt_lower == 0 || sqrt_variance > (std::u64::max_value!() as u128)) {
         return std::u64::max_value!()
     };
-    let sqrt_upper = math::sqrt_u128(saturating_add_u128(variance, increment_error));
+    let sqrt_upper = math::sqrt_u128_up(saturating_add_u128(variance, increment_error));
     let sqrt_error = if (sqrt_variance - sqrt_lower >= sqrt_upper - sqrt_variance) {
         sqrt_variance - sqrt_lower
     } else {

@@ -196,6 +196,13 @@ public fun sqrt_u128(x: u128): u128 {
     g
 }
 
+/// Integer square root rounded up for a wide nonnegative intermediate.
+/// Formula-specific callers retain ownership of their scale and range invariants.
+public fun sqrt_u128_up(x: u128): u128 {
+    let root = sqrt_u128(x);
+    if (root * root == x) root else root + 1
+}
+
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
 public fun pow10(n: u64): u64 {
     assert!(n <= 18, EPow10ExponentTooLarge);
