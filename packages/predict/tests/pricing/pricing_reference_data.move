@@ -14,6 +14,9 @@
 // the generator header for the full derivation. The forward priced is the fresh-Pyth
 // round-trip mul(spot, div(forward, spot)).
 //
+// `baseline_center` is the exact scalar output observed at parent commit 8046d0e6717efe5cad7eea3f053e7e6b60584a79.
+// It detects value drift only; the independent reference + tolerance above decides correctness.
+//
 // Worst-case per-endpoint budget across all scenarios/strikes: 3_129 units (@1e9).
 // Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w)
 // and the skew term's 1/sqrt(w) denominator amplify fixed-point variance / slope dust.
@@ -29,13 +32,13 @@ use deepbook_predict::constants;
 
 const ENoSuchScenario: u64 = 0;
 
-/// One independent reference point: Pricer.range_price(lower, higher)
-/// must be within `tolerance` units of the true-math `reference`.
+/// One pricing point with independent correctness and exact compatibility expectations.
 public struct RefPoint has copy, drop {
     lower: u64,
     higher: u64,
     reference: u64,
     tolerance: u64,
+    baseline_center: u64,
 }
 
 public fun lower(p: &RefPoint): u64 { p.lower }
@@ -46,8 +49,10 @@ public fun reference(p: &RefPoint): u64 { p.reference }
 
 public fun tolerance(p: &RefPoint): u64 { p.tolerance }
 
-fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64): RefPoint {
-    RefPoint { lower, higher, reference, tolerance }
+public fun baseline_center(p: &RefPoint): u64 { p.baseline_center }
+
+fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64, baseline_center: u64): RefPoint {
+    RefPoint { lower, higher, reference, tolerance, baseline_center }
 }
 
 /// Number of real-data scenarios.
@@ -179,94 +184,94 @@ public fun svi_m_is_negative(s: u64): bool {
     }
 }
 
-/// Reference points for scenario `s` (lower, higher, true-math reference, tolerance).
+/// Points for scenario `s` (range, true reference, tolerance, parent scalar center).
 public fun points(s: u64): vector<RefPoint> {
     if (s == 0) {
         vector[
             // d2~+3.0 adjusted UP(K) skew=+6.045e-04
-            pt(68_488_000_000_000, constants::pos_inf!(), 999_254_898, 44),
+            pt(68_488_000_000_000, constants::pos_inf!(), 999_254_898, 44, 999_254_900),
             // d2~+2.0 adjusted UP(K) skew=+9.224e-03
-            pt(71_901_000_000_000, constants::pos_inf!(), 986_475_283, 202),
+            pt(71_901_000_000_000, constants::pos_inf!(), 986_475_283, 202, 986_475_324),
             // d2~+1.0 adjusted UP(K) skew=+4.679e-02
-            pt(74_265_000_000_000, constants::pos_inf!(), 888_173_139, 732),
+            pt(74_265_000_000_000, constants::pos_inf!(), 888_173_139, 732, 888_173_465),
             // d2~+0.5 adjusted UP(K) skew=+5.726e-02
-            pt(75_100_000_000_000, constants::pos_inf!(), 748_850_555, 801),
+            pt(75_100_000_000_000, constants::pos_inf!(), 748_850_555, 801, 748_850_877),
             // d2~+0.0 adjusted UP(K) skew=+2.822e-02
-            pt(75_788_000_000_000, constants::pos_inf!(), 528_329_906, 229),
+            pt(75_788_000_000_000, constants::pos_inf!(), 528_329_906, 229, 528_329_890),
             // d2~-0.5 adjusted UP(K) skew=-1.336e-02
-            pt(76_433_000_000_000, constants::pos_inf!(), 295_405_051, 713),
+            pt(76_433_000_000_000, constants::pos_inf!(), 295_405_051, 713, 295_404_800),
             // d2~-1.0 adjusted UP(K) skew=-2.440e-02
-            pt(77_136_000_000_000, constants::pos_inf!(), 134_304_459, 827),
+            pt(77_136_000_000_000, constants::pos_inf!(), 134_304_459, 827, 134_304_135),
             // d2~-2.0 adjusted UP(K) skew=-6.758e-03
-            pt(78_942_000_000_000, constants::pos_inf!(), 16_002_241, 276),
+            pt(78_942_000_000_000, constants::pos_inf!(), 16_002_241, 276, 16_002_176),
             // d2~-3.0 adjusted UP(K) skew=-5.006e-04
-            pt(81_484_000_000_000, constants::pos_inf!(), 850_622, 51),
+            pt(81_484_000_000_000, constants::pos_inf!(), 850_622, 51, 850_614),
             // clamp wing d2~+8
-            pt(40_875_000_000_000, constants::pos_inf!(), 1_000_000_000, 2),
+            pt(40_875_000_000_000, constants::pos_inf!(), 1_000_000_000, 2, 1_000_000_000),
             // clamp wing d2~-8
-            pt(111_541_000_000_000, constants::pos_inf!(), 0, 2),
+            pt(111_541_000_000_000, constants::pos_inf!(), 0, 2, 0),
             // (-inf, K_atm] = 1 - adjusted UP(d2)
-            pt(constants::neg_inf!(), 75_788_000_000_000, 471_670_094, 229),
+            pt(constants::neg_inf!(), 75_788_000_000_000, 471_670_094, 229, 471_670_110),
             // (K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)
-            pt(74_265_000_000_000, 77_136_000_000_000, 753_868_680, 1_557),
+            pt(74_265_000_000_000, 77_136_000_000_000, 753_868_680, 1_557, 753_869_330),
         ]
     } else if (s == 1) {
         vector[
             // d2~+3.0 adjusted UP(K) skew=+5.761e-04
-            pt(70_751_000_000_000, constants::pos_inf!(), 999_226_715, 62),
+            pt(70_751_000_000_000, constants::pos_inf!(), 999_226_715, 62, 999_226_717),
             // d2~+2.0 adjusted UP(K) skew=+8.697e-03
-            pt(72_731_000_000_000, constants::pos_inf!(), 985_952_951, 440),
+            pt(72_731_000_000_000, constants::pos_inf!(), 985_952_951, 440, 985_953_006),
             // d2~+1.0 adjusted UP(K) skew=+4.378e-02
-            pt(74_122_000_000_000, constants::pos_inf!(), 885_252_958, 1_886),
+            pt(74_122_000_000_000, constants::pos_inf!(), 885_252_958, 1_886, 885_253_926),
             // d2~+0.5 adjusted UP(K) skew=+4.241e-02
-            pt(74_620_000_000_000, constants::pos_inf!(), 734_089_382, 1_988),
+            pt(74_620_000_000_000, constants::pos_inf!(), 734_089_382, 1_988, 734_089_989),
             // d2~+0.0 adjusted UP(K) skew=-1.020e-03
-            pt(75_040_000_000_000, constants::pos_inf!(), 499_130_516, 777),
+            pt(75_040_000_000_000, constants::pos_inf!(), 499_130_516, 777, 499_130_082),
             // d2~-0.5 adjusted UP(K) skew=-1.902e-02
-            pt(75_457_000_000_000, constants::pos_inf!(), 289_536_017, 1_603),
+            pt(75_457_000_000_000, constants::pos_inf!(), 289_536_017, 1_603, 289_535_211),
             // d2~-1.0 adjusted UP(K) skew=-1.634e-02
-            pt(75_903_000_000_000, constants::pos_inf!(), 142_539_030, 1_559),
+            pt(75_903_000_000_000, constants::pos_inf!(), 142_539_030, 1_559, 142_538_210),
             // d2~-2.0 adjusted UP(K) skew=-3.789e-03
-            pt(76_919_000_000_000, constants::pos_inf!(), 19_005_305, 548),
+            pt(76_919_000_000_000, constants::pos_inf!(), 19_005_305, 548, 19_005_077),
             // d2~-3.0 adjusted UP(K) skew=-2.942e-04
-            pt(78_125_000_000_000, constants::pos_inf!(), 1_057_214, 81),
+            pt(78_125_000_000_000, constants::pos_inf!(), 1_057_214, 81, 1_057_199),
             // clamp wing d2~+8
-            pt(53_193_000_000_000, constants::pos_inf!(), 1_000_000_000, 2),
+            pt(53_193_000_000_000, constants::pos_inf!(), 1_000_000_000, 2, 1_000_000_000),
             // clamp wing d2~-8
-            pt(87_962_000_000_000, constants::pos_inf!(), 0, 2),
+            pt(87_962_000_000_000, constants::pos_inf!(), 0, 2, 0),
             // (-inf, K_atm] = 1 - adjusted UP(d2)
-            pt(constants::neg_inf!(), 75_040_000_000_000, 500_869_484, 777),
+            pt(constants::neg_inf!(), 75_040_000_000_000, 500_869_484, 777, 500_869_918),
             // (K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)
-            pt(74_122_000_000_000, 75_903_000_000_000, 742_713_927, 3_443),
+            pt(74_122_000_000_000, 75_903_000_000_000, 742_713_927, 3_443, 742_715_716),
         ]
     } else if (s == 2) {
         vector[
             // d2~+3.0 adjusted UP(K) skew=+4.899e-04
-            pt(71_198_000_000_000, constants::pos_inf!(), 999_142_870, 85),
+            pt(71_198_000_000_000, constants::pos_inf!(), 999_142_870, 85, 999_142_883),
             // d2~+2.0 adjusted UP(K) skew=+7.022e-03
-            pt(72_504_000_000_000, constants::pos_inf!(), 984_281_878, 673),
+            pt(72_504_000_000_000, constants::pos_inf!(), 984_281_878, 673, 984_282_218),
             // d2~+1.0 adjusted UP(K) skew=+3.565e-02
-            pt(73_490_000_000_000, constants::pos_inf!(), 877_147_807, 2_326),
+            pt(73_490_000_000_000, constants::pos_inf!(), 877_147_807, 2_326, 877_148_869),
             // d2~+0.5 adjusted UP(K) skew=+5.049e-02
-            pt(73_878_000_000_000, constants::pos_inf!(), 741_986_661, 2_645),
+            pt(73_878_000_000_000, constants::pos_inf!(), 741_986_661, 2_645, 741_987_390),
             // d2~+0.0 adjusted UP(K) skew=+3.948e-02
-            pt(74_210_000_000_000, constants::pos_inf!(), 539_490_779, 1_293),
+            pt(74_210_000_000_000, constants::pos_inf!(), 539_490_779, 1_293, 539_491_244),
             // d2~-0.5 adjusted UP(K) skew=-4.576e-04
-            pt(74_514_000_000_000, constants::pos_inf!(), 308_261_559, 2_564),
+            pt(74_514_000_000_000, constants::pos_inf!(), 308_261_559, 2_564, 308_261_004),
             // d2~-1.0 adjusted UP(K) skew=-1.534e-02
-            pt(74_831_000_000_000, constants::pos_inf!(), 143_600_509, 3_129),
+            pt(74_831_000_000_000, constants::pos_inf!(), 143_600_509, 3_129, 143_598_722),
             // d2~-2.0 adjusted UP(K) skew=-4.552e-03
-            pt(75_576_000_000_000, constants::pos_inf!(), 18_232_347, 1_005),
+            pt(75_576_000_000_000, constants::pos_inf!(), 18_232_347, 1_005, 18_232_297),
             // d2~-3.0 adjusted UP(K) skew=-3.550e-04
-            pt(76_497_000_000_000, constants::pos_inf!(), 998_121, 124),
+            pt(76_497_000_000_000, constants::pos_inf!(), 998_121, 124, 998_098),
             // clamp wing d2~+8
-            pt(59_811_000_000_000, constants::pos_inf!(), 1_000_000_000, 2),
+            pt(59_811_000_000_000, constants::pos_inf!(), 1_000_000_000, 2, 1_000_000_000),
             // clamp wing d2~-8
-            pt(84_603_000_000_000, constants::pos_inf!(), 0, 2),
+            pt(84_603_000_000_000, constants::pos_inf!(), 0, 2, 0),
             // (-inf, K_atm] = 1 - adjusted UP(d2)
-            pt(constants::neg_inf!(), 74_210_000_000_000, 460_509_221, 1_293),
+            pt(constants::neg_inf!(), 74_210_000_000_000, 460_509_221, 1_293, 460_508_756),
             // (K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)
-            pt(73_490_000_000_000, 74_831_000_000_000, 733_547_298, 5_452),
+            pt(73_490_000_000_000, 74_831_000_000_000, 733_547_298, 5_452, 733_550_147),
         ]
     } else {
         abort ENoSuchScenario

@@ -116,6 +116,28 @@ from decimal import Decimal, getcontext
 getcontext().prec = 60
 
 F = 1_000_000_000
+BASELINE_COMMIT = "8046d0e6717efe5cad7eea3f053e7e6b60584a79"
+# Exact `Pricer.range_price` outputs produced by BASELINE_COMMIT for the points
+# generated below, in scenario/point order. These are compatibility snapshots,
+# not correctness expectations; the independent true-math reference remains the
+# correctness oracle.
+BASELINE_CENTERS = [
+    [
+        999_254_900, 986_475_324, 888_173_465, 748_850_877, 528_329_890,
+        295_404_800, 134_304_135, 16_002_176, 850_614, 1_000_000_000, 0,
+        471_670_110, 753_869_330,
+    ],
+    [
+        999_226_717, 985_953_006, 885_253_926, 734_089_989, 499_130_082,
+        289_535_211, 142_538_210, 19_005_077, 1_057_199, 1_000_000_000, 0,
+        500_869_918, 742_715_716,
+    ],
+    [
+        999_142_883, 984_282_218, 877_148_869, 741_987_390, 539_491_244,
+        308_261_004, 143_598_722, 18_232_297, 998_098, 1_000_000_000, 0,
+        460_508_756, 733_550_147,
+    ],
+]
 REFERENCE_GRID_TICKS = 100_000       # Reference ladder width used to choose strikes.
 MARKET_TICK_SIZE_UNIT = 10_000       # constants::market_tick_size_unit!()
 TICK_SIZE = 1_000_000_000            # $1 ticks: spot/tick in (50000, 100000] for ~$75k spot
@@ -376,6 +398,9 @@ def emit_move(scenarios, scen_points, budget_units):
     w("// the generator header for the full derivation. The forward priced is the fresh-Pyth")
     w("// round-trip mul(spot, div(forward, spot)).")
     w("//")
+    w(f"// `baseline_center` is the exact scalar output observed at parent commit {BASELINE_COMMIT}.")
+    w("// It detects value drift only; the independent reference + tolerance above decides correctness.")
+    w("//")
     w(f"// Worst-case per-endpoint budget across all scenarios/strikes: {fmt_u64(budget_units)} units (@1e9).")
     w("// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w)")
     w("// and the skew term's 1/sqrt(w) denominator amplify fixed-point variance / slope dust.")
@@ -391,13 +416,13 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("const ENoSuchScenario: u64 = 0;")
     w("")
-    w("/// One independent reference point: Pricer.range_price(lower, higher)")
-    w("/// must be within `tolerance` units of the true-math `reference`.")
+    w("/// One pricing point with independent correctness and exact compatibility expectations.")
     w("public struct RefPoint has copy, drop {")
     w("    lower: u64,")
     w("    higher: u64,")
     w("    reference: u64,")
     w("    tolerance: u64,")
+    w("    baseline_center: u64,")
     w("}")
     w("")
     w("public fun lower(p: &RefPoint): u64 { p.lower }")
@@ -408,8 +433,10 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("public fun tolerance(p: &RefPoint): u64 { p.tolerance }")
     w("")
-    w("fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64): RefPoint {")
-    w("    RefPoint { lower, higher, reference, tolerance }")
+    w("public fun baseline_center(p: &RefPoint): u64 { p.baseline_center }")
+    w("")
+    w("fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64, baseline_center: u64): RefPoint {")
+    w("    RefPoint { lower, higher, reference, tolerance, baseline_center }")
     w("}")
     w("")
     w("/// Number of real-data scenarios.")
@@ -465,7 +492,7 @@ def emit_move(scenarios, scen_points, budget_units):
     emit_u64_selector("svi_m_magnitude", [s.m_mag for s in scenarios], "Real SVI `m` magnitude (1e9) seeded through the Block Scholes surface update.")
     emit_bool_selector("svi_m_is_negative", [s.m_neg for s in scenarios], "Sign flag for real SVI `m` (true == negative).")
 
-    w("/// Reference points for scenario `s` (lower, higher, true-math reference, tolerance).")
+    w("/// Points for scenario `s` (range, true reference, tolerance, parent scalar center).")
     w("public fun points(s: u64): vector<RefPoint> {")
     for i, s in enumerate(scenarios):
         kw = "if" if i == 0 else "} else if"
@@ -475,7 +502,7 @@ def emit_move(scenarios, scen_points, budget_units):
             lo = "constants::neg_inf!()" if p["lower"] == NEG_INF else fmt_u64(p["lower"])
             hi = "constants::pos_inf!()" if p["higher"] == POS_INF else fmt_u64(p["higher"])
             w(f"            // {p['note']}")
-            w(f"            pt({lo}, {hi}, {fmt_u64(p['reference'])}, {fmt_u64(p['tolerance'])}),")
+            w(f"            pt({lo}, {hi}, {fmt_u64(p['reference'])}, {fmt_u64(p['tolerance'])}, {fmt_u64(p['baseline_center'])}),")
         w("        ]")
     w("    } else {")
     w("        abort ENoSuchScenario")
@@ -514,6 +541,14 @@ def main():
     print("=== diagnostic (true-math reference + analytic budget) ===")
     for i, s in enumerate(scenarios):
         pts, worst = build_points(s)
+        baseline = BASELINE_CENTERS[i]
+        if len(baseline) != len(pts):
+            raise SystemExit(
+                f"baseline point count mismatch for scenario {i}: "
+                f"{len(baseline)} baseline values != {len(pts)} generated points"
+            )
+        for p, center in zip(pts, baseline):
+            p["baseline_center"] = center
         scen_points.append(pts)
         budget = max(budget, worst)
         print(f"\n[{i}] {s.digest}  {s.svi_ts[:19]}")

@@ -49,8 +49,9 @@ const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
-/// spot/forward, and assert `Pricer.range_price` matches the independent
-/// true-math reference within the per-point derived budget at every reference point.
+/// spot/forward, and assert `Pricer.range_price` is bit-identical to the scalar
+/// output at the pre-Approx parent commit while also matching the independent
+/// true-math reference within the per-point derived budget.
 fun run_scenario(s: u64) {
     let mut fx = oracle_fixture::setup_oracle(
         ref_data::creation_spot(s),
@@ -79,6 +80,7 @@ fun run_scenario(s: u64) {
     while (i < n) {
         let p = &points[i];
         let actual = pricer.range_price(strike(p.lower()), strike(p.higher()));
+        assert_eq!(actual, p.baseline_center());
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
         i = i + 1;
     };
