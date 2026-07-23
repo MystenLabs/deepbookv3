@@ -573,7 +573,7 @@ fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {
     // correction, N(d2) exactly. A rounded zero with nonzero radius still carries
     // a possible correction and must flow through the approximate quotient.
     if (w_prime.magnitude() == 0 && w_prime.error() == 0) {
-        return nd2.clamp_unit_interval()
+        return nd2
     };
 
     // Smile correction phi(d2) * w'(k) / (2 sqrt(w)), carried signed so `sub` clamps

@@ -107,6 +107,30 @@ fun mul_scaled_encloses_negative_product_corners() {
 }
 
 #[test]
+fun exact_zero_absorbs_multiplication_uncertainty_in_both_orders() {
+    let zero = approx::exact_u64(0);
+    let uncertain = approx::from_certified_parts(i64::from_parts(2 * float!(), true), float!() / 5);
+
+    let left_zero = zero.mul_scaled(&uncertain);
+    assert_center(&left_zero, 0, false);
+    assert_eq!(left_zero.error(), 0);
+
+    let right_zero = uncertain.mul_scaled(&zero);
+    assert_center(&right_zero, 0, false);
+    assert_eq!(right_zero.error(), 0);
+}
+
+#[test]
+fun zero_center_with_error_does_not_absorb_multiplication_uncertainty() {
+    let uncertain_zero = approx::from_certified_parts(i64::zero(), 1);
+    let one = approx::exact_u64(float!());
+    let result = uncertain_zero.mul_scaled(&one);
+
+    assert_center(&result, 0, false);
+    assert_eq!(result.error(), 2);
+}
+
+#[test]
 fun square_scaled_encloses_fixed_sign_and_zero_crossing_balls() {
     let fixed_sign = approx::from_certified_parts(
         i64::from_parts(3 * float!() / 2, true),

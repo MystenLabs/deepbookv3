@@ -148,9 +148,15 @@ public fun half(a: &Approx): Approx {
 
 // === Scaled multiplicative operations ===
 
-/// Scaled product. Propagates via the product rule
+/// Scaled product. A certified exact zero is absorbing, with no rounding or
+/// propagated error. Otherwise propagates via the product rule
 /// `d(ab) = |a| db + |b| da + da db`, each term rounded up, plus one raw unit.
 public fun mul_scaled(a: &Approx, b: &Approx): Approx {
+    if ((a.value.is_zero() && a.error == 0)
+            || (b.value.is_zero() && b.error == 0)) {
+        return exact_u64(0)
+    };
+
     let ma = a.value.magnitude();
     let mb = b.value.magnitude();
     let error = ceil_mul(ma, b.error)

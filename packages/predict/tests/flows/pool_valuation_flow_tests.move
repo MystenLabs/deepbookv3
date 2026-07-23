@@ -201,6 +201,37 @@ fun empty_pool_valuation_returns_idle() {
     fx.finish();
 }
 
+#[test]
+fun empty_full_u64_pool_valuation_uses_exact_bid_ask() {
+    let max_idle = std::u64::max_value!();
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, max_idle);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+
+    let val = fx.start_flush(&mut config, &vault);
+    let pool_nav = val.finish_flush(
+        &mut vault,
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+    assert_eq!(pool_nav, max_idle);
+
+    let flushes = event::events_by_type<FlushExecuted>();
+    assert_eq!(flushes.length(), 1);
+    let flush = &flushes[0];
+    assert_eq!(vault_events::flush_withdraw_pool_value(flush), max_idle);
+    assert_eq!(vault_events::flush_supply_pool_value(flush), max_idle);
+
+    return_shared(config);
+    return_shared(vault);
+    fx.finish();
+}
+
 // === Completeness proof ===
 
 #[test, expected_failure(abort_code = plp::EMissingExpiryValuation)]
