@@ -68,16 +68,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (`registry → protocol_config → admin`).
 - **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
   (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
-  book coexist; the exact live NAV is read by decomposing the per-order liability
+  book coexist; live NAV is read by decomposing the complete per-order liability
   across the two (`Σ qty·P` over the tree minus the leveraged floor-correction
-  scan over the book).
+  scan over the book), with numerical error carried in `Approx`.
   *Superseded:* a dense paged NAV matrix (`{quantity, floor_shares}` with
   strike-weighted prefix sums), which existed only to make every LP supply/withdraw
   a cheap synchronous read. It and its whole mitigation stack (the valuation
   liquidation pass, the verified/unscanned bucket split, the uncertainty band, the
   Q-haircut conservative-NAV thread) were deleted when LP flows went async — the
-  daily flush can afford an exact brute-force valuation, so the approximation and
-  everything compensating for its error are gone.
+  daily flush can afford a complete brute-force valuation, so the sampling
+  approximation and everything compensating for missing book state are gone.
 - **A flat, paged, sorted-`u256` liquidation book**, binary-searched, with a
   bounded keeper head-scan plus a rotating passive watermark; only leveraged
   orders enter. Priority is encoded by storing the quantity field's complement, so
@@ -146,7 +146,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Keep the payout tree.** The tree's max-net-payout term is the enforced settlement
   floor that anchors the live reserve — an O(1) root read, and the structural
   proof that any reserve ≥ it always pays in full at settlement. The same tree now
-  also serves the exact NAV linear walk (`Σ qty·P` over its live boundaries), so it
+  also serves the complete NAV linear walk (`Σ qty·P` over its live boundaries), so it
   is the single full-lifecycle live index. *Rejected:* folding settlement into the
   deleted NAV matrix and dropping the tree.
 
@@ -209,7 +209,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `active_stake` at claim; an owner who unstakes post-settlement, pre-claim, is scaled
   to zero. Accepted (self-inflicted; the prompt incentivized sweep bounds the window).
 - **`stake_deep` / `unstake_deep` carry no valuation-lock gate.** Staked DEEP is
-  excluded from `lp_pool_value`, so neither can move the flush mark; gating them would
+  excluded from `lp_pool_value_approx`, so neither can move the flush mark; gating them would
   add lock contention for no solvency benefit.
 
 ## Oracle extraction (recent)
@@ -298,28 +298,38 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   prices poorly. *Rejected:* a standalone reject-at-mint strike-range guard (redundant
   with the ask band on mint, and it would not cover redeem / NAV / liquidation, which
   re-price already-minted orders with no band).
+- **Short-dated pricing has one narrow wide-precision island.** The canonical
+  pricing centers and downstream formulas stay at 1e9, but
+  `a + b·(rho·(k−m) + sqrt((k−m)² + sigma²))` retains its raw 1e18 numerator
+  through `sqrt(w)`. Dividing that same numerator by 1e9 still supplies the
+  ordinary 1e9 `w` center to `w/2`. *Rationale:* flooring `b·inner` before the
+  square root made its fractional variance material under short-dated
+  `1/sqrt(w)` conditioning; widening more of SVI adds duplicate math without
+  materially improving measured mint availability.
 
-## Async LP, exact NAV, and the privileged flush (recent)
+## Async LP, certified NAV, and the privileged flush (recent)
 
-- **LP supply/withdraw is asynchronous; the daily flush values the pool exactly.**
+- **LP supply/withdraw is asynchronous; the daily flush values the complete pool.**
   LPs queue escrowed `request_supply`/`request_withdraw` (cancellable for an
   immediate refund, with request-time minimum-output limits), and a daily flush
-  fills eligible queued heads at one frozen mark.
+  fills eligible queued heads at one frozen bid/ask pair.
   *Rationale:* moving valuation off the trading hot path lets the flush afford an
-  exact brute-force NAV, which deletes the entire approximate-NAV mitigation stack;
+  all-order walk, which deletes the entire sampled approximate-NAV mitigation stack;
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
   a trustless on-chain crank), a multi-tx crank, and a flush that pauses trading.
-- **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
-  `current_nav = free_cash − exact_per_order_liability`, floored at zero, where the
-  liability is the payout-tree linear walk minus the leveraged-book floor correction;
-  an underwater leveraged order nets to zero with no liquidation pass. The flush
-  prices supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of
-  the pending-protocol-profit exclusion). *Rationale (audit L10):* one mark used in
-  both directions must equal true recoverable value, so it must be exact — a
-  conservative band would over-mint on one side or over-pay on the other. The
-  supply-mark-≥-true directional invariant is satisfied with equality. *Superseded:*
-  the optimistic supply mark + uncertainty-band withdraw fee of the approximate-NAV
-  world.
+- **`current_nav_approx` carries one per-expiry numerical certificate; the pool
+  consumes it directionally.** Per expiry, `current_nav_approx =
+  exact(free_cash) − live_liability_approx`, floored at zero, where the liability
+  is the payout-tree linear walk minus the leveraged-book correction; an
+  underwater leveraged order nets to zero with no liquidation pass. The flush
+  aggregates those certificates, aborts above 1% relative error, then prices
+  supply at `center + error` and withdraw at `center - error` over one pre-drain
+  PLP supply. *Rationale (audit L10):* a supplier must never price below true NAV
+  and dilute incumbents, while a withdrawer must never price above true NAV. A
+  center-radius certificate satisfies both without asking downstream accounting
+  to choose interval endpoints. *Superseded:* both the single scalar mark and the
+  optimistic supply mark plus configurable uncertainty-band withdrawal fee of
+  the sampled approximate-NAV world.
 - **The flush is privileged (cron-driven), not permissionless (audit L8).** Only a
   market-deployer `MarketLifecycleCap` (`start_pool_valuation`) may start a flush; the
   root-`AdminCap` flush path was removed (the flush is routine maintenance and should
@@ -329,7 +339,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   preceding tx could fill their own queued request at a mark they chose. *Rationale:*
   the cap-holder is trusted not to manipulate the oracle, and the cap is revocable
   (bounded blast radius, better key hygiene than the root cap). NAV manipulation is
-  closed by privileging the start; dilution by the fair FIFO drain at the frozen mark.
+  closed by privileging the start; numerical transfer is bounded by the certified
+  bid/ask and dilution by the fair FIFO drain.
   *Rejected:* a permissionless flush.
 - **Cash maintenance is decoupled from the flush potato.** Cash rebalance, the
   settled-market sweep, and liquidation are standalone, permissionless, per-market

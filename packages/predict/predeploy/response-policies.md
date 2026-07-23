@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-21. This is the tracked register of **settled response-policy
+Updated 2026-07-23. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -48,7 +48,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-1: The flush executes at any exact NAV mark (price circuit breakers removed)
+## RP-1: The flush executes at any certified NAV price (economic circuit breakers removed)
 
 - **Trigger state:** frozen flush mark implies a PLP price outside the former
   `[0.01, 100]` DUSDC band, or a pool NAV below the former dust floor.
@@ -56,10 +56,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   history. `total_supply ≤ k × pool_value` is not a maintainable invariant.
 - **Blast radius:** the mark is computed inside `finish_flush`, the single
   mandatory pool-wide PTB (valuation, sweeps, LP fills).
-- **Response:** proceed — no mark-level guard. Degeneracies are owned at the
-  fill site (RP-2). (Commit `cc67ed9f`, resolving P-1.)
-- **Reasoning:** the mark is the exact pool NAV, so any price it implies is
-  fair by construction; the deleted `assert_plp_price_in_bounds` was a
+- **Response:** proceed at the certified bid/ask regardless of the PLP price
+  they imply. Degeneracies are owned at the fill site (RP-2). The distinct 1%
+  numerical-certificate ceiling is defined under "Pricing and valuation
+  deviation bounds"; it constrains whether NAV is known well enough to move
+  value, not whether a known economic outcome is acceptable. (Commit
+  `cc67ed9f`, resolving P-1.)
+- **Reasoning:** the withdrawal price is at or below certified pool NAV and the
+  supply price is at or above it, so neither side extracts value from numerical
+  uncertainty; the deleted `assert_plp_price_in_bounds` was a
   state-triggered abort over a market-controlled variable with no on-chain
   recovery path — it bricked the flush in legitimate states (100x
   appreciation, post-drawdown recapitalization) until package upgrade.
@@ -123,17 +128,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   protocol-triggered refunds, or a new LP request type adds another
   non-executable fill mode.
 
-## RP-3: `lp_pool_value` floors at zero
+## RP-3: `lp_pool_value_approx` floors its center at zero
 
 - **Trigger state:** the sticky held-out total (`exclusion +
   pending_protocol_profit`) exceeds a collapsed gross pool value.
 - **Controller:** market (gross collapses via losses); the exclusion basis is
   protocol accounting but intentionally does not shrink on withdrawals.
 - **Blast radius:** the NAV read feeding the mandatory flush.
-- **Response:** `skip/carry`-shaped clamp — `saturating_sub` to 0, never
-  abort. LP-attributable value reads as zero until marks recover; the
-  downstream consequence (zero-value fills) is RP-2's problem, not this
-  read's.
+- **Response:** `skip/carry`-shaped clamp — `Approx::saturating_sub` to a zero
+  center, never abort. `finish_flush` turns that result into two zero,
+  non-executable marks until value recovers; the downstream refund behavior is
+  RP-2's problem, not this read's.
 - **Reasoning:** LP value cannot be negative; an abort here would brick the
   flush on an exogenous state. NAV==0 is a real reachable state, not an
   underflow guard.
@@ -161,8 +166,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   the permissionless exact-ms insert followed by `try_settle`. Standalone cash
   rebalance is a no-op in the window, and the keeper does not flush until the
   transition succeeds. Deliberately **no substitute
-  mark**: a settlement-dependent market has no well-defined true value, and
-  the single mark prices both queue directions — contribute-0 dilutes
+  mark**: a settlement-dependent market has no well-defined true value from
+  which to derive either side of the paired mark — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
 - **Recovery is not guaranteed.** `pyth_feed::insert_at` rejects a print
   generated more than `constants::max_settlement_carry_ms` (2s) before its
@@ -227,12 +232,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   this one *is* enforceable as an invariant).
 - **Response:** gate the flush behind the revocable `MarketLifecycleCap`; the
   accepted cost is a trust assumption — the operator chooses the valuation
-  instant (never the price: the mark is the exact NAV at that instant) and
+  instant (never the price: both sides are derived from the certified NAV at
+  that instant) and
   must run flushes for LP liveness.
 - **Reasoning + disclosure:** `docs/risks.md` "The privileged flush"; audit
   lens L8 (NAV-timing manipulation closed by privilege).
-- **Risk profile:** `BEST-GUESS` — operator-timing abuse bounded by mark
-  exactness; liveness depends on flush cadence (disclosed).
+- **Risk profile:** `BEST-GUESS` — operator-timing abuse is bounded by the
+  certified bid/ask; liveness depends on flush cadence (disclosed).
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
   touched.
 - **Reopen when:** a continuous/permissionless valuation design (e.g.
@@ -609,7 +615,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   the carry refill bear a small one-time timing transfer (suppliers inside the
   window pick it up), and the front-load becomes permanent only if the pool
   winds down or stays loss-making so the carry never refills. LP pricing is
-  structurally unaffected: `plp::lp_pool_value` already excludes
+  structurally unaffected: `plp::lp_pool_value_approx` already excludes
   `share × max(0, live unrealized net − carry)` — the net-basis anticipation of
   the future cut — and already-materialized cuts have left the pricing basis.
 - **Risk profile:** `BEST-GUESS` — the peak-of-booked-net invariant itself is
@@ -643,10 +649,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (every `current_nav`, including the flush lane `plp::value_expiry`).
 - **Controller:** market (prices move orders into the band between keeper
   sweeps) × protocol (whether the mark prices those claims at holder value).
-- **Blast radius:** the single frozen mark that fills both LP queues. Marking a
+- **Blast radius:** the frozen bid/ask pair that fills the LP queues. Marking a
   liquidatable order at holder value (`range_value - floor`) understates
   recoverable value by up to the LTV buffer per order, diluting incumbent LPs on
-  a same-flush supply and contradicting the exact-mark framing (RP-1; the
+  a same-flush supply and contradicting the certified-mark framing (RP-1; the
   NAV-mark directional invariant).
 - **Response:** value the knock-out at its liquidated worth in the read-only NAV
   correction, without touching the book. `exact_live_liability` already walks the
@@ -765,25 +771,28 @@ rounding, not model-evaluation accuracy):
 the canonical scalar control path. A mint quote whose contract-price certificate
 exceeds 0.1% aborts before it can create an order; the user can retry after a fresh
 oracle surface. A full-pool flush whose final pool-NAV certificate exceeds 1%
-aborts before it creates a frozen mark; a keeper retries after fresh pricing inputs
-or settlement. A zero scalar pool NAV proceeds under RP-1/RP-3: zero-value fills
-are already classified at the drain, and a purely relative NAV bound has no
-denominator. These checks do not reinterpret liquidation or other protocol
-branches: those continue to use the scalar center exactly as the protocol defines.
+aborts before it creates a frozen mark; inside that ceiling, supplies price at
+`center + error` and withdrawals at `center - error`, both over the same
+pre-drain PLP supply. A keeper retries an over-limit certificate after fresh
+pricing inputs or settlement. A zero scalar pool NAV proceeds under RP-1/RP-3
+as two zero, non-executable marks, and a purely relative NAV bound has no
+denominator. These checks do not reinterpret liquidation, live close, or other
+protocol branches: those continue to use the scalar center exactly as the
+protocol defines.
 
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
 reference (`packages/predict/tests/pricing/pricing_reference_data.move`, built by
 `generate_pricing_reference.py` from real Block Scholes surfaces against a
-true-math reference), whose per-scenario analytic fixed-point tolerance sits well
-inside 0.1% — but only where the dataset has scenarios. It must therefore cover
-the full deployed variance range, short-dated included, or the bound goes
-unenforced exactly where it is tightest: `1/sqrt(w)` conditioning makes low
-variance the worst case, which is the gap open item P-14 records. The NAV bound
-is guarded by the `current_nav_flow_tests` independent oracle. A pricer or
-valuation change that would breach either ceiling on any deployable surface is a
-defect to fix, not an accepted tradeoff — this is the line between negligible and
-worth-fixing.
+true-math reference). Its moderate-variance scenarios use analytic fixed-point
+tolerances, and its short-dated scenario pins the 0.1% ceiling at
+`w ~= 3.26e-8`, where `1/sqrt(w)` conditioning makes variance rounding most
+material. Pricing retains only `a + b * inner` at 1e18 through `sqrt(w)`; the
+1e9 total-variance center and every downstream operation remain on the canonical
+fixed-math path. The NAV bound is guarded by the `current_nav_flow_tests`
+independent oracle and the pool-flow bid/ask tests. A pricer or valuation change
+that would breach either ceiling on any deployable surface is a defect to fix,
+not an accepted tradeoff — this is the line between negligible and worth-fixing.
 
 ---
 

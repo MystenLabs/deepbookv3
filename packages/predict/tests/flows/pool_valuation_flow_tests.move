@@ -22,12 +22,13 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     protocol_config::{Self, ProtocolConfig},
-    test_constants
+    test_constants,
+    vault_events::{Self, FlushExecuted}
 };
 use fixed_math::math::float_scaling as float;
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::return_shared;
+use sui::{event, test_scenario::return_shared};
 
 /// 1x ATM up range, quantity 2e9 (well under the 50e9 cash floor that backs it).
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
@@ -46,10 +47,10 @@ const TWO_MARKET_POOL_NAV: u64 = 1_200_006_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
 /// that mark is a very low but executable fair PLP price.
 const BELOW_MIN_PRICE_IDLE: u64 = 1_000_000_000;
-/// Large 1x order used to drive a fully-funded market underwater after a price jump.
+/// Large 1x order used to drive a fully-funded market underwater after a price drop.
 const UNDERWATER_QUANTITY: u64 = 500_000_000_000;
 const UNDERWATER_TRADER_DEPOSIT: u64 = 400_000_000_000;
-const DEEP_ITM_LIVE_PRICE: u64 = 1_000_000_000_000;
+const DEEP_DOWN_LIVE_PRICE: u64 = 1;
 const REPRICE_MS: u64 = 121_000;
 const REPRICE_SOURCE_TS: u64 = 119_500;
 /// Empty-market cash above the 10e9 target. Valuation sweeps the 1e9 surplus to
@@ -101,6 +102,13 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     assert_eq!(vault.profit_basis_debits(), POST_VALUATION_PROFIT_DEBITS);
     assert_eq!(vault.pending_protocol_profit(), 0);
     assert_eq!(pool_nav, TWO_MARKET_POOL_NAV);
+    let flushes = event::events_by_type<FlushExecuted>();
+    assert_eq!(flushes.length(), 1);
+    let flush = &flushes[0];
+    let withdraw_pool_value = vault_events::flush_withdraw_pool_value(flush);
+    let supply_pool_value = vault_events::flush_supply_pool_value(flush);
+    assert!(withdraw_pool_value < pool_nav);
+    assert_eq!(pool_nav - withdraw_pool_value, supply_pool_value - pool_nav);
 
     return_shared(config);
     return_shared(pyth);
@@ -559,9 +567,10 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
 }
 
 /// Build a production-created market whose full pool allocation is deployed into
-/// expiry cash, then mint an ATM UP order and reprice it deep in the money. The
+/// expiry cash, then mint an ATM DOWN order and reprice it deep in the money. The
 /// repriced live liability exceeds free cash, so the market contributes zero NAV;
-/// `idle_remainder` is the only pool NAV left for `finish_flush`.
+/// the extreme tail price is exact, and `idle_remainder` is the only pool NAV left
+/// for `finish_flush`.
 fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
     let mut fx = helpers::setup_market_default();
     let market_allocation = test_constants::default_max_expiry_allocation();
@@ -579,13 +588,13 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
     fx.mint_bundle(
         &mut market,
         &mut account,
+        0,
         helpers::strike_tick(),
-        constants::pos_inf_tick!(),
         UNDERWATER_QUANTITY,
         test_constants::leverage_one_x(),
     );
     fx.set_clock_for_testing(REPRICE_MS);
-    fx.prepare_live_oracle_bundle_at(&mut market, DEEP_ITM_LIVE_PRICE, REPRICE_SOURCE_TS);
+    fx.prepare_live_oracle_bundle_at(&mut market, DEEP_DOWN_LIVE_PRICE, REPRICE_SOURCE_TS);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

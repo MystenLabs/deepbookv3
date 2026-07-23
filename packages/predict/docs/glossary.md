@@ -178,21 +178,24 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 ## Liquidity, NAV, and the flush
 
 The LP layer is **asynchronous**: liquidity providers queue requests and a
-privileged periodic **flush** prices them all at one frozen pool mark. See
+privileged periodic **flush** prices them at one frozen pool bid/ask pair. See
 [liquidity and NAV](./concepts/liquidity-and-nav.md).
 
 - **PLP** — the pool's liquidity-provider share token (`Coin<PLP>`), minted on a
   filled supply and burned on a filled withdraw; its value tracks pool NAV. The
   fungible claim on `PoolVault`. Code `PLP`.
-- **`current_nav`** — an `ExpiryMarket`'s **exact** live NAV: free cash minus the
-  exact per-order live liability (payout-tree `walk_linear` minus the leveraged
-  book's `correction_value`), floored at zero. There is no approximation or
-  uncertainty band — it is the true per-expiry recoverable value at the
-  valuation instant. Code `current_nav`.
+- **`current_nav`** — an `ExpiryMarket`'s live NAV center plus a certified
+  numerical-error radius: free cash minus the complete per-order live liability
+  (payout-tree `walk_linear` minus the leveraged book's `correction_value`),
+  floored at zero. Code `current_nav` (value-only view) and
+  `current_nav_approx` (package certificate).
 - **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush
   prices PLP at: `idle + Σ active-market current_nav`, net of the
-  pending-protocol-profit exclusion. Computed once per flush and used for both
-  supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
+  pending-protocol-profit exclusion. Computed once per flush as a center and
+  certified radius; supplies use `center + error`, withdrawals use
+  `center - error`, and both use the same pre-drain PLP supply. Event
+  `FlushExecuted` fields `supply_pool_value`, `withdraw_pool_value`, and
+  `active_market_nav_error`.
 - **Supply / withdraw queue** — the two FIFO request queues on `PoolVault`
   (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP
   enqueues with `request_supply` / `request_withdraw` (routed through its

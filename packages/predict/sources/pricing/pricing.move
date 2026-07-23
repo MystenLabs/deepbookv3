@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math};
+use fixed_math::{approx::{Self, Approx}, i64, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -432,7 +432,10 @@ fun assert_min_total_variance_positive(svi: &SVIParams) {
     let min_variance_increment = min_svi_variance_increment(svi);
     let a = svi.a();
     let min_total_var = i64::from_u64(min_variance_increment).add(&a);
-    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+    assert!(
+        !min_total_var.is_negative() && !min_total_var.is_zero(),
+        EBlockScholesMinVarianceInvalid,
+    );
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -490,8 +493,7 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): Approx {
     // `try_mul_div_down` floors the ratio by at most one raw unit.
     let k = approx::ln(strike_ratio, 1);
     let (k_minus_m, root) = moneyness_terms(svi_params, &k);
-    let total_var = total_variance(svi_params, &k_minus_m, &root);
-    let sqrt_var = approx::sqrt(&total_var);
+    let (total_var, sqrt_var) = total_variance_terms(svi_params, &k_minus_m, &root);
     let d2 = standardized_d2(&k, &total_var, &sqrt_var);
     let w_prime = variance_slope(svi_params, &k_minus_m, &root);
     digital_price(&d2, &w_prime, &sqrt_var)
@@ -508,21 +510,48 @@ fun moneyness_terms(svi_params: &SVIParams, k: &Approx): (Approx, Approx) {
     (k_minus_m, root)
 }
 
-fun total_variance(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): Approx {
+fun total_variance_terms(
+    svi_params: &SVIParams,
+    k_minus_m: &Approx,
+    root: &Approx,
+): (Approx, Approx) {
     let rho = approx::exact(svi_params.rho());
     let inner = rho.mul_scaled(k_minus_m).add(root);
     // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let b = approx::exact_u64(svi_params.b());
-    let variance_increment = b.mul_scaled(&inner);
-    let a = approx::exact(svi_params.a());
-    let total_var = variance_increment.add(&a);
-    // Total variance must be positive because pricing takes sqrt(w) below.
-    let total_var_center = total_var.value();
-    assert!(is_positive(&total_var_center), ENonPositiveVariance);
-    total_var
+    // Keep `b * inner + a` at 1e18 until sqrt. Dividing the same wide result by
+    // 1e9 exactly recovers the legacy 1e9 total-variance center used in `w / 2`,
+    // while sqrt no longer loses the fractional variance before amplification by
+    // `1 / sqrt(w)`.
+    let scale = math::float_scaling!() as u128;
+    let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
+    let a = svi_params.a();
+    let wide_a = (a.magnitude() as u128) * scale;
+    let wide_total_var = if (a.is_negative()) {
+        assert!(wide_increment >= wide_a, ENonPositiveVariance);
+        wide_increment - wide_a
+    } else {
+        wide_increment + wide_a
+    };
+    let total_var_center = (wide_total_var / scale) as u64;
+    assert!(total_var_center > 0, ENonPositiveVariance);
+
+    let wide_error = (svi_params.b() as u128) * (inner.error() as u128);
+    let total_var_error = (wide_error.div_ceil(scale) as u64) + 1;
+    let total_var = approx::from_parts(i64::from_u64(total_var_center), total_var_error);
+
+    let sqrt_center = math::sqrt_u128(wide_total_var);
+    let sqrt_low = if (wide_total_var > wide_error) {
+        math::sqrt_u128(wide_total_var - wide_error)
+    } else {
+        0
+    };
+    let sqrt_high = math::sqrt_u128_up(wide_total_var + wide_error);
+    let sqrt_error = (sqrt_center - sqrt_low).max(sqrt_high - sqrt_center);
+    let sqrt_var = approx::from_parts(i64::from_u64(sqrt_center as u64), sqrt_error as u64);
+    (total_var, sqrt_var)
 }
 
 fun standardized_d2(k: &Approx, total_var: &Approx, sqrt_var: &Approx): Approx {
@@ -555,8 +584,4 @@ fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {
     let correction = pdf.mul_div_down(w_prime, &two_sqrt_var);
     let adjusted = nd2.sub(&correction);
     adjusted.clamp_unit_interval()
-}
-
-fun is_positive(value: &I64): bool {
-    !value.is_negative() && !value.is_zero()
 }

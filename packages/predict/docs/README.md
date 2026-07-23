@@ -43,7 +43,7 @@ How the protocol works:
   position is liquidated, and what the holder receives.
 - **[Liquidity and NAV](./concepts/liquidity-and-nav.md)** — the pool, PLP
   shares, the async supply/withdraw queues, the privileged flush, and how the
-  exact pool NAV is computed.
+  certified pool NAV bid/ask is computed.
 
 ## Design
 

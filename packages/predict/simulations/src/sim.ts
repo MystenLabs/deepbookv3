@@ -657,9 +657,9 @@ function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<str
 
 // === Async LP request/flush events. A supply/withdraw is a two-phase flow: a request
 // row escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
-// queues at one frozen mark, emitting per-request SupplyFilled / WithdrawFilled and a
-// single FlushExecuted that carries the frozen valuation (the former PoolValued fields
-// were folded into it). Generated rows do not request cancellation, but protocol
+// queues at one frozen bid/ask pair, emitting per-request SupplyFilled / WithdrawFilled
+// and a single FlushExecuted that carries the frozen valuation (the former PoolValued
+// fields were folded into it). Generated rows do not request cancellation, but protocol
 // refunds can still emit RequestCancelled. The `index` queue handle is the request
 // alias key (no PLP coin is returned).
 
@@ -726,9 +726,11 @@ function normalizeFlushExecuted(event: any): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
         type: "flush_executed",
-        pool_value: decimal(json.pool_value),
+        withdraw_pool_value: decimal(json.withdraw_pool_value),
+        supply_pool_value: decimal(json.supply_pool_value),
         total_supply: decimal(json.total_supply),
         active_market_nav: decimal(json.active_market_nav),
+        active_market_nav_error: decimal(json.active_market_nav_error),
         market_count: decimal(json.market_count),
         idle_balance_before: decimal(json.idle_balance_before),
         supplies_filled: decimal(json.supplies_filled),

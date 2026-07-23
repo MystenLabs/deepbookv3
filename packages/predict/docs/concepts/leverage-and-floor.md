@@ -183,8 +183,7 @@ expiry's snapshotted floor-to-value ratio (see
 [liquidation](./liquidation.md) and [configuration](../design/configuration.md)).
 
 After admission, the expiry indexes the same contract two ways: payout terms for
-cash backing and settlement, and liquidation terms for the exact NAV floor
-correction.
+cash backing and settlement, and liquidation terms for the NAV floor correction.
 
 ## Live redeem
 

@@ -158,8 +158,13 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
         type: "flush", marketCount: fe ? Number(fe.market_count) : flush.length, stragglers: settlements.length,
-        poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
-        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr), compGas: computationOf(fr),
+        navCenter: fe ? (Number(fe.withdraw_pool_value) + Number(fe.supply_pool_value)) / 2e6 : 0,
+        withdrawPoolValue: fe ? Number(fe.withdraw_pool_value) / 1e6 : 0,
+        supplyPoolValue: fe ? Number(fe.supply_pool_value) / 1e6 : 0,
+        totalSupply: fe ? Number(fe.total_supply) : 0,
+        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0,
+        activeNavError: fe ? Number(fe.active_market_nav_error) / 1e6 : 0,
+        gas: gasOf(fr), compGas: computationOf(fr),
       });
       console.log(`[keeper] flushed ${flush.length} active market(s)`);
     } catch (e) {

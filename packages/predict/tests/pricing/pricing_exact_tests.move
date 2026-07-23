@@ -47,12 +47,12 @@ const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
+const MAX_MINT_PRICE_DEVIATION: u64 = 1_000_000;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
-/// spot/forward, and assert `Pricer.range_price` is bit-identical to the scalar
-/// output at the pre-Approx parent commit while also matching the independent
-/// true-math reference within the per-point derived budget.
-fun run_scenario(s: u64) {
+/// spot/forward, and assert `Pricer.range_price` matches its fixed-point regression
+/// snapshot and the independent true-math reference within the per-point budget.
+fun run_scenario(s: u64, enforce_mint_deviation: bool) {
     let mut fx = oracle_fixture::setup_oracle(
         ref_data::creation_spot(s),
         ref_data::tick_size(s),
@@ -83,10 +83,13 @@ fun run_scenario(s: u64) {
         assert!(!priced.is_negative());
         assert!(priced.error() < std::u64::max_value!());
         let actual = priced.magnitude();
-        assert_eq!(actual, p.baseline_center());
+        assert_eq!(actual, p.expected_center());
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
         test_helpers::assert_within(actual, p.reference_lower(), priced.error());
         test_helpers::assert_within(actual, p.reference_upper(), priced.error());
+        if (enforce_mint_deviation) {
+            assert!(priced.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
+        };
         i = i + 1;
     };
 
@@ -95,13 +98,20 @@ fun run_scenario(s: u64) {
 }
 
 #[test]
-fun real_scenario_large_variance() { run_scenario(0); }
+fun real_scenario_large_variance() { run_scenario(0, false); }
 
 #[test]
-fun real_scenario_medium_variance() { run_scenario(1); }
+fun real_scenario_medium_variance() { run_scenario(1, false); }
 
 #[test]
-fun real_scenario_small_variance() { run_scenario(2); }
+fun real_scenario_small_variance() { run_scenario(2, false); }
+
+/// This real one-minute SVI surface has w ~= 3.26e-8 at the selected strike.
+/// Flooring `b * inner` to 1e9 before sqrt priced it about 3% below the independent
+/// reference and produced a certificate above the 0.1% mint ceiling. Retaining
+/// that one variance term through sqrt keeps both center and certificate in policy.
+#[test]
+fun real_short_dated_scenario_meets_mint_deviation() { run_scenario(3, true); }
 
 #[test]
 fun positive_svi_slope_clamps_adjusted_digital_to_zero() {

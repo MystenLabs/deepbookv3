@@ -300,24 +300,34 @@ public fun finish_flush(
         &total_nav,
     );
     // NAV precision policy; a zero pool NAV is a valid liveness mark (RP-1/RP-3:
-    // zero-value fills are handled at the drain, and a purely relative bound has no
-    // denominator), so it skips the check rather than stalling the flush.
+    // both sides become non-executable at the drain, and a purely relative bound
+    // has no denominator), so it skips the check rather than stalling the flush.
     assert!(
         pool_nav.magnitude() == 0
             || pool_nav.true_relative_deviation_within(max_nav_deviation!()),
         ENavTooImprecise,
     );
-    let total_nav = total_nav.magnitude();
-    let pool_nav = pool_nav.magnitude();
+    let active_market_nav = total_nav.magnitude();
+    let active_market_nav_error = total_nav.error();
+    let pool_nav_center = pool_nav.magnitude();
+    let pool_nav_error = pool_nav.error();
+    let (withdraw_pool_value, supply_pool_value) = if (pool_nav_center == 0) {
+        (0, 0)
+    } else {
+        (pool_nav_center - pool_nav_error, pool_nav_center + pool_nav_error)
+    };
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Snapshot the share price once (frozen pair), drain both queues against it, then
-    // release the valuation lock at the very end. The flush IS the full-pool
-    // valuation, so the single FlushExecuted event carries the priced mark and its
-    // idle + active-NAV breakdown.
+    // Deconstruct Approx exactly once at the economic boundary. Suppliers pay the
+    // high pool value and withdrawals receive the low pool value, both over the
+    // same frozen pre-drain supply.
     let vault_id = vault.id();
-    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
+    let mark = lp_book::new_flush_mark(
+        withdraw_pool_value,
+        supply_pool_value,
+        total_supply,
+    );
     let drain_summary = vault
         .lp
         .drain(
@@ -333,9 +343,11 @@ public fun finish_flush(
     vault_events::emit_flush_executed(
         vault_id,
         ctx.epoch(),
-        pool_nav,
+        withdraw_pool_value,
+        supply_pool_value,
         total_supply,
-        total_nav,
+        active_market_nav,
+        active_market_nav_error,
         market_count,
         idle_balance_before,
         drain_summary.supplies_filled(),
@@ -344,7 +356,7 @@ public fun finish_flush(
         vault.expiry_accounting.idle_balance(),
         total_supply_after,
     );
-    pool_nav
+    pool_nav_center
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the new

@@ -60,29 +60,29 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## NAV and valuation
 
-- **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  free_cash − exact_per_order_liability`, floored at zero, where `free_cash =
-  cash − rebate_reserve` and the liability is the payout-tree linear walk
+- **`current_nav_approx` is the certified per-expiry mark.**
+  `expiry_market::current_nav_approx = exact(free_cash) − live_liability_approx`,
+  floored at zero, where `free_cash = cash − rebate_reserve` and the liability is
+  the payout-tree linear walk
   (`strike_payout_tree::walk_linear`, `Σ qty·P`, caching boundary prices for the
   same valuation) minus the leveraged-book floor correction
   (`liquidation_book::correction_value`, reading order range prices from that
-  cache). An underwater leveraged order
+  cache). Every numerical value carries its `Approx` radius. An underwater leveraged order
   nets to zero by the per-order floor cap, so the read needs no liquidation pass.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
   reserve and proven on every trade); the `saturating_sub` cash floor marks a
   degenerate (underwater) market at 0, the correct per-market limited-recourse
-  value, never negative.
-- **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP
-  supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of the
-  protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`),
-  computed once in `finish_flush`. Because each
-  `current_nav` is exact, that one mark equals true recoverable value in both
-  directions: a supplier prices `=` fair shares (never over-mints to dilute
-  incumbents) and a withdrawer draws `=` fair cash. There is **no conservative
-  band** — the bucket/band decomposition belonged to the deleted approximate-NAV
-  world. Any liveness clamp inside `current_nav` (the degenerate-underwater cash
-  floor) only ever *maximizes* NAV when it fires, preserving the supply-mark
-  direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
+  value, never negative. The public `current_nav` is its center-only read.
+- **NAV-mark directional invariant — supply high, withdraw low.** The flush
+  computes one `pool_nav_approx = exact(idle) + Σ current_nav_approx`, net of the
+  protocol's unmaterialized-profit exclusion and any carried
+  `pending_protocol_profit`, and rejects a relative radius above 1%. Inside that
+  ceiling, supply uses `center + error` so it cannot undercount true value and
+  over-mint; withdraw uses `center - error` so it cannot overpay true value. Both
+  use the same pre-drain PLP supply. This certificate-derived spread is not the
+  deleted heuristic bucket/band design or a withdrawal fee. A zero center produces
+  two zero, non-executable marks. See
+  [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
 - **Exactly-once full-pool valuation.** The flush hot potato (`PoolValuation`)
   snapshots the active-expiry set at `start_pool_valuation`; each `value_expiry`
   proves its market is in the snapshot and not already valued, and `finish_flush`
@@ -179,8 +179,9 @@ and contributors. For *how* each mechanism works, follow the links into
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
 - PLP supply and withdraw carry **no fee**. The former uncertainty-band withdraw
-  fee (`withdraw_fee_alpha`) was deleted with the approximate-NAV band — the exact
-  single-mark NAV has no valuation uncertainty to price.
+  fee (`withdraw_fee_alpha`) was deleted with the heuristic approximate-NAV band.
+  The current bid/ask is derived mechanically from the certified numerical error,
+  not a configurable fee or risk premium.
 
 ## Lifecycle
 
@@ -198,8 +199,9 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Past-expiry exact-data liveness.** A market that crosses its expiry but lacks
   an exact Propbook Pyth spot cannot be live-valued: `value_expiry` tries passive
   settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
-  market remains unsettled. This preserves the single exact mark for PLP supply and
-  withdraw; no approximate substitute mark is allowed. Because the flush must value
+  market remains unsettled. Without the settlement-dependent center the flush
+  cannot derive a certified PLP bid/ask; no synthetic substitute is allowed.
+  Because the flush must value
   every active market exactly once, this abort blocks the *whole* pool flush, not
   just the one market — so an expiry whose exact settlement spot is permanently
   unobtainable is a cross-market liveness brick, not a benign wait. Guaranteeing the
@@ -230,7 +232,9 @@ and contributors. For *how* each mechanism works, follow the links into
   returns quantities it is the source of truth for (an exposure book returns its raw
   live liability; the pool returns its profit basis), never a value pre-shaped for a
   caller's mark, haircut, or stance. `strike_exposure::exact_live_liability` returns
-  the liability fact; `expiry_market::current_nav` owns the NAV cash floor.
+  the complete liability `Approx`; `expiry_market::current_nav_approx` owns the NAV
+  cash floor; `plp::finish_flush` alone turns the final certificate into economic
+  bid/ask policy.
 - **Each economic quantity is clamped exactly once, at the policy owner.** A lossy
   transform (clamp at zero, `min`/`max`, saturating subtraction, rounding) is applied
   once, as the last step before use, in the module that owns the policy — never on a
@@ -239,14 +243,15 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Rounding
 
-- All fixed-point math is at 1e9 scale; `math::mul` and `math::div` round **down**
-  uniformly.
+- Canonical fixed-point values are at 1e9 scale; `math::mul` and `math::div`
+  round **down** uniformly. Pricing's one narrow exception retains the raw
+  `a + b·inner` numerator at 1e18 through `sqrt(w)`, then rejoins the 1e9 path.
 - **Solvency rests on bit-identical pairing:** where a reserve and a payout derive
   from the same quantity/floor atoms, they use the same net-payout calculation
   (`quantity − floor_shares`), so a reserve can never be short of the payout it
   backs.
 - Dust is biased to the protocol/LP pool, never against solvency: payouts round
-  down (the holder absorbs ≤1 unit). The exact NAV walk floors at zero with
-  `saturating_sub` so bounded fixed-point ulp dust (which the boundary-aggregated
-  liability can carry) cannot underflow and abort valuation. See the "Rounding and
-  dust" section of [../risks.md](../risks.md).
+  down (the holder absorbs ≤1 unit). The NAV `Approx` floors its center at zero
+  so bounded fixed-point dust cannot underflow and abort valuation; its radius
+  remains attached until `finish_flush` applies the 1% gate and bid/ask. See the
+  "Rounding and dust" section of [../risks.md](../risks.md).

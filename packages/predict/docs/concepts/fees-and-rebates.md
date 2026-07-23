@@ -4,7 +4,7 @@ Every Predict trade — a mint or a live redeem — carries a trading fee, and m
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
-This page covers **per-trade** fees. The pool itself charges no LP-side fee: PLP supply and withdraw are priced at one exact pool-wide mark with no band or spread, documented in [./liquidity-and-nav.md](./liquidity-and-nav.md).
+This page covers **per-trade** fees. The pool itself charges no LP-side fee. PLP supply and withdraw use a certified numerical-error bid/ask—upper NAV for supply, lower NAV for withdraw—not a fee or configurable spread; see [liquidity and NAV](./liquidity-and-nav.md).
 
 ## Where fees come from
 
