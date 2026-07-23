@@ -299,7 +299,7 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
 
     let complement = math::float_scaling!() - probability;
     let variance = math::mul_down(probability, complement);
-    let bernoulli_factor = math::sqrt_down(variance, math::float_scaling!());
+    let bernoulli_factor = math::sqrt_down(variance);
     math::mul_down(config.base_fee, bernoulli_factor)
 }
 

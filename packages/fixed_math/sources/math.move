@@ -10,9 +10,8 @@ module fixed_math::math;
 use fixed_math::i64;
 
 const EInputZero: u64 = 0;
-const EInvalidPrecision: u64 = 1;
-const EPow10ExponentTooLarge: u64 = 2;
-const EExpOverflow: u64 = 3;
+const EPow10ExponentTooLarge: u64 = 1;
+const EExpOverflow: u64 = 2;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
@@ -194,13 +193,10 @@ public fun normal_pdf(x: &i64::I64): u64 {
     mul_down(exp(&exponent), INV_SQRT_2PI)
 }
 
-/// Returns a fixed-point square root with `precision` as the operand scale.
-/// For `m = floor(1e9 / precision)`, the exact integer contract is `floor(sqrt(x * m * 1e9)) / m`; when `precision` divides 1e9, the raw result represents `sqrt(x * precision)`. Predict callers pass `precision = 1e9`, so a 1e9-scaled input produces a 1e9-scaled result rounded down within one raw unit. `precision` must be in `[1, 1e9]`.
-public fun sqrt_down(x: u64, precision: u64): u64 {
-    assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
-    let multiplier = (float_scaling!() / precision) as u128;
-    let scaled = (x as u128) * multiplier * F;
-    (sqrt_u128_down(scaled) / multiplier) as u64
+/// Returns the square root of a 1e9-scaled nonnegative value at 1e9 scale,
+/// rounded down within one raw unit.
+public fun sqrt_down(x: u64): u64 {
+    sqrt_u128_down((x as u128) * F) as u64
 }
 
 /// Integer square root rounded down for a wide nonnegative intermediate.

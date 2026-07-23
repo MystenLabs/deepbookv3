@@ -49,7 +49,7 @@ public(package) fun penalty_fee(
     let gas_price = scaled_gas_price(ctx);
     if (gas_price <= self.mean) return 0;
 
-    let std_dev = math::sqrt_down(self.variance, math::float_scaling!());
+    let std_dev = math::sqrt_down(self.variance);
     let z_score = math::div_down(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 

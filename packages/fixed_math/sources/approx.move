@@ -276,10 +276,10 @@ public fun ln_ratio(numerator: u64, denominator: u64): Approx {
 /// center magnitude; callers guard nonnegativity of the center.
 public fun sqrt(a: &Approx): Approx {
     let x = a.value.magnitude();
-    let root = math::sqrt_down(x, math::float_scaling!());
-    let low = if (x > a.error) math::sqrt_down(x - a.error, math::float_scaling!()) else 0;
+    let root = math::sqrt_down(x);
+    let low = if (x > a.error) math::sqrt_down(x - a.error) else 0;
     let upper = if (a.error > std::u64::max_value!() - x) std::u64::max_value!() else x + a.error;
-    let high = math::sqrt_down(upper, math::float_scaling!());
+    let high = math::sqrt_down(upper);
     let spread = if (root - low >= high - root) { root - low } else { high - root };
     Approx { value: i64::from_u64(root), error: spread + sqrt_leaf!() }
 }
@@ -317,18 +317,10 @@ fun ceil_div(x: u64, y: u64): u64 {
     ceil_mul_div(x, math::float_scaling!(), y)
 }
 
-/// `ceil(x * y / d)`, saturating to `u64::MAX` and guarding the u128 product so a
-/// saturated (`u64::MAX`) error operand cannot overflow. `d == 0` saturates.
+/// `ceil(x * y / d)`, saturating to `u64::MAX` when the denominator is zero or
+/// the result does not fit in `u64`.
 fun ceil_mul_div(x: u64, y: u64, d: u64): u64 {
-    if (d == 0) return std::u64::max_value!();
-    let xu = x as u128;
-    let yu = y as u128;
-    if (yu != 0 && xu > std::u128::max_value!() / yu) return std::u64::max_value!();
-    let num = xu * yu;
-    let du = d as u128;
-    let quotient = num / du;
-    if (quotient >= (std::u64::max_value!() as u128)) return std::u64::max_value!();
-    (if (num % du > 0) { quotient + 1 } else { quotient }) as u64
+    math::try_mul_div_up(x, y, d).destroy_or!(std::u64::max_value!())
 }
 
 fun saturating_add(a: u64, b: u64): u64 {

@@ -446,7 +446,7 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
     if (rho_mag == math::float_scaling!()) return 0;
 
     let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
-    let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared, math::float_scaling!());
+    let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
     math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
