@@ -49,6 +49,10 @@ struct Args {
     margin_poll_interval_secs: u64,
     #[clap(env, long)]
     margin_package_id: Option<String>,
+    #[clap(env = "LIVE_OHCLV_POLL_INTERVAL_MS", long, default_value_t = 1000)]
+    live_ohclv_poll_interval_ms: u64,
+    #[clap(env = "LIVE_OHCLV_MAX_FILLS", long, default_value_t = 5000)]
+    live_ohclv_max_fills: usize,
     /// Comma-separated list of valid admin bearer tokens
     #[clap(env = "ADMIN_TOKENS", long)]
     admin_tokens: Option<String>,
@@ -71,6 +75,8 @@ async fn main() -> Result<(), anyhow::Error> {
         deep_treasury_id,
         margin_poll_interval_secs,
         margin_package_id,
+        live_ohclv_poll_interval_ms,
+        live_ohclv_max_fills,
         admin_tokens,
     } = Args::parse();
 
@@ -86,6 +92,8 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
+        live_ohclv_poll_interval_ms,
+        live_ohclv_max_fills,
     )
     .await?;
 

@@ -41,3 +41,7 @@ secrecy = "0.8"
 [[bin]]
 name = "deepbook-server"
 path = "src/main.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
