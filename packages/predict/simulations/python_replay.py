@@ -1214,9 +1214,9 @@ def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] |
     return exact_live_liability(model)
 
 
-# current_nav (per ExpiryMarket): free cash minus the exact per-order live
-# liability, floored at zero. free_cash = expiry_cash - rebate_reserve. This is the
-# EXACT mark the flush prices supply AND withdraw at.
+# Scalar replay of the `current_nav_approx` center for one ExpiryMarket: free cash
+# minus the per-order live-liability center, floored at zero. free_cash =
+# expiry_cash - rebate_reserve. This helper does not reproduce the Approx radius.
 def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
     free_cash = max(0, state["expiry_cash_balance"] - rebate_reserve)
@@ -1229,11 +1229,11 @@ def compute_pool_value(
     curve: list[dict[str, int]] | None = None,
     position_liability: int | None = None,
 ) -> int:
-    # Pool NAV = lp_pool_value(idle, credits, debits, share, active, pending), where
-    # the single active market's NAV is the EXACT `current_nav` above (settled markets
-    # contribute 0 — not modelled here, settlement is stubbed). Mirrors
-    # plp::lp_pool_value's saturating exclusion of unmaterialized and carried
-    # protocol profit.
+    # Scalar-center analogue of `plp::lp_pool_value_approx`, where the single
+    # active market contributes the `current_nav` center above (settled markets
+    # contribute 0 — not modelled here, settlement is stubbed). This mirrors the
+    # saturating exclusion of unmaterialized and carried protocol profit, but does
+    # not compute the on-chain certificate or its directional flush marks.
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     active_expiry_value = current_nav(model, state)
@@ -1928,12 +1928,10 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 
 # === Async LP supply/withdraw (replaces the deleted synchronous SupplyExecuted /
 # WithdrawExecuted). A supply/withdraw is now: a request that escrows funds, then a
-# later privileged flush that drains the queue at one EXACT frozen mark
-# (current_nav). plp::supply_shares mints `amount * total_supply / pool_value`
-# (bootstrap 1:1 when total_supply == 0 AND pool_value == 0); plp::withdraw_dusdc
-# pays `shares * pool_value / total_supply` — NO withdraw fee (the band fee died with
-# the approximate-NAV world). Both round down; a dust request that prices to 0 is
-# refunded.
+# later privileged flush. These long-replay helpers intentionally use the scalar
+# pool-value center for both directions; they do not reproduce the contract's
+# `center + error` supply mark or `center - error` withdrawal mark. Both helpers
+# round down, and a dust request that prices to 0 is refunded.
 #
 # These synchronous helpers are for the long Python-only replay. Normal parity
 # queues requests and drains them later in `parity_flush_updates`.
@@ -1946,7 +1944,7 @@ def supply_update(
     if row["lpRef"] in model["lp_refs"]:
         raise ValueError(f"duplicate lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    # plp::supply_shares: bootstrap 1:1 requires an empty pool NAV.
+    # Scalar replay supply calculation: bootstrap 1:1 requires an empty pool NAV.
     if total_supply == 0:
         if pool_value != 0:
             raise ValueError("bootstrap supply requires empty pool NAV")
@@ -1979,7 +1977,7 @@ def withdraw_update(
     if shares is None:
         raise ValueError(f"unknown lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    # plp::withdraw_dusdc: pro-rata, rounded down, NO withdraw fee.
+    # Scalar replay withdrawal calculation: pro-rata and rounded down.
     payout = mul_div_round_down(shares, pool_value, total_supply) if total_supply else 0
     if payout <= 0:
         raise ValueError("withdraw priced to zero DUSDC (would be refunded)")

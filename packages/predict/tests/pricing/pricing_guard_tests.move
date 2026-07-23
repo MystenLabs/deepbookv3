@@ -71,6 +71,10 @@ const DEEP_ITM_STRIKE: u64 = 1;
 /// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
 /// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
+/// Production-valid spot/forward and strike whose floored strike ratio is exactly
+/// one raw 1e9 unit, so `ln` must conservatively saturate its input-error radius.
+const MIN_NONZERO_RATIO_FORWARD: u64 = 10_000_000_000_000_000;
+const MIN_NONZERO_RATIO_STRIKE: u64 = 10_000_000;
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
@@ -300,6 +304,33 @@ fun deep_otm_up_price_saturates_to_zero() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.up_price(strike(DEEP_OTM_STRIKE)), 0);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// A saturated certificate remains a rejectable passenger; narrowing the retained
+/// variance error back to u64 must not primitive-abort the scalar tail quote.
+#[test]
+fun smallest_nonzero_strike_ratio_still_prices_the_tail() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        MIN_NONZERO_RATIO_FORWARD,
+        MIN_NONZERO_RATIO_FORWARD,
+        1,
+        false,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
+        float!(),
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(pricer.up_price(strike(MIN_NONZERO_RATIO_STRIKE)), 0);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

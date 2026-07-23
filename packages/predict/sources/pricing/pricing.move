@@ -539,7 +539,13 @@ fun total_variance_terms(
     assert!(total_var_center > 0, ENonPositiveVariance);
 
     let wide_error = (svi_params.b() as u128) * (inner.error() as u128);
-    let total_var_error = (wide_error.div_ceil(scale) as u64) + 1;
+    let scaled_error = wide_error.div_ceil(scale);
+    let max_error = std::u64::max_value!() as u128;
+    let total_var_error = if (scaled_error >= max_error) {
+        std::u64::max_value!()
+    } else {
+        (scaled_error as u64) + 1
+    };
     let total_var = approx::from_parts(i64::from_u64(total_var_center), total_var_error);
 
     let sqrt_center = math::sqrt_u128(wide_total_var);
