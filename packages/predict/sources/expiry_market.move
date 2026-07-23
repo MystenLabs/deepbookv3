@@ -71,9 +71,9 @@ public struct ExpiryMarket has key {
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
-/// `quantity` is the exact requested quantity or the conservatively budget-sized
-/// fill. `trading_fee` is the post-stake-discount fee before sponsor subsidy, and
-/// `all_in_cost` is the resulting account withdrawal:
+/// `quantity` is the exact requested quantity or the largest lot-rounded fill
+/// whose net premium fits the budget. `trading_fee` is the post-stake-discount
+/// fee before sponsor subsidy, and `all_in_cost` is the resulting account withdrawal:
 /// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
 public struct MintQuote has copy, drop {
     quantity: u64,
@@ -272,11 +272,11 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 
 /// Quote the all-in cost of a mint request for an anonymous taker (no
 /// stake discount, no builder code) without mutating any market state.
-/// Exact-quantity mode uses `min_quantity`; budget mode conservatively sizes a
-/// lot-rounded fill under `max_premium`. The quote applies live-mint and admission
-/// gates but does not preflight account balance, slippage caps, or exposure-index
-/// capacity. Its penalty uses the current pre-update EWMA state. Public for SDK
-/// and devInspect pre-trade pricing.
+/// Exact-quantity mode uses `min_quantity`; budget mode sizes the largest
+/// lot-rounded fill under `max_premium`. The quote applies live-mint and
+/// admission gates but does not preflight account balance, slippage caps, or
+/// exposure-index capacity. Its penalty uses the current pre-update EWMA state.
+/// Public for SDK and devInspect pre-trade pricing.
 public fun quote_mint(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -460,9 +460,8 @@ public fun mint_exact_quantity(
     )
 }
 
-/// Mint a conservatively sized lot-rounded position whose net premium does not
-/// exceed `max_premium`. The result may be one lot below the largest fitting
-/// quantity and must meet `min_quantity`.
+/// Mint the largest lot-rounded position whose net premium does not exceed
+/// `max_premium`. The result must meet `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
 /// `max_premium`. The sizing budget is first capped to the account's available

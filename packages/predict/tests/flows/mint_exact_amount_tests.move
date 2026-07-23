@@ -7,9 +7,6 @@
 /// cap instead of aborting on oversized budgets (the DBU-566 regression), and
 /// enforces `min_quantity` as the fill floor. Every expected value is
 /// hand-derived from the fixture's exact at-the-money probability Φ(0) = 0.5.
-/// Not covered here: the one-lot-conservative probe edge at fractional leverage
-/// with a rounding-lossy probability — at p = 0.5 every per-lot product is
-/// exact, so the probe and the charge coincide at all these points.
 #[test_only]
 module deepbook_predict::mint_exact_amount_tests;
 
@@ -45,6 +42,15 @@ const LOT_CAP_NET_PREMIUM: u64 = 21_474_836_475_000;
 /// Fill for a balance-capped budget: deposit 1e9 / one-lot premium 5_000 =
 /// 200_000 lots of 10_000 raw units.
 const BALANCE_CAPPED_QUANTITY: u64 = 2_000_000_000;
+/// At p = 0.5 and 1.5x, quantity 3_000_000 has entry value 1_500_000 and exact
+/// net premium 1_000_000. The next lot has entry value 1_505_000 and premium
+/// ceil(1_505_000 / 1.5) = 1_003_334.
+const FRACTIONAL_LEVERAGE: u64 = 1_500_000_000;
+const FRACTIONAL_LOWER_QUANTITY: u64 = 3_000_000;
+const FRACTIONAL_LOWER_PREMIUM: u64 = 1_000_000;
+const FRACTIONAL_NEXT_QUANTITY: u64 = 3_010_000;
+const FRACTIONAL_NEXT_PREMIUM: u64 = 1_003_334;
+const FRACTIONAL_BUDGET_BELOW_NEXT: u64 = 1_003_333;
 
 #[test]
 fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
@@ -105,6 +111,41 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
     );
 
     helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun fractional_leverage_budget_uses_the_exact_rounded_premium() {
+    let (mut fx, expiry_id, _trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let market = fx.take_market_bundle(expiry_id);
+
+    let below = fx.quote_mint_amount_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        FRACTIONAL_BUDGET_BELOW_NEXT,
+        FRACTIONAL_LOWER_QUANTITY,
+        FRACTIONAL_LEVERAGE,
+    );
+    assert_eq!(below.quantity(), FRACTIONAL_LOWER_QUANTITY);
+    assert_eq!(below.net_premium(), FRACTIONAL_LOWER_PREMIUM);
+
+    let at = fx.quote_mint_amount_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        FRACTIONAL_NEXT_PREMIUM,
+        FRACTIONAL_NEXT_QUANTITY,
+        FRACTIONAL_LEVERAGE,
+    );
+    assert_eq!(at.quantity(), FRACTIONAL_NEXT_QUANTITY);
+    assert_eq!(at.net_premium(), FRACTIONAL_NEXT_PREMIUM);
+
     helpers::return_market_bundle(market);
     fx.finish();
 }

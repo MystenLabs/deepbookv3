@@ -47,9 +47,15 @@ const LEVERAGE_ONE_POINT_FIVE_X: u64 = 1_500_000_000;
 /// p = 0.5 at 1x: net premium is the full entry value 500_000_000, floor 0.
 const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
 /// p = 0.1, 1.5x, quantity 1e9: entry value 100_000_000; net premium
-/// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares the 33_333_334 remainder.
-const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_666;
-const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_334;
+/// ceil(100_000_000 / 1.5) = 66_666_667; floor shares are the 33_333_333
+/// remainder.
+const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_667;
+const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_333;
+/// p = 0.5, quantity 2_010_000: entry value 1_005_000. At the smallest
+/// leverage above 1x, the financed floor is less than one raw unit and rounds
+/// to zero, so the full entry value is the premium.
+const NEAR_ONE_X_QUANTITY: u64 = 2_010_000;
+const NEAR_ONE_X_NET_PREMIUM: u64 = 1_005_000;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -286,6 +292,21 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
     destroy(config);
 }
 
+#[test]
+fun mint_admission_near_one_x_rounds_sub_atom_floor_to_zero() {
+    let config = strike_exposure_config::new();
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        NEAR_ONE_X_QUANTITY,
+        LEVERAGE_JUST_ABOVE_ONE_X,
+        FAR_FROM_EXPIRY_MS,
+    );
+    assert_eq!(admission.net_premium(), NEAR_ONE_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
+    destroy(config);
+}
+
 // === ENetPremiumBelowMinimum (mint admission) ===
 
 #[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBelowMinimum)]
@@ -410,8 +431,9 @@ fun no_leverage_window_zero_disables_block() {
 }
 
 // Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
-// is admitted far from expiry. Entry value 100_000_000; net premium
-// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares 100_000_000 - 66_666_666.
+// is admitted far from expiry. Entry value 100_000_000; the financed floor is
+// floor(100_000_000 / 3) = 33_333_333, so the complementary net premium is
+// 66_666_667.
 #[test]
 fun low_probability_one_point_five_x_admitted_far_from_expiry() {
     let config = strike_exposure_config::new();

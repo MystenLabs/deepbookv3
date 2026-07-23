@@ -20,7 +20,7 @@ use deepbook_predict::{
     order_events,
     pricing::{Self, Pricer},
     range_codec,
-    strike_exposure_config::StrikeExposureConfig,
+    strike_exposure_config::{Self, StrikeExposureConfig},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use fixed_math::{approx::Approx, math};
@@ -297,8 +297,8 @@ public(package) fun is_active_order(exposure: &StrikeExposure, order: &Order): b
 
 /// Price a range, choose quantity under the requested bias, and run mint
 /// admission. Exact-quantity mode uses `min_quantity`. Budget mode uses a
-/// conservative lot-rounded premium search, then requires the result to meet
-/// `min_quantity`.
+/// lot-rounded search over the same premium relation as admission, then requires
+/// the result to meet `min_quantity`.
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -324,16 +324,18 @@ public(package) fun quote_mint_terms(
                 leverage,
                 time_to_expiry_ms,
             );
-        // The single-floor probe overstates the admitted two-floor premium by at
-        // most one unit. The configured probability floor keeps that difference
-        // below one lot, so sizing never exceeds the budget and may undershoot the
-        // largest admissible quantity by at most one lot.
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
-            if (math::mul_div_down(entry_probability, mid * lot, leverage) <= max_premium) {
+            let entry_value = math::mul(entry_probability, mid * lot);
+            if (
+                strike_exposure_config::net_premium_from_entry_value(
+                    entry_value,
+                    leverage,
+                ) <= max_premium
+            ) {
                 lo = mid
             } else {
                 hi = mid - 1

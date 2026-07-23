@@ -118,6 +118,14 @@ public(package) fun trading_fee(
     math::mul_up(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
+/// Return the premium charged against an integer entry value, rounding the
+/// protocol inflow upward. The complementary floor therefore rounds downward
+/// and `net_premium + floor_shares = entry_value` exactly.
+public(package) fun net_premium_from_entry_value(entry_value: u64, leverage: u64): u64 {
+    assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
+    math::mul_div_up(entry_value, math::float_scaling!(), leverage)
+}
+
 /// Assert entry probability and leverage policy without deriving quantity-dependent
 /// mint terms. Budget-bias sizing runs this before searching so a policy-invalid
 /// request aborts with its domain code before any division by `leverage`, in the
@@ -166,7 +174,7 @@ public(package) fun assert_mint_admission(
     );
 
     let entry_value = math::mul(entry_probability, quantity);
-    let net_premium = math::div(entry_value, leverage);
+    let net_premium = net_premium_from_entry_value(entry_value, leverage);
     assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
     let floor_shares = entry_value - net_premium;
 

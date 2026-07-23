@@ -471,45 +471,39 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Blast radius:** the single mint transaction or quote; no shared or
   mandatory path.
 - **Response:** proceed — sizing is a binary search over lot counts against the
-  premium relation, with the lot cap (`order::max_quantity_lots`) as the search
-  domain, so an oversized budget converges to the largest legal order instead
-  of aborting. Every probe quantity is a legal order quantity and the premium
-  relation only shrinks its input, so no intermediate can leave u64: the former
-  guard's abort state is unrepresentable, not tolerated.
+  same staged premium relation used by admission, with the lot cap
+  (`order::max_quantity_lots`) as the search domain, so an oversized budget
+  converges to the largest legal order instead of aborting. Every probe quantity
+  is a legal order quantity and the premium relation only shrinks its input, so
+  no intermediate can leave u64: the former guard's abort state is
+  unrepresentable, not tolerated.
 - **Duty inventory (guard removal):** the three `ENetPremiumBudgetTooHigh`
   asserts bounded only the removed algebraic inverse's own `(budget+1) *
   leverage` and `entry_value * scaling` u64 intermediates; those expressions
   were deleted with the inverse, and no downstream consumer read its raw
   (pre-lot-cap) result. Nothing else was incidentally bounded.
-- **Accepted inaccuracy:** the search probes the single-floor fused premium
-  `mul_div_down(p, Q, L)`, which over-estimates admission's two-floor charge by
-  at most one premium unit, so sizing is conservative: the charged premium
-  never exceeds the budget, and the fill is at most one lot short of the exact
-  maximum. The lot bound is envelope-dependent, not intrinsic: one premium unit
-  spans `leverage / entry_probability` raw quantity units, so it stays sub-lot
-  only because `config_constants::min_min_entry_probability` floors the
-  admissible entry band at 1% (worst reachable case ~152 raw units against the
-  10_000-unit lot, at the 1% floor under the probability-scaled cap of the 10x
-  template-leverage envelope). The probe >= charge dependency is one-sided and
-  documented at the probe site in `strike_exposure::quote_mint_terms`.
-- **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
-  dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
-  the BS pricing in the same call.
+- **Rounding relation:** admission and every search probe first compute the
+  integer entry value `E = floor(P·Q)`, then charge
+  `net_premium = ceil(E·S / L)`, where `S = 1e9` and `L` is scaled leverage.
+  The static floor is the exact complement `E - net_premium`, so premium plus
+  floor equals entry value and the indivisible atom stays on the
+  protocol-inflow side.
+- **Risk profile:** n/a (the search and admission use one exact integer
+  relation).
 - **Pinning tests:** `mint_exact_amount_tests.move` —
   `oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
   quotes the lot-cap premium, the former abort domain),
   `budget_mints_largest_fitting_quantity_and_debits_its_exact_cost` and
   `budget_at_next_lot_premium_mints_the_next_lot` (sizing pinned from both
   sides at the exact ATM probability),
+  `fractional_leverage_budget_uses_the_exact_rounded_premium` (a one-atom
+  fractional-leverage boundary selects the exact largest fitting lot),
   `budget_fill_below_min_quantity_aborts` (fill floor);
   `mint_redeem_guard_tests::mint_exact_amount_below_min_quantity_aborts`
-  (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
-  edge needs a rounding-lossy probability no current fixture pins.
-- **Reopen when:** the premium relation changes shape (a fee folded into the
-  budget, a rounding flip — the probe must move with it or the one-sided bound
-  breaks), the `min_min_entry_probability` envelope floor is lowered (the
-  one-lot fill bound dies with it), a measured gas profile shows the search
-  matters, or a consumer needs the exact maximum fill at fractional leverage.
+  (dust budget rejects on the floor).
+- **Reopen when:** the budget definition changes (for example, a fee is folded
+  into it), the lot search domain changes, or admission stops using the
+  canonical premium helper.
 
 ---
 
