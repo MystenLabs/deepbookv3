@@ -213,18 +213,20 @@ public(package) fun new_price_memo(): PriceMemo {
     }
 }
 
-/// Read the cached range price `up_price(lower) - up_price(higher)` for one order's
-/// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
-/// Both finite boundaries must have been cached by the linear walk; a finite miss
-/// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
+/// Read the cached range price `up_price(lower) - up_price(higher)` for one valid
+/// order tick range, mirroring `range_price`'s infinity sentinels. The memo's
+/// monotone centers make the subtraction exact. Both finite boundaries must have
+/// been cached by the linear walk; a finite miss aborts (the order's tick is not a
+/// payout-tree node — a broken index, not dust).
 public(package) fun cached_range_price(
     memo: &PriceMemo,
     lower_tick: u64,
     higher_tick: u64,
 ): Approx {
+    assert!(lower_tick < higher_tick, EInvalidRange);
     let lower = memo.cached_up_price(lower_tick);
     let higher = memo.cached_up_price(higher_tick);
-    lower.sub(&higher).clamp_nonnegative()
+    lower.sub(&higher)
 }
 
 /// Price `tick` through `pricer` and append its approximate value to the cache.

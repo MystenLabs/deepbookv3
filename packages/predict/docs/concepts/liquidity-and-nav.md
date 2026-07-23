@@ -116,7 +116,7 @@ where:
 
 Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The representation is complete over the active book; the `Approx` radius certifies the numerical error introduced while evaluating its prices.
 
-`current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
+`current_nav` carries **no redundant backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every cash mutation, so `free_cash = cash_balance − rebate_reserve` is exact and an impossible broken state fails loudly. The final `max(0, free_cash − live_liability)` projection marks a valid but underwater market at zero, which is its correct limited-recourse value, never negative.
 
 > This does not restore the deleted heuristic approximate-NAV design. There is still no verified/unscanned bucket split, configurable uncertainty band, or uncertainty-band withdrawal fee. The current design walks the complete per-order representation, propagates only fixed-point numerical error, rejects a pool certificate above 1%, and consumes the admitted certificate as a directional bid/ask.
 

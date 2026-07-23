@@ -823,9 +823,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
         return balance::zero()
     };
     let payout_liability = market.payout_liability();
-    let released_cash = market.cash.release_surplus(amount, payout_liability);
-    market.assert_cash_backing();
-    released_cash
+    market.cash.release_surplus(amount, payout_liability)
 }
 
 /// Release settled cash above payout liability and unresolved rebate reserve.

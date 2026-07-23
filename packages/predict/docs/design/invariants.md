@@ -13,8 +13,10 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
   plus its unresolved trading-loss rebate reserve (`cash ≥ payout_liability +
-  rebate_reserve`), re-asserted after every cash mutation
-  (`expiry_cash::assert_backing`).
+  rebate_reserve`). Cash mutations either assert this postcondition or preserve it
+  by construction: `expiry_cash::release_surplus` admits only
+  `cash_before ≥ required_cash + amount`, so the exact post-release balance still
+  covers `required_cash`.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed net payout at any *single* settlement price, read
   from `StrikePayoutTree::net_payout_reserve_terms`; the buffer is
@@ -71,10 +73,18 @@ and contributors. For *how* each mechanism works, follow the links into
   cache). The projection occurs once after that subtraction. Every numerical
   value carries its `Approx` radius. An underwater leveraged order nets to zero
   by the per-order floor cap, so the read needs no liquidation pass.
-  It is a **pure read with no backing assert** (backing is owned by the payout-tree
-  reserve and proven on every trade); the `saturating_sub` cash floor marks a
-  degenerate (underwater) market at 0, the correct per-market limited-recourse
-  value, never negative. The public `current_nav` is its center-only read.
+  It is a **pure read with no redundant backing assert**: `free_cash` subtracts
+  the protocol-controlled rebate reserve exactly, so an impossible
+  `cash < rebate_reserve` state fails loudly. The final NAV projection still
+  marks a market whose valid free cash is below its live liability at 0, the
+  correct per-market limited-recourse value. The public `current_nav` is its
+  center-only read.
+- **Cached range prices are exact differences of validated memo centers.**
+  `cached_range_price` requires `lower_tick < higher_tick` before lookup.
+  The in-order payout walk fills `PriceMemo` with non-increasing UP-price
+  centers, so `up(lower) − up(higher)` cannot be negative and needs no clamp.
+  The uncached `compute_range_price` retains its clamp because an externally
+  supplied surface does not yet carry that tree-wide monotonicity proof.
 - **NAV-mark directional invariant — supply high, withdraw low.** The flush
   computes one `pool_nav_approx = exact(idle) + Σ current_nav_approx`, net of the
   protocol's unmaterialized-profit exclusion and any carried

@@ -16,8 +16,12 @@ const FEE_AMOUNT: u64 = 40;
 const NON_REBATE_FEE_AMOUNT: u64 = 10;
 const TOTAL_FEE_AMOUNT: u64 = 50;
 const EXPECTED_REBATE_RESERVE: u64 = 20;
-/// Cash left after draining below the rebate reserve (10 < reserve 20).
-const CASH_BELOW_RESERVE: u64 = 10;
+const CASH_AT_REBATE_RESERVE: u64 = 20;
+const CASH_BELOW_REBATE_RESERVE: u64 = 19;
+const EXTRA_SURPLUS_CASH: u64 = 60;
+const SURPLUS_PAYOUT_LIABILITY: u64 = 30;
+const EXACT_SURPLUS_AMOUNT: u64 = 50;
+const EXPECTED_REQUIRED_CASH: u64 = 50;
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun assert_backing_underfunded_aborts() {
@@ -83,7 +87,7 @@ fun collecting_trade_fee_increases_cash_and_rebate_reserve() {
 }
 
 #[test]
-fun free_cash_nets_out_rebate_reserve_and_floors_at_zero() {
+fun free_cash_nets_out_rebate_reserve() {
     let ctx = &mut tx_context::dummy();
     let mut config = expiry_cash_config::new();
     config.set_trading_loss_rebate_rate(REBATE_RATE); // 0.5
@@ -99,14 +103,78 @@ fun free_cash_nets_out_rebate_reserve_and_floors_at_zero() {
     );
     assert_eq!(cash.free_cash(), FEE_AMOUNT - EXPECTED_REBATE_RESERVE); // 40 - 20 = 20
 
-    // Drain cash below the reserve (pay 30 -> cash 10, reserve still 20): free cash
-    // floors at zero rather than underflowing.
-    let drained = cash.pay_authorized(FEE_AMOUNT - CASH_BELOW_RESERVE);
-    assert_eq!(cash.balance(), CASH_BELOW_RESERVE);
+    destroy(cash);
+}
+
+#[test]
+fun free_cash_at_rebate_reserve_is_zero() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    cash.collect_trade_fee(
+        coin::mint_for_testing<DUSDC>(
+            FEE_AMOUNT,
+            ctx,
+        ).into_balance(),
+        FEE_AMOUNT,
+    );
+
+    let drained = cash.pay_authorized(CASH_AT_REBATE_RESERVE);
+    assert_eq!(cash.balance(), CASH_AT_REBATE_RESERVE);
     assert_eq!(cash.rebate_reserve(), EXPECTED_REBATE_RESERVE);
     assert_eq!(cash.free_cash(), 0);
 
     destroy(drained);
+    destroy(cash);
+}
+
+#[test, expected_failure(arithmetic_error, location = expiry_cash)]
+fun free_cash_below_rebate_reserve_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    cash.collect_trade_fee(
+        coin::mint_for_testing<DUSDC>(
+            FEE_AMOUNT,
+            ctx,
+        ).into_balance(),
+        FEE_AMOUNT,
+    );
+
+    let drained = cash.pay_authorized(FEE_AMOUNT - CASH_BELOW_REBATE_RESERVE);
+    assert_eq!(cash.balance(), CASH_BELOW_REBATE_RESERVE);
+    assert_eq!(cash.rebate_reserve(), EXPECTED_REBATE_RESERVE);
+    cash.free_cash();
+
+    destroy(drained);
+    destroy(cash);
+}
+
+#[test]
+fun release_exact_surplus_preserves_payout_and_rebate_backing() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    cash.collect_trade_fee(
+        coin::mint_for_testing<DUSDC>(
+            FEE_AMOUNT,
+            ctx,
+        ).into_balance(),
+        FEE_AMOUNT,
+    );
+    cash.receive(coin::mint_for_testing<DUSDC>(EXTRA_SURPLUS_CASH, ctx).into_balance());
+
+    let released = cash.release_surplus(EXACT_SURPLUS_AMOUNT, SURPLUS_PAYOUT_LIABILITY);
+
+    assert_eq!(released.value(), EXACT_SURPLUS_AMOUNT);
+    assert_eq!(cash.balance(), EXPECTED_REQUIRED_CASH);
+    assert_eq!(cash.required_cash(SURPLUS_PAYOUT_LIABILITY), EXPECTED_REQUIRED_CASH);
+    assert_eq!(cash.rebate_reserve(), EXPECTED_REBATE_RESERVE);
+
+    destroy(released);
     destroy(cash);
 }
 

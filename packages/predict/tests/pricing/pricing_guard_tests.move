@@ -5,8 +5,8 @@
 ///
 /// Two abort surfaces are exercised through the production-valid `oracle_fixture`
 /// bring-up:
-///   - `EInvalidRange`: a degenerate range (`lower == higher`) after freshness
-///     passes;
+///   - `EInvalidRange`: a degenerate live range after freshness passes, or
+///     non-increasing cached range bounds before cache lookup;
 ///   - `EBlockScholesPriceStale`: a hard staleness abort when one of the split
 ///     Block Scholes price feeds is past its configured freshness window.
 /// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone: every positive
@@ -46,7 +46,7 @@ use deepbook_predict::{
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
     pricing_reference_data as ref_data,
-    range_codec::strike_for_testing as strike,
+    range_codec::{Self, strike_for_testing as strike},
     test_constants,
     test_helpers
 };
@@ -94,6 +94,8 @@ const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
 const NON_MONOTONE_LOW_TICK: u64 = 90;
 const NON_MONOTONE_HIGH_TICK: u64 = 95;
+const CACHED_RANGE_LOWER_TICK: u64 = 90;
+const CACHED_RANGE_HIGHER_TICK: u64 = 110;
 
 // === Abort guards ===
 
@@ -101,6 +103,20 @@ const NON_MONOTONE_HIGH_TICK: u64 = 95;
 fun cached_range_price_with_missing_finite_tick_aborts() {
     let memo = pricing::new_price_memo();
     memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EInvalidRange)]
+fun cached_range_price_with_equal_bounds_aborts_before_lookup() {
+    let memo = pricing::new_price_memo();
+    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, PRICE_MEMO_MISSING_TICK);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EInvalidRange)]
+fun cached_range_price_with_reversed_bounds_aborts_before_lookup() {
+    let memo = pricing::new_price_memo();
+    memo.cached_range_price(CACHED_RANGE_HIGHER_TICK, CACHED_RANGE_LOWER_TICK);
     abort EUnexpectedSuccess
 }
 
@@ -130,6 +146,27 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
     abort EUnexpectedSuccess
+}
+
+#[test]
+fun cached_range_price_preserves_direct_range_center_and_error() {
+    let (fx, oracle) = setup_live();
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let tick_size = test_constants::default_tick_size();
+    let mut memo = pricing::new_price_memo();
+    memo.price_and_cache(&pricer, CACHED_RANGE_LOWER_TICK, tick_size);
+    memo.price_and_cache(&pricer, CACHED_RANGE_HIGHER_TICK, tick_size);
+
+    let cached = memo.cached_range_price(CACHED_RANGE_LOWER_TICK, CACHED_RANGE_HIGHER_TICK);
+    let direct = pricer.range_price_approx(
+        range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size),
+        range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size),
+    );
+    assert_eq!(cached.magnitude(), direct.magnitude());
+    assert_eq!(cached.error(), direct.error());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]

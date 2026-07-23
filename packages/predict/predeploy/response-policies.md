@@ -788,6 +788,58 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-20: Protocol-controlled accounting invariants fail loudly
+
+- **Trigger state:** an internally corrupted expiry has cash below its unresolved
+  rebate reserve; a cached range has non-increasing tick bounds or inverted memo
+  centers; or a pool-cash release would leave less than required payout and
+  rebate backing.
+- **Controller:** protocol — expiry cash and rebate basis, order ticks, payout
+  tree traversal order, the price memo, and surplus release amounts are all
+  written or derived exclusively by package code.
+- **Blast radius:** the transaction reading the corrupted expiry or memo aborts
+  instead of silently converting the invalid value to zero. Reachable cash
+  releases and cached prices remain bit-identical.
+- **Response:** compute `free_cash = cash - rebate_reserve` exactly; validate
+  `lower_tick < higher_tick` before cached lookup and return the memo-center
+  difference without a clamp; rely on `release_surplus`'s leaf precondition
+  instead of rechecking backing in its caller. Keep the uncached range-price
+  clamp because externally supplied pricing surfaces do not yet have the same
+  monotonicity proof.
+- **Reasoning:** protocol-controlled state should expose a broken invariant,
+  not manufacture a plausible zero. Valid expiry cash always covers at least
+  its rebate reserve. The payout walk inserts cached UP centers in ascending tick
+  order and rejects an increase, so a valid cached range is nonnegative.
+  `release_surplus` requires `cash_before ≥ required_cash + amount`, which
+  directly proves `cash_after ≥ required_cash`.
+- **Duty inventory:** the removed free-cash saturation only hid
+  `cash < rebate_reserve`; cash joins cannot violate the inequality, fee
+  collection adds at least the new reserve, and every authorized payment either
+  updates its paired liability/reserve first and checks backing or uses
+  `release_surplus`. The cached clamp hid invalid bounds or a broken monotone
+  memo; the new range guard, order validation, in-order traversal, and
+  `price_and_cache` monotonicity check own those duties. The removed caller
+  backing check duplicated the leaf's stronger precondition and owned no
+  independent flow gate.
+- **Risk profile:** `BEST-GUESS` only for whether future package changes could
+  violate these writer inventories. The current exact-subtraction and
+  post-release proofs are deterministic.
+- **Pinning tests:** `expiry_cash_tests.move` —
+  `free_cash_at_rebate_reserve_is_zero`,
+  `free_cash_below_rebate_reserve_aborts`, and
+  `release_exact_surplus_preserves_payout_and_rebate_backing`;
+  `pricing_guard_tests.move` —
+  `cached_range_price_preserves_direct_range_center_and_error`,
+  `cached_range_price_with_equal_bounds_aborts_before_lookup`, and
+  `cached_range_price_with_reversed_bounds_aborts_before_lookup`.
+- **Reopen when:** expiry cash or rebate basis gains a new writer; an authorized
+  payment path stops maintaining backing; `PriceMemo` gains another producer or
+  stops enforcing insertion order and non-increasing centers; cached ranges gain
+  a caller outside validated order terms; or `release_surplus` weakens its
+  precondition.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
