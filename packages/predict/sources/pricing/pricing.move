@@ -481,17 +481,7 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): Approx {
 fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): Approx {
     assert!(forward > 0, EZeroForward);
 
-    // Saturate ratios outside the fixed-point domain to their digital-probability
-    // limits instead of aborting live valuation and position flows. Tail limits are
-    // exact (zero error).
-    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
-    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return approx::exact_u64(0);
-    let strike_ratio = strike_ratio_opt.destroy_some();
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return approx::exact_u64(math::float_scaling!());
-    // `try_mul_div_down` floors the ratio by at most one raw unit.
-    let k = approx::ln(strike_ratio, 1);
+    let k = approx::ln_ratio(strike, forward);
     let (k_minus_m, root) = moneyness_terms(svi_params, &k);
     let (total_var, sqrt_var) = total_variance_terms(svi_params, &k_minus_m, &root);
     let d2 = standardized_d2(&k, &total_var, &sqrt_var);

@@ -7,6 +7,14 @@ module fixed_math::approx_tests;
 use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math::{Self, float_scaling as float}};
 use std::unit_test::assert_eq;
 
+const EUnexpectedSuccess: u64 = 999;
+// Arbitrary-precision Decimal references emitted by
+// `packages/predict/tests/helper/reference/generate_constants.py`.
+const LN_RATIO_TWO_REFERENCE: u64 = 693_147_181;
+const LN_RATIO_ONE_RAW_REFERENCE_MAG: u64 = 20_723_265_837;
+const LN_RATIO_UNDERFLOW_REFERENCE_MAG: u64 = 20_772_056_001;
+const LN_RATIO_U64_MAX_REFERENCE: u64 = 44_361_419_556;
+
 fun assert_center(ball: &Approx, magnitude: u64, negative: bool) {
     assert_eq!(ball.magnitude(), magnitude);
     assert_eq!(ball.is_negative(), negative);
@@ -220,6 +228,43 @@ fun transcendental_balls_enclose_independent_endpoint_references() {
     let pdf = normal_input.normal_pdf();
     assert_contains(&pdf, i64::from_u64(352_065_327)); // phi(0.5)
     assert_contains(&pdf, i64::from_u64(129_517_596)); // phi(1.5)
+}
+
+#[test]
+fun ln_ratio_encloses_independent_references_across_quotient_domains() {
+    let ordinary = approx::ln_ratio(2 * float!(), float!());
+    assert_contains(&ordinary, i64::from_u64(LN_RATIO_TWO_REFERENCE));
+    assert!(ordinary.error() < std::u64::max_value!());
+
+    let one_raw = approx::ln_ratio(10_000_000, 10_000_000_000_000_000);
+    assert_contains(
+        &one_raw,
+        i64::from_parts(LN_RATIO_ONE_RAW_REFERENCE_MAG, true),
+    );
+    assert!(one_raw.error() < std::u64::max_value!());
+
+    let underflow = approx::ln_ratio(100_000_000, 105_000_000_000_000_000);
+    assert_contains(
+        &underflow,
+        i64::from_parts(LN_RATIO_UNDERFLOW_REFERENCE_MAG, true),
+    );
+    assert!(underflow.error() < std::u64::max_value!());
+
+    let overflow = approx::ln_ratio(std::u64::max_value!(), 1);
+    assert_contains(&overflow, i64::from_u64(LN_RATIO_U64_MAX_REFERENCE));
+    assert!(overflow.error() < std::u64::max_value!());
+}
+
+#[test, expected_failure(abort_code = math::EInputZero)]
+fun ln_ratio_zero_numerator_aborts() {
+    approx::ln_ratio(0, float!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = math::EInputZero)]
+fun ln_ratio_zero_denominator_aborts() {
+    approx::ln_ratio(float!(), 0);
+    abort EUnexpectedSuccess
 }
 
 #[test]

@@ -287,17 +287,20 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   re-adding a creation-time spot read purely to sanity-check the tick size against the
   asset's price scale — the tick size is sized operationally and a mismatch fails
   loud at the first mint.
-- **Deep-tail pricing saturates, it does not abort.** `compute_nd2` computes
-  `strike/forward` in `u128` and saturates both tails (deep-ITM up tail → ~1.0, the
-  `neg_inf` limit; deep-OTM up tail → 0) instead of aborting on underflow or wrapping
-  the `u64` cast. *Rationale:* the widened tick domain makes a deep tail reachable by
-  a forward drift alone, and the NAV walk prices every live boundary — one
-  unpriceable order would otherwise brick NAV, redeem, and liquidation for the whole
-  market until settlement. Saturation keeps those reads live; the `[min_entry_probability, max_entry_probability]`
-  admission band, not an abort, is what keeps the protocol from writing a tail it
-  prices poorly. *Rejected:* a standalone reject-at-mint strike-range guard (redundant
-  with the ask band on mint, and it would not cover redeem / NAV / liquidation, which
-  re-price already-minted orders with no band).
+- **Finite deep-tail pricing stays calculable; only strike sentinels are exact endpoints.**
+  `compute_nd2` delegates log-moneyness to `fixed_math::approx::ln_ratio`. The
+  ordinary domain keeps the existing one-log quotient path; quotient underflow, a
+  one-raw-unit quotient, and quotient overflow use certified
+  `ln(strike) - ln(forward)` instead of promoting a finite strike to the `neg_inf`
+  or `pos_inf` price. *Rationale:* the widened tick domain makes a deep tail
+  reachable by forward drift alone, and the NAV walk prices every live boundary —
+  one unpriceable order would otherwise brick NAV, redeem, and liquidation until
+  settlement. Evaluating every positive finite ratio keeps those reads live while
+  the propagated certificate lets mint and NAV policy fail closed when numerical
+  error is too large. *Rejected:* exact endpoint saturation for finite quotient
+  failures (it can issue a false zero-error certificate on an admitted SVI surface)
+  and a standalone reject-at-mint strike-range guard (it would not cover redeem,
+  NAV, or liquidation, which re-price already-minted orders).
 - **Short-dated pricing has one narrow wide-precision island.** The canonical
   pricing centers and downstream formulas stay at 1e9, but
   `a + b·(rho·(k−m) + sqrt((k−m)² + sigma²))` retains its raw 1e18 numerator

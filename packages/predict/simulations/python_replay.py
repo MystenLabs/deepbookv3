@@ -641,6 +641,13 @@ def ln_fixed(x: int) -> I64:
     return I64(ln_u128(y, n))
 
 
+def ln_ratio_fixed(numerator: int, denominator: int) -> I64:
+    ratio = numerator * FLOAT_SCALING // denominator
+    if 1 < ratio <= POS_INF_STRIKE:
+        return ln_fixed(ratio)
+    return ln_fixed(numerator).sub(ln_fixed(denominator))
+
+
 def exp_series_u128(r: int) -> int:
     total = F
     term = F
@@ -809,14 +816,7 @@ def normal_pdf(value: I64) -> int:
 
 
 def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
-    # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
-    # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
-    strike_ratio_scaled = strike * FLOAT_SCALING // forward
-    if strike_ratio_scaled == 0:
-        return FLOAT_SCALING
-    if strike_ratio_scaled > 2**64 - 1:
-        return 0
-    k = ln_fixed(strike_ratio_scaled)
+    k = ln_ratio_fixed(strike, forward)
     m = I64(svi["m"], svi["mNegative"])
     k_minus_m = k.sub(m)
     k_minus_m_squared = k_minus_m.square_scaled()

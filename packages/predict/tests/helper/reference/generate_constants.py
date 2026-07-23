@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Independent reference values for Predict's fixed-point math tests.
+"""Independent reference values for Predict's fixed-point math and focused pricing tests.
 
-Ground truth comes ONLY from Python's stdlib `math` (double precision, ~15-16
-significant digits — far more than the 1e9 / 9-digit fixed-point needs). NOTHING
-here reads or depends on the Move contract, so the values are an independent
-oracle, not a snapshot of contract output (unit-tests rule 1).
+Ground truth comes ONLY from Python's stdlib `math` and `decimal` implementations.
+NOTHING here reads or depends on the Move contract, so the values are an
+independent oracle, not a snapshot of contract output (unit-tests rule 1).
 
 Each reference is `round(f_true(x) * 1e9)` — the correctly-rounded fixed-point
 representation of the true mathematical value. The Move tests assert the contract
@@ -33,12 +32,53 @@ def exp_scaled(num: int, den: int = 1) -> int:
     return int(((Decimal(num) / Decimal(den)).exp() * Decimal(F)).to_integral_value(ROUND_HALF_EVEN))
 
 
+def ln_ratio_scaled(num: int, den: int) -> int:
+    """ln(num/den) * 1e9 via arbitrary-precision Decimal."""
+    ratio = Decimal(num) / Decimal(den)
+    return int((ratio.ln() * Decimal(F)).to_integral_value(ROUND_HALF_EVEN))
+
+
 def phi(x: float) -> float:  # standard normal CDF via stdlib erf
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 def pdf(x: float) -> float:  # standard normal PDF
     return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def adjusted_up(strike: int, forward: int, a: int, b: int, rho: int, m: int, sigma: int) -> float:
+    """Independent real-number SVI adjusted digital, clamped to [0, 1]."""
+    k = math.log(strike / forward)
+    x = k - m / F
+    sigma_real = sigma / F
+    root = math.sqrt(x * x + sigma_real * sigma_real)
+    total_variance = a / F + b / F * (rho / F * x + root)
+    variance_slope = b / F * (rho / F + x / root)
+    sqrt_variance = math.sqrt(total_variance)
+    d2 = -(k + total_variance / 2) / sqrt_variance
+    value = phi(d2) - pdf(d2) * variance_slope / (2 * sqrt_variance)
+    return max(0.0, min(1.0, value))
+
+
+FINITE_TAIL_FORWARD = 105_000_000_000_000_000
+FINITE_TAIL_LOWER_UP = adjusted_up(
+    100_000_000,
+    FINITE_TAIL_FORWARD,
+    1,
+    F,
+    -F,
+    0,
+    1_000_000,
+)
+FINITE_TAIL_UPPER_UP = adjusted_up(
+    100_000_000_000,
+    FINITE_TAIL_FORWARD,
+    1,
+    F,
+    -F,
+    0,
+    1_000_000,
+)
 
 
 POINTS = [
@@ -88,6 +128,16 @@ POINTS = [
     ("LN_1EM9_MAG", abs(scaled(math.log(1e-9)))),
     ("LN_U64MAX", scaled(math.log((2**64 - 1) / F))),
     ("LN_1_5", scaled(math.log(1.5))),  # x in (F, 2F): non-degenerate Horner series
+    # ln_ratio: ordinary quotient, one-raw-unit quotient, quotient underflow,
+    # and quotient overflow over exact positive u64 inputs.
+    ("LN_RATIO_TWO", ln_ratio_scaled(2 * F, F)),
+    ("LN_RATIO_ONE_RAW_MAG", abs(ln_ratio_scaled(10_000_000, 10_000_000_000_000_000))),
+    ("LN_RATIO_UNDERFLOW_MAG", abs(ln_ratio_scaled(100_000_000, 105_000_000_000_000_000))),
+    ("LN_RATIO_U64_MAX", ln_ratio_scaled(2**64 - 1, 1)),
+    # Accepted SVI surface whose finite lower quotient floors to zero.
+    ("FINITE_TAIL_LOWER_UP_REFERENCE", scaled(FINITE_TAIL_LOWER_UP)),
+    ("FINITE_TAIL_UPPER_UP_REFERENCE", scaled(FINITE_TAIL_UPPER_UP)),
+    ("FINITE_TAIL_RANGE_REFERENCE", scaled(max(0.0, FINITE_TAIL_LOWER_UP - FINITE_TAIL_UPPER_UP))),
     # sqrt with non-default precision: sqrt(x, P) == isqrt(x * P) in raw units.
     ("SQRT_4F_PREC_ONE", math.isqrt(4 * F * 1)),
     ("SQRT_U64MAX_PREC_ONE", math.isqrt((2**64 - 1) * 1)),  # high-bit Newton path; = 2^32-1

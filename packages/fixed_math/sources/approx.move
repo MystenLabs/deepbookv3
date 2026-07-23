@@ -254,6 +254,22 @@ public fun ln(x: u64, x_error: u64): Approx {
     Approx { value, error: saturating_add(propagated, leaf) }
 }
 
+/// `ln(numerator / denominator)` for exact positive u64 inputs. The ordinary
+/// 1e9 quotient path preserves its established center and error. Ratios whose
+/// floored quotient cannot keep a positive lower corner instead subtract the two
+/// certified logarithms, so every finite ratio remains finite.
+public fun ln_ratio(numerator: u64, denominator: u64): Approx {
+    let ratio_opt = math::try_mul_div_down(numerator, math::float_scaling!(), denominator);
+    if (ratio_opt.is_some()) {
+        let ratio = ratio_opt.destroy_some();
+        if (ratio > 1) return ln(ratio, 1)
+    };
+
+    let numerator_log = ln(numerator, 0);
+    let denominator_log = ln(denominator, 0);
+    numerator_log.sub(&denominator_log)
+}
+
 /// `sqrt` of a nonnegative ball (operand scale 1e9). Monotone, so the true value is
 /// enclosed by `[sqrt(x - dx), sqrt(x + dx)]`; the error is the larger endpoint
 /// deviation from `sqrt(x)`, plus one raw unit for `sqrt`'s own rounding. Uses the
