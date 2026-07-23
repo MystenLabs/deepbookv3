@@ -384,7 +384,22 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Monotonic, so version-disable is one-way.** The watermark cannot be lowered; a
   disabled running version is recovered by upgrading, not by re-enabling. The
   PauseCap version-disable path was removed — reversible emergencies are covered by
-  `trading_paused` / `mint_paused`; PauseCaps keep only those.
+  `trading_paused` / `mint_paused` and the protocol-wide freeze (below).
+- **A reversible protocol-wide freeze gives the version-disable blast radius without
+  an upgrade.** `frozen` on `ProtocolConfig`, checked inside `assert_version`, halts
+  every version-gated flow (mint, redeem, settlement, valuation, LP flush/supply/
+  withdraw) when set; force-on via `PauseCap` (`registry::freeze_protocol_pause_cap`),
+  lifted only by `AdminCap` (`set_frozen`, deliberately ungated so a freeze is never
+  unrecoverable-without-upgrade). It reuses the watermark's blast radius by folding
+  into the one gate (zero new call sites) but is reversible, where a version-disable
+  recovers only by upgrade; account-package custody withdrawals stay ungated, so
+  balances already credited to custody remain withdrawable while frozen (unredeemed
+  positions and pending LP-queue escrow are frozen until admin lifts it). *Rejected:* freezing via
+  `bump_version_watermark` (it cannot set the floor above the running version, so it
+  cannot freeze the current version at all, and relaxing its advance assert reopens a
+  downgrade through an old package); and a one-way upgrade-to-resume freeze (it
+  reimposes the upgrade cost the freeze exists to remove). Recorded RP-18; disclosed
+  in `docs/risks.md`.
 - **Gate placement is uniform: line 1 of every public `&mut` entrypoint, nowhere
   else.** Internal `*_internal`/`*_inner` cores do not re-gate (the public caller
   owns it), and the watermark setter + kill switches + revocations are the documented

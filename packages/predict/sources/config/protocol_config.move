@@ -4,8 +4,9 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, and the transaction-local full-pool valuation lock. Flow modules decide
-/// which gates apply before they mutate expiry, oracle, pool, or account state.
+/// gate, the protocol-wide emergency freeze, and the transaction-local full-pool
+/// valuation lock. Flow modules decide which gates apply before they mutate
+/// expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -25,6 +26,7 @@ const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
+const EProtocolFrozen: u64 = 5;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -47,6 +49,12 @@ public struct ProtocolConfig has key {
     version_watermark: u64,
     /// Blocks new risk creation while true.
     trading_paused: bool,
+    /// Emergency hard stop. While true, `assert_version` aborts, halting every
+    /// version-gated flow (mint, redeem, settlement, valuation, LP supply/withdraw,
+    /// admin config) — the same blast radius as a version-disable, but reversible
+    /// without a package upgrade. Force-on via `PauseCap`; cleared by `AdminCap`.
+    /// Account-package custody withdrawals are ungated and stay available.
+    frozen: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled, so no
     /// NAV-changing op can interleave between per-market value steps in the PTB.
     valuation_in_progress: bool,
@@ -62,6 +70,11 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return the global trading-pause state for SDK and devInspect reads.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
+}
+
+/// Return the global protocol-freeze state for SDK and devInspect reads.
+public fun frozen(config: &ProtocolConfig): bool {
+    config.frozen
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -246,6 +259,15 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused_internal(paused);
 }
 
+/// Set the protocol-wide emergency freeze.
+///
+/// Intentionally NOT version-gated, unlike every other admin setter: the freeze
+/// gate lives inside `assert_version`, so routing this through it would make an
+/// engaged freeze unclearable without a package upgrade — defeating the point.
+public fun set_frozen(config: &mut ProtocolConfig, _admin_cap: &AdminCap, frozen: bool) {
+    config.set_frozen_internal(frozen);
+}
+
 /// Advance the version floor to this package's compiled-in `current_version!()`.
 ///
 /// The floor cannot be set above the executing package's version. This function
@@ -310,10 +332,13 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
 
-/// Abort unless the running package version is at or above the watermark floor.
+/// Abort unless the protocol is operational: not emergency-frozen, and the
+/// running package version is at or above the watermark floor.
 ///
-/// Version-gated flows thread the shared `ProtocolConfig` through this check.
+/// Version-gated flows thread the shared `ProtocolConfig` through this check, so
+/// the freeze here reaches every one of them.
 public(package) fun assert_version(config: &ProtocolConfig) {
+    assert!(!config.frozen, EProtocolFrozen);
     assert!(constants::current_version!() >= config.version_watermark, EPackageVersionDisabled);
 }
 
@@ -349,6 +374,12 @@ public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
 }
 
+/// Force `frozen = true` without admin authority. Reserved for `PauseCap`
+/// holders going through the registry; cannot be used to lift the freeze.
+public(package) fun freeze_protocol(config: &mut ProtocolConfig) {
+    config.set_frozen_internal(true);
+}
+
 /// Begin a transaction-local full-pool valuation lock.
 public(package) fun begin_valuation(config: &mut ProtocolConfig) {
     config.assert_not_valuation_in_progress();
@@ -364,6 +395,11 @@ public(package) fun end_valuation(config: &mut ProtocolConfig) {
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config.trading_paused = paused;
     config_events::emit_trading_paused_updated(config.id(), paused);
+}
+
+fun set_frozen_internal(config: &mut ProtocolConfig, frozen: bool) {
+    config.frozen = frozen;
+    config_events::emit_protocol_frozen_updated(config.id(), frozen);
 }
 
 /// Abort unless trading is not paused.
@@ -383,6 +419,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),
         trading_paused: false,
+        frozen: false,
         valuation_in_progress: false,
     }
 }
