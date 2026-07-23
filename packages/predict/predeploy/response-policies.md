@@ -694,6 +694,57 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-18: Live liability projects nonnegative once, after leveraged correction
+
+- **Trigger state:** the signed payout-tree boundary-linear center is negative
+  from per-boundary product-floor residue, or the nonnegative leveraged
+  correction exceeds that center during `marked_live_liability`.
+- **Controller:** protocol — the tree representation, fixed-point rounding, and
+  leveraged correction are all maintained contract state and arithmetic.
+- **Blast radius:** one expiry's `current_nav` and therefore the certified
+  full-pool flush mark. No order value, payout, backing reserve, or state
+  mutation reads the intermediate result.
+- **Response:** retain the signed boundary-linear `Approx`, subtract the
+  nonnegative leveraged correction, and apply `clamp_nonnegative` exactly once
+  at the final live-liability boundary. A negative final center remains zero;
+  its numerical-error radius is retained unchanged.
+- **Reasoning:** for correction `C >= 0`,
+  `max(0, max(0, L) - C) = max(0, L - C)`. Because
+  `clamp_nonnegative` preserves the radius, removing the inner projection
+  preserves both the final center and error bits.
+- **Duty inventory and headroom proof:** the removed tree-level clamp made
+  `walk_linear`'s center nonnegative and incidentally bounded the following
+  signed subtraction; it did not enforce PriceMemo monotonicity, bound the
+  certificate radius, or serve another production consumer. Monotone cached UP
+  centers make the exact boundary-linear value nonnegative. Only finite start
+  products can bias its floored center downward, each by less than one atom, so
+  `max_payout_tree_nodes = 1,000` bounds a negative integer residue by `999`.
+  The correction is nonnegative and at most the sum of active leveraged
+  quantities:
+  `5,000 * (u32::MAX * 10,000) = 214,748,364,750,000,000`.
+  Therefore the worst negative `L - C` magnitude is
+  `214,748,364,750,000,999`, leaving
+  `18,231,995,708,959,550,616` atoms of headroom below `u64::MAX`.
+- **Risk profile:** `BEST-GUESS` only for how often the one-atom residue appears
+  under live oracle surfaces; the algebraic identity and source-cap headroom
+  bound are deterministic.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `walk_linear_preserves_negative_boundary_dust_until_marked_liability` pins a
+  production-created partial-close survivor witness at signed `-1`, then pins
+  final marked liability at zero with the identical error;
+  `exact_walk_matches_per_order_reference` and
+  `shared_boundary_error_scales_with_net_not_gross_quantity` retain ordinary
+  positive-center and certificate behavior. `current_nav_flow_tests.move` —
+  `single_leveraged_order_above_floor` and
+  `single_leveraged_order_underwater_nets_to_zero` pin positive and zero
+  downstream NAV cases.
+- **Reopen when:** the payout-tree node cap, active-leveraged-order cap, packed
+  quantity width, or position lot size increases; correction can become
+  negative or exceed per-order quantity; `walk_linear` gains another production
+  consumer; or `Approx::clamp_nonnegative` changes its radius semantics.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

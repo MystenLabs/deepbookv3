@@ -94,9 +94,11 @@ public(package) fun settled_payout_liability(
 /// correction scan.
 ///
 /// Boundary products are rounded separately, then accumulated in one signed
-/// approximate total. `tree.base` is the `P(-inf) = 1` anchor for `(-inf, h]`
-/// ranges (its quantity enters at face value); `+inf` ends are never stored
-/// (`P = 0`).
+/// approximate total. The signed result retains any boundary-rounding residue;
+/// `marked_live_liability` subtracts the leveraged correction and projects the
+/// final economic liability to nonnegative once. `tree.base` is the
+/// `P(-inf) = 1` anchor for `(-inf, h]` ranges (its quantity enters at face
+/// value); `+inf` ends are never stored (`P = 0`).
 public(package) fun walk_linear(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
@@ -110,10 +112,8 @@ public(package) fun walk_linear(
         tick_size,
         memo,
     );
-    // Boundary products are rounded per node and the signed aggregate is floored
-    // once. This can differ from pricing and flooring each order independently.
     let base = approx::exact_u64(tree.base.quantity);
-    base.add(&running).clamp_nonnegative()
+    base.add(&running)
 }
 
 /// Create an empty sparse payout tree.

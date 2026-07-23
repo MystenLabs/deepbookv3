@@ -5,8 +5,8 @@
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
 /// `current_nav` cannot reach directly: the per-flush price memo populated for
 /// the correction walk, the skip-zero-delta path over an equal live start/end
-/// boundary, and the boundary-aggregation dust clamp — the flat-price-tail integer
-/// underflow the ATM `current_nav` fixtures miss.
+/// boundary, and the signed boundary-aggregation dust residue — the
+/// flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
 ///
 /// The tree keys boundaries by absolute tick; the walk recovers each raw strike as
 /// `tick * tick_size`. These tests use the default `tick_size` (1e9) so tick `100`
@@ -22,13 +22,17 @@ module deepbook_predict::payout_tree_walk_tests;
 use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
+    order::Order,
     pricing::{Self, Pricer},
     range_codec::{Self, Strike},
+    strike_exposure::{Self, StrikeExposure},
+    strike_exposure_config,
     strike_payout_tree::{Self, StrikePayoutTree},
     test_constants
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
+use sui::clock::Clock;
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes
 /// price close together and smoothly — a real clustered-price regime.
@@ -46,6 +50,9 @@ const FLAT_REGION_FORWARD: u64 = 435_000_000_000;
 /// Tiny quantity (a partial-close survivor) whose per-order range value rounds to
 /// zero, so only boundary-aggregation rounding remains.
 const DUST_QUANTITY: u64 = 100_000;
+/// Production-valid initial quantity reduced to `DUST_QUANTITY` through the
+/// ordinary partial-close mutation.
+const DUST_WITNESS_INITIAL_QUANTITY: u64 = 1_000_000_000_000;
 const GC_SURVIVOR_A_LOWER: u64 = 98;
 const GC_REMOVED_LOWER: u64 = 100;
 const GC_SURVIVOR_C_LOWER: u64 = 102;
@@ -176,31 +183,91 @@ fun shared_boundary_error_scales_with_net_not_gross_quantity() {
 }
 
 #[test]
-fun walk_linear_clamps_boundary_aggregation_dust() {
-    let (mut fixture, oracle, pricer) = live_pricer_at(FLAT_REGION_FORWARD);
+fun walk_linear_preserves_negative_boundary_dust_until_marked_liability() {
+    let (mut fixture, mut oracle, entry_pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let mut exposure = strike_exposure::new(
+        fixture.expiry_id(),
+        fixture.expiry(),
+        tick_size(),
+        tick_size(),
+        fixture.expiry() - test_constants::default_cadence_period_ms(),
+        strike_exposure_config::new(),
+        fixture.scenario_mut().ctx(),
+    );
 
     let t0 = test_constants::default_strike_tick();
     let lower_a = t0; // raw 100e9, up ~999_996_456
     let lower_b = t0 + 1; // raw 101e9, up ~999_995_893
     let higher = t0 + 2; // raw 102e9, up ~999_995_253, shared upper boundary
 
-    // Two thin ITM ranges sharing the higher boundary, each one dust lot. In this
-    // flat tail the end-side floor at the shared boundary aggregates 1 ulp above the
-    // two start-side floors (199_999 vs 99_999+99_999), so the raw
-    // base+start-end would underflow to -1 and abort. The clamp returns 0.
+    let order_a = allocate_one_x_range(
+        &mut exposure,
+        &entry_pricer,
+        lower_a,
+        higher,
+        DUST_WITNESS_INITIAL_QUANTITY,
+        fixture.clock(),
+    );
+    let order_b = allocate_one_x_range(
+        &mut exposure,
+        &entry_pricer,
+        lower_b,
+        higher,
+        DUST_WITNESS_INITIAL_QUANTITY,
+        fixture.clock(),
+    );
+
+    let source_timestamp_ms = test_constants::live_source_timestamp_ms() + 1;
+    fixture.set_pyth_bundle(&mut oracle, FLAT_REGION_FORWARD, source_timestamp_ms);
+    fixture.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    fixture.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+
+    leave_dust_survivor(&mut exposure, &pricer, &order_a, fixture.clock());
+    leave_dust_survivor(&mut exposure, &pricer, &order_b, fixture.clock());
+
+    // Two thin ITM ranges sharing the higher boundary, each one partial-close
+    // survivor. In this flat tail the end-side floor at the shared boundary
+    // aggregates 1 ulp above the two start-side floors
+    // (199_999 vs 99_999 + 99_999), so the signed boundary-linear term is -1.
     tree.insert_range(lower_a, higher, DUST_QUANTITY, 0);
     tree.insert_range(lower_b, higher, DUST_QUANTITY, 0);
 
     // Independent per-order reference: both ranges' values round to 0, so true
-    // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
+    // linear liability is 0; the negative boundary residue is spurious.
     let reference =
         math::mul_down(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
         math::mul_down(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
     assert_eq!(reference, 0);
-    assert_eq!(walk_linear(&tree, &pricer), 0);
+
+    let mut memo = pricing::new_price_memo();
+    let signed_boundary_linear = tree.walk_linear(&pricer, &mut memo, tick_size());
+    assert!(signed_boundary_linear.is_negative());
+    assert_eq!(signed_boundary_linear.magnitude(), 1);
+    assert_eq!(
+        signed_boundary_linear.error(),
+        expected_boundary_error(&memo, lower_a, DUST_QUANTITY)
+            + expected_boundary_error(&memo, lower_b, DUST_QUANTITY)
+            + expected_boundary_error(&memo, higher, 2 * DUST_QUANTITY),
+    );
+
+    // The exposure carries the same two production-created survivors. Its only
+    // economic projection remains at the final marked-liability boundary.
+    let marked_liability = exposure.marked_live_liability(&pricer);
+    assert_eq!(marked_liability.magnitude(), 0);
+    assert_eq!(marked_liability.error(), signed_boundary_linear.error());
 
     destroy(tree);
+    destroy(exposure);
     cleanup(fixture, oracle);
 }
 
@@ -283,6 +350,41 @@ fun clustered_ticks(): (u64, u64, u64) {
 /// terms; `walk_linear` reads only the quantity).
 fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
     tree.insert_range(tick, constants::pos_inf_tick!(), quantity, 0);
+}
+
+fun allocate_one_x_range(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    clock: &Clock,
+): Order {
+    let terms = exposure.quote_mint_terms(
+        pricer,
+        lower_tick,
+        higher_tick,
+        0,
+        quantity,
+        true,
+        test_constants::leverage_one_x(),
+        clock,
+    );
+    exposure.allocate_mint_order(terms)
+}
+
+fun leave_dust_survivor(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+    clock: &Clock,
+) {
+    let close_quantity = order.quantity() - DUST_QUANTITY;
+    let terms = exposure.quote_close(option::some(*pricer), order, close_quantity);
+    assert!(terms.is_live());
+    let survivor = exposure.process_close(option::some(*pricer), terms, clock);
+    assert!(survivor.is_some());
+    assert_eq!(survivor.destroy_some().quantity(), DUST_QUANTITY);
 }
 
 /// Independent linear reference: `Σ mul_down(range_price(tick·ts, +inf), quantity)`.

@@ -211,23 +211,24 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     }
 }
 
-/// Return the live marked liability as the aggregate boundary-linear term minus
-/// the leveraged floor correction. A knocked-out order (gross at or below
-/// `floor_shares / liquidation_ltv`) is marked at zero live liability, so the
-/// flush mark never prices a claim above what the protocol honors once the
-/// ambient sweep liquidates it; every other order contributes its positive
-/// `range_value - floor_shares`. Boundary aggregation and per-order correction
-/// round at different points, so the subtraction saturates at zero.
+/// Return the live marked liability as the signed aggregate boundary-linear term
+/// minus the nonnegative leveraged floor correction, projected to nonnegative
+/// once. A knocked-out order (gross at or below `floor_shares / liquidation_ltv`)
+/// is marked at zero live liability, so the flush mark never prices a claim above
+/// what the protocol honors once the ambient sweep liquidates it; every other
+/// order contributes its positive `range_value - floor_shares`. Boundary
+/// aggregation and per-order correction round at different points, so the final
+/// subtraction clamps at zero.
 public(package) fun marked_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Approx {
     let mut memo = pricing::new_price_memo();
-    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
+    let signed_boundary_linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
     let correction = exposure
         .liquidation
         .correction_value(
             &memo,
             exposure.config.liquidation_ltv(),
         );
-    linear.sub(&correction).clamp_nonnegative()
+    signed_boundary_linear.sub(&correction).clamp_nonnegative()
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.
