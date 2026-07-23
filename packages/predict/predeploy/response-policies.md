@@ -717,11 +717,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `walk_linear`'s center nonnegative and incidentally bounded the following
   signed subtraction; it did not enforce PriceMemo monotonicity, bound the
   certificate radius, or serve another production consumer. Monotone cached UP
-  centers make the exact boundary-linear value nonnegative. Only finite start
-  products can bias its floored center downward, each by less than one atom, so
-  `max_payout_tree_nodes = 1,000` bounds a negative integer residue by `999`.
-  The correction is nonnegative and at most the sum of active leveraged
-  quantities:
+  centers make the exact boundary-linear value nonnegative. Each finite signed-net
+  boundary product differs from its real-number term by less than one atom, so
+  `max_payout_tree_nodes = 1,000` bounds a negative integer residue by `999`. The
+  correction is nonnegative and at most the sum of active leveraged quantities:
   `5,000 * (u32::MAX * 10,000) = 214,748,364,750,000,000`.
   Therefore the worst negative `L - C` magnitude is
   `214,748,364,750,000,999`, leaving
@@ -844,10 +843,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-21: Live NAV certifies the real-number shared-boundary mark (resolves P-13)
 
 - **Trigger state:** grouping order quantities at a shared payout-tree boundary
-  changes where fixed-point products floor. Two ranges can therefore produce a
-  boundary-linear center one raw atom above or below the sum obtained by pricing
+  changes where fixed-point products truncate. The signed-net boundary center
+  can therefore remain one raw atom above or below the sum obtained by pricing
   and flooring each order independently; the recorded positive-liability
-  witness is `872` from the tree versus `873` per order.
+  witness is `1` from the tree versus `0` per order.
 - **Controller:** protocol — the payout tree chooses the shared-boundary
   representation and every multiplication and error-propagation rule.
 - **Blast radius:** one expiry's live-liability center and certified radius,
@@ -860,27 +859,30 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   independently rounded order marks. Supplier and withdrawer prices consume the
   resulting upper and lower NAV endpoints under the standing directional policy.
 - **Reasoning:** for scale `S`, price center `p`, start quantity `s`, and end
-  quantity `e`,
-  `floor(p*s/S) - floor(p*e/S) - p*(s-e)/S` is the difference of two fractional
-  parts and has magnitude below one raw unit. A price radius `r` contributes at
-  most `ceil(r*|s-e|/S)`. Therefore
-  `price.mul_scaled(exact(|s-e|)).error()` already supplies the complete local
-  bound: the propagated price radius plus one rounding leaf. The previous
-  additional atom double-counted product-floor residue. Summing the local balls
-  certifies the whole tree; at most 1,000 finite nodes make the structural-only
-  component at most 1,000 raw DUSDC atoms (`0.001 DUSDC`) per expiry.
-- **Duty inventory:** each boundary's start and end products use the same cached
-  `Approx`, so price uncertainty is correlated by `|s-e|`; equal quantities
-  return exact zero; the open-lower base is exact; `Approx::add` sums local
-  radii; the leveraged correction retains its own per-order multiplication
-  radii; and both final nonnegative projections are 1-Lipschitz and preserve the
-  radius. Saturation inside `Approx` remains the fail-closed response when a
-  propagated error does not fit in `u64`. No state writer, payout path, or
-  backing calculation depended on the removed error atom.
+  quantity `e`, let signed `q = s-e`. The center
+  `trunc(p*q/S)` differs from `p*q/S` by less than one raw unit. A price radius
+  `r` contributes at most `ceil(r*|q|/S)`. Therefore
+  `price.mul_scaled(exact(q))` supplies both the canonical local center and its
+  complete bound: propagated price radius plus one rounding leaf. Summing the
+  local balls certifies the whole tree; at most 1,000 finite nodes make the
+  structural-only component at most 1,000 raw DUSDC atoms (`0.001 DUSDC`) per
+  expiry.
+- **Duty inventory:** each boundary forms one exact signed net quantity and
+  multiplies its cached price `Approx` once, so price uncertainty scales by
+  `|s-e|`; exact zero absorbs the product without adding center or error; the
+  open-lower base is exact; `Approx::add` sums local radii; the leveraged
+  correction retains its own per-order multiplication radii; and both final
+  nonnegative projections are 1-Lipschitz and preserve the radius. Saturation
+  inside `Approx` remains the fail-closed response when a propagated error does
+  not fit in `u64`. No order, payout, custody, or backing writer consumes this
+  intermediate center directly; the LP flush consumes only the certified pool
+  endpoints derived from it.
 - **Risk profile:** deterministic algebra and source caps. The difference from
   independently rounded order marks is representation dust, not an unmeasured
   market-frequency claim.
 - **Pinning tests:** `payout_tree_walk_tests.move` —
+  `shared_boundary_multiplies_the_signed_net_quantity_once`,
+  `zero_net_boundary_keeps_adjacent_live_ranges_exact`,
   `shared_boundary_error_scales_with_net_not_gross_quantity`,
   `walk_linear_error_encloses_positive_boundary_dust`, and
   `walk_linear_preserves_negative_boundary_dust_until_marked_liability`.

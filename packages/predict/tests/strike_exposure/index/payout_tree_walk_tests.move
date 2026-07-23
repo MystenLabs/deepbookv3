@@ -4,7 +4,7 @@
 /// Unit coverage for `strike_payout_tree::walk_linear` — the NAV linear walk —
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
 /// `current_nav` cannot reach directly: the per-flush price memo populated for
-/// the correction walk, the skip-zero-delta path over an equal live start/end
+/// the correction walk, exact-zero absorption over an equal live start/end
 /// boundary, and the signed boundary-aggregation dust residue — the
 /// flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
 ///
@@ -113,21 +113,21 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
 }
 
 #[test]
-fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
+fun zero_net_boundary_keeps_adjacent_live_ranges_exact() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
     // Adjacent live ranges with the same quantity leave an equal nonzero start/end
-    // at the shared boundary. The exact walk may skip pricing that boundary because
-    // the two sides cancel.
+    // at the shared boundary. Its exact signed net quantity absorbs the shared
+    // price certificate without adding center or error.
     tree.insert_range(t0, t1, ADJACENT_QUANTITY, 0);
     tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size()).magnitude();
+    let approximate = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(
-        walk,
+        approximate.magnitude(),
         range_reference(
             &pricer,
             vector[t0, t1],
@@ -139,6 +139,11 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     // linear value, but it must still be cached for leveraged correction lookups.
     assert_eq!(memo.cached_range_price(t0, t1).magnitude(), pricer.range_price(raw(t0), raw(t1)));
     assert_eq!(memo.cached_range_price(t1, t2).magnitude(), pricer.range_price(raw(t1), raw(t2)));
+    assert_eq!(
+        approximate.error(),
+        expected_boundary_error(&memo, t0, ADJACENT_QUANTITY)
+            + expected_boundary_error(&memo, t2, ADJACENT_QUANTITY),
+    );
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -178,6 +183,30 @@ fun shared_boundary_error_scales_with_net_not_gross_quantity() {
             + expected_shared
             + expected_boundary_error(&memo, t2, CORRELATED_RIGHT_QUANTITY),
     );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test]
+fun shared_boundary_multiplies_the_signed_net_quantity_once() {
+    let (mut fixture, oracle, pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let (t0, t1, t2) = clustered_ticks();
+    // At the shared boundary, the old two-product center produced 3,671 for the
+    // complete walk. Multiplying the signed net quantity once produces 3,670,
+    // matching the independently evaluated range path for this witness.
+    tree.insert_range(t0, t1, DUST_QUANTITY, 0);
+    tree.insert_range(t1, t2, 2 * DUST_QUANTITY, 0);
+
+    let expected = range_reference(
+        &pricer,
+        vector[t0, t1],
+        vector[t1, t2],
+        vector[DUST_QUANTITY, 2 * DUST_QUANTITY],
+    );
+    let mut memo = pricing::new_price_memo();
+    assert_eq!(tree.walk_linear(&pricer, &mut memo, tick_size()).magnitude(), expected);
 
     destroy(tree);
     cleanup(fixture, oracle);

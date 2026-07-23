@@ -93,12 +93,13 @@ public(package) fun settled_payout_liability(
 /// once. The in-order walk records boundary prices in `memo` for the leveraged
 /// correction scan.
 ///
-/// Boundary products are rounded separately, then accumulated in one signed
-/// approximate total. The signed result retains any boundary-rounding residue;
-/// `marked_live_liability` subtracts the leveraged correction and projects the
-/// final economic liability to nonnegative once. `tree.base` is the
-/// `P(-inf) = 1` anchor for `(-inf, h]` ranges (its quantity enters at face
-/// value); `+inf` ends are never stored (`P = 0`).
+/// Each boundary's exact signed net quantity is multiplied by its shared price
+/// certificate once, then accumulated into one signed approximate total. The
+/// signed result retains any boundary-rounding residue; `marked_live_liability`
+/// subtracts the leveraged correction and projects the final economic liability
+/// to nonnegative once. `tree.base` is the `P(-inf) = 1` anchor for
+/// `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends are never
+/// stored (`P = 0`).
 public(package) fun walk_linear(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
@@ -398,9 +399,9 @@ fun settlement_prefix_terms(
     settlement_prefix_terms(nodes, node.right, limit_tick, running)
 }
 
-/// Accumulate signed, separately rounded boundary products during an in-order
-/// walk. Every node is cached even when its equal local start and end quantities
-/// cancel, because leveraged-order correction lookups require every finite boundary.
+/// Accumulate signed net-boundary products during an in-order walk. Every node
+/// is cached even when its equal local start and end quantities cancel, because
+/// leveraged-order correction lookups require every finite boundary.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
@@ -421,11 +422,13 @@ fun walk_linear_subtree(
     );
 
     let price = memo.price_and_cache(pricer, tick, tick_size);
-    let local = boundary_linear_value(
-        &price,
-        node.local_start.quantity,
-        node.local_end.quantity,
+    let start_quantity = node.local_start.quantity;
+    let end_quantity = node.local_end.quantity;
+    let net_quantity = i64::from_parts(
+        start_quantity.diff(end_quantity),
+        start_quantity < end_quantity,
     );
+    let local = price.mul_scaled(&approx::exact(net_quantity));
 
     let right = walk_linear_subtree(
         nodes,
@@ -435,22 +438,6 @@ fun walk_linear_subtree(
         memo,
     );
     left.add(&local).add(&right)
-}
-
-/// Price one signed boundary delta while retaining the scalar path's two separate
-/// product floors. The same uncertain price multiplies both sides, so its error is
-/// correlated and scales with `|start - end|`, not `start + end`. For center `p`,
-/// `floor(p * start) - floor(p * end) - p * (start - end)` has magnitude below one
-/// raw unit, exactly the rounding leaf already carried by `Approx::mul_scaled`.
-fun boundary_linear_value(price: &Approx, start_quantity: u64, end_quantity: u64): Approx {
-    if (start_quantity == end_quantity) return approx::exact_u64(0);
-
-    let price_value = price.value();
-    let start_value = price_value.mul_scaled(&i64::from_u64(start_quantity));
-    let end_value = price_value.mul_scaled(&i64::from_u64(end_quantity));
-    let net_quantity = start_quantity.diff(end_quantity);
-    let correlated_error = price.mul_scaled(&approx::exact_u64(net_quantity)).error();
-    approx::from_certified_parts(start_value.sub(&end_value), correlated_error)
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {
