@@ -9,8 +9,8 @@
 /// same bounded active set supplies the floor-correction term for pool valuation.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo};
-use fixed_math::{approx::{Self, Approx}, math};
+use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo, strike_exposure_config};
+use fixed_math::approx::{Self, Approx};
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -85,8 +85,11 @@ public(package) fun correction_value(
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.
         let cap = if (
-            range_value.magnitude()
-            <= math::div_down(order.floor_shares(), liquidation_ltv)
+            strike_exposure_config::is_liquidatable(
+                range_value.magnitude(),
+                order.floor_shares(),
+                liquidation_ltv,
+            )
         ) {
             range_value
         } else {

@@ -65,10 +65,16 @@ embeds it into the contract as a floor.
 At mint, the protocol computes:
 
 ```text
-entry_value     = entry_probability * quantity
-net_premium     = entry_value / leverage
+S               = 1_000_000_000
+entry_value     = floor(entry_probability * quantity / S)
+net_premium     = ceil(entry_value * S / leverage)
 floor_shares    = financed_amount = entry_value - net_premium
 ```
+
+`entry_probability` and `leverage` are 1e9-scaled integers; `entry_value`,
+`net_premium`, and `floor_shares` are raw DUSDC atoms. The staged rounding is
+part of the contract: entry value rounds down first, net premium then rounds up,
+and the floor is the exact integer complement.
 
 The holder pays `net_premium` plus fees and owns the contract's upside above the
 floor. `financed_amount` is the slice of the full premium (`entry_value`) the pool
@@ -171,8 +177,9 @@ and settlement are unaffected.
 ### The entry-value gate
 
 ```text
-net_premium = entry_value / leverage  >=  min_net_premium
-entry_value > floor_shares / liquidation_ltv   (when floor_shares > 0)
+net_premium = ceil(entry_value * S / leverage) >= min_net_premium
+floor_shares == 0
+    or ceil(entry_value * liquidation_ltv / S) > floor_shares
 ```
 
 The net premium must clear a minimum so dust orders are rejected. The entry-value

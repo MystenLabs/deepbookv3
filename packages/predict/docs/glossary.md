@@ -65,11 +65,11 @@ grid, no boundary indices).
   premium per unit notional **equals the risk-neutral probability** of the
   payout event; Predict quotes and stores that probability directly in 1e9
   fixed point (code `entry_probability`, `range_probability`).
-- **Full premium** — the contract's complete entry value,
-  `entry_probability × quantity`; code `entry_value`.
+- **Full premium** — the contract's complete integer entry value,
+  `floor(entry_probability × quantity / 1e9)`; code `entry_value`.
 - **Net premium** — what a leveraged buyer pays upfront,
-  `full premium / leverage`; code `net_premium`. The unpaid remainder is
-  financed (see below). Fees are charged on top and are never part of the
+  `ceil(entry_value × 1e9 / leverage)`; code `net_premium`. The unpaid remainder
+  is financed (see below). Fees are charged on top and are never part of the
   contract's terms.
 - **Mark value (live value)** — the contract's current model value,
   `quantity × range_probability − floor`, clamped at zero. "Live value" in

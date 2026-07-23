@@ -427,10 +427,12 @@ public(package) fun quote_close(
     // read this one observation.
     let range_probability = exposure.order_range_price(pricer.borrow(), order);
     let gross_value = math::mul_down(range_probability, order.quantity());
-    // Leveraged only: a 1x order has a zero floor, so the threshold test would
-    // spuriously classify a currently-worthless 1x order as liquidatable.
     if (
-        order.is_leveraged() && exposure.under_liquidation_floor(gross_value, order.floor_shares())
+        strike_exposure_config::is_liquidatable(
+            gross_value,
+            order.floor_shares(),
+            exposure.config.liquidation_ltv(),
+        )
     ) {
         return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
@@ -713,7 +715,7 @@ fun process_live_close(
     option::some(replacement_order)
 }
 
-/// Liquidate (knock out) `order` when `under_liquidation_floor` holds.
+/// Liquidate (knock out) `order` when the canonical liquidation predicate holds.
 fun liquidate_order_if_under_floor(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -721,7 +723,13 @@ fun liquidate_order_if_under_floor(
     liquidated_at_ms: u64,
 ): bool {
     let gross_value = exposure.gross_order_value(pricer, order);
-    if (!exposure.under_liquidation_floor(gross_value, order.floor_shares())) return false;
+    if (
+        !strike_exposure_config::is_liquidatable(
+            gross_value,
+            order.floor_shares(),
+            exposure.config.liquidation_ltv(),
+        )
+    ) return false;
 
     exposure.apply_liquidation(pricer, order, gross_value, liquidated_at_ms);
     true
@@ -732,8 +740,8 @@ fun liquidate_order_if_under_floor(
 /// event atomically with the removal. Shared by the close flow
 /// (`process_close`) and the ambient sweep, so the book, tree, and event can
 /// never diverge. Callers own the liquidation decision; only leveraged orders
-/// reach here — the classifier by its explicit guard, the sweep because the
-/// active index holds exactly the leveraged orders (1x inserts are no-ops).
+/// reach here — the classifier uses the canonical zero-floor guard, and the
+/// sweep's active index holds exactly the leveraged orders (1x inserts are no-ops).
 fun apply_liquidation(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -763,12 +771,6 @@ fun apply_liquidation(
 
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
     math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
-}
-
-/// Return whether live gross value is at or below the configured multiple of the
-/// static floor. The reserve independently backs the order's full net payout.
-fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_amount: u64): bool {
-    gross_value <= math::div_down(floor_amount, exposure.config.liquidation_ltv())
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {

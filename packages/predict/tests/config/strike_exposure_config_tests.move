@@ -56,6 +56,10 @@ const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_333;
 /// to zero, so the full entry value is the premium.
 const NEAR_ONE_X_QUANTITY: u64 = 2_010_000;
 const NEAR_ONE_X_NET_PREMIUM: u64 = 1_005_000;
+const LIQUIDATION_BOUNDARY_FLOOR: u64 = 9_950;
+const LIQUIDATION_BOUNDARY_GROSS: u64 = 11_705;
+const GROSS_ABOVE_LIQUIDATION_BOUNDARY: u64 = 11_706;
+const ZERO_GROSS_VALUE: u64 = 0;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -463,6 +467,37 @@ fun no_leverage_window_overrides_low_probability_curve() {
         AT_EXPIRY_MS,
     );
     abort 999
+}
+
+// === Canonical liquidation predicate ===
+
+#[test]
+fun liquidation_predicate_owns_zero_floor_and_exact_boundary() {
+    let liquidation_ltv = config_constants::default_liquidation_ltv!();
+
+    // With LTV 0.85, ceil(11_705 * 0.85) = 9_950, while
+    // ceil(11_706 * 0.85) = 9_951.
+    assert!(
+        !strike_exposure_config::is_liquidatable(
+            ZERO_GROSS_VALUE,
+            UNLEVERAGED_FLOOR_SHARES,
+            liquidation_ltv,
+        ),
+    );
+    assert!(
+        strike_exposure_config::is_liquidatable(
+            LIQUIDATION_BOUNDARY_GROSS,
+            LIQUIDATION_BOUNDARY_FLOOR,
+            liquidation_ltv,
+        ),
+    );
+    assert!(
+        !strike_exposure_config::is_liquidatable(
+            GROSS_ABOVE_LIQUIDATION_BOUNDARY,
+            LIQUIDATION_BOUNDARY_FLOOR,
+            liquidation_ltv,
+        ),
+    );
 }
 
 // === EOrderBelowLiquidationThreshold (mint admission) ===

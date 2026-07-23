@@ -519,6 +519,10 @@ def deepbook_div(x: int, y: int) -> int:
     return x * FLOAT_SCALING // y
 
 
+def deepbook_div_up(x: int, y: int) -> int:
+    return (x * FLOAT_SCALING + y - 1) // y
+
+
 def deepbook_mul(x: int, y: int) -> int:
     return x * y // FLOAT_SCALING
 
@@ -571,8 +575,8 @@ def assert_admission_leverage_cap(entry_probability: int, leverage: int) -> None
         raise ValueError("leverage above admission cap")
 
 
-def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
-    return deepbook_div(exposure_value, leverage_multiplier(leverage))
+def net_premium_from_entry_value(entry_value: int, leverage: int) -> int:
+    return deepbook_div_up(entry_value, leverage_multiplier(leverage))
 
 
 def assert_net_premium_above_min(net_premium: int) -> None:
@@ -585,7 +589,7 @@ def assert_net_premium_above_min(net_premium: int) -> None:
 def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
     assert_admission_leverage_cap(entry_probability, leverage)
     entry_exposure_value = deepbook_mul(entry_probability, quantity)
-    contribution = user_contribution_from_exposure_value(entry_exposure_value, leverage)
+    contribution = net_premium_from_entry_value(entry_exposure_value, leverage)
     return {
         "entry_exposure_value": entry_exposure_value,
         "contribution": contribution,

@@ -52,9 +52,10 @@ and contributors. For *how* each mechanism works, follow the links into
 - The floor is **limited-recourse per order**: it offsets only its own order's
   value/payout, capped at that value. Aggregate floor exceeding aggregate
   liability is not positive NAV.
-- **Mint creation invariant:** leveraged orders start above the knock-out line:
-  `entry_probability × quantity > floor_shares / liquidation_ltv`. Fees are
-  transaction costs, not floor value.
+- **Mint creation invariant:** after `entry_value =
+  floor(entry_probability × quantity / 1e9)`, leveraged orders start above the
+  knock-out line: `ceil(entry_value × liquidation_ltv / 1e9) > floor_shares`.
+  Fees are transaction costs, not floor value.
 - `floor_shares = financed_amount = entry_value − net_premium` is the durable
   per-order static floor amount.
 
@@ -148,8 +149,9 @@ and contributors. For *how* each mechanism works, follow the links into
   cap is exactly 1×, regardless of entry probability; a `0` window disables the
   block. This bounds origination only — an order opened before the window keeps its
   leverage into expiry.
-- `net_premium = entry_probability × quantity / leverage ≥
-  min_net_premium`; the pool seeds the remainder (`financed_amount`).
+- `entry_value = floor(entry_probability × quantity / 1e9)`,
+  `net_premium = ceil(entry_value × 1e9 / leverage) ≥ min_net_premium`; the pool
+  seeds the exact remainder (`financed_amount = entry_value − net_premium`).
 
 ## Order encoding
 

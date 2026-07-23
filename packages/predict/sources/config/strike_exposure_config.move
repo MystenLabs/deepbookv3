@@ -101,6 +101,16 @@ public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
 }
 
+/// Return whether a positive static floor knocks out the given gross value.
+/// `liquidation_ltv` is a validated nonzero config value.
+public(package) fun is_liquidatable(
+    gross_value: u64,
+    floor_amount: u64,
+    liquidation_ltv: u64,
+): bool {
+    floor_amount > 0 && math::mul_up(gross_value, liquidation_ltv) <= floor_amount
+}
+
 /// Returns the raw trade fee for a live probability and quantity. The final
 /// rate-to-DUSDC conversion rounds upward, so a nonzero fractional charge is
 /// collected rather than discarded.
@@ -178,10 +188,10 @@ public(package) fun assert_mint_admission(
     assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
     let floor_shares = entry_value - net_premium;
 
-    if (floor_shares > 0) {
-        let liquidation_threshold_at_open = math::div_down(floor_shares, config.liquidation_ltv);
-        assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
-    };
+    assert!(
+        !is_liquidatable(entry_value, floor_shares, config.liquidation_ltv),
+        EOrderBelowLiquidationThreshold,
+    );
 
     MintAdmission { net_premium, floor_shares }
 }
