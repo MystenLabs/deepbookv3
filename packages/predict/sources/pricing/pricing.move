@@ -224,13 +224,7 @@ public(package) fun new_price_memo(): PriceMemo {
 /// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
 /// Both finite boundaries must have been cached by the linear walk; a finite miss
 /// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
-public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher_tick: u64): u64 {
-    memo.cached_range_price_approx(lower_tick, higher_tick).magnitude()
-}
-
-/// Read the cached range price with its certified error. The scalar wrapper above
-/// remains for callers that intentionally end the approximate flow here.
-public(package) fun cached_range_price_approx(
+public(package) fun cached_range_price(
     memo: &PriceMemo,
     lower_tick: u64,
     higher_tick: u64,

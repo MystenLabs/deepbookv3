@@ -74,6 +74,13 @@ public fun is_negative(a: &Approx): bool {
     a.value.is_negative()
 }
 
+/// Whether the certified error is within `max_deviation` (relative, 1e9-scaled) of
+/// the center magnitude — the shared precision-gate predicate. Callers own the
+/// bound, the abort code, and any zero-magnitude policy at the call site.
+public fun deviation_within(a: &Approx, max_deviation: u64): bool {
+    a.error <= math::mul(max_deviation, a.value.magnitude())
+}
+
 /// Clamp to zero. This continuous projection is 1-Lipschitz, so it retains the
 /// numerical radius even when the canonical center is on the zero branch.
 public fun clamp_nonnegative(a: &Approx): Approx {

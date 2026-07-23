@@ -72,22 +72,13 @@ public(package) fun correction_value(
     book: &LiquidationBook,
     memo: &PriceMemo,
     liquidation_ltv: u64,
-): u64 {
-    book.correction_value_approx(memo, liquidation_ltv).magnitude()
-}
-
-/// Return the NAV floor-correction term with its certified absolute error.
-public(package) fun correction_value_approx(
-    book: &LiquidationBook,
-    memo: &PriceMemo,
-    liquidation_ltv: u64,
 ): Approx {
     let mut correction = approx::exact_u64(0);
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
-        let range_price = memo.cached_range_price_approx(order.lower_tick(), order.higher_tick());
+        let range_price = memo.cached_range_price(order.lower_tick(), order.higher_tick());
         let quantity = approx::exact_u64(order.quantity());
         let range_value = range_price.mul_scaled(&quantity);
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it

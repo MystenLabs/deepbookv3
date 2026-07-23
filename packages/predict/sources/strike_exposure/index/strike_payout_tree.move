@@ -102,24 +102,6 @@ public(package) fun walk_linear(
     pricer: &Pricer,
     memo: &mut PriceMemo,
     tick_size: u64,
-): u64 {
-    tree
-        .walk_linear_approx(
-            pricer,
-            memo,
-            tick_size,
-        )
-        .magnitude()
-}
-
-/// Return the linear liability with its certified absolute error. The scalar center
-/// is bit-identical to `walk_linear`; the approximate value retains the error for
-/// the correction and NAV path.
-public(package) fun walk_linear_approx(
-    tree: &StrikePayoutTree,
-    pricer: &Pricer,
-    memo: &mut PriceMemo,
-    tick_size: u64,
 ): Approx {
     let running = walk_linear_subtree(
         &tree.nodes,

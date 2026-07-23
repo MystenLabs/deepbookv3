@@ -214,22 +214,12 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// ambient sweep liquidates it; every other order contributes its positive
 /// `range_value - floor_shares`. Boundary aggregation and per-order correction
 /// round at different points, so the subtraction saturates at zero.
-public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
-    exposure.exact_live_liability_approx(pricer).magnitude()
-}
-
-/// Return the live marked liability with its certified absolute error. The scalar
-/// center matches `exact_live_liability`; the approximate result continues through
-/// market and pool NAV before the final valuation policy gate.
-public(package) fun exact_live_liability_approx(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-): Approx {
+public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Approx {
     let mut memo = pricing::new_price_memo();
-    let linear = exposure.payout.walk_linear_approx(pricer, &mut memo, exposure.tick_size);
+    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
     let correction = exposure
         .liquidation
-        .correction_value_approx(
+        .correction_value(
             &memo,
             exposure.config.liquidation_ltv(),
         );
@@ -561,15 +551,6 @@ public(package) fun new(
     }
 }
 
-public(package) fun assert_contract_price_precision(price: &Approx) {
-    assert!(price.error() <= max_contract_price_error(price.magnitude()), EPriceTooImprecise);
-}
-
-/// Return the maximum certified numerical error permitted for a contract price.
-public(package) fun max_contract_price_error(price: u64): u64 {
-    math::mul(max_contract_price_deviation!(), price)
-}
-
 /// The protocol invariant on produced contract prices: a quoted probability may
 /// deviate from its true value by at most 0.1% (1e6 at 1e9 scale). Enforced at the
 /// mint quote below by aborting when the pricer's certified error exceeds this
@@ -591,7 +572,7 @@ fun admitted_entry_probability(
     let price = pricer.range_price_approx(lower, higher);
     // Contract prices cannot deviate from true by more than 0.1%; an over-wide
     // certified error aborts the quote rather than admitting an imprecise price.
-    assert_contract_price_precision(&price);
+    assert!(price.deviation_within(max_contract_price_deviation!()), EPriceTooImprecise);
     price.magnitude()
 }
 

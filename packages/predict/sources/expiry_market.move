@@ -244,7 +244,7 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 /// valuation. The public `current_nav` is the value-only read wrapper.
 public(package) fun current_nav_approx(market: &ExpiryMarket, pricer: &Pricer): Approx {
     market.assert_pricer_bound(pricer);
-    let liability = market.strike_exposure.exact_live_liability_approx(pricer);
+    let liability = market.strike_exposure.exact_live_liability(pricer);
     // Marked liability and free cash are computed through different rounded
     // aggregates; negative marked NAV is represented as zero.
     let cash = approx::exact_u64(market.cash.free_cash());

@@ -299,7 +299,13 @@ public fun finish_flush(
         config.protocol_reserve_profit_share(),
         &total_nav,
     );
-    assert_nav_precision(&pool_nav);
+    // NAV precision policy; a zero pool NAV is a valid liveness mark (RP-1/RP-3:
+    // zero-value fills are handled at the drain, and a purely relative bound has no
+    // denominator), so it skips the check rather than stalling the flush.
+    assert!(
+        pool_nav.magnitude() == 0 || pool_nav.deviation_within(max_nav_deviation!()),
+        ENavTooImprecise,
+    );
     let total_nav = total_nav.magnitude();
     let pool_nav = pool_nav.magnitude();
     let total_supply = vault.lp.total_supply();
@@ -667,21 +673,6 @@ public(package) fun register_expiry(
     vault
         .expiry_accounting
         .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
-}
-
-/// Abort a full-pool flush whose certified numerical error exceeds the ratified
-/// relative NAV bound. The next keeper can retry with fresh market inputs.
-public(package) fun assert_nav_precision(nav: &Approx) {
-    // RP-1/RP-3 define a zero scalar NAV as a valid liveness mark: zero-value
-    // fills are handled by `lp_book`, so a relative precision policy has no
-    // denominator and must not stall the mandatory flush.
-    if (nav.magnitude() == 0) return;
-    assert!(nav.error() <= max_nav_error(nav.magnitude()), ENavTooImprecise);
-}
-
-/// Return the maximum certified numerical error permitted for a frozen pool NAV.
-public(package) fun max_nav_error(nav: u64): u64 {
-    math::mul(max_nav_deviation!(), nav)
 }
 
 // === Private Functions ===

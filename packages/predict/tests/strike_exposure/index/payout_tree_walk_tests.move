@@ -91,12 +91,12 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     // Insertion order is intentionally not sorted. The in-order walk must still
     // cache ascending ticks, because `cached_range_price` uses binary search.
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size()).magnitude();
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
-    assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
-    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(raw(0), raw(t0)));
+    assert_eq!(memo.cached_range_price(t0, t2).magnitude(), pricer.range_price(raw(t0), raw(t2)));
+    assert_eq!(memo.cached_range_price(0, t0).magnitude(), pricer.range_price(raw(0), raw(t0)));
     assert_eq!(
-        memo.cached_range_price(t2, constants::pos_inf_tick!()),
+        memo.cached_range_price(t2, constants::pos_inf_tick!()).magnitude(),
         pricer.range_price(raw(t2), raw(constants::pos_inf_tick!())),
     );
 
@@ -117,7 +117,7 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size()).magnitude();
     assert_eq!(
         walk,
         range_reference(
@@ -129,8 +129,8 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     );
     // The shared boundary has equal start/end quantity and contributes no net
     // linear value, but it must still be cached for leveraged correction lookups.
-    assert_eq!(memo.cached_range_price(t0, t1), pricer.range_price(raw(t0), raw(t1)));
-    assert_eq!(memo.cached_range_price(t1, t2), pricer.range_price(raw(t1), raw(t2)));
+    assert_eq!(memo.cached_range_price(t0, t1).magnitude(), pricer.range_price(raw(t0), raw(t1)));
+    assert_eq!(memo.cached_range_price(t1, t2).magnitude(), pricer.range_price(raw(t1), raw(t2)));
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -145,7 +145,7 @@ fun shared_boundary_error_scales_with_net_not_gross_quantity() {
     tree.insert_range(t1, t2, CORRELATED_RIGHT_QUANTITY, 0);
 
     let mut memo = pricing::new_price_memo();
-    let approximate = tree.walk_linear_approx(&pricer, &mut memo, tick_size());
+    let approximate = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(
         approximate.magnitude(),
         range_reference(
@@ -263,13 +263,13 @@ fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 /// Run the exact linear walk with the production price memo.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
-    tree.walk_linear(pricer, &mut memo, tick_size())
+    tree.walk_linear(pricer, &mut memo, tick_size()).magnitude()
 }
 
 /// Independent error budget for one boundary with one shared uncertain UP price:
 /// `ceil(price_error * |start-end| / 1e9)` plus two product-floor units.
 fun expected_boundary_error(memo: &pricing::PriceMemo, tick: u64, net_quantity: u64): u64 {
-    let price = memo.cached_range_price_approx(tick, constants::pos_inf_tick!());
+    let price = memo.cached_range_price(tick, constants::pos_inf_tick!());
     math::mul_div_up(price.error(), net_quantity, math::float_scaling!()) + 2
 }
 

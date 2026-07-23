@@ -17,6 +17,9 @@ use deepbook_predict::{
 use fixed_math::{approx::Approx, math};
 
 const EUnexpectedSuccess: u64 = 999;
+// The ratified contract-price deviation bound at 1e9 scale (0.1%), mirroring
+// `strike_exposure::max_contract_price_deviation`.
+const CONTRACT_MAX_DEVIATION: u64 = 1_000_000;
 
 #[test]
 fun extreme_surface_is_admissible_but_not_numerically_certifiable() {
@@ -27,7 +30,7 @@ fun extreme_surface_is_admissible_but_not_numerically_certifiable() {
     let price = atm_up_price(&fx.load_pricer_bundle(&market));
     assert!(price.magnitude() >= config_constants::default_min_entry_probability!());
     assert!(price.magnitude() <= config_constants::default_max_entry_probability!());
-    assert!(price.error() > strike_exposure::max_contract_price_error(price.magnitude()));
+    assert!(!price.deviation_within(CONTRACT_MAX_DEVIATION));
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -40,7 +43,7 @@ fun production_mint_accepts_a_certified_default_price() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let price = atm_up_price(&fx.load_pricer_bundle(&market));
-    assert!(price.error() <= strike_exposure::max_contract_price_error(price.magnitude()));
+    assert!(price.deviation_within(CONTRACT_MAX_DEVIATION));
 
     let order_id = fx.mint_bundle(
         &mut market,
