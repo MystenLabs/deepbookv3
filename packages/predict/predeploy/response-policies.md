@@ -745,6 +745,49 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-19: Fee-incentive lifetime capacity is snapshotted per expiry
+
+- **Trigger state:** a pool allocates sponsor-funded fee incentives to a
+  registered expiry, including a request that reaches or exceeds its lifetime
+  capacity.
+- **Controller:** protocol — both the absolute lifetime cap and cumulative
+  allocation total are stored accounting terms with no external writer.
+- **Blast radius:** one expiry's sponsor-funded fee-incentive allocation. The
+  live target, pool reserve, events, and other fee-incentive economics are
+  unchanged.
+- **Response:** snapshot the absolute lifetime cap at registration by rounding
+  `max_expiry_allocation × fee_incentive_lifetime_cap_rate` down. Allocate
+  `min(requested, cap - allocated)` and use exact subtraction so any internal
+  invariant violation fails loudly. Existing expiries retain their snapshotted
+  cap across upgrades; a later package-rate change affects only newly
+  registered expiries.
+- **Reasoning:** registration establishes `allocated = 0 <= cap`. Allocation
+  computes exact remaining capacity, adds at most that amount, and therefore
+  preserves `allocated <= cap`. Registration is the only cap writer,
+  `record_fee_incentives_allocated_up_to` is the only allocation-total writer,
+  neither field has a mutable-reference escape, and terminal accounting prevents
+  further allocations without weakening the inequality.
+- **Duty inventory:** removing saturation does not remove a reachable fallback.
+  An inconsistent caller cap is eliminated with the caller parameter;
+  retroactive cap reduction is eliminated by snapshotting; writer overshoot is
+  eliminated by `min(requested, remaining)`; external mutation is absent because
+  neither field escapes by mutable reference.
+- **Risk profile:** `BEST-GUESS` only for how often live allocation requests
+  reach the lifetime cap. The inequality itself follows by source-complete
+  induction over the two field writers, and unit tests pin below-cap,
+  crossing-cap, at-cap, exhausted, fractional-cap, and terminal-accounting
+  behavior.
+- **Pinning tests:** `pool_accounting_tests.move` —
+  `fee_incentives_allocate_up_to_lifetime_cap`,
+  `fee_incentive_lifetime_cap_rounds_down_at_registration`, and
+  `fee_incentive_allocation_after_terminal_accounting_started_aborts`.
+- **Reopen when:** either stored field gains another writer or mutable-reference
+  escape; registration no longer snapshots the cap; allocation no longer caps
+  the request at remaining capacity; or terminal accounting permits subsequent
+  allocations.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

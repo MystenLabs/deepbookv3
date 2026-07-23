@@ -868,14 +868,7 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
 
     let (allocation, allocated_after) = vault
         .expiry_accounting
-        .record_fee_incentives_allocated_up_to(
-            expiry_market_id,
-            math::mul_down(
-                max_expiry_allocation,
-                constants::fee_incentive_lifetime_cap_rate!(),
-            ),
-            requested_allocation,
-        );
+        .record_fee_incentives_allocated_up_to(expiry_market_id, requested_allocation);
     if (allocation == 0) return;
 
     let incentives = vault.fee_incentive_reserve.split(allocation);

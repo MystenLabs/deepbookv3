@@ -28,6 +28,8 @@ const MAX_EXPIRY_ALLOCATION: u64 = 1000;
 const INITIAL_EXPIRY_CASH: u64 = 100;
 const POST_TERMINAL_FUNDING_AMOUNT: u64 = 100;
 const FEE_INCENTIVE_CAP: u64 = 100;
+const NON_INTEGRAL_CAP_BASIS: u64 = 101;
+const FLOORED_NON_INTEGRAL_CAP: u64 = 10;
 const FIRST_FEE_INCENTIVE_ALLOCATION: u64 = 40;
 const OVER_CAP_FEE_INCENTIVE_REQUEST: u64 = 80;
 const FIRST_EXPIRY_FUNDING: u64 = 700;
@@ -82,7 +84,6 @@ fun fee_incentives_allocate_up_to_lifetime_cap() {
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         FIRST_FEE_INCENTIVE_ALLOCATION,
     );
     assert_eq!(allocated, FIRST_FEE_INCENTIVE_ALLOCATION);
@@ -90,19 +91,39 @@ fun fee_incentives_allocate_up_to_lifetime_cap() {
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         OVER_CAP_FEE_INCENTIVE_REQUEST,
     );
-    assert_eq!(allocated, FEE_INCENTIVE_CAP - FIRST_FEE_INCENTIVE_ALLOCATION);
+    assert_eq!(allocated, 60);
     assert_eq!(allocated_after, FEE_INCENTIVE_CAP);
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         FIRST_FEE_INCENTIVE_ALLOCATION,
     );
     assert_eq!(allocated, 0);
     assert_eq!(allocated_after, FEE_INCENTIVE_CAP);
+
+    destroy(ledger);
+}
+
+#[test]
+fun fee_incentive_lifetime_cap_rounds_down_at_registration() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id, EXPIRY_A_MS, NON_INTEGRAL_CAP_BASIS, INITIAL_EXPIRY_CASH);
+
+    // The 10% lifetime cap on 101 atoms is 10.1 atoms, rounded down to 10.
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        id,
+        NON_INTEGRAL_CAP_BASIS,
+    );
+    assert_eq!(allocated, FLOORED_NON_INTEGRAL_CAP);
+    assert_eq!(allocated_after, FLOORED_NON_INTEGRAL_CAP);
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(id, 1);
+    assert_eq!(allocated, 0);
+    assert_eq!(allocated_after, FLOORED_NON_INTEGRAL_CAP);
 
     destroy(ledger);
 }
@@ -269,11 +290,7 @@ fun fee_incentive_allocation_after_terminal_accounting_started_aborts() {
     ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
 
     ledger.materialize_expiry_profit(id);
-    ledger.record_fee_incentives_allocated_up_to(
-        id,
-        FEE_INCENTIVE_CAP,
-        FIRST_FEE_INCENTIVE_ALLOCATION,
-    );
+    ledger.record_fee_incentives_allocated_up_to(id, FIRST_FEE_INCENTIVE_ALLOCATION);
 
     abort 999
 }

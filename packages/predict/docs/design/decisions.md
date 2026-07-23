@@ -94,6 +94,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Per-expiry config is snapshotted immutable at creation**, so admin changes to
   the global template never reprice live orders.
+- **Each expiry's absolute fee-incentive lifetime cap is snapshotted at
+  registration.** The package rate is applied once to the expiry allocation cap;
+  later rate changes affect only newly registered expiries.
 - **The contract defaults ARE the genesis values (AUD-002).** There is no separate
   launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.25, caps,
   budgets) ship as-is unless an open item changes one. Configured values live in
