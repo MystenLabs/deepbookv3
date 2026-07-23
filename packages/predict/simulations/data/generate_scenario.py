@@ -194,7 +194,7 @@ class Generator:
             except ValueError:
                 continue
 
-            fee_amount = replay.deepbook_mul(fee_rate, quantity)
+            fee_amount = replay.deepbook_mul_up(fee_rate, quantity)
             cash_required = terms["contribution"] + fee_amount
             if self.manager_balance - cash_required < MANAGER_CASH_FLOOR:
                 continue
@@ -273,7 +273,7 @@ class Generator:
         leverage: int,
     ) -> int:
         lot_terms = replay.compute_mint_terms(entry_probability, replay.POSITION_LOT_SIZE, leverage)
-        lot_fee = replay.deepbook_mul(fee_rate, replay.POSITION_LOT_SIZE)
+        lot_fee = replay.deepbook_mul_up(fee_rate, replay.POSITION_LOT_SIZE)
         lot_cost = lot_terms["contribution"] + lot_fee
         if lot_cost <= 0:
             raise GenerationError("mint lot cost must be positive")

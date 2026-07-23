@@ -75,6 +75,13 @@ public fun mul(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128)) / F) as u64
 }
 
+/// Multiply two 1e9-scaled fixed-point values, rounding up. `x*y + F - 1` cannot
+/// overflow u128 for any u64 operands, so no intermediate guard is needed.
+/// Directed counterpart of `mul`.
+public fun mul_up(x: u64, y: u64): u64 {
+    (((x as u128) * (y as u128) + (F - 1)) / F) as u64
+}
+
 /// Divides two 1e9-scaled fixed-point values, rounding down.
 /// Aborts when `y` is zero or the quotient does not fit in `u64`.
 public fun div(x: u64, y: u64): u64 {

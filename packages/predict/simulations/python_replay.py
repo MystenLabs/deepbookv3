@@ -523,6 +523,10 @@ def deepbook_mul(x: int, y: int) -> int:
     return x * y // FLOAT_SCALING
 
 
+def deepbook_mul_up(x: int, y: int) -> int:
+    return (x * y + FLOAT_SCALING - 1) // FLOAT_SCALING
+
+
 def mul_div_round_down(a: int, b: int, c: int) -> int:
     return a * b // c
 
@@ -1570,7 +1574,7 @@ def order_minted_update(
     lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
     assert_entry_probability_bounds(entry_probability)
-    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
+    fee_amount = deepbook_mul_up(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
     assert_net_premium_above_min(terms["contribution"])
     return {
@@ -1875,7 +1879,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         raise ValueError(f"order_ref {ref} is not redeemable")
 
     probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
-    fee = deepbook_mul(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
+    fee = deepbook_mul_up(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
     gross = deepbook_mul(probability, close_quantity)
 
     remaining_quantity = order["quantity"] - close_quantity

@@ -53,8 +53,9 @@ public(package) fun penalty_fee(
     let z_score = math::div(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 
-    // penalty_rate * quantity / float_scaling, round down
-    math::mul(config.penalty_rate(), quantity)
+    // Convert the final rate to DUSDC upward so a nonzero fractional surcharge
+    // is collected rather than discarded.
+    math::mul_up(config.penalty_rate(), quantity)
 }
 
 /// Fold the current transaction's gas price into the smoothed mean and variance.

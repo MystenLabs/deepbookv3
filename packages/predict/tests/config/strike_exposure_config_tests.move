@@ -177,6 +177,26 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
     destroy(config);
 }
 
+#[test]
+fun trading_fee_rounds_final_non_integral_charge_up() {
+    let mut config = strike_exposure_config::new();
+    // At p = 0.5, base_fee = 1 makes the raw Bernoulli rate round to zero,
+    // so this non-integral min fee binds. Its exact quantity charge is
+    // 5_000_009 * 1_000_010_000 / 1e9 = 5_000_059.00009.
+    config.set_base_fee(1);
+    config.set_min_fee(5_000_009);
+    assert_eq!(
+        config.trading_fee(
+            test_constants::default_expiry_ms(),
+            ENTRY_PROBABILITY_HALF,
+            1_000_010_000,
+            test_constants::now_ms(),
+        ),
+        5_000_060,
+    );
+    destroy(config);
+}
+
 // === EEntryProbabilityOutOfBounds (mint admission) ===
 
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]

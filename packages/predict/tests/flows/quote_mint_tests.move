@@ -48,6 +48,12 @@ const ALL_IN_WITH_SUBSIDY: u64 = 504_000_000;
 const BUILDER_FEE_ATM: u64 = 500_000;
 const ALL_IN_WITH_BUILDER: u64 = 505_500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
+const ROUND_UP_MIN_FEE: u64 = 5_000_009;
+const ROUND_UP_QUANTITY: u64 = 1_000_010_000;
+const ROUND_UP_NET_PREMIUM: u64 = 500_005_000;
+const ROUND_UP_TRADING_FEE: u64 = 5_000_060;
+const ROUND_UP_BUILDER_FEE: u64 = 500_006;
+const ROUND_UP_ALL_IN_WITH_BUILDER: u64 = 505_505_066;
 
 /// Full-benefit stake (>= upper_benefit_power) earns the max fee discount:
 /// benefit_ratio = 1.0, discount_fraction = max_fee_discount (0.5), so the fee
@@ -260,6 +266,65 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
         test_constants::mint_deposit() - ALL_IN_WITH_BUILDER,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun rounded_trading_fee_can_advance_derived_builder_fee_by_one_atom() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(ROUND_UP_MIN_FEE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    helpers::return_market_bundle(market);
+    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let quote = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        ROUND_UP_QUANTITY,
+        test_constants::leverage_one_x(),
+    );
+
+    // The pre-change floors were 5_000_059 for trading and 500_005 for the
+    // derived builder fee. Rounding the first component upward lands exactly on
+    // the builder's next 10% integer threshold, so the all-in delta is two atoms.
+    assert_eq!(quote.entry_probability(), ENTRY_PROBABILITY_ATM);
+    assert_eq!(quote.net_premium(), ROUND_UP_NET_PREMIUM);
+    assert_eq!(quote.trading_fee(), ROUND_UP_TRADING_FEE);
+    assert_eq!(quote.fee_incentive_subsidy(), 0);
+    assert_eq!(quote.builder_fee(), ROUND_UP_BUILDER_FEE);
+    assert_eq!(quote.penalty_fee(), 0);
+    assert_eq!(quote.all_in_cost(), ROUND_UP_ALL_IN_WITH_BUILDER);
+
+    let order = fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        ROUND_UP_QUANTITY,
+        test_constants::leverage_one_x(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+    assert!(helpers::has_position_bundle(&account, expiry_id, order));
+    assert_eq!(
+        fx.account_balance_bundle<DUSDC>(&account),
+        test_constants::mint_deposit() - ROUND_UP_ALL_IN_WITH_BUILDER,
     );
 
     helpers::return_account_bundle(account);

@@ -98,10 +98,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.25, caps,
   budgets) ship as-is unless an open item changes one. Configured values live in
   [configuration.md](./configuration.md).
-- **Uniform round-down math** at 1e9 scale; solvency rests on bit-identical
-  reserve↔payout pairing (a reserve and its payout derive from the same quantity
-  via the *identical* helper). *Rejected:* mixed ceil/floor primitives, which
-  introduced super-additivity drift and were deleted.
+- **Reserve and payout math rounds down uniformly** at 1e9 scale; solvency rests
+  on bit-identical reserve↔payout pairing (a reserve and its payout derive from
+  the same quantity via the *identical* helper). Independently routed transaction
+  charges are not future payout liabilities: the final rate×quantity conversion
+  for trading fees and EWMA surcharges rounds upward by at most one DUSDC atom,
+  and quote and execution share those same charge owners. *Rejected:* mixed
+  ceil/floor primitives inside reserve↔payout calculations, which introduced
+  super-additivity drift.
 - **Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
   the `u64` mul ceiling is accepted because the failure mode is a graceful per-tx
   mint abort at extreme strike×quantity (never a brick), and inline `u128` casts

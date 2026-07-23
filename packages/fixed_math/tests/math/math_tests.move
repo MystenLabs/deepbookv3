@@ -97,6 +97,29 @@ fun mul_rounds_down_to_integer_unit() {
 }
 
 #[test]
+fun mul_up_ceils_one_raw_unit_of_dust() {
+    // ceil(1 * 1 / 1e9) = 1; mul floors the same product to 0
+    assert_eq!(math::mul_up(1, 1), 1);
+}
+
+#[test]
+fun mul_up_exact_product_does_not_round() {
+    // 1.5 * 2.25 = 3.375 exactly at 1e9 scale
+    assert_eq!(math::mul_up(float!() + float!() / 2, 2 * float!() + float!() / 4), 3_375_000_000);
+}
+
+#[test]
+fun mul_up_rounds_half_up_to_next_unit() {
+    // 7 * 0.5 = 3.5 raw units: ceil = 4, floor = 3
+    assert_eq!(math::mul_up(7, float!() / 2), 4);
+}
+
+#[test]
+fun mul_up_of_zero_is_zero() {
+    assert_eq!(math::mul_up(0, float!()), 0);
+}
+
+#[test]
 fun div_floors_scaled_quotient() {
     // floor(5 / 2 * 1e9) = 2.5e9
     assert_eq!(math::div(5 * float!(), 2 * float!()), 2_500_000_000);

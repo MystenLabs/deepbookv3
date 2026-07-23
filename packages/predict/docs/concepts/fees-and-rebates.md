@@ -24,6 +24,8 @@ congestion_fee  = penalty_rate * quantity                    (only when gas is a
 
 The base trading fee, the expiry ramp, and the staking discount together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
 
+The intermediate fixed-point rate calculations round down. The final conversion of the trading-fee rate and congestion-penalty rate into a DUSDC amount rounds upward, changing a non-integral component by at most one raw DUSDC atom; integral charges are unchanged. Builder fees remain derived from the integer post-discount trading fee, so advancing that fee by one atom can also advance the builder component at its own integer threshold.
+
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
 A range contract settling inside or outside its range is a Bernoulli outcome with success probability `p`. The variance of that outcome is `p · (1 − p)`, and its standard deviation is `sqrt(p · (1 − p))`. The base fee is proportional to that standard deviation:
