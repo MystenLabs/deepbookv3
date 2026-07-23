@@ -68,9 +68,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (`registry → protocol_config → admin`).
 - **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
   (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
-  book coexist; live NAV is read by decomposing the complete per-order liability
-  across the two (`Σ qty·P` over the tree minus the leveraged floor-correction
-  scan over the book), with numerical error carried in `Approx`.
+  book coexist; live NAV certifies the complete book's ideal real-number
+  liability across the two (`Σ qty·P` over shared tree boundaries minus the
+  per-order leveraged floor-correction scan), with every fixed-point residue
+  carried in `Approx`. Independently rounded per-order marks are not the NAV
+  reference; custody, payout, and backing atoms remain exact contract terms.
   *Superseded:* a dense paged NAV matrix (`{quantity, floor_shares}` with
   strike-weighted prefix sums), which existed only to make every LP supply/withdraw
   a cheap synchronous read. It and its whole mitigation stack (the valuation

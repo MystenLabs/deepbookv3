@@ -185,9 +185,9 @@ privileged periodic **flush** prices them at one frozen pool bid/ask pair. See
   filled supply and burned on a filled withdraw; its value tracks pool NAV. The
   fungible claim on `PoolVault`. Code `PLP`.
 - **`current_nav`** — an `ExpiryMarket`'s live NAV center plus a certified
-  numerical-error radius: free cash minus the complete per-order live liability
-  (payout-tree `walk_linear` minus the leveraged book's `correction_value`),
-  floored at zero. Code `current_nav` (value-only view) and
+  numerical-error radius: free cash minus the complete-book live liability
+  (shared-boundary payout-tree `walk_linear` minus the leveraged book's per-order
+  `correction_value`), floored at zero. Code `current_nav` (value-only view) and
   `current_nav_approx` (package certificate).
 - **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush
   prices PLP at: `idle + Σ active-market current_nav`, net of the

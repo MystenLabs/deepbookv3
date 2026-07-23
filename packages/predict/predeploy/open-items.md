@@ -114,7 +114,8 @@ loss estimate.
 evaluate a source-level butterfly/monotonicity admission check. The active-book
 price-memo guard prevents the known NAV overstatement by aborting valuation on a
 non-monotone active boundary set, so the completed-valuation-discrepancy risk is
-closed (only P-13 now describes a live valuation gap). Because the guard
+closed. The distinct shared-boundary rounding residual is certified under RP-21.
+Because the guard
 aborts rather than reprices, and the pool flush values every active market in one
 transaction, an admitted non-monotone surface now stalls that flush until the
 surface is replaced — the residual is a surface-quality admission gap plus this
@@ -122,26 +123,6 @@ flush-liveness cost, not a mispriced NAV. Surface quality remains a trusted inpu
 for single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
 review; quantitative framing corrected 2026-07-11; active-book guard added by
 DBU-548.)
-
-### P-13: Boundary aggregation can understate positive liability by one raw unit
-
-**Severity:** Low.
-
-The payout tree prices and floors each signed boundary contribution before
-netting the aggregate, while an individual order floors its range probability
-before multiplying by quantity. Those operation orders are not bit-equivalent.
-On a normal monotone constant-variance surface, two one-lot ranges sharing an
-upper strike price individually at `463 + 410 = 873` raw DUSDC units, while
-`strike_payout_tree::walk_linear` produces `9583 + 9530 - 18241 = 872`. The
-aggregate live liability is therefore one raw unit below the sum of the two
-order liabilities, and `current_nav` is one raw unit high. This is distinct from
-P-11's non-monotone-surface netting failure.
-
-**Action:** Decide whether live liability must reproduce per-order rounding. If
-yes, preserve per-range rounded terms in the valuation representation. If not,
-bound and accept the aggregation residual in the rounding policy, add a
-regression covering both directions, and narrow every exact-NAV claim to the
-accepted bound. (2026-07-17 clean-room gap audit)
 
 ## Access and Governance
 

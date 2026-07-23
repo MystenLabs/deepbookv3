@@ -71,8 +71,12 @@ and contributors. For *how* each mechanism works, follow the links into
   same valuation) minus the nonnegative leveraged-book floor correction
   (`liquidation_book::correction_value`, reading order range prices from that
   cache). The projection occurs once after that subtraction. Every numerical
-  value carries its `Approx` radius. An underwater leveraged order nets to zero
-  by the per-order floor cap, so the read needs no liquidation pass.
+  value carries its `Approx` radius. The reference is the complete book's ideal
+  real-number value under the contract-selected liquidation branches; the
+  shared-boundary center need not equal an alternative sum of independently
+  rounded per-order marks, and its sub-atom product residues stay in the radius
+  under RP-21. An underwater leveraged order nets to zero by the per-order floor
+  cap, so the read needs no liquidation pass.
   It is a **pure read with no redundant backing assert**: `free_cash` subtracts
   the protocol-controlled rebate reserve exactly, so an impossible
   `cash < rebate_reserve` state fails loudly. The final NAV projection still

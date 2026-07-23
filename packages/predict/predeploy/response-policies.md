@@ -668,11 +668,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   liquidation the book has not yet applied — the same window the sweep lag
   already carries, and one that moves no money, because the mark only sets LP
   fill prices, not holder payouts.
-- **Residual:** the credit uses each order's per-order `range_value`, which
-  differs from that order's aggregated payout-tree contribution by the
-  boundary-aggregation rounding of P-13 (at most one raw unit per boundary), so a
-  flush that credits a knock-out lands within P-13's band on the same side. This
-  is the accepted P-13 residual, not a new class.
+- **Residual:** the credit uses each order's per-order `range_value`, while the
+  payout-tree center groups the same exposure by shared boundary. Those centers
+  need not be bit-identical, but RP-21 defines the real-number liability as the
+  valuation reference and certifies each representation's fixed-point residue.
+  The final liability projection therefore retains the combined radius rather
+  than requiring the two centers to cancel atom-for-atom.
 - **Risk profile:** `BEST-GUESS` — reachability depends on prices moving orders
   into the band between sweeps. Cost is the read-only scan over the active
   leveraged set that `correction_value` already walks on every valuation; no tree
@@ -687,10 +688,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   dedicated pin on a high-variance surface (a leveraged order priced into the
   band marks at zero live liability, raising NAV above the floor-capped value);
   tracked as the follow-up test for this policy.
-- **Reopen when:** the LP flush stops using one shared mark for both queues; or a
+- **Reopen when:** the LP flush stops using one shared mark for both queues; a
   product decision requires the book to be liquidated in-pass rather than by the
-  sweep (reintroducing the mutation and its gas profile); or the P-13
-  boundary-aggregation residual is closed and the credit must become exact.
+  sweep (reintroducing the mutation and its gas profile); or NAV changes from
+  the RP-21 real-number reference to independently rounded per-order marks.
 
 ---
 
@@ -837,6 +838,57 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   stops enforcing insertion order and non-increasing centers; cached ranges gain
   a caller outside validated order terms; or `release_surplus` weakens its
   precondition.
+
+---
+
+## RP-21: Live NAV certifies the real-number shared-boundary mark (resolves P-13)
+
+- **Trigger state:** grouping order quantities at a shared payout-tree boundary
+  changes where fixed-point products floor. Two ranges can therefore produce a
+  boundary-linear center one raw atom above or below the sum obtained by pricing
+  and flooring each order independently; the recorded positive-liability
+  witness is `872` from the tree versus `873` per order.
+- **Controller:** protocol — the payout tree chooses the shared-boundary
+  representation and every multiplication and error-propagation rule.
+- **Blast radius:** one expiry's live-liability center and certified radius,
+  which flow into the pool NAV bid/ask. Custody, stored order atoms, backing,
+  close proceeds, and terminal payouts do not read this valuation center.
+- **Response:** define the ideal real-number value of the complete active book,
+  under the contract-selected liquidation branches, as NAV's reference. Keep
+  the compact shared-boundary center and carry its distance from that reference
+  in `Approx.error`; do not require equality with the alternative sum of
+  independently rounded order marks. Supplier and withdrawer prices consume the
+  resulting upper and lower NAV endpoints under the standing directional policy.
+- **Reasoning:** for scale `S`, price center `p`, start quantity `s`, and end
+  quantity `e`,
+  `floor(p*s/S) - floor(p*e/S) - p*(s-e)/S` is the difference of two fractional
+  parts and has magnitude below one raw unit. A price radius `r` contributes at
+  most `ceil(r*|s-e|/S)`. Therefore
+  `price.mul_scaled(exact(|s-e|)).error()` already supplies the complete local
+  bound: the propagated price radius plus one rounding leaf. The previous
+  additional atom double-counted product-floor residue. Summing the local balls
+  certifies the whole tree; at most 1,000 finite nodes make the structural-only
+  component at most 1,000 raw DUSDC atoms (`0.001 DUSDC`) per expiry.
+- **Duty inventory:** each boundary's start and end products use the same cached
+  `Approx`, so price uncertainty is correlated by `|s-e|`; equal quantities
+  return exact zero; the open-lower base is exact; `Approx::add` sums local
+  radii; the leveraged correction retains its own per-order multiplication
+  radii; and both final nonnegative projections are 1-Lipschitz and preserve the
+  radius. Saturation inside `Approx` remains the fail-closed response when a
+  propagated error does not fit in `u64`. No state writer, payout path, or
+  backing calculation depended on the removed error atom.
+- **Risk profile:** deterministic algebra and source caps. The difference from
+  independently rounded order marks is representation dust, not an unmeasured
+  market-frequency claim.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `shared_boundary_error_scales_with_net_not_gross_quantity`,
+  `walk_linear_error_encloses_positive_boundary_dust`, and
+  `walk_linear_preserves_negative_boundary_dust_until_marked_liability`.
+- **Reopen when:** one boundary's start and end stop sharing the same price
+  certificate; boundary multiplication changes rounding direction;
+  `Approx::mul_scaled` changes its one-unit rounding leaf or saturation
+  semantics; a transfer or backing path starts consuming the live NAV center; or
+  NAV is redefined to reproduce independently rounded per-order marks.
 
 ---
 

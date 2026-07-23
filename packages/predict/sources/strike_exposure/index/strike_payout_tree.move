@@ -439,8 +439,9 @@ fun walk_linear_subtree(
 
 /// Price one signed boundary delta while retaining the scalar path's two separate
 /// product floors. The same uncertain price multiplies both sides, so its error is
-/// correlated and scales with `|start - end|`, not `start + end`; two raw units
-/// conservatively cover the independently rounded scalar products.
+/// correlated and scales with `|start - end|`, not `start + end`. For center `p`,
+/// `floor(p * start) - floor(p * end) - p * (start - end)` has magnitude below one
+/// raw unit, exactly the rounding leaf already carried by `Approx::mul_scaled`.
 fun boundary_linear_value(price: &Approx, start_quantity: u64, end_quantity: u64): Approx {
     if (start_quantity == end_quantity) return approx::exact_u64(0);
 
@@ -448,10 +449,7 @@ fun boundary_linear_value(price: &Approx, start_quantity: u64, end_quantity: u64
     let start_value = price_value.mul_scaled(&i64::from_u64(start_quantity));
     let end_value = price_value.mul_scaled(&i64::from_u64(end_quantity));
     let net_quantity = start_quantity.diff(end_quantity);
-    let correlated_error = price
-        .mul_scaled(&approx::exact_u64(net_quantity))
-        .error()
-        .saturating_add(1);
+    let correlated_error = price.mul_scaled(&approx::exact_u64(net_quantity)).error();
     approx::from_certified_parts(start_value.sub(&end_value), correlated_error)
 }
 

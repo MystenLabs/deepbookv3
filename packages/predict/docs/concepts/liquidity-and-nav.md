@@ -97,11 +97,11 @@ Fills and refunds are delivered to each recipient account through the **balance 
 
 ## Full-pool NAV carries one certificate
 
-The pool NAV above is exact idle accounting plus `Σ current_nav_approx`. The substance is how one expiry's complete per-order valuation carries fixed-point error.
+The pool NAV above is exact idle accounting plus `Σ current_nav_approx`. The substance is how one expiry's complete-book valuation carries fixed-point error.
 
 ### An active expiry's certified NAV
 
-`current_nav_approx` is a pure read: exact free cash minus the complete per-order live-liability certificate, floored at zero. The public `current_nav` view returns only its center.
+`current_nav_approx` is a pure read: exact free cash minus the complete-book live-liability certificate, floored at zero. The public `current_nav` view returns only its center.
 
 ```
 current_nav_approx = max(0, exact(free_cash) − live_liability_approx)
@@ -114,11 +114,11 @@ where:
   - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick once through the resolved pricer and caching its `Approx` in a transaction-local memo.
   - **`correction_value`** is the per-order leveraged floor or liquidation correction, scanned over the active leveraged book using the same cached approximate range prices.
 
-Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The representation is complete over the active book; the `Approx` radius certifies the numerical error introduced while evaluating its prices.
+Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The representation is complete over the active book. Its reference is the ideal real-number value under the contract-selected liquidation branches; the shared-boundary center can differ by fixed-point dust from an alternative sum of independently rounded per-order marks, and the `Approx` radius certifies that difference together with pricing error.
 
 `current_nav` carries **no redundant backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every cash mutation, so `free_cash = cash_balance − rebate_reserve` is exact and an impossible broken state fails loudly. The final `max(0, free_cash − live_liability)` projection marks a valid but underwater market at zero, which is its correct limited-recourse value, never negative.
 
-> This does not restore the deleted heuristic approximate-NAV design. There is still no verified/unscanned bucket split, configurable uncertainty band, or uncertainty-band withdrawal fee. The current design walks the complete per-order representation, propagates only fixed-point numerical error, rejects a pool certificate above 1%, and consumes the admitted certificate as a directional bid/ask.
+> This does not restore the deleted heuristic approximate-NAV design. There is still no verified/unscanned bucket split, configurable uncertainty band, or uncertainty-band withdrawal fee. The current design values the complete active book, propagates only fixed-point numerical error, rejects a pool certificate above 1%, and consumes the admitted certificate as a directional bid/ask.
 
 ### Past-expiry settlement liveness
 

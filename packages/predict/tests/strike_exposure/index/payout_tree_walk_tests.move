@@ -53,6 +53,7 @@ const DUST_QUANTITY: u64 = 100_000;
 /// Production-valid initial quantity reduced to `DUST_QUANTITY` through the
 /// ordinary partial-close mutation.
 const DUST_WITNESS_INITIAL_QUANTITY: u64 = 1_000_000_000_000;
+const EXPECTED_BOUNDARY_DUST: u64 = 1;
 const GC_SURVIVOR_A_LOWER: u64 = 98;
 const GC_REMOVED_LOWER: u64 = 100;
 const GC_SURVIVOR_C_LOWER: u64 = 102;
@@ -176,6 +177,54 @@ fun shared_boundary_error_scales_with_net_not_gross_quantity() {
         expected_boundary_error(&memo, t0, CORRELATED_LEFT_QUANTITY)
             + expected_shared
             + expected_boundary_error(&memo, t2, CORRELATED_RIGHT_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test]
+fun walk_linear_error_encloses_positive_boundary_dust() {
+    let (mut fixture, mut oracle, _entry_pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let (lower, higher_a, higher_b) = clustered_ticks();
+
+    let source_timestamp_ms = test_constants::live_source_timestamp_ms() + 1;
+    fixture.set_pyth_bundle(&mut oracle, FLAT_REGION_FORWARD, source_timestamp_ms);
+    fixture.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    fixture.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+
+    // Mirror the shared-end negative witness below: aggregating two starts at
+    // `lower` rounds one atom above the two independently rounded thin ranges.
+    tree.insert_range(lower, higher_a, DUST_QUANTITY, 0);
+    tree.insert_range(lower, higher_b, DUST_QUANTITY, 0);
+
+    let reference = range_reference(
+        &pricer,
+        vector[lower, lower],
+        vector[higher_a, higher_b],
+        vector[DUST_QUANTITY, DUST_QUANTITY],
+    );
+    assert_eq!(reference, 0);
+
+    let mut memo = pricing::new_price_memo();
+    let signed_boundary_linear = tree.walk_linear(&pricer, &mut memo, tick_size());
+    assert!(!signed_boundary_linear.is_negative());
+    assert_eq!(signed_boundary_linear.magnitude(), EXPECTED_BOUNDARY_DUST);
+    assert_eq!(
+        signed_boundary_linear.error(),
+        expected_boundary_error(&memo, lower, 2 * DUST_QUANTITY)
+            + expected_boundary_error(&memo, higher_a, DUST_QUANTITY)
+            + expected_boundary_error(&memo, higher_b, DUST_QUANTITY),
     );
 
     destroy(tree);
@@ -334,10 +383,10 @@ fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
 }
 
 /// Independent error budget for one boundary with one shared uncertain UP price:
-/// `ceil(price_error * |start-end| / 1e9)` plus two product-floor units.
+/// `ceil(price_error * |start-end| / 1e9)` plus one product-floor unit.
 fun expected_boundary_error(memo: &pricing::PriceMemo, tick: u64, net_quantity: u64): u64 {
     let price = memo.cached_range_price(tick, constants::pos_inf_tick!());
-    math::mul_up(price.error(), net_quantity) + 2
+    math::mul_up(price.error(), net_quantity) + 1
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
