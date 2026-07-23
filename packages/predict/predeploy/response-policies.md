@@ -649,7 +649,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   a same-flush supply and contradicting the certified-mark framing (RP-1; the
   NAV-mark directional invariant).
 - **Response:** value the knock-out at its liquidated worth in the read-only NAV
-  correction, without touching the book. `exact_live_liability` already walks the
+  correction, without touching the book. `marked_live_liability` already walks the
   payout tree once and subtracts the leveraged floor correction
   (`liquidation_book::correction_value`); that correction now credits a
   knocked-out order's full `range_value` — using the same threshold the close

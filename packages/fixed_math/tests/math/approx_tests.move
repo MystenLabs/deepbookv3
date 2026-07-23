@@ -38,8 +38,8 @@ fun assert_contains(ball: &Approx, candidate: I64) {
 
 #[test]
 fun constructors_and_linear_operations_preserve_the_scalar_center() {
-    let a = approx::from_parts(i64::from_parts(3 * float!() / 2, true), 7);
-    let b = approx::from_parts(i64::from_u64(float!() / 4), 11);
+    let a = approx::from_certified_parts(i64::from_parts(3 * float!() / 2, true), 7);
+    let b = approx::from_certified_parts(i64::from_u64(float!() / 4), 11);
 
     let sum = a.add(&b);
     assert_center(&sum, 5 * float!() / 4, true);
@@ -68,12 +68,12 @@ fun constructors_and_linear_operations_preserve_the_scalar_center() {
 
 #[test]
 fun continuous_clamps_retain_the_radius() {
-    let negative = approx::from_parts(i64::from_parts(10, true), 7);
+    let negative = approx::from_certified_parts(i64::from_parts(10, true), 7);
     let zero = negative.clamp_nonnegative();
     assert_center(&zero, 0, false);
     assert_eq!(zero.error(), 7);
 
-    let above_one = approx::from_parts(i64::from_u64(2 * float!()), 9);
+    let above_one = approx::from_certified_parts(i64::from_u64(2 * float!()), 9);
     let one = above_one.clamp_unit_interval();
     assert_center(&one, float!(), false);
     assert_eq!(one.error(), 9);
@@ -85,8 +85,8 @@ fun continuous_clamps_retain_the_radius() {
 
 #[test]
 fun mul_scaled_encloses_all_positive_corners_and_keeps_scalar_center() {
-    let a = approx::from_parts(i64::from_u64(3 * float!() / 2), float!() / 5);
-    let b = approx::from_parts(i64::from_u64(2 * float!()), 3 * float!() / 10);
+    let a = approx::from_certified_parts(i64::from_u64(3 * float!() / 2), float!() / 5);
+    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), 3 * float!() / 10);
     let result = a.mul_scaled(&b);
 
     assert_center(&result, 3 * float!(), false);
@@ -97,8 +97,8 @@ fun mul_scaled_encloses_all_positive_corners_and_keeps_scalar_center() {
 
 #[test]
 fun mul_scaled_encloses_negative_product_corners() {
-    let a = approx::from_parts(i64::from_parts(3 * float!() / 2, true), float!() / 5);
-    let b = approx::from_parts(i64::from_u64(2 * float!()), 3 * float!() / 10);
+    let a = approx::from_certified_parts(i64::from_parts(3 * float!() / 2, true), float!() / 5);
+    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), 3 * float!() / 10);
     let result = a.mul_scaled(&b);
 
     assert_center(&result, 3 * float!(), true);
@@ -108,7 +108,7 @@ fun mul_scaled_encloses_negative_product_corners() {
 
 #[test]
 fun square_scaled_encloses_fixed_sign_and_zero_crossing_balls() {
-    let fixed_sign = approx::from_parts(
+    let fixed_sign = approx::from_certified_parts(
         i64::from_parts(3 * float!() / 2, true),
         float!() / 5,
     );
@@ -118,7 +118,7 @@ fun square_scaled_encloses_fixed_sign_and_zero_crossing_balls() {
     assert_contains(&fixed_result, i64::from_u64(1_690_000_000));
     assert_contains(&fixed_result, i64::from_u64(2_890_000_000));
 
-    let crossing = approx::from_parts(i64::from_u64(float!() / 10), float!() / 5);
+    let crossing = approx::from_certified_parts(i64::from_u64(float!() / 10), float!() / 5);
     let crossing_result = crossing.square_scaled();
     assert_center(&crossing_result, 10_000_000, false);
     assert_eq!(crossing_result.error(), 80_000_001);
@@ -128,8 +128,8 @@ fun square_scaled_encloses_fixed_sign_and_zero_crossing_balls() {
 
 #[test]
 fun div_scaled_encloses_outward_quotient_corners() {
-    let a = approx::from_parts(i64::from_u64(3 * float!()), float!() / 5);
-    let b = approx::from_parts(i64::from_u64(2 * float!()), float!() / 10);
+    let a = approx::from_certified_parts(i64::from_u64(3 * float!()), float!() / 5);
+    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), float!() / 10);
     let result = a.div_scaled(&b);
 
     assert_center(&result, 3 * float!() / 2, false);
@@ -143,15 +143,23 @@ fun div_scaled_encloses_outward_quotient_corners() {
 #[test]
 fun div_scaled_saturates_when_denominator_ball_reaches_zero() {
     let a = approx::exact_u64(float!());
-    let b = approx::from_parts(i64::from_u64(float!() / 10), float!() / 10);
+    let b = approx::from_certified_parts(i64::from_u64(float!() / 10), float!() / 10);
     assert_eq!(a.div_scaled(&b).error(), std::u64::max_value!());
+}
+
+#[test, expected_failure(abort_code = i64::EZeroDivisor)]
+fun div_scaled_zero_center_denominator_aborts() {
+    let numerator = approx::exact_u64(float!());
+    let denominator = approx::exact_u64(0);
+    numerator.div_scaled(&denominator);
+    abort EUnexpectedSuccess
 }
 
 #[test]
 fun mul_div_down_encloses_both_fixed_sign_corners() {
-    let a = approx::from_parts(i64::from_u64(3 * float!() / 2), float!() / 10);
-    let b = approx::from_parts(i64::from_u64(2 * float!()), float!() / 5);
-    let c = approx::from_parts(i64::from_u64(4 * float!()), float!() / 10);
+    let a = approx::from_certified_parts(i64::from_u64(3 * float!() / 2), float!() / 10);
+    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), float!() / 5);
+    let c = approx::from_certified_parts(i64::from_u64(4 * float!()), float!() / 10);
     let result = a.mul_div_down(&b, &c);
 
     assert_center(&result, 3 * float!() / 4, false);
@@ -184,7 +192,7 @@ fun mul_div_down_accounts_for_a_negative_denominator() {
 
 #[test]
 fun mul_div_down_covers_a_numerator_sign_change() {
-    let a = approx::from_parts(i64::from_u64(float!() / 10), float!() / 5);
+    let a = approx::from_certified_parts(i64::from_u64(float!() / 10), float!() / 5);
     let b = approx::exact_u64(2 * float!());
     let c = approx::exact_u64(float!());
     let result = a.mul_div_down(&b, &c);
@@ -198,11 +206,19 @@ fun mul_div_down_covers_a_numerator_sign_change() {
 #[test]
 fun mul_div_down_saturates_uncertifiable_domains() {
     let one = approx::exact_u64(1);
-    let denominator_crosses_zero = approx::from_parts(i64::from_u64(1), 1);
+    let denominator_crosses_zero = approx::from_certified_parts(i64::from_u64(1), 1);
     assert_eq!(one.mul_div_down(&one, &denominator_crosses_zero).error(), std::u64::max_value!());
 
-    let endpoint_overflows = approx::from_parts(i64::from_u64(std::u64::max_value!()), 1);
+    let endpoint_overflows = approx::from_certified_parts(i64::from_u64(std::u64::max_value!()), 1);
     assert_eq!(endpoint_overflows.mul_div_down(&one, &one).error(), std::u64::max_value!());
+}
+
+#[test, expected_failure(abort_code = math::EInputZero)]
+fun mul_div_down_zero_center_denominator_aborts() {
+    let one = approx::exact_u64(1);
+    let denominator = approx::exact_u64(0);
+    one.mul_div_down(&one, &denominator);
+    abort EUnexpectedSuccess
 }
 
 #[test]
@@ -213,14 +229,14 @@ fun transcendental_balls_enclose_independent_endpoint_references() {
     assert_contains(&logarithm, i64::from_u64(405_465_108)); // ln(1.5)
     assert_contains(&logarithm, i64::from_u64(916_290_732)); // ln(2.5)
 
-    let square_root_input = approx::from_parts(i64::from_u64(4 * float!()), float!());
+    let square_root_input = approx::from_certified_parts(i64::from_u64(4 * float!()), float!());
     let square_root = square_root_input.sqrt();
     assert_center(&square_root, 2 * float!(), false);
     assert_eq!(square_root.error(), 267_949_194);
     assert_contains(&square_root, i64::from_u64(1_732_050_807)); // floor(sqrt(3) * 1e9)
     assert_contains(&square_root, i64::from_u64(2_236_067_977)); // floor(sqrt(5) * 1e9)
 
-    let normal_input = approx::from_parts(i64::from_u64(float!()), float!() / 2);
+    let normal_input = approx::from_certified_parts(i64::from_u64(float!()), float!() / 2);
     let cdf = normal_input.normal_cdf();
     assert_contains(&cdf, i64::from_u64(691_462_461)); // Phi(0.5)
     assert_contains(&cdf, i64::from_u64(933_192_799)); // Phi(1.5)
@@ -273,7 +289,7 @@ fun normal_cdf_uses_a_certified_upper_bound_for_its_derivative() {
     // raw units, so 398_827_402 is an outward integer upper bound. The ball spans
     // [0.024, 20.024], making x=0.024 the exact maximum-density corner.
     let radius = 10 * float!();
-    let input = approx::from_parts(i64::from_u64(10_024_000_000), radius);
+    let input = approx::from_certified_parts(i64::from_u64(10_024_000_000), radius);
     let result = input.normal_cdf();
     let required_propagation = math::mul_up(398_827_402, radius);
     assert!(result.error() >= required_propagation + 20);
@@ -281,7 +297,7 @@ fun normal_cdf_uses_a_certified_upper_bound_for_its_derivative() {
 
 #[test]
 fun error_arithmetic_saturates_instead_of_wrapping() {
-    let saturated = approx::from_parts(i64::from_u64(float!()), std::u64::max_value!());
+    let saturated = approx::from_certified_parts(i64::from_u64(float!()), std::u64::max_value!());
     let exact = approx::exact_u64(float!());
     assert_eq!(saturated.add(&exact).error(), std::u64::max_value!());
     assert_eq!(saturated.sub(&exact).error(), std::u64::max_value!());

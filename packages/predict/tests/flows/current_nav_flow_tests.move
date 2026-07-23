@@ -9,7 +9,7 @@
 /// `pricing::range_price` (a knocked-out leveraged order is marked at its
 /// liquidated worth, RP-17). The
 /// reference reuses NONE of `walk_linear` / `correction_value` /
-/// `exact_live_liability` / `current_nav` / `expiry_cash::free_cash`, so it is a
+/// `marked_live_liability` / `current_nav` / `expiry_cash::free_cash`, so it is a
 /// genuine oracle (unit-tests rule 1): it sums per order, while the contract
 /// decomposes into a boundary-aggregated linear walk minus a leveraged-book
 /// correction walk.

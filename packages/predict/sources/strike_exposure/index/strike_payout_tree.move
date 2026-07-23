@@ -16,7 +16,7 @@
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
-use fixed_math::approx::{Self, Approx};
+use fixed_math::{approx::{Self, Approx}, i64};
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
@@ -444,14 +444,15 @@ fun walk_linear_subtree(
 fun boundary_linear_value(price: &Approx, start_quantity: u64, end_quantity: u64): Approx {
     if (start_quantity == end_quantity) return approx::exact_u64(0);
 
-    let start = price.mul_scaled(&approx::exact_u64(start_quantity));
-    let end = price.mul_scaled(&approx::exact_u64(end_quantity));
+    let price_value = price.value();
+    let start_value = price_value.mul_scaled(&i64::from_u64(start_quantity));
+    let end_value = price_value.mul_scaled(&i64::from_u64(end_quantity));
     let net_quantity = start_quantity.diff(end_quantity);
     let correlated_error = price
         .mul_scaled(&approx::exact_u64(net_quantity))
         .error()
         .saturating_add(1);
-    approx::from_parts(start.value().sub(&end.value()), correlated_error)
+    approx::from_certified_parts(start_value.sub(&end_value), correlated_error)
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {

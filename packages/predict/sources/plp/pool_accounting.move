@@ -121,7 +121,7 @@ public(package) fun initial_expiry_cash(ledger: &Ledger, expiry_market_id: ID): 
 public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
-    flow.max_expiry_allocation.saturating_sub(flow_net_funding(flow))
+    flow.max_expiry_allocation - flow_net_funding(flow)
 }
 
 /// Abort unless this expiry is registered to the pool.

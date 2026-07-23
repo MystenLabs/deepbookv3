@@ -233,7 +233,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Cross-module returns carry owned facts, not a consumer's policy.** A module
   returns quantities it is the source of truth for (an exposure book returns its raw
   live liability; the pool returns its profit basis), never a value pre-shaped for a
-  caller's mark, haircut, or stance. `strike_exposure::exact_live_liability` returns
+  caller's mark, haircut, or stance. `strike_exposure::marked_live_liability` returns
   the complete liability `Approx`; `expiry_market::current_nav_approx` owns the NAV
   cash floor; `plp::finish_flush` alone turns the final certificate into economic
   bid/ask policy.

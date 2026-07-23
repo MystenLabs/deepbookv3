@@ -9,7 +9,7 @@ finding for the single-market case only.
 
 ## The change
 
-The full-pool flush values each expiry via `strike_exposure::exact_live_liability`,
+The full-pool flush values each expiry via `strike_exposure::marked_live_liability`,
 which was `walk_linear` (payout-tree, prices each of ≤1,000 distinct boundary ticks
 once) **plus** `correction_value` (liquidation book, re-priced every one of up to
 5,000 leveraged orders). Every leveraged order's boundary ticks are already tree

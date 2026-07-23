@@ -273,7 +273,7 @@ order ID. Beyond selecting liquidation candidates, it supplies the floor offset
 that turns the tree's linear term into NAV:
 
 ```text
-exact_live_liability = walk_linear - correction_value,  floored at 0
+marked_live_liability = walk_linear - correction_value,  floored at 0
 correction_value     = sum(active leveraged min(quantity * range_price, floor_shares))
 ```
 
@@ -282,7 +282,7 @@ memo populated by `walk_linear`: each order's floor offsets only its own range
 value, capped at it. Capping per order is what makes the subtraction
 limited-recourse -- an exhausted order's unconsumed floor can never offset another
 order's value. The expiry's `current_nav` is then `free_cash -
-exact_live_liability`; see
+marked_live_liability`; see
 [liquidity and NAV](./liquidity-and-nav.md).
 
 ## Liquidation priority

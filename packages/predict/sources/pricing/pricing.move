@@ -536,7 +536,7 @@ fun total_variance_terms(
     } else {
         (scaled_error as u64) + 1
     };
-    let total_var = approx::from_parts(i64::from_u64(total_var_center), total_var_error);
+    let total_var = approx::from_certified_parts(i64::from_u64(total_var_center), total_var_error);
 
     let sqrt_center = math::sqrt_u128_down(wide_total_var);
     let sqrt_low = if (wide_total_var > wide_error) {
@@ -546,7 +546,10 @@ fun total_variance_terms(
     };
     let sqrt_high = math::sqrt_u128_up(wide_total_var + wide_error);
     let sqrt_error = (sqrt_center - sqrt_low).max(sqrt_high - sqrt_center);
-    let sqrt_var = approx::from_parts(i64::from_u64(sqrt_center as u64), sqrt_error as u64);
+    let sqrt_var = approx::from_certified_parts(
+        i64::from_u64(sqrt_center as u64),
+        sqrt_error as u64,
+    );
     (total_var, sqrt_var)
 }
 

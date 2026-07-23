@@ -23,24 +23,24 @@ const NAV_ERROR_ABOVE_MAX: u64 = 9_900_991;
 
 #[test]
 fun contract_price_at_boundary_is_within() {
-    let price = approx::from_parts(i64::from_u64(CENTER), MAX_PRICE_ERROR);
+    let price = approx::from_certified_parts(i64::from_u64(CENTER), MAX_PRICE_ERROR);
     assert!(price.true_relative_deviation_within(CONTRACT_MAX_DEVIATION));
 }
 
 #[test]
 fun contract_price_above_boundary_is_not_within() {
-    let price = approx::from_parts(i64::from_u64(CENTER), PRICE_ERROR_ABOVE_MAX);
+    let price = approx::from_certified_parts(i64::from_u64(CENTER), PRICE_ERROR_ABOVE_MAX);
     assert!(!price.true_relative_deviation_within(CONTRACT_MAX_DEVIATION));
 }
 
 #[test]
 fun pool_nav_at_boundary_is_within() {
-    let nav = approx::from_parts(i64::from_u64(CENTER), MAX_NAV_ERROR);
+    let nav = approx::from_certified_parts(i64::from_u64(CENTER), MAX_NAV_ERROR);
     assert!(nav.true_relative_deviation_within(NAV_MAX_DEVIATION));
 }
 
 #[test]
 fun pool_nav_above_boundary_is_not_within() {
-    let nav = approx::from_parts(i64::from_u64(CENTER), NAV_ERROR_ABOVE_MAX);
+    let nav = approx::from_certified_parts(i64::from_u64(CENTER), NAV_ERROR_ABOVE_MAX);
     assert!(!nav.true_relative_deviation_within(NAV_MAX_DEVIATION));
 }

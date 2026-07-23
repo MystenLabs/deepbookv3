@@ -60,6 +60,20 @@ fun send_and_receive_track_profit_basis() {
 }
 
 #[test]
+fun funding_at_cap_has_no_remaining_room() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.receive_idle(balance::create_for_testing<DUSDC>(MAX_EXPIRY_ALLOCATION));
+
+    destroy(ledger.send_expiry_cash(id, MAX_EXPIRY_ALLOCATION));
+    assert_eq!(ledger.available_expiry_funding(id), 0);
+
+    destroy(ledger);
+}
+
+#[test]
 fun fee_incentives_allocate_up_to_lifetime_cap() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);

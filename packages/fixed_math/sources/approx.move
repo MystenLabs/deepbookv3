@@ -49,8 +49,8 @@ public fun exact_u64(value: u64): Approx {
     Approx { value: i64::from_u64(value), error: 0 }
 }
 
-/// A ball from a value and an explicit error radius.
-public fun from_parts(value: I64, error: u64): Approx {
+/// A ball from a canonical value and its certified explicit error radius.
+public fun from_certified_parts(value: I64, error: u64): Approx {
     Approx { value, error }
 }
 
@@ -118,12 +118,12 @@ public fun clamp_upper(a: &Approx, upper: u64): Approx {
 
 /// Sum. Absolute errors add (saturating).
 public fun add(a: &Approx, b: &Approx): Approx {
-    Approx { value: a.value.add(&b.value), error: saturating_add(a.error, b.error) }
+    Approx { value: a.value.add(&b.value), error: a.error.saturating_add(b.error) }
 }
 
 /// Difference. Absolute errors add (subtraction cannot cancel uncertainty).
 public fun sub(a: &Approx, b: &Approx): Approx {
-    Approx { value: a.value.sub(&b.value), error: saturating_add(a.error, b.error) }
+    Approx { value: a.value.sub(&b.value), error: a.error.saturating_add(b.error) }
 }
 
 /// Negation. The error radius is unchanged.
@@ -142,7 +142,7 @@ public fun double(a: &Approx): Approx {
 public fun half(a: &Approx): Approx {
     Approx {
         value: i64::from_parts(a.value.magnitude() / 2, a.value.is_negative()),
-        error: saturating_add(a.error, round_leaf!()),
+        error: a.error.saturating_add(round_leaf!()),
     }
 }
 
@@ -153,13 +153,10 @@ public fun half(a: &Approx): Approx {
 public fun mul_scaled(a: &Approx, b: &Approx): Approx {
     let ma = a.value.magnitude();
     let mb = b.value.magnitude();
-    let error = saturating_add(
-        saturating_add(
-            saturating_add(ceil_mul(ma, b.error), ceil_mul(mb, a.error)),
-            ceil_mul(a.error, b.error),
-        ),
-        round_leaf!(),
-    );
+    let error = ceil_mul(ma, b.error)
+        .saturating_add(ceil_mul(mb, a.error))
+        .saturating_add(ceil_mul(a.error, b.error))
+        .saturating_add(round_leaf!());
     Approx { value: a.value.mul_scaled(&b.value), error }
 }
 
@@ -168,18 +165,19 @@ public fun mul_scaled(a: &Approx, b: &Approx): Approx {
 public fun square_scaled(a: &Approx): Approx {
     let m = a.value.magnitude();
     let cross = ceil_mul(m, a.error);
-    let error = saturating_add(
-        saturating_add(saturating_add(cross, cross), ceil_mul(a.error, a.error)),
-        round_leaf!(),
-    );
+    let error = cross
+        .saturating_add(cross)
+        .saturating_add(ceil_mul(a.error, a.error))
+        .saturating_add(round_leaf!());
     Approx { value: i64::from_u64(a.value.square_scaled()), error }
 }
 
 /// Scaled quotient. Propagates via the quotient rule with the denominator taken at
 /// the worst corner `|b| - db`. The `|a| db / b^2` term is computed division-first
 /// (`ceil(|a| db / b)` then `/ b`) so a small numerator cannot underflow it to zero.
-/// A denominator that can reach zero (`|b| <= db`) cannot be certified; its error
-/// saturates so any downstream gate rejects it.
+/// The scalar center is evaluated first and aborts when `b.value == 0`. For a
+/// nonzero center whose ball can reach zero (`|b| <= db`), the error saturates so
+/// any downstream gate rejects it.
 public fun div_scaled(a: &Approx, b: &Approx): Approx {
     let ma = a.value.magnitude();
     let mb = b.value.magnitude();
@@ -190,7 +188,7 @@ public fun div_scaled(a: &Approx, b: &Approx): Approx {
     let denom = mb - b.error;
     let first = ceil_div(a.error, denom); // |da / b|
     let second = ceil_div(ceil_mul_div(ma, b.error, denom), denom); // |a| |db| / b^2
-    let error = saturating_add(saturating_add(first, second), round_leaf!());
+    let error = first.saturating_add(second).saturating_add(round_leaf!());
     Approx { value, error }
 }
 
@@ -199,9 +197,11 @@ public fun div_scaled(a: &Approx, b: &Approx): Approx {
 /// outward corner evaluation over the three input balls, not a linearization: when
 /// both numerator factors retain their signs, their quotient magnitude lies in
 /// `[(|a|-da)(|b|-db)/(|c|+dc), (|a|+da)(|b|+db)/(|c|-dc)]`;
-/// otherwise the numerator may cross zero and either output sign is covered. A
-/// denominator that can reach zero, or an endpoint that cannot be represented in
-/// the u64 error domain, saturates so every downstream precision gate rejects it.
+/// otherwise the numerator may cross zero and either output sign is covered.
+/// The scalar center is evaluated first and aborts when `c.value == 0`. For a
+/// nonzero center whose denominator ball can reach zero, or an endpoint that
+/// cannot be represented in the u64 error domain, the error saturates so every
+/// downstream precision gate rejects it.
 public fun mul_div_down(a: &Approx, b: &Approx, c: &Approx): Approx {
     let ma = a.value.magnitude();
     let mb = b.value.magnitude();
@@ -237,7 +237,7 @@ public fun mul_div_down(a: &Approx, b: &Approx, c: &Approx): Approx {
         // Crossing either numerator factor through zero can reverse the quotient's
         // sign relative to the canonical center, so the farthest endpoint is the
         // sum of their magnitudes.
-        saturating_add(value_magnitude, upper)
+        value_magnitude.saturating_add(upper)
     };
     Approx { value, error }
 }
@@ -251,7 +251,7 @@ public fun ln(x: u64, x_error: u64): Approx {
     let value = math::ln(x);
     let leaf = value.magnitude() / 10_000_000 + 3;
     let propagated = if (x > x_error) ceil_div(x_error, x - x_error) else std::u64::max_value!();
-    Approx { value, error: saturating_add(propagated, leaf) }
+    Approx { value, error: propagated.saturating_add(leaf) }
 }
 
 /// `ln(numerator / denominator)` for exact positive u64 inputs. The ordinary
@@ -291,8 +291,8 @@ public fun normal_cdf(a: &Approx): Approx {
     let value = i64::from_u64(math::normal_cdf(&a.value));
     let m = a.value.magnitude();
     let nearest = if (m > a.error) i64::from_u64(m - a.error) else i64::zero();
-    let sup_phi = saturating_add(math::normal_pdf(&nearest), pdf_leaf!());
-    let error = saturating_add(ceil_mul(sup_phi, a.error), cdf_leaf!());
+    let sup_phi = math::normal_pdf(&nearest).saturating_add(pdf_leaf!());
+    let error = ceil_mul(sup_phi, a.error).saturating_add(cdf_leaf!());
     Approx { value, error }
 }
 
@@ -301,7 +301,7 @@ public fun normal_cdf(a: &Approx): Approx {
 /// own approximation error.
 public fun normal_pdf(a: &Approx): Approx {
     let value = i64::from_u64(math::normal_pdf(&a.value));
-    let error = saturating_add(ceil_mul(max_pdf_slope!(), a.error), pdf_leaf!());
+    let error = ceil_mul(max_pdf_slope!(), a.error).saturating_add(pdf_leaf!());
     Approx { value, error }
 }
 
@@ -321,9 +321,4 @@ fun ceil_div(x: u64, y: u64): u64 {
 /// the result does not fit in `u64`.
 fun ceil_mul_div(x: u64, y: u64, d: u64): u64 {
     math::try_mul_div_up(x, y, d).destroy_or!(std::u64::max_value!())
-}
-
-fun saturating_add(a: u64, b: u64): u64 {
-    let max = std::u64::max_value!();
-    if (a > max - b) max else a + b
 }

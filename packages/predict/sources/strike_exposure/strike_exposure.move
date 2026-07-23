@@ -36,6 +36,10 @@ const EWrongCloseOutcome: u64 = 6;
 const EPricerRequired: u64 = 7;
 const EPriceTooImprecise: u64 = 8;
 
+/// The protocol invariant on produced contract prices: a quoted probability may
+/// deviate from its true value by at most 0.1% (1e6 at 1e9 scale).
+macro fun max_contract_price_deviation(): u64 { 1_000_000 }
+
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
     /// Expiry market that owns this exposure book.
@@ -214,7 +218,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// ambient sweep liquidates it; every other order contributes its positive
 /// `range_value - floor_shares`. Boundary aggregation and per-order correction
 /// round at different points, so the subtraction saturates at zero.
-public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Approx {
+public(package) fun marked_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Approx {
     let mut memo = pricing::new_price_memo();
     let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
     let correction = exposure
@@ -554,12 +558,6 @@ public(package) fun new(
         payout: strike_payout_tree::new(ctx),
     }
 }
-
-/// The protocol invariant on produced contract prices: a quoted probability may
-/// deviate from its true value by at most 0.1% (1e6 at 1e9 scale). Enforced at the
-/// mint quote below by aborting when the pricer's certified error exceeds this
-/// fraction of the price — imprecision becomes unavailability, never a distorted quote.
-macro fun max_contract_price_deviation(): u64 { 1_000_000 }
 
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
 /// validation, and enforce the contract-price precision invariant. The single
