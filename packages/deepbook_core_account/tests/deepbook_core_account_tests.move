@@ -37,6 +37,13 @@ const BOB: address = @0xB0B;
 const BASE_AMOUNT: u64 = 5_000_000_000;
 const RESTING_ASK_CLIENT_ORDER_ID: u64 = 11;
 const FILLING_BID_CLIENT_ORDER_ID: u64 = 12;
+const MARKET_ORDER_MAKER_CLIENT_ORDER_ID: u64 = 21;
+const ACCOUNT_MARKET_ORDER_CLIENT_ORDER_ID: u64 = 22;
+const ONE_PRICE_UNIT: u64 = 1;
+const PARTIAL_FILL_MULTIPLIER: u64 = 2;
+const ABOVE_LIMIT_PRICE_MULTIPLIER: u64 = 2;
+const EUnexpectedSuccess: u64 = 999;
+const NO_AVAILABLE_QUANTITY: u64 = 0;
 const ZERO_BALANCE: u64 = 0;
 const NO_OPEN_ORDER_COUNT: u64 = 0;
 const SINGLE_OPEN_ORDER_COUNT: u64 = 1;
@@ -219,6 +226,86 @@ fun funding_round_trip_sweeps_back_to_account() {
     return_shared(registry);
     destroy(wrapper);
     scenario.end();
+}
+
+#[test]
+fun bid_market_order_at_price_limit_succeeds() {
+    run_market_order_at_price_limit(
+        true,
+        constants::min_size(),
+        constants::min_size(),
+    );
+}
+
+#[test, expected_failure(abort_code = dca::EMarketOrderPriceLimitExceeded)]
+fun bid_market_order_above_price_limit_aborts() {
+    let execution_price = constants::float_scaling();
+    let trade_amount = constants::min_size();
+    let _ = run_market_order_beyond_price_limit(
+        true,
+        trade_amount,
+        trade_amount,
+        execution_price,
+        execution_price - ONE_PRICE_UNIT,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun ask_market_order_at_price_limit_succeeds() {
+    run_market_order_at_price_limit(
+        false,
+        constants::min_size(),
+        constants::min_size(),
+    );
+}
+
+#[test, expected_failure(abort_code = dca::EMarketOrderPriceLimitExceeded)]
+fun ask_market_order_below_price_limit_aborts() {
+    let execution_price = constants::float_scaling();
+    let trade_amount = constants::min_size();
+    let _ = run_market_order_beyond_price_limit(
+        false,
+        trade_amount,
+        trade_amount,
+        execution_price,
+        execution_price + ONE_PRICE_UNIT,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun partial_fill_uses_executed_quantity_for_price_limit() {
+    // Bob offers one lot while Alice requests two, so only half the request executes.
+    run_market_order_at_price_limit(
+        true,
+        constants::min_size(),
+        PARTIAL_FILL_MULTIPLIER * constants::min_size(),
+    );
+}
+
+#[test, expected_failure(abort_code = dca::EMarketOrderPriceLimitExceeded)]
+fun partial_fill_above_price_limit_aborts_using_executed_quantity() {
+    let available_quantity = constants::min_size();
+    let requested_quantity = PARTIAL_FILL_MULTIPLIER * available_quantity;
+    let price_limit = constants::float_scaling();
+    let execution_price = ABOVE_LIMIT_PRICE_MULTIPLIER * price_limit;
+
+    // With one of two requested lots filled at 2.0, the 1.0 limit must use the
+    // one executed lot. Using the two requested lots would incorrectly pass.
+    let _ = run_market_order_beyond_price_limit(
+        true,
+        available_quantity,
+        requested_quantity,
+        execution_price,
+        price_limit,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun no_fill_skips_price_limit_and_preserves_custody() {
+    run_market_order_at_price_limit(false, NO_AVAILABLE_QUANTITY, constants::min_size());
 }
 
 #[test]
@@ -428,6 +515,159 @@ fun setup_whitelisted_account(): (Scenario, ID, ID, AccountWrapper) {
     setup_account_with_pool(true)
 }
 
+/// Run a successful account market order at an exact 1.0 execution-price limit.
+/// `is_bid` selects Alice's side. `available_quantity` is Bob's opposing resting
+/// liquidity; zero leaves the book empty. `requested_quantity` is Alice's IOC size.
+///
+/// The helper creates and funds Alice's account, authorizes the core app, optionally
+/// rests Bob's opposing order, executes Alice's market order, then verifies the
+/// actual fill and that all free balances were swept back into account custody.
+fun run_market_order_at_price_limit(
+    is_bid: bool,
+    available_quantity: u64,
+    requested_quantity: u64,
+) {
+    let execution_price = constants::float_scaling();
+    let (mut scenario, registry_id, pool_id, mut wrapper) = if (
+        available_quantity == NO_AVAILABLE_QUANTITY
+    ) {
+        let (mut scenario, registry_id, pool_id, wrapper) = setup_whitelisted_account();
+        authorize_core_app(&mut scenario, registry_id);
+        (scenario, registry_id, pool_id, wrapper)
+    } else {
+        setup_market_order_account(
+            !is_bid,
+            execution_price,
+            available_quantity,
+        )
+    };
+
+    scenario.next_tx(ALICE);
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let root = scenario.take_shared<AccumulatorRoot>();
+    let clock = scenario.take_shared<Clock>();
+    let info = dca::place_market_order<BASE, QUOTE>(
+        &mut pool,
+        &registry,
+        &mut wrapper,
+        account::generate_auth(scenario.ctx()),
+        ACCOUNT_MARKET_ORDER_CLIENT_ORDER_ID,
+        constants::self_matching_allowed(),
+        requested_quantity,
+        execution_price,
+        is_bid,
+        true,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    let account = wrapper.load_account();
+    let expected_base_balance = if (is_bid) {
+        BASE_AMOUNT + available_quantity
+    } else {
+        BASE_AMOUNT - available_quantity
+    };
+    let expected_quote_balance = if (is_bid) {
+        BASE_AMOUNT - available_quantity
+    } else {
+        BASE_AMOUNT + available_quantity
+    };
+
+    assert_eq!(info.original_quantity(), requested_quantity);
+    assert_eq!(info.executed_quantity(), available_quantity);
+    assert_eq!(info.cumulative_quote_quantity(), available_quantity);
+    assert_eq!(account.balance<BASE>(&root, &clock), expected_base_balance);
+    assert_eq!(account.balance<QUOTE>(&root, &clock), expected_quote_balance);
+    if (available_quantity == NO_AVAILABLE_QUANTITY) {
+        assert_eq!(account.balance<DEEP>(&root, &clock), BASE_AMOUNT);
+    };
+    assert_eq!(account_data::balance_manager_balance<BASE>(account), ZERO_BALANCE);
+    assert_eq!(account_data::balance_manager_balance<QUOTE>(account), ZERO_BALANCE);
+    assert_eq!(account_data::balance_manager_balance<DEEP>(account), ZERO_BALANCE);
+
+    return_shared(clock);
+    return_shared(root);
+    return_shared(pool);
+    return_shared(registry);
+    destroy(wrapper);
+    scenario.end();
+}
+
+/// Set up Bob's opposing order, then place Alice's account market order with the
+/// supplied execution and limit prices. `available_quantity` is Bob's liquidity
+/// and `requested_quantity` is Alice's IOC size. Expected tests abort inside the
+/// account call; if the guard regresses, this helper cleans up and returns so the
+/// test body's distinct guard abort fails the expected-abort assertion.
+fun run_market_order_beyond_price_limit(
+    is_bid: bool,
+    available_quantity: u64,
+    requested_quantity: u64,
+    execution_price: u64,
+    price_limit: u64,
+): OrderInfo {
+    let (mut scenario, registry_id, pool_id, mut wrapper) = setup_market_order_account(
+        !is_bid,
+        execution_price,
+        available_quantity,
+    );
+
+    scenario.next_tx(ALICE);
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut pool = scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let root = scenario.take_shared<AccumulatorRoot>();
+    let clock = scenario.take_shared<Clock>();
+    let info = dca::place_market_order<BASE, QUOTE>(
+        &mut pool,
+        &registry,
+        &mut wrapper,
+        account::generate_auth(scenario.ctx()),
+        ACCOUNT_MARKET_ORDER_CLIENT_ORDER_ID,
+        constants::self_matching_allowed(),
+        requested_quantity,
+        price_limit,
+        is_bid,
+        true,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(clock);
+    return_shared(root);
+    return_shared(pool);
+    return_shared(registry);
+    destroy(wrapper);
+    scenario.end();
+    info
+}
+
+fun setup_market_order_account(
+    maker_is_bid: bool,
+    maker_price: u64,
+    maker_quantity: u64,
+): (Scenario, ID, ID, AccountWrapper) {
+    let (mut scenario, registry_id, pool_id, wrapper) = setup_whitelisted_account();
+    authorize_core_app(&mut scenario, registry_id);
+    let maker_manager_id = create_balance_manager_with_funds<BASE, QUOTE>(
+        &mut scenario,
+        BOB,
+        BASE_AMOUNT,
+    );
+    let maker = place_manager_limit_order<BASE, QUOTE>(
+        &mut scenario,
+        BOB,
+        pool_id,
+        maker_manager_id,
+        MARKET_ORDER_MAKER_CLIENT_ORDER_ID,
+        maker_price,
+        maker_quantity,
+        maker_is_bid,
+    );
+    assert_eq!(maker.status(), constants::live());
+    assert!(maker.order_inserted());
+    (scenario, registry_id, pool_id, wrapper)
+}
+
 fun setup_account_with_pool(whitelisted_pool: bool): (Scenario, ID, ID, AccountWrapper) {
     let mut scenario = test::begin(ADMIN);
 
@@ -495,6 +735,41 @@ fun place_manager_market_order<BaseAsset, QuoteAsset>(
         quantity,
         is_bid,
         true,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(clock);
+    return_shared(pool);
+    return_shared(manager);
+    info
+}
+
+fun place_manager_limit_order<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    trader: address,
+    pool_id: ID,
+    balance_manager_id: ID,
+    client_order_id: u64,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+): OrderInfo {
+    scenario.next_tx(trader);
+    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let clock = scenario.take_shared<Clock>();
+    let mut manager = scenario.take_shared_by_id<BalanceManager>(balance_manager_id);
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    let info = pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut manager,
+        &proof,
+        client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        is_bid,
+        true,
+        constants::max_u64(),
         &clock,
         scenario.ctx(),
     );
