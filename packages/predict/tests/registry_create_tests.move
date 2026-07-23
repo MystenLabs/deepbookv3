@@ -406,7 +406,7 @@ fun cadence_configs_two_underlyings_isolated() {
 
 #[test, expected_failure(abort_code = market_manager::EUnderlyingNotRegistered)]
 fun cadence_configs_unregistered_underlying_aborts() {
-    let (_scenario, reg, config, _admin_cap) = test_helpers::begin_registry_test();
+    let (_scenario, reg, _config, _admin_cap) = test_helpers::begin_registry_test();
 
     let _configs = reg.cadence_configs(UNDERLYING_BTC);
     abort EUnexpectedSuccess

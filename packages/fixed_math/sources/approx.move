@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// A 1e9-scaled fixed-point value carried with a certified numerical-error bound —
-/// a center-radius "ball". `value` is the protocol's canonical fixed-point result;
-/// `error` bounds continuous numerical approximation along that selected value path.
-/// Protocol comparisons and branches use `value` exactly as the scalar code does;
-/// the ball does not represent counterfactual outcomes from taking another branch.
-///
-/// The `value` is bit-for-bit the scalar `fixed_math::math` result, so a ball flows
-/// through downstream arithmetic exactly as the scalar does today; `error` is a
-/// passenger read only where a bound must be enforced.
+/// a center-radius "ball". `value` is the canonical fixed-point result selected by
+/// its caller; `error` bounds continuous numerical approximation along that path.
+/// The ball does not choose protocol policy or represent counterfactual outcomes
+/// from taking another branch: consequence-owning call sites either use the center
+/// or enforce a bound on the radius.
 ///
 /// Leaf error comes from each `math` primitive's documented accuracy; continuous
 /// propagation uses derivative bounds or endpoint evaluation. Every error term
@@ -74,11 +71,18 @@ public fun is_negative(a: &Approx): bool {
     a.value.is_negative()
 }
 
-/// Whether the certified error is within `max_deviation` (relative, 1e9-scaled) of
-/// the center magnitude — the shared precision-gate predicate. Callers own the
-/// bound, the abort code, and any zero-magnitude policy at the call site.
-public fun deviation_within(a: &Approx, max_deviation: u64): bool {
-    a.error <= math::mul(max_deviation, a.value.magnitude())
+/// Whether every value in the ball is within `max_deviation` (relative, 1e9-scaled)
+/// of its possible true value. For nonnegative protocol values the worst denominator
+/// is `center - error`, so certification requires
+/// `error <= max_deviation * (center - error) / 1e9`.
+///
+/// Callers own the bound, abort code, and any zero-magnitude policy. The products
+/// use u128 so every pair of u64 operands is representable without saturation.
+public fun true_relative_deviation_within(a: &Approx, max_deviation: u64): bool {
+    let center = a.value.magnitude();
+    if (a.error > center) return false;
+    (a.error as u128) * (math::float_scaling!() as u128)
+        <= (max_deviation as u128) * ((center - a.error) as u128)
 }
 
 /// Clamp to zero. This continuous projection is 1-Lipschitz, so it retains the

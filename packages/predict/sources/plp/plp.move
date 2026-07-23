@@ -303,7 +303,8 @@ public fun finish_flush(
     // zero-value fills are handled at the drain, and a purely relative bound has no
     // denominator), so it skips the check rather than stalling the flush.
     assert!(
-        pool_nav.magnitude() == 0 || pool_nav.deviation_within(max_nav_deviation!()),
+        pool_nav.magnitude() == 0
+            || pool_nav.true_relative_deviation_within(max_nav_deviation!()),
         ENavTooImprecise,
     );
     let total_nav = total_nav.magnitude();

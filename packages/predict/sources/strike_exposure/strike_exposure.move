@@ -572,7 +572,10 @@ fun admitted_entry_probability(
     let price = pricer.range_price_approx(lower, higher);
     // Contract prices cannot deviate from true by more than 0.1%; an over-wide
     // certified error aborts the quote rather than admitting an imprecise price.
-    assert!(price.deviation_within(max_contract_price_deviation!()), EPriceTooImprecise);
+    assert!(
+        price.true_relative_deviation_within(max_contract_price_deviation!()),
+        EPriceTooImprecise,
+    );
     price.magnitude()
 }
 

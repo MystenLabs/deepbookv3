@@ -30,7 +30,7 @@ fun extreme_surface_is_admissible_but_not_numerically_certifiable() {
     let price = atm_up_price(&fx.load_pricer_bundle(&market));
     assert!(price.magnitude() >= config_constants::default_min_entry_probability!());
     assert!(price.magnitude() <= config_constants::default_max_entry_probability!());
-    assert!(!price.deviation_within(CONTRACT_MAX_DEVIATION));
+    assert!(!price.true_relative_deviation_within(CONTRACT_MAX_DEVIATION));
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -43,7 +43,7 @@ fun production_mint_accepts_a_certified_default_price() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let price = atm_up_price(&fx.load_pricer_bundle(&market));
-    assert!(price.deviation_within(CONTRACT_MAX_DEVIATION));
+    assert!(price.true_relative_deviation_within(CONTRACT_MAX_DEVIATION));
 
     let order_id = fx.mint_bundle(
         &mut market,

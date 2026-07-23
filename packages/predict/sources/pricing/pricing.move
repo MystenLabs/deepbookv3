@@ -96,13 +96,6 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
-// The SVI variance is a product of two 1e9-scaled terms. Retain that product at
-// 1e18 in the ND2 certificate so a sub-raw variance increment is not discarded
-// before the square root. This is private pricing precision, not a protocol scale.
-macro fun variance_scaling(): u128 { 1_000_000_000u128 }
-
-macro fun max_pdf_slope(): u64 { 242_000_000 }
-
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and
@@ -501,24 +494,15 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): Approx {
     let sqrt_var = approx::sqrt(&total_var);
     let d2 = standardized_d2(&k, &total_var, &sqrt_var);
     let w_prime = variance_slope(svi_params, &k_minus_m, &root);
-    let scalar = digital_price(&d2, &w_prime, &sqrt_var);
-    let error = certify_nd2_error(
-        svi_params,
-        &k,
-        &k_minus_m,
-        &root,
-        &w_prime,
-        scalar.magnitude(),
-    );
-    approx::from_parts(scalar.value(), error)
+    digital_price(&d2, &w_prime, &sqrt_var)
 }
 
 fun moneyness_terms(svi_params: &SVIParams, k: &Approx): (Approx, Approx) {
     let m = approx::exact(svi_params.m());
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = svi_params.sigma();
-    let sigma_squared = approx::exact_u64(math::mul(sigma, sigma));
+    let sigma = approx::exact_u64(svi_params.sigma());
+    let sigma_squared = sigma.square_scaled();
     let sqrt_input = k_minus_m_squared.add(&sigma_squared);
     let root = approx::sqrt(&sqrt_input);
     (k_minus_m, root)
@@ -526,8 +510,7 @@ fun moneyness_terms(svi_params: &SVIParams, k: &Approx): (Approx, Approx) {
 
 fun total_variance(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): Approx {
     let rho = approx::exact(svi_params.rho());
-    let rho_km = rho.mul_scaled(k_minus_m);
-    let inner = rho_km.add(root);
+    let inner = rho.mul_scaled(k_minus_m).add(root);
     // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
@@ -558,8 +541,12 @@ fun variance_slope(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): A
 
 fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {
     let nd2 = approx::normal_cdf(d2);
-    // A zero slope is the flat-variance digital: no smile correction, N(d2) exactly.
-    if (w_prime.magnitude() == 0) return nd2.clamp_unit_interval();
+    // A certified-exact zero slope is the flat-variance digital: no smile
+    // correction, N(d2) exactly. A rounded zero with nonzero radius still carries
+    // a possible correction and must flow through the approximate quotient.
+    if (w_prime.magnitude() == 0 && w_prime.error() == 0) {
+        return nd2.clamp_unit_interval()
+    };
 
     // Smile correction phi(d2) * w'(k) / (2 sqrt(w)), carried signed so `sub` clamps
     // in the correct direction; N(d2) - correction is then floored/capped to [0, 1].
@@ -568,179 +555,6 @@ fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {
     let correction = pdf.mul_div_down(w_prime, &two_sqrt_var);
     let adjusted = nd2.sub(&correction);
     adjusted.clamp_unit_interval()
-}
-
-/// Certify the scalar ND2 price through a precision island that retains SVI
-/// variance at 1e18 until after its square root. The scalar computation above is
-/// deliberately unchanged; this helper only bounds its distance from the formula.
-fun certify_nd2_error(
-    svi_params: &SVIParams,
-    k: &Approx,
-    k_minus_m: &Approx,
-    root: &Approx,
-    w_prime: &Approx,
-    scalar_price: u64,
-): u64 {
-    let rho = approx::exact(svi_params.rho());
-    let inner = rho.mul_scaled(k_minus_m).add(root);
-    if (inner.is_negative()) return std::u64::max_value!();
-
-    let scale = variance_scaling!();
-    let increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
-    let increment_error = (svi_params.b() as u128) * (inner.error() as u128);
-    let a = svi_params.a();
-    let a_magnitude = (a.magnitude() as u128) * scale;
-    let (variance, negative) = if (a.is_negative()) {
-        if (increment >= a_magnitude) {
-            (increment - a_magnitude, false)
-        } else {
-            (a_magnitude - increment, true)
-        }
-    } else {
-        (increment + a_magnitude, false)
-    };
-    if (negative || variance <= increment_error) return std::u64::max_value!();
-
-    let sqrt_variance = math::sqrt_u128(variance);
-    let sqrt_lower = math::sqrt_u128(variance - increment_error);
-    if (sqrt_lower == 0 || sqrt_variance > (std::u64::max_value!() as u128)) {
-        return std::u64::max_value!()
-    };
-    let sqrt_upper = math::sqrt_u128_up(saturating_add_u128(variance, increment_error));
-    let sqrt_error = if (sqrt_variance - sqrt_lower >= sqrt_upper - sqrt_variance) {
-        sqrt_variance - sqrt_lower
-    } else {
-        sqrt_upper - sqrt_variance
-    };
-
-    let k_value = k.value();
-    let k_magnitude = (k_value.magnitude() as u128) * scale;
-    let half_variance = variance / 2;
-    let (numerator, numerator_negative) = if (k_value.is_negative()) {
-        if (half_variance >= k_magnitude) {
-            (half_variance - k_magnitude, false)
-        } else {
-            (k_magnitude - half_variance, true)
-        }
-    } else {
-        (half_variance + k_magnitude, false)
-    };
-    let k_error = (k.error() as u128) * scale;
-    let numerator_error = saturating_add_u128(k_error, increment_error.div_ceil(2));
-    let d2_magnitude = numerator / sqrt_variance;
-    if (d2_magnitude > (std::u64::max_value!() as u128)) return std::u64::max_value!();
-    let d2 = i64::from_parts(d2_magnitude as u64, !numerator_negative);
-    let numerator_error_term = ceil_div_u128(numerator_error, sqrt_lower);
-    let denominator_error_term = ceil_div_u128(
-        ceil_mul_div_u128(saturating_add_u128(numerator, numerator_error), sqrt_error, sqrt_lower),
-        sqrt_lower,
-    );
-    let d2_error = saturating_add_u128(
-        saturating_add_u128(numerator_error_term, denominator_error_term),
-        1,
-    );
-    if (d2_error > (std::u64::max_value!() as u128)) return std::u64::max_value!();
-    let d2_error = d2_error as u64;
-
-    let reference_cdf = math::normal_cdf(&d2);
-    let pdf = math::normal_pdf(&d2);
-    let nearest = d2_magnitude.saturating_sub(d2_error as u128);
-    let (cdf_error, pdf_error) = if (nearest > 8 * (math::float_scaling!() as u128)) {
-        // At |d2| > 8 the true CDF tail is below one raw price unit. The fixed
-        // primitives' documented leaf bounds cover the residual tail rounding.
-        (20, 50)
-    } else {
-        let pdf_upper = saturating_add(math::normal_pdf(&i64::from_u64(nearest as u64)), 50);
-        (
-            saturating_add(
-                math::mul_div_up(pdf_upper, d2_error, math::float_scaling!()),
-                20,
-            ),
-            saturating_add(
-                math::mul_div_up(max_pdf_slope!(), d2_error, math::float_scaling!()),
-                50,
-            ),
-        )
-    };
-    let (correction, correction_error) = smile_correction_certificate(
-        w_prime,
-        pdf,
-        pdf_error,
-        sqrt_lower,
-        sqrt_variance,
-        sqrt_upper,
-    );
-    let adjusted = i64::from_u64(reference_cdf).sub(&correction);
-    let reference_price = if (adjusted.is_negative()) {
-        0
-    } else if (adjusted.magnitude() > math::float_scaling!()) {
-        math::float_scaling!()
-    } else {
-        adjusted.magnitude()
-    };
-    let reference_error = saturating_add(cdf_error, correction_error);
-    scalar_price.diff(reference_price).saturating_add(reference_error)
-}
-
-/// Build a center and radius for the SVI smile correction. The correction is
-/// monotone in the absolute PDF and slope, and inverse-monotone in sqrt(w), so
-/// evaluating those corners retains the tight central correction without losing
-/// its sign to an absolute upper bound.
-fun smile_correction_certificate(
-    w_prime: &Approx,
-    pdf: u64,
-    pdf_error: u64,
-    sqrt_lower: u128,
-    sqrt_variance: u128,
-    sqrt_upper: u128,
-): (I64, u64) {
-    if (
-        sqrt_lower == 0
-            || sqrt_upper > ((std::u64::max_value!() / 2) as u128)
-            || sqrt_variance > ((std::u64::max_value!() / 2) as u128)
-    ) return (i64::zero(), std::u64::max_value!());
-
-    let slope = w_prime.magnitude();
-    let correction = math::mul_div_down(pdf, slope, (sqrt_variance as u64) * 2);
-    let correction = i64::from_parts(correction, w_prime.is_negative());
-    let pdf_low = pdf.saturating_sub(pdf_error);
-    let pdf_high = saturating_add(pdf, pdf_error);
-    let slope_low = slope.saturating_sub(w_prime.error());
-    let slope_high = saturating_add(slope, w_prime.error());
-    let correction_low = math::mul_div_down(pdf_low, slope_low, (sqrt_upper as u64) * 2);
-    let correction_high = math::mul_div_up(pdf_high, slope_high, (sqrt_lower as u64) * 2);
-    let correction_error = if (w_prime.error() >= slope) {
-        saturating_add(correction.magnitude(), correction_high)
-    } else {
-        correction
-            .magnitude()
-            .diff(correction_low)
-            .max(correction_high.diff(correction.magnitude()))
-    };
-    (correction, correction_error)
-}
-
-fun ceil_div_u128(value: u128, divisor: u128): u128 {
-    if (divisor == 0) return std::u128::max_value!();
-    let quotient = value / divisor;
-    if (value % divisor == 0) quotient else saturating_add_u128(quotient, 1)
-}
-
-fun ceil_mul_div_u128(a: u128, b: u128, divisor: u128): u128 {
-    if (divisor == 0 || (b > 0 && a > std::u128::max_value!() / b)) {
-        return std::u128::max_value!()
-    };
-    ceil_div_u128(a * b, divisor)
-}
-
-fun saturating_add_u128(a: u128, b: u128): u128 {
-    let max = std::u128::max_value!();
-    if (a > max - b) max else a + b
-}
-
-fun saturating_add(a: u64, b: u64): u64 {
-    let max = std::u64::max_value!();
-    if (a > max - b) max else a + b
 }
 
 fun is_positive(value: &I64): bool {
