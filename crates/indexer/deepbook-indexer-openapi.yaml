@@ -15,6 +15,7 @@ tags:
   - name: Market Data
   - name: Order Flow
   - name: Reference
+  - name: Pyth
   - name: Health
 
 paths:
@@ -72,6 +73,111 @@ paths:
               schema:
                 $ref: "#/components/schemas/IndexerStatus"
       x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /pyth/v2/updates/price/latest:
+    get:
+      tags: [Pyth]
+      summary: Latest Pyth price updates
+      description: |
+        Server-side authenticated wrapper around Pyth's upgraded Hermes
+        `/v2/updates/price/latest` endpoint. Query parameters, response body,
+        status, and relevant cache/rate-limit headers preserve the Hermes
+        contract. Identical requests are briefly cached and concurrent misses
+        share one upstream load. The upstream API key is never exposed to
+        callers.
+      operationId: getLatestPythPriceUpdates
+      parameters:
+        - in: query
+          name: "ids[]"
+          required: true
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+          description: Repeatable Pyth Core price feed IDs.
+        - in: query
+          name: parsed
+          schema: { type: boolean, default: false }
+          description: Include parsed price updates.
+        - in: query
+          name: ignore_invalid_price_ids
+          schema: { type: boolean, default: false }
+          description: Ignore invalid feed IDs instead of rejecting the request.
+        - in: query
+          name: encoding
+          schema:
+            type: string
+            enum: [hex, base64]
+            default: hex
+          description: Binary update encoding.
+      responses:
+        "200":
+          description: Hermes price update response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PythPriceUpdate"
+        "503":
+          description: Pyth is not configured on this server.
+        "502":
+          description: The upstream Pyth service could not be reached.
+
+  /pyth/v2/updates/price/{publish_time}:
+    get:
+      tags: [Pyth]
+      summary: Pyth price updates at a timestamp
+      description: |
+        Server-side authenticated wrapper around Pyth's upgraded Hermes
+        `/v2/updates/price/{publish_time}` endpoint. Hermes returns the first
+        available update whose publish time is at or after the requested Unix
+        timestamp. Successful identical responses use a bounded server-local
+        cache and concurrent misses share one upstream load.
+      operationId: getPythPriceUpdatesAtTimestamp
+      parameters:
+        - in: path
+          name: publish_time
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Unix timestamp in seconds.
+        - in: query
+          name: "ids[]"
+          required: true
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+          description: Repeatable Pyth Core price feed IDs.
+        - in: query
+          name: parsed
+          schema: { type: boolean, default: false }
+          description: Include parsed price updates.
+        - in: query
+          name: ignore_invalid_price_ids
+          schema: { type: boolean, default: false }
+          description: Ignore invalid feed IDs instead of rejecting the request.
+        - in: query
+          name: encoding
+          schema:
+            type: string
+            enum: [hex, base64]
+            default: hex
+          description: Binary update encoding.
+      responses:
+        "200":
+          description: Hermes price update response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PythPriceUpdate"
+        "503":
+          description: Pyth is not configured on this server.
+        "502":
+          description: The upstream Pyth service could not be reached.
 
   /get_pools:
     get:
@@ -374,6 +480,28 @@ paths:
 
 components:
   schemas:
+    PythPriceUpdate:
+      type: object
+      description: |
+        Pyth Hermes response. Parsed entries are present when `parsed=true`;
+        binary update data is present according to the requested encoding.
+      properties:
+        binary:
+          type: object
+          properties:
+            encoding:
+              type: string
+              enum: [hex, base64]
+            data:
+              type: array
+              items: { type: string }
+        parsed:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+
     Pool:
       type: object
       required:

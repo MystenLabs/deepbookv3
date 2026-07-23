@@ -6,6 +6,7 @@ pub mod error;
 pub mod grpc;
 pub mod margin_metrics;
 mod metrics;
+pub mod pyth;
 mod reader;
 pub mod server;
 pub mod writer;

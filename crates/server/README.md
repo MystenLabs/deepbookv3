@@ -73,3 +73,45 @@ curl "http://localhost:9008/status?max_checkpoint_lag=10&max_time_lag_seconds=5"
 - `UNHEALTHY` - Indexer is behind or experiencing delays
 
 This endpoint is useful for monitoring the indexer's synchronization status and detecting stale data.
+
+## Pyth Hermes proxy
+
+The server exposes the two authenticated Pyth Hermes reads used by DeepBook
+clients:
+
+- `GET /pyth/v2/updates/price/latest`
+- `GET /pyth/v2/updates/price/:publish_time`
+
+The routes preserve Hermes query parameters, response bodies, status codes, and
+the `Content-Type`, `Cache-Control`, and `Retry-After` response headers. Existing
+`@pythnetwork/hermes-client` consumers can therefore use the DeepBook Server by
+setting their Hermes base URL to `<deepbook-server>/pyth`.
+
+Configure the server with:
+
+- `PYTH_API_KEY` — Pyth API key injected into upstream requests as a bearer
+  token. The proxy routes return HTTP 503 when it is absent. Authenticated
+  Hermes access becomes mandatory on August 18, 2026.
+- `PYTH_HERMES_URL` — optional upstream base URL; defaults to
+  `https://pyth.dourolabs.app/hermes`.
+- `PYTH_LATEST_CACHE_TTL_MS` — latest-price response lifetime; defaults to
+  `1000` milliseconds.
+- `PYTH_HISTORICAL_CACHE_TTL_SECS` — historical-price response lifetime;
+  defaults to `300` seconds.
+- `PYTH_CACHE_MAX_ENTRIES` — maximum responses cached per server process;
+  defaults to `1024`. Set to `0` to disable response caching.
+
+Requests are cached by their exact Hermes path and query string. Concurrent
+identical cache misses share one upstream request (single-flight loading).
+Only successful upstream responses are cached, so rate limits and service
+errors are always retried on the next request. The cache is local to each
+server process; deployments with multiple replicas maintain independent
+caches.
+
+The API key must stay in server/deployment secrets and must never be sent to a
+browser. Example:
+
+```bash
+curl \
+  "http://localhost:9008/pyth/v2/updates/price/latest?ids[]=0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43&parsed=true"
+```

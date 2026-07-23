@@ -39,6 +39,7 @@ use url::Url;
 use crate::admin::routes::admin_routes;
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
+use crate::pyth::{PythCacheConfig, PythProxy};
 use crate::reader::{PortfolioQueryResult, Reader};
 use crate::writer::Writer;
 use axum::middleware::from_fn_with_state;
@@ -147,6 +148,7 @@ pub struct AppState {
     admin_tokens: Vec<Secret<String>>,
     admin_auth_limiter: Arc<AdminRateLimiter>,
     margin_package_id: Option<String>,
+    pyth_proxy: PythProxy,
 }
 
 impl AppState {
@@ -160,6 +162,9 @@ impl AppState {
         deep_treasury_id: String,
         admin_tokens: Option<String>,
         margin_package_id: Option<String>,
+        pyth_hermes_url: Url,
+        pyth_api_key: Option<String>,
+        pyth_cache_config: PythCacheConfig,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(
@@ -203,6 +208,7 @@ impl AppState {
             admin_tokens,
             admin_auth_limiter,
             margin_package_id,
+            pyth_proxy: PythProxy::new(pyth_hermes_url, pyth_api_key, pyth_cache_config)?,
         })
     }
 
@@ -262,6 +268,9 @@ pub async fn run_server(
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
     admin_tokens: Option<String>,
+    pyth_hermes_url: Url,
+    pyth_api_key: Option<String>,
+    pyth_cache_config: PythCacheConfig,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -278,6 +287,9 @@ pub async fn run_server(
         deep_treasury_id,
         admin_tokens,
         margin_package_id.clone(),
+        pyth_hermes_url,
+        pyth_api_key,
+        pyth_cache_config,
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
@@ -422,9 +434,11 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .with_state(state.clone());
 
     let admin = admin_routes(state.clone()).with_state(state.clone());
+    let pyth = crate::pyth::routes(state.pyth_proxy.clone());
 
     db_routes
         .merge(rpc_routes)
+        .nest("/pyth", pyth)
         .nest("/admin", admin)
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
