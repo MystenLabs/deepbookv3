@@ -15,7 +15,7 @@
 // the generator header for the full derivation. The short-dated scenario instead
 // pins the protocol's 0.1% mint-price ceiling at w~3.26e-8. The forward priced is
 // the fresh-Pyth
-// round-trip mul(spot, div(forward, spot)).
+// round-trip mul_down(spot, div_down(forward, spot)).
 //
 // `expected_center` is the exact production fixed-point output.
 // It detects value drift only; the independent reference + tolerance above decides correctness.

@@ -134,8 +134,8 @@ fun div_scaled_encloses_outward_quotient_corners() {
 
     assert_center(&result, 3 * float!() / 2, false);
     assert_eq!(result.error(), 188_365_653);
-    let lower = math::mul_div_down(14 * float!() / 5, float!(), 21 * float!() / 10);
-    let upper = math::mul_div_up(16 * float!() / 5, float!(), 19 * float!() / 10);
+    let lower = math::div_down(14 * float!() / 5, 21 * float!() / 10);
+    let upper = math::div_up(16 * float!() / 5, 19 * float!() / 10);
     assert_contains(&result, i64::from_u64(lower));
     assert_contains(&result, i64::from_u64(upper));
 }
@@ -275,7 +275,7 @@ fun normal_cdf_uses_a_certified_upper_bound_for_its_derivative() {
     let radius = 10 * float!();
     let input = approx::from_parts(i64::from_u64(10_024_000_000), radius);
     let result = input.normal_cdf();
-    let required_propagation = math::mul_div_up(398_827_402, radius, float!());
+    let required_propagation = math::mul_up(398_827_402, radius);
     assert!(result.error() >= required_propagation + 20);
 }
 

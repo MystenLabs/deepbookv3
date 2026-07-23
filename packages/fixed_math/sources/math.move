@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Fixed-point arithmetic at 1e9 scale, raw integer ratio helpers, and bounded approximations for common transcendental functions.
-/// Integer ratio functions state their rounding direction explicitly; signed scaled operations truncate magnitude toward zero.
+/// Unsigned scaled and raw ratio functions state their rounding direction explicitly; signed scaled operations truncate magnitude toward zero.
 /// Approximation error is sign-varying: `normal_cdf` is within 20 raw units and `normal_pdf` within 50 raw units before their documented tail saturation. `ln` and `exp` target 1e-7 relative error outside raw-unit quantization regimes; near `ln(1)` use absolute raw-unit error, and sufficiently negative exponentials round to zero.
 /// These are primitive-level bounds; callers remain responsible for any amplification caused by an ill-conditioned formula.
 module fixed_math::math;
@@ -71,21 +71,38 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 // === Public Functions ===
 
 /// Multiply two 1e9-scaled fixed-point values, rounding down.
-public fun mul(x: u64, y: u64): u64 {
+public fun mul_down(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128)) / F) as u64
 }
 
 /// Multiply two 1e9-scaled fixed-point values, rounding up. `x*y + F - 1` cannot
 /// overflow u128 for any u64 operands, so no intermediate guard is needed.
-/// Directed counterpart of `mul`.
+/// Directed counterpart of `mul_down`.
 public fun mul_up(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128) + (F - 1)) / F) as u64
 }
 
 /// Divides two 1e9-scaled fixed-point values, rounding down.
 /// Aborts when `y` is zero or the quotient does not fit in `u64`.
-public fun div(x: u64, y: u64): u64 {
+public fun div_down(x: u64, y: u64): u64 {
     (((x as u128) * F) / (y as u128)) as u64
+}
+
+/// Checked `div_down`: returns `None` for a zero denominator or a result that
+/// does not fit in u64, and `Some(result)` otherwise.
+public fun try_div_down(x: u64, y: u64): Option<u64> {
+    if (y == 0) return option::none();
+    let result = (x as u128) * F / (y as u128);
+    try_u64(result)
+}
+
+/// Divides two 1e9-scaled fixed-point values, rounding up.
+/// Aborts when `y` is zero or the quotient does not fit in `u64`. `x*F + y - 1`
+/// cannot overflow u128 for any u64 operands, so no intermediate guard is needed.
+/// Directed counterpart of `div_down`.
+public fun div_up(x: u64, y: u64): u64 {
+    assert!(y > 0, EInputZero);
+    (((x as u128) * F + (y as u128) - 1) / (y as u128)) as u64
 }
 
 /// Multiplies two raw integers, divides by a raw denominator, and rounds down.
@@ -174,21 +191,21 @@ public fun normal_pdf(x: &i64::I64): u64 {
 
     let x_sq_half = (((x_mag as u128) * (x_mag as u128)) / (2 * F)) as u64;
     let exponent = i64::from_parts(x_sq_half, true);
-    mul(exp(&exponent), INV_SQRT_2PI)
+    mul_down(exp(&exponent), INV_SQRT_2PI)
 }
 
 /// Returns a fixed-point square root with `precision` as the operand scale.
 /// For `m = floor(1e9 / precision)`, the exact integer contract is `floor(sqrt(x * m * 1e9)) / m`; when `precision` divides 1e9, the raw result represents `sqrt(x * precision)`. Predict callers pass `precision = 1e9`, so a 1e9-scaled input produces a 1e9-scaled result rounded down within one raw unit. `precision` must be in `[1, 1e9]`.
-public fun sqrt(x: u64, precision: u64): u64 {
+public fun sqrt_down(x: u64, precision: u64): u64 {
     assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
     let multiplier = (float_scaling!() / precision) as u128;
     let scaled = (x as u128) * multiplier * F;
-    (sqrt_u128(scaled) / multiplier) as u64
+    (sqrt_u128_down(scaled) / multiplier) as u64
 }
 
 /// Integer square root rounded down for a wide nonnegative intermediate.
 /// Formula-specific callers retain ownership of their scale and range invariants.
-public fun sqrt_u128(x: u128): u128 {
+public fun sqrt_u128_down(x: u128): u128 {
     if (x == 0) return 0;
     if (x < 4) return 1;
     let mut g = sqrt_initial_guess_u128(x);
@@ -206,7 +223,7 @@ public fun sqrt_u128(x: u128): u128 {
 /// Integer square root rounded up for a wide nonnegative intermediate.
 /// Formula-specific callers retain ownership of their scale and range invariants.
 public fun sqrt_u128_up(x: u128): u128 {
-    let root = sqrt_u128(x);
+    let root = sqrt_u128_down(x);
     if (root * root == x) root else root + 1
 }
 

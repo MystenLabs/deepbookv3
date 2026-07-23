@@ -174,7 +174,7 @@ fun single_leveraged_order_above_floor() {
         LEVERAGE_TWO_X,
     );
 
-    // value = mul(0.5, 2e9) = 1e9 > floor = mul(floor_shares 5e8, 1.0) = 5e8, so the
+    // value = mul_down(0.5, 2e9) = 1e9 > floor = mul_down(floor_shares 5e8, 1.0) = 5e8, so the
     // correction min() picks the floor and the order's net liability is 5e8.
     check_nav(&fx, &market, vector[id], float!());
     check_single_order_nav_enclosure(&fx, &market, id);
@@ -257,7 +257,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     let pricer = fx.load_pricer_bundle(&market);
     let expiry_market = helpers::market(&market);
     let decoded = order::from_order_id(id);
-    let range_value = math::mul(
+    let range_value = math::mul_down(
         pricer.range_price(
             range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size()),
             range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size()),
@@ -266,7 +266,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     );
     let floor = decoded.floor_shares();
     assert!(range_value > floor, 0);
-    assert!(range_value <= math::div(floor, expiry_market.liquidation_ltv()), 1);
+    assert!(range_value <= math::div_down(floor, expiry_market.liquidation_ltv()), 1);
 
     // The knocked-out order is credited its full range value (zero live liability),
     // so NAV rises to the knock-out-aware reference — above the old floor-capped
@@ -407,15 +407,16 @@ fun check_single_order_nav_enclosure(
     let price_low = price.magnitude().saturating_sub(price.error());
     let price_high = price.magnitude().saturating_add(price.error()).min(float!());
 
-    let canonical_gross = math::mul(price.magnitude(), decoded.quantity());
+    let canonical_gross = math::mul_down(price.magnitude(), decoded.quantity());
     let knocked_out =
         decoded.floor_shares() > 0
-            && canonical_gross <= math::div(decoded.floor_shares(), expiry_market.liquidation_ltv());
+            && canonical_gross
+                <= math::div_down(decoded.floor_shares(), expiry_market.liquidation_ltv());
     let (liability_low, liability_high) = if (knocked_out) {
         (0, 0)
     } else {
-        let gross_low = math::mul_div_down(price_low, decoded.quantity(), float!());
-        let gross_high = math::mul_div_up(price_high, decoded.quantity(), float!());
+        let gross_low = math::mul_down(price_low, decoded.quantity());
+        let gross_high = math::mul_up(price_high, decoded.quantity());
         (
             gross_low.saturating_sub(decoded.floor_shares()),
             gross_high.saturating_sub(decoded.floor_shares()),
@@ -455,11 +456,11 @@ fun reference_nav(
         let decoded = order::from_order_id(*id);
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
-        let range_value = math::mul(pricer.range_price(lower, higher), decoded.quantity());
-        let floor_value = math::mul(decoded.floor_shares(), index_now);
+        let range_value = math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
+        let floor_value = math::mul_down(decoded.floor_shares(), index_now);
         let knocked_out =
             decoded.floor_shares() > 0
-                && range_value <= math::div(decoded.floor_shares(), market.liquidation_ltv());
+                && range_value <= math::div_down(decoded.floor_shares(), market.liquidation_ltv());
         let contribution = if (knocked_out) 0 else range_value.saturating_sub(floor_value);
         liability = liability + contribution;
     });

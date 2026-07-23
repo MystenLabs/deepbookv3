@@ -123,7 +123,7 @@ public(package) fun trading_fee(
 /// and `net_premium + floor_shares = entry_value` exactly.
 public(package) fun net_premium_from_entry_value(entry_value: u64, leverage: u64): u64 {
     assert!(leverage >= math::float_scaling!(), EInvalidLeverage);
-    math::mul_div_up(entry_value, math::float_scaling!(), leverage)
+    math::div_up(entry_value, leverage)
 }
 
 /// Assert entry probability and leverage policy without deriving quantity-dependent
@@ -173,13 +173,13 @@ public(package) fun assert_mint_admission(
         time_to_expiry_ms,
     );
 
-    let entry_value = math::mul(entry_probability, quantity);
+    let entry_value = math::mul_down(entry_probability, quantity);
     let net_premium = net_premium_from_entry_value(entry_value, leverage);
     assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
     let floor_shares = entry_value - net_premium;
 
     if (floor_shares > 0) {
-        let liquidation_threshold_at_open = math::div(floor_shares, config.liquidation_ltv);
+        let liquidation_threshold_at_open = math::div_down(floor_shares, config.liquidation_ltv);
         assert!(entry_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
     };
 
@@ -290,7 +290,7 @@ fun fee_rate(
     let raw_fee = config.raw_bernoulli_fee_rate(probability);
     let base = raw_fee.max(config.min_fee);
     let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
-    math::mul(base, multiplier)
+    math::mul_down(base, multiplier)
 }
 
 fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {
@@ -298,9 +298,9 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
     if (probability == 0 || probability == math::float_scaling!()) return 0;
 
     let complement = math::float_scaling!() - probability;
-    let variance = math::mul(probability, complement);
-    let bernoulli_factor = math::sqrt(variance, math::float_scaling!());
-    math::mul(config.base_fee, bernoulli_factor)
+    let variance = math::mul_down(probability, complement);
+    let bernoulli_factor = math::sqrt_down(variance, math::float_scaling!());
+    math::mul_down(config.base_fee, bernoulli_factor)
 }
 
 /// Max leverage mint admission will originate, given the entry probability and the
@@ -328,7 +328,7 @@ fun admitted_leverage_cap(
         entry_probability + k,
     );
     math::float_scaling!()
-        + math::mul(config.max_admission_leverage - math::float_scaling!(), risk_curve)
+        + math::mul_down(config.max_admission_leverage - math::float_scaling!(), risk_curve)
 }
 
 /// Linear ramp that scales the trade fee up as expiry approaches.

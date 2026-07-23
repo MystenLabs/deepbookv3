@@ -30,7 +30,7 @@ macro fun pdf_leaf(): u64 { 50 }
 
 macro fun sqrt_leaf(): u64 { 1 }
 
-// `mul`/`div` and the scaled `i64` ops carry at most one raw unit of rounding.
+// `mul_down`/`div_down` and the scaled `i64` ops carry at most one raw unit of rounding.
 macro fun round_leaf(): u64 { 1 }
 
 // Global bound on `|phi'(x)| = |x| * phi(x)`, maximized at `|x| = 1`
@@ -259,7 +259,7 @@ public fun ln(x: u64, x_error: u64): Approx {
 /// floored quotient cannot keep a positive lower corner instead subtract the two
 /// certified logarithms, so every finite ratio remains finite.
 public fun ln_ratio(numerator: u64, denominator: u64): Approx {
-    let ratio_opt = math::try_mul_div_down(numerator, math::float_scaling!(), denominator);
+    let ratio_opt = math::try_div_down(numerator, denominator);
     if (ratio_opt.is_some()) {
         let ratio = ratio_opt.destroy_some();
         if (ratio > 1) return ln(ratio, 1)
@@ -272,14 +272,14 @@ public fun ln_ratio(numerator: u64, denominator: u64): Approx {
 
 /// `sqrt` of a nonnegative ball (operand scale 1e9). Monotone, so the true value is
 /// enclosed by `[sqrt(x - dx), sqrt(x + dx)]`; the error is the larger endpoint
-/// deviation from `sqrt(x)`, plus one raw unit for `sqrt`'s own rounding. Uses the
+/// deviation from `sqrt(x)`, plus one raw unit for `sqrt_down`'s own rounding. Uses the
 /// center magnitude; callers guard nonnegativity of the center.
 public fun sqrt(a: &Approx): Approx {
     let x = a.value.magnitude();
-    let root = math::sqrt(x, math::float_scaling!());
-    let low = if (x > a.error) math::sqrt(x - a.error, math::float_scaling!()) else 0;
+    let root = math::sqrt_down(x, math::float_scaling!());
+    let low = if (x > a.error) math::sqrt_down(x - a.error, math::float_scaling!()) else 0;
     let upper = if (a.error > std::u64::max_value!() - x) std::u64::max_value!() else x + a.error;
-    let high = math::sqrt(upper, math::float_scaling!());
+    let high = math::sqrt_down(upper, math::float_scaling!());
     let spread = if (root - low >= high - root) { root - low } else { high - root };
     Approx { value: i64::from_u64(root), error: spread + sqrt_leaf!() }
 }

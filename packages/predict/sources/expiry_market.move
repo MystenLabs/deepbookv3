@@ -1003,7 +1003,7 @@ fun compute_mint_quote(
 }
 
 fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
-    math::mul(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
+    math::mul_down(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
         .fee_incentive_balance
         .value())
 }
@@ -1295,8 +1295,8 @@ fun ewma_penalty(
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
-        math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
-            math::mul(quantity, constants::max_builder_fee_rate!()),
+        math::mul_down(fee_amount, constants::builder_fee_multiplier!()).min(
+            math::mul_down(quantity, constants::max_builder_fee_rate!()),
         )
     } else {
         0

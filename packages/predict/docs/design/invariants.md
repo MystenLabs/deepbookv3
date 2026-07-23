@@ -243,8 +243,9 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Rounding
 
-- Canonical fixed-point values are at 1e9 scale; `math::mul` and `math::div`
-  round **down** uniformly. Pricing's one narrow exception retains the raw
+- Canonical fixed-point values are at 1e9 scale; unsigned fixed-point operations
+  state their direction as `math::mul_down` / `math::mul_up` and
+  `math::div_down` / `math::div_up`. Pricing's one narrow precision exception retains the raw
   `a + b·inner` numerator at 1e18 through `sqrt(w)`, then rejoins the 1e9 path.
 - **Solvency rests on bit-identical pairing:** where a reserve and a payout derive
   from the same quantity/floor atoms, they use the same net-payout calculation

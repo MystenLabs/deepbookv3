@@ -445,9 +445,9 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
     let rho_mag = svi.rho().magnitude();
     if (rho_mag == math::float_scaling!()) return 0;
 
-    let one_minus_rho_squared = math::float_scaling!() - math::mul(rho_mag, rho_mag);
-    let sqrt_one_minus_rho_squared = math::sqrt(one_minus_rho_squared, math::float_scaling!());
-    math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
+    let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
+    let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared, math::float_scaling!());
+    math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
@@ -538,9 +538,9 @@ fun total_variance_terms(
     };
     let total_var = approx::from_parts(i64::from_u64(total_var_center), total_var_error);
 
-    let sqrt_center = math::sqrt_u128(wide_total_var);
+    let sqrt_center = math::sqrt_u128_down(wide_total_var);
     let sqrt_low = if (wide_total_var > wide_error) {
-        math::sqrt_u128(wide_total_var - wide_error)
+        math::sqrt_u128_down(wide_total_var - wide_error)
     } else {
         0
     };

@@ -10,7 +10,7 @@ use std::unit_test::assert_eq;
 /// Verify the defining floor-square-root inequalities without relying on a
 /// second square-root implementation or on products that can overflow u128.
 fun assert_isqrt_floor(x: u128) {
-    let root = math::sqrt_u128(x);
+    let root = math::sqrt_u128_down(x);
     if (x == 0) {
         assert_eq!(root, 0);
     } else {

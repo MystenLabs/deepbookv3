@@ -86,7 +86,7 @@ public(package) fun correction_value(
         // liability at zero — credit the full range value, not the floor cap.
         let cap = if (
             range_value.magnitude()
-            <= math::div(order.floor_shares(), liquidation_ltv)
+            <= math::div_down(order.floor_shares(), liquidation_ltv)
         ) {
             range_value
         } else {

@@ -13,7 +13,7 @@
 /// is raw strike `100e9`.
 ///
 /// References are independent of the walk (unit-tests rule 1): the exact walk is
-/// checked against a per-order `Σ mul(range_price, qty)` sum (a different pricer
+/// checked against a per-order `Σ mul_down(range_price, qty)` sum (a different pricer
 /// path than the walk's `up_price`). Memo lookup checks compare the cached boundary
 /// prices against `range_price` so a stale or missing memo entry is visible.
 #[test_only]
@@ -195,8 +195,8 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     // Independent per-order reference: both ranges' values round to 0, so true
     // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
     let reference =
-        math::mul(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
-        math::mul(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
+        math::mul_down(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
+        math::mul_down(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
     assert_eq!(reference, 0);
     assert_eq!(walk_linear(&tree, &pricer), 0);
 
@@ -270,7 +270,7 @@ fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
 /// `ceil(price_error * |start-end| / 1e9)` plus two product-floor units.
 fun expected_boundary_error(memo: &pricing::PriceMemo, tick: u64, net_quantity: u64): u64 {
     let price = memo.cached_range_price(tick, constants::pos_inf_tick!());
-    math::mul_div_up(price.error(), net_quantity, math::float_scaling!()) + 2
+    math::mul_up(price.error(), net_quantity) + 2
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
@@ -285,13 +285,13 @@ fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
     tree.insert_range(tick, constants::pos_inf_tick!(), quantity, 0);
 }
 
-/// Independent linear reference: `Σ mul(range_price(tick·ts, +inf), quantity)`.
+/// Independent linear reference: `Σ mul_down(range_price(tick·ts, +inf), quantity)`.
 /// Uses `range_price` (a different pricer path than the walk's `up_price`).
 fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): u64 {
     let mut total = 0;
     ticks.length().do!(|i| {
         total =
-            total + math::mul(
+            total + math::mul_down(
                 pricer.range_price(raw(ticks[i]), raw(constants::pos_inf_tick!())),
                 quantities[i],
             );
@@ -299,7 +299,7 @@ fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): 
     total
 }
 
-/// Independent finite-range reference: `Σ mul(range_price(lower·ts, higher·ts), quantity)`.
+/// Independent finite-range reference: `Σ mul_down(range_price(lower·ts, higher·ts), quantity)`.
 /// Uses `range_price` (a different pricer path than the walk's `up_price`).
 fun range_reference(
     pricer: &Pricer,
@@ -310,7 +310,7 @@ fun range_reference(
     let mut total = 0;
     lower_ticks.length().do!(|i| {
         let range_price = pricer.range_price(raw(lower_ticks[i]), raw(higher_ticks[i]));
-        total = total + math::mul(range_price, quantities[i]);
+        total = total + math::mul_down(range_price, quantities[i]);
     });
     total
 }

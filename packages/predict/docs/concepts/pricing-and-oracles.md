@@ -81,7 +81,7 @@ The canonical values run at 1e9 fixed point, using the `fixed_math` `I64` signed
 
 For single order/range quotes, range-price differencing is saturating: if a clamped or non-monotone adjusted digital segment would make `up_price(lower) < up_price(higher)`, that order prices at zero rather than aborting the trade path. NAV valuation has an additional active-book check. The payout-tree walk caches finite boundary UP prices in ascending tick order; if an active market's current surface makes those cached UP prices increase over the active boundary set, the flush aborts with a non-monotone price-memo guard instead of netting a non-monotone surface into an overstated `current_nav`.
 
-> The full closed-form SVI and normal-CDF/PDF implementation, including the fixed-point `ln`, `sqrt`, `normal_cdf`, and `normal_pdf` helpers, lives in the `pricing` and `fixed_math` modules. The formulas above are the model, not a reproduction of every rounding step.
+> The full closed-form SVI and normal-CDF/PDF implementation, including the fixed-point `ln`, `sqrt_down`, `normal_cdf`, and `normal_pdf` helpers, lives in the `pricing` and `fixed_math` modules. The formulas above are the model, not a reproduction of every rounding step.
 
 ## Resolving the live forward
 

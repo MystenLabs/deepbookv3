@@ -17,7 +17,7 @@ use deepbook_predict::{flow_test_helpers as helpers, order, test_constants};
 use std::unit_test::assert_eq;
 
 /// Per-trade fee floors at `min_fee`: the fixture floors base_fee to 1, so the
-/// raw Bernoulli fee mul(1, sqrt(0.5 * 0.5)) rounds to 0 and the floor binds.
+/// raw Bernoulli fee mul_down(1, sqrt(0.5 * 0.5)) rounds to 0 and the floor binds.
 /// The default expiry-fee ramp multiplier is exactly 1.0 (ramp disabled).
 const MINT_MIN_FEE: u64 = 5_000_000;
 /// The order is the first admitted finite range above min_strike and the live forward ==

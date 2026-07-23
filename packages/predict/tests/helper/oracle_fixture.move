@@ -351,7 +351,7 @@ public fun prepare_live_oracle_bundle(
 
 /// Seed a fresh Pyth spot + an explicit Block Scholes surface (real spot/forward +
 /// SVI) for exact-pricing tests over real on-chain scenarios. On the fresh-Pyth
-/// path pricing derives the live forward as `mul(spot, forward/spot)`.
+/// path pricing derives the live forward as `mul_down(spot, forward/spot)`.
 public fun prepare_real_oracle(
     self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,

@@ -203,7 +203,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
         let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
         // The point max is a subset-sum of the same non-negative per-order net payouts.
         let gap = total_net_payout - max_net_payout;
-        max_net_payout + math::mul(exposure.config.backing_buffer_lambda(), gap)
+        max_net_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
     }
 }
 
@@ -329,7 +329,7 @@ public(package) fun quote_mint_terms(
         let mut hi = order::max_quantity_lots();
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
-            let entry_value = math::mul(entry_probability, mid * lot);
+            let entry_value = math::mul_down(entry_probability, mid * lot);
             if (
                 strike_exposure_config::net_premium_from_entry_value(
                     entry_value,
@@ -426,7 +426,7 @@ public(package) fun quote_close(
     // Price the range exactly once; the knock-out test and the live terms both
     // read this one observation.
     let range_probability = exposure.order_range_price(pricer.borrow(), order);
-    let gross_value = math::mul(range_probability, order.quantity());
+    let gross_value = math::mul_down(range_probability, order.quantity());
     // Leveraged only: a 1x order has a zero floor, so the threshold test would
     // spuriously classify a currently-worthless 1x order as liquidatable.
     if (
@@ -648,7 +648,7 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
     );
     let remove_floor_shares = old_floor_shares - remaining_floor_shares;
 
-    let gross_redeem_amount = math::mul(range_probability, close_quantity);
+    let gross_redeem_amount = math::mul_down(range_probability, close_quantity);
     // Clamp, don't abort: a full close cannot saturate (a non-knocked-out order's
     // gross value strictly exceeds its full floor), but a partial close's slice
     // can owe up to one unit of round-down dust more floor than its own gross
@@ -762,13 +762,13 @@ fun apply_liquidation(
 }
 
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    math::mul(exposure.order_range_price(pricer, order), order.quantity())
+    math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
 }
 
 /// Return whether live gross value is at or below the configured multiple of the
 /// static floor. The reserve independently backs the order's full net payout.
 fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_amount: u64): bool {
-    gross_value <= math::div(floor_amount, exposure.config.liquidation_ltv())
+    gross_value <= math::div_down(floor_amount, exposure.config.liquidation_ltv())
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
