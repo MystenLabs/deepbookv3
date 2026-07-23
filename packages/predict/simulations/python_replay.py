@@ -539,15 +539,17 @@ def mul_div_round_up(a: int, b: int, c: int) -> int:
     return (a * b + c - 1) // c
 
 
-def live_forward(spot: int, forward: int) -> int:
-    # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
-    # every live quote/valuation/liquidation is NOT the pushed forward, but is
-    # re-derived from the live Pyth spot and the stored Block Scholes basis as
-    # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
-    # generally differs from `forward` by a few units. In the localnet parity flow
-    # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
-    # is exactly the forward the contracts price with.
-    return deepbook_mul(spot, deepbook_div(forward, spot))
+def live_forward(
+    pyth_spot: int,
+    block_scholes_forward: int,
+    block_scholes_spot: int,
+) -> int:
+    # Mirror pricing::resolve_live_pricer's fresh-Pyth branch.
+    return mul_div_round_down(
+        pyth_spot,
+        block_scholes_forward,
+        block_scholes_spot,
+    )
 
 
 def assert_valid_leverage(leverage: int) -> None:
@@ -595,6 +597,48 @@ def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> 
         "contribution": contribution,
         "floor_shares": entry_exposure_value - contribution,
         "leverage_multiplier": leverage_multiplier(leverage),
+    }
+
+
+def split_partial_close_floor(
+    old_quantity: int,
+    old_floor_shares: int,
+    close_quantity: int,
+) -> tuple[int, int, int]:
+    if close_quantity > old_quantity:
+        raise ValueError("close quantity exceeds order quantity")
+    remaining_quantity = old_quantity - close_quantity
+    remaining_floor_shares = mul_div_round_down(
+        old_floor_shares,
+        remaining_quantity,
+        old_quantity,
+    )
+    remove_floor_shares = old_floor_shares - remaining_floor_shares
+    return remaining_quantity, remaining_floor_shares, remove_floor_shares
+
+
+def compute_live_close_terms(
+    range_probability: int,
+    old_quantity: int,
+    old_floor_shares: int,
+    close_quantity: int,
+) -> dict[str, int]:
+    (
+        remaining_quantity,
+        remaining_floor_shares,
+        remove_floor_shares,
+    ) = split_partial_close_floor(
+        old_quantity,
+        old_floor_shares,
+        close_quantity,
+    )
+    gross_redeem_amount = deepbook_mul(range_probability, close_quantity)
+    return {
+        "remaining_quantity": remaining_quantity,
+        "remaining_floor_shares": remaining_floor_shares,
+        "remove_floor_shares": remove_floor_shares,
+        "gross_redeem_amount": gross_redeem_amount,
+        "redeem_amount": max(0, gross_redeem_amount - remove_floor_shares),
     }
 
 
@@ -836,13 +880,19 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     inner = rho_km.add(I64(sq))
     if inner.is_negative:
         raise ValueError("SVI inner term cannot be negative")
-    wing_var = deepbook_mul(svi["b"], inner.magnitude)
     a = I64(svi["a"], svi.get("aNegative", False))
-    total_var_i64 = I64(wing_var).add(a)
-    if total_var_i64.is_negative or total_var_i64.magnitude == 0:
+    wide_increment = svi["b"] * inner.magnitude
+    wide_a = a.magnitude * FLOAT_SCALING
+    if a.is_negative:
+        if wide_increment < wide_a:
+            raise ValueError("SVI total variance must be positive")
+        wide_total_var = wide_increment - wide_a
+    else:
+        wide_total_var = wide_increment + wide_a
+    total_var = wide_total_var // FLOAT_SCALING
+    if total_var == 0:
         raise ValueError("SVI total variance must be positive")
-    total_var = total_var_i64.magnitude
-    sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
+    sqrt_var = sqrt_u128(wide_total_var)
     d2_numerator = k.add(I64(total_var // 2))
     d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
     nd2 = normal_cdf(d2)
@@ -1102,9 +1152,8 @@ def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
 def remove_closed_live_order(
     model: dict[str, Any],
     order: dict[str, Any],
-    close_quantity: int,
     resulting_order: dict[str, Any] | None,
-) -> int:
+) -> None:
     old_quantity, old_floor_shares = order_index_update_terms(order)
     if resulting_order is None:
         remaining_floor_shares = 0
@@ -1121,12 +1170,10 @@ def remove_closed_live_order(
             remaining_floor_shares,
         )
     invalidate_valuation_cache(model)
-    closed_floor_amount = mul_div_round_up(old_floor_shares, close_quantity, old_quantity)
-    return floor_amount(closed_floor_amount)
 
 
-def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
-    return remove_closed_live_order(model, order, order["quantity"], None)
+def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
+    remove_closed_live_order(model, order, None)
 
 
 def valuation_curve_key(
@@ -1560,7 +1607,11 @@ def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
 
 def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
     oracle = row if row["action"] == "oracle_mint_ptb" else row["oracleRefresh"]
-    model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
+    model["current_forward"] = live_forward(
+        oracle["spot"],
+        oracle["forward"],
+        oracle["spot"],
+    )
     model["current_svi"] = oracle
     updates.append(pyth_feed_update(oracle))
     updates.append(block_scholes_surface_update(oracle))
@@ -1884,40 +1935,41 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 
     probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
     fee = deepbook_mul_up(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
-    gross = deepbook_mul(probability, close_quantity)
-
-    remaining_quantity = order["quantity"] - close_quantity
+    close_terms = compute_live_close_terms(
+        probability,
+        order["quantity"],
+        order_floor_shares(order),
+        close_quantity,
+    )
+    remaining_quantity = close_terms["remaining_quantity"]
     if remaining_quantity == 0:
         replacement_ref = None
         replacement_sequence = None
         remove_active_order(model, ref)
-        closed_floor = remove_live_order(model, order)
+        remove_live_order(model, order)
         del model["orders"][ref]
     else:
         replacement_ref = row["replacementOrderRef"] or ref
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
-        old_floor_shares = order_floor_shares(order)
-        close_fraction = deepbook_div(close_quantity, order["quantity"])
-        remaining_floor_shares = old_floor_shares - deepbook_mul(old_floor_shares, close_fraction)
         replacement = {
             **order,
             "ref": replacement_ref,
             "sequence": model["next_sequence"],
             "quantity": remaining_quantity,
             "contribution": replacement_terms["contribution"],
-            "floor_shares": remaining_floor_shares,
+            "floor_shares": close_terms["remaining_floor_shares"],
             "status": "active",
         }
         replacement["order_id"] = order_id_for_terms(replacement)
         remove_active_order(model, ref)
-        closed_floor = remove_closed_live_order(model, order, close_quantity, replacement)
+        remove_closed_live_order(model, order, replacement)
         del model["orders"][ref]
         model["next_sequence"] += 1
         model["orders"][replacement_ref] = replacement
         insert_active_order(model, replacement_ref)
         replacement_sequence = replacement["sequence"]
 
-    redeem_amount = gross - min(gross, closed_floor)
+    redeem_amount = close_terms["redeem_amount"]
     fee = min(fee, redeem_amount)
     return {
         "type": "live_order_redeemed",
@@ -2272,8 +2324,11 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         if remaining_quantity == 0 or not replacement_ref:
             return
         close_quantity = int(update["quantity_closed"])
-        close_fraction = deepbook_div(close_quantity, order["quantity"])
-        floor_shares = order["floor_shares"] - deepbook_mul(order["floor_shares"], close_fraction)
+        _, floor_shares, _ = split_partial_close_floor(
+            order["quantity"],
+            order["floor_shares"],
+            close_quantity,
+        )
         analytics_insert_order(
             analytics,
             {
@@ -2979,7 +3034,11 @@ def replay(
         model["now_ms"] = row_timestamp_ms
         scan_active_count = active_order_count(model)
         if action == "oracle_mint_ptb":
-            model["current_forward"] = live_forward(row["spot"], row["forward"])
+            model["current_forward"] = live_forward(
+                row["spot"],
+                row["forward"],
+                row["spot"],
+            )
             model["current_svi"] = row
             updates.append(pyth_feed_update(row))
             updates.append(block_scholes_surface_update(row))

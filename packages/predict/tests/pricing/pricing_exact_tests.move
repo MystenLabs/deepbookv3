@@ -48,6 +48,14 @@ const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
 const MAX_MINT_PRICE_DEVIATION: u64 = 1_000_000;
+// Three-input re-anchor fixture: fresh Pyth spot != Block Scholes spot != forward.
+// Expected forward = floor(pyth_spot * bs_forward / bs_spot)
+//                  = floor(75_100e9 * 75_050e9 / 75_000e9) = 75_150_066_666_666.
+const REANCHOR_BS_SPOT: u64 = 75_000_000_000_000;
+const REANCHOR_BS_FORWARD: u64 = 75_050_000_000_000;
+const REANCHOR_PYTH_SPOT: u64 = 75_100_000_000_000;
+const REANCHOR_EXPECTED_FORWARD: u64 = 75_150_066_666_666;
+const REANCHOR_PYTH_SOURCE_MS: u64 = 119_001;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
 /// spot/forward, and assert `Pricer.range_price` matches its fixed-point regression
@@ -112,6 +120,42 @@ fun real_scenario_small_variance() { run_scenario(2, false); }
 /// that one variance term through sqrt keeps both center and certificate in policy.
 #[test]
 fun real_short_dated_scenario_meets_mint_deviation() { run_scenario(3, true); }
+
+/// Pin the three-input re-anchor when the fresh Pyth spot differs from the Block
+/// Scholes spot. The flat SVI fixture has exactly 0.5 probability only at the
+/// forward, so this observes the fused `pyth * bs_forward / bs_spot` result
+/// without exposing `Pricer.forward`.
+#[test]
+fun unequal_spots_use_the_fused_live_forward() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        REANCHOR_BS_SPOT,
+        REANCHOR_BS_FORWARD,
+        FLAT_SVI_A,
+        false,
+        FLAT_SVI_B,
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+    );
+    fx.set_pyth_bundle(&mut oracle, REANCHOR_PYTH_SPOT, REANCHOR_PYTH_SOURCE_MS);
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(
+        pricer.range_price(
+            strike(REANCHOR_EXPECTED_FORWARD),
+            strike(constants::pos_inf!()),
+        ),
+        math::float_scaling!() / 2,
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
 
 #[test]
 fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
