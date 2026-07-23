@@ -148,6 +148,17 @@ public fun pause_trading_pause_cap(
     config.pause_trading();
 }
 
+/// Force the protocol-wide emergency freeze via a valid `PauseCap`. One-way;
+/// admin's `protocol_config::set_frozen` is needed to lift the freeze.
+public fun freeze_protocol_pause_cap(
+    config: &mut ProtocolConfig,
+    registry: &Registry,
+    pause_cap: &PauseCap,
+) {
+    registry.assert_valid_pause_cap(pause_cap);
+    config.freeze_protocol();
+}
+
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
 /// One-way; admin's `expiry_market::set_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(

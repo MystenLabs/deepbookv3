@@ -16,6 +16,12 @@ public struct TradingPausedUpdated has copy, drop, store {
     paused: bool,
 }
 
+/// Emitted when the protocol-wide emergency freeze state changes.
+public struct ProtocolFrozenUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    frozen: bool,
+}
+
 /// Emitted when a new expiry market is created, with its cadence terms and
 /// immutable expiry-policy snapshot. Fraction, leverage, fee, probability, and
 /// multiplier fields use FLOAT_SCALING; windows use milliseconds.
@@ -94,6 +100,13 @@ public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: 
     event::emit(TradingPausedUpdated {
         protocol_config_id,
         paused,
+    });
+}
+
+public(package) fun emit_protocol_frozen_updated(protocol_config_id: ID, frozen: bool) {
+    event::emit(ProtocolFrozenUpdated {
+        protocol_config_id,
+        frozen,
     });
 }
 

@@ -694,6 +694,52 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-18: Protocol-wide emergency freeze — reversible hard stop of the version-gated surface
+
+- **Trigger state:** an exploit or incident requires halting the full
+  version-gated Predict surface (mint, redeem, settlement, valuation, LP
+  supply/withdraw, admin config) faster than a package upgrade allows, and the
+  at-risk flow is not covered by trading-pause (which blocks only new risk
+  creation, RP-7).
+- **Controller:** protocol — a `PauseCap` holder engages it; the `AdminCap`
+  lifts it.
+- **Blast radius:** every version-gated flow — the same surface a package-version
+  disable covers, reached because the freeze is folded into
+  `protocol_config::assert_version`. Account-package custody withdrawals are not
+  Predict-version-gated and stay available, so balances already credited to
+  account custody remain withdrawable; unredeemed positions and pending LP-queue
+  escrow are frozen (reversibly) until admin lifts it. The ungated bypasses
+  (existence-level cap revocations, the watermark setter, and freeze/unfreeze
+  themselves) stay available.
+- **Response:** `pause`-with-recovery. Force-on via
+  `registry::freeze_protocol_pause_cap` (one-way, `PauseCap`, bypasses the
+  version gate like every kill switch); recovery is admin-side via
+  `protocol_config::set_frozen(_, false)`, intentionally ungated so an engaged
+  freeze is never unrecoverable without an upgrade.
+- **Reasoning:** the only prior lever with this blast radius was a
+  version-disable, triggerable and recoverable only by shipping a package
+  upgrade — too slow under an active exploit, and `bump_version_watermark`
+  cannot set the floor above the running version, so a pure-watermark freeze was
+  impossible without an upgrade. Blocking Predict redeems (unlike RP-7) is
+  intentional: a hard freeze must be able to stop a redeem/settlement-path
+  exploit. The user-fund-trap concern RP-7 owns is bounded here because balances
+  already in account custody stay withdrawable and recovery needs no upgrade. A
+  one-way
+  upgrade-to-resume variant was rejected — it would reimpose the upgrade cost the
+  freeze exists to avoid.
+- **Risk profile:** n/a (semantics decision, not a probabilistic risk).
+- **Pinning tests:** `protocol_config_tests.move` —
+  `frozen_blocks_version_gated_flow` (a gated flow aborts `EProtocolFrozen` while
+  frozen) and `frozen_defaults_false_and_admin_toggles` (admin lifts the freeze
+  while frozen — no unrecoverable brick); `registry_guard_tests.move` —
+  `pause_cap_freezes_protocol` (`PauseCap` force-on + admin lift) and
+  `revoked_pause_cap_cannot_freeze_protocol` (revoked cap rejected).
+- **Reopen when:** freeze semantics are intentionally changed (a one-way variant
+  is adopted, or custody/exit paths are brought under the freeze), or per-flow
+  granularity beyond the single global gate is required.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
