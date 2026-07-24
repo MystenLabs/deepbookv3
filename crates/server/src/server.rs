@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
 use tokio::net::TcpListener;
@@ -37,6 +37,7 @@ use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
 use crate::admin::routes::admin_routes;
+use crate::live_ohclv::{LiveOhclvCache, OHCLV_DEFAULT_LIMIT, OHCLV_DEFAULT_WINDOW_MS};
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::{PortfolioQueryResult, Reader};
@@ -66,6 +67,13 @@ diesel::define_sql_function! {
 
 /// Default lookback window for the /orders endpoint when no start_time is provided (7 days in ms).
 const DEFAULT_ORDERS_LOOKBACK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+fn current_time_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
 
 pub const GET_POOLS_PATH: &str = "/get_pools";
 pub const GET_HISTORICAL_VOLUME_BY_BALANCE_MANAGER_ID_WITH_INTERVAL: &str =
@@ -139,6 +147,7 @@ type AdminRateLimiter = RateLimiter<
 pub struct AppState {
     reader: Reader,
     writer: Writer,
+    live_ohclv: LiveOhclvCache,
     metrics: Arc<RpcMetrics>,
     sui_client: Client,
     deepbook_package_id: String,
@@ -160,6 +169,7 @@ impl AppState {
         deep_treasury_id: String,
         admin_tokens: Option<String>,
         margin_package_id: Option<String>,
+        live_ohclv_max_fills: usize,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(
@@ -170,6 +180,7 @@ impl AppState {
         )
         .await?;
         let writer = Writer::new(database_url, args).await?;
+        let live_ohclv = LiveOhclvCache::new(live_ohclv_max_fills);
 
         let admin_tokens: Vec<Secret<String>> = admin_tokens
             .map(|s| {
@@ -195,6 +206,7 @@ impl AppState {
         Ok(Self {
             reader,
             writer,
+            live_ohclv,
             metrics,
             sui_client: Client::new(rpc_url.as_str())?,
             deepbook_package_id,
@@ -217,6 +229,16 @@ impl AppState {
 
     pub fn writer(&self) -> &Writer {
         &self.writer
+    }
+
+    pub fn start_live_ohclv_poller(&self, poll_interval: Duration) -> tokio::task::JoinHandle<()> {
+        let live_ohclv_cache = self.live_ohclv.clone();
+        let live_ohclv_reader = self.reader.clone();
+        tokio::spawn(async move {
+            live_ohclv_cache
+                .run_poll_loop(live_ohclv_reader, poll_interval)
+                .await;
+        })
     }
 
     pub fn is_valid_admin_token(&self, token: &str) -> bool {
@@ -262,6 +284,8 @@ pub async fn run_server(
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
     admin_tokens: Option<String>,
+    live_ohclv_poll_interval_ms: u64,
+    live_ohclv_max_fills: usize,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -278,11 +302,20 @@ pub async fn run_server(
         deep_treasury_id,
         admin_tokens,
         margin_package_id.clone(),
+        live_ohclv_max_fills,
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
 
     println!("Server started successfully on port {}", server_port);
+
+    let live_ohclv_poll_interval = Duration::from_millis(live_ohclv_poll_interval_ms.max(1));
+    state.start_live_ohclv_poller(live_ohclv_poll_interval);
+    println!(
+        "Live OHCLV cache poller started (interval: {}ms, max fills: {})",
+        live_ohclv_poll_interval_ms.max(1),
+        live_ohclv_max_fills
+    );
 
     // Start margin metrics poller if margin_package_id is provided
     // Must be done before spawning the metrics service since we need access to the registry
@@ -333,7 +366,7 @@ pub async fn run_server(
 
     Ok(())
 }
-pub(crate) fn make_router(state: Arc<AppState>) -> Router {
+pub fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![
             Method::GET,
@@ -1894,12 +1927,7 @@ impl ParameterUtil for HashMap<String, String> {
         self.get("end_time")
             .and_then(|v| v.parse::<i64>().ok())
             .map(|t| t * 1000) // Convert to milliseconds
-            .unwrap_or_else(|| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64
-            })
+            .unwrap_or_else(current_time_ms)
     }
 
     fn volume_in_base(&self) -> bool {
@@ -1927,9 +1955,18 @@ async fn ohclv(
         .ok_or_else(|| DeepBookError::not_found(format!("Pool '{}'", pool_name)))?;
 
     let interval = params.get("interval").unwrap_or(&"1m".to_string()).clone();
-    let start_time = params.get("start_time").and_then(|v| v.parse::<i64>().ok());
-    let end_time = params.get("end_time").and_then(|v| v.parse::<i64>().ok());
-    let limit = params.get("limit").and_then(|v| v.parse::<i32>().ok());
+    let end_time = params
+        .get("end_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or_else(current_time_ms);
+    let start_time = params
+        .get("start_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or_else(|| end_time.saturating_sub(OHCLV_DEFAULT_WINDOW_MS));
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(OHCLV_DEFAULT_LIMIT);
 
     let valid_intervals = vec!["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"];
     if !valid_intervals.contains(&interval.as_str()) {
@@ -1941,18 +1978,32 @@ async fn ohclv(
 
     let candles = state
         .reader
-        .get_ohclv(pool.pool_id.clone(), interval, start_time, end_time, limit)
+        .get_ohclv(
+            pool.pool_id.clone(),
+            interval.clone(),
+            start_time,
+            end_time,
+            limit,
+        )
         .await?;
+    let candles = state.live_ohclv.overlay_candles(
+        &interval,
+        &pool.pool_id,
+        start_time,
+        end_time,
+        limit,
+        candles,
+    );
     let candles_array: Vec<Value> = candles
         .into_iter()
-        .map(|(timestamp, open, high, low, close, volume)| {
+        .map(|candle| {
             Value::Array(vec![
-                Value::from(timestamp),
-                Value::from(open),
-                Value::from(high),
-                Value::from(low),
-                Value::from(close),
-                Value::from(volume),
+                Value::from(candle.timestamp_ms),
+                Value::from(candle.open),
+                Value::from(candle.high),
+                Value::from(candle.low),
+                Value::from(candle.close),
+                Value::from(candle.base_volume),
             ])
         })
         .collect();
