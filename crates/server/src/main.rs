@@ -3,8 +3,8 @@
 
 use clap::Parser;
 use deepbook_server::pyth::{
-    PythCacheConfig, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_HERMES_URL,
-    DEFAULT_HISTORICAL_CACHE_TTL_SECS, DEFAULT_LATEST_CACHE_TTL_MS,
+    PythProConfig, DEFAULT_HISTORY_CACHE_MAX_ENTRIES, DEFAULT_HISTORY_CACHE_TTL_SECS,
+    DEFAULT_MAX_STALENESS_MS, DEFAULT_POLL_INTERVAL_MS, DEFAULT_PRO_URL,
 };
 use deepbook_server::server::run_server;
 use std::{net::SocketAddr, time::Duration};
@@ -56,18 +56,24 @@ struct Args {
     /// Comma-separated list of valid admin bearer tokens
     #[clap(env = "ADMIN_TOKENS", long)]
     admin_tokens: Option<String>,
-    /// Authenticated Pyth Hermes base URL.
-    #[clap(env, long, default_value = DEFAULT_HERMES_URL)]
-    pyth_hermes_url: Url,
-    /// Cache lifetime for the latest-price endpoint, in milliseconds.
-    #[clap(env, long, default_value_t = DEFAULT_LATEST_CACHE_TTL_MS)]
-    pyth_latest_cache_ttl_ms: u64,
-    /// Cache lifetime for historical-price responses, in seconds.
-    #[clap(env, long, default_value_t = DEFAULT_HISTORICAL_CACHE_TTL_SECS)]
-    pyth_historical_cache_ttl_secs: u64,
-    /// Maximum number of successful Pyth responses cached in this server process.
-    #[clap(env, long, default_value_t = DEFAULT_CACHE_MAX_ENTRIES)]
-    pyth_cache_max_entries: usize,
+    /// Authenticated Pyth Pro Router API base URL.
+    #[clap(env, long, default_value = DEFAULT_PRO_URL)]
+    pyth_pro_url: Url,
+    /// Pyth Pro numeric feed IDs refreshed by the latest-price poller.
+    #[clap(env, long, value_delimiter = ',')]
+    pyth_pro_feed_ids: Vec<u32>,
+    /// Interval between Pyth Pro latest-price refreshes, in milliseconds.
+    #[clap(env, long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
+    pyth_pro_poll_interval_ms: u64,
+    /// Maximum age of the latest-price snapshot, in milliseconds.
+    #[clap(env, long, default_value_t = DEFAULT_MAX_STALENESS_MS)]
+    pyth_pro_max_staleness_ms: u64,
+    /// Cache lifetime for historical Pyth Pro prices, in seconds.
+    #[clap(env, long, default_value_t = DEFAULT_HISTORY_CACHE_TTL_SECS)]
+    pyth_pro_history_cache_ttl_secs: u64,
+    /// Maximum historical feed/timestamp pairs cached in this process.
+    #[clap(env, long, default_value_t = DEFAULT_HISTORY_CACHE_MAX_ENTRIES)]
+    pyth_pro_history_cache_max_entries: u64,
 }
 
 #[tokio::main]
@@ -88,18 +94,22 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
-        pyth_hermes_url,
-        pyth_latest_cache_ttl_ms,
-        pyth_historical_cache_ttl_secs,
-        pyth_cache_max_entries,
+        pyth_pro_url,
+        pyth_pro_feed_ids,
+        pyth_pro_poll_interval_ms,
+        pyth_pro_max_staleness_ms,
+        pyth_pro_history_cache_ttl_secs,
+        pyth_pro_history_cache_max_entries,
     } = Args::parse();
     // Read the secret from the environment only so it never needs to appear in
     // process arguments or clap's help output.
-    let pyth_api_key = std::env::var("PYTH_API_KEY").ok();
-    let pyth_cache_config = PythCacheConfig {
-        latest_ttl: Duration::from_millis(pyth_latest_cache_ttl_ms),
-        historical_ttl: Duration::from_secs(pyth_historical_cache_ttl_secs),
-        max_entries: pyth_cache_max_entries,
+    let pyth_pro_api_key = std::env::var("PYTH_PRO_API_KEY").ok();
+    let pyth_pro_config = PythProConfig {
+        feed_ids: pyth_pro_feed_ids,
+        poll_interval: Duration::from_millis(pyth_pro_poll_interval_ms),
+        max_staleness: Duration::from_millis(pyth_pro_max_staleness_ms),
+        history_cache_ttl: Duration::from_secs(pyth_pro_history_cache_ttl_secs),
+        history_cache_max_entries: pyth_pro_history_cache_max_entries,
     };
 
     run_server(
@@ -114,9 +124,9 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
-        pyth_hermes_url,
-        pyth_api_key,
-        pyth_cache_config,
+        pyth_pro_url,
+        pyth_pro_api_key,
+        pyth_pro_config,
     )
     .await?;
 
