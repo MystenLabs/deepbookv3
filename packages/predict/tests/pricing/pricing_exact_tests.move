@@ -47,11 +47,20 @@ const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
+const MAX_MINT_PRICE_DEVIATION: u64 = 1_000_000;
+// Three-input re-anchor fixture: fresh Pyth spot != Block Scholes spot != forward.
+// Expected forward = floor(pyth_spot * bs_forward / bs_spot)
+//                  = floor(75_100e9 * 75_050e9 / 75_000e9) = 75_150_066_666_666.
+const REANCHOR_BS_SPOT: u64 = 75_000_000_000_000;
+const REANCHOR_BS_FORWARD: u64 = 75_050_000_000_000;
+const REANCHOR_PYTH_SPOT: u64 = 75_100_000_000_000;
+const REANCHOR_EXPECTED_FORWARD: u64 = 75_150_066_666_666;
+const REANCHOR_PYTH_SOURCE_MS: u64 = 119_001;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
-/// spot/forward, and assert `Pricer.range_price` matches the independent
-/// true-math reference within the per-point derived budget at every reference point.
-fun run_scenario(s: u64) {
+/// spot/forward, and assert `Pricer.range_price` matches its fixed-point regression
+/// snapshot and the independent true-math reference within the per-point budget.
+fun run_scenario(s: u64, enforce_mint_deviation: bool) {
     let mut fx = oracle_fixture::setup_oracle(
         ref_data::creation_spot(s),
         ref_data::tick_size(s),
@@ -78,8 +87,20 @@ fun run_scenario(s: u64) {
     let mut i = 0;
     while (i < n) {
         let p = &points[i];
-        let actual = pricer.range_price(strike(p.lower()), strike(p.higher()));
+        let lower = strike(p.lower());
+        let higher = strike(p.higher());
+        let priced = pricer.range_price_approx(lower, higher);
+        assert!(!priced.is_negative());
+        assert!(priced.error() < std::u64::max_value!());
+        let actual = priced.magnitude();
+        assert_eq!(pricer.range_price(lower, higher), actual);
+        assert_eq!(actual, p.expected_center());
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
+        test_helpers::assert_within(actual, p.reference_lower(), priced.error());
+        test_helpers::assert_within(actual, p.reference_upper(), priced.error());
+        if (enforce_mint_deviation) {
+            assert!(priced.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
+        };
         i = i + 1;
     };
 
@@ -88,13 +109,56 @@ fun run_scenario(s: u64) {
 }
 
 #[test]
-fun real_scenario_large_variance() { run_scenario(0); }
+fun real_scenario_large_variance() { run_scenario(0, false); }
 
 #[test]
-fun real_scenario_medium_variance() { run_scenario(1); }
+fun real_scenario_medium_variance() { run_scenario(1, false); }
 
 #[test]
-fun real_scenario_small_variance() { run_scenario(2); }
+fun real_scenario_small_variance() { run_scenario(2, false); }
+
+/// This real one-minute SVI surface has w ~= 3.26e-8 at the selected strike.
+/// Flooring `b * inner` to 1e9 before sqrt priced it about 3% below the independent
+/// reference and produced a certificate above the 0.1% mint ceiling. Retaining
+/// that one variance term through sqrt keeps both center and certificate in policy.
+#[test]
+fun real_short_dated_scenario_meets_mint_deviation() { run_scenario(3, true); }
+
+/// Pin the three-input re-anchor when the fresh Pyth spot differs from the Block
+/// Scholes spot. The flat SVI fixture has exactly 0.5 probability only at the
+/// forward, so this observes the fused `pyth * bs_forward / bs_spot` result
+/// without exposing `Pricer.forward`.
+#[test]
+fun unequal_spots_use_the_fused_live_forward() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        REANCHOR_BS_SPOT,
+        REANCHOR_BS_FORWARD,
+        FLAT_SVI_A,
+        false,
+        FLAT_SVI_B,
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+    );
+    fx.set_pyth_bundle(&mut oracle, REANCHOR_PYTH_SPOT, REANCHOR_PYTH_SOURCE_MS);
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(
+        pricer.range_price(
+            strike(REANCHOR_EXPECTED_FORWARD),
+            strike(constants::pos_inf!()),
+        ),
+        math::float_scaling!() / 2,
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
 
 #[test]
 fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
@@ -144,7 +208,7 @@ fun at_the_forward_is_exactly_one_half() {
 /// Production-valid SVI envelope point where strike == forward, m == 0, |rho| == 1,
 /// b == max_svi_input, and sigma == min_svi_sigma. Then d2 is near -0.158, so the
 /// normal CDF/PDF tail guards do not fire; the enormous signed `w'` term is what
-/// pushes the raw adjusted digital outside [0, 1] and exercises compute_nd2's final
+/// pushes the raw adjusted digital outside [0, 1] and exercises compute_up_price's final
 /// clamp.
 fun skew_clamp_up_price(rho_is_negative: bool): u64 {
     let mut fx = oracle_fixture::setup_oracle_default();

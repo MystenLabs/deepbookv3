@@ -196,9 +196,9 @@ def _analyze_one(inst: Path) -> list[str]:
                 print(f"  {k:14} n={len(gs):>3}  avg={sum(gs) // len(gs):>11,} gas")
 
     # pool NAV trend (flushes) -> drain heuristic.
-    flushes = sorted((r for r in recs if r.get("type") == "flush" and r.get("poolValue")), key=lambda r: r["ts"])
+    flushes = sorted((r for r in recs if r.get("type") == "flush" and r.get("navCenter")), key=lambda r: r["ts"])
     if flushes:
-        navs = [r["poolValue"] for r in flushes]
+        navs = [r["navCenter"] for r in flushes]
         print(f"\npool NAV (flush, n={len(navs)}): first=${navs[0]:,.0f} last=${navs[-1]:,.0f} min=${min(navs):,.0f} max=${max(navs):,.0f}")
         if min(navs) < max(navs) * 0.99:
             print(f"  WARN NAV dipped {((max(navs) - min(navs)) / max(navs) * 100):.2f}% below peak (inspect for PLP drain)")
@@ -424,7 +424,7 @@ def _analyze_one(inst: Path) -> list[str]:
     if not any(r.get("_actor") == "keeper" for r in recs):
         signals.append("no-keeper-trace")  # keeper never started / crashed in setup
         print("  *** WARN: no keeper trace — keeper never started or crashed in setup ***")
-    nav_note = f"NAV ${flushes[-1]['poolValue']:,.0f}" if flushes else "no flush"
+    nav_note = f"NAV ${flushes[-1]['navCenter']:,.0f}" if flushes else "no flush"
     print(f"\nsummary [{label}]: {len(recs)} ops, {len(fails)} fail(s) ({len(flagged)} flagged), {len(adv_accepted)} adv-accepted, {nav_note}")
     return signals
 

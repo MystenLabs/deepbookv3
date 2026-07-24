@@ -49,12 +49,13 @@ public(package) fun penalty_fee(
     let gas_price = scaled_gas_price(ctx);
     if (gas_price <= self.mean) return 0;
 
-    let std_dev = math::sqrt(self.variance, math::float_scaling!());
-    let z_score = math::div(gas_price - self.mean, std_dev);
+    let std_dev = math::sqrt_down(self.variance);
+    let z_score = math::div_down(gas_price - self.mean, std_dev);
     if (z_score <= config.z_score_threshold()) return 0;
 
-    // penalty_rate * quantity / float_scaling, round down
-    math::mul(config.penalty_rate(), quantity)
+    // Convert the final rate to DUSDC upward so a nonzero fractional surcharge
+    // is collected rather than discarded.
+    math::mul_up(config.penalty_rate(), quantity)
 }
 
 /// Fold the current transaction's gas price into the smoothed mean and variance.
@@ -79,14 +80,14 @@ public(package) fun update(
     let one_minus_alpha = math::float_scaling!() - alpha;
     let gas_price = scaled_gas_price(ctx);
 
-    let mean_new = math::mul(alpha, gas_price) + math::mul(one_minus_alpha, self.mean);
+    let mean_new = math::mul_down(alpha, gas_price) + math::mul_down(one_minus_alpha, self.mean);
 
     let diff = gas_price.diff(self.mean);
-    let diff_squared = math::mul(diff, diff);
+    let diff_squared = math::mul_down(diff, diff);
     let variance_new = if (self.variance == 0) {
         diff_squared
     } else {
-        math::mul(one_minus_alpha, self.variance) + math::mul(alpha, diff_squared)
+        math::mul_down(one_minus_alpha, self.variance) + math::mul_down(alpha, diff_squared)
     };
 
     self.mean = mean_new;

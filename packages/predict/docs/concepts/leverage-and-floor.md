@@ -65,10 +65,16 @@ embeds it into the contract as a floor.
 At mint, the protocol computes:
 
 ```text
-entry_value     = entry_probability * quantity
-net_premium     = entry_value / leverage
+S               = 1_000_000_000
+entry_value     = floor(entry_probability * quantity / S)
+net_premium     = ceil(entry_value * S / leverage)
 floor_shares    = financed_amount = entry_value - net_premium
 ```
+
+`entry_probability` and `leverage` are 1e9-scaled integers; `entry_value`,
+`net_premium`, and `floor_shares` are raw DUSDC atoms. The staged rounding is
+part of the contract: entry value rounds down first, net premium then rounds up,
+and the floor is the exact integer complement.
 
 The holder pays `net_premium` plus fees and owns the contract's upside above the
 floor. `financed_amount` is the slice of the full premium (`entry_value`) the pool
@@ -171,8 +177,9 @@ and settlement are unaffected.
 ### The entry-value gate
 
 ```text
-net_premium = entry_value / leverage  >=  min_net_premium
-entry_value > floor_shares / liquidation_ltv   (when floor_shares > 0)
+net_premium = ceil(entry_value * S / leverage) >= min_net_premium
+floor_shares == 0
+    or ceil(entry_value * liquidation_ltv / S) > floor_shares
 ```
 
 The net premium must clear a minimum so dust orders are rejected. The entry-value
@@ -183,8 +190,7 @@ expiry's snapshotted floor-to-value ratio (see
 [liquidation](./liquidation.md) and [configuration](../design/configuration.md)).
 
 After admission, the expiry indexes the same contract two ways: payout terms for
-cash backing and settlement, and liquidation terms for the exact NAV floor
-correction.
+cash backing and settlement, and liquidation terms for the NAV floor correction.
 
 ## Live redeem
 
@@ -267,7 +273,7 @@ order ID. Beyond selecting liquidation candidates, it supplies the floor offset
 that turns the tree's linear term into NAV:
 
 ```text
-exact_live_liability = walk_linear - correction_value,  floored at 0
+marked_live_liability = walk_linear - correction_value,  floored at 0
 correction_value     = sum(active leveraged min(quantity * range_price, floor_shares))
 ```
 
@@ -276,7 +282,7 @@ memo populated by `walk_linear`: each order's floor offsets only its own range
 value, capped at it. Capping per order is what makes the subtraction
 limited-recourse -- an exhausted order's unconsumed floor can never offset another
 order's value. The expiry's `current_nav` is then `free_cash -
-exact_live_liability`; see
+marked_live_liability`; see
 [liquidity and NAV](./liquidity-and-nav.md).
 
 ## Liquidation priority

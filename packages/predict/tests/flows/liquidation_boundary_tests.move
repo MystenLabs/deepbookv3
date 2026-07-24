@@ -289,11 +289,11 @@ fun redeem_live_target_liquidates_order_missed_by_budgeted_sweep() {
     let total_mint_cost = mint_count * (CONTRIBUTION + TRADE_FEE);
     let cash_after_mints = test_constants::default_seeded_expiry_cash() + total_mint_cost;
     let balance_after_mints = test_constants::default_manager_deposit() - total_mint_cost;
-    let rebate_after_mints = math::mul(
+    let rebate_after_mints = math::mul_down(
         total_fees,
         config_constants::default_trading_loss_rebate_rate!(),
     );
-    let target_disjoint_buffer = math::mul(
+    let target_disjoint_buffer = math::mul_down(
         LIVE_BACKING_PER_ORDER,
         config_constants::default_backing_buffer_lambda!(),
     );

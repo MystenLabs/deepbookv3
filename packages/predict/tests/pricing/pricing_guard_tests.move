@@ -5,15 +5,15 @@
 ///
 /// Two abort surfaces are exercised through the production-valid `oracle_fixture`
 /// bring-up:
-///   - `EInvalidRange`: a degenerate range (`lower == higher`) after freshness
-///     passes;
+///   - `EInvalidRange`: a degenerate live range after freshness passes, or
+///     non-increasing cached range bounds before cache lookup;
 ///   - `EBlockScholesPriceStale`: a hard staleness abort when one of the split
 ///     Block Scholes price feeds is past its configured freshness window.
-/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone: the price
-/// tail now SATURATES instead of aborting, so those are pinned here as exact-value
-/// tests (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0). A stale Pyth spot no
-/// longer aborts either — it falls back to the stored Block Scholes forward; that
-/// fallback is pinned with exact values in
+/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone: every positive
+/// finite strike now evaluates through certified log-ratio math, while the final
+/// digital price remains clamped to `[0, 1]`. A stale Pyth spot no longer aborts
+/// either — it falls back to the stored Block Scholes forward; that fallback is
+/// pinned with exact values in
 /// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
 /// so it is not duplicated here.
 ///
@@ -33,7 +33,7 @@
 /// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
 /// a boundary surface whose rounded analytical minimum is positive at load but
 /// whose concrete at-forward quote rounds total variance non-positive.
-/// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
+/// `ECannotBeNegative` inside `compute_up_price` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
 /// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
 /// directly below; active-book non-monotone UP prices are covered by
@@ -46,7 +46,7 @@ use deepbook_predict::{
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
     pricing_reference_data as ref_data,
-    range_codec::strike_for_testing as strike,
+    range_codec::{Self, strike_for_testing as strike},
     test_constants,
     test_helpers
 };
@@ -62,15 +62,22 @@ use sui::test_scenario::return_shared;
 const EUnexpectedSuccess: u64 = 999;
 const SECOND_SOURCE_ID: u32 = 2;
 
-/// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
-/// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
-/// forward (100e9) the threshold is `forward / 1e9 == 100`, so strike 1 saturates.
+/// A finite strike so far below the forward that its 1e9 quotient truncates to zero.
 const DEEP_ITM_STRIKE: u64 = 1;
 
-/// A finite (non-`pos_inf`) strike so far above a tiny forward that
-/// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
-/// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
+/// A finite strike so far above a tiny forward that its 1e9 quotient exceeds u64.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
+/// Production-valid spot/forward and strike whose floored strike ratio is exactly
+/// one raw 1e9 unit.
+const MIN_NONZERO_RATIO_FORWARD: u64 = 10_000_000_000_000_000;
+const MIN_NONZERO_RATIO_STRIKE: u64 = 10_000_000;
+const FINITE_TAIL_FORWARD: u64 = 105_000_000_000_000_000;
+const FINITE_TAIL_LOWER_STRIKE: u64 = 100_000_000;
+const FINITE_TAIL_UPPER_STRIKE: u64 = 100_000_000_000;
+const FINITE_TAIL_LOWER_UP_REFERENCE: u64 = 561_894_965;
+const FINITE_TAIL_UPPER_UP_REFERENCE: u64 = 575_761_066;
+const FINITE_TAIL_RANGE_REFERENCE: u64 = 0;
+const MAX_MINT_PRICE_DEVIATION: u64 = 1_000_000;
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
@@ -87,6 +94,8 @@ const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
 const NON_MONOTONE_LOW_TICK: u64 = 90;
 const NON_MONOTONE_HIGH_TICK: u64 = 95;
+const CACHED_RANGE_LOWER_TICK: u64 = 90;
+const CACHED_RANGE_HIGHER_TICK: u64 = 110;
 
 // === Abort guards ===
 
@@ -94,6 +103,20 @@ const NON_MONOTONE_HIGH_TICK: u64 = 95;
 fun cached_range_price_with_missing_finite_tick_aborts() {
     let memo = pricing::new_price_memo();
     memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EInvalidRange)]
+fun cached_range_price_with_equal_bounds_aborts_before_lookup() {
+    let memo = pricing::new_price_memo();
+    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, PRICE_MEMO_MISSING_TICK);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EInvalidRange)]
+fun cached_range_price_with_reversed_bounds_aborts_before_lookup() {
+    let memo = pricing::new_price_memo();
+    memo.cached_range_price(CACHED_RANGE_HIGHER_TICK, CACHED_RANGE_LOWER_TICK);
     abort EUnexpectedSuccess
 }
 
@@ -123,6 +146,34 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
     abort EUnexpectedSuccess
+}
+
+#[test]
+fun cached_range_price_preserves_direct_range_center_and_error() {
+    let (fx, oracle) = setup_live();
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let tick_size = test_constants::default_tick_size();
+    let mut memo = pricing::new_price_memo();
+    memo.price_and_cache(&pricer, CACHED_RANGE_LOWER_TICK, tick_size);
+    memo.price_and_cache(&pricer, CACHED_RANGE_HIGHER_TICK, tick_size);
+
+    let cached = memo.cached_range_price(CACHED_RANGE_LOWER_TICK, CACHED_RANGE_HIGHER_TICK);
+    let direct = pricer.range_price_approx(
+        range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size),
+        range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size),
+    );
+    assert_eq!(cached.magnitude(), direct.magnitude());
+    assert_eq!(cached.error(), direct.error());
+    assert_eq!(
+        pricer.range_price(
+            range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size),
+            range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size),
+        ),
+        direct.magnitude(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]
@@ -270,12 +321,12 @@ fun fresh_pyth_spot_above_pricing_ceiling_aborts() {
     abort EUnexpectedSuccess
 }
 
-// === Price-tail saturation (replaces the deleted strike-ratio aborts) ===
+// === Finite price tails (replace the deleted strike-ratio aborts) ===
 
-/// Deep-ITM up tail: a strike far below the forward underflows the strike ratio to
-/// 0, so `up_price` returns ~1.0 (the neg_inf limit) instead of aborting.
+/// The finite deep-ITM path evaluates rather than aborting; this default surface's
+/// resulting digital price clamps to one.
 #[test]
-fun deep_itm_up_price_saturates_to_one() {
+fun deep_itm_up_price_evaluates_to_one() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     // Fresh spot == forward == 100e9.
@@ -288,10 +339,10 @@ fun deep_itm_up_price_saturates_to_one() {
     fx.finish();
 }
 
-/// Deep-OTM up tail: a strike far above the forward overflows the strike ratio past
-/// `u64::MAX`, so `up_price` returns 0 (the pos_inf limit) instead of aborting.
+/// The finite deep-OTM path evaluates rather than aborting; this default surface's
+/// resulting digital price clamps to zero.
 #[test]
-fun deep_otm_up_price_saturates_to_zero() {
+fun deep_otm_up_price_evaluates_to_zero() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     // Fresh spot == forward == 1 (a tiny forward, so a finite u64 strike can clear
@@ -300,6 +351,100 @@ fun deep_otm_up_price_saturates_to_zero() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.up_price(strike(DEEP_OTM_STRIKE)), 0);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// A one-raw-unit quotient takes the finite log-ratio path without primitive-aborting.
+#[test]
+fun smallest_nonzero_strike_ratio_still_prices_the_tail() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        MIN_NONZERO_RATIO_FORWARD,
+        MIN_NONZERO_RATIO_FORWARD,
+        1,
+        false,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
+        float!(),
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(pricer.up_price(strike(MIN_NONZERO_RATIO_STRIKE)), 0);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// Python stdlib true math gives UP(lower)=0.5618949647268344 and
+/// UP(upper)=0.5757610655414342, hence a clamped range price of exactly zero.
+/// Both finite strikes and this SVI surface satisfy the live pricing envelope.
+#[test]
+fun finite_ratio_underflow_does_not_false_certify_range() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        FINITE_TAIL_FORWARD,
+        FINITE_TAIL_FORWARD,
+        1,
+        false,
+        float!(),
+        test_constants::pricing_min_svi_sigma(),
+        float!(),
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    let lower_up = pricer.range_price_approx(
+        strike(FINITE_TAIL_LOWER_STRIKE),
+        strike(constants::pos_inf!()),
+    );
+    assert_eq!(pricer.up_price(strike(FINITE_TAIL_LOWER_STRIKE)), lower_up.magnitude());
+    test_helpers::assert_within(
+        lower_up.magnitude(),
+        FINITE_TAIL_LOWER_UP_REFERENCE,
+        lower_up.error(),
+    );
+    assert!(lower_up.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
+
+    let upper_up = pricer.range_price_approx(
+        strike(FINITE_TAIL_UPPER_STRIKE),
+        strike(constants::pos_inf!()),
+    );
+    assert_eq!(pricer.up_price(strike(FINITE_TAIL_UPPER_STRIKE)), upper_up.magnitude());
+    test_helpers::assert_within(
+        upper_up.magnitude(),
+        FINITE_TAIL_UPPER_UP_REFERENCE,
+        upper_up.error(),
+    );
+    assert!(upper_up.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
+
+    let range = pricer.range_price_approx(
+        strike(FINITE_TAIL_LOWER_STRIKE),
+        strike(FINITE_TAIL_UPPER_STRIKE),
+    );
+    assert_eq!(
+        pricer.range_price(
+            strike(FINITE_TAIL_LOWER_STRIKE),
+            strike(FINITE_TAIL_UPPER_STRIKE),
+        ),
+        range.magnitude(),
+    );
+    test_helpers::assert_within(
+        range.magnitude(),
+        FINITE_TAIL_RANGE_REFERENCE,
+        range.error(),
+    );
+    assert!(!range.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -505,7 +650,7 @@ fun surface_with_svi_sigma_above_max_aborts() {
 
 /// A surface whose forward is tiny relative to the BS spot passes the envelope
 /// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
-/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
+/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_up_price` aborts on
 /// the first finite-strike quote.
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {

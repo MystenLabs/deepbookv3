@@ -125,6 +125,38 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
     fx.finish();
 }
 
+/// The scalar APIs and certified range API evaluate the same canonical center
+/// across finite and infinite boundary shapes.
+#[test]
+fun scalar_and_certified_pricing_share_centers() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    let finite = strike(test_constants::default_live_price());
+    let neg_inf = strike(constants::neg_inf!());
+    let pos_inf = strike(constants::pos_inf!());
+    let certified_up = pricer.range_price_approx(finite, pos_inf);
+    assert_eq!(pricer.up_price(finite), certified_up.magnitude());
+    assert_eq!(pricer.range_price(finite, pos_inf), certified_up.magnitude());
+
+    let certified_below = pricer.range_price_approx(neg_inf, finite);
+    assert_eq!(pricer.range_price(neg_inf, finite), certified_below.magnitude());
+
+    let certified_whole = pricer.range_price_approx(neg_inf, pos_inf);
+    assert_eq!(pricer.range_price(neg_inf, pos_inf), certified_whole.magnitude());
+
+    let finite_range = pricer.range_price_approx(strike(STRIKE_BELOW), strike(STRIKE_ABOVE));
+    assert_eq!(
+        pricer.range_price(strike(STRIKE_BELOW), strike(STRIKE_ABOVE)),
+        finite_range.magnitude(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 #[test]
 fun whole_line_range_is_certain() {
     let mut fx = oracle_fixture::setup_oracle_default();
@@ -207,7 +239,7 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
 /// Decision-pinned: the live forward switches source exactly at the Pyth
 /// staleness boundary (`pricing::load_live_pricer`, fallback documented in-code).
 /// While Pyth is fresh — inclusive: `now − freshness_ts == max_age` — the
-/// forward is `mul(pyth_spot, basis)`; one millisecond later, with ZERO
+/// forward is `mul_down(pyth_spot, basis)`; one millisecond later, with ZERO
 /// oracle-data change, it is the stored Block Scholes forward. With a +2%
 /// diverged Pyth print the mark therefore jumps 2% discontinuously on a 1 ms
 /// clock advance — accepted behavior, pinned so any future smoothing
@@ -216,7 +248,7 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
 fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    // Block Scholes spot = forward = 100e9, so basis = div(100e9, 100e9) = 1.0
+    // Block Scholes spot = forward = 100e9, so basis = div_down(100e9, 100e9) = 1.0
     // exactly.
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     // Overwrite only the Pyth print with the diverged spot at a strictly-newer
@@ -232,7 +264,7 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     );
 
     // AT the boundary (now − 99_500 == budget): Pyth is fresh (inclusive), so
-    // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.
+    // forward = mul_down(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget);
     let pricer = fx.load_pricer_bundle(&oracle);
     assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), float!() / 2);

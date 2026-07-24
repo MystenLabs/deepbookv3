@@ -1,6 +1,6 @@
 # Liquidity and NAV
 
-The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's exact net asset value (NAV) is computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged daily flush prices and fills those requests at a single frozen mark, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability plus its rebate reserve.
+The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's net asset value (NAV) and numerical-error certificate are computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged daily flush prices those requests at one frozen bid/ask pair, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability plus its rebate reserve.
 
 For how markets, orders, and absolute ticks work, see [markets and positions](./markets-and-positions.md). For the leverage floor that drives both pricing and NAV, see [leverage and the floor](./leverage-and-floor.md). For tunable values, see [configuration](../design/configuration.md). For trust assumptions and known caveats, see [risks](../risks.md).
 
@@ -23,7 +23,7 @@ PLP is registered as a 6-decimal currency, matching DUSDC's 6 decimals. Fixed-po
 
 ## Async supply and withdraw
 
-LPs do not mint or burn PLP synchronously against a live valuation. Instead they **queue a request** that a later flush prices and fills at one pool-wide mark. This decouples the LP's transaction from the (privileged, oracle-reading) valuation, so an LP can never time their entry or exit against a self-supplied oracle snapshot.
+LPs do not mint or burn PLP synchronously against a live valuation. Instead they **queue a request** that a later flush prices against one pool-wide NAV certificate. This decouples the LP's transaction from the (privileged, oracle-reading) valuation, so an LP can never time their entry or exit against a self-supplied oracle snapshot.
 
 - **`request_supply`** escrows a DUSDC payment, records the requesting account's receive address as the fill recipient, and stores `min_plp_out`, the minimum PLP the frozen mark must mint. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
 - **`request_withdraw`** escrows PLP, records the account recipient, and stores `min_dusdc_out`, the minimum DUSDC the frozen mark must pay. It returns a queue index.
@@ -31,13 +31,13 @@ LPs do not mint or burn PLP synchronously against a live valuation. Instead they
 
 Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush fills or refunds the request, a live limit miss carries it, or the LP cancels it.
 
-## The flush: one frozen mark for both sides
+## The flush: one frozen certificate, two directional marks
 
-A daily **flush** values the whole pool once and attempts to drain both queues against that single frozen mark, filling only eligible heads. It is a transaction-local **hot potato** with a strict three-phase shape:
+A daily **flush** values the whole pool once and attempts to drain both queues against the bid/ask derived from that certificate, filling only eligible heads. It is a transaction-local **hot potato** with a strict three-phase shape:
 
 1. **`start_pool_valuation`** engages the valuation lock in `ProtocolConfig` and snapshots the set of active expiry markets into the potato (`PoolValuation`).
-2. **`value_expiry`** is called once per snapshotted market. Each call rebalances that market's cash against the pool (top up / sweep, described below), then folds the market's NAV into a running total — a settled market contributes `0`; a live market contributes its exact `current_nav`.
-3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, runs the queue drain against it, releases the lock, and consumes the potato.
+2. **`value_expiry`** is called once per snapshotted market. Each call rebalances that market's cash against the pool (top up / sweep, described below), then folds the market's NAV center and certified error into a running `Approx` — a settled market contributes exact `0`; a live market contributes `current_nav_approx`.
+3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV certificate, rejects a relative error above 1%, freezes its bid/ask over one pre-drain PLP supply, runs the queue drain, releases the lock, and consumes the potato.
 
 The potato has no abilities, so the sequence cannot be left half-finished: the only way to release the lock is to finish.
 
@@ -47,16 +47,16 @@ PLP bounds live NAV work separately from the flush itself: each active expiry is
 
 Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`), and the hot potato can be created **only** by starting one, so gating the start gates the whole flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
 
-This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. The cap-holder is trusted not to manipulate the live oracle, which is the trust that makes the single frozen mark sound.
+This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the valuation with their own oracle update. The cap-holder is trusted not to manipulate the live oracle; the numerical certificate bounds evaluation error, not oracle-timing abuse.
 
-### Pool NAV and the single mark
+### Pool NAV and the bid/ask
 
 `finish_flush` computes the LP-attributable pool NAV from the accumulated active-expiry total:
 
 ```
-gross_pool_value = idle_DUSDC + Σ active_expiry current_nav
-exclusion        = protocol_reserve_profit_share × max(0, (profit_basis_credits + Σ current_nav) − profit_basis_debits)
-pool_nav         = max(0, gross_pool_value − exclusion − pending_protocol_profit)
+gross_pool_value_approx = exact(idle_DUSDC) + Σ active_expiry current_nav_approx
+exclusion_approx        = protocol_reserve_profit_share × max(0, exact(profit_basis_credits) + Σ current_nav_approx − exact(profit_basis_debits))
+pool_nav_approx          = max(0, gross_pool_value_approx − exclusion_approx − exact(pending_protocol_profit))
 ```
 
 Both subtracted terms are protocol profit not yet sitting in the reserve, in two phases:
@@ -66,19 +66,20 @@ Both subtracted terms are protocol profit not yet sitting in the reserve, in two
 
 The two are disjoint: the moment a cut materializes it leaves `exclusion` (its profit enters `profit_basis_debits`) and, if not immediately movable, enters `pending_protocol_profit`. Incentive value is not part of this figure (incentives are out of the pool entirely).
 
-`pool_nav` and the PLP `total_supply` are snapshotted **once** and passed to the drain for both queues. This single mark prices supply and withdraw identically:
+`pool_nav_approx` is deconstructed only at this economic boundary. If its relative certificate exceeds 1%, the flush aborts before moving LP value. Otherwise the PLP `total_supply` is snapshotted **once** and both marks use it:
 
-- **Supply fill:** `shares = floor(amount × total_supply / pool_nav)`.
-- **Withdraw fill:** `payout = floor(shares × pool_nav / total_supply)`.
+- **Supply mark:** `supply_pool_value = center + error`; `shares = floor(amount × total_supply / supply_pool_value)`.
+- **Withdraw mark:** `withdraw_pool_value = center − error`; `payout = floor(shares × withdraw_pool_value / total_supply)`.
 
-There is **no band, no separate supply/withdraw pricing, and no optimistic/conservative stance.** Because the same mark must be fair in both directions, it must equal the *true* recoverable value — which it does, because each per-expiry `current_nav` is exact (see [An active expiry's exact NAV](#an-active-expirys-exact-nav)). This is the NAV-mark invariant: the supply mark must never undercount true value (or a supplier could over-mint and dilute incumbents), and a single exact mark satisfies it in both directions.
+This is a certified numerical-error spread, not the deleted configurable NAV band and not an LP fee. The supply mark is at or above true NAV, so approximation cannot let a supplier over-mint and dilute incumbents. The withdrawal mark is at or below true NAV, so approximation cannot overpay an exiting LP. A zero center produces two zero, non-executable marks; the drain refunds affected queue heads without moving value.
 
 ```mermaid
 flowchart TD
   CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
-  LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
-  EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
-  NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]
+  LOCK -->|value_expiry x N| EXP[rebalance cash, fold NAV center + error]
+  EXP -->|finish_flush| NAV[pool NAV Approx; require error <= 1 percent]
+  NAV --> MARKS[withdraw = center - error; supply = center + error]
+  MARKS --> DRAIN[drain both queues over one pre-drain total_supply]
   DRAIN --> SUP[supplies first: mint PLP into idle]
   DRAIN --> WD[then withdrawals FIFO until idle dry]
 ```
@@ -87,43 +88,43 @@ flowchart TD
 
 `lp_book::drain` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` makes that queue unbounded. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
 
-- **Supplies pass (FIFO from the head).** Each executable request whose quote satisfies `min_plp_out` mints `supply_shares(amount, total_supply, pool_nav)` PLP and joins the escrowed DUSDC into idle. A head supply whose mark or quote is non-executable — PLP price outside the executable band, zero-share output, or u64 overflow — is protocol-cancelled and refunded instead of aborting the flush; it counts against the supply budget because the queue head was processed. If the quote is executable but below `min_plp_out`, the request records a limit miss, remains queued at the head, spends one processed-budget unit, and stops the supply pass for this flush. On its third miss it expires and is refunded instead of carrying again.
-- **Withdrawals pass (FIFO until idle is dry).** Each executable request whose quote satisfies `min_dusdc_out` burns its escrowed PLP and pays `withdraw_dusdc(shares, total_supply, pool_nav)` DUSDC out of idle. A head withdrawal whose mark or quote is non-executable is protocol-cancelled and refunded, counting against the withdraw budget. If the quote is executable but below `min_dusdc_out`, the request follows the same three-miss carry-then-refund rule as supply. If the quote is valid and limit-satisfying but idle cannot cover the head request's payout, the drain **stops** without spending withdraw budget and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.
+- **Supplies pass (FIFO from the head).** Each executable request whose quote satisfies `min_plp_out` mints shares from `supply_pool_value` and joins the escrowed DUSDC into idle. A head supply whose mark or quote is non-executable — PLP price outside the executable band, zero-share output, or u64 overflow — is protocol-cancelled and refunded instead of aborting the flush; it counts against the supply budget because the queue head was processed. If the quote is executable but below `min_plp_out`, the request records a limit miss, remains queued at the head, spends one processed-budget unit, and stops the supply pass for this flush. On its third miss it expires and is refunded instead of carrying again.
+- **Withdrawals pass (FIFO until idle is dry).** Each executable request whose quote satisfies `min_dusdc_out` burns its escrowed PLP and pays DUSDC from `withdraw_pool_value` out of idle. A head withdrawal whose mark or quote is non-executable is protocol-cancelled and refunded, counting against the withdraw budget. If the quote is executable but below `min_dusdc_out`, the request follows the same three-miss carry-then-refund rule as supply. If the quote is valid and limit-satisfying but idle cannot cover the head request's payout, the drain **stops** without spending withdraw budget and carries that request and every later one to the next flush — withdrawals are never partially filled or reordered to skip a too-large head.
 
 Because supplies run before withdrawals, the DUSDC supplied this flush is available to pay this flush's withdrawals. Cash funded into expiries is not directly redeemable until it returns through rebalance or settlement, so a large exit can be bounded by idle and deferred — it cannot force-drain a live market.
 
 Fills and refunds are delivered to each recipient account through the **balance accumulator** (`send_funds`): the minted PLP, paid DUSDC, or refunded escrow accumulates against the account's receive address, and the account absorbs it lazily on its next capital operation. The flush never holds an account reference; it only needs the recipient address recorded at request time.
 
-## Full-pool NAV is exact, per expiry
+## Full-pool NAV carries one certificate
 
-The pool NAV above is just `idle + Σ current_nav`. The substance is `current_nav`, the **exact** live recoverable value of one expiry.
+The pool NAV above is exact idle accounting plus `Σ current_nav_approx`. The substance is how one expiry's complete-book valuation carries fixed-point error.
 
-### An active expiry's exact NAV
+### An active expiry's certified NAV
 
-`current_nav` is a pure read: free cash minus the exact per-order live liability, floored at zero.
+`current_nav_approx` is a pure read: exact free cash minus the complete-book live-liability certificate, floored at zero. The public `current_nav` view returns only its center.
 
 ```
-current_nav = max(0, free_cash − exact_live_liability)
+current_nav_approx = max(0, exact(free_cash) − live_liability_approx)
 ```
 
 where:
 
 - **`free_cash = cash_balance − rebate_reserve`** — the expiry's DUSDC net of the rebate it still owes.
-- **`exact_live_liability = walk_linear − correction_value`**, floored at zero, is the exact mark-to-model liability of every open order:
-  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer and caching those boundary prices in a transaction-local memo.
-  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book using the memo populated by `walk_linear`.
+- **`live_liability_approx = walk_linear − correction_value`**, floored at zero, includes every open order and carries the propagated pricing error:
+  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick once through the resolved pricer and caching its `Approx` in a transaction-local memo.
+  - **`correction_value`** is the per-order leveraged floor or liquidation correction, scanned over the active leveraged book using the same cached approximate range prices.
 
-Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The leftover after the floor is the order's recoverable equity, and `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
+Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The representation is complete over the active book. Its reference is the ideal real-number value under the contract-selected liquidation branches; the shared-boundary center can differ by fixed-point dust from an alternative sum of independently rounded per-order marks, and the `Approx` radius certifies that difference together with pricing error.
 
-`current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
+`current_nav` carries **no redundant backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every cash mutation, so `free_cash = cash_balance − rebate_reserve` is exact and an impossible broken state fails loudly. The final `max(0, free_cash − live_liability)` projection marks a valid but underwater market at zero, which is its correct limited-recourse value, never negative.
 
-> This replaces the old approximate NAV entirely. There is no longer a verified/unscanned bucket split, no aggregate uncertainty band, and no uncertainty-band withdrawal fee — those belonged to the approximate-NAV world and are gone. NAV is now the exact per-order walk, and supply/withdraw share one exact mark.
+> This does not restore the deleted heuristic approximate-NAV design. There is still no verified/unscanned bucket split, configurable uncertainty band, or uncertainty-band withdrawal fee. The current design values the complete active book, propagates only fixed-point numerical error, rejects a pool certificate above 1%, and consumes the admitted certificate as a directional bid/ask.
 
 ### Past-expiry settlement liveness
 
 `current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Settlement is a separate PTB command: the keeper inserts the exact normalized Pyth spot and calls `try_settle` before `value_expiry`. A settled market is swept off the active set and contributes `0`; an expired unsettled market moves no cash and then aborts through `current_nav` until settlement succeeds.
 
-If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
+If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no settlement-dependent center from which to derive a solvency-safe certificate or either side of the bid/ask. Substituting a synthetic contribution could either dilute incumbents on supply or overpay withdrawals.
 
 ## Pool ↔ expiry cash flow
 

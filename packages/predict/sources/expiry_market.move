@@ -29,7 +29,7 @@ use deepbook_predict::{
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{approx::{Self, Approx}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -71,9 +71,9 @@ public struct ExpiryMarket has key {
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
-/// `quantity` is the exact requested quantity or the conservatively budget-sized
-/// fill. `trading_fee` is the post-stake-discount fee before sponsor subsidy, and
-/// `all_in_cost` is the resulting account withdrawal:
+/// `quantity` is the exact requested quantity or the largest lot-rounded fill
+/// whose net premium fits the budget. `trading_fee` is the post-stake-discount
+/// fee before sponsor subsidy, and `all_in_cost` is the resulting account withdrawal:
 /// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
 public struct MintQuote has copy, drop {
     quantity: u64,
@@ -237,11 +237,18 @@ public fun load_live_pricer(
 /// `Pricer`; an expired but unsettled market cannot be valued through this path.
 /// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
+    market.current_nav_approx(pricer).magnitude()
+}
+
+/// Return live marked NAV with its certified numerical error retained for pool
+/// valuation. The public `current_nav` is the value-only read wrapper.
+public(package) fun current_nav_approx(market: &ExpiryMarket, pricer: &Pricer): Approx {
     market.assert_pricer_bound(pricer);
-    let liability = market.strike_exposure.exact_live_liability(pricer);
+    let liability = market.strike_exposure.marked_live_liability(pricer);
     // Marked liability and free cash are computed through different rounded
     // aggregates; negative marked NAV is represented as zero.
-    market.cash.free_cash().saturating_sub(liability)
+    let cash = approx::exact_u64(market.cash.free_cash());
+    cash.sub(&liability).clamp_nonnegative()
 }
 
 /// Return one order's close value before fees. Liquidated or currently
@@ -265,11 +272,11 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 
 /// Quote the all-in cost of a mint request for an anonymous taker (no
 /// stake discount, no builder code) without mutating any market state.
-/// Exact-quantity mode uses `min_quantity`; budget mode conservatively sizes a
-/// lot-rounded fill under `max_premium`. The quote applies live-mint and admission
-/// gates but does not preflight account balance, slippage caps, or exposure-index
-/// capacity. Its penalty uses the current pre-update EWMA state. Public for SDK
-/// and devInspect pre-trade pricing.
+/// Exact-quantity mode uses `min_quantity`; budget mode sizes the largest
+/// lot-rounded fill under `max_premium`. The quote applies live-mint and
+/// admission gates but does not preflight account balance, slippage caps, or
+/// exposure-index capacity. Its penalty uses the current pre-update EWMA state.
+/// Public for SDK and devInspect pre-trade pricing.
 public fun quote_mint(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -453,9 +460,8 @@ public fun mint_exact_quantity(
     )
 }
 
-/// Mint a conservatively sized lot-rounded position whose net premium does not
-/// exceed `max_premium`. The result may be one lot below the largest fitting
-/// quantity and must meet `min_quantity`.
+/// Mint the largest lot-rounded position whose net premium does not exceed
+/// `max_premium`. The result must meet `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
 /// `max_premium`. The sizing budget is first capped to the account's available
@@ -817,19 +823,13 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
         return balance::zero()
     };
     let payout_liability = market.payout_liability();
-    let released_cash = market.cash.release_surplus(amount, payout_liability);
-    market.assert_cash_backing();
-    released_cash
+    market.cash.release_surplus(amount, payout_liability)
 }
 
 /// Release settled cash above payout liability and unresolved rebate reserve.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
-    let reserved_cash = market.cash.required_cash(settled_liability);
-    market.cash.assert_backing(settled_liability);
-
-    let returned_cash_amount = market.cash.balance() - reserved_cash;
-    market.release_pool_cash(returned_cash_amount)
+    market.cash.release_all_surplus(settled_liability)
 }
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
@@ -997,7 +997,7 @@ fun compute_mint_quote(
 }
 
 fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
-    math::mul(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
+    math::mul_down(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
         .fee_incentive_balance
         .value())
 }
@@ -1289,8 +1289,8 @@ fun ewma_penalty(
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
-        math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
-            math::mul(quantity, constants::max_builder_fee_rate!()),
+        math::mul_down(fee_amount, constants::builder_fee_multiplier!()).min(
+            math::mul_down(quantity, constants::max_builder_fee_rate!()),
         )
     } else {
         0

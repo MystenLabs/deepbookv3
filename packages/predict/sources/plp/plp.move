@@ -28,7 +28,7 @@ use deepbook_predict::{
     vault_events
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{approx::{Self, Approx}, i64, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -55,6 +55,10 @@ const EBelowMinBootstrapLiquidity: u64 = 6;
 const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
+const ENavTooImprecise: u64 = 10;
+
+/// Relative numerical-error ceiling for the frozen pool NAV mark: 1% at 1e9 scale.
+macro fun max_nav_deviation(): u64 { 10_000_000 }
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -89,8 +93,8 @@ public struct PoolValuation {
     expected_expiry_markets: vector<ID>,
     /// Markets valued so far this flow; folded against `expected` at finish.
     valued_expiry_markets: vector<ID>,
-    /// Running Σ of each valued market's NAV (settled markets contribute 0).
-    total_nav: u64,
+    /// Running Σ of each valued market's NAV (settled markets contribute exact 0).
+    total_nav: Approx,
 }
 
 // === Package Initializer ===
@@ -242,7 +246,7 @@ public fun value_expiry(
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     let nav = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
-        0
+        approx::exact_u64(0)
     } else {
         let pricer = market.load_live_pricer(
             config,
@@ -253,10 +257,10 @@ public fun value_expiry(
             bs_svi,
             clock,
         );
-        market.current_nav(&pricer)
+        market.current_nav_approx(&pricer)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
-    valuation.total_nav = valuation.total_nav + nav;
+    valuation.total_nav = valuation.total_nav.add(&nav);
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -290,20 +294,27 @@ public fun finish_flush(
     let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
-    let pool_nav = lp_pool_value(
+    let pool_nav = lp_pool_value_approx(
         vault,
         config.protocol_reserve_profit_share(),
-        total_nav,
+        &total_nav,
     );
+    let active_market_nav = total_nav.magnitude();
+    let active_market_nav_error = total_nav.error();
+    let pool_nav_center = pool_nav.magnitude();
+    let (withdraw_pool_value, supply_pool_value) = pool_nav_bid_ask(&pool_nav);
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Snapshot the share price once (frozen pair), drain both queues against it, then
-    // release the valuation lock at the very end. The flush IS the full-pool
-    // valuation, so the single FlushExecuted event carries the priced mark and its
-    // idle + active-NAV breakdown.
+    // Deconstruct Approx exactly once at the economic boundary. Suppliers pay the
+    // high pool value and withdrawals receive the low pool value, both over the
+    // same frozen pre-drain supply.
     let vault_id = vault.id();
-    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
+    let mark = lp_book::new_flush_mark(
+        withdraw_pool_value,
+        supply_pool_value,
+        total_supply,
+    );
     let drain_summary = vault
         .lp
         .drain(
@@ -319,9 +330,11 @@ public fun finish_flush(
     vault_events::emit_flush_executed(
         vault_id,
         ctx.epoch(),
-        pool_nav,
+        withdraw_pool_value,
+        supply_pool_value,
         total_supply,
-        total_nav,
+        active_market_nav,
+        active_market_nav_error,
         market_count,
         idle_balance_before,
         drain_summary.supplies_filled(),
@@ -330,7 +343,7 @@ public fun finish_flush(
         vault.expiry_accounting.idle_balance(),
         total_supply_after,
     );
-    pool_nav
+    pool_nav_center
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the new
@@ -662,6 +675,22 @@ public(package) fun register_expiry(
         .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
 }
 
+/// Deconstruct one nonnegative pool-NAV certificate into the protocol-favored
+/// withdrawal bid and supply ask. A zero center remains a live zero mark; every
+/// nonzero mark must satisfy the relative precision ceiling and have a
+/// representable upper endpoint before it can move LP value.
+public(package) fun pool_nav_bid_ask(pool_nav: &Approx): (u64, u64) {
+    let center = pool_nav.magnitude();
+    if (center == 0) return (0, 0);
+    let error = pool_nav.error();
+    assert!(
+        pool_nav.true_relative_deviation_within(max_nav_deviation!())
+            && error <= std::u64::max_value!() - center,
+        ENavTooImprecise,
+    );
+    (center - error, center + error)
+}
+
 // === Private Functions ===
 
 fun claim_trading_loss_rebate_internal(
@@ -719,28 +748,68 @@ fun claim_trading_loss_rebate_internal(
 /// deployed elsewhere) has left that debit-basis exclusion, so the carried
 /// `pending_protocol_profit` is subtracted separately to keep it out of LP value
 /// until it is drained into the reserve.
-fun lp_pool_value(
+fun lp_pool_value_approx(
+    vault: &PoolVault,
+    protocol_reserve_profit_share: u64,
+    active_expiry_value: &Approx,
+): Approx {
+    let center = active_expiry_value.magnitude();
+    let error = active_expiry_value.error();
+    let pool_center = lp_pool_value_at_active_nav(
+        vault,
+        protocol_reserve_profit_share,
+        center,
+    );
+    if (error > std::u64::max_value!() - center) {
+        return approx::from_certified_parts(i64::from_u64(pool_center), std::u64::max_value!())
+    };
+    let upper_active_expiry_value = center + error;
+    let max = std::u64::max_value!();
+    if (
+        upper_active_expiry_value > max - vault.expiry_accounting.idle_balance()
+            || upper_active_expiry_value > max - vault.expiry_accounting.profit_basis_credits()
+    ) {
+        return approx::from_certified_parts(i64::from_u64(pool_center), max)
+    };
+
+    // Active NAV is the one uncertain input on both sides of the protocol-profit
+    // exclusion. Evaluate that shared input at its certified endpoints instead of
+    // treating the two appearances as independent balls and double-counting its
+    // radius. The scalar pool-value function is monotone because the configured
+    // protocol share is at most 1.
+    let lower = lp_pool_value_at_active_nav(
+        vault,
+        protocol_reserve_profit_share,
+        center.saturating_sub(error),
+    );
+    let upper = lp_pool_value_at_active_nav(
+        vault,
+        protocol_reserve_profit_share,
+        upper_active_expiry_value,
+    );
+    let pool_error = (pool_center - lower).max(upper - pool_center);
+    approx::from_certified_parts(i64::from_u64(pool_center), pool_error)
+}
+
+fun lp_pool_value_at_active_nav(
     vault: &PoolVault,
     protocol_reserve_profit_share: u64,
     active_expiry_value: u64,
 ): u64 {
-    let idle_balance = vault.expiry_accounting.idle_balance();
-    let profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
-    let profit_basis_debits = vault.expiry_accounting.profit_basis_debits();
-    let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
-    let gross_pool_value = idle_balance + active_expiry_value;
-    let aggregate_credits = profit_basis_credits + active_expiry_value;
-    let exclusion = math::mul(
-        aggregate_credits.saturating_sub(profit_basis_debits),
-        protocol_reserve_profit_share,
-    );
+    let gross_pool_value = vault.expiry_accounting.idle_balance() + active_expiry_value;
+    let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
+    let excess_credits = aggregate_credits.saturating_sub(vault
+        .expiry_accounting
+        .profit_basis_debits());
+    let exclusion = math::mul_down(excess_credits, protocol_reserve_profit_share);
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
-    // exceed gross. LP value can never be negative, so floor it at 0 to keep the
-    // subtraction from underflow-aborting. A 0/dust pool NAV makes non-executable
-    // LP queue heads refund inside `lp_book::drain`, rather than aborting the flush.
-    gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
+    // exceed gross. LP value can never be negative, so floor it at 0. A 0/dust
+    // pool NAV makes non-executable queue heads refund inside `lp_book::drain`.
+    gross_pool_value
+        .saturating_sub(exclusion)
+        .saturating_sub(vault.expiry_accounting.pending_protocol_profit())
 }
 
 /// Sweep a settled market, rebalance a live market, or leave an expired unsettled
@@ -831,7 +900,7 @@ fun sweep_live_expiry_surplus(
 
 fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
     let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
-    let requested_allocation = math::mul(
+    let requested_allocation = math::mul_down(
         max_expiry_allocation,
         constants::fee_incentive_live_target_rate!(),
     )
@@ -841,14 +910,7 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
 
     let (allocation, allocated_after) = vault
         .expiry_accounting
-        .record_fee_incentives_allocated_up_to(
-            expiry_market_id,
-            math::mul(
-                max_expiry_allocation,
-                constants::fee_incentive_lifetime_cap_rate!(),
-            ),
-            requested_allocation,
-        );
+        .record_fee_incentives_allocated_up_to(expiry_market_id, requested_allocation);
     if (allocation == 0) return;
 
     let incentives = vault.fee_incentive_reserve.split(allocation);
@@ -871,7 +933,7 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
 /// returns the excess over target.
 fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
     let required_cash = market.required_cash();
-    let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
+    let target_buffer = math::mul_down(required_cash, constants::expiry_rebalance_pct!());
     let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
     let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
         initial_expiry_cash,
@@ -930,7 +992,7 @@ fun materialize_expiry_profit(
     if (profit == 0) {
         return
     };
-    let protocol_profit = math::mul(profit, config.protocol_reserve_profit_share());
+    let protocol_profit = math::mul_down(profit, config.protocol_reserve_profit_share());
     let lp_profit = profit - protocol_profit;
     let realized = vault.expiry_accounting.realize_protocol_profit(protocol_profit);
     vault.protocol_reserve_balance.join(realized);
@@ -954,7 +1016,7 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
         pool_vault_id: vault.id(),
         expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
-        total_nav: 0,
+        total_nav: approx::exact_u64(0),
     }
 }
 

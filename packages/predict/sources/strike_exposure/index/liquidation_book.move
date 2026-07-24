@@ -9,8 +9,8 @@
 /// same bounded active set supplies the floor-correction term for pool valuation.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo};
-use fixed_math::math;
+use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo, strike_exposure_config};
+use fixed_math::approx::{Self, Approx};
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -72,25 +72,29 @@ public(package) fun correction_value(
     book: &LiquidationBook,
     memo: &PriceMemo,
     liquidation_ltv: u64,
-): u64 {
-    let mut correction = 0;
+): Approx {
+    let mut correction = approx::exact_u64(0);
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
-        let range_value = math::mul(
-            memo.cached_range_price(order.lower_tick(), order.higher_tick()),
-            order.quantity(),
-        );
+        let range_price = memo.cached_range_price(order.lower_tick(), order.higher_tick());
+        let quantity = approx::exact_u64(order.quantity());
+        let range_value = range_price.mul_scaled(&quantity);
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.
-        let cap = if (range_value <= math::div(order.floor_shares(), liquidation_ltv)) {
+        let is_liquidatable = strike_exposure_config::is_liquidatable(
+            range_value.magnitude(),
+            order.floor_shares(),
+            liquidation_ltv,
+        );
+        let cap = if (is_liquidatable) {
             range_value
         } else {
-            range_value.min(order.floor_shares())
+            range_value.clamp_upper(order.floor_shares())
         };
-        correction = correction + cap;
+        correction = correction.add(&cap);
         cursor = book.next_cursor(scan);
     };
     correction

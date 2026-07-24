@@ -114,7 +114,8 @@ loss estimate.
 evaluate a source-level butterfly/monotonicity admission check. The active-book
 price-memo guard prevents the known NAV overstatement by aborting valuation on a
 non-monotone active boundary set, so the completed-valuation-discrepancy risk is
-closed (only P-13 now describes a live valuation gap). Because the guard
+closed. The distinct shared-boundary rounding residual is certified under RP-21.
+Because the guard
 aborts rather than reprices, and the pool flush values every active market in one
 transaction, an admitted non-monotone surface now stalls that flush until the
 surface is replaced — the residual is a surface-quality admission gap plus this
@@ -122,63 +123,6 @@ flush-liveness cost, not a mispriced NAV. Surface quality remains a trusted inpu
 for single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
 review; quantitative framing corrected 2026-07-11; active-book guard added by
 DBU-548.)
-
-### P-13: Boundary aggregation can understate positive liability by one raw unit
-
-**Severity:** Low.
-
-The payout tree prices and floors each signed boundary contribution before
-netting the aggregate, while an individual order floors its range probability
-before multiplying by quantity. Those operation orders are not bit-equivalent.
-On a normal monotone constant-variance surface, two one-lot ranges sharing an
-upper strike price individually at `463 + 410 = 873` raw DUSDC units, while
-`strike_payout_tree::walk_linear` produces `9583 + 9530 - 18241 = 872`. The
-aggregate live liability is therefore one raw unit below the sum of the two
-order liabilities, and `current_nav` is one raw unit high. This is distinct from
-P-11's non-monotone-surface netting failure.
-
-**Action:** Decide whether live liability must reproduce per-order rounding. If
-yes, preserve per-range rounded terms in the valuation representation. If not,
-bound and accept the aggregation residual in the rounding policy, add a
-regression covering both directions, and narrow every exact-NAV claim to the
-accepted bound. (2026-07-17 clean-room gap audit)
-
-### P-14: Short-dated up_price breaches the 0.1% price-deviation bound — variance increment floored to 1e9
-
-**Severity:** Medium.
-
-The `up_price` on short-dated markets breaches the ratified 0.1% price-deviation
-bound (`response-policies.md § Pricing and valuation deviation bounds`).
-`pricing::compute_nd2` forms the SVI variance increment as `math::mul(b, inner)`
-= `(b · inner) / 1e9`, truncating the sub-unit fraction to an integer 1e9 unit.
-At the low total variance of short-dated markets that fraction is a material
-share of total variance, so `total_var` is biased systematically downward
-(truncation toward zero, not zero-mean noise). `up_price` feeds entry price, the
-live NAV mark, and liquidation thresholds, so the breach is a systematic mark
-bias, not noise.
-
-Measured against a 30-digit reference over a moneyness grid on real Block Scholes
-SVI surfaces (1c–99c band): one-minute worst-case relative error **1.12%**
-(absolute 5.15e-4); five-minute (the dominant published cadence) worst-case
-**3.28%** (absolute 2.09e-3); daily below 0.27%. One-minute and five-minute
-exceed the 0.1% ceiling; daily is within it. A worst-case one-minute surface at
-`k = -0.0005` discards 0.806 of 51.806 raw variance-increment units (1.56%):
-`up_price` 0.89080 versus 0.89028 exact.
-
-The breach went undetected because **the deviation bound is only enforced where
-the pricing reference has scenarios** — the current dataset is a single
-moderate-variance market (`sqrt(w) ≈ 0.008–0.017`, `w ≈ 1e-4`), roughly five
-orders of magnitude above the short-dated regime (`w ≈ 1e-8`). Reachable on any
-deployed one-minute or five-minute cadence (`CadenceConfig.window_size > 0`); the
-near-expiry no-leverage gate (P-2, O-1) caps admission leverage but does not
-disable pricing.
-
-**Action:** two parts. (1) Carry the variance, `sqrt(w)`, and `d2` computation at
-u128 / 1e18 precision instead of flooring the `b · inner` product to 1e9, which
-brings short-dated error back under the 0.1% bound. (2) Add short-dated scenarios
-to the generated pricing reference so the bound is actually enforced at `w ≈
-1e-8` — without them the fix has no regression guard where the bound is tightest
-(`1/sqrt(w)` conditioning).
 
 ## Access and Governance
 

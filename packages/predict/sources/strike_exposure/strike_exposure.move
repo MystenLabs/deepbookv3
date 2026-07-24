@@ -20,10 +20,10 @@ use deepbook_predict::{
     order_events,
     pricing::{Self, Pricer},
     range_codec,
-    strike_exposure_config::StrikeExposureConfig,
+    strike_exposure_config::{Self, StrikeExposureConfig},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use fixed_math::math;
+use fixed_math::{approx::Approx, math};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
@@ -34,6 +34,11 @@ const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EWrongCloseOutcome: u64 = 6;
 const EPricerRequired: u64 = 7;
+const EPriceTooImprecise: u64 = 8;
+
+/// The protocol invariant on produced contract prices: a quoted probability may
+/// deviate from its true value by at most 0.1% (1e6 at 1e9 scale).
+macro fun max_contract_price_deviation(): u64 { 1_000_000 }
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -202,27 +207,28 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
         let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
         // The point max is a subset-sum of the same non-negative per-order net payouts.
         let gap = total_net_payout - max_net_payout;
-        max_net_payout + math::mul(exposure.config.backing_buffer_lambda(), gap)
+        max_net_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
     }
 }
 
-/// Return the live marked liability as the aggregate boundary-linear term minus
-/// the leveraged floor correction. A knocked-out order (gross at or below
-/// `floor_shares / liquidation_ltv`) is marked at zero live liability, so the
-/// flush mark never prices a claim above what the protocol honors once the
-/// ambient sweep liquidates it; every other order contributes its positive
-/// `range_value - floor_shares`. Boundary aggregation and per-order correction
-/// round at different points, so the subtraction saturates at zero.
-public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
+/// Return the live marked liability as the signed aggregate boundary-linear term
+/// minus the nonnegative leveraged floor correction, projected to nonnegative
+/// once. A knocked-out order (gross at or below `floor_shares / liquidation_ltv`)
+/// is marked at zero live liability, so the flush mark never prices a claim above
+/// what the protocol honors once the ambient sweep liquidates it; every other
+/// order contributes its positive `range_value - floor_shares`. Boundary
+/// aggregation and per-order correction round at different points, so the final
+/// subtraction clamps at zero.
+public(package) fun marked_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Approx {
     let mut memo = pricing::new_price_memo();
-    let linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
+    let signed_boundary_linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
     let correction = exposure
         .liquidation
         .correction_value(
             &memo,
             exposure.config.liquidation_ltv(),
         );
-    linear.saturating_sub(correction)
+    signed_boundary_linear.sub(&correction).clamp_nonnegative()
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.
@@ -296,8 +302,8 @@ public(package) fun is_active_order(exposure: &StrikeExposure, order: &Order): b
 
 /// Price a range, choose quantity under the requested bias, and run mint
 /// admission. Exact-quantity mode uses `min_quantity`. Budget mode uses a
-/// conservative lot-rounded premium search, then requires the result to meet
-/// `min_quantity`.
+/// lot-rounded search over the same premium relation as admission, then requires
+/// the result to meet `min_quantity`.
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -323,16 +329,17 @@ public(package) fun quote_mint_terms(
                 leverage,
                 time_to_expiry_ms,
             );
-        // The single-floor probe overstates the admitted two-floor premium by at
-        // most one unit. The configured probability floor keeps that difference
-        // below one lot, so sizing never exceeds the budget and may undershoot the
-        // largest admissible quantity by at most one lot.
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
-            if (math::mul_div_down(entry_probability, mid * lot, leverage) <= max_premium) {
+            let entry_value = math::mul_down(entry_probability, mid * lot);
+            let net_premium = strike_exposure_config::net_premium_from_entry_value(
+                entry_value,
+                leverage,
+            );
+            if (net_premium <= max_premium) {
                 lo = mid
             } else {
                 hi = mid - 1
@@ -423,12 +430,13 @@ public(package) fun quote_close(
     // Price the range exactly once; the knock-out test and the live terms both
     // read this one observation.
     let range_probability = exposure.order_range_price(pricer.borrow(), order);
-    let gross_value = math::mul(range_probability, order.quantity());
-    // Leveraged only: a 1x order has a zero floor, so the threshold test would
-    // spuriously classify a currently-worthless 1x order as liquidatable.
-    if (
-        order.is_leveraged() && exposure.under_liquidation_floor(gross_value, order.floor_shares())
-    ) {
+    let gross_value = math::mul_down(range_probability, order.quantity());
+    let is_liquidatable = strike_exposure_config::is_liquidatable(
+        gross_value,
+        order.floor_shares(),
+        exposure.config.liquidation_ltv(),
+    );
+    if (is_liquidatable) {
         return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
     exposure.close_terms(
@@ -551,8 +559,8 @@ public(package) fun new(
 }
 
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
-/// validation. The single pricing-prefix orchestration shared by every mint
-/// quote/terms path.
+/// validation, and enforce the contract-price precision invariant. The single
+/// pricing-prefix orchestration shared by every mint quote/terms path.
 fun admitted_entry_probability(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -562,7 +570,14 @@ fun admitted_entry_probability(
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
     let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
     let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
-    pricer.range_price(lower, higher)
+    let price = pricer.range_price_approx(lower, higher);
+    // Contract prices cannot deviate from true by more than 0.1%; an over-wide
+    // certified error aborts the quote rather than admitting an imprecise price.
+    assert!(
+        price.true_relative_deviation_within(max_contract_price_deviation!()),
+        EPriceTooImprecise,
+    );
+    price.magnitude()
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
@@ -632,7 +647,7 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
     );
     let remove_floor_shares = old_floor_shares - remaining_floor_shares;
 
-    let gross_redeem_amount = math::mul(range_probability, close_quantity);
+    let gross_redeem_amount = math::mul_down(range_probability, close_quantity);
     // Clamp, don't abort: a full close cannot saturate (a non-knocked-out order's
     // gross value strictly exceeds its full floor), but a partial close's slice
     // can owe up to one unit of round-down dust more floor than its own gross
@@ -697,7 +712,7 @@ fun process_live_close(
     option::some(replacement_order)
 }
 
-/// Liquidate (knock out) `order` when `under_liquidation_floor` holds.
+/// Liquidate (knock out) `order` when the canonical liquidation predicate holds.
 fun liquidate_order_if_under_floor(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -705,7 +720,12 @@ fun liquidate_order_if_under_floor(
     liquidated_at_ms: u64,
 ): bool {
     let gross_value = exposure.gross_order_value(pricer, order);
-    if (!exposure.under_liquidation_floor(gross_value, order.floor_shares())) return false;
+    let is_liquidatable = strike_exposure_config::is_liquidatable(
+        gross_value,
+        order.floor_shares(),
+        exposure.config.liquidation_ltv(),
+    );
+    if (!is_liquidatable) return false;
 
     exposure.apply_liquidation(pricer, order, gross_value, liquidated_at_ms);
     true
@@ -716,8 +736,8 @@ fun liquidate_order_if_under_floor(
 /// event atomically with the removal. Shared by the close flow
 /// (`process_close`) and the ambient sweep, so the book, tree, and event can
 /// never diverge. Callers own the liquidation decision; only leveraged orders
-/// reach here — the classifier by its explicit guard, the sweep because the
-/// active index holds exactly the leveraged orders (1x inserts are no-ops).
+/// reach here — the classifier uses the canonical zero-floor guard, and the
+/// sweep's active index holds exactly the leveraged orders (1x inserts are no-ops).
 fun apply_liquidation(
     exposure: &mut StrikeExposure,
     pricer: &Pricer,
@@ -746,13 +766,7 @@ fun apply_liquidation(
 }
 
 fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    math::mul(exposure.order_range_price(pricer, order), order.quantity())
-}
-
-/// Return whether live gross value is at or below the configured multiple of the
-/// static floor. The reserve independently backs the order's full net payout.
-fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_amount: u64): bool {
-    gross_value <= math::div(floor_amount, exposure.config.liquidation_ltv())
+    math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {

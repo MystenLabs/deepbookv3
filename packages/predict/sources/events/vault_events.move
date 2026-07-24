@@ -158,18 +158,21 @@ public struct WithdrawFilled has copy, drop, store {
     requests_pending_after: u64,
 }
 
-/// Emitted once after a flush drains both queues. `pool_value / total_supply` is
-/// the frozen pre-drain mark used by every fill in the flush.
+/// Emitted once after a flush drains both queues at one frozen pre-drain
+/// bid/ask mark over `total_supply`.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
-    /// LP-attributable pool NAV every fill was priced at: idle plus
-    /// `active_market_nav`, excluding unrealized and pending protocol profit.
-    pool_value: u64,
-    /// PLP supply in the frozen pre-drain mark used to price every fill.
+    /// Lower certified pool value used for withdrawal payouts.
+    withdraw_pool_value: u64,
+    /// Upper certified pool value used for supply share issuance.
+    supply_pool_value: u64,
+    /// PLP supply in the frozen pre-drain mark pair used to price every fill.
     total_supply: u64,
     /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
+    /// Certified absolute error on `active_market_nav`.
+    active_market_nav_error: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
     /// Idle DUSDC held by the pool at valuation time, before the drain.
@@ -216,6 +219,21 @@ public struct FeeIncentivesReturned has copy, drop, store {
     expiry_market_id: ID,
     amount: u64,
     pool_reserve_after: u64,
+}
+
+#[test_only]
+public fun flush_withdraw_pool_value(event: &FlushExecuted): u64 {
+    event.withdraw_pool_value
+}
+
+#[test_only]
+public fun flush_supply_pool_value(event: &FlushExecuted): u64 {
+    event.supply_pool_value
+}
+
+#[test_only]
+public fun flush_active_market_nav_error(event: &FlushExecuted): u64 {
+    event.active_market_nav_error
 }
 
 // === Public-Package Functions ===
@@ -447,9 +465,11 @@ public(package) fun emit_withdraw_filled(
 public(package) fun emit_flush_executed(
     pool_vault_id: ID,
     epoch: u64,
-    pool_value: u64,
+    withdraw_pool_value: u64,
+    supply_pool_value: u64,
     total_supply: u64,
     active_market_nav: u64,
+    active_market_nav_error: u64,
     market_count: u64,
     idle_balance_before: u64,
     supplies_filled: u64,
@@ -461,9 +481,11 @@ public(package) fun emit_flush_executed(
     event::emit(FlushExecuted {
         pool_vault_id,
         epoch,
-        pool_value,
+        withdraw_pool_value,
+        supply_pool_value,
         total_supply,
         active_market_nav,
+        active_market_nav_error,
         market_count,
         idle_balance_before,
         supplies_filled,

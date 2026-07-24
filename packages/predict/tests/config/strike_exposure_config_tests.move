@@ -7,7 +7,7 @@
 /// probability guard on the template setters). Leaf math guard:
 /// `EInvalidFeeProbability` — unreachable
 /// from the public mint surface because `pricing` quotes come from
-/// `compute_nd2`'s explicitly clamped digital, so it is exercised by a direct
+/// `compute_up_price`'s explicitly clamped digital, so it is exercised by a direct
 /// package-internal `trading_fee` call (rule 4). Mint-admission policy is
 /// exercised through `assert_mint_admission`, which is the package boundary the
 /// real trade flow calls after it has loaded the live price.
@@ -47,9 +47,19 @@ const LEVERAGE_ONE_POINT_FIVE_X: u64 = 1_500_000_000;
 /// p = 0.5 at 1x: net premium is the full entry value 500_000_000, floor 0.
 const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
 /// p = 0.1, 1.5x, quantity 1e9: entry value 100_000_000; net premium
-/// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares the 33_333_334 remainder.
-const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_666;
-const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_334;
+/// ceil(100_000_000 / 1.5) = 66_666_667; floor shares are the 33_333_333
+/// remainder.
+const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_667;
+const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_333;
+/// p = 0.5, quantity 2_010_000: entry value 1_005_000. At the smallest
+/// leverage above 1x, the financed floor is less than one raw unit and rounds
+/// to zero, so the full entry value is the premium.
+const NEAR_ONE_X_QUANTITY: u64 = 2_010_000;
+const NEAR_ONE_X_NET_PREMIUM: u64 = 1_005_000;
+const LIQUIDATION_BOUNDARY_FLOOR: u64 = 9_950;
+const LIQUIDATION_BOUNDARY_GROSS: u64 = 11_705;
+const GROSS_ABOVE_LIQUIDATION_BOUNDARY: u64 = 11_706;
+const ZERO_GROSS_VALUE: u64 = 0;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -177,6 +187,26 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
     destroy(config);
 }
 
+#[test]
+fun trading_fee_rounds_final_non_integral_charge_up() {
+    let mut config = strike_exposure_config::new();
+    // At p = 0.5, base_fee = 1 makes the raw Bernoulli rate round to zero,
+    // so this non-integral min fee binds. Its exact quantity charge is
+    // 5_000_009 * 1_000_010_000 / 1e9 = 5_000_059.00009.
+    config.set_base_fee(1);
+    config.set_min_fee(5_000_009);
+    assert_eq!(
+        config.trading_fee(
+            test_constants::default_expiry_ms(),
+            ENTRY_PROBABILITY_HALF,
+            1_000_010_000,
+            test_constants::now_ms(),
+        ),
+        5_000_060,
+    );
+    destroy(config);
+}
+
 // === EEntryProbabilityOutOfBounds (mint admission) ===
 
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
@@ -263,6 +293,21 @@ fun mint_admission_half_probability_two_and_half_x_succeeds() {
     );
     assert_eq!(admission.net_premium(), HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM);
     assert_eq!(admission.floor_shares(), HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES);
+    destroy(config);
+}
+
+#[test]
+fun mint_admission_near_one_x_rounds_sub_atom_floor_to_zero() {
+    let config = strike_exposure_config::new();
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        NEAR_ONE_X_QUANTITY,
+        LEVERAGE_JUST_ABOVE_ONE_X,
+        FAR_FROM_EXPIRY_MS,
+    );
+    assert_eq!(admission.net_premium(), NEAR_ONE_X_NET_PREMIUM);
+    assert_eq!(admission.floor_shares(), UNLEVERAGED_FLOOR_SHARES);
     destroy(config);
 }
 
@@ -390,8 +435,9 @@ fun no_leverage_window_zero_disables_block() {
 }
 
 // Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
-// is admitted far from expiry. Entry value 100_000_000; net premium
-// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares 100_000_000 - 66_666_666.
+// is admitted far from expiry. Entry value 100_000_000; the financed floor is
+// floor(100_000_000 / 3) = 33_333_333, so the complementary net premium is
+// 66_666_667.
 #[test]
 fun low_probability_one_point_five_x_admitted_far_from_expiry() {
     let config = strike_exposure_config::new();
@@ -421,6 +467,37 @@ fun no_leverage_window_overrides_low_probability_curve() {
         AT_EXPIRY_MS,
     );
     abort 999
+}
+
+// === Canonical liquidation predicate ===
+
+#[test]
+fun liquidation_predicate_owns_zero_floor_and_exact_boundary() {
+    let liquidation_ltv = config_constants::default_liquidation_ltv!();
+
+    // With LTV 0.85, ceil(11_705 * 0.85) = 9_950, while
+    // ceil(11_706 * 0.85) = 9_951.
+    assert!(
+        !strike_exposure_config::is_liquidatable(
+            ZERO_GROSS_VALUE,
+            UNLEVERAGED_FLOOR_SHARES,
+            liquidation_ltv,
+        ),
+    );
+    assert!(
+        strike_exposure_config::is_liquidatable(
+            LIQUIDATION_BOUNDARY_GROSS,
+            LIQUIDATION_BOUNDARY_FLOOR,
+            liquidation_ltv,
+        ),
+    );
+    assert!(
+        !strike_exposure_config::is_liquidatable(
+            GROSS_ABOVE_LIQUIDATION_BOUNDARY,
+            LIQUIDATION_BOUNDARY_FLOOR,
+            liquidation_ltv,
+        ),
+    );
 }
 
 // === EOrderBelowLiquidationThreshold (mint admission) ===

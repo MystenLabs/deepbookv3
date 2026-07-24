@@ -69,7 +69,7 @@ fun disjoint_range_book_uses_default_gap_buffer() {
 
     // M = 1e9, Σ = 2e9, λ(default) * gap = 250e6, reserve = 1.25e9.
     assert_eq!(
-        math::mul(config_constants::default_backing_buffer_lambda!(), DISJOINT_GAP),
+        math::mul_down(config_constants::default_backing_buffer_lambda!(), DISJOINT_GAP),
         QUANTITY / 4,
     );
     assert_eq!(helpers::market(&market).payout_liability(), disjoint_buffered_reserve());
@@ -88,7 +88,7 @@ fun overlapping_range_book_has_zero_gap() {
     let _second = mint_down(&mut fx, &mut market, &mut account);
 
     // Both orders win at the same settlement points: M = Σ = 2e9, gap = 0.
-    assert_eq!(math::mul(config_constants::default_backing_buffer_lambda!(), 0), 0);
+    assert_eq!(math::mul_down(config_constants::default_backing_buffer_lambda!(), 0), 0);
     assert_eq!(helpers::market(&market).payout_liability(), OVERLAPPING_RESERVE);
 
     cleanup(fx, market, account);
@@ -107,9 +107,9 @@ fun lambda_one_is_summed_backing_identity() {
     let _down = mint_down(&mut fx, &mut market, &mut account);
     let _up = mint_up(&mut fx, &mut market, &mut account);
 
-    // λ = 1e9 makes mul(λ, gap) exactly gap under the fixed-point identity.
+    // λ = 1e9 makes mul_down(λ, gap) exactly gap under the fixed-point identity.
     assert_eq!(helpers::market(&market).backing_buffer_lambda(), float!());
-    assert_eq!(math::mul(float!(), DISJOINT_GAP), DISJOINT_GAP);
+    assert_eq!(math::mul_down(float!(), DISJOINT_GAP), DISJOINT_GAP);
     assert_eq!(helpers::market(&market).payout_liability(), 2 * QUANTITY);
 
     cleanup(fx, market, account);
@@ -271,7 +271,7 @@ fun mint_leveraged_up(
 
 fun disjoint_buffered_reserve(): u64 {
     // Independent of the production reserve formula: λ_default = 0.25, so the gap
-    // buffer is DISJOINT_GAP / 4 (line-72 assert separately pins math::mul(λ, gap)
+    // buffer is DISJOINT_GAP / 4 (line-72 assert separately pins math::mul_down(λ, gap)
     // == QUANTITY / 4). Reserve = max-live + buffer.
     DISJOINT_MAX_LIVE + DISJOINT_GAP / 4
 }

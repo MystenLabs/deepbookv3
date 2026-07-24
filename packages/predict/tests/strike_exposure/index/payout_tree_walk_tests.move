@@ -4,16 +4,16 @@
 /// Unit coverage for `strike_payout_tree::walk_linear` — the NAV linear walk —
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
 /// `current_nav` cannot reach directly: the per-flush price memo populated for
-/// the correction walk, the skip-zero-delta path over an equal live start/end
-/// boundary, and the boundary-aggregation dust clamp — the flat-price-tail integer
-/// underflow the ATM `current_nav` fixtures miss.
+/// the correction walk, exact-zero absorption over an equal live start/end
+/// boundary, and the signed boundary-aggregation dust residue — the
+/// flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
 ///
 /// The tree keys boundaries by absolute tick; the walk recovers each raw strike as
 /// `tick * tick_size`. These tests use the default `tick_size` (1e9) so tick `100`
 /// is raw strike `100e9`.
 ///
 /// References are independent of the walk (unit-tests rule 1): the exact walk is
-/// checked against a per-order `Σ mul(range_price, qty)` sum (a different pricer
+/// checked against a per-order `Σ mul_down(range_price, qty)` sum (a different pricer
 /// path than the walk's `up_price`). Memo lookup checks compare the cached boundary
 /// prices against `range_price` so a stale or missing memo entry is visible.
 #[test_only]
@@ -22,13 +22,17 @@ module deepbook_predict::payout_tree_walk_tests;
 use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
+    order::Order,
     pricing::{Self, Pricer},
     range_codec::{Self, Strike},
+    strike_exposure::{Self, StrikeExposure},
+    strike_exposure_config,
     strike_payout_tree::{Self, StrikePayoutTree},
     test_constants
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
+use sui::clock::Clock;
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes
 /// price close together and smoothly — a real clustered-price regime.
@@ -38,12 +42,18 @@ const Q0: u64 = 10_000_000_000;
 const Q1: u64 = 2_000_000_000;
 const Q2: u64 = 2_000_000_000;
 const ADJACENT_QUANTITY: u64 = 5_000_000_000;
+const CORRELATED_LEFT_QUANTITY: u64 = 5_000_000_000;
+const CORRELATED_RIGHT_QUANTITY: u64 = 4_000_000_000;
 /// Forward far above the grid so low strikes sit in the deep-ITM flat price tail
 /// where adjacent ticks price within a floor bucket — the dust-underflow regime.
 const FLAT_REGION_FORWARD: u64 = 435_000_000_000;
 /// Tiny quantity (a partial-close survivor) whose per-order range value rounds to
 /// zero, so only boundary-aggregation rounding remains.
 const DUST_QUANTITY: u64 = 100_000;
+/// Production-valid initial quantity reduced to `DUST_QUANTITY` through the
+/// ordinary partial-close mutation.
+const DUST_WITNESS_INITIAL_QUANTITY: u64 = 1_000_000_000_000;
+const EXPECTED_BOUNDARY_DUST: u64 = 1;
 const GC_SURVIVOR_A_LOWER: u64 = 98;
 const GC_REMOVED_LOWER: u64 = 100;
 const GC_SURVIVOR_C_LOWER: u64 = 102;
@@ -89,12 +99,12 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     // Insertion order is intentionally not sorted. The in-order walk must still
     // cache ascending ticks, because `cached_range_price` uses binary search.
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
+    let walk = tree.walk_linear(&pricer, &mut memo, tick_size()).magnitude();
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
-    assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
-    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(raw(0), raw(t0)));
+    assert_eq!(memo.cached_range_price(t0, t2).magnitude(), pricer.range_price(raw(t0), raw(t2)));
+    assert_eq!(memo.cached_range_price(0, t0).magnitude(), pricer.range_price(raw(0), raw(t0)));
     assert_eq!(
-        memo.cached_range_price(t2, constants::pos_inf_tick!()),
+        memo.cached_range_price(t2, constants::pos_inf_tick!()).magnitude(),
         pricer.range_price(raw(t2), raw(constants::pos_inf_tick!())),
     );
 
@@ -103,21 +113,21 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
 }
 
 #[test]
-fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
+fun zero_net_boundary_keeps_adjacent_live_ranges_exact() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
     let (t0, t1, t2) = clustered_ticks();
     // Adjacent live ranges with the same quantity leave an equal nonzero start/end
-    // at the shared boundary. The exact walk may skip pricing that boundary because
-    // the two sides cancel.
+    // at the shared boundary. Its exact signed net quantity absorbs the shared
+    // price certificate without adding center or error.
     tree.insert_range(t0, t1, ADJACENT_QUANTITY, 0);
     tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
 
     let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
+    let approximate = tree.walk_linear(&pricer, &mut memo, tick_size());
     assert_eq!(
-        walk,
+        approximate.magnitude(),
         range_reference(
             &pricer,
             vector[t0, t1],
@@ -127,39 +137,215 @@ fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
     );
     // The shared boundary has equal start/end quantity and contributes no net
     // linear value, but it must still be cached for leveraged correction lookups.
-    assert_eq!(memo.cached_range_price(t0, t1), pricer.range_price(raw(t0), raw(t1)));
-    assert_eq!(memo.cached_range_price(t1, t2), pricer.range_price(raw(t1), raw(t2)));
+    assert_eq!(memo.cached_range_price(t0, t1).magnitude(), pricer.range_price(raw(t0), raw(t1)));
+    assert_eq!(memo.cached_range_price(t1, t2).magnitude(), pricer.range_price(raw(t1), raw(t2)));
+    assert_eq!(
+        approximate.error(),
+        expected_boundary_error(&memo, t0, ADJACENT_QUANTITY)
+            + expected_boundary_error(&memo, t2, ADJACENT_QUANTITY),
+    );
 
     destroy(tree);
     cleanup(fixture, oracle);
 }
 
 #[test]
-fun walk_linear_clamps_boundary_aggregation_dust() {
-    let (mut fixture, oracle, pricer) = live_pricer_at(FLAT_REGION_FORWARD);
+fun shared_boundary_error_scales_with_net_not_gross_quantity() {
+    let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let (t0, t1, t2) = clustered_ticks();
+    tree.insert_range(t0, t1, CORRELATED_LEFT_QUANTITY, 0);
+    tree.insert_range(t1, t2, CORRELATED_RIGHT_QUANTITY, 0);
+
+    let mut memo = pricing::new_price_memo();
+    let approximate = tree.walk_linear(&pricer, &mut memo, tick_size());
+    assert_eq!(
+        approximate.magnitude(),
+        range_reference(
+            &pricer,
+            vector[t0, t1],
+            vector[t1, t2],
+            vector[CORRELATED_LEFT_QUANTITY, CORRELATED_RIGHT_QUANTITY],
+        ),
+    );
+
+    let shared_net = CORRELATED_LEFT_QUANTITY - CORRELATED_RIGHT_QUANTITY;
+    let expected_shared = expected_boundary_error(&memo, t1, shared_net);
+    let uncorrelated_shared = expected_boundary_error(
+        &memo,
+        t1,
+        CORRELATED_LEFT_QUANTITY + CORRELATED_RIGHT_QUANTITY,
+    );
+    assert!(expected_shared < uncorrelated_shared);
+    assert_eq!(
+        approximate.error(),
+        expected_boundary_error(&memo, t0, CORRELATED_LEFT_QUANTITY)
+            + expected_shared
+            + expected_boundary_error(&memo, t2, CORRELATED_RIGHT_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test]
+fun shared_boundary_multiplies_the_signed_net_quantity_once() {
+    let (mut fixture, oracle, pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let (t0, t1, t2) = clustered_ticks();
+    // At the shared boundary, the old two-product center produced 3,671 for the
+    // complete walk. Multiplying the signed net quantity once produces 3,670,
+    // matching the independently evaluated range path for this witness.
+    tree.insert_range(t0, t1, DUST_QUANTITY, 0);
+    tree.insert_range(t1, t2, 2 * DUST_QUANTITY, 0);
+
+    let expected = range_reference(
+        &pricer,
+        vector[t0, t1],
+        vector[t1, t2],
+        vector[DUST_QUANTITY, 2 * DUST_QUANTITY],
+    );
+    let mut memo = pricing::new_price_memo();
+    assert_eq!(tree.walk_linear(&pricer, &mut memo, tick_size()).magnitude(), expected);
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test]
+fun walk_linear_error_encloses_positive_boundary_dust() {
+    let (mut fixture, mut oracle, _entry_pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let (lower, higher_a, higher_b) = clustered_ticks();
+
+    let source_timestamp_ms = test_constants::live_source_timestamp_ms() + 1;
+    fixture.set_pyth_bundle(&mut oracle, FLAT_REGION_FORWARD, source_timestamp_ms);
+    fixture.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    fixture.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+
+    // Mirror the shared-end negative witness below: aggregating two starts at
+    // `lower` rounds one atom above the two independently rounded thin ranges.
+    tree.insert_range(lower, higher_a, DUST_QUANTITY, 0);
+    tree.insert_range(lower, higher_b, DUST_QUANTITY, 0);
+
+    let reference = range_reference(
+        &pricer,
+        vector[lower, lower],
+        vector[higher_a, higher_b],
+        vector[DUST_QUANTITY, DUST_QUANTITY],
+    );
+    assert_eq!(reference, 0);
+
+    let mut memo = pricing::new_price_memo();
+    let signed_boundary_linear = tree.walk_linear(&pricer, &mut memo, tick_size());
+    assert!(!signed_boundary_linear.is_negative());
+    assert_eq!(signed_boundary_linear.magnitude(), EXPECTED_BOUNDARY_DUST);
+    assert_eq!(
+        signed_boundary_linear.error(),
+        expected_boundary_error(&memo, lower, 2 * DUST_QUANTITY)
+            + expected_boundary_error(&memo, higher_a, DUST_QUANTITY)
+            + expected_boundary_error(&memo, higher_b, DUST_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test]
+fun walk_linear_preserves_negative_boundary_dust_until_marked_liability() {
+    let (mut fixture, mut oracle, entry_pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let mut exposure = strike_exposure::new(
+        fixture.expiry_id(),
+        fixture.expiry(),
+        tick_size(),
+        tick_size(),
+        fixture.expiry() - test_constants::default_cadence_period_ms(),
+        strike_exposure_config::new(),
+        fixture.scenario_mut().ctx(),
+    );
 
     let t0 = test_constants::default_strike_tick();
     let lower_a = t0; // raw 100e9, up ~999_996_456
     let lower_b = t0 + 1; // raw 101e9, up ~999_995_893
     let higher = t0 + 2; // raw 102e9, up ~999_995_253, shared upper boundary
 
-    // Two thin ITM ranges sharing the higher boundary, each one dust lot. In this
-    // flat tail the end-side floor at the shared boundary aggregates 1 ulp above the
-    // two start-side floors (199_999 vs 99_999+99_999), so the raw
-    // base+start-end would underflow to -1 and abort. The clamp returns 0.
+    let order_a = allocate_one_x_range(
+        &mut exposure,
+        &entry_pricer,
+        lower_a,
+        higher,
+        DUST_WITNESS_INITIAL_QUANTITY,
+        fixture.clock(),
+    );
+    let order_b = allocate_one_x_range(
+        &mut exposure,
+        &entry_pricer,
+        lower_b,
+        higher,
+        DUST_WITNESS_INITIAL_QUANTITY,
+        fixture.clock(),
+    );
+
+    let source_timestamp_ms = test_constants::live_source_timestamp_ms() + 1;
+    fixture.set_pyth_bundle(&mut oracle, FLAT_REGION_FORWARD, source_timestamp_ms);
+    fixture.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    fixture.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        source_timestamp_ms,
+        FLAT_REGION_FORWARD,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+
+    leave_dust_survivor(&mut exposure, &pricer, &order_a, fixture.clock());
+    leave_dust_survivor(&mut exposure, &pricer, &order_b, fixture.clock());
+
+    // Two thin ITM ranges sharing the higher boundary, each one partial-close
+    // survivor. In this flat tail the end-side floor at the shared boundary
+    // aggregates 1 ulp above the two start-side floors
+    // (199_999 vs 99_999 + 99_999), so the signed boundary-linear term is -1.
     tree.insert_range(lower_a, higher, DUST_QUANTITY, 0);
     tree.insert_range(lower_b, higher, DUST_QUANTITY, 0);
 
     // Independent per-order reference: both ranges' values round to 0, so true
-    // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
+    // linear liability is 0; the negative boundary residue is spurious.
     let reference =
-        math::mul(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
-        math::mul(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
+        math::mul_down(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
+        math::mul_down(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
     assert_eq!(reference, 0);
-    assert_eq!(walk_linear(&tree, &pricer), 0);
+
+    let mut memo = pricing::new_price_memo();
+    let signed_boundary_linear = tree.walk_linear(&pricer, &mut memo, tick_size());
+    assert!(signed_boundary_linear.is_negative());
+    assert_eq!(signed_boundary_linear.magnitude(), 1);
+    assert_eq!(
+        signed_boundary_linear.error(),
+        expected_boundary_error(&memo, lower_a, DUST_QUANTITY)
+            + expected_boundary_error(&memo, lower_b, DUST_QUANTITY)
+            + expected_boundary_error(&memo, higher, 2 * DUST_QUANTITY),
+    );
+
+    // The exposure carries the same two production-created survivors. Its only
+    // economic projection remains at the final marked-liability boundary.
+    let marked_liability = exposure.marked_live_liability(&pricer);
+    assert_eq!(marked_liability.magnitude(), 0);
+    assert_eq!(marked_liability.error(), signed_boundary_linear.error());
 
     destroy(tree);
+    destroy(exposure);
     cleanup(fixture, oracle);
 }
 
@@ -222,7 +408,14 @@ fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 /// Run the exact linear walk with the production price memo.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
     let mut memo = pricing::new_price_memo();
-    tree.walk_linear(pricer, &mut memo, tick_size())
+    tree.walk_linear(pricer, &mut memo, tick_size()).magnitude()
+}
+
+/// Independent error budget for one boundary with one shared uncertain UP price:
+/// `ceil(price_error * |start-end| / 1e9)` plus one product-floor unit.
+fun expected_boundary_error(memo: &pricing::PriceMemo, tick: u64, net_quantity: u64): u64 {
+    let price = memo.cached_range_price(tick, constants::pos_inf_tick!());
+    math::mul_up(price.error(), net_quantity) + 1
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
@@ -237,13 +430,48 @@ fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
     tree.insert_range(tick, constants::pos_inf_tick!(), quantity, 0);
 }
 
-/// Independent linear reference: `Σ mul(range_price(tick·ts, +inf), quantity)`.
+fun allocate_one_x_range(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    clock: &Clock,
+): Order {
+    let terms = exposure.quote_mint_terms(
+        pricer,
+        lower_tick,
+        higher_tick,
+        0,
+        quantity,
+        true,
+        test_constants::leverage_one_x(),
+        clock,
+    );
+    exposure.allocate_mint_order(terms)
+}
+
+fun leave_dust_survivor(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+    clock: &Clock,
+) {
+    let close_quantity = order.quantity() - DUST_QUANTITY;
+    let terms = exposure.quote_close(option::some(*pricer), order, close_quantity);
+    assert!(terms.is_live());
+    let survivor = exposure.process_close(option::some(*pricer), terms, clock);
+    assert!(survivor.is_some());
+    assert_eq!(survivor.destroy_some().quantity(), DUST_QUANTITY);
+}
+
+/// Independent linear reference: `Σ mul_down(range_price(tick·ts, +inf), quantity)`.
 /// Uses `range_price` (a different pricer path than the walk's `up_price`).
 fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): u64 {
     let mut total = 0;
     ticks.length().do!(|i| {
         total =
-            total + math::mul(
+            total + math::mul_down(
                 pricer.range_price(raw(ticks[i]), raw(constants::pos_inf_tick!())),
                 quantities[i],
             );
@@ -251,7 +479,7 @@ fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): 
     total
 }
 
-/// Independent finite-range reference: `Σ mul(range_price(lower·ts, higher·ts), quantity)`.
+/// Independent finite-range reference: `Σ mul_down(range_price(lower·ts, higher·ts), quantity)`.
 /// Uses `range_price` (a different pricer path than the walk's `up_price`).
 fun range_reference(
     pricer: &Pricer,
@@ -262,7 +490,7 @@ fun range_reference(
     let mut total = 0;
     lower_ticks.length().do!(|i| {
         let range_price = pricer.range_price(raw(lower_ticks[i]), raw(higher_ticks[i]));
-        total = total + math::mul(range_price, quantities[i]);
+        total = total + math::mul_down(range_price, quantities[i]);
     });
     total
 }

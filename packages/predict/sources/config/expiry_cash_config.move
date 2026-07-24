@@ -30,7 +30,7 @@ public(package) fun rebate_reserve_for_fee_basis(
     config: &ExpiryCashConfig,
     trading_fees_paid: u64,
 ): u64 {
-    math::mul(trading_fees_paid, config.trading_loss_rebate_rate)
+    math::mul_down(trading_fees_paid, config.trading_loss_rebate_rate)
 }
 
 public(package) fun new(): ExpiryCashConfig {

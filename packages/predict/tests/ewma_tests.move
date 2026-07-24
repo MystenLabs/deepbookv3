@@ -17,6 +17,9 @@ use sui::{clock::{Self, Clock}, test_scenario::{begin, end, Scenario}};
 const QUANTITY: u64 = 1_000_000_000; // 1.0 contract unit in 1e9 scaling
 // default penalty_rate is 0.1%; 0.1% of 1.0 = 0.001 = 1_000_000 base units.
 const EXPECTED_PENALTY: u64 = 1_000_000;
+const NON_INTEGRAL_QUANTITY: u64 = 3_010_000;
+const NON_INTEGRAL_PENALTY_RATE: u64 = 1_000_001;
+const ROUNDED_NON_INTEGRAL_PENALTY: u64 = 3_011;
 
 fun advance_with_gas(test: &mut Scenario, gas_price: u64, timestamp_advance: u64) {
     let ts = test.ctx().epoch_timestamp_ms() + timestamp_advance;
@@ -107,6 +110,30 @@ fun penalty_fires_once_z_score_crosses_threshold() {
         config_constants::default_ewma_penalty_rate!(),
     );
     assert_eq!(state.penalty_fee(&config, QUANTITY, test.ctx()), 0);
+
+    destroy(state);
+    destroy(config);
+    destroy(clock);
+    end(test);
+}
+
+#[test]
+fun fired_penalty_rounds_final_non_integral_charge_up() {
+    let mut test = begin(@0xF);
+    let mut config = config_with(config_constants::min_ewma_z_score_threshold!(), true);
+    config.set_params(
+        config_constants::default_ewma_alpha!(),
+        config_constants::min_ewma_z_score_threshold!(),
+        NON_INTEGRAL_PENALTY_RATE,
+    );
+    let mut clock = clock::create_for_testing(test.ctx());
+    let state = seeded_state(&mut test, &mut clock, &config);
+
+    // 1_000_001 * 3_010_000 / 1e9 = 3_010.00301.
+    assert_eq!(
+        state.penalty_fee(&config, NON_INTEGRAL_QUANTITY, test.ctx()),
+        ROUNDED_NON_INTEGRAL_PENALTY,
+    );
 
     destroy(state);
     destroy(config);

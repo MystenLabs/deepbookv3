@@ -9,7 +9,7 @@
 /// `pricing::range_price` (a knocked-out leveraged order is marked at its
 /// liquidated worth, RP-17). The
 /// reference reuses NONE of `walk_linear` / `correction_value` /
-/// `exact_live_liability` / `current_nav` / `expiry_cash::free_cash`, so it is a
+/// `marked_live_liability` / `current_nav` / `expiry_cash::free_cash`, so it is a
 /// genuine oracle (unit-tests rule 1): it sums per order, while the contract
 /// decomposes into a boundary-aggregated linear walk minus a leveraged-book
 /// correction walk.
@@ -31,7 +31,7 @@ use deepbook_predict::{
     range_codec,
     test_constants
 };
-use fixed_math::math::{Self, float_scaling as float};
+use fixed_math::{approx::Approx, math::{Self, float_scaling as float}};
 use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
@@ -64,6 +64,10 @@ fun empty_live_market_values_at_free_cash() {
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, test_constants::default_seeded_expiry_cash());
     check_nav(&fx, &market, vector[], float!());
+    let pricer = fx.load_pricer_bundle(&market);
+    let approximate = helpers::market(&market).current_nav_approx(&pricer);
+    assert_eq!(approximate.magnitude(), nav);
+    assert_eq!(approximate.error(), 0);
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -86,6 +90,7 @@ fun single_one_x_up_order() {
     );
 
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -111,6 +116,7 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -168,9 +174,10 @@ fun single_leveraged_order_above_floor() {
         LEVERAGE_TWO_X,
     );
 
-    // value = mul(0.5, 2e9) = 1e9 > floor = mul(floor_shares 5e8, 1.0) = 5e8, so the
+    // value = mul_down(0.5, 2e9) = 1e9 > floor = mul_down(floor_shares 5e8, 1.0) = 5e8, so the
     // correction min() picks the floor and the order's net liability is 5e8.
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -203,6 +210,7 @@ fun single_leveraged_order_underwater_nets_to_zero() {
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve()));
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
 
@@ -249,7 +257,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     let pricer = fx.load_pricer_bundle(&market);
     let expiry_market = helpers::market(&market);
     let decoded = order::from_order_id(id);
-    let range_value = math::mul(
+    let range_value = math::mul_down(
         pricer.range_price(
             range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size()),
             range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size()),
@@ -258,12 +266,13 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     );
     let floor = decoded.floor_shares();
     assert!(range_value > floor, 0);
-    assert!(range_value <= math::div(floor, expiry_market.liquidation_ltv()), 1);
+    assert!(range_value <= math::div_down(floor, expiry_market.liquidation_ltv()), 1);
 
     // The knocked-out order is credited its full range value (zero live liability),
     // so NAV rises to the knock-out-aware reference — above the old floor-capped
     // mark. `check_nav` asserts `current_nav` equals that independent reference.
     check_nav(&fx, &market, vector[id], float!());
+    check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -380,6 +389,54 @@ fun check_nav(
     helpers::assert_market_backed(expiry_market);
 }
 
+/// Compose the certified range-price ball through one order's quantity, fixed
+/// correction branch, liability clamp, and cash subtraction. Pricing correctness
+/// is covered independently; this checks that the NAV layer encloses both outward
+/// price endpoints without changing its scalar center.
+fun check_single_order_nav_enclosure(
+    fx: &helpers::Fixture,
+    market: &helpers::MarketBundle,
+    order_id: u256,
+) {
+    let pricer = fx.load_pricer_bundle(market);
+    let expiry_market = helpers::market(market);
+    let decoded = order::from_order_id(order_id);
+    let lower = range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size());
+    let higher = range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size());
+    let price = pricer.range_price_approx(lower, higher);
+    let price_low = price.magnitude().saturating_sub(price.error());
+    let price_high = price.magnitude().saturating_add(price.error()).min(float!());
+
+    let canonical_gross = math::mul_down(price.magnitude(), decoded.quantity());
+    let knocked_out =
+        decoded.floor_shares() > 0
+            && canonical_gross
+                <= math::div_down(decoded.floor_shares(), expiry_market.liquidation_ltv());
+    let (liability_low, liability_high) = if (knocked_out) {
+        (0, 0)
+    } else {
+        let gross_low = math::mul_down(price_low, decoded.quantity());
+        let gross_high = math::mul_up(price_high, decoded.quantity());
+        (
+            gross_low.saturating_sub(decoded.floor_shares()),
+            gross_high.saturating_sub(decoded.floor_shares()),
+        )
+    };
+
+    let free_cash = expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve());
+    let nav_low = free_cash.saturating_sub(liability_high);
+    let nav_high = free_cash.saturating_sub(liability_low);
+    let approximate = expiry_market.current_nav_approx(&pricer);
+    assert_eq!(approximate.magnitude(), expiry_market.current_nav(&pricer));
+    assert_contains(&approximate, nav_low);
+    assert_contains(&approximate, nav_high);
+}
+
+fun assert_contains(ball: &Approx, candidate: u64) {
+    assert!(!ball.is_negative());
+    assert!(ball.magnitude().diff(candidate) <= ball.error());
+}
+
 /// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ contribution` per
 /// open order, using only order atoms and `pricing::range_price`. A knocked-out
 /// leveraged order (live gross at or below `floor / liquidation_ltv`) contributes
@@ -399,11 +456,11 @@ fun reference_nav(
         let decoded = order::from_order_id(*id);
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
-        let range_value = math::mul(pricer.range_price(lower, higher), decoded.quantity());
-        let floor_value = math::mul(decoded.floor_shares(), index_now);
+        let range_value = math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
+        let floor_value = math::mul_down(decoded.floor_shares(), index_now);
         let knocked_out =
             decoded.floor_shares() > 0
-                && range_value <= math::div(decoded.floor_shares(), market.liquidation_ltv());
+                && range_value <= math::div_down(decoded.floor_shares(), market.liquidation_ltv());
         let contribution = if (knocked_out) 0 else range_value.saturating_sub(floor_value);
         liability = liability + contribution;
     });

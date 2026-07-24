@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-21. This is the tracked register of **settled response-policy
+Updated 2026-07-23. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -48,7 +48,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-1: The flush executes at any exact NAV mark (price circuit breakers removed)
+## RP-1: The flush executes at any certified NAV price (economic circuit breakers removed)
 
 - **Trigger state:** frozen flush mark implies a PLP price outside the former
   `[0.01, 100]` DUSDC band, or a pool NAV below the former dust floor.
@@ -56,10 +56,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   history. `total_supply ≤ k × pool_value` is not a maintainable invariant.
 - **Blast radius:** the mark is computed inside `finish_flush`, the single
   mandatory pool-wide PTB (valuation, sweeps, LP fills).
-- **Response:** proceed — no mark-level guard. Degeneracies are owned at the
-  fill site (RP-2). (Commit `cc67ed9f`, resolving P-1.)
-- **Reasoning:** the mark is the exact pool NAV, so any price it implies is
-  fair by construction; the deleted `assert_plp_price_in_bounds` was a
+- **Response:** proceed at the certified bid/ask regardless of the PLP price
+  they imply. Degeneracies are owned at the fill site (RP-2). The distinct 1%
+  numerical-certificate ceiling is defined under "Pricing and valuation
+  deviation bounds"; it constrains whether NAV is known well enough to move
+  value, not whether a known economic outcome is acceptable. (Commit
+  `cc67ed9f`, resolving P-1.)
+- **Reasoning:** the withdrawal price is at or below certified pool NAV and the
+  supply price is at or above it, so neither side extracts value from numerical
+  uncertainty; the deleted `assert_plp_price_in_bounds` was a
   state-triggered abort over a market-controlled variable with no on-chain
   recovery path — it bricked the flush in legitimate states (100x
   appreciation, post-drawdown recapitalization) until package upgrade.
@@ -123,17 +128,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   protocol-triggered refunds, or a new LP request type adds another
   non-executable fill mode.
 
-## RP-3: `lp_pool_value` floors at zero
+## RP-3: `lp_pool_value_approx` floors its center at zero
 
 - **Trigger state:** the sticky held-out total (`exclusion +
   pending_protocol_profit`) exceeds a collapsed gross pool value.
 - **Controller:** market (gross collapses via losses); the exclusion basis is
   protocol accounting but intentionally does not shrink on withdrawals.
 - **Blast radius:** the NAV read feeding the mandatory flush.
-- **Response:** `skip/carry`-shaped clamp — `saturating_sub` to 0, never
-  abort. LP-attributable value reads as zero until marks recover; the
-  downstream consequence (zero-value fills) is RP-2's problem, not this
-  read's.
+- **Response:** `skip/carry`-shaped clamp — `Approx::saturating_sub` to a zero
+  center, never abort. `finish_flush` turns that result into two zero,
+  non-executable marks until value recovers; the downstream refund behavior is
+  RP-2's problem, not this read's.
 - **Reasoning:** LP value cannot be negative; an abort here would brick the
   flush on an exogenous state. NAV==0 is a real reachable state, not an
   underflow guard.
@@ -161,8 +166,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   the permissionless exact-ms insert followed by `try_settle`. Standalone cash
   rebalance is a no-op in the window, and the keeper does not flush until the
   transition succeeds. Deliberately **no substitute
-  mark**: a settlement-dependent market has no well-defined true value, and
-  the single mark prices both queue directions — contribute-0 dilutes
+  mark**: a settlement-dependent market has no well-defined true value from
+  which to derive either side of the paired mark — contribute-0 dilutes
   incumbents on supply, free-cash overpays withdrawals.
 - **Recovery is not guaranteed.** `pyth_feed::insert_at` rejects a print
   generated more than `constants::max_settlement_carry_ms` (2s) before its
@@ -227,12 +232,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   this one *is* enforceable as an invariant).
 - **Response:** gate the flush behind the revocable `MarketLifecycleCap`; the
   accepted cost is a trust assumption — the operator chooses the valuation
-  instant (never the price: the mark is the exact NAV at that instant) and
+  instant (never the price: both sides are derived from the certified NAV at
+  that instant) and
   must run flushes for LP liveness.
 - **Reasoning + disclosure:** `docs/risks.md` "The privileged flush"; audit
   lens L8 (NAV-timing manipulation closed by privilege).
-- **Risk profile:** `BEST-GUESS` — operator-timing abuse bounded by mark
-  exactness; liveness depends on flush cadence (disclosed).
+- **Risk profile:** `BEST-GUESS` — operator-timing abuse is bounded by the
+  certified bid/ask; liveness depends on flush cadence (disclosed).
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
   touched.
 - **Reopen when:** a continuous/permissionless valuation design (e.g.
@@ -465,45 +471,39 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Blast radius:** the single mint transaction or quote; no shared or
   mandatory path.
 - **Response:** proceed — sizing is a binary search over lot counts against the
-  premium relation, with the lot cap (`order::max_quantity_lots`) as the search
-  domain, so an oversized budget converges to the largest legal order instead
-  of aborting. Every probe quantity is a legal order quantity and the premium
-  relation only shrinks its input, so no intermediate can leave u64: the former
-  guard's abort state is unrepresentable, not tolerated.
+  same staged premium relation used by admission, with the lot cap
+  (`order::max_quantity_lots`) as the search domain, so an oversized budget
+  converges to the largest legal order instead of aborting. Every probe quantity
+  is a legal order quantity and the premium relation only shrinks its input, so
+  no intermediate can leave u64: the former guard's abort state is
+  unrepresentable, not tolerated.
 - **Duty inventory (guard removal):** the three `ENetPremiumBudgetTooHigh`
   asserts bounded only the removed algebraic inverse's own `(budget+1) *
   leverage` and `entry_value * scaling` u64 intermediates; those expressions
   were deleted with the inverse, and no downstream consumer read its raw
   (pre-lot-cap) result. Nothing else was incidentally bounded.
-- **Accepted inaccuracy:** the search probes the single-floor fused premium
-  `mul_div_down(p, Q, L)`, which over-estimates admission's two-floor charge by
-  at most one premium unit, so sizing is conservative: the charged premium
-  never exceeds the budget, and the fill is at most one lot short of the exact
-  maximum. The lot bound is envelope-dependent, not intrinsic: one premium unit
-  spans `leverage / entry_probability` raw quantity units, so it stays sub-lot
-  only because `config_constants::min_min_entry_probability` floors the
-  admissible entry band at 1% (worst reachable case ~152 raw units against the
-  10_000-unit lot, at the 1% floor under the probability-scaled cap of the 10x
-  template-leverage envelope). The probe >= charge dependency is one-sided and
-  documented at the probe site in `strike_exposure::quote_mint_terms`.
-- **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
-  dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
-  the BS pricing in the same call.
+- **Rounding relation:** admission and every search probe first compute the
+  integer entry value `E = floor(P·Q)`, then charge
+  `net_premium = ceil(E·S / L)`, where `S = 1e9` and `L` is scaled leverage.
+  The static floor is the exact complement `E - net_premium`, so premium plus
+  floor equals entry value and the indivisible atom stays on the
+  protocol-inflow side.
+- **Risk profile:** n/a (the search and admission use one exact integer
+  relation).
 - **Pinning tests:** `mint_exact_amount_tests.move` —
   `oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
   quotes the lot-cap premium, the former abort domain),
   `budget_mints_largest_fitting_quantity_and_debits_its_exact_cost` and
   `budget_at_next_lot_premium_mints_the_next_lot` (sizing pinned from both
   sides at the exact ATM probability),
+  `fractional_leverage_budget_uses_the_exact_rounded_premium` (a one-atom
+  fractional-leverage boundary selects the exact largest fitting lot),
   `budget_fill_below_min_quantity_aborts` (fill floor);
   `mint_redeem_guard_tests::mint_exact_amount_below_min_quantity_aborts`
-  (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
-  edge needs a rounding-lossy probability no current fixture pins.
-- **Reopen when:** the premium relation changes shape (a fee folded into the
-  budget, a rounding flip — the probe must move with it or the one-sided bound
-  breaks), the `min_min_entry_probability` envelope floor is lowered (the
-  one-lot fill bound dies with it), a measured gas profile shows the search
-  matters, or a consumer needs the exact maximum fill at fractional leverage.
+  (dust budget rejects on the floor).
+- **Reopen when:** the budget definition changes (for example, a fee is folded
+  into it), the lot search domain changes, or admission stops using the
+  canonical premium helper.
 
 ---
 
@@ -609,7 +609,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   the carry refill bear a small one-time timing transfer (suppliers inside the
   window pick it up), and the front-load becomes permanent only if the pool
   winds down or stays loss-making so the carry never refills. LP pricing is
-  structurally unaffected: `plp::lp_pool_value` already excludes
+  structurally unaffected: `plp::lp_pool_value_approx` already excludes
   `share × max(0, live unrealized net − carry)` — the net-basis anticipation of
   the future cut — and already-materialized cuts have left the pricing basis.
 - **Risk profile:** `BEST-GUESS` — the peak-of-booked-net invariant itself is
@@ -643,13 +643,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (every `current_nav`, including the flush lane `plp::value_expiry`).
 - **Controller:** market (prices move orders into the band between keeper
   sweeps) × protocol (whether the mark prices those claims at holder value).
-- **Blast radius:** the single frozen mark that fills both LP queues. Marking a
+- **Blast radius:** the frozen bid/ask pair that fills the LP queues. Marking a
   liquidatable order at holder value (`range_value - floor`) understates
   recoverable value by up to the LTV buffer per order, diluting incumbent LPs on
-  a same-flush supply and contradicting the exact-mark framing (RP-1; the
+  a same-flush supply and contradicting the certified-mark framing (RP-1; the
   NAV-mark directional invariant).
 - **Response:** value the knock-out at its liquidated worth in the read-only NAV
-  correction, without touching the book. `exact_live_liability` already walks the
+  correction, without touching the book. `marked_live_liability` already walks the
   payout tree once and subtracts the leveraged floor correction
   (`liquidation_book::correction_value`); that correction now credits a
   knocked-out order's full `range_value` — using the same threshold the close
@@ -668,11 +668,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   liquidation the book has not yet applied — the same window the sweep lag
   already carries, and one that moves no money, because the mark only sets LP
   fill prices, not holder payouts.
-- **Residual:** the credit uses each order's per-order `range_value`, which
-  differs from that order's aggregated payout-tree contribution by the
-  boundary-aggregation rounding of P-13 (at most one raw unit per boundary), so a
-  flush that credits a knock-out lands within P-13's band on the same side. This
-  is the accepted P-13 residual, not a new class.
+- **Residual:** the credit uses each order's per-order `range_value`, while the
+  payout-tree center groups the same exposure by shared boundary. Those centers
+  need not be bit-identical, but RP-21 defines the real-number liability as the
+  valuation reference and certifies each representation's fixed-point residue.
+  The final liability projection therefore retains the combined radius rather
+  than requiring the two centers to cancel atom-for-atom.
 - **Risk profile:** `BEST-GUESS` — reachability depends on prices moving orders
   into the band between sweeps. Cost is the read-only scan over the active
   leveraged set that `correction_value` already walks on every valuation; no tree
@@ -687,10 +688,213 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   dedicated pin on a high-variance surface (a leveraged order priced into the
   band marks at zero live liability, raising NAV above the floor-capped value);
   tracked as the follow-up test for this policy.
-- **Reopen when:** the LP flush stops using one shared mark for both queues; or a
+- **Reopen when:** the LP flush stops using one shared mark for both queues; a
   product decision requires the book to be liquidated in-pass rather than by the
-  sweep (reintroducing the mutation and its gas profile); or the P-13
-  boundary-aggregation residual is closed and the credit must become exact.
+  sweep (reintroducing the mutation and its gas profile); or NAV changes from
+  the RP-21 real-number reference to independently rounded per-order marks.
+
+---
+
+## RP-18: Live liability projects nonnegative once, after leveraged correction
+
+- **Trigger state:** the signed payout-tree boundary-linear center is negative
+  from per-boundary product-floor residue, or the nonnegative leveraged
+  correction exceeds that center during `marked_live_liability`.
+- **Controller:** protocol — the tree representation, fixed-point rounding, and
+  leveraged correction are all maintained contract state and arithmetic.
+- **Blast radius:** one expiry's `current_nav` and therefore the certified
+  full-pool flush mark. No order value, payout, backing reserve, or state
+  mutation reads the intermediate result.
+- **Response:** retain the signed boundary-linear `Approx`, subtract the
+  nonnegative leveraged correction, and apply `clamp_nonnegative` exactly once
+  at the final live-liability boundary. A negative final center remains zero;
+  its numerical-error radius is retained unchanged.
+- **Reasoning:** for correction `C >= 0`,
+  `max(0, max(0, L) - C) = max(0, L - C)`. Because
+  `clamp_nonnegative` preserves the radius, removing the inner projection
+  preserves both the final center and error bits.
+- **Duty inventory and headroom proof:** the removed tree-level clamp made
+  `walk_linear`'s center nonnegative and incidentally bounded the following
+  signed subtraction; it did not enforce PriceMemo monotonicity, bound the
+  certificate radius, or serve another production consumer. Monotone cached UP
+  centers make the exact boundary-linear value nonnegative. Each finite signed-net
+  boundary product differs from its real-number term by less than one atom, so
+  `max_payout_tree_nodes = 1,000` bounds a negative integer residue by `999`. The
+  correction is nonnegative and at most the sum of active leveraged quantities:
+  `5,000 * (u32::MAX * 10,000) = 214,748,364,750,000,000`.
+  Therefore the worst negative `L - C` magnitude is
+  `214,748,364,750,000,999`, leaving
+  `18,231,995,708,959,550,616` atoms of headroom below `u64::MAX`.
+- **Risk profile:** `BEST-GUESS` only for how often the one-atom residue appears
+  under live oracle surfaces; the algebraic identity and source-cap headroom
+  bound are deterministic.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `walk_linear_preserves_negative_boundary_dust_until_marked_liability` pins a
+  production-created partial-close survivor witness at signed `-1`, then pins
+  final marked liability at zero with the identical error;
+  `exact_walk_matches_per_order_reference` and
+  `shared_boundary_error_scales_with_net_not_gross_quantity` retain ordinary
+  positive-center and certificate behavior. `current_nav_flow_tests.move` —
+  `single_leveraged_order_above_floor` and
+  `single_leveraged_order_underwater_nets_to_zero` pin positive and zero
+  downstream NAV cases.
+- **Reopen when:** the payout-tree node cap, active-leveraged-order cap, packed
+  quantity width, or position lot size increases; correction can become
+  negative or exceed per-order quantity; `walk_linear` gains another production
+  consumer; or `Approx::clamp_nonnegative` changes its radius semantics.
+
+---
+
+## RP-19: Fee-incentive lifetime capacity is snapshotted per expiry
+
+- **Trigger state:** a pool allocates sponsor-funded fee incentives to a
+  registered expiry, including a request that reaches or exceeds its lifetime
+  capacity.
+- **Controller:** protocol — both the absolute lifetime cap and cumulative
+  allocation total are stored accounting terms with no external writer.
+- **Blast radius:** one expiry's sponsor-funded fee-incentive allocation. The
+  live target, pool reserve, events, and other fee-incentive economics are
+  unchanged.
+- **Response:** snapshot the absolute lifetime cap at registration by rounding
+  `max_expiry_allocation × fee_incentive_lifetime_cap_rate` down. Allocate
+  `min(requested, cap - allocated)` and use exact subtraction so any internal
+  invariant violation fails loudly. Existing expiries retain their snapshotted
+  cap across upgrades; a later package-rate change affects only newly
+  registered expiries.
+- **Reasoning:** registration establishes `allocated = 0 <= cap`. Allocation
+  computes exact remaining capacity, adds at most that amount, and therefore
+  preserves `allocated <= cap`. Registration is the only cap writer,
+  `record_fee_incentives_allocated_up_to` is the only allocation-total writer,
+  neither field has a mutable-reference escape, and terminal accounting prevents
+  further allocations without weakening the inequality.
+- **Duty inventory:** removing saturation does not remove a reachable fallback.
+  An inconsistent caller cap is eliminated with the caller parameter;
+  retroactive cap reduction is eliminated by snapshotting; writer overshoot is
+  eliminated by `min(requested, remaining)`; external mutation is absent because
+  neither field escapes by mutable reference.
+- **Risk profile:** `BEST-GUESS` only for how often live allocation requests
+  reach the lifetime cap. The inequality itself follows by source-complete
+  induction over the two field writers, and unit tests pin below-cap,
+  crossing-cap, at-cap, exhausted, fractional-cap, and terminal-accounting
+  behavior.
+- **Pinning tests:** `pool_accounting_tests.move` —
+  `fee_incentives_allocate_up_to_lifetime_cap`,
+  `fee_incentive_lifetime_cap_rounds_down_at_registration`, and
+  `fee_incentive_allocation_after_terminal_accounting_started_aborts`.
+- **Reopen when:** either stored field gains another writer or mutable-reference
+  escape; registration no longer snapshots the cap; allocation no longer caps
+  the request at remaining capacity; or terminal accounting permits subsequent
+  allocations.
+
+---
+
+## RP-20: Protocol-controlled accounting invariants fail loudly
+
+- **Trigger state:** an internally corrupted expiry has cash below its unresolved
+  rebate reserve; a cached range has non-increasing tick bounds or inverted memo
+  centers; or a pool-cash release would leave less than required payout and
+  rebate backing.
+- **Controller:** protocol — expiry cash and rebate basis, order ticks, payout
+  tree traversal order, the price memo, and surplus release amounts are all
+  written or derived exclusively by package code.
+- **Blast radius:** the transaction reading the corrupted expiry or memo aborts
+  instead of silently converting the invalid value to zero. Reachable cash
+  releases and cached prices remain bit-identical.
+- **Response:** compute `free_cash = cash - rebate_reserve` exactly; validate
+  `lower_tick < higher_tick` before cached lookup and return the memo-center
+  difference without a clamp; compute a settled market's entire releasable
+  complement once inside `release_all_surplus`. Keep the uncached range-price
+  clamp because externally supplied pricing surfaces do not yet have the same
+  monotonicity proof.
+- **Reasoning:** protocol-controlled state should expose a broken invariant,
+  not manufacture a plausible zero. Valid expiry cash always covers at least
+  its rebate reserve. The payout walk inserts cached UP centers in ascending tick
+  order and rejects an increase, so a valid cached range is nonnegative.
+  `release_surplus` requires `cash_before ≥ required_cash + amount`, while
+  `release_all_surplus` requires `cash_before ≥ required_cash` and releases the
+  exact difference; both directly prove `cash_after ≥ required_cash`.
+- **Duty inventory:** the removed free-cash saturation only hid
+  `cash < rebate_reserve`; cash joins cannot violate the inequality, fee
+  collection adds at least the new reserve, and every authorized payment either
+  updates its paired liability/reserve first and checks backing or uses
+  `release_surplus` or `release_all_surplus`. The cached clamp hid invalid bounds or a broken monotone
+  memo; the new range guard, order validation, in-order traversal, and
+  `price_and_cache` monotonicity check own those duties. The removed caller
+  settled-cash calculation and second payout walk duplicated the leaf's exact
+  complement and owned no independent flow gate.
+- **Risk profile:** `BEST-GUESS` only for whether future package changes could
+  violate these writer inventories. The current exact-subtraction and
+  post-release proofs are deterministic.
+- **Pinning tests:** `expiry_cash_tests.move` —
+  `free_cash_at_rebate_reserve_is_zero`,
+  `free_cash_below_rebate_reserve_aborts`, and
+  `release_exact_surplus_preserves_payout_and_rebate_backing`,
+  `release_all_surplus_leaves_exact_required_cash`,
+  `release_all_surplus_at_exact_backing_returns_zero`, and
+  `release_all_surplus_underfunded_aborts`;
+  `pricing_guard_tests.move` —
+  `cached_range_price_preserves_direct_range_center_and_error`,
+  `cached_range_price_with_equal_bounds_aborts_before_lookup`, and
+  `cached_range_price_with_reversed_bounds_aborts_before_lookup`.
+- **Reopen when:** expiry cash or rebate basis gains a new writer; an authorized
+  payment path stops maintaining backing; `PriceMemo` gains another producer or
+  stops enforcing insertion order and non-increasing centers; cached ranges gain
+  a caller outside validated order terms; or either surplus-release helper
+  weakens its precondition.
+
+---
+
+## RP-21: Live NAV certifies the real-number shared-boundary mark (resolves P-13)
+
+- **Trigger state:** grouping order quantities at a shared payout-tree boundary
+  changes where fixed-point products truncate. The signed-net boundary center
+  can therefore remain one raw atom above or below the sum obtained by pricing
+  and flooring each order independently; the recorded positive-liability
+  witness is `1` from the tree versus `0` per order.
+- **Controller:** protocol — the payout tree chooses the shared-boundary
+  representation and every multiplication and error-propagation rule.
+- **Blast radius:** one expiry's live-liability center and certified radius,
+  which flow into the pool NAV bid/ask. Custody, stored order atoms, backing,
+  close proceeds, and terminal payouts do not read this valuation center.
+- **Response:** define the ideal real-number value of the complete active book,
+  under the contract-selected liquidation branches, as NAV's reference. Keep
+  the compact shared-boundary center and carry its distance from that reference
+  in `Approx.error`; do not require equality with the alternative sum of
+  independently rounded order marks. Supplier and withdrawer prices consume the
+  resulting upper and lower NAV endpoints under the standing directional policy.
+- **Reasoning:** for scale `S`, price center `p`, start quantity `s`, and end
+  quantity `e`, let signed `q = s-e`. The center
+  `trunc(p*q/S)` differs from `p*q/S` by less than one raw unit. A price radius
+  `r` contributes at most `ceil(r*|q|/S)`. Therefore
+  `price.mul_scaled(exact(q))` supplies both the canonical local center and its
+  complete bound: propagated price radius plus one rounding leaf. Summing the
+  local balls certifies the whole tree; at most 1,000 finite nodes make the
+  structural-only component at most 1,000 raw DUSDC atoms (`0.001 DUSDC`) per
+  expiry.
+- **Duty inventory:** each boundary forms one exact signed net quantity and
+  multiplies its cached price `Approx` once, so price uncertainty scales by
+  `|s-e|`; exact zero absorbs the product without adding center or error; the
+  open-lower base is exact; `Approx::add` sums local radii; the leveraged
+  correction retains its own per-order multiplication radii; and both final
+  nonnegative projections are 1-Lipschitz and preserve the radius. Saturation
+  inside `Approx` remains the fail-closed response when a propagated error does
+  not fit in `u64`. No order, payout, custody, or backing writer consumes this
+  intermediate center directly; the LP flush consumes only the certified pool
+  endpoints derived from it.
+- **Risk profile:** deterministic algebra and source caps. The difference from
+  independently rounded order marks is representation dust, not an unmeasured
+  market-frequency claim.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `shared_boundary_multiplies_the_signed_net_quantity_once`,
+  `zero_net_boundary_keeps_adjacent_live_ranges_exact`,
+  `shared_boundary_error_scales_with_net_not_gross_quantity`,
+  `walk_linear_error_encloses_positive_boundary_dust`, and
+  `walk_linear_preserves_negative_boundary_dust_until_marked_liability`.
+- **Reopen when:** one boundary's start and end stop sharing the same price
+  certificate; boundary multiplication changes rounding direction;
+  `Approx::mul_scaled` changes its one-unit rounding leaf or saturation
+  semantics; a transfer or backing path starts consuming the live NAV center; or
+  NAV is redefined to reproduce independently rounded per-order marks.
 
 ---
 
@@ -761,19 +965,34 @@ rounding, not model-evaluation accuracy):
 - **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
   more than **1%** (relative).
 
+**Runtime response.** The pricing ball retains a numerical-error certificate on
+the canonical scalar control path. A mint quote whose contract-price certificate
+exceeds 0.1% aborts before it can create an order; the user can retry after a fresh
+oracle surface. A full-pool flush whose final pool-NAV certificate exceeds 1%
+aborts before it creates a frozen mark; inside that ceiling, supplies price at
+`center + error` and withdrawals at `center - error`, both over the same
+pre-drain PLP supply. A nonzero certificate whose upper endpoint does not fit in
+u64 aborts under the same precision response before a mark is constructed rather
+than overflowing incidentally. A keeper retries an over-limit certificate after
+fresh pricing inputs or settlement. A zero scalar pool NAV proceeds under RP-1/RP-3
+as two zero, non-executable marks, and a purely relative NAV bound has no
+denominator. These checks do not reinterpret liquidation, live close, or other
+protocol branches: those continue to use the scalar center exactly as the
+protocol defines.
+
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
 reference (`packages/predict/tests/pricing/pricing_reference_data.move`, built by
 `generate_pricing_reference.py` from real Block Scholes surfaces against a
-true-math reference), whose per-scenario analytic fixed-point tolerance sits well
-inside 0.1% — but only where the dataset has scenarios. It must therefore cover
-the full deployed variance range, short-dated included, or the bound goes
-unenforced exactly where it is tightest: `1/sqrt(w)` conditioning makes low
-variance the worst case, which is the gap open item P-14 records. The NAV bound
-is guarded by the `current_nav_flow_tests` independent oracle. A pricer or
-valuation change that would breach either ceiling on any deployable surface is a
-defect to fix, not an accepted tradeoff — this is the line between negligible and
-worth-fixing.
+true-math reference). Its moderate-variance scenarios use analytic fixed-point
+tolerances, and its short-dated scenario pins the 0.1% ceiling at
+`w ~= 3.26e-8`, where `1/sqrt(w)` conditioning makes variance rounding most
+material. Pricing retains only `a + b * inner` at 1e18 through `sqrt(w)`; the
+1e9 total-variance center and every downstream operation remain on the canonical
+fixed-math path. The NAV bound is guarded by the `current_nav_flow_tests`
+independent oracle and the pool-flow bid/ask tests. A pricer or valuation change
+that would breach either ceiling on any deployable surface is a defect to fix,
+not an accepted tradeoff — this is the line between negligible and worth-fixing.
 
 ---
 

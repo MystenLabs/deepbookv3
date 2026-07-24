@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{i64::{Self, I64}, math};
+use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -58,8 +58,8 @@ public struct ExactSpotRead has drop {
 public struct PriceMemo has drop {
     /// Finite boundary ticks in ascending order (the in-order walk appends them).
     ticks: vector<u64>,
-    /// `up_price(ticks[i] * tick_size)`, parallel to `ticks`.
-    prices: vector<u64>,
+    /// `up_price(ticks[i] * tick_size)`, with its certified error, parallel to `ticks`.
+    prices: vector<Approx>,
 }
 
 const EZeroForward: u64 = 0;
@@ -101,16 +101,23 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 /// Return the current UP digital probability for a typed strike. Public PTB and
 /// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
-    compute_up_price(&pricer.svi, pricer.forward, strike)
+    compute_up_price_center(&pricer.svi, pricer.forward, strike)
 }
 
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+    compute_range_price_center(&pricer.svi, pricer.forward, lower, higher)
 }
 
 // === Public-Package Functions ===
+
+/// Return the probability for `(lower, higher]` with its certified error retained
+/// for package-internal protocol decisions. The public `range_price` is the
+/// value-only view for external reads.
+public(package) fun range_price_approx(pricer: &Pricer, lower: Strike, higher: Strike): Approx {
+    compute_range_price_approx(&pricer.svi, pricer.forward, lower, higher)
+}
 
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
@@ -200,32 +207,48 @@ public(package) fun load_exact_spot_read(
 
 /// Create an empty per-flush price cache (see `PriceMemo`).
 public(package) fun new_price_memo(): PriceMemo {
-    PriceMemo { ticks: vector[], prices: vector[] }
+    PriceMemo {
+        ticks: vector[],
+        prices: vector[],
+    }
 }
 
-/// Read the cached range price `up_price(lower) - up_price(higher)` for one order's
-/// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
-/// Both finite boundaries must have been cached by the linear walk; a finite miss
-/// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
-public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher_tick: u64): u64 {
-    memo.cached_up_price(lower_tick).saturating_sub(memo.cached_up_price(higher_tick))
+/// Read the cached range price `up_price(lower) - up_price(higher)` for one valid
+/// order tick range, mirroring `range_price`'s infinity sentinels. The memo's
+/// monotone centers make the subtraction exact. Both finite boundaries must have
+/// been cached by the linear walk; a finite miss aborts (the order's tick is not a
+/// payout-tree node — a broken index, not dust).
+public(package) fun cached_range_price(
+    memo: &PriceMemo,
+    lower_tick: u64,
+    higher_tick: u64,
+): Approx {
+    assert!(lower_tick < higher_tick, EInvalidRange);
+    let lower = memo.cached_up_price(lower_tick);
+    let higher = memo.cached_up_price(higher_tick);
+    lower.sub(&higher)
 }
 
-/// Price `tick` through `pricer` and append it to the cache. Called once per node by
-/// the in-order linear walk, so `ticks` stays ascending for `cached_up_price`'s
-/// binary search. Only finite ticks are stored (the tree never holds inf boundaries).
+/// Price `tick` through `pricer` and append its approximate value to the cache.
+/// Called once per node by the in-order linear walk, so `ticks` stays ascending for
+/// `cached_up_price`'s binary search. Only finite ticks are stored (the tree never
+/// holds inf boundaries).
 public(package) fun price_and_cache(
     memo: &mut PriceMemo,
     pricer: &Pricer,
     tick: u64,
     tick_size: u64,
-): u64 {
-    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+): Approx {
+    let price = compute_up_price_approx(
+        &pricer.svi,
+        pricer.forward,
+        range_codec::strike_from_tick(tick, tick_size),
+    );
     if (!memo.prices.is_empty()) {
         let previous = memo.prices[memo.prices.length() - 1];
         // Higher strikes should not have higher UP prices. NAV's linear tree walk
         // relies on that order; an inverted surface can overstate pool value.
-        assert!(price <= previous, ENonMonotonePriceMemo);
+        assert!(price.magnitude() <= previous.magnitude(), ENonMonotonePriceMemo);
     };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
@@ -235,11 +258,11 @@ public(package) fun price_and_cache(
 // === Private Functions ===
 
 /// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
-/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
+/// nodes, so they short-circuit to `compute_up_price_approx`'s sentinels (`P(-inf) = 1`,
 /// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
-fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
-    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
-    if (tick == constants::pos_inf_tick!()) return 0;
+fun cached_up_price(memo: &PriceMemo, tick: u64): Approx {
+    if (tick == 0) return approx::exact_u64(math::float_scaling!()); // neg-inf sentinel
+    if (tick == constants::pos_inf_tick!()) return approx::exact_u64(0);
 
     let ticks = &memo.ticks;
     let mut lo = 0;
@@ -411,7 +434,10 @@ fun assert_min_total_variance_positive(svi: &SVIParams) {
     let min_variance_increment = min_svi_variance_increment(svi);
     let a = svi.a();
     let min_total_var = i64::from_u64(min_variance_increment).add(&a);
-    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+    assert!(
+        !min_total_var.is_negative() && !min_total_var.is_zero(),
+        EBlockScholesMinVarianceInvalid,
+    );
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -421,24 +447,43 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
     let rho_mag = svi.rho().magnitude();
     if (rho_mag == math::float_scaling!()) return 0;
 
-    let one_minus_rho_squared = math::float_scaling!() - math::mul(rho_mag, rho_mag);
-    let sqrt_one_minus_rho_squared = math::sqrt(one_minus_rho_squared, math::float_scaling!());
-    math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
+    let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
+    let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
+    math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
-/// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+/// Compute only the canonical scalar center for `(lower, higher]`. Live close
+/// and liquidation deliberately consume this center without a numerical-error
+/// policy branch, so constructing and discarding the certificate would add
+/// candidate-linear gas to every ambient sweep.
+fun compute_range_price_center(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
+    let lower_up_price = compute_up_price_center(svi, forward, lower);
+    let higher_up_price = compute_up_price_center(svi, forward, higher);
     // Fixed-point approximation or a non-monotone SVI surface can invert the
     // boundary prices; the range probability is floored at zero.
     lower_up_price.saturating_sub(higher_up_price)
 }
 
-/// Compute the adjusted UP digital probability for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+/// Compute the certified probability for `(lower, higher]`.
+fun compute_range_price_approx(
+    svi: &SVIParams,
+    forward: u64,
+    lower: Strike,
+    higher: Strike,
+): Approx {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+
+    let lower_up_price = compute_up_price_approx(svi, forward, lower);
+    let higher_up_price = compute_up_price_approx(svi, forward, higher);
+    lower_up_price.sub(&higher_up_price).clamp_nonnegative()
+}
+
+/// Compute the canonical scalar center of the adjusted UP digital probability.
+/// Theorem 2.7 in `docs/design/math-proofs.md` proves this is bit-identical to
+/// `compute_up_price_approx(...).magnitude()`.
+fun compute_up_price_center(svi_params: &SVIParams, forward: u64, strike: Strike): u64 {
     if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
@@ -446,75 +491,175 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
         return 0
     };
 
-    compute_nd2(svi, forward, strike.value())
-}
-
-/// Binary pricing from SVI total variance:
-/// - k = ln(strike / forward)
-/// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
-/// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-/// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // Saturate ratios outside the fixed-point domain to their digital-probability
-    // limits instead of aborting live valuation and position flows.
-    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
-    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
-    let strike_ratio = strike_ratio_opt.destroy_some();
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
-    let k = math::ln(strike_ratio);
+    let k = ln_ratio_center(strike.value(), forward);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = svi_params.sigma();
-    let sigma_squared = math::mul(sigma, sigma);
-    let sqrt_input = k_minus_m_squared + sigma_squared;
-    let sq = math::sqrt(sqrt_input, math::float_scaling!());
-    let sq_i64 = i64::from_u64(sq);
+    let sigma_squared = math::mul_down(svi_params.sigma(), svi_params.sigma());
+    let root = math::sqrt_down(k_minus_m_squared + sigma_squared);
+    let root_i64 = i64::from_u64(root);
 
     let rho = svi_params.rho();
-    let rho_km = rho.mul_scaled(&k_minus_m);
-    let inner = rho_km.add(&sq_i64);
-    // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
-    // violates that invariant at the envelope boundary.
+    let inner = rho.mul_scaled(&k_minus_m).add(&root_i64);
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let b = svi_params.b();
-    let variance_increment = math::mul(b, inner.magnitude());
+    let scale = math::float_scaling!() as u128;
+    let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
     let a = svi_params.a();
-    let total_var = i64::from_u64(variance_increment).add(&a);
-    // Total variance must be positive because pricing takes sqrt(w) below.
-    assert!(is_positive(&total_var), ENonPositiveVariance);
-    let total_var = total_var.magnitude();
+    let wide_a = (a.magnitude() as u128) * scale;
+    let wide_total_var = if (a.is_negative()) {
+        assert!(wide_increment >= wide_a, ENonPositiveVariance);
+        wide_increment - wide_a
+    } else {
+        wide_increment + wide_a
+    };
+    assert!(wide_total_var >= scale, ENonPositiveVariance);
 
-    let sqrt_var = math::sqrt(total_var, math::float_scaling!());
+    let half_var = i64::from_u64((wide_total_var / (scale + scale)) as u64);
+    let sqrt_var = math::sqrt_u128_down(wide_total_var) as u64;
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
-    let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = k.add(&half_var_i64);
-    let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
-    let d2 = d2.neg();
+    let d2 = k.add(&half_var).div_scaled(&sqrt_var_i64).neg();
 
-    let slope_ratio = k_minus_m.div_scaled(&sq_i64);
+    let slope_ratio = k_minus_m.div_scaled(&root_i64);
     let slope = rho.add(&slope_ratio);
-    let w_prime = i64::from_u64(b).mul_scaled(&slope);
+    let w_prime = i64::from_u64(svi_params.b()).mul_scaled(&slope);
     let nd2 = math::normal_cdf(&d2);
     if (w_prime.is_zero()) return nd2;
 
     let correction_magnitude = math::mul_div_down(
         math::normal_pdf(&d2),
         w_prime.magnitude(),
-        2 * sqrt_var,
+        sqrt_var + sqrt_var,
     );
     let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;
-    if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
-    adjusted.magnitude()
+    adjusted.magnitude().min(math::float_scaling!())
 }
 
-fun is_positive(value: &I64): bool {
-    !value.is_negative() && !value.is_zero()
+/// Center of `Approx::ln_ratio` without constructing its discarded radius.
+fun ln_ratio_center(numerator: u64, denominator: u64): I64 {
+    let ratio_opt = math::try_div_down(numerator, denominator);
+    if (ratio_opt.is_some()) {
+        let ratio = ratio_opt.destroy_some();
+        if (ratio > 1) return math::ln(ratio)
+    };
+
+    math::ln(numerator).sub(&math::ln(denominator))
+}
+
+/// Compute the adjusted UP digital probability with its numerical certificate.
+fun compute_up_price_approx(svi: &SVIParams, forward: u64, strike: Strike): Approx {
+    if (strike.is_neg_inf()) {
+        return approx::exact_u64(math::float_scaling!())
+    };
+    if (strike.is_pos_inf()) {
+        return approx::exact_u64(0)
+    };
+
+    assert!(forward > 0, EZeroForward);
+
+    // Binary pricing from SVI total variance:
+    // - k = ln(strike / forward)
+    // - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
+    // - d2 = -((k + w(k) / 2) / sqrt(w(k)))
+    // - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
+    let k = approx::ln_ratio(strike.value(), forward);
+    let (k_minus_m, root) = moneyness_terms(svi, &k);
+    let (half_var, sqrt_var) = variance_denominator_terms(svi, &k_minus_m, &root);
+    let d2 = k.add(&half_var).div_scaled(&sqrt_var).neg();
+    let w_prime = variance_slope(svi, &k_minus_m, &root);
+    digital_price(&d2, &w_prime, &sqrt_var)
+}
+
+fun moneyness_terms(svi_params: &SVIParams, k: &Approx): (Approx, Approx) {
+    let m = approx::exact(svi_params.m());
+    let k_minus_m = k.sub(&m);
+    let k_minus_m_squared = k_minus_m.square_scaled();
+    let sigma = approx::exact_u64(svi_params.sigma());
+    let sigma_squared = sigma.square_scaled();
+    let sqrt_input = k_minus_m_squared.add(&sigma_squared);
+    let root = approx::sqrt(&sqrt_input);
+    (k_minus_m, root)
+}
+
+fun variance_denominator_terms(
+    svi_params: &SVIParams,
+    k_minus_m: &Approx,
+    root: &Approx,
+): (Approx, Approx) {
+    let rho = approx::exact(svi_params.rho());
+    let inner = rho.mul_scaled(k_minus_m).add(root);
+    // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
+    // violates that invariant at the envelope boundary.
+    assert!(!inner.is_negative(), ECannotBeNegative);
+
+    // Keep `b * inner + a` at 1e18 until both downstream projections. For the
+    // d2 numerator, floor(floor(wide / 1e9) / 2) = floor(wide / 2e9), so construct
+    // w / 2 directly without narrowing to a discarded total-variance Approx.
+    let scale = math::float_scaling!() as u128;
+    let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
+    let a = svi_params.a();
+    let wide_a = (a.magnitude() as u128) * scale;
+    let wide_total_var = if (a.is_negative()) {
+        assert!(wide_increment >= wide_a, ENonPositiveVariance);
+        wide_increment - wide_a
+    } else {
+        wide_increment + wide_a
+    };
+    assert!(wide_total_var >= scale, ENonPositiveVariance);
+
+    let wide_error = (svi_params.b() as u128) * (inner.error() as u128);
+    let half_scale = scale + scale;
+    let half_var_center = (wide_total_var / half_scale) as u64;
+    let scaled_error = wide_error.div_ceil(half_scale);
+    let max_error = std::u64::max_value!() as u128;
+    let half_var_error = if (scaled_error >= max_error) {
+        std::u64::max_value!()
+    } else {
+        (scaled_error as u64) + 1
+    };
+    let half_var = approx::from_certified_parts(i64::from_u64(half_var_center), half_var_error);
+
+    let sqrt_center = math::sqrt_u128_down(wide_total_var);
+    let sqrt_low = if (wide_total_var > wide_error) {
+        math::sqrt_u128_down(wide_total_var - wide_error)
+    } else {
+        0
+    };
+    let sqrt_high = math::sqrt_u128_up(wide_total_var + wide_error);
+    let sqrt_error = (sqrt_center - sqrt_low).max(sqrt_high - sqrt_center);
+    let sqrt_var = approx::from_certified_parts(
+        i64::from_u64(sqrt_center as u64),
+        sqrt_error as u64,
+    );
+    (half_var, sqrt_var)
+}
+
+fun variance_slope(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): Approx {
+    let rho = approx::exact(svi_params.rho());
+    let slope_ratio = k_minus_m.div_scaled(root);
+    let slope = rho.add(&slope_ratio);
+    let b = approx::exact_u64(svi_params.b());
+    b.mul_scaled(&slope)
+}
+
+fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {
+    let nd2 = approx::normal_cdf(d2);
+    // A certified-exact zero slope is the flat-variance digital: no smile
+    // correction, N(d2) exactly. A rounded zero with nonzero radius still carries
+    // a possible correction and must flow through the approximate quotient.
+    if (w_prime.magnitude() == 0 && w_prime.error() == 0) {
+        return nd2
+    };
+
+    // Smile correction phi(d2) * w'(k) / (2 sqrt(w)), carried signed so `sub` clamps
+    // in the correct direction; N(d2) - correction is then floored/capped to [0, 1].
+    let pdf = approx::normal_pdf(d2);
+    let two_sqrt_var = sqrt_var.double();
+    let correction = pdf.mul_div_down(w_prime, &two_sqrt_var);
+    let adjusted = nd2.sub(&correction);
+    adjusted.clamp_unit_interval()
 }

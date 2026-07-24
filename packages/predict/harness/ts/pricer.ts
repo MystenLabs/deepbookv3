@@ -1,4 +1,4 @@
-// Off-chain port of deepbook_predict::pricing (compute_nd2 / range_price).
+// Off-chain port of deepbook_predict::pricing (compute_up_price / range_price).
 //
 // Float, not fixed-point: a small drift from the contract's normal_cdf/exp is
 // accepted by design (the semantic instruction targets an approximate price, and

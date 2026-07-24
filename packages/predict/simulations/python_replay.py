@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -19,6 +20,7 @@ from python_indexes.liquidation_book import (
 from python_indexes.strike_payout_tree import StrikePayoutTree
 
 FLOAT_SCALING = 1_000_000_000
+U64_MAX = (1 << 64) - 1
 POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
@@ -72,6 +74,7 @@ VALUATION_LIQUIDATION_BUDGET = 192
 LIQUIDATION_HEAD_SCAN_DIVISOR = 3
 CURVE_SAMPLES = 50
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
+MAX_NAV_DEVIATION = 10_000_000
 # WITHDRAW_FEE_ALPHA removed: the withdraw band fee died with the approximate-NAV
 # world. The async flush pays withdrawals exactly pro-rata (plp::withdraw_dusdc).
 TRADING_LOSS_REBATE_RATE = 500_000_000
@@ -289,6 +292,200 @@ class I64:
 
     def square_scaled(self) -> int:
         return self.mul_scaled(self).magnitude
+
+
+def saturating_add_u64(left: int, right: int) -> int:
+    return min(U64_MAX, left + right)
+
+
+def ceil_mul_div_u64(left: int, right: int, denominator: int) -> int:
+    if denominator == 0:
+        return U64_MAX
+    value = (left * right + denominator - 1) // denominator
+    return min(U64_MAX, value)
+
+
+def trunc_div_signed(numerator: int, denominator: int) -> int:
+    magnitude = abs(numerator) // abs(denominator)
+    return -magnitude if (numerator < 0) != (denominator < 0) else magnitude
+
+
+@dataclass(frozen=True)
+class ApproxValue:
+    """Operational mirror of fixed_math::approx's center-radius arithmetic."""
+
+    center: int
+    error: int = 0
+
+    @staticmethod
+    def exact(center: int) -> "ApproxValue":
+        return ApproxValue(center, 0)
+
+    def add(self, other: "ApproxValue") -> "ApproxValue":
+        return ApproxValue(
+            self.center + other.center,
+            saturating_add_u64(self.error, other.error),
+        )
+
+    def sub(self, other: "ApproxValue") -> "ApproxValue":
+        return ApproxValue(
+            self.center - other.center,
+            saturating_add_u64(self.error, other.error),
+        )
+
+    def neg(self) -> "ApproxValue":
+        return ApproxValue(-self.center, self.error)
+
+    def double(self) -> "ApproxValue":
+        return self.add(self)
+
+    def clamp_nonnegative(self) -> "ApproxValue":
+        return ApproxValue(max(0, self.center), self.error)
+
+    def clamp_upper(self, upper: int) -> "ApproxValue":
+        return ApproxValue(min(self.center, upper), self.error)
+
+    def clamp_unit_interval(self) -> "ApproxValue":
+        return self.clamp_nonnegative().clamp_upper(FLOAT_SCALING)
+
+    def mul_scaled(self, other: "ApproxValue") -> "ApproxValue":
+        if (self.center == 0 and self.error == 0) or (
+            other.center == 0 and other.error == 0
+        ):
+            return ApproxValue.exact(0)
+        center = trunc_div_signed(
+            self.center * other.center,
+            FLOAT_SCALING,
+        )
+        error = ceil_mul_div_u64(abs(self.center), other.error, FLOAT_SCALING)
+        error = saturating_add_u64(
+            error,
+            ceil_mul_div_u64(abs(other.center), self.error, FLOAT_SCALING),
+        )
+        error = saturating_add_u64(
+            error,
+            ceil_mul_div_u64(self.error, other.error, FLOAT_SCALING),
+        )
+        return ApproxValue(center, saturating_add_u64(error, 1))
+
+    def square_scaled(self) -> "ApproxValue":
+        center = self.center * self.center // FLOAT_SCALING
+        cross = ceil_mul_div_u64(
+            abs(self.center),
+            self.error,
+            FLOAT_SCALING,
+        )
+        error = saturating_add_u64(cross, cross)
+        error = saturating_add_u64(
+            error,
+            ceil_mul_div_u64(self.error, self.error, FLOAT_SCALING),
+        )
+        return ApproxValue(center, saturating_add_u64(error, 1))
+
+    def div_scaled(self, other: "ApproxValue") -> "ApproxValue":
+        center = trunc_div_signed(
+            self.center * FLOAT_SCALING,
+            other.center,
+        )
+        denominator_center = abs(other.center)
+        if denominator_center <= other.error:
+            return ApproxValue(center, U64_MAX)
+        denominator = denominator_center - other.error
+        first = ceil_mul_div_u64(self.error, FLOAT_SCALING, denominator)
+        numerator_over_denominator = ceil_mul_div_u64(
+            abs(self.center),
+            other.error,
+            denominator,
+        )
+        second = ceil_mul_div_u64(
+            numerator_over_denominator,
+            FLOAT_SCALING,
+            denominator,
+        )
+        return ApproxValue(
+            center,
+            saturating_add_u64(saturating_add_u64(first, second), 1),
+        )
+
+    def mul_div_down(
+        self,
+        other: "ApproxValue",
+        denominator: "ApproxValue",
+    ) -> "ApproxValue":
+        ma = abs(self.center)
+        mb = abs(other.center)
+        mc = abs(denominator.center)
+        center_magnitude = ma * mb // mc
+        center = (
+            -center_magnitude
+            if (self.center < 0) ^ (other.center < 0) ^ (denominator.center < 0)
+            else center_magnitude
+        )
+        if mc <= denominator.error:
+            return ApproxValue(center, U64_MAX)
+        if ma > U64_MAX - self.error or mb > U64_MAX - other.error:
+            return ApproxValue(center, U64_MAX)
+        upper = ceil_mul_div_u64(
+            ma + self.error,
+            mb + other.error,
+            mc - denominator.error,
+        )
+        if upper == U64_MAX:
+            return ApproxValue(center, U64_MAX)
+        if ma > self.error and mb > other.error:
+            lower = (
+                0
+                if mc > U64_MAX - denominator.error
+                else (ma - self.error)
+                * (mb - other.error)
+                // (mc + denominator.error)
+            )
+            error = max(
+                center_magnitude - lower,
+                max(0, upper - center_magnitude),
+            )
+        else:
+            error = saturating_add_u64(center_magnitude, upper)
+        return ApproxValue(center, error)
+
+    def sqrt(self) -> "ApproxValue":
+        x = abs(self.center)
+        center = sqrt_fixed(x, FLOAT_SCALING)
+        low = sqrt_fixed(x - self.error, FLOAT_SCALING) if x > self.error else 0
+        high = sqrt_u128((x + self.error) * FLOAT_SCALING)
+        return ApproxValue(
+            center,
+            max(center - low, high - center) + 1,
+        )
+
+    def normal_cdf(self) -> "ApproxValue":
+        center = normal_cdf(I64(abs(self.center), self.center < 0))
+        nearest = max(0, abs(self.center) - self.error)
+        sup_phi = saturating_add_u64(normal_pdf(I64(nearest)), 50)
+        propagated = ceil_mul_div_u64(
+            sup_phi,
+            self.error,
+            FLOAT_SCALING,
+        )
+        return ApproxValue(center, saturating_add_u64(propagated, 20))
+
+    def normal_pdf(self) -> "ApproxValue":
+        center = normal_pdf(I64(abs(self.center), self.center < 0))
+        propagated = ceil_mul_div_u64(
+            242_000_000,
+            self.error,
+            FLOAT_SCALING,
+        )
+        return ApproxValue(center, saturating_add_u64(propagated, 50))
+
+    def true_relative_deviation_within(self, max_deviation: int) -> bool:
+        center = abs(self.center)
+        if self.error > center:
+            return False
+        return (
+            self.error * FLOAT_SCALING
+            <= max_deviation * (center - self.error)
+        )
 
 
 def scenario_quantity_scale() -> int:
@@ -519,8 +716,16 @@ def deepbook_div(x: int, y: int) -> int:
     return x * FLOAT_SCALING // y
 
 
+def deepbook_div_up(x: int, y: int) -> int:
+    return (x * FLOAT_SCALING + y - 1) // y
+
+
 def deepbook_mul(x: int, y: int) -> int:
     return x * y // FLOAT_SCALING
+
+
+def deepbook_mul_up(x: int, y: int) -> int:
+    return (x * y + FLOAT_SCALING - 1) // FLOAT_SCALING
 
 
 def mul_div_round_down(a: int, b: int, c: int) -> int:
@@ -531,15 +736,17 @@ def mul_div_round_up(a: int, b: int, c: int) -> int:
     return (a * b + c - 1) // c
 
 
-def live_forward(spot: int, forward: int) -> int:
-    # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
-    # every live quote/valuation/liquidation is NOT the pushed forward, but is
-    # re-derived from the live Pyth spot and the stored Block Scholes basis as
-    # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
-    # generally differs from `forward` by a few units. In the localnet parity flow
-    # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
-    # is exactly the forward the contracts price with.
-    return deepbook_mul(spot, deepbook_div(forward, spot))
+def live_forward(
+    pyth_spot: int,
+    block_scholes_forward: int,
+    block_scholes_spot: int,
+) -> int:
+    # Mirror pricing::resolve_live_pricer's fresh-Pyth branch.
+    return mul_div_round_down(
+        pyth_spot,
+        block_scholes_forward,
+        block_scholes_spot,
+    )
 
 
 def assert_valid_leverage(leverage: int) -> None:
@@ -567,8 +774,8 @@ def assert_admission_leverage_cap(entry_probability: int, leverage: int) -> None
         raise ValueError("leverage above admission cap")
 
 
-def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
-    return deepbook_div(exposure_value, leverage_multiplier(leverage))
+def net_premium_from_entry_value(entry_value: int, leverage: int) -> int:
+    return deepbook_div_up(entry_value, leverage_multiplier(leverage))
 
 
 def assert_net_premium_above_min(net_premium: int) -> None:
@@ -581,12 +788,54 @@ def assert_net_premium_above_min(net_premium: int) -> None:
 def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
     assert_admission_leverage_cap(entry_probability, leverage)
     entry_exposure_value = deepbook_mul(entry_probability, quantity)
-    contribution = user_contribution_from_exposure_value(entry_exposure_value, leverage)
+    contribution = net_premium_from_entry_value(entry_exposure_value, leverage)
     return {
         "entry_exposure_value": entry_exposure_value,
         "contribution": contribution,
         "floor_shares": entry_exposure_value - contribution,
         "leverage_multiplier": leverage_multiplier(leverage),
+    }
+
+
+def split_partial_close_floor(
+    old_quantity: int,
+    old_floor_shares: int,
+    close_quantity: int,
+) -> tuple[int, int, int]:
+    if close_quantity > old_quantity:
+        raise ValueError("close quantity exceeds order quantity")
+    remaining_quantity = old_quantity - close_quantity
+    remaining_floor_shares = mul_div_round_down(
+        old_floor_shares,
+        remaining_quantity,
+        old_quantity,
+    )
+    remove_floor_shares = old_floor_shares - remaining_floor_shares
+    return remaining_quantity, remaining_floor_shares, remove_floor_shares
+
+
+def compute_live_close_terms(
+    range_probability: int,
+    old_quantity: int,
+    old_floor_shares: int,
+    close_quantity: int,
+) -> dict[str, int]:
+    (
+        remaining_quantity,
+        remaining_floor_shares,
+        remove_floor_shares,
+    ) = split_partial_close_floor(
+        old_quantity,
+        old_floor_shares,
+        close_quantity,
+    )
+    gross_redeem_amount = deepbook_mul(range_probability, close_quantity)
+    return {
+        "remaining_quantity": remaining_quantity,
+        "remaining_floor_shares": remaining_floor_shares,
+        "remove_floor_shares": remove_floor_shares,
+        "gross_redeem_amount": gross_redeem_amount,
+        "redeem_amount": max(0, gross_redeem_amount - remove_floor_shares),
     }
 
 
@@ -639,6 +888,13 @@ def ln_fixed(x: int) -> I64:
         return ln_fixed(inv).neg()
     y, n = normalize_ln(x)
     return I64(ln_u128(y, n))
+
+
+def ln_ratio_fixed(numerator: int, denominator: int) -> I64:
+    ratio = numerator * FLOAT_SCALING // denominator
+    if 1 < ratio <= POS_INF_STRIKE:
+        return ln_fixed(ratio)
+    return ln_fixed(numerator).sub(ln_fixed(denominator))
 
 
 def exp_series_u128(r: int) -> int:
@@ -808,49 +1064,6 @@ def normal_pdf(value: I64) -> int:
     return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
 
 
-def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
-    # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
-    # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
-    strike_ratio_scaled = strike * FLOAT_SCALING // forward
-    if strike_ratio_scaled == 0:
-        return FLOAT_SCALING
-    if strike_ratio_scaled > 2**64 - 1:
-        return 0
-    k = ln_fixed(strike_ratio_scaled)
-    m = I64(svi["m"], svi["mNegative"])
-    k_minus_m = k.sub(m)
-    k_minus_m_squared = k_minus_m.square_scaled()
-    sigma = svi["sigma"]
-    sigma_squared = deepbook_mul(sigma, sigma)
-    sq = sqrt_fixed(k_minus_m_squared + sigma_squared, FLOAT_SCALING)
-    rho = I64(svi["rho"], svi["rhoNegative"])
-    rho_km = rho.mul_scaled(k_minus_m)
-    inner = rho_km.add(I64(sq))
-    if inner.is_negative:
-        raise ValueError("SVI inner term cannot be negative")
-    wing_var = deepbook_mul(svi["b"], inner.magnitude)
-    a = I64(svi["a"], svi.get("aNegative", False))
-    total_var_i64 = I64(wing_var).add(a)
-    if total_var_i64.is_negative or total_var_i64.magnitude == 0:
-        raise ValueError("SVI total variance must be positive")
-    total_var = total_var_i64.magnitude
-    sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
-    d2_numerator = k.add(I64(total_var // 2))
-    d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
-    nd2 = normal_cdf(d2)
-
-    slope_ratio = k_minus_m.div_scaled(I64(sq))
-    slope = rho.add(slope_ratio)
-    w_prime = I64(svi["b"]).mul_scaled(slope)
-    if w_prime.magnitude == 0:
-        return nd2
-
-    correction = mul_div_round_down(normal_pdf(d2), w_prime.magnitude, 2 * sqrt_var)
-    if w_prime.is_negative:
-        return min(FLOAT_SCALING, nd2 + correction)
-    return nd2 - correction if nd2 > correction else 0
-
-
 def svi_cache_key(svi: dict[str, Any]) -> tuple[int, bool, int, int, bool, int, bool, int]:
     return (
         svi["a"],
@@ -881,20 +1094,42 @@ def compute_up_price_cached(
         return FLOAT_SCALING
     if strike == POS_INF_STRIKE:
         return 0
-    return compute_nd2(
-        {
-            "a": a,
-            "aNegative": a_negative,
-            "b": b,
-            "rho": rho,
-            "rhoNegative": rho_negative,
-            "m": m,
-            "mNegative": m_negative,
-            "sigma": sigma,
-        },
-        forward,
-        strike,
-    )
+    k = ln_ratio_fixed(strike, forward)
+    m_value = I64(m, m_negative)
+    k_minus_m = k.sub(m_value)
+    k_minus_m_squared = k_minus_m.square_scaled()
+    sigma_squared = deepbook_mul(sigma, sigma)
+    root = sqrt_fixed(k_minus_m_squared + sigma_squared, FLOAT_SCALING)
+    rho_value = I64(rho, rho_negative)
+    inner = rho_value.mul_scaled(k_minus_m).add(I64(root))
+    if inner.is_negative:
+        raise ValueError("SVI inner term cannot be negative")
+    a_value = I64(a, a_negative)
+    wide_increment = b * inner.magnitude
+    wide_a = a_value.magnitude * FLOAT_SCALING
+    if a_value.is_negative:
+        if wide_increment < wide_a:
+            raise ValueError("SVI total variance must be positive")
+        wide_total_var = wide_increment - wide_a
+    else:
+        wide_total_var = wide_increment + wide_a
+    total_var = wide_total_var // FLOAT_SCALING
+    if total_var == 0:
+        raise ValueError("SVI total variance must be positive")
+    sqrt_var = sqrt_u128(wide_total_var)
+    d2 = k.add(I64(total_var // 2)).div_scaled(I64(sqrt_var)).neg()
+    nd2 = normal_cdf(d2)
+
+    slope_ratio = k_minus_m.div_scaled(I64(root))
+    slope = rho_value.add(slope_ratio)
+    w_prime = I64(b).mul_scaled(slope)
+    if w_prime.magnitude == 0:
+        return nd2
+
+    correction = mul_div_round_down(normal_pdf(d2), w_prime.magnitude, 2 * sqrt_var)
+    if w_prime.is_negative:
+        return min(FLOAT_SCALING, nd2 + correction)
+    return nd2 - correction if nd2 > correction else 0
 
 
 def compute_up_price(svi: dict[str, Any], forward: int, strike: int) -> int:
@@ -944,6 +1179,152 @@ def compute_range_price_cached(
 
 def compute_range_price(svi: dict[str, Any], forward: int, lower: int, higher: int) -> int:
     return compute_range_price_cached(forward, *svi_cache_key(svi), lower, higher)
+
+
+def ln_approx(value: int, input_error: int) -> ApproxValue:
+    center_i64 = ln_fixed(value)
+    center = -center_i64.magnitude if center_i64.is_negative else center_i64.magnitude
+    leaf = abs(center) // 10_000_000 + 3
+    propagated = ceil_mul_div_u64(
+        input_error,
+        FLOAT_SCALING,
+        value - input_error,
+    )
+    return ApproxValue(center, saturating_add_u64(propagated, leaf))
+
+
+def ln_ratio_approx(numerator: int, denominator: int) -> ApproxValue:
+    ratio = numerator * FLOAT_SCALING // denominator
+    if ratio <= U64_MAX and ratio > 1:
+        return ln_approx(ratio, 1)
+    return ln_approx(numerator, 0).sub(ln_approx(denominator, 0))
+
+
+@lru_cache(maxsize=PRICE_CACHE_SIZE)
+def compute_up_price_approx_cached(
+    forward: int,
+    a: int,
+    a_negative: bool,
+    b: int,
+    rho: int,
+    rho_negative: bool,
+    m: int,
+    m_negative: bool,
+    sigma: int,
+    strike: int,
+) -> ApproxValue:
+    if strike == NEG_INF_STRIKE:
+        return ApproxValue.exact(FLOAT_SCALING)
+    if strike == POS_INF_STRIKE:
+        return ApproxValue.exact(0)
+
+    k = ln_ratio_approx(strike, forward)
+    m_value = ApproxValue.exact(-m if m_negative else m)
+    k_minus_m = k.sub(m_value)
+    k_minus_m_squared = k_minus_m.square_scaled()
+    sigma_value = ApproxValue.exact(sigma)
+    root = k_minus_m_squared.add(sigma_value.square_scaled()).sqrt()
+    rho_value = ApproxValue.exact(-rho if rho_negative else rho)
+    inner = rho_value.mul_scaled(k_minus_m).add(root)
+    if inner.center < 0:
+        raise ValueError("SVI inner term cannot be negative")
+
+    wide_increment = b * inner.center
+    wide_a = a * FLOAT_SCALING
+    if a_negative:
+        if wide_increment < wide_a:
+            raise ValueError("SVI total variance must be positive")
+        wide_total_var = wide_increment - wide_a
+    else:
+        wide_total_var = wide_increment + wide_a
+    if wide_total_var < FLOAT_SCALING:
+        raise ValueError("SVI total variance must be positive")
+
+    wide_error = b * inner.error
+    half_scale = 2 * FLOAT_SCALING
+    half_center = wide_total_var // half_scale
+    scaled_half_error = (wide_error + half_scale - 1) // half_scale
+    half_error = (
+        U64_MAX
+        if scaled_half_error >= U64_MAX
+        else scaled_half_error + 1
+    )
+    half_var = ApproxValue(half_center, half_error)
+
+    sqrt_center = sqrt_u128(wide_total_var)
+    sqrt_low = (
+        sqrt_u128(wide_total_var - wide_error)
+        if wide_total_var > wide_error
+        else 0
+    )
+    sqrt_high = sqrt_u128(wide_total_var + wide_error)
+    if sqrt_high * sqrt_high < wide_total_var + wide_error:
+        sqrt_high += 1
+    sqrt_var = ApproxValue(
+        sqrt_center,
+        max(sqrt_center - sqrt_low, sqrt_high - sqrt_center),
+    )
+
+    d2 = k.add(half_var).div_scaled(sqrt_var).neg()
+    slope_ratio = k_minus_m.div_scaled(root)
+    slope = rho_value.add(slope_ratio)
+    w_prime = ApproxValue.exact(b).mul_scaled(slope)
+    nd2 = d2.normal_cdf()
+    if w_prime.center == 0 and w_prime.error == 0:
+        price = nd2
+    else:
+        correction = d2.normal_pdf().mul_div_down(
+            w_prime,
+            sqrt_var.double(),
+        )
+        price = nd2.sub(correction).clamp_unit_interval()
+
+    scalar = compute_up_price_cached(
+        forward,
+        a,
+        a_negative,
+        b,
+        rho,
+        rho_negative,
+        m,
+        m_negative,
+        sigma,
+        strike,
+    )
+    if price.center != scalar:
+        raise ValueError(
+            f"Approx center mismatch: certificate={price.center} scalar={scalar}"
+        )
+    return price
+
+
+def compute_up_price_approx(
+    svi: dict[str, Any],
+    forward: int,
+    strike: int,
+) -> ApproxValue:
+    return compute_up_price_approx_cached(
+        forward,
+        *svi_cache_key(svi),
+        strike,
+    )
+
+
+def compute_range_price_approx(
+    svi: dict[str, Any],
+    forward: int,
+    lower: int,
+    higher: int,
+) -> ApproxValue:
+    lower_up = compute_up_price_approx(svi, forward, lower)
+    higher_up = compute_up_price_approx(svi, forward, higher)
+    price = lower_up.sub(higher_up).clamp_nonnegative()
+    scalar = compute_range_price(svi, forward, lower, higher)
+    if price.center != scalar:
+        raise ValueError(
+            f"Approx range center mismatch: certificate={price.center} scalar={scalar}"
+        )
+    return price
 
 
 def directional_probability_bounds(curve: list[dict[str, int]], lower: int, higher: int) -> tuple[int, int]:
@@ -1094,9 +1475,8 @@ def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
 def remove_closed_live_order(
     model: dict[str, Any],
     order: dict[str, Any],
-    close_quantity: int,
     resulting_order: dict[str, Any] | None,
-) -> int:
+) -> None:
     old_quantity, old_floor_shares = order_index_update_terms(order)
     if resulting_order is None:
         remaining_floor_shares = 0
@@ -1113,12 +1493,10 @@ def remove_closed_live_order(
             remaining_floor_shares,
         )
     invalidate_valuation_cache(model)
-    closed_floor_amount = mul_div_round_up(old_floor_shares, close_quantity, old_quantity)
-    return floor_amount(closed_floor_amount)
 
 
-def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
-    return remove_closed_live_order(model, order, order["quantity"], None)
+def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
+    remove_closed_live_order(model, order, None)
 
 
 def valuation_curve_key(
@@ -1156,19 +1534,17 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
     return curve
 
 
-# --- Exact NAV liability (replaces the deleted dense StrikeNavMatrix + curve). ---
-# The contract's `strike_exposure::exact_live_liability` is `linear - correction`.
-# The payout-tree `walk_linear` and leveraged-book `correction_value` are efficient
-# on-chain aggregations of per-order sums when the active boundary UP prices are
-# monotone. The contract rejects non-monotone active boundary sets during the price
-# memo walk; mirror that precondition, then sum order-by-order here (the simulation
-# has one book, so the O(n) walk is fine and exact):
-#   linear     = Σ_active           quantity · range_price(lower, higher)
+# --- Certified NAV liability (shared-boundary parity with Move). ---
+# The payout-tree walk multiplies each distinct boundary price by the signed net
+# quantity at that boundary once. That center is not bit-equivalent to summing
+# independently floored per-order range values. The correction remains per
+# leveraged order:
+#   linear     = base_quantity + Σ_boundary trunc(price · (starts - ends))
 #   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
 #                                       floor_shares)
-#   exact_live_liability = max(0, linear - correction)
-# There is NO conservative band anymore (deleted with the approximate-NAV world):
-# the flush prices one exact mark for both supply and withdraw.
+#   marked_live_liability.center = max(0, linear - correction)
+# The operational replay mirrors both the canonical center and the propagated
+# radius so LP fills can use the same directional marks as Move.
 def assert_active_book_monotone(model: dict[str, Any]) -> None:
     boundaries = sorted(
         {
@@ -1187,40 +1563,146 @@ def assert_active_book_monotone(model: dict[str, Any]) -> None:
         previous = price
 
 
-def exact_live_liability(model: dict[str, Any]) -> int:
+def _signed_mul_scaled_toward_zero(value: int, signed_quantity: int) -> int:
+    product = value * signed_quantity
+    magnitude = abs(product) // FLOAT_SCALING
+    return -magnitude if product < 0 else magnitude
+
+
+def shared_boundary_linear(
+    orders: list[dict[str, Any]],
+    boundary_prices: dict[int, int],
+) -> int:
+    starts: dict[int, int] = {}
+    ends: dict[int, int] = {}
+    base_quantity = 0
+    for order in orders:
+        quantity = order["quantity"]
+        lower = order["lower"]
+        higher = order["higher"]
+        if lower == NEG_INF_STRIKE:
+            base_quantity += quantity
+        else:
+            starts[lower] = starts.get(lower, 0) + quantity
+        if higher != POS_INF_STRIKE:
+            ends[higher] = ends.get(higher, 0) + quantity
+
+    linear = base_quantity
+    for strike in sorted(set(starts) | set(ends)):
+        net_quantity = starts.get(strike, 0) - ends.get(strike, 0)
+        if net_quantity:
+            linear += _signed_mul_scaled_toward_zero(
+                boundary_prices[strike],
+                net_quantity,
+            )
+    return linear
+
+
+def marked_live_liability_center(model: dict[str, Any]) -> int:
+    return marked_live_liability_approx(model).center
+
+
+def marked_live_liability_approx(model: dict[str, Any]) -> ApproxValue:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
-    assert_active_book_monotone(model)
-    linear = 0
-    correction = 0
-    for order in model["orders"].values():
-        if order["status"] != "active":
-            continue
-        range_value = deepbook_mul(
-            compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"]),
-            order["quantity"],
+    active_orders = [
+        order
+        for order in model["orders"].values()
+        if order["status"] == "active"
+    ]
+    boundaries = {
+        strike
+        for order in active_orders
+        for strike in (order["lower"], order["higher"])
+        if strike not in (NEG_INF_STRIKE, POS_INF_STRIKE)
+    }
+    boundary_prices = {
+        strike: compute_up_price_approx(
+            model["current_svi"],
+            model["current_forward"],
+            strike,
         )
-        linear += range_value
-        if order["leverage"] != LEVERAGE_ONE_X:
-            floor_value = floor_amount(order_floor_shares(order))
-            correction += min(range_value, floor_value)
-    return max(0, linear - correction)
+        for strike in boundaries
+    }
+    previous: int | None = None
+    for strike in sorted(boundary_prices):
+        price = boundary_prices[strike]
+        if previous is not None and price.center > previous:
+            raise ValueError("non-monotone active-book SVI surface")
+        previous = price.center
+
+    starts: dict[int, int] = {}
+    ends: dict[int, int] = {}
+    base_quantity = 0
+    for order in active_orders:
+        quantity = order["quantity"]
+        lower = order["lower"]
+        higher = order["higher"]
+        if lower == NEG_INF_STRIKE:
+            base_quantity += quantity
+        else:
+            starts[lower] = starts.get(lower, 0) + quantity
+        if higher != POS_INF_STRIKE:
+            ends[higher] = ends.get(higher, 0) + quantity
+
+    linear = ApproxValue.exact(base_quantity)
+    for strike in sorted(set(starts) | set(ends)):
+        net_quantity = starts.get(strike, 0) - ends.get(strike, 0)
+        local = boundary_prices[strike].mul_scaled(
+            ApproxValue.exact(net_quantity),
+        )
+        linear = linear.add(local)
+
+    correction = ApproxValue.exact(0)
+    for order in active_orders:
+        if order["leverage"] == LEVERAGE_ONE_X:
+            continue
+        lower_price = (
+            ApproxValue.exact(FLOAT_SCALING)
+            if order["lower"] == NEG_INF_STRIKE
+            else boundary_prices[order["lower"]]
+        )
+        higher_price = (
+            ApproxValue.exact(0)
+            if order["higher"] == POS_INF_STRIKE
+            else boundary_prices[order["higher"]]
+        )
+        range_value = lower_price.sub(higher_price).mul_scaled(
+            ApproxValue.exact(order["quantity"]),
+        )
+        floor_value = floor_amount(order_floor_shares(order))
+        cap = (
+            range_value
+            if liquidation_threshold_value(floor_value) >= range_value.center
+            and floor_value > 0
+            else range_value.clamp_upper(floor_value)
+        )
+        correction = correction.add(cap)
+    return linear.sub(correction).clamp_nonnegative()
 
 
 def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] | None = None) -> int:
     # `curve` is accepted for call-site compatibility but ignored: the exact walk
     # needs no curve. (Kept positional so the Python-only derived sampler, which
     # passes a curve, still type-checks.)
-    return exact_live_liability(model)
+    return marked_live_liability_center(model)
 
 
-# current_nav (per ExpiryMarket): free cash minus the exact per-order live
-# liability, floored at zero. free_cash = expiry_cash - rebate_reserve. This is the
-# EXACT mark the flush prices supply AND withdraw at.
-def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
+def current_nav_approx(
+    model: dict[str, Any],
+    state: dict[str, int],
+) -> ApproxValue:
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    free_cash = max(0, state["expiry_cash_balance"] - rebate_reserve)
-    return max(0, free_cash - exact_live_liability(model))
+    if state["expiry_cash_balance"] < rebate_reserve:
+        raise ValueError("expiry cash below rebate reserve")
+    free_cash = state["expiry_cash_balance"] - rebate_reserve
+    return ApproxValue.exact(free_cash).sub(
+        marked_live_liability_approx(model),
+    ).clamp_nonnegative()
+
+
+def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
+    return current_nav_approx(model, state).center
 
 
 def compute_pool_value(
@@ -1229,16 +1711,70 @@ def compute_pool_value(
     curve: list[dict[str, int]] | None = None,
     position_liability: int | None = None,
 ) -> int:
-    # Pool NAV = lp_pool_value(idle, credits, debits, share, active, pending), where
-    # the single active market's NAV is the EXACT `current_nav` above (settled markets
-    # contribute 0 — not modelled here, settlement is stubbed). Mirrors
-    # plp::lp_pool_value's saturating exclusion of unmaterialized and carried
-    # protocol profit.
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     active_expiry_value = current_nav(model, state)
-    exclusion = unmaterialized_protocol_profit_exclusion(state, active_expiry_value)
-    return max(0, state["vault_idle_balance"] + active_expiry_value - exclusion - state["pending_protocol_profit"])
+    return pool_value_at_active_nav(state, active_expiry_value)
+
+
+def pool_value_at_active_nav(
+    state: dict[str, int],
+    active_expiry_value: int,
+) -> int:
+    exclusion = unmaterialized_protocol_profit_exclusion(
+        state,
+        active_expiry_value,
+    )
+    return max(
+        0,
+        state["vault_idle_balance"]
+        + active_expiry_value
+        - exclusion
+        - state["pending_protocol_profit"],
+    )
+
+
+def compute_pool_value_approx(
+    model: dict[str, Any],
+    state: dict[str, int],
+) -> tuple[ApproxValue, ApproxValue]:
+    active = current_nav_approx(model, state)
+    center = pool_value_at_active_nav(state, active.center)
+    if active.error > U64_MAX - active.center:
+        return ApproxValue(center, U64_MAX), active
+    upper_active = active.center + active.error
+    if (
+        upper_active > U64_MAX - state["vault_idle_balance"]
+        or upper_active > U64_MAX - state["profit_basis_credits"]
+    ):
+        return ApproxValue(center, U64_MAX), active
+    lower = pool_value_at_active_nav(
+        state,
+        max(0, active.center - active.error),
+    )
+    upper = pool_value_at_active_nav(
+        state,
+        upper_active,
+    )
+    return (
+        ApproxValue(
+            center,
+            max(center - lower, upper - center),
+        ),
+        active,
+    )
+
+
+def pool_nav_bid_ask(pool_value: ApproxValue) -> tuple[int, int]:
+    center = abs(pool_value.center)
+    if center == 0:
+        return 0, 0
+    if (
+        not pool_value.true_relative_deviation_within(MAX_NAV_DEVIATION)
+        or pool_value.error > U64_MAX - center
+    ):
+        raise ValueError("pool NAV certificate exceeds precision policy")
+    return center - pool_value.error, center + pool_value.error
 
 
 def expiry_net_funding(state: dict[str, int]) -> int:
@@ -1367,22 +1903,17 @@ def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]
     ]
 
 
-# The flush valuation: rebalance the (single) active expiry, then price the pool
-# NAV at the EXACT mark. The deleted approximate-NAV world's verified-vs-unscanned
-# floor scan, supply_liability band, and aggregate_band are GONE — the flush uses
-# one exact `current_nav` for both supply and withdraw (DOCS_CONSOLIDATED_FACTS §3,
-# move.md NAV-mark invariant). Returns (cash-rebalance updates, pool_value,
-# synced_state).
-# The parity replay calls this once per synthetic flush, then uses the frozen pool
-# value and pre-drain total supply for both FIFO queues.
+# Rebalance the single active expiry, then mirror the certified pool NAV and its
+# directional frozen marks. Returns cash-rebalance updates, pool NAV, active-market
+# NAV, and the synchronized state.
 def flush_valuation(
     model: dict[str, Any],
     state: dict[str, int],
-) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+) -> tuple[list[dict[str, Any]], ApproxValue, ApproxValue, dict[str, int]]:
     synced_state = dict(state)
     updates = sync_active_expiry_cash_updates(model, synced_state)
-    pool_value = compute_pool_value(model, synced_state)
-    return updates, pool_value, synced_state
+    pool_value, active_value = compute_pool_value_approx(model, synced_state)
+    return updates, pool_value, active_value, synced_state
 
 
 def unmaterialized_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
@@ -1552,7 +2083,11 @@ def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
 
 def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
     oracle = row if row["action"] == "oracle_mint_ptb" else row["oracleRefresh"]
-    model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
+    model["current_forward"] = live_forward(
+        oracle["spot"],
+        oracle["forward"],
+        oracle["spot"],
+    )
     model["current_svi"] = oracle
     updates.append(pyth_feed_update(oracle))
     updates.append(block_scholes_surface_update(oracle))
@@ -1570,7 +2105,7 @@ def order_minted_update(
     lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
     assert_entry_probability_bounds(entry_probability)
-    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
+    fee_amount = deepbook_mul_up(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
     assert_net_premium_above_min(terms["contribution"])
     return {
@@ -1792,15 +2327,17 @@ def append_pool_sync_phase(
     model: dict[str, Any],
     state: dict[str, int],
     updates: list[dict[str, Any]],
-) -> tuple[int, dict[str, int]]:
+) -> tuple[int, int, dict[str, int]]:
     # The flush still runs a passive liquidation pass, but NAV no longer needs its
     # verified-floor/range output (the exact per-order floor-capped liability makes
-    # an underwater order net to zero with no scan — see exact_live_liability), so
+    # an underwater order net to zero with no scan — see
+    # marked_live_liability_center), so
     # the verification plumbing and the band it fed are dropped.
     updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
-    sync_updates, pool_value, synced_state = flush_valuation(model, state)
+    sync_updates, pool_value, _, synced_state = flush_valuation(model, state)
     updates.extend(sync_updates)
-    return pool_value, synced_state
+    withdraw_pool_value, supply_pool_value = pool_nav_bid_ask(pool_value)
+    return withdraw_pool_value, supply_pool_value, synced_state
 
 
 def track_minted_boundaries(model: dict[str, Any], lower: int, higher: int) -> None:
@@ -1875,41 +2412,42 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         raise ValueError(f"order_ref {ref} is not redeemable")
 
     probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
-    fee = deepbook_mul(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
-    gross = deepbook_mul(probability, close_quantity)
-
-    remaining_quantity = order["quantity"] - close_quantity
+    fee = deepbook_mul_up(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
+    close_terms = compute_live_close_terms(
+        probability,
+        order["quantity"],
+        order_floor_shares(order),
+        close_quantity,
+    )
+    remaining_quantity = close_terms["remaining_quantity"]
     if remaining_quantity == 0:
         replacement_ref = None
         replacement_sequence = None
         remove_active_order(model, ref)
-        closed_floor = remove_live_order(model, order)
+        remove_live_order(model, order)
         del model["orders"][ref]
     else:
         replacement_ref = row["replacementOrderRef"] or ref
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
-        old_floor_shares = order_floor_shares(order)
-        close_fraction = deepbook_div(close_quantity, order["quantity"])
-        remaining_floor_shares = old_floor_shares - deepbook_mul(old_floor_shares, close_fraction)
         replacement = {
             **order,
             "ref": replacement_ref,
             "sequence": model["next_sequence"],
             "quantity": remaining_quantity,
             "contribution": replacement_terms["contribution"],
-            "floor_shares": remaining_floor_shares,
+            "floor_shares": close_terms["remaining_floor_shares"],
             "status": "active",
         }
         replacement["order_id"] = order_id_for_terms(replacement)
         remove_active_order(model, ref)
-        closed_floor = remove_closed_live_order(model, order, close_quantity, replacement)
+        remove_closed_live_order(model, order, replacement)
         del model["orders"][ref]
         model["next_sequence"] += 1
         model["orders"][replacement_ref] = replacement
         insert_active_order(model, replacement_ref)
         replacement_sequence = replacement["sequence"]
 
-    redeem_amount = gross - min(gross, closed_floor)
+    redeem_amount = close_terms["redeem_amount"]
     fee = min(fee, redeem_amount)
     return {
         "type": "live_order_redeemed",
@@ -1928,33 +2466,34 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 
 # === Async LP supply/withdraw (replaces the deleted synchronous SupplyExecuted /
 # WithdrawExecuted). A supply/withdraw is now: a request that escrows funds, then a
-# later privileged flush that drains the queue at one EXACT frozen mark
-# (current_nav). plp::supply_shares mints `amount * total_supply / pool_value`
-# (bootstrap 1:1 when total_supply == 0 AND pool_value == 0); plp::withdraw_dusdc
-# pays `shares * pool_value / total_supply` — NO withdraw fee (the band fee died with
-# the approximate-NAV world). Both round down; a dust request that prices to 0 is
-# refunded.
+# later privileged flush. These long-replay helpers use the same certified ask for
+# supply and bid for withdrawal as the contract. Both helpers round down, and a
+# dust request that prices to 0 is refunded.
 #
 # These synchronous helpers are for the long Python-only replay. Normal parity
 # queues requests and drains them later in `parity_flush_updates`.
 def supply_update(
     model: dict[str, Any],
     row: dict[str, Any],
-    pool_value: int,
+    supply_pool_value: int,
     synced_state: dict[str, int],
 ) -> dict[str, str]:
     if row["lpRef"] in model["lp_refs"]:
         raise ValueError(f"duplicate lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    # plp::supply_shares: bootstrap 1:1 requires an empty pool NAV.
+    # Bootstrap 1:1 requires an empty pool NAV.
     if total_supply == 0:
-        if pool_value != 0:
+        if supply_pool_value != 0:
             raise ValueError("bootstrap supply requires empty pool NAV")
         shares = row["amount"]
-    elif pool_value == 0:
+    elif supply_pool_value == 0:
         shares = 0  # wiped pool — caller refunds the escrowed DUSDC
     else:
-        shares = mul_div_round_down(row["amount"], total_supply, pool_value)
+        shares = mul_div_round_down(
+            row["amount"],
+            total_supply,
+            supply_pool_value,
+        )
     if shares <= 0:
         raise ValueError("supply priced to zero shares (would be refunded)")
     model["lp_refs"][row["lpRef"]] = shares
@@ -1963,7 +2502,7 @@ def supply_update(
         "lp_ref": row["lpRef"],
         "dusdc_amount": str(row["amount"]),
         "shares_minted": str(shares),
-        "pool_value": str(pool_value),
+        "pool_value": str(supply_pool_value),
         "total_supply_after": str(total_supply + shares),
         "idle_balance_after": str(synced_state["vault_idle_balance"] + row["amount"]),
     }
@@ -1972,15 +2511,18 @@ def supply_update(
 def withdraw_update(
     model: dict[str, Any],
     row: dict[str, Any],
-    pool_value: int,
+    withdraw_pool_value: int,
     synced_state: dict[str, int],
 ) -> dict[str, str]:
     shares = model["lp_refs"].get(row["lpRef"])
     if shares is None:
         raise ValueError(f"unknown lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    # plp::withdraw_dusdc: pro-rata, rounded down, NO withdraw fee.
-    payout = mul_div_round_down(shares, pool_value, total_supply) if total_supply else 0
+    payout = (
+        mul_div_round_down(shares, withdraw_pool_value, total_supply)
+        if total_supply
+        else 0
+    )
     if payout <= 0:
         raise ValueError("withdraw priced to zero DUSDC (would be refunded)")
     if synced_state["vault_idle_balance"] < payout:
@@ -1991,7 +2533,7 @@ def withdraw_update(
         "lp_ref": row["lpRef"],
         "shares_burned": str(shares),
         "dusdc_amount": str(payout),
-        "pool_value": str(pool_value),
+        "pool_value": str(withdraw_pool_value),
         "total_supply_after": str(total_supply - shares),
         "idle_balance_after": str(synced_state["vault_idle_balance"] - payout),
     }
@@ -2266,8 +2808,11 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         if remaining_quantity == 0 or not replacement_ref:
             return
         close_quantity = int(update["quantity_closed"])
-        close_fraction = deepbook_div(close_quantity, order["quantity"])
-        floor_shares = order["floor_shares"] - deepbook_mul(order["floor_shares"], close_fraction)
+        _, floor_shares, _ = split_partial_close_floor(
+            order["quantity"],
+            order["floor_shares"],
+            close_quantity,
+        )
         analytics_insert_order(
             analytics,
             {
@@ -2731,6 +3276,8 @@ def flush_checkpoints(row_count: int) -> set[int]:
             for part in raw.split(",")
             if (value := part.strip()).isdigit() and int(value) > 0
         }
+    if row_count < 300:
+        return {row_count}
     return {checkpoint for checkpoint in (300, 999) if checkpoint <= row_count}
 
 
@@ -2752,8 +3299,9 @@ def parity_flush_updates(
     updates: list[dict[str, Any]] = []
     apply_inline_oracle_refresh(model, row, updates)
     updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
-    sync_updates, pool_value, synced_state = flush_valuation(model, state)
+    sync_updates, pool_value, active_value, synced_state = flush_valuation(model, state)
     updates.extend(sync_updates)
+    withdraw_pool_value, supply_pool_value = pool_nav_bid_ask(pool_value)
 
     total_supply = synced_state["vault_total_plp_supply"]
     idle_balance_before = synced_state["vault_idle_balance"]
@@ -2766,8 +3314,12 @@ def parity_flush_updates(
     while supply_queue:
         request = supply_queue.pop(0)
         shares = (
-            mul_div_round_down(request["amount"], total_supply, pool_value)
-            if pool_value > 0
+            mul_div_round_down(
+                request["amount"],
+                total_supply,
+                supply_pool_value,
+            )
+            if supply_pool_value > 0
             else 0
         )
         requests_pending_after = len(supply_queue)
@@ -2801,7 +3353,11 @@ def parity_flush_updates(
     while withdraw_queue:
         request = withdraw_queue[0]
         payout = (
-            mul_div_round_down(request["shares"], pool_value, total_supply)
+            mul_div_round_down(
+                request["shares"],
+                withdraw_pool_value,
+                total_supply,
+            )
             if total_supply > 0
             else 0
         )
@@ -2838,9 +3394,11 @@ def parity_flush_updates(
     updates.append(
         {
             "type": "flush_executed",
-            "pool_value": str(pool_value),
+            "withdraw_pool_value": str(withdraw_pool_value),
+            "supply_pool_value": str(supply_pool_value),
             "total_supply": str(total_supply),
-            "active_market_nav": str(current_nav(model, synced_state)),
+            "active_market_nav": str(active_value.center),
+            "active_market_nav_error": str(active_value.error),
             "market_count": "1",
             "idle_balance_before": str(idle_balance_before),
             "supplies_filled": str(supplies_filled),
@@ -2973,7 +3531,11 @@ def replay(
         model["now_ms"] = row_timestamp_ms
         scan_active_count = active_order_count(model)
         if action == "oracle_mint_ptb":
-            model["current_forward"] = live_forward(row["spot"], row["forward"])
+            model["current_forward"] = live_forward(
+                row["spot"],
+                row["forward"],
+                row["spot"],
+            )
             model["current_svi"] = row
             updates.append(pyth_feed_update(row))
             updates.append(block_scholes_surface_update(row))
@@ -2996,8 +3558,19 @@ def replay(
                 # economic charts still see LP fills + pool funding.
                 apply_inline_oracle_refresh(model, row, updates)
                 scan_active_count = active_order_count(model)
-                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-                updates.append(supply_update(model, row, pool_value, synced_state))
+                _, supply_pool_value, synced_state = append_pool_sync_phase(
+                    model,
+                    state,
+                    updates,
+                )
+                updates.append(
+                    supply_update(
+                        model,
+                        row,
+                        supply_pool_value,
+                        synced_state,
+                    )
+                )
             else:
                 # Parity: request_supply only escrows DUSDC into the queue (no oracle
                 # refresh, no fill). Mirror the localnet request record exactly.
@@ -3025,8 +3598,19 @@ def replay(
             if exact_time:
                 apply_inline_oracle_refresh(model, row, updates)
                 scan_active_count = active_order_count(model)
-                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-                updates.append(withdraw_update(model, row, pool_value, synced_state))
+                withdraw_pool_value, _, synced_state = append_pool_sync_phase(
+                    model,
+                    state,
+                    updates,
+                )
+                updates.append(
+                    withdraw_update(
+                        model,
+                        row,
+                        withdraw_pool_value,
+                        synced_state,
+                    )
+                )
             else:
                 # Parity: request_withdraw escrows PLP (materialized from the bootstrap
                 # pool) into the queue. The runner skips — with no record — any withdraw

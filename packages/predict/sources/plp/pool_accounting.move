@@ -6,13 +6,15 @@
 /// This module owns pool idle DUSDC custody, the durable set of expiries
 /// registered to a pool, the active expiry index used for valuation, DUSDC sent
 /// from the main pool into each expiry, DUSDC received back from each expiry,
-/// lifetime fee-incentive allocations, terminal cash watermarks, and per-expiry
-/// cap checks. It does not classify expiry-local liabilities or apply PLP reserve
-/// policy; PoolVault uses the aggregate profit basis to price PLP and decide
-/// protocol reserve transfers.
+/// snapshotted lifetime fee-incentive caps and allocations, terminal cash
+/// watermarks, and per-expiry cap checks. It does not classify expiry-local
+/// liabilities or apply PLP reserve policy; PoolVault uses the aggregate profit
+/// basis to price PLP and decide protocol reserve transfers.
 module deepbook_predict::pool_accounting;
 
+use deepbook_predict::constants;
 use dusdc::dusdc::DUSDC;
+use fixed_math::math;
 use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
 const EUnknownRegisteredExpiry: u64 = 0;
@@ -57,6 +59,8 @@ public struct RegisteredExpiry has store {
     sent_to_expiry: u64,
     /// DUSDC returned from this expiry to the main pool.
     received_from_expiry: u64,
+    /// Absolute lifetime fee-incentive cap snapshotted when this expiry was registered.
+    fee_incentive_lifetime_cap: u64,
     /// Lifetime sponsor-funded fee incentives allocated to this expiry.
     fee_incentives_allocated: u64,
     /// True once this expiry has started terminal profit/loss accounting.
@@ -121,7 +125,7 @@ public(package) fun initial_expiry_cash(ledger: &Ledger, expiry_market_id: ID): 
 public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
-    flow.max_expiry_allocation.saturating_sub(flow_net_funding(flow))
+    flow.max_expiry_allocation - flow_net_funding(flow)
 }
 
 /// Abort unless this expiry is registered to the pool.
@@ -139,6 +143,10 @@ public(package) fun register_expiry(
     initial_expiry_cash: u64,
 ) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
+    let fee_incentive_lifetime_cap = math::mul_down(
+        max_expiry_allocation,
+        constants::fee_incentive_lifetime_cap_rate!(),
+    );
     ledger.active_expiry_markets.push_back(ActiveExpiry { expiry_market_id, expiry_ms });
     ledger
         .registered_expiries
@@ -149,6 +157,7 @@ public(package) fun register_expiry(
                 initial_expiry_cash,
                 sent_to_expiry: 0,
                 received_from_expiry: 0,
+                fee_incentive_lifetime_cap,
                 fee_incentives_allocated: 0,
                 terminal_accounting_started: false,
                 terminal_received_watermark: 0,
@@ -193,13 +202,15 @@ public(package) fun send_expiry_cash(
 public(package) fun record_fee_incentives_allocated_up_to(
     ledger: &mut Ledger,
     expiry_market_id: ID,
-    max_fee_incentives: u64,
     requested_amount: u64,
 ): (u64, u64) {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
-    let amount = requested_amount.min(max_fee_incentives.saturating_sub(flow.fee_incentives_allocated));
+    // Registration starts allocated at zero. Every update adds at most the
+    // exact remaining capacity, preserving allocated <= the immutable cap.
+    let remaining = flow.fee_incentive_lifetime_cap - flow.fee_incentives_allocated;
+    let amount = requested_amount.min(remaining);
     flow.fee_incentives_allocated = flow.fee_incentives_allocated + amount;
     (amount, flow.fee_incentives_allocated)
 }

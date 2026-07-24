@@ -165,9 +165,9 @@ class Generator:
         # The raw `forward` is written to the CSV (localnet pushes it to
         # update_block_scholes_prices), but pricing must use the value the
         # contracts actually quote with: forward re-derived from the live Pyth
-        # spot via pricing::load_live_pricer. Mirror that here so admission decisions
-        # (dynamic leverage cap, LTV, min premium) match localnet and the replay.
-        pricing_forward = replay.live_forward(snapshot["spot"], forward)
+        # spot via pricing::resolve_live_pricer. Generated rows push the same
+        # snapshot spot to Pyth and Block Scholes, so pass it in both roles here.
+        pricing_forward = replay.live_forward(snapshot["spot"], forward, snapshot["spot"])
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
             is_up = bool(self.rng.randrange(2))
@@ -194,7 +194,7 @@ class Generator:
             except ValueError:
                 continue
 
-            fee_amount = replay.deepbook_mul(fee_rate, quantity)
+            fee_amount = replay.deepbook_mul_up(fee_rate, quantity)
             cash_required = terms["contribution"] + fee_amount
             if self.manager_balance - cash_required < MANAGER_CASH_FLOOR:
                 continue
@@ -273,7 +273,7 @@ class Generator:
         leverage: int,
     ) -> int:
         lot_terms = replay.compute_mint_terms(entry_probability, replay.POSITION_LOT_SIZE, leverage)
-        lot_fee = replay.deepbook_mul(fee_rate, replay.POSITION_LOT_SIZE)
+        lot_fee = replay.deepbook_mul_up(fee_rate, replay.POSITION_LOT_SIZE)
         lot_cost = lot_terms["contribution"] + lot_fee
         if lot_cost <= 0:
             raise GenerationError("mint lot cost must be positive")

@@ -45,12 +45,12 @@ scale). No param is ever rounded, shortened, or re-derived from another column.
 
 The *forward the contract actually prices with* is NOT the raw pushed forward: in
 `pricing::load_live_pricer` the fresh-Pyth path re-derives it as
-    forward_live = mul(spot, div(forward, spot))            (two fixed_math floors)
-This is the dominant production path (Pyth spot fresh). We reproduce that floor
-round-trip below to obtain the byte-identical forward the model prices at, then
-compute the TRUE adjusted digital from it. The round-trip is INPUT CONSTRUCTION
+    forward_live = floor(spot * forward / bs_spot)          (one fused floor)
+This is the dominant production path (Pyth spot fresh). We reproduce that fused
+operation below to obtain the byte-identical forward the model prices at, then
+compute the TRUE adjusted digital from it. The re-anchoring is INPUT CONSTRUCTION
 (it builds the model's forward input), not the pricer; ref and contract therefore
-price the identical forward, so the round-trip contributes NO error to the budget.
+price the identical forward, so it contributes NO error to the budget.
 
 ============================================================================
 PRECISION BUDGET (derived, never measured from contract output)
@@ -107,6 +107,13 @@ the quote by ~1e-6. The reported worst-case budget reflects this.
 The wings (deep ITM/OTM, |d2| large) hit the contract's normal_cdf clamp (0 or F)
 and Phi rounds to exactly 0/F, so those points are EXACT (tolerance = a 2-unit
 representation cushion), exercising the clamp path.
+
+The fourth scenario is a focused short-dated regression. Its SVI inputs come from
+a one-minute Block Scholes surface seven seconds before expiry; spot and forward
+are normalized to the test market's production-valid $75,000 grid without changing
+the dimensionless pricing problem. Its tolerance is the protocol's 0.1% mint-price
+ceiling, not the legacy analytic budget above. This point failed that ceiling when
+`b * inner` was floored to 1e9 before `sqrt(w)`.
 """
 import csv
 import math
@@ -116,10 +123,33 @@ from decimal import Decimal, getcontext
 getcontext().prec = 60
 
 F = 1_000_000_000
+# Exact production `Pricer.range_price` outputs for the points generated below,
+# in scenario/point order. These are regression snapshots, not correctness
+# expectations; the independent true-math reference remains the correctness
+# oracle.
+EXPECTED_CENTERS = [
+    [
+        999_254_898, 986_475_284, 888_173_166, 748_850_600, 528_329_883,
+        295_404_986, 134_304_491, 16_002_241, 850_622, 1_000_000_000, 0,
+        471_670_117, 753_868_675,
+    ],
+    [
+        999_226_716, 985_952_968, 885_253_256, 734_089_915, 499_130_085,
+        289_535_897, 142_538_929, 19_005_287, 1_057_212, 1_000_000_000, 0,
+        500_869_915, 742_714_327,
+    ],
+    [
+        999_142_871, 984_281_911, 877_147_899, 741_986_937, 539_491_163,
+        308_261_500, 143_599_998, 18_232_308, 998_121, 1_000_000_000, 0,
+        460_508_837, 733_547_901,
+    ],
+    [53_264_202],
+]
 REFERENCE_GRID_TICKS = 100_000       # Reference ladder width used to choose strikes.
 MARKET_TICK_SIZE_UNIT = 10_000       # constants::market_tick_size_unit!()
 TICK_SIZE = 1_000_000_000            # $1 ticks: spot/tick in (50000, 100000] for ~$75k spot
 CUSHION_UNITS = 2                    # reference integer rounding + 2nd-order propagation
+REFERENCE_GUARD_UNITS = 2            # outward guard around the float64 true-math result
 NORMAL_CDF_ABS = 2e-8
 NORMAL_PDF_ABS = 50.0 / F
 ULP = 1.0 / F
@@ -137,6 +167,28 @@ SELECTED_DIGESTS = [
     "357n4TarJkp62atdMpfGExEr77SZGqnDBZ7QcBatgpUF9",   # 2026-05-28 02:03:03  sqrt_w_atm ~0.0084
 ]
 
+# Real one-minute SVI surface observed seven seconds before expiry. Spot and
+# forward are normalized to the fixture's production-valid $75,000 grid; SVI and
+# the strike/forward ratio retain the source surface's dimensionless pricing
+# problem. At the selected point w ~= 3.26e-8 and the pre-fix 1e9 variance floor
+# moved the quote outside the 0.1% mint-price ceiling.
+SHORT_DATED_SURFACE = {
+    "svi_event_digest": "surface_1782548400000",
+    "svi_timestamp": "2026-06-27 08:19:53",
+    "oracle_id": "1",
+    "spot": "75000000000000",
+    "forward": "75000000000000",
+    "a": "28",
+    "b": "6251",
+    "rho": "940000000",
+    "rho_negative": "true",
+    "m": "48425",
+    "m_negative": "true",
+    "sigma": "1000000",
+}
+SHORT_DATED_STRIKE = 75_022_000_000_000
+MINT_PRICE_DEVIATION = 1_000_000      # 0.1% at 1e9 scale
+
 # Interior d2 ladder (well below the sqrt(32)~5.657 clamp) + two clamp wings.
 INTERIOR_D2 = [3.0, 2.0, 1.0, 0.5, 0.0, -0.5, -1.0, -2.0, -3.0]
 WING_D2 = [8.0, -8.0]                 # deep ITM / OTM -> contract clamps to F / 0
@@ -147,13 +199,9 @@ CSV_PATH = os.environ.get("PREDICT_SCENARIO_DATASET", DEFAULT_CSV_PATH)
 OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "pricing_reference_data.move")
 
 
-# --- predict math floor ops (INPUT construction only: forward round-trip) ---
-def fp_div(x, y):  # math::div: floor(x * F / y)
-    return (x * F) // y
-
-
-def fp_mul(x, y):  # math::mul: floor(x * y / F)
-    return (x * y) // F
+# --- predict math floor op (INPUT construction only: forward re-anchoring) ---
+def fp_mul_div_down(x, y, denominator):
+    return (x * y) // denominator
 
 
 def phi(x):  # standard normal CDF via stdlib erf (independent of Cody approx)
@@ -185,8 +233,12 @@ class Scenario:
         self.rf = (-self.rho_mag if self.rho_neg else self.rho_mag) / F
         self.mf = (-self.m_mag if self.m_neg else self.m_mag) / F
         self.sf = self.sigma / F
-        # The forward the contract actually prices with (fresh-Pyth round-trip).
-        self.forward_live = fp_mul(self.spot, fp_div(self.forward, self.spot))
+        # The forward the contract actually prices with (fresh-Pyth re-anchoring).
+        self.forward_live = fp_mul_div_down(
+            self.spot,
+            self.forward,
+            self.spot,
+        )
         self.fwd_f = self.forward_live / F
         # Reference ladder for selecting raw strikes around spot. Production
         # markets use absolute ticks; this generator emits raw strike points.
@@ -291,6 +343,26 @@ POS_INF = (1 << 64) - 1
 NEG_INF = 0
 
 
+def reference_fields(value):
+    """Integer center plus an outward raw-unit enclosure of a true-math value."""
+    scaled = value * F
+    return dict(
+        reference=round(scaled),
+        reference_lower=max(0, math.floor(scaled) - REFERENCE_GUARD_UNITS),
+        reference_upper=min(F, math.ceil(scaled) + REFERENCE_GUARD_UNITS),
+    )
+
+
+def point(lower, higher, true_value, tolerance, note):
+    return dict(
+        lower=lower,
+        higher=higher,
+        tolerance=tolerance,
+        note=note,
+        **reference_fields(true_value),
+    )
+
+
 def build_points(s):
     """Return (list_of_point_dicts, max_delta_up_units_for_this_scenario)."""
     points = []
@@ -310,10 +382,15 @@ def build_points(s):
         du = s.delta_up(strike)
         tol = math.ceil(du * F) + CUSHION_UNITS
         worst = max(worst, du)
-        ref = round(s.up_true(strike) * F)
-        correction = s.up_true(strike) - phi(s.d2_of_strike(strike)[2])
-        points.append(dict(lower=strike, higher=POS_INF, reference=ref, tolerance=tol,
-                           note=f"d2~{d2:+.1f} adjusted UP(K) skew={correction:+.3e}"))
+        true_price = s.up_true(strike)
+        correction = true_price - phi(s.d2_of_strike(strike)[2])
+        points.append(point(
+            strike,
+            POS_INF,
+            true_price,
+            tol,
+            f"d2~{d2:+.1f} adjusted UP(K) skew={correction:+.3e}",
+        ))
 
     # clamp wings (strike, +inf): contract CDF/PDF tails clamp, adjusted UP rounds to 0 / F
     for d2 in WING_D2:
@@ -322,20 +399,30 @@ def build_points(s):
             continue
         seen.add(strike)
         _, _, d2t = s.d2_of_strike(strike)
-        ref = round(s.up_true(strike) * F)
+        true_price = s.up_true(strike)
+        ref = round(true_price * F)
         assert ref in (0, F), f"wing d2={d2t} did not round to clamp (ref={ref})"
         assert abs(d2t) >= 6.0, f"wing |d2|={abs(d2t)} not deep enough to clamp"
-        points.append(dict(lower=strike, higher=POS_INF, reference=ref,
-                           tolerance=CUSHION_UNITS, note=f"clamp wing d2~{d2:+.0f}"))
+        points.append(point(
+            strike,
+            POS_INF,
+            true_price,
+            CUSHION_UNITS,
+            f"clamp wing d2~{d2:+.0f}",
+        ))
 
     # neg_inf one-sided range (-inf, strike@ATM): range = 1 - adjusted UP(d2)
     atm = d2_to_strike[0.0]
     du = s.delta_up(atm)
     tol = math.ceil(du * F) + CUSHION_UNITS
     worst = max(worst, du)
-    ref = round((1.0 - s.up_true(atm)) * F)
-    points.append(dict(lower=NEG_INF, higher=atm, reference=ref, tolerance=tol,
-                       note="(-inf, K_atm] = 1 - adjusted UP(d2)"))
+    points.append(point(
+        NEG_INF,
+        atm,
+        1.0 - s.up_true(atm),
+        tol,
+        "(-inf, K_atm] = 1 - adjusted UP(d2)",
+    ))
 
     # finite-finite range (K@d2=+1, K@d2=-1): both endpoints approximate -> 2 budgets
     lo = d2_to_strike[1.0]
@@ -343,11 +430,30 @@ def build_points(s):
     assert lo < hi
     du2 = s.delta_up(lo) + s.delta_up(hi)
     tol = math.ceil(du2 * F) + CUSHION_UNITS
-    ref = round((s.up_true(lo) - s.up_true(hi)) * F)
-    points.append(dict(lower=lo, higher=hi, reference=ref, tolerance=tol,
-                       note="(K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)"))
+    points.append(point(
+        lo,
+        hi,
+        s.up_true(lo) - s.up_true(hi),
+        tol,
+        "(K@d2=+1, K@d2=-1] = adjusted UP(+1)-adjusted UP(-1)",
+    ))
 
     return points, worst
+
+
+def build_short_dated_points(s):
+    """One policy-bound point in the variance regime fixed by the sqrt island."""
+    true_price = s.up_true(SHORT_DATED_STRIKE)
+    tolerance = math.ceil(true_price * MINT_PRICE_DEVIATION)
+    return [
+        point(
+            SHORT_DATED_STRIKE,
+            POS_INF,
+            true_price,
+            tolerance,
+            "short-dated w~3.26e-8; 0.1% mint-price policy regression",
+        )
+    ], 0.0
 
 
 # ----------------------------------------------------------------------------
@@ -364,23 +470,31 @@ def emit_move(scenarios, scen_points, budget_units):
     w("// SPDX-License-Identifier: Apache-2.0")
     w("//")
     w("// @generated by packages/predict/tests/helper/reference/generate_pricing_reference.py")
-    w("// Source data: packages/predict/simulations/data/scenario_dataset.csv (real on-chain")
-    w("// Block Scholes SVI, one market, 2026-05-27). DO NOT EDIT BY HAND — regenerate with")
+    w("// Source data: packages/predict/simulations/data/scenario_dataset.csv plus the")
+    w("// short-dated Block Scholes fixture documented in the generator. DO NOT EDIT BY HAND.")
+    w("// Regenerate with")
     w("//   python3 generate_pricing_reference.py")
     w("//")
     w("// Independent true-math reference (Python stdlib math.log/sqrt/erf, NOT the contract")
     w("// and NOT python_replay's fixed-point pricer) for Pricer.range_price.")
-    w("// Each point's `tolerance` is the analytic worst-case fixed-point error of the")
+    w("// The first three scenarios use the analytic worst-case fixed-point error of the")
     w("// skew-adjusted UP=N(d2)-phi(d2)*w'(k)/(2*sqrt(w)),")
     w("// propagated from math.move's documented per-primitive budgets at the TRUE values; see")
-    w("// the generator header for the full derivation. The forward priced is the fresh-Pyth")
-    w("// round-trip mul(spot, div(forward, spot)).")
+    w("// the generator header for the full derivation. The short-dated scenario instead")
+    w("// pins the protocol's 0.1% mint-price ceiling at w~3.26e-8. The forward priced is")
+    w("// the fresh-Pyth")
+    w("// fused floor(spot * forward / bs_spot) re-anchoring.")
+    w("//")
+    w("// `expected_center` is the exact production fixed-point output.")
+    w("// It detects value drift only; the independent reference + tolerance above decides correctness.")
+    w("// `reference_lower` / `reference_upper` add a two-unit outward guard around the")
+    w("// float64 true-math result; the Approx radius must enclose both endpoints.")
     w("//")
     w(f"// Worst-case per-endpoint budget across all scenarios/strikes: {fmt_u64(budget_units)} units (@1e9).")
     w("// Dominated by the small-variance scenario at |d2|~1: d2=-(k+w/2)/sqrt(w)")
     w("// and the skew term's 1/sqrt(w) denominator amplify fixed-point variance / slope dust.")
     w("//")
-    w("// Provenance (svi_event_digest @ svi_timestamp, sqrt(w_atm)):")
+    w("// Provenance (source identifier @ SVI timestamp, sqrt(w_atm)):")
     for i, s in enumerate(scenarios):
         wk = s.w_of_k(0.0)
         w(f"//   [{i}] {s.digest}  {s.svi_ts[:19]}  sqrt_w_atm={math.sqrt(wk):.6f}")
@@ -391,13 +505,15 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("const ENoSuchScenario: u64 = 0;")
     w("")
-    w("/// One independent reference point: Pricer.range_price(lower, higher)")
-    w("/// must be within `tolerance` units of the true-math `reference`.")
+    w("/// One pricing point with independent correctness and exact compatibility expectations.")
     w("public struct RefPoint has copy, drop {")
     w("    lower: u64,")
     w("    higher: u64,")
     w("    reference: u64,")
+    w("    reference_lower: u64,")
+    w("    reference_upper: u64,")
     w("    tolerance: u64,")
+    w("    expected_center: u64,")
     w("}")
     w("")
     w("public fun lower(p: &RefPoint): u64 { p.lower }")
@@ -406,10 +522,32 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("public fun reference(p: &RefPoint): u64 { p.reference }")
     w("")
+    w("public fun reference_lower(p: &RefPoint): u64 { p.reference_lower }")
+    w("")
+    w("public fun reference_upper(p: &RefPoint): u64 { p.reference_upper }")
+    w("")
     w("public fun tolerance(p: &RefPoint): u64 { p.tolerance }")
     w("")
-    w("fun pt(lower: u64, higher: u64, reference: u64, tolerance: u64): RefPoint {")
-    w("    RefPoint { lower, higher, reference, tolerance }")
+    w("public fun expected_center(p: &RefPoint): u64 { p.expected_center }")
+    w("")
+    w("fun pt(")
+    w("    lower: u64,")
+    w("    higher: u64,")
+    w("    reference: u64,")
+    w("    reference_lower: u64,")
+    w("    reference_upper: u64,")
+    w("    tolerance: u64,")
+    w("    expected_center: u64,")
+    w("): RefPoint {")
+    w("    RefPoint {")
+    w("        lower,")
+    w("        higher,")
+    w("        reference,")
+    w("        reference_lower,")
+    w("        reference_upper,")
+    w("        tolerance,")
+    w("        expected_center,")
+    w("    }")
     w("}")
     w("")
     w("/// Number of real-data scenarios.")
@@ -465,7 +603,7 @@ def emit_move(scenarios, scen_points, budget_units):
     emit_u64_selector("svi_m_magnitude", [s.m_mag for s in scenarios], "Real SVI `m` magnitude (1e9) seeded through the Block Scholes surface update.")
     emit_bool_selector("svi_m_is_negative", [s.m_neg for s in scenarios], "Sign flag for real SVI `m` (true == negative).")
 
-    w("/// Reference points for scenario `s` (lower, higher, true-math reference, tolerance).")
+    w("/// Points for scenario `s` (range, true reference enclosure, tolerance, parent center).")
     w("public fun points(s: u64): vector<RefPoint> {")
     for i, s in enumerate(scenarios):
         kw = "if" if i == 0 else "} else if"
@@ -475,7 +613,15 @@ def emit_move(scenarios, scen_points, budget_units):
             lo = "constants::neg_inf!()" if p["lower"] == NEG_INF else fmt_u64(p["lower"])
             hi = "constants::pos_inf!()" if p["higher"] == POS_INF else fmt_u64(p["higher"])
             w(f"            // {p['note']}")
-            w(f"            pt({lo}, {hi}, {fmt_u64(p['reference'])}, {fmt_u64(p['tolerance'])}),")
+            w("            pt(")
+            w(f"                {lo},")
+            w(f"                {hi},")
+            w(f"                {fmt_u64(p['reference'])},")
+            w(f"                {fmt_u64(p['reference_lower'])},")
+            w(f"                {fmt_u64(p['reference_upper'])},")
+            w(f"                {fmt_u64(p['tolerance'])},")
+            w(f"                {fmt_u64(p['expected_center'])},")
+            w("            ),")
         w("        ]")
     w("    } else {")
     w("        abort ENoSuchScenario")
@@ -483,7 +629,7 @@ def emit_move(scenarios, scen_points, budget_units):
     w("}")
     w("")
 
-    w("/// Provenance: svi_event_digest of the source CSV row for scenario `s`.")
+    w("/// Provenance source identifier (CSV event digest or short-dated surface ID).")
     w("public fun svi_event_digest(s: u64): vector<u8> {")
     for i, s in enumerate(scenarios):
         kw = "if" if i == 0 else "} else if"
@@ -508,12 +654,25 @@ def main():
         if d not in by_digest:
             raise SystemExit(f"selected svi_event_digest not found in CSV: {d}")
         scenarios.append(Scenario(by_digest[d]))
+    scenarios.append(Scenario(SHORT_DATED_SURFACE))
 
     scen_points = []
     budget = 0.0
     print("=== diagnostic (true-math reference + analytic budget) ===")
     for i, s in enumerate(scenarios):
-        pts, worst = build_points(s)
+        pts, worst = (
+            build_short_dated_points(s)
+            if i == len(SELECTED_DIGESTS)
+            else build_points(s)
+        )
+        expected = EXPECTED_CENTERS[i]
+        if len(expected) != len(pts):
+            raise SystemExit(
+                f"expected point count mismatch for scenario {i}: "
+                f"{len(expected)} expected values != {len(pts)} generated points"
+            )
+        for p, center in zip(pts, expected):
+            p["expected_center"] = center
         scen_points.append(pts)
         budget = max(budget, worst)
         print(f"\n[{i}] {s.digest}  {s.svi_ts[:19]}")

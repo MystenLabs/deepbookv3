@@ -657,9 +657,9 @@ function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<str
 
 // === Async LP request/flush events. A supply/withdraw is a two-phase flow: a request
 // row escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
-// queues at one frozen mark, emitting per-request SupplyFilled / WithdrawFilled and a
-// single FlushExecuted that carries the frozen valuation (the former PoolValued fields
-// were folded into it). Generated rows do not request cancellation, but protocol
+// queues at one frozen bid/ask pair, emitting per-request SupplyFilled / WithdrawFilled
+// and a single FlushExecuted that carries the frozen valuation (the former PoolValued
+// fields were folded into it). Generated rows do not request cancellation, but protocol
 // refunds can still emit RequestCancelled. The `index` queue handle is the request
 // alias key (no PLP coin is returned).
 
@@ -726,9 +726,11 @@ function normalizeFlushExecuted(event: any): Record<string, unknown> {
     const json = event.parsedJson ?? {};
     return {
         type: "flush_executed",
-        pool_value: decimal(json.pool_value),
+        withdraw_pool_value: decimal(json.withdraw_pool_value),
+        supply_pool_value: decimal(json.supply_pool_value),
         total_supply: decimal(json.total_supply),
         active_market_nav: decimal(json.active_market_nav),
+        active_market_nav_error: decimal(json.active_market_nav_error),
         market_count: decimal(json.market_count),
         idle_balance_before: decimal(json.idle_balance_before),
         supplies_filled: decimal(json.supplies_filled),
@@ -1134,9 +1136,9 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-// Row counts after which the runner synthesizes a privileged LP flush. Defaults to
-// rows 300 and 999 (the chosen batched cadence); SIM_FLUSH_AFTER="a,b,..." overrides
-// it for fast smoke runs.
+// Row counts after which the runner synthesizes a privileged LP flush. Full runs
+// default to rows 300 and 999; a shorter run flushes on its final row so benchmark
+// smoke tests still exercise pool valuation and queue draining.
 function flushCheckpoints(rowCount: number, defaultToFinalRow = false): Set<number> {
     const raw = process.env.SIM_FLUSH_AFTER;
     if (raw) {
@@ -1147,7 +1149,7 @@ function flushCheckpoints(rowCount: number, defaultToFinalRow = false): Set<numb
                 .filter((n) => Number.isInteger(n) && n > 0),
         );
     }
-    if (defaultToFinalRow) return new Set([rowCount]);
+    if (defaultToFinalRow || rowCount < 300) return new Set([rowCount]);
     return new Set([300, 999]);
 }
 

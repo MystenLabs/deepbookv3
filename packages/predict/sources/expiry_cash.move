@@ -50,10 +50,10 @@ public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64
     payout_liability + cash.rebate_reserve()
 }
 
-/// Return cash net of the unresolved rebate reserve, floored at zero. Pool NAV
-/// values this amount separately from payout liability.
+/// Return cash net of the unresolved rebate reserve. Cash backing guarantees
+/// this exact subtraction cannot underflow.
 public(package) fun free_cash(cash: &ExpiryCash): u64 {
-    cash.balance().saturating_sub(cash.rebate_reserve())
+    cash.balance() - cash.rebate_reserve()
 }
 
 /// Abort unless current cash covers payout liability plus unresolved rebate reserve.
@@ -74,6 +74,19 @@ public(package) fun release_surplus(
 ): Balance<DUSDC> {
     if (amount == 0) return balance::zero();
     assert!(cash.balance() >= cash.required_cash(payout_liability) + amount, EInsufficientCash);
+    cash.cash_balance.split(amount)
+}
+
+/// Release every atom above payout liability and unresolved rebate backing.
+public(package) fun release_all_surplus(
+    cash: &mut ExpiryCash,
+    payout_liability: u64,
+): Balance<DUSDC> {
+    let required = cash.required_cash(payout_liability);
+    let available = cash.balance();
+    assert!(available >= required, EInsufficientCash);
+    let amount = available - required;
+    if (amount == 0) return balance::zero();
     cash.cash_balance.split(amount)
 }
 

@@ -70,9 +70,9 @@ fun template_min_fee_above_max_aborts() {
 // `EInvalidEntryProbabilityBound` check, so the just-outside envelope value
 // aborts with the envelope code even though it also violates the relational
 // bound.
-// The 1% envelope floor is load-bearing for budget-bias mint sizing: one
-// premium unit of probe conservatism stays sub-lot only while entry
-// probability cannot be configured below it (RP-13).
+// The current configurable envelope keeps the minimum entry probability at 1%.
+// Exact-amount sizing uses the canonical premium relation and does not depend on
+// this product-policy boundary.
 #[test, expected_failure(abort_code = config_constants::EInvalidMinEntryProbability)]
 fun template_min_entry_probability_below_envelope_floor_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
@@ -234,7 +234,7 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
 
     // Envelope floors. `max_entry_probability`'s envelope floor (0) is
     // relationally unreachable: the setter requires max > min and min's
-    // envelope floor is 1% (RP-13), so the smallest settable max entry
+    // current envelope floor is 1%, so the smallest settable max entry
     // probability is one unit above that floor. min entry probability must
     // drop to its floor first.
     config.set_template_base_fee(&admin_cap, config_constants::min_base_fee!());
