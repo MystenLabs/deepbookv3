@@ -9,6 +9,9 @@ and contributors. For *how* each mechanism works, follow the links into
 > **Status:** pre-deploy. Names refer to modules/functions rather than line
 > numbers, which drift.
 
+The symbolic derivations supporting the numerical and accounting invariants
+are collected in [math-proofs.md](./math-proofs.md).
+
 ## Solvency and custody
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability

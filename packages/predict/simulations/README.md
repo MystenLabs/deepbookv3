@@ -76,71 +76,6 @@ the normal every-100-row expiry-cash rebalances. Stress mint PTBs use a fixed
 high gas budget because this mode does not benchmark individual mint gas;
 `SIM_GAS_BUDGET` still controls the final NAV flush transaction.
 
-## Algebra And Dust Proof Bundle
-
-A source-pinned Python proof bundle establishes the money-math dust, algebra, and
-saturation properties of the `predict` package. It is anchored to contract
-baseline commit `4d5206a3` and reads the Move sources directly. The SHA-256
-content digest of `packages/predict/sources/**` is a freshness gate, while stable
-call-site identities and exact operator bindings independently connect each
-rounding certificate to the implemented Move expression. A source edit, digest
-mismatch, new unclassified arithmetic, or rounding-direction mutation breaks the
-checks even if the expected digest is refreshed. Run the modules and their proof
-runners from this directory:
-
-```bash
-python3 algebra_trace.py
-python3 dust_invariants.py
-python3 money_math_inventory.py
-python3 math_dust_proofs.py
-python3 algebra_minimality.py
-python3 economic_lifecycle_proofs.py
-python3 payout_tree_proofs.py
-python3 saturation_proofs.py
-python3 partial_close_proofs.py
-python3 -m unittest discover -v -s . -p "test_*.py"
-```
-
-Each module prints a structured JSON bundle; the paired `test_*.py` files are the
-deterministic proof runners that assert it. `algebra_trace.py` writes an operation
-DAG and a knot report under `runs/algebra-trace/`; `dust_invariants.py` writes its
-typed collapse ledger, NAV bid/ask mutation matrix, and stateful lifecycle checks
-beside them, and its source census classifies fixed-point, raw-integer, clamp,
-`Approx`, and custody arithmetic in every Predict Move source.
-`algebra_minimality.py` additionally proves the direct wide-to-half variance
-projection with a quotient-remainder identity and a mutation witness for its
-required rounding atom. `math_dust_proofs.py`
-uses `python_replay.py` as the single integer parity kernel while retaining independent
-`Fraction` formulas for each ideal real-number value. It gives every money-collapse function an exact-rational rounding-direction certificate,
-names its residual owner, and verifies its exact source operator bindings; its
-negative-control tests flip both the Move trading-fee direction and the canonical
-integer parity kernel and require the aggregate proof to turn red. The aggregate
-is complete only when the source census is fresh, every binding and exact relation
-holds, and no protocol-bias mismatch remains. `economic_lifecycle_proofs.py` and `payout_tree_proofs.py`
-consume that same integer kernel for implemented results and reconcile them against
-independent exact ideals and cash-state lifecycles, including the
-current one-product signed shared-boundary valuation and the universal associative
-max-prefix recurrence. `saturation_proofs.py`
-classifies every remaining `saturating_sub`/`saturating_add` site and retains the
-source-complete induction that justified the now-landed removal in
-`pool_accounting::available_expiry_funding`; the induction covers every writer of
-the funding fields with a fail-closed writer scan and transition lemmas, not the
-bounded state search alone. `partial_close_proofs.py`
-proves per-close floor conservation and survivor bias, shows the live-close
-`saturating_sub` is semantically required, and exposes the reachable,
-sequence-dependent discounted-proceeds dust (splitting a close is not net-proceeds
-path-independent under stake discount and builder fees) as an open policy question:
-the aggregate stays red while any reachable trader-favored split remains, the
-advantage is small and non-monotone in slice count, and no universal maximum is
-claimed. Every reported result carries a `result_strength` tag — universal
-proof, exhaustive search over a stated finite domain, or concrete reachable
-witness.
-
-External availability corpora are not embedded in this public repository. Pass an
-ignored aggregate JSON with `python3 dust_invariants.py --availability-evidence
-<path>` to attach separately reproduced availability results and their corpus and
-runner digests to a generated proof bundle.
-
 ## File Map
 
 -   `run.sh`: orchestrates fresh full runs and Python-only runs.
@@ -172,32 +107,6 @@ runner digests to a generated proof bundle.
     including the Move-parity signed shared-boundary NAV center. Pricing values
     used by replay, such as base fee, min fee, and ask bounds, are read from
     `data/scenario_config.json` with Python defaults as fallback.
--   `algebra_trace.py`: mint-centered algebra DAG and knot analyzer covering
-    pricing certificates, stored mint atoms, partial close, liquidation,
-    settlement, NAV, and LP supply/withdraw.
--   `dust_invariants.py`: typed money-collapse registry, double-entry dust
-    ledger, NAV bid/ask proof and mutation matrix, and stateful lifecycle
-    invariant analyzer pinned to the tracer's contract baseline.
--   `money_math_inventory.py`: fail-closed, digest-pinned source census with
-    exact directed-operator recognition and stable call-site identities for
-    fixed-point, raw-integer, clamp, `Approx`, guard, and custody arithmetic.
--   `math_dust_proofs.py`: exact-rational rounding and residual certificates for
-    every inventoried money-collapse function.
--   `algebra_minimality.py`: per-function minimality dispositions, the universal
-    direct-half-variance projection proof, bit-equivalence counterexamples for
-    candidate rewrites, and the folded partial-close and saturation conclusions.
--   `economic_lifecycle_proofs.py`: independent cash-state reconciliation for
-    mint fees, live redeem deductions, rebate claims, and exact-amount sizing.
--   `payout_tree_proofs.py`: bounded-exhaustive containment of the fused signed
-    boundary center against exact-rational live liability, a universal proof of
-    the max-prefix summary monoid, plus settled redemption conservation checks.
--   `saturation_proofs.py`: classification of every `saturating_*` site and the
-    source-complete induction proving the one removable outer saturation.
--   `partial_close_proofs.py`: partial-close floor conservation and survivor
-    bias, the live-close saturation requirement, and the reachable
-    sequence-dependent discounted-proceeds dust with its strength-tagged bounds.
--   `test_*.py`: the deterministic, SHA-pinned proof runners for the modules
-    above (see the Maintenance Rules exception).
 -   `compare_parity.py`: canonical parity projection and first-difference reporter for localnet/Python economic data.
 -   `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
 -   `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
@@ -459,13 +368,9 @@ Important fields:
 
 ## Maintenance Rules
 
--   Do not grow ordinary product or unit-test coverage under
-    `packages/predict/simulations/**`. Verify harness changes with
-    `npx tsc --noEmit`, `bash -n run.sh`, a Python replay, or a small
-    `bash run.sh --sim_max_rows=N --skip-analysis` smoke run instead. The single
-    exception is the deterministic, SHA-pinned algebra/dust/saturation proof
-    bundle (see "Algebra And Dust Proof Bundle"): its `test_*.py` files ARE the
-    proof runners for the bundle and are kept and run via `python3 -m unittest`.
+-   Do not add unit tests under `packages/predict/simulations/**`. Verify changes
+    with `npx tsc --noEmit`, `bash -n run.sh`, a Python replay, or a small
+    `bash run.sh --sim_max_rows=N --skip-analysis` smoke run instead.
 -   If a Move entrypoint used by the simulation changes generic parameters or its
     signature, audit `src/runtime.ts` for stale `typeArguments` or argument
     lists; otherwise benchmark CI fails only as an external

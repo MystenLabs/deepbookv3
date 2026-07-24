@@ -56,6 +56,9 @@ How the protocol is built:
 - **[Invariants](./design/invariants.md)** — a precise, scannable reference of
   the conditions the protocol always maintains (solvency, floor, NAV,
   settlement, liquidation, rounding).
+- **[Mathematical proofs](./design/math-proofs.md)** — symbolic derivations for
+  numerical certificates, dust direction, payout-tree accounting, NAV bid/ask,
+  and exact-subtraction invariants, with source and test anchors.
 - **[Design decisions](./design/decisions.md)** — the significant design choices
   and the alternatives that were rejected, with rationale.
 
