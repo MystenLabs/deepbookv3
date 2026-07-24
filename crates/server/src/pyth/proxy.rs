@@ -11,8 +11,9 @@ use super::{
     },
 };
 use axum::{
+    body::Bytes,
     extract::{Path, RawQuery, State},
-    http::StatusCode,
+    http::{header::CONTENT_TYPE, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -29,10 +30,12 @@ use tokio::{
 };
 use url::Url;
 
-#[derive(Debug)]
+const LATEST_RESPONSE_CACHE_MAX_ENTRIES: u64 = 128;
+
 struct LatestSnapshot {
     prices: HashMap<u32, Arc<PriceUpdate>>,
     refreshed_at: Instant,
+    serialized_responses: Cache<Vec<u32>, Bytes>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -49,10 +52,12 @@ pub struct PythProxy {
     latest_snapshot: watch::Receiver<Option<Arc<LatestSnapshot>>>,
     max_staleness: Duration,
     history: Cache<HistoricalPriceKey, Arc<PriceUpdate>>,
+    // A timestamp-scoped guard lets one upstream request batch all feed IDs
+    // missing at that timestamp. Moka's per-key `try_get_with` cannot coalesce
+    // that cross-key batch the way it can for one chart-history response.
     history_load_guards: Cache<u64, Arc<Mutex<()>>>,
     chart_history_symbols: Arc<HashSet<String>>,
-    chart_history_max_range: Duration,
-    chart_history: Cache<ChartHistoryQuery, Arc<serde_json::Value>>,
+    chart_history: Cache<ChartHistoryQuery, Bytes>,
 }
 
 impl PythProxy {
@@ -85,11 +90,6 @@ impl PythProxy {
             config.chart_history.cache_max_entries > 0,
             "Pyth Pro chart history cache capacity must be greater than zero"
         );
-        anyhow::ensure!(
-            !config.chart_history.max_range.is_zero(),
-            "Pyth Pro chart history maximum range must be greater than zero"
-        );
-
         config.feed_ids.sort_unstable();
         config.feed_ids.dedup();
         config.chart_history.symbols = config
@@ -154,7 +154,6 @@ impl PythProxy {
             history,
             history_load_guards,
             chart_history_symbols: Arc::new(config.chart_history.symbols.into_iter().collect()),
-            chart_history_max_range: config.chart_history.max_range,
             chart_history,
         })
     }
@@ -171,22 +170,34 @@ impl PythProxy {
         self.latest_snapshot.borrow().is_some()
     }
 
+    fn unconfigured_ids(&self, feed_ids: &[u32]) -> Option<Vec<u32>> {
+        if feed_ids.iter().all(|id| self.feed_ids.contains(id)) {
+            return None;
+        }
+
+        let mut seen = HashSet::new();
+        Some(
+            feed_ids
+                .iter()
+                .copied()
+                .filter(|id| !self.feed_ids.contains(id) && seen.insert(*id))
+                .collect(),
+        )
+    }
+
     async fn latest(&self, query: PriceQuery) -> Response {
         if let Err(error) = self.configured() {
             return error.into_response();
         }
 
-        let invalid_ids: Vec<_> = query
-            .unique_ids()
-            .into_iter()
-            .filter(|id| !self.feed_ids.contains(id))
-            .collect();
-        if !query.ignore_invalid_price_ids && !invalid_ids.is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("latest prices are not configured for feed IDs {invalid_ids:?}"),
-            )
-                .into_response();
+        if !query.ignore_invalid_price_ids {
+            if let Some(invalid_ids) = self.unconfigured_ids(&query.ids) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("latest prices are not configured for feed IDs {invalid_ids:?}"),
+                )
+                    .into_response();
+            }
         }
 
         let Some(snapshot) = self.latest_snapshot.borrow().clone() else {
@@ -204,39 +215,47 @@ impl PythProxy {
                 .into_response();
         }
 
-        let mut prices = Vec::with_capacity(query.ids.len());
-        for id in query.ids {
-            match snapshot.prices.get(&id) {
-                Some(price) => prices.push((**price).clone()),
-                None if query.ignore_invalid_price_ids => {}
-                None => {
-                    return (
-                        StatusCode::BAD_GATEWAY,
-                        format!("latest price is unavailable for feed ID {id}"),
-                    )
-                        .into_response();
+        let response_key = query.ids.clone();
+        let response_cache = snapshot.serialized_responses.clone();
+        let snapshot_for_load = snapshot.clone();
+        let ignore_invalid_price_ids = query.ignore_invalid_price_ids;
+        match response_cache
+            .try_get_with(response_key, async move {
+                let mut prices = Vec::with_capacity(query.ids.len());
+                for id in query.ids {
+                    match snapshot_for_load.prices.get(&id) {
+                        Some(price) => prices.push((**price).clone()),
+                        None if ignore_invalid_price_ids => {}
+                        None => {
+                            return Err(PythError::InvalidResponse(format!(
+                                "latest price is unavailable for feed ID {id}"
+                            )))
+                        }
+                    }
                 }
-            }
+                serialize_price_response(prices)
+            })
+            .await
+        {
+            Ok(body) => json_bytes_response(body),
+            Err(error) => (*error).clone().into_response(),
         }
-
-        Json(PriceResponse { parsed: prices }).into_response()
     }
 
     async fn historical(&self, query: PriceQuery, publish_time: u64) -> Response {
         if let Err(error) = self.configured() {
             return error.into_response();
         }
-        let invalid_ids: Vec<_> = query
-            .unique_ids()
-            .into_iter()
-            .filter(|id| !self.feed_ids.contains(id))
-            .collect();
-        if !query.ignore_invalid_price_ids && !invalid_ids.is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("historical prices are not configured for feed IDs {invalid_ids:?}"),
-            )
-                .into_response();
+
+        let unique_ids = query.unique_ids();
+        if !query.ignore_invalid_price_ids {
+            if let Some(invalid_ids) = self.unconfigured_ids(&unique_ids) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("historical prices are not configured for feed IDs {invalid_ids:?}"),
+                )
+                    .into_response();
+            }
         }
         let Some(timestamp_us) = publish_time.checked_mul(MICROS_PER_SECOND) else {
             return (
@@ -248,8 +267,7 @@ impl PythProxy {
 
         let mut prices = HashMap::new();
         let mut missing_ids = Vec::new();
-        for feed_id in query
-            .unique_ids()
+        for feed_id in unique_ids
             .into_iter()
             .filter(|id| self.feed_ids.contains(id))
         {
@@ -266,6 +284,11 @@ impl PythProxy {
         }
 
         if !missing_ids.is_empty() {
+            // A waiting request must recheck after acquiring the guard because
+            // the request ahead of it may have populated some or all misses.
+            // Guard eviction can permit a redundant load under capacity
+            // pressure, but cached values are idempotent, so correctness is
+            // unaffected.
             let load_guard = self
                 .history_load_guards
                 .get_with(timestamp_us, async { Arc::new(Mutex::new(())) })
@@ -355,19 +378,22 @@ impl PythProxy {
 
         let client = self.client.clone();
         let request = query.clone();
+        // `try_get_with` stores only a successful loader result and coalesces
+        // concurrent misses for this exact query. Errors are returned uncached.
         match self
             .chart_history
-            .try_get_with(query, async move {
-                client.chart_history(&request).await.map(Arc::new)
-            })
+            .try_get_with(query, async move { client.chart_history(&request).await })
             .await
         {
-            Ok(body) => Json((*body).clone()).into_response(),
+            Ok(body) => json_bytes_response(body),
             Err(error) => (*error).clone().into_response(),
         }
     }
 }
 
+/// Intentionally demand-independent so the first request is served from memory
+/// with predictable latency. It only runs when an API key and feed allowlist
+/// are configured, and operators can tune the polling interval.
 fn spawn_latest_poller(
     client: PythProClient,
     feed_ids: Vec<u32>,
@@ -423,6 +449,9 @@ fn spawn_latest_poller(
                             latest_sender.send_replace(Some(Arc::new(LatestSnapshot {
                                 prices,
                                 refreshed_at: Instant::now(),
+                                serialized_responses: Cache::builder()
+                                    .max_capacity(LATEST_RESPONSE_CACHE_MAX_ENTRIES)
+                                    .build(),
                             })));
                         }
                         Err(error) => {
@@ -433,6 +462,20 @@ fn spawn_latest_poller(
             }
         }
     });
+}
+
+fn serialize_price_response(prices: Vec<PriceUpdate>) -> Result<Bytes, PythError> {
+    serde_json::to_vec(&PriceResponse { parsed: prices })
+        .map(Bytes::from)
+        .map_err(|error| PythError::InvalidResponse(error.to_string()))
+}
+
+fn json_bytes_response(body: Bytes) -> Response {
+    let mut response = body.into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response
 }
 
 pub fn routes(proxy: PythProxy) -> Router {
@@ -465,7 +508,7 @@ async fn tradingview_history(
     State(proxy): State<PythProxy>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    match ChartHistoryQuery::parse(query.as_deref(), proxy.chart_history_max_range) {
+    match ChartHistoryQuery::parse(query.as_deref()) {
         Ok(query) => proxy.chart_history(query).await,
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
     }

@@ -79,9 +79,9 @@ This endpoint is useful for monitoring the indexer's synchronization status and 
 The server exposes Hermes- and TradingView-like HTTP GET routes backed by
 authenticated Pyth Pro requests:
 
-- `GET /pyth/v2/updates/price/latest`
-- `GET /pyth/v2/updates/price/:publish_time`
-- `GET /pyth/v1/shims/tradingview/history`
+- `GET /pyth/updates/price/latest`
+- `GET /pyth/updates/price/:publish_time`
+- `GET /pyth/shims/tradingview/history`
 
 The first two routes use the Pyth Pro
 [Router API](https://pyth-lazer-0.dourolabs.app/docs/openapi.json). They accept
@@ -126,21 +126,23 @@ Configure the server with:
   defaults to `60`.
 - `PYTH_PRO_CHART_HISTORY_CACHE_MAX_ENTRIES` — maximum chart-history responses
   cached per process; defaults to `256`.
-- `PYTH_PRO_CHART_HISTORY_MAX_RANGE_SECS` — maximum `to - from` chart-history
-  range; defaults to `86400` (one day).
 
 One background task requests all configured latest feeds in a single Pyth Pro
 call every polling interval, then atomically publishes the parsed snapshot.
-Latest HTTP requests only read that snapshot and never call Pyth. Historical
-prices use a bounded Moka cache keyed by numeric feed ID and microsecond
-timestamp. A request containing several IDs fetches all cache misses in one
-Pyth Pro call, and concurrent requests for the same timestamp share the load.
+This polling is intentionally demand-independent so the first HTTP request has
+predictable latency; it only starts when both an API key and feed allowlist are
+configured, and the interval is tunable. Latest HTTP requests only read that
+snapshot and reuse serialized responses for repeated queries. Historical prices
+use a bounded Moka cache keyed by numeric feed ID and microsecond timestamp. A
+request containing several IDs fetches all cache misses in one Pyth Pro call,
+and concurrent requests for the same timestamp share the load.
 
 Chart history uses a separate bounded Moka cache keyed by canonical
 `(symbol, resolution, from, to)`. Symbol casing and minute-aligned query bounds
 are normalized so equivalent requests share an entry. Moka coalesces concurrent
-misses for the same key into one authenticated History API request. Errors and
-rate limits are not cached.
+misses for the same key into one authenticated History API request. Successful
+responses are cached as serialized bytes, so cache hits do not clone or
+re-serialize the JSON. Errors and rate limits are not cached.
 
 The familiar route and query shape is intended to make migration simple, but
 the parsed-only response is not a drop-in replacement for
@@ -167,11 +169,11 @@ Example, using numeric Pyth Pro feed IDs `1` and `2`:
 
 ```bash
 curl \
-  "http://localhost:9008/pyth/v2/updates/price/latest?ids[]=1&ids[]=2&parsed=true"
+  "http://localhost:9008/pyth/updates/price/latest?ids[]=1&ids[]=2&parsed=true"
 
 curl \
-  "http://localhost:9008/pyth/v2/updates/price/1700000000?ids[]=1&parsed=true"
+  "http://localhost:9008/pyth/updates/price/1700000000?ids[]=1&parsed=true"
 
 curl \
-  "http://localhost:9008/pyth/v1/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1704067200&to=1704070800"
+  "http://localhost:9008/pyth/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1704067200&to=1704070800"
 ```

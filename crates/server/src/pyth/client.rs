@@ -6,7 +6,7 @@ use super::{
     error::PythError,
     models::{ChartHistoryQuery, PythProJsonUpdate, PythProParsedPayload, PythProRequest},
 };
-use axum::http::header::RETRY_AFTER;
+use axum::{body::Bytes, http::header::RETRY_AFTER};
 use secrecy::{ExposeSecret, Secret};
 use std::{sync::Arc, time::Duration};
 use url::Url;
@@ -101,7 +101,7 @@ impl PythProClient {
     pub(super) async fn chart_history(
         &self,
         query: &ChartHistoryQuery,
-    ) -> Result<serde_json::Value, PythError> {
+    ) -> Result<Bytes, PythError> {
         let response = self
             .send(
                 self.http
@@ -113,10 +113,12 @@ impl PythProClient {
             )
             .await?;
         let body = response
-            .json::<serde_json::Value>()
+            .bytes()
             .await
             .map_err(|error| PythError::InvalidResponse(error.to_string()))?;
-        validate_chart_history(&body)?;
+        let parsed = serde_json::from_slice::<serde_json::Value>(&body)
+            .map_err(|error| PythError::InvalidResponse(error.to_string()))?;
+        validate_chart_history(&parsed)?;
         Ok(body)
     }
 

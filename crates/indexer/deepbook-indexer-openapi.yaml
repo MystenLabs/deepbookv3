@@ -74,7 +74,7 @@ paths:
                 $ref: "#/components/schemas/IndexerStatus"
       x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
 
-  /pyth/v2/updates/price/latest:
+  /pyth/updates/price/latest:
     get:
       tags: [Pyth]
       summary: Latest parsed Pyth Pro price updates
@@ -120,7 +120,7 @@ paths:
         "502":
           description: The latest-price snapshot is stale.
 
-  /pyth/v2/updates/price/{publish_time}:
+  /pyth/updates/price/{publish_time}:
     get:
       tags: [Pyth]
       summary: Parsed Pyth Pro prices at a timestamp
@@ -176,6 +176,60 @@ paths:
           description: Pyth Pro is not configured or its history service is unavailable.
         "502":
           description: Pyth Pro could not be reached or returned an invalid response.
+
+  /pyth/shims/tradingview/history:
+    get:
+      tags: [Pyth]
+      summary: Pyth Pro OHLC chart history
+      description: |
+        TradingView-compatible chart history backed by the authenticated Pyth
+        Pro History API. Successful responses are cached by canonical symbol,
+        resolution, and minute-aligned bounds.
+      operationId: getPythChartHistory
+      parameters:
+        - in: query
+          name: symbol
+          required: true
+          schema: { type: string }
+          description: Server-configured Pyth Pro symbol, such as Crypto.BTC/USD.
+        - in: query
+          name: resolution
+          required: true
+          schema:
+            type: string
+            enum: ["1", "2", "5", "15", "30", "60", "120", "240", "360", "720", D, W, M]
+          description: TradingView candle resolution.
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Inclusive start time in Unix seconds.
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Inclusive end time in Unix seconds.
+      responses:
+        "200":
+          description: TradingView-compatible OHLC arrays.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PythTradingViewHistory"
+        "400":
+          description: Invalid query or symbol is not configured.
+        "429":
+          description: Pyth Pro rate limit response.
+        "502":
+          description: Pyth Pro could not be reached or returned an invalid response.
+        "503":
+          description: Pyth Pro is not configured.
 
   /get_pools:
     get:
@@ -518,6 +572,32 @@ components:
           type: integer
           format: int64
           minimum: 0
+
+    PythTradingViewHistory:
+      type: object
+      required: [s, t, o, h, l, c, v]
+      properties:
+        s:
+          type: string
+          enum: [ok]
+        t:
+          type: array
+          items: { type: integer, format: int64 }
+        o:
+          type: array
+          items: { type: number, format: double }
+        h:
+          type: array
+          items: { type: number, format: double }
+        l:
+          type: array
+          items: { type: number, format: double }
+        c:
+          type: array
+          items: { type: number, format: double }
+        v:
+          type: array
+          items: { type: number, format: double }
 
     Pool:
       type: object

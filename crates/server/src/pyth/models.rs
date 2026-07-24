@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 
 pub(super) const MICROS_PER_SECOND: u64 = 1_000_000;
 const SECONDS_PER_MINUTE: u64 = 60;
@@ -73,7 +73,7 @@ pub(super) struct ChartHistoryQuery {
 }
 
 impl ChartHistoryQuery {
-    pub(super) fn parse(raw_query: Option<&str>, max_range: Duration) -> Result<Self, String> {
+    pub(super) fn parse(raw_query: Option<&str>) -> Result<Self, String> {
         let mut symbol = None;
         let mut resolution = None;
         let mut from = None;
@@ -101,6 +101,8 @@ impl ChartHistoryQuery {
             }
         }
 
+        // Pyth Pro History requires all four parameters. Rejecting malformed
+        // requests here avoids spending upstream quota on calls it cannot serve.
         let symbol = symbol
             .filter(|symbol| !symbol.is_empty())
             .ok_or_else(|| "`symbol` is required (for example, `Crypto.BTC/USD`)".to_owned())?;
@@ -110,13 +112,6 @@ impl ChartHistoryQuery {
         if from > to {
             return Err("`from` must be less than or equal to `to`".to_owned());
         }
-        if to - from > max_range.as_secs() {
-            return Err(format!(
-                "requested chart history exceeds the maximum range of {} seconds",
-                max_range.as_secs()
-            ));
-        }
-
         // TradingView bars are minute-aligned. Canonicalizing inclusive bounds
         // makes requests from different browser sessions share the same cache key
         // without changing which complete bars fall inside the requested window.

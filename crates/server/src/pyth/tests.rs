@@ -3,13 +3,13 @@
 
 use super::{
     config::{PythChartHistoryConfig, PythProConfig, DEFAULT_PRO_URL},
-    models::normalize_history_resolution,
+    models::{normalize_history_resolution, ChartHistoryQuery},
     proxy::{routes, PythProxy},
 };
 use axum::{
     extract::{OriginalUri, State},
     http::{
-        header::{AUTHORIZATION, RETRY_AFTER},
+        header::{AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER},
         HeaderMap, StatusCode,
     },
     response::IntoResponse,
@@ -156,7 +156,6 @@ fn test_config(feed_ids: Vec<u32>) -> PythProConfig {
             symbols: vec!["Crypto.BTC/USD".to_owned()],
             cache_ttl: Duration::from_secs(60),
             cache_max_entries: 100,
-            max_range: Duration::from_secs(86_400),
             ..PythChartHistoryConfig::default()
         },
     }
@@ -190,7 +189,7 @@ async fn latest_handler_reads_only_the_background_snapshot() {
     .unwrap();
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy.clone()))).await;
     let url = server_url
-        .join("/pyth/v2/updates/price/latest?ids%5B%5D=2&ids%5B%5D=1&parsed=true")
+        .join("/pyth/updates/price/latest?ids%5B%5D=2&ids%5B%5D=1&parsed=true")
         .unwrap();
 
     let warming = reqwest::get(url.clone()).await.unwrap();
@@ -200,7 +199,12 @@ async fn latest_handler_reads_only_the_background_snapshot() {
     wait_for_latest(&proxy).await;
     let responses = join_all((0..20).map(|_| reqwest::get(url.clone()))).await;
     for response in responses {
-        assert_eq!(response.unwrap().status(), StatusCode::OK);
+        let response = response.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
     }
     assert_eq!(mock.latest_requests.load(Ordering::SeqCst), 1);
 
@@ -238,7 +242,7 @@ async fn stale_latest_snapshot_is_not_served() {
 
     let response = reqwest::get(
         server_url
-            .join("/pyth/v2/updates/price/latest?ids%5B%5D=1")
+            .join("/pyth/updates/price/latest?ids%5B%5D=1")
             .unwrap(),
     )
     .await
@@ -265,7 +269,7 @@ async fn historical_cache_is_keyed_by_feed_and_timestamp() {
     .unwrap();
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
     let first_url = server_url
-        .join("/pyth/v2/updates/price/1700000000?ids%5B%5D=1&ids%5B%5D=2&parsed=true")
+        .join("/pyth/updates/price/1700000000?ids%5B%5D=1&ids%5B%5D=2&parsed=true")
         .unwrap();
 
     let first = reqwest::get(first_url).await.unwrap();
@@ -274,7 +278,7 @@ async fn historical_cache_is_keyed_by_feed_and_timestamp() {
 
     let cached = reqwest::get(
         server_url
-            .join("/pyth/v2/updates/price/1700000000?ids%5B%5D=2")
+            .join("/pyth/updates/price/1700000000?ids%5B%5D=2")
             .unwrap(),
     )
     .await
@@ -284,7 +288,7 @@ async fn historical_cache_is_keyed_by_feed_and_timestamp() {
 
     let partial_miss = reqwest::get(
         server_url
-            .join("/pyth/v2/updates/price/1700000000?ids%5B%5D=2&ids%5B%5D=3")
+            .join("/pyth/updates/price/1700000000?ids%5B%5D=2&ids%5B%5D=3")
             .unwrap(),
     )
     .await
@@ -327,7 +331,7 @@ async fn concurrent_identical_history_misses_share_one_load() {
     .unwrap();
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
     let url = server_url
-        .join("/pyth/v2/updates/price/1700000000?ids%5B%5D=1&ids%5B%5D=2")
+        .join("/pyth/updates/price/1700000000?ids%5B%5D=1&ids%5B%5D=2")
         .unwrap();
 
     let (first, second) = tokio::join!(reqwest::get(url.clone()), reqwest::get(url));
@@ -366,7 +370,7 @@ async fn history_errors_are_not_cached() {
     .unwrap();
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
     let url = server_url
-        .join("/pyth/v2/updates/price/1700000000?ids%5B%5D=1")
+        .join("/pyth/updates/price/1700000000?ids%5B%5D=1")
         .unwrap();
 
     for _ in 0..2 {
@@ -394,7 +398,7 @@ async fn chart_history_normalizes_and_coalesces_requests() {
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
     let url = server_url
         .join(
-            "/pyth/v1/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000041&to=1700003699",
+            "/pyth/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000041&to=1700003699",
         )
         .unwrap();
 
@@ -402,6 +406,10 @@ async fn chart_history_normalizes_and_coalesces_requests() {
     for response in responses {
         let response = response.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
         let body = response.json::<Value>().await.unwrap();
         assert_eq!(body["s"], "ok");
         assert_eq!(body["c"], json!([101.0, 102.0]));
@@ -423,7 +431,7 @@ async fn chart_history_normalizes_and_coalesces_requests() {
 
     let equivalent_url = server_url
         .join(
-            "/pyth/v1/shims/tradingview/history?symbol=crypto.btc%2Fusd&resolution=1&from=1700000100&to=1700003641",
+            "/pyth/shims/tradingview/history?symbol=crypto.btc%2Fusd&resolution=1&from=1700000100&to=1700003641",
         )
         .unwrap();
     let cached = reqwest::get(equivalent_url).await.unwrap();
@@ -448,6 +456,23 @@ fn chart_history_canonicalizes_tradingview_resolution_aliases() {
     }
 }
 
+#[test]
+fn chart_history_requires_only_pyth_required_parameters() {
+    assert!(ChartHistoryQuery::parse(Some(
+        "symbol=Crypto.BTC%2FUSD&resolution=1&from=0&to=604800"
+    ))
+    .is_ok());
+
+    for query in [
+        "resolution=1&from=0&to=60",
+        "symbol=Crypto.BTC%2FUSD&from=0&to=60",
+        "symbol=Crypto.BTC%2FUSD&resolution=1&to=60",
+        "symbol=Crypto.BTC%2FUSD&resolution=1&from=0",
+    ] {
+        assert!(ChartHistoryQuery::parse(Some(query)).is_err());
+    }
+}
+
 #[tokio::test]
 async fn chart_history_rejects_unsupported_queries_without_loading() {
     let mock = MockPyth::default();
@@ -461,11 +486,10 @@ async fn chart_history_rejects_unsupported_queries_without_loading() {
         "symbol=Crypto.ETH%2FUSD&resolution=1&from=1700000000&to=1700003600",
         "symbol=Crypto.BTC%2FUSD&resolution=3&from=1700000000&to=1700003600",
         "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700003600&to=1700000000",
-        "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700100000",
     ] {
         let response = reqwest::get(
             server_url
-                .join(&format!("/pyth/v1/shims/tradingview/history?{query}"))
+                .join(&format!("/pyth/shims/tradingview/history?{query}"))
                 .unwrap(),
         )
         .await
@@ -504,7 +528,7 @@ async fn chart_history_errors_are_not_cached() {
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
     let url = server_url
         .join(
-            "/pyth/v1/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700003600",
+            "/pyth/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700003600",
         )
         .unwrap();
 
@@ -532,7 +556,7 @@ async fn invalid_queries_and_missing_configuration_are_rejected() {
 
     let invalid = reqwest::get(
         server_url
-            .join("/pyth/v2/updates/price/latest?ids%5B%5D=not-a-number")
+            .join("/pyth/updates/price/latest?ids%5B%5D=not-a-number")
             .unwrap(),
     )
     .await
@@ -541,7 +565,7 @@ async fn invalid_queries_and_missing_configuration_are_rejected() {
 
     let unavailable = reqwest::get(
         server_url
-            .join("/pyth/v2/updates/price/latest?ids%5B%5D=1")
+            .join("/pyth/updates/price/latest?ids%5B%5D=1")
             .unwrap(),
     )
     .await
