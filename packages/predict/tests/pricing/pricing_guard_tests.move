@@ -164,6 +164,13 @@ fun cached_range_price_preserves_direct_range_center_and_error() {
     );
     assert_eq!(cached.magnitude(), direct.magnitude());
     assert_eq!(cached.error(), direct.error());
+    assert_eq!(
+        pricer.range_price(
+            range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size),
+            range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size),
+        ),
+        direct.magnitude(),
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -401,6 +408,7 @@ fun finite_ratio_underflow_does_not_false_certify_range() {
         strike(FINITE_TAIL_LOWER_STRIKE),
         strike(constants::pos_inf!()),
     );
+    assert_eq!(pricer.up_price(strike(FINITE_TAIL_LOWER_STRIKE)), lower_up.magnitude());
     test_helpers::assert_within(
         lower_up.magnitude(),
         FINITE_TAIL_LOWER_UP_REFERENCE,
@@ -412,6 +420,7 @@ fun finite_ratio_underflow_does_not_false_certify_range() {
         strike(FINITE_TAIL_UPPER_STRIKE),
         strike(constants::pos_inf!()),
     );
+    assert_eq!(pricer.up_price(strike(FINITE_TAIL_UPPER_STRIKE)), upper_up.magnitude());
     test_helpers::assert_within(
         upper_up.magnitude(),
         FINITE_TAIL_UPPER_UP_REFERENCE,
@@ -422,6 +431,13 @@ fun finite_ratio_underflow_does_not_false_certify_range() {
     let range = pricer.range_price_approx(
         strike(FINITE_TAIL_LOWER_STRIKE),
         strike(FINITE_TAIL_UPPER_STRIKE),
+    );
+    assert_eq!(
+        pricer.range_price(
+            strike(FINITE_TAIL_LOWER_STRIKE),
+            strike(FINITE_TAIL_UPPER_STRIKE),
+        ),
+        range.magnitude(),
     );
     test_helpers::assert_within(
         range.magnitude(),

@@ -15,6 +15,7 @@ use deepbook_predict::{
     test_constants
 };
 use fixed_math::{approx::Approx, math};
+use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
 // The ratified contract-price deviation bound at 1e9 scale (0.1%), mirroring
@@ -97,14 +98,15 @@ fun seed_uncertifiable_surface(fx: &mut helpers::Fixture, market: &mut helpers::
 }
 
 fun atm_up_price(pricer: &Pricer): Approx {
-    pricer.range_price_approx(
-        range_codec::strike_from_tick(
-            helpers::strike_tick(),
-            test_constants::default_tick_size(),
-        ),
-        range_codec::strike_from_tick(
-            constants::pos_inf_tick!(),
-            test_constants::default_tick_size(),
-        ),
-    )
+    let lower = range_codec::strike_from_tick(
+        helpers::strike_tick(),
+        test_constants::default_tick_size(),
+    );
+    let higher = range_codec::strike_from_tick(
+        constants::pos_inf_tick!(),
+        test_constants::default_tick_size(),
+    );
+    let approximate = pricer.range_price_approx(lower, higher);
+    assert_eq!(pricer.range_price(lower, higher), approximate.magnitude());
+    approximate
 }

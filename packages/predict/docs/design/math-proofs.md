@@ -219,9 +219,59 @@ Saturating error arithmetic is an uncertifiable sentinel, not a claim that
 boundaries. Center-only close and liquidation intentionally select the
 canonical center under their separate economic policy.
 
+### Theorem 2.7 — Scalar pricing is the center projection of certified pricing
+
+Let `center(c,e)=c`. Every `Approx` operation used by SVI pricing computes its
+output center only from its input centers:
+
+```text
+center(add(A,B))       = add(center(A),center(B))
+center(sub(A,B))       = sub(center(A),center(B))
+center(mul(A,B))       = mul(center(A),center(B))
+center(div(A,B))       = div(center(A),center(B))
+center(sqrt(A))        = sqrt(center(A))
+center(Phi(A))         = Phi(center(A))
+center(phi(A))         = phi(center(A)).
+```
+
+The corresponding statements hold for square, fused multiply-divide, negation,
+doubling, and projection onto `[0,S]`. Error-dependent denominator and overflow
+branches change only the radius to the uncertifiable sentinel; they do not
+change the already-computed center. Certified exact-zero multiplication returns
+the same zero as scalar multiplication. If the certified slope has center zero
+but nonzero radius, its correction center is still zero, so the scalar
+zero-slope shortcut preserves the final center.
+
+The retained-precision variance island also separates this way: both paths use
+the same wide center `C`, `floor(C/(2S))` for half variance, and
+`sqrt_down(C)` for the square-root center; only the certified path additionally
+evaluates the wide error endpoints.
+
+Structural composition through `compute_up_price_center` and
+`compute_up_price_approx` therefore gives
+
+```text
+up_price(strike) = center(up_price_approx(strike)).
+```
+
+Applying the same boundary subtraction and nonnegative projection gives
+
+```text
+range_price(lower,higher)
+  = center(range_price_approx(lower,higher)).
+```
+
+The theorem holds under the same validated pricing envelope and primitive abort
+domain. It permits scalar close and liquidation to avoid constructing a radius
+that their policy does not consume, while mint admission and NAV retain the
+complete certificate.
+
 Pins:
 
 - `packages/fixed_math/tests/math/approx_tests.move`
+- `packages/predict/tests/pricing/pricing_exact_tests.move`
+- `packages/predict/tests/pricing/pricing_guard_tests.move`
+- `packages/predict/tests/pricing/pricing_tests.move`
 - `packages/predict/tests/pricing/precision_guard_tests.move`
 - `packages/predict/tests/flows/precision_policy_flow_tests.move`
 - `packages/predict/tests/flows/pool_valuation_flow_tests.move`

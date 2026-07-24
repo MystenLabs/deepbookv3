@@ -11,7 +11,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{approx::{Self, Approx}, i64, math};
+use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -101,13 +101,13 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 /// Return the current UP digital probability for a typed strike. Public PTB and
 /// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
-    compute_up_price(&pricer.svi, pricer.forward, strike).magnitude()
+    compute_up_price_center(&pricer.svi, pricer.forward, strike)
 }
 
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher).magnitude()
+    compute_range_price_center(&pricer.svi, pricer.forward, lower, higher)
 }
 
 // === Public-Package Functions ===
@@ -116,7 +116,7 @@ public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
 /// for package-internal protocol decisions. The public `range_price` is the
 /// value-only view for external reads.
 public(package) fun range_price_approx(pricer: &Pricer, lower: Strike, higher: Strike): Approx {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+    compute_range_price_approx(&pricer.svi, pricer.forward, lower, higher)
 }
 
 /// Return the expiry market this pricer was loaded for.
@@ -239,7 +239,7 @@ public(package) fun price_and_cache(
     tick: u64,
     tick_size: u64,
 ): Approx {
-    let price = compute_up_price(
+    let price = compute_up_price_approx(
         &pricer.svi,
         pricer.forward,
         range_codec::strike_from_tick(tick, tick_size),
@@ -258,7 +258,7 @@ public(package) fun price_and_cache(
 // === Private Functions ===
 
 /// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
-/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
+/// nodes, so they short-circuit to `compute_up_price_approx`'s sentinels (`P(-inf) = 1`,
 /// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
 fun cached_up_price(memo: &PriceMemo, tick: u64): Approx {
     if (tick == 0) return approx::exact_u64(math::float_scaling!()); // neg-inf sentinel
@@ -452,19 +452,106 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
     math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
-/// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): Approx {
+/// Compute only the canonical scalar center for `(lower, higher]`. Live close
+/// and liquidation deliberately consume this center without a numerical-error
+/// policy branch, so constructing and discarding the certificate would add
+/// candidate-linear gas to every ambient sweep.
+fun compute_range_price_center(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
+    let lower_up_price = compute_up_price_center(svi, forward, lower);
+    let higher_up_price = compute_up_price_center(svi, forward, higher);
     // Fixed-point approximation or a non-monotone SVI surface can invert the
     // boundary prices; the range probability is floored at zero.
+    lower_up_price.saturating_sub(higher_up_price)
+}
+
+/// Compute the certified probability for `(lower, higher]`.
+fun compute_range_price_approx(
+    svi: &SVIParams,
+    forward: u64,
+    lower: Strike,
+    higher: Strike,
+): Approx {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+
+    let lower_up_price = compute_up_price_approx(svi, forward, lower);
+    let higher_up_price = compute_up_price_approx(svi, forward, higher);
     lower_up_price.sub(&higher_up_price).clamp_nonnegative()
 }
 
-/// Compute the adjusted UP digital probability for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): Approx {
+/// Compute the canonical scalar center of the adjusted UP digital probability.
+/// Theorem 2.7 in `docs/design/math-proofs.md` proves this is bit-identical to
+/// `compute_up_price_approx(...).magnitude()`.
+fun compute_up_price_center(svi_params: &SVIParams, forward: u64, strike: Strike): u64 {
+    if (strike.is_neg_inf()) {
+        return math::float_scaling!()
+    };
+    if (strike.is_pos_inf()) {
+        return 0
+    };
+
+    assert!(forward > 0, EZeroForward);
+
+    let k = ln_ratio_center(strike.value(), forward);
+    let m = svi_params.m();
+    let k_minus_m = k.sub(&m);
+    let k_minus_m_squared = k_minus_m.square_scaled();
+    let sigma_squared = math::mul_down(svi_params.sigma(), svi_params.sigma());
+    let root = math::sqrt_down(k_minus_m_squared + sigma_squared);
+    let root_i64 = i64::from_u64(root);
+
+    let rho = svi_params.rho();
+    let inner = rho.mul_scaled(&k_minus_m).add(&root_i64);
+    assert!(!inner.is_negative(), ECannotBeNegative);
+
+    let scale = math::float_scaling!() as u128;
+    let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
+    let a = svi_params.a();
+    let wide_a = (a.magnitude() as u128) * scale;
+    let wide_total_var = if (a.is_negative()) {
+        assert!(wide_increment >= wide_a, ENonPositiveVariance);
+        wide_increment - wide_a
+    } else {
+        wide_increment + wide_a
+    };
+    assert!(wide_total_var >= scale, ENonPositiveVariance);
+
+    let half_var = i64::from_u64((wide_total_var / (scale + scale)) as u64);
+    let sqrt_var = math::sqrt_u128_down(wide_total_var) as u64;
+    let sqrt_var_i64 = i64::from_u64(sqrt_var);
+    let d2 = k.add(&half_var).div_scaled(&sqrt_var_i64).neg();
+
+    let slope_ratio = k_minus_m.div_scaled(&root_i64);
+    let slope = rho.add(&slope_ratio);
+    let w_prime = i64::from_u64(svi_params.b()).mul_scaled(&slope);
+    let nd2 = math::normal_cdf(&d2);
+    if (w_prime.is_zero()) return nd2;
+
+    let correction_magnitude = math::mul_div_down(
+        math::normal_pdf(&d2),
+        w_prime.magnitude(),
+        sqrt_var + sqrt_var,
+    );
+    let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
+    let adjusted = i64::from_u64(nd2).sub(&correction);
+    if (adjusted.is_negative()) return 0;
+    adjusted.magnitude().min(math::float_scaling!())
+}
+
+/// Center of `Approx::ln_ratio` without constructing its discarded radius.
+fun ln_ratio_center(numerator: u64, denominator: u64): I64 {
+    let ratio_opt = math::try_div_down(numerator, denominator);
+    if (ratio_opt.is_some()) {
+        let ratio = ratio_opt.destroy_some();
+        if (ratio > 1) return math::ln(ratio)
+    };
+
+    math::ln(numerator).sub(&math::ln(denominator))
+}
+
+/// Compute the adjusted UP digital probability with its numerical certificate.
+fun compute_up_price_approx(svi: &SVIParams, forward: u64, strike: Strike): Approx {
     if (strike.is_neg_inf()) {
         return approx::exact_u64(math::float_scaling!())
     };
