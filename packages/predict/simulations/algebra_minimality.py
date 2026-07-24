@@ -8,6 +8,7 @@ from typing import Any
 
 import money_math_inventory as inventory
 import partial_close_proofs
+import payout_tree_proofs
 import saturation_proofs
 
 
@@ -441,8 +442,15 @@ def cross_module_conclusions() -> dict[str, Any]:
     structural = partial_close_proofs.bounded_structural_proof()
     witness = partial_close_proofs.production_fragmentation_witness()
     shortfall = partial_close_proofs.shortfall_bound()
+    prefix = payout_tree_proofs.prefix_summary_monoid_proof()
     induction = saturation_proofs.available_expiry_funding_induction()
     return {
+        "payout_prefix_positive_part": {
+            "verdict": "semantically_required_and_algebraically_minimal",
+            "owner": "payout_tree_proofs.prefix_summary_monoid_proof",
+            "associative": prefix["invariants"]["combine_is_associative"],
+            "removable": False,
+        },
         "partial_close_floor_complement": {
             "verdict": "locally_minimal_and_atom_conserving",
             "owner": "partial_close_proofs.bounded_structural_proof",

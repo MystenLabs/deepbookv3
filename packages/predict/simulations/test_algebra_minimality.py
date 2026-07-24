@@ -100,6 +100,13 @@ class AlgebraMinimalityTests(unittest.TestCase):
 
     def test_cross_module_conclusions_are_folded_in(self) -> None:
         conclusions = self.bundle["cross_module_conclusions"]
+        prefix = conclusions["payout_prefix_positive_part"]
+        self.assertEqual(
+            prefix["verdict"],
+            "semantically_required_and_algebraically_minimal",
+        )
+        self.assertTrue(prefix["associative"])
+        self.assertFalse(prefix["removable"])
         self.assertEqual(
             conclusions["partial_close_floor_complement"]["verdict"],
             "locally_minimal_and_atom_conserving",

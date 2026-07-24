@@ -9,6 +9,21 @@ from fractions import Fraction
 from itertools import product
 from typing import Any
 
+import money_math_inventory as inventory
+
+
+PREFIX_SUMMARY_FUNCTION_SHA256 = {
+    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::boundary_summary": (
+        "f05c98a411097ac1150e538411b9bc1325224657abdec44c969b47af645a1a7a"
+    ),
+    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::combine_summaries": (
+        "eb9f96e3d55db9d6d58a29ae2d17f2a3d845aec200a9682fb73bd6a414875fa4"
+    ),
+    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::positive_net_delta": (
+        "36d0901495a671a1fb99669dca00a1a31a368bc6fae7e5e12b71bd12d1e135cd"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Order:
@@ -270,16 +285,166 @@ def settled_redemption_proof() -> dict[str, Any]:
     }
 
 
+def _prefix_summary(deltas: tuple[int, ...]) -> tuple[int, int]:
+    running = 0
+    maximum = 0
+    for delta in deltas:
+        running += delta
+        maximum = max(maximum, running)
+    return running, maximum
+
+
+def _combine_prefix_summaries(
+    left: tuple[int, int],
+    right: tuple[int, int],
+) -> tuple[int, int]:
+    left_delta, left_max = left
+    right_delta, right_max = right
+    return (
+        left_delta + right_delta,
+        max(left_max, max(0, left_delta + right_max)),
+    )
+
+
+def prefix_summary_monoid_proof() -> dict[str, Any]:
+    """Prove the payout tree's max-prefix recurrence.
+
+    A sequence summary is (D, M), where D is its total signed net-payout
+    boundary delta and M=max(0, every prefix sum). For concatenation A·B,
+    prefixes are either prefixes of A or D_A plus a prefix of B, hence
+    summary(A·B)=(D_A+D_B, max(M_A, max(0,D_A+M_B))). Move represents D_A as
+    net(start_A)-net(end_A); `positive_net_delta` is exactly the inner positive
+    part and the following `.max` is exactly the outer maximum.
+    """
+    function_hashes = inventory.function_source_sha256()
+    fingerprint_mismatches = {
+        function_id: {
+            "expected": expected,
+            "actual": function_hashes.get(function_id),
+        }
+        for function_id, expected in PREFIX_SUMMARY_FUNCTION_SHA256.items()
+        if function_hashes.get(function_id) != expected
+    }
+    source = (
+        inventory.SOURCE_ROOT
+        / "strike_exposure"
+        / "index"
+        / "strike_payout_tree.move"
+    ).read_text()
+    expression_bindings = {
+        "positive_part": (
+            "(net_payout(start) + gain).saturating_sub(net_payout(end))"
+            in source
+        ),
+        "prefix_maximum": (
+            "left.max_net_payout_prefix_gain.max(right_gain_after_left)"
+            in source
+        ),
+        "right_prefix_shift": (
+            "right.max_net_payout_prefix_gain," in source
+        ),
+    }
+
+    concatenation_failures: list[dict[str, Any]] = []
+    associativity_failures: list[dict[str, Any]] = []
+    sequences = [
+        tuple(deltas)
+        for length in range(5)
+        for deltas in product(range(-2, 3), repeat=length)
+    ]
+    for sequence in sequences:
+        direct = _prefix_summary(sequence)
+        for split in range(len(sequence) + 1):
+            combined = _combine_prefix_summaries(
+                _prefix_summary(sequence[:split]),
+                _prefix_summary(sequence[split:]),
+            )
+            if combined != direct:
+                concatenation_failures.append(
+                    {
+                        "sequence": sequence,
+                        "split": split,
+                        "direct": direct,
+                        "combined": combined,
+                    }
+                )
+        for first in range(len(sequence) + 1):
+            for second in range(first, len(sequence) + 1):
+                a = _prefix_summary(sequence[:first])
+                b = _prefix_summary(sequence[first:second])
+                c = _prefix_summary(sequence[second:])
+                left_grouped = _combine_prefix_summaries(
+                    _combine_prefix_summaries(a, b),
+                    c,
+                )
+                right_grouped = _combine_prefix_summaries(
+                    a,
+                    _combine_prefix_summaries(b, c),
+                )
+                if left_grouped != right_grouped:
+                    associativity_failures.append(
+                        {
+                            "sequence": sequence,
+                            "first": first,
+                            "second": second,
+                        }
+                    )
+
+    invariants = {
+        "source_fingerprints_match": not fingerprint_mismatches,
+        "source_expressions_match": all(expression_bindings.values()),
+        "concatenation_recurrence_holds": not concatenation_failures,
+        "combine_is_associative": not associativity_failures,
+    }
+    return {
+        "proof_strength": (
+            "universal concatenation derivation; bounded enumeration is a "
+            "mutation-sensitive sanity check"
+        ),
+        "summary_definition": (
+            "(total signed delta, max of zero and every prefix sum)"
+        ),
+        "concatenation_identity": (
+            "(Da+Db, max(Ma, max(0, Da+Mb)))"
+        ),
+        "source_function_fingerprint_mismatches": fingerprint_mismatches,
+        "source_expression_bindings": expression_bindings,
+        "bounded_sequences_checked": str(len(sequences)),
+        "concatenation_failures": concatenation_failures,
+        "associativity_failures": associativity_failures,
+        "plain_subtraction_mutation": {
+            "deltas": [-1],
+            "correct_positive_part": 0,
+            "plain_unsigned_subtraction": "underflow",
+        },
+        "remove_outer_max_mutation": {
+            "left_deltas": [2, -2],
+            "right_deltas": [-1],
+            "correct_max_prefix": 2,
+            "right_only_shifted_prefix": 0,
+        },
+        "invariants": invariants,
+        "all_invariants_hold": all(invariants.values()),
+        "minimality_disposition": (
+            "retain: total delta and max prefix are the minimal associative "
+            "summary; combine requires one shifted positive part and one max"
+        ),
+    }
+
+
 def build_payout_tree_bundle() -> dict[str, Any]:
     live = bounded_aggregation_proof()
     settled = settled_redemption_proof()
+    prefix = prefix_summary_monoid_proof()
     return {
         "schema": "predict_payout_tree_proofs_v1",
         "live_aggregation": live,
         "settled_redemption": settled,
+        "prefix_summary_monoid": prefix,
         "all_invariants_hold": (
             live["all_invariants_hold"]
             and settled["all_invariants_hold"]
+            and prefix["all_invariants_hold"]
         ),
         "minimality_disposition": (
             "one signed product per nonzero net boundary is the shared-price "

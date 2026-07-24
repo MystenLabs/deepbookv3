@@ -115,7 +115,8 @@ names its residual owner, and verifies its exact source operator bindings; its
 negative-control test flips the trading-fee direction and requires the aggregate
 proof to turn red. `economic_lifecycle_proofs.py` and `payout_tree_proofs.py`
 reconcile cash-state lifecycles and bounded live/settled aggregation, including the
-current one-product signed shared-boundary valuation. `saturation_proofs.py`
+current one-product signed shared-boundary valuation and the universal associative
+max-prefix recurrence. `saturation_proofs.py`
 classifies every remaining `saturating_sub`/`saturating_add` site and retains the
 source-complete induction that justified the now-landed removal in
 `pool_accounting::available_expiry_funding`; the induction covers every writer of
@@ -184,8 +185,8 @@ runner digests to a generated proof bundle.
 -   `economic_lifecycle_proofs.py`: independent cash-state reconciliation for
     mint fees, live redeem deductions, rebate claims, and exact-amount sizing.
 -   `payout_tree_proofs.py`: bounded-exhaustive containment of the fused signed
-    boundary center against exact-rational live liability, plus settled
-    redemption conservation checks.
+    boundary center against exact-rational live liability, a universal proof of
+    the max-prefix summary monoid, plus settled redemption conservation checks.
 -   `saturation_proofs.py`: classification of every `saturating_*` site and the
     source-complete induction proving the one removable outer saturation.
 -   `partial_close_proofs.py`: partial-close floor conservation and survivor
