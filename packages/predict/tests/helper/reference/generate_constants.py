@@ -139,8 +139,6 @@ POINTS = [
     ("FINITE_TAIL_UPPER_UP_REFERENCE", scaled(FINITE_TAIL_UPPER_UP)),
     ("FINITE_TAIL_RANGE_REFERENCE", scaled(max(0.0, FINITE_TAIL_LOWER_UP - FINITE_TAIL_UPPER_UP))),
     # sqrt with non-default precision: sqrt(x, P) == isqrt(x * P) in raw units.
-    ("SQRT_4F_PREC_ONE", math.isqrt(4 * F * 1)),
-    ("SQRT_U64MAX_PREC_ONE", math.isqrt((2**64 - 1) * 1)),  # high-bit Newton path; = 2^32-1
 ]
 
 if __name__ == "__main__":

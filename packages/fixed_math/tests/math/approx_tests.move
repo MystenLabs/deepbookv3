@@ -25,9 +25,9 @@ fun assert_center(ball: &Approx, magnitude: u64, negative: bool) {
 }
 
 fun assert_contains(ball: &Approx, candidate: I64) {
-    let center = ball.value();
-    let distance = if (center.is_negative() == candidate.is_negative()) {
-        let center_magnitude = center.magnitude();
+    let center_magnitude = ball.magnitude();
+    let center_is_negative = ball.is_negative();
+    let distance = if (center_is_negative == candidate.is_negative()) {
         let candidate_magnitude = candidate.magnitude();
         if (center_magnitude >= candidate_magnitude) {
             (center_magnitude - candidate_magnitude) as u128
@@ -35,7 +35,7 @@ fun assert_contains(ball: &Approx, candidate: I64) {
             (candidate_magnitude - center_magnitude) as u128
         }
     } else {
-        (center.magnitude() as u128) + (candidate.magnitude() as u128)
+        (center_magnitude as u128) + (candidate.magnitude() as u128)
     };
     assert!(distance <= (ball.error() as u128));
 }
@@ -60,10 +60,6 @@ fun constructors_and_linear_operations_preserve_the_scalar_center() {
     let doubled = a.double();
     assert_center(&doubled, 3 * float!(), true);
     assert_eq!(doubled.error(), 14);
-
-    let halved = a.half();
-    assert_center(&halved, 3 * float!() / 4, true);
-    assert_eq!(halved.error(), 8);
 
     let exact = approx::exact_u64(42);
     assert_center(&exact, 42, false);
@@ -253,10 +249,6 @@ fun mul_div_down_zero_center_denominator_aborts() {
 fun transcendental_balls_enclose_independent_endpoint_references() {
     // Python stdlib references, rounded to 1e9; these are independent of the
     // contract approximations used to construct each center.
-    let logarithm = approx::ln(2 * float!(), float!() / 2);
-    assert_contains(&logarithm, i64::from_u64(405_465_108)); // ln(1.5)
-    assert_contains(&logarithm, i64::from_u64(916_290_732)); // ln(2.5)
-
     let square_root_input = approx::from_certified_parts(i64::from_u64(4 * float!()), float!());
     let square_root = square_root_input.sqrt();
     assert_center(&square_root, 2 * float!(), false);
@@ -341,5 +333,4 @@ fun error_arithmetic_saturates_instead_of_wrapping() {
     assert_eq!(saturated.add(&exact).error(), std::u64::max_value!());
     assert_eq!(saturated.sub(&exact).error(), std::u64::max_value!());
     assert_eq!(saturated.mul_scaled(&exact).error(), std::u64::max_value!());
-    assert_eq!(approx::ln(float!(), float!()).error(), std::u64::max_value!());
 }

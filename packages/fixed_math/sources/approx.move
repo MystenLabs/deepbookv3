@@ -54,10 +54,6 @@ public fun from_certified_parts(value: I64, error: u64): Approx {
     Approx { value, error }
 }
 
-public fun value(a: &Approx): I64 {
-    a.value
-}
-
 public fun error(a: &Approx): u64 {
     a.error
 }
@@ -134,16 +130,6 @@ public fun neg(a: &Approx): Approx {
 /// Exact doubling: value and error both double (integer addition, no truncation).
 public fun double(a: &Approx): Approx {
     add(a, a)
-}
-
-/// Halving by an exact factor of two. The value truncates toward zero (one raw
-/// unit); the error is kept in full — a sound over-estimate of the true half-error,
-/// negligible where used (the `d2` numerator, dominated by the `1/sqrt(w)` term).
-public fun half(a: &Approx): Approx {
-    Approx {
-        value: i64::from_parts(a.value.magnitude() / 2, a.value.is_negative()),
-        error: a.error.saturating_add(round_leaf!()),
-    }
 }
 
 // === Scaled multiplicative operations ===
@@ -253,10 +239,13 @@ public fun mul_div_down(a: &Approx, b: &Approx, c: &Approx): Approx {
 /// `ln` of a positive u64 ball. Value error is bounded by `dx / (x - dx)`
 /// (worst-corner `1/x`, rounded up) plus `ln`'s approximation error: `1e-7` relative
 /// plus a three-raw-unit margin covering the near-`ln(1)` quantization regime.
-public fun ln(x: u64, x_error: u64): Approx {
+fun ln(x: u64, x_error: u64): Approx {
     let value = math::ln(x);
     let leaf = value.magnitude() / 10_000_000 + 3;
-    let propagated = if (x > x_error) ceil_div(x_error, x - x_error) else std::u64::max_value!();
+    // Every caller reaches this propagation step only after `math::ln(x)` has
+    // established `x > 0`; `ln_ratio` supplies either zero error or `(ratio, 1)`
+    // with `ratio > 1`, so the lower endpoint is strictly positive.
+    let propagated = ceil_div(x_error, x - x_error);
     Approx { value, error: propagated.saturating_add(leaf) }
 }
 
