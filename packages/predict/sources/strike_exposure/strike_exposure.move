@@ -23,7 +23,7 @@ use deepbook_predict::{
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use fixed_math::math;
+use fixed_math::{i64::{Self, I64}, math};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
@@ -59,6 +59,11 @@ public struct StrikeExposure has store {
     liquidation: LiquidationBook,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
+    /// Net directional position the pool holds against this expiry's traders, in
+    /// position lots, signed in UP-probability space: negative means the pool is
+    /// net short UP. Maintained by `directional_lots` at every book mutation and
+    /// read only by the trade-path quote — never by NAV, backing, or liquidation.
+    directional_aggregate: I64,
 }
 
 /// Pure mint terms for one prospective live mint: the priced tick range,
@@ -268,6 +273,12 @@ public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
     exposure.reference_tick
 }
 
+/// Return the pool's net directional position against this expiry, in position
+/// lots. Negative means the pool is net short UP.
+public(package) fun directional_aggregate(exposure: &StrikeExposure): I64 {
+    exposure.directional_aggregate
+}
+
 /// Return the raw per-trade fee for a live price and quantity.
 ///
 /// Fee collection is expiry-market payment accounting; exposure only owns the
@@ -309,17 +320,23 @@ public(package) fun quote_mint_terms(
     leverage: u64,
     clock: &Clock,
 ): MintTerms {
-    let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
+    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
+    // Hoisted out of the sizing search: the fair boundary prices are the
+    // expensive part of a quote and do not vary with quantity. Only the skew
+    // does, and it is integer arithmetic over the probe's own inventory delta.
+    let fair_up_lower = exposure.fair_up_price(pricer, lower_tick);
+    let fair_up_higher = exposure.fair_up_price(pricer, higher_tick);
     let time_to_expiry_ms = exposure.expiry_ms - clock.timestamp_ms();
 
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        // Validate policy before the search divides by leverage.
+        // Validate policy before the search divides by leverage. This reads the
+        // pre-trade price; mint admission below re-validates the post-trade one.
         exposure
             .config
             .assert_mint_probability_and_leverage_policy(
-                entry_probability,
+                exposure.skewed_range_price(fair_up_lower, fair_up_higher, &i64::zero()),
                 leverage,
                 time_to_expiry_ms,
             );
@@ -327,12 +344,24 @@ public(package) fun quote_mint_terms(
         // most one unit. The configured probability floor keeps that difference
         // below one lot, so sizing never exceeds the budget and may undershoot the
         // largest admissible quantity by at most one lot.
+        //
+        // Each probe prices against the inventory its own quantity would create,
+        // so budget mode cannot size against a flatter book than it trades on.
+        // The probe premium stays monotone in quantity — the search's
+        // precondition — because `max_max_skew_shift` keeps the per-lot price
+        // concession far below the per-lot premium at every probability.
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
-            if (math::mul_div_down(entry_probability, mid * lot, leverage) <= max_premium) {
+            let probe_quantity = mid * lot;
+            let probe_probability = exposure.skewed_range_price(
+                fair_up_lower,
+                fair_up_higher,
+                &directional_lots(lower_tick, higher_tick, probe_quantity),
+            );
+            if (math::mul_div_down(probe_probability, probe_quantity, leverage) <= max_premium) {
                 lo = mid
             } else {
                 hi = mid - 1
@@ -341,6 +370,12 @@ public(package) fun quote_mint_terms(
         lo * lot
     };
     assert!(quantity >= min_quantity, EMintQuantityBelowMin);
+
+    let entry_probability = exposure.skewed_range_price(
+        fair_up_lower,
+        fair_up_higher,
+        &directional_lots(lower_tick, higher_tick, quantity),
+    );
 
     let admission = exposure
         .config
@@ -385,6 +420,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 
     exposure.liquidation.insert_order(&allocated_order);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
+    exposure.apply_directional_delta(&directional_lots(lower_tick, higher_tick, quantity));
 
     allocated_order
 }
@@ -420,10 +456,16 @@ public(package) fun quote_close(
         return exposure.close_terms(order, CloseOutcome::Settled { payout })
     };
     assert!(pricer.is_some(), EPricerRequired);
-    // Price the range exactly once; the knock-out test and the live terms both
-    // read this one observation.
-    let range_probability = exposure.order_range_price(pricer.borrow(), order);
-    let gross_value = math::mul(range_probability, order.quantity());
+    let pricer = pricer.borrow();
+    let lower_tick = order.lower_tick();
+    let higher_tick = order.higher_tick();
+    let fair_up_lower = exposure.fair_up_price(pricer, lower_tick);
+    let fair_up_higher = exposure.fair_up_price(pricer, higher_tick);
+
+    // The knock-out test reads the FAIR mark, never the skewed one. A knock-out
+    // is a solvency event against the order's own floor, so the pool's inventory
+    // must not be able to push an order across its liquidation threshold.
+    let gross_value = math::mul(fair_up_lower.saturating_sub(fair_up_higher), order.quantity());
     // Leveraged only: a 1x order has a zero floor, so the threshold test would
     // spuriously classify a currently-worthless 1x order as liquidatable.
     if (
@@ -431,6 +473,16 @@ public(package) fun quote_close(
     ) {
         return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
+
+    // A close is a trade and pays the skew, priced against the inventory it
+    // leaves behind. Closing releases the position's own directional weight, so
+    // a close that flattens the book prices better than the fair mark.
+    let released = directional_lots(lower_tick, higher_tick, close_quantity).neg();
+    let range_probability = exposure.skewed_range_price(
+        fair_up_lower,
+        fair_up_higher,
+        &released,
+    );
     exposure.close_terms(
         order,
         CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
@@ -547,22 +599,36 @@ public(package) fun new(
         settled_payout_liability: 0,
         liquidation: liquidation_book::new(ctx),
         payout: strike_payout_tree::new(ctx),
+        directional_aggregate: i64::zero(),
     }
 }
 
-/// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
-/// validation. The single pricing-prefix orchestration shared by every mint
-/// quote/terms path.
-fun admitted_entry_probability(
+/// The oracle's unskewed UP probability at one boundary tick.
+fun fair_up_price(exposure: &StrikeExposure, pricer: &Pricer, tick: u64): u64 {
+    pricer.up_price(range_codec::strike_from_tick(tick, exposure.tick_size))
+}
+
+/// Price `(lower, higher]` under the directional inventory the book would hold
+/// after `delta`, from boundary prices the caller already sampled. Passing
+/// `i64::zero()` prices the book as it stands.
+///
+/// Both boundaries are shifted by the same signed aggregate through one shared
+/// function, so every appearance of a boundary shifts identically and a set of
+/// ranges partitioning the line still costs exactly 1. Pricing against the
+/// post-trade delta is what makes the skew undodgeable by splitting or ordering:
+/// a trade is always quoted against the inventory it is about to create.
+fun skewed_range_price(
     exposure: &StrikeExposure,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
+    fair_up_lower: u64,
+    fair_up_higher: u64,
+    delta: &I64,
 ): u64 {
-    exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
-    let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
-    pricer.range_price(lower, higher)
+    let aggregate = exposure.directional_aggregate.add(delta);
+    let lower = exposure.config.skewed_up_price(fair_up_lower, &aggregate);
+    let higher = exposure.config.skewed_up_price(fair_up_higher, &aggregate);
+    // Mirror `pricing::range_price`: a fixed-point approximation can invert the
+    // boundary prices, and the range probability floors at zero.
+    lower.saturating_sub(higher)
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
@@ -675,6 +741,7 @@ fun process_live_close(
             remove_floor_shares,
         );
     exposure.liquidation.remove_order(order);
+    exposure.release_directional_delta(order, close_quantity);
 
     // The survivor keeps exactly what the closed slice did not remove:
     // conservation by construction, with `order::replacement` re-validating
@@ -734,6 +801,7 @@ fun apply_liquidation(
             order.quantity(),
             order.floor_shares(),
         );
+    exposure.release_directional_delta(order, order.quantity());
 
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
@@ -760,4 +828,41 @@ fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )
+}
+
+/// Return `quantity` of `order`'s range to the pool, undoing exactly the
+/// directional weight the mint of that slice added.
+fun release_directional_delta(exposure: &mut StrikeExposure, order: &Order, quantity: u64) {
+    let released = directional_lots(order.lower_tick(), order.higher_tick(), quantity).neg();
+    exposure.apply_directional_delta(&released);
+}
+
+fun apply_directional_delta(exposure: &mut StrikeExposure, delta: &I64) {
+    exposure.directional_aggregate = exposure.directional_aggregate.add(delta);
+}
+
+/// Net directional position, in position lots, that the pool takes on when a
+/// trader buys `quantity` of `(lower_tick, higher_tick]`.
+///
+/// The pool is short what the trader is long: short `P(lower)`, long `P(higher)`.
+/// Only finite boundaries carry directional risk, because `P(-inf) = 1` and
+/// `P(+inf) = 0` are constants — so a one-sided binary moves the aggregate by its
+/// full size, while a two-sided range is directionally flat and leaves it alone.
+///
+/// This is the single owned evaluator for the aggregate: mint, live close, and
+/// liquidation all route through it, so a removal subtracts bit-equal what the
+/// insert added. It reads only atoms that round-trip losslessly through the
+/// packed order id (the boundary ticks and a whole number of lots) and no oracle
+/// state whatsoever. That is deliberate and load-bearing: an aggregate weighted
+/// by the live surface — the shape this mechanism carried when it was first built
+/// and reverted — leaves a residual on every close whose surface has moved since
+/// the open, and the residual accumulates without bound. Moneyness weighting
+/// belongs at read time, in `strike_exposure_config::skewed_up_price`, where it
+/// is recomputed from the current mark and can never be stored stale.
+fun directional_lots(lower_tick: u64, higher_tick: u64, quantity: u64): I64 {
+    let lots = quantity / constants::position_lot_size!();
+    let long_leg = if (higher_tick == constants::pos_inf_tick!()) 0 else lots;
+    let short_leg = if (lower_tick == 0) 0 else lots;
+
+    i64::from_u64(long_leg).sub(&i64::from_u64(short_leg))
 }

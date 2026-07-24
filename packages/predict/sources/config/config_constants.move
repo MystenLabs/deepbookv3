@@ -31,6 +31,8 @@ const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
+const EInvalidSkewDepthLots: u64 = 24;
+const EInvalidMaxSkewShift: u64 = 25;
 
 // === Fees ===
 
@@ -130,6 +132,43 @@ public(package) fun assert_no_leverage_window_ms(value: u64) {
         value >= min_no_leverage_window_ms!() && value <= max_no_leverage_window_ms!(),
         EInvalidNoLeverageWindowMs,
     );
+}
+
+/// Net one-sided directional position, in position lots, at which the inventory
+/// skew reaches its full `max_skew_shift`. Larger values make the skew flatter.
+public(package) macro fun default_skew_depth_lots(): u64 { 1_000_000 }
+
+/// A zero depth would divide by zero; the skew is disabled with
+/// `max_skew_shift = 0` instead.
+public(package) macro fun min_skew_depth_lots(): u64 { 1 }
+
+public(package) macro fun max_skew_depth_lots(): u64 { 1_000_000_000_000 }
+
+public(package) fun assert_skew_depth_lots(value: u64) {
+    assert!(
+        value >= min_skew_depth_lots!() && value <= max_skew_depth_lots!(),
+        EInvalidSkewDepthLots,
+    );
+}
+
+/// Largest probability the inventory skew may move a single strike's mid, at
+/// full depth and peak moneyness weight. `0` disables the skew entirely.
+///
+/// Ships disabled. Whether skewing on inventory improves LP outcomes under the
+/// current fee-only model is an open question, so markets quote at the fair mark
+/// until an admin snapshots a nonzero shift into a new expiry.
+public(package) macro fun default_max_skew_shift(): u64 { 0 }
+
+public(package) macro fun min_max_skew_shift(): u64 { 0 }
+
+/// The hard ceiling is what keeps the shifted mid inside `(0, 1)` without a
+/// clamp: the per-strike shift is `4·p·(1-p)·s`, so a mid stays positive while
+/// `4·(1-p)·s < 1`, which holds for every `p` once `s <= 0.05`. Raising this
+/// bound reintroduces the need for a saturating clamp in `skewed_up_price`.
+public(package) macro fun max_max_skew_shift(): u64 { 50_000_000 }
+
+public(package) fun assert_max_skew_shift(value: u64) {
+    assert!(value >= min_max_skew_shift!() && value <= max_max_skew_shift!(), EInvalidMaxSkewShift);
 }
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }

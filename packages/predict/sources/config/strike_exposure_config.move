@@ -10,7 +10,7 @@
 module deepbook_predict::strike_exposure_config;
 
 use deepbook_predict::{config_constants, constants};
-use fixed_math::math;
+use fixed_math::{i64::I64, math};
 
 const EOrderBelowLiquidationThreshold: u64 = 0;
 const EEntryProbabilityOutOfBounds: u64 = 1;
@@ -50,6 +50,14 @@ public struct StrikeExposureConfig has store {
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
     no_leverage_window_ms: u64,
+    /// Net one-sided directional position, in position lots, at which the
+    /// inventory skew reaches `max_skew_shift`. Never gains a live-expiry setter:
+    /// the skew is read-time only, but the depth is what makes a quoted shift
+    /// reproducible from the snapshot a market was created with.
+    skew_depth_lots: u64,
+    /// Largest probability the inventory skew may move one strike's mid, at full
+    /// depth and at the money. `0` disables the skew.
+    max_skew_shift: u64,
 }
 
 /// Mint admission outcome: the net premium charged for the order and the static
@@ -99,6 +107,58 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
+}
+
+public(package) fun skew_depth_lots(config: &StrikeExposureConfig): u64 {
+    config.skew_depth_lots
+}
+
+public(package) fun max_skew_shift(config: &StrikeExposureConfig): u64 {
+    config.max_skew_shift
+}
+
+/// Return one strike boundary's UP probability skewed by the pool's directional
+/// inventory.
+///
+/// `fair_up_price` is the oracle's unskewed `P(settle > K)`. The shift is
+/// `4·p·(1-p) · max_skew_shift · min(1, |aggregate| / depth)`, added when the
+/// aggregate is negative (the pool is net short UP, so UP must get dearer) and
+/// subtracted when it is positive.
+///
+/// The moneyness factor `4·p·(1-p)` peaks at `1.0` at the money and vanishes in
+/// both tails. That makes the infinity sentinels inert for free — `P(-inf) = 1`
+/// and `P(+inf) = 0` both weight to zero — and keeps a deep out-of-the-money
+/// strike from being quoted far off a price the oracle says is nearly certain.
+///
+/// Applying the same function at every appearance of a boundary is what keeps
+/// the skew self-consistent: a set of ranges partitioning the whole line still
+/// costs exactly 1, because each interior boundary's shift appears once with
+/// each sign and cancels.
+///
+/// No saturating clamp: `config_constants::max_max_skew_shift` bounds the shift
+/// strictly below both `p` and `1 - p` for every `p`, so neither direction can
+/// leave `(0, 1)`.
+public(package) fun skewed_up_price(
+    config: &StrikeExposureConfig,
+    fair_up_price: u64,
+    directional_aggregate: &I64,
+): u64 {
+    if (config.max_skew_shift == 0 || directional_aggregate.is_zero()) return fair_up_price;
+
+    let float_scaling = math::float_scaling!();
+    let depth_ratio = math::mul_div_down(
+        directional_aggregate.magnitude(),
+        float_scaling,
+        config.skew_depth_lots,
+    ).min(float_scaling);
+    let moneyness = 4 * math::mul(fair_up_price, float_scaling - fair_up_price);
+    let shift = math::mul(math::mul(config.max_skew_shift, depth_ratio), moneyness);
+
+    if (directional_aggregate.is_negative()) {
+        fair_up_price + shift
+    } else {
+        fair_up_price - shift
+    }
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -196,6 +256,8 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
+        skew_depth_lots: config_constants::default_skew_depth_lots!(),
+        max_skew_shift: config_constants::default_max_skew_shift!(),
     }
 }
 
@@ -212,6 +274,8 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         no_leverage_window_ms: config.no_leverage_window_ms,
+        skew_depth_lots: config.skew_depth_lots,
+        max_skew_shift: config.max_skew_shift,
     }
 }
 
@@ -265,6 +329,16 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {
     config_constants::assert_no_leverage_window_ms(window_ms);
     config.no_leverage_window_ms = window_ms;
+}
+
+public(package) fun set_skew_depth_lots(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_skew_depth_lots(value);
+    config.skew_depth_lots = value;
+}
+
+public(package) fun set_max_skew_shift(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_max_skew_shift(value);
+    config.max_skew_shift = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.

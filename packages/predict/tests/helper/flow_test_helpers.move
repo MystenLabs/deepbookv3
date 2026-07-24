@@ -251,6 +251,22 @@ public fun setup_everything(): (Fixture, ID, Trader) {
     )
 }
 
+/// `setup_everything` with the inventory skew snapshotted into the expiry. The
+/// skew ships disabled and the per-expiry snapshot has no live setter, so the
+/// template must be set before the market is created.
+public fun setup_everything_with_skew(max_shift: u64, depth_lots: u64): (Fixture, ID, Trader) {
+    let mut fx = setup_market_default();
+    fx.set_template_inventory_skew(max_shift, depth_lots);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(&mut market.market, test_constants::default_seeded_expiry_cash());
+    return_market_bundle(market);
+    fx.scenario.next_tx(test_constants::admin());
+    (fx, expiry_id, trader)
+}
+
 fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
     let expiry_id = fx.create_expiry(expiry_ms);
@@ -412,6 +428,18 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_max_admission_leverage(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Enable the inventory skew for expiries created after this call. The skew
+/// ships disabled, and the per-expiry snapshot has no live setter, so this must
+/// run before `create_expiry`.
+public fun set_template_inventory_skew(self: &mut Fixture, max_shift: u64, depth_lots: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_max_skew_shift(&self.admin_cap, max_shift);
+    config.set_template_skew_depth_lots(&self.admin_cap, depth_lots);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
