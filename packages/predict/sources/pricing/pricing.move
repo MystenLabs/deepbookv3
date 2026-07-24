@@ -485,8 +485,8 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): Approx {
 
     let k = approx::ln_ratio(strike, forward);
     let (k_minus_m, root) = moneyness_terms(svi_params, &k);
-    let (total_var, sqrt_var) = total_variance_terms(svi_params, &k_minus_m, &root);
-    let d2 = standardized_d2(&k, &total_var, &sqrt_var);
+    let (half_var, sqrt_var) = variance_denominator_terms(svi_params, &k_minus_m, &root);
+    let d2 = standardized_d2(&k, &half_var, &sqrt_var);
     let w_prime = variance_slope(svi_params, &k_minus_m, &root);
     digital_price(&d2, &w_prime, &sqrt_var)
 }
@@ -502,7 +502,7 @@ fun moneyness_terms(svi_params: &SVIParams, k: &Approx): (Approx, Approx) {
     (k_minus_m, root)
 }
 
-fun total_variance_terms(
+fun variance_denominator_terms(
     svi_params: &SVIParams,
     k_minus_m: &Approx,
     root: &Approx,
@@ -513,10 +513,9 @@ fun total_variance_terms(
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    // Keep `b * inner + a` at 1e18 until sqrt. Dividing the same wide result by
-    // 1e9 exactly recovers the legacy 1e9 total-variance center used in `w / 2`,
-    // while sqrt no longer loses the fractional variance before amplification by
-    // `1 / sqrt(w)`.
+    // Keep `b * inner + a` at 1e18 until both downstream projections. For the
+    // d2 numerator, floor(floor(wide / 1e9) / 2) = floor(wide / 2e9), so construct
+    // w / 2 directly without narrowing to a discarded total-variance Approx.
     let scale = math::float_scaling!() as u128;
     let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
     let a = svi_params.a();
@@ -527,18 +526,19 @@ fun total_variance_terms(
     } else {
         wide_increment + wide_a
     };
-    let total_var_center = (wide_total_var / scale) as u64;
-    assert!(total_var_center > 0, ENonPositiveVariance);
+    assert!(wide_total_var >= scale, ENonPositiveVariance);
 
     let wide_error = (svi_params.b() as u128) * (inner.error() as u128);
-    let scaled_error = wide_error.div_ceil(scale);
+    let half_scale = scale + scale;
+    let half_var_center = (wide_total_var / half_scale) as u64;
+    let scaled_error = wide_error.div_ceil(half_scale);
     let max_error = std::u64::max_value!() as u128;
-    let total_var_error = if (scaled_error >= max_error) {
+    let half_var_error = if (scaled_error >= max_error) {
         std::u64::max_value!()
     } else {
         (scaled_error as u64) + 1
     };
-    let total_var = approx::from_certified_parts(i64::from_u64(total_var_center), total_var_error);
+    let half_var = approx::from_certified_parts(i64::from_u64(half_var_center), half_var_error);
 
     let sqrt_center = math::sqrt_u128_down(wide_total_var);
     let sqrt_low = if (wide_total_var > wide_error) {
@@ -552,12 +552,11 @@ fun total_variance_terms(
         i64::from_u64(sqrt_center as u64),
         sqrt_error as u64,
     );
-    (total_var, sqrt_var)
+    (half_var, sqrt_var)
 }
 
-fun standardized_d2(k: &Approx, total_var: &Approx, sqrt_var: &Approx): Approx {
-    let half_var = total_var.half();
-    let d2_numerator = k.add(&half_var);
+fun standardized_d2(k: &Approx, half_var: &Approx, sqrt_var: &Approx): Approx {
+    let d2_numerator = k.add(half_var);
     d2_numerator.div_scaled(sqrt_var).neg()
 }
 
