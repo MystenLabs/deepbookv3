@@ -97,7 +97,7 @@ class AlgebraMinimalityTests(unittest.TestCase):
         self.assertEqual(split["verdict"], "reachable_open_policy_issue")
         self.assertTrue(split["policy_decision_pending"])
         funding = conclusions["available_expiry_funding_outer_saturation"]
-        self.assertEqual(funding["verdict"], "proven_reduction")
+        self.assertEqual(funding["verdict"], "proven_reduction_landed")
         self.assertTrue(funding["proven"])
 
 

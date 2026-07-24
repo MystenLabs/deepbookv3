@@ -31,13 +31,14 @@ class SaturationProofTests(unittest.TestCase):
             "underflow",
         )
 
-    def test_only_one_saturation_is_immediately_proved_redundant(self) -> None:
+    def test_proven_outer_saturation_reduction_is_landed(self) -> None:
         self.assertEqual(
-            self.bundle["proved_immediate_reductions"],
+            self.bundle["proved_landed_reductions"],
             [
                 "packages/predict/sources/plp/pool_accounting.move::available_expiry_funding"
             ],
         )
+        self.assertEqual(self.bundle["proved_immediate_reductions"], [])
 
     def test_available_expiry_funding_reduction_rests_on_an_induction(
         self,

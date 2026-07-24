@@ -14,15 +14,11 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ROOT = REPO_ROOT / "packages" / "predict" / "sources"
 EXPECTED_SOURCE_TREE_SHA256 = (
-    "3468a854d59a3cdb7c7b83a69724c690e6213da51ef792a549691448728fb063"
+    "ae920f8c04d6470b0fec51310998f6eea4269dd63d223ad23d345ef3674082be"
 )
 
 CANDIDATE_RE = re.compile(
-    r"math::try_mul_div_down"
-    r"|math::mul_div_down"
-    r"|math::mul"
-    r"|math::div"
-    r"|math::sqrt(?:_u128(?:_up)?)?"
+    r"math::[A-Za-z0-9_]+\s*\("
     r"|\.saturating_sub\("
     r"|\.saturating_add\("
     r"|\.div_ceil\("
@@ -30,7 +26,7 @@ CANDIDATE_RE = re.compile(
     r"|\.max\("
     r"|\.diff\("
     r"|\.split\("
-    r"|approx::(?:sqrt|ln|normal_cdf|normal_pdf|exact_u64|exact|from_parts)"
+    r"|approx::[A-Za-z0-9_]+\s*\("
     r"|\.(?:mul_scaled|div_scaled|square_scaled|mul_div_down|half|double"
     r"|clamp_nonnegative|clamp_unit_interval|clamp_upper|add|sub)\("
 )
@@ -49,11 +45,24 @@ EXACT_CUSTODY = "exact_custody"
 DATA_STRUCTURE = "data_structure"
 NON_MONEY_INTEGER = "non_money_integer"
 
+DIRECTED_ROUNDING_OPERATORS = {
+    "try_mul_div_down",
+    "mul_div_down",
+    "mul_down",
+    "mul_up",
+    "div_down",
+    "div_up",
+    "sqrt_down",
+    "sqrt_u128_down",
+    "sqrt_u128_up",
+}
+
 
 @dataclass(frozen=True)
 class Candidate:
     path: str
     function: str
+    ordinal: int
     line: int
     operator: str
     source: str
@@ -64,10 +73,7 @@ class Candidate:
 
     @property
     def site_id(self) -> str:
-        return (
-            f"{self.path}::{self.function}::{self.operator}"
-            f"@{self.line}"
-        )
+        return f"{self.path}::{self.function}::site#{self.ordinal}"
 
 
 FUNCTION_CLASSIFICATION = {
@@ -75,11 +81,10 @@ FUNCTION_CLASSIFICATION = {
     "packages/predict/sources/expiry_market.move::current_nav_approx": MONEY_VALUATION,
     "packages/predict/sources/plp/plp.move::lp_pool_value_approx": MONEY_VALUATION,
     "packages/predict/sources/plp/plp.move::value_expiry": MONEY_VALUATION,
-    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::boundary_linear_value": MONEY_VALUATION,
     "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::walk_linear": MONEY_VALUATION,
     "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::walk_linear_subtree": MONEY_VALUATION,
     "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::combine_summaries": MONEY_VALUATION,
-    "packages/predict/sources/strike_exposure/strike_exposure.move::exact_live_liability": MONEY_VALUATION,
+    "packages/predict/sources/strike_exposure/strike_exposure.move::marked_live_liability": MONEY_VALUATION,
     # Monetary values or entitlements are rounded here.
     "packages/predict/sources/config/expiry_cash_config.move::rebate_reserve_for_fee_basis": MONEY_COLLAPSE,
     "packages/predict/sources/config/stake_config.move::fee_amount_after_discount": MONEY_COLLAPSE,
@@ -99,7 +104,8 @@ FUNCTION_CLASSIFICATION = {
     "packages/predict/sources/plp/plp.move::sync_fee_incentives": MONEY_COLLAPSE,
     "packages/predict/sources/plp/plp.move::expiry_rebalance_cash_terms": MONEY_COLLAPSE,
     "packages/predict/sources/plp/plp.move::materialize_expiry_profit": MONEY_COLLAPSE,
-    "packages/predict/sources/plp/plp.move::finish_flush": MONEY_COLLAPSE,
+    "packages/predict/sources/plp/plp.move::pool_nav_bid_ask": MONEY_COLLAPSE,
+    "packages/predict/sources/plp/pool_accounting.move::register_expiry": MONEY_COLLAPSE,
     "packages/predict/sources/strike_exposure/strike_exposure.move::payout_liability": MONEY_COLLAPSE,
     "packages/predict/sources/strike_exposure/strike_exposure.move::quote_mint_terms": MONEY_COLLAPSE,
     "packages/predict/sources/strike_exposure/strike_exposure.move::quote_close": MONEY_COLLAPSE,
@@ -150,7 +156,6 @@ FUNCTION_CLASSIFICATION = {
     "packages/predict/sources/plp/pool_accounting.move::send_expiry_cash": EXACT_CUSTODY,
     "packages/predict/sources/plp/pool_accounting.move::realize_pending_protocol_profit": EXACT_CUSTODY,
     # False positives from generic `.add` calls are recorded, not silently dropped.
-    "packages/predict/sources/plp/pool_accounting.move::register_expiry": DATA_STRUCTURE,
     "packages/predict/sources/predict_account.move::add_position": DATA_STRUCTURE,
     "packages/predict/sources/predict_account.move::ensure_summary": DATA_STRUCTURE,
     "packages/predict/sources/registry/market_manager.move::record_expiry_creation": DATA_STRUCTURE,
@@ -277,6 +282,9 @@ FUNCTION_CLASSIFICATION.update(
 
 
 def _operator(token: str) -> str:
+    token = token.rstrip()
+    if token.endswith("("):
+        token = token[:-1].rstrip()
     if token.startswith("math::"):
         return token.removeprefix("math::")
     if "saturating_sub" in token:
@@ -290,51 +298,60 @@ def _operator(token: str) -> str:
     if token.startswith("approx::"):
         return token.removeprefix("approx::")
     if token.startswith("."):
-        return token[1:-1]
+        return token[1:]
     raise ValueError(f"unknown candidate token: {token}")
+
+
+def scan_source_text(relative: str, source: str) -> list[Candidate]:
+    """Scan one Move source while preserving stable within-function site ordinals."""
+    candidates: list[Candidate] = []
+    ordinals: Counter[str] = Counter()
+    current_function = "<module>"
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        function = FUNCTION_RE.search(line)
+        if function:
+            current_function = function.group(1)
+        function_id = f"{relative}::{current_function}"
+        for match in CANDIDATE_RE.finditer(line):
+            ordinals[function_id] += 1
+            candidates.append(
+                Candidate(
+                    path=relative,
+                    function=current_function,
+                    ordinal=ordinals[function_id],
+                    line=line_number,
+                    operator=_operator(match.group(0)),
+                    source=line.strip(),
+                )
+            )
+        if function is None:
+            code = line.split("//", 1)[0]
+            for match in RAW_OPERATOR_RE.finditer(code):
+                ordinals[function_id] += 1
+                candidates.append(
+                    Candidate(
+                        path=relative,
+                        function=current_function,
+                        ordinal=ordinals[function_id],
+                        line=line_number,
+                        operator={
+                            "+": "raw_add",
+                            "-": "raw_sub",
+                            "*": "raw_mul",
+                            "/": "raw_div",
+                            "%": "raw_mod",
+                        }[match.group(1)],
+                        source=line.strip(),
+                    )
+                )
+    return candidates
 
 
 def scan_candidates() -> list[Candidate]:
     candidates: list[Candidate] = []
     for source_path in sorted(SOURCE_ROOT.rglob("*.move")):
         relative = source_path.relative_to(REPO_ROOT).as_posix()
-        current_function = "<module>"
-        for line_number, line in enumerate(
-            source_path.read_text().splitlines(),
-            start=1,
-        ):
-            function = FUNCTION_RE.search(line)
-            if function:
-                current_function = function.group(1)
-            for match in CANDIDATE_RE.finditer(line):
-                candidates.append(
-                    Candidate(
-                        path=relative,
-                        function=current_function,
-                        line=line_number,
-                        operator=_operator(match.group(0)),
-                        source=line.strip(),
-                    )
-                )
-            function_id = f"{relative}::{current_function}"
-            if function is None:
-                code = line.split("//", 1)[0]
-                for match in RAW_OPERATOR_RE.finditer(code):
-                    candidates.append(
-                        Candidate(
-                            path=relative,
-                            function=current_function,
-                            line=line_number,
-                            operator={
-                                "+": "raw_add",
-                                "-": "raw_sub",
-                                "*": "raw_mul",
-                                "/": "raw_div",
-                                "%": "raw_mod",
-                            }[match.group(1)],
-                            source=line.strip(),
-                        )
-                    )
+        candidates.extend(scan_source_text(relative, source_path.read_text()))
     return candidates
 
 
@@ -349,14 +366,36 @@ def source_tree_sha256() -> str:
     return digest.hexdigest()
 
 
+def function_source_sha256() -> dict[str, str]:
+    """Hash each complete Move function body for certificate source binding."""
+    hashes: dict[str, str] = {}
+    for source_path in sorted(SOURCE_ROOT.rglob("*.move")):
+        relative = source_path.relative_to(REPO_ROOT).as_posix()
+        lines = source_path.read_text().splitlines(keepends=True)
+        starts = [
+            (index, match.group(1))
+            for index, line in enumerate(lines)
+            if (match := FUNCTION_RE.search(line))
+        ]
+        for position, (start, function) in enumerate(starts):
+            end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+            digest = hashlib.sha256("".join(lines[start:end]).encode()).hexdigest()
+            hashes[f"{relative}::{function}"] = digest
+    return hashes
+
+
 def build_inventory() -> dict[str, Any]:
     candidates = scan_candidates()
     source_digest = source_tree_sha256()
+    function_hashes = function_source_sha256()
     records = [
         {
             **asdict(candidate),
             "site_id": candidate.site_id,
             "function_id": candidate.function_id,
+            "function_source_sha256": function_hashes.get(
+                candidate.function_id
+            ),
             "classification": FUNCTION_CLASSIFICATION.get(
                 candidate.function_id
             ),

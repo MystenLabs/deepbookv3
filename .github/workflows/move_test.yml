@@ -17,6 +17,18 @@ env:
   SUI_VERSION: testnet-v1.74.0
 
 jobs:
+  predict-algebra-proofs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run source-pinned Predict algebra proofs
+        working-directory: packages/predict/simulations
+        run: python3 -m unittest discover -v -s . -p "test_*.py"
+
   test-linux:
     runs-on: ubuntu-latest
 

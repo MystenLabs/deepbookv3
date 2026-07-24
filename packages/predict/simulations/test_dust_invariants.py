@@ -81,7 +81,7 @@ class DustInvariantBundleTests(unittest.TestCase):
     def test_bundle_is_pinned_to_requested_contract_sha(self) -> None:
         self.assertEqual(
             self.bundle["contract_baseline"],
-            "1a9489f6cb1a6f398307bd8576e20b5df5467126",
+            "eaab2d893856aa601d8e56f17f24fcd29f31666c",
         )
         self.assertEqual(
             self.bundle["pricing_profile"],
@@ -374,8 +374,9 @@ class DustInvariantBundleTests(unittest.TestCase):
         )
         self.assertTrue(self.bundle["payout_tree_proofs"]["all_invariants_hold"])
         self.assertTrue(aggregate["all_saturating_sites_classified"])
+        self.assertEqual(aggregate["proved_redundant_saturations"], [])
         self.assertEqual(
-            aggregate["proved_redundant_saturations"],
+            aggregate["proved_landed_saturation_reductions"],
             [
                 "packages/predict/sources/plp/pool_accounting.move::available_expiry_funding"
             ],

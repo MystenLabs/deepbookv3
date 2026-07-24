@@ -80,11 +80,13 @@ high gas budget because this mode does not benchmark individual mint gas;
 
 A source-pinned Python proof bundle establishes the money-math dust, algebra, and
 saturation properties of the `predict` package. It is anchored to contract
-baseline commit `1a9489f6` and reads the Move sources directly; it is fail-closed
-against a SHA-256 content digest of `packages/predict/sources/**` (distinct from
-the git commit, though consistent with it at that baseline), so any source edit,
-digest mismatch, or new unclassified arithmetic breaks the checks. Run the modules
-and their proof runners from this directory:
+baseline commit `eaab2d89` and reads the Move sources directly. The SHA-256
+content digest of `packages/predict/sources/**` is a freshness gate, while stable
+call-site identities and exact operator bindings independently connect each
+rounding certificate to the implemented Move expression. A source edit, digest
+mismatch, new unclassified arithmetic, or rounding-direction mutation breaks the
+checks even if the expected digest is refreshed. Run the modules and their proof
+runners from this directory:
 
 ```bash
 python3 algebra_trace.py
@@ -96,10 +98,7 @@ python3 economic_lifecycle_proofs.py
 python3 payout_tree_proofs.py
 python3 saturation_proofs.py
 python3 partial_close_proofs.py
-python3 -m unittest -v \
-  test_algebra_trace test_dust_invariants test_money_math_inventory \
-  test_math_dust_proofs test_algebra_minimality test_economic_lifecycle_proofs \
-  test_payout_tree_proofs test_saturation_proofs test_partial_close_proofs
+python3 -m unittest discover -v -s . -p "test_*.py"
 ```
 
 Each module prints a structured JSON bundle; the paired `test_*.py` files are the
@@ -108,14 +107,17 @@ DAG and a knot report under `runs/algebra-trace/`; `dust_invariants.py` writes i
 typed collapse ledger, NAV bid/ask mutation matrix, and stateful lifecycle checks
 beside them, and its source census classifies fixed-point, raw-integer, clamp,
 `Approx`, and custody arithmetic in every Predict Move source. `math_dust_proofs.py`
-gives each money-collapse function an exact-rational rounding-direction certificate
-and names its residual owner; `economic_lifecycle_proofs.py` and
-`payout_tree_proofs.py` reconcile cash-state lifecycles and bounded live/settled
-aggregation. `saturation_proofs.py` classifies every `saturating_sub`/`saturating_add`
-site and proves the one removable case
-(`pool_accounting::available_expiry_funding`) with a source-complete induction over
-every writer of the funding fields — a fail-closed writer scan plus exhaustive
-transition lemmas, not the bounded state search alone. `partial_close_proofs.py`
+gives each money-collapse function an exact-rational rounding-direction certificate,
+names its residual owner, and verifies its exact source operator bindings; its
+negative-control test flips the trading-fee direction and requires the aggregate
+proof to turn red. `economic_lifecycle_proofs.py` and `payout_tree_proofs.py`
+reconcile cash-state lifecycles and bounded live/settled aggregation, including the
+current one-product signed shared-boundary valuation. `saturation_proofs.py`
+classifies every remaining `saturating_sub`/`saturating_add` site and retains the
+source-complete induction that justified the now-landed removal in
+`pool_accounting::available_expiry_funding`; the induction covers every writer of
+the funding fields with a fail-closed writer scan and transition lemmas, not the
+bounded state search alone. `partial_close_proofs.py`
 proves per-close floor conservation and survivor bias, shows the live-close
 `saturating_sub` is semantically required, and exposes the reachable,
 sequence-dependent discounted-proceeds dust (splitting a close is not net-proceeds
@@ -158,16 +160,18 @@ runner digests to a generated proof bundle.
 -   `src/localPyth.ts`: local Wormhole/Pyth key and signed update helpers used
     only by the localnet harness.
 -   `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
--   `python_replay.py`: Python economic mirror and derived metric generator.
-    Pricing values used by replay, such as base fee, min fee, and ask bounds,
-    are read from `data/scenario_config.json` with Python defaults as fallback.
+-   `python_replay.py`: Python economic mirror and derived metric generator,
+    including the Move-parity signed shared-boundary NAV center. Pricing values
+    used by replay, such as base fee, min fee, and ask bounds, are read from
+    `data/scenario_config.json` with Python defaults as fallback.
 -   `algebra_trace.py`: mint-centered algebra DAG and knot analyzer covering
     pricing certificates, stored mint atoms, partial close, liquidation,
     settlement, NAV, and LP supply/withdraw.
 -   `dust_invariants.py`: typed money-collapse registry, double-entry dust
     ledger, NAV bid/ask proof and mutation matrix, and stateful lifecycle
     invariant analyzer pinned to the tracer's contract baseline.
--   `money_math_inventory.py`: fail-closed, digest-pinned source census for
+-   `money_math_inventory.py`: fail-closed, digest-pinned source census with
+    exact directed-operator recognition and stable call-site identities for
     fixed-point, raw-integer, clamp, `Approx`, guard, and custody arithmetic.
 -   `math_dust_proofs.py`: exact-rational rounding and residual certificates for
     every inventoried money-collapse function.
@@ -176,8 +180,9 @@ runner digests to a generated proof bundle.
     partial-close and saturation conclusions.
 -   `economic_lifecycle_proofs.py`: independent cash-state reconciliation for
     mint fees, live redeem deductions, rebate claims, and exact-amount sizing.
--   `payout_tree_proofs.py`: bounded-exhaustive live aggregation containment and
-    settled redemption conservation checks.
+-   `payout_tree_proofs.py`: bounded-exhaustive containment of the fused signed
+    boundary center against exact-rational live liability, plus settled
+    redemption conservation checks.
 -   `saturation_proofs.py`: classification of every `saturating_*` site and the
     source-complete induction proving the one removable outer saturation.
 -   `partial_close_proofs.py`: partial-close floor conservation and survivor

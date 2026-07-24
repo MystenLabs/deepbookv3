@@ -15,7 +15,7 @@ import python_replay as replay
 
 # The 1e9 tables freeze contract SHA 94758ffd before the retained-1e18
 # variance-to-sqrt seam. The accepted tables freeze current contract SHA
-# 1a9489f6 after the canonical round-up premium and fee changes. These pin change
+# eaab2d89 after the canonical round-up premium and valuation fixes. These pin change
 # detection only; the committed reference enclosures remain the independent
 # mathematical correctness oracle for price containment.
 TARGET_94758FFD_1E9_KEY_OUTPUTS = {

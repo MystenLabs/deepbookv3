@@ -63,5 +63,35 @@ class PartialCloseParityTests(unittest.TestCase):
         self.assertEqual(terms["redeem_amount"], 0)
 
 
+class SharedBoundaryNavParityTests(unittest.TestCase):
+    def test_shared_boundary_center_is_not_per_order_floor_sum(self) -> None:
+        orders = [
+            {
+                "lower": 100,
+                "higher": 200,
+                "quantity": 1,
+            },
+            {
+                "lower": 100,
+                "higher": 300,
+                "quantity": 1,
+            },
+        ]
+        prices = {
+            100: 500_000_001,
+            200: 333_333_333,
+            300: 123_456_789,
+        }
+
+        shared = replay.shared_boundary_linear(orders, prices)
+        per_order = (
+            (prices[100] - prices[200]) // replay.FLOAT_SCALING
+            + (prices[100] - prices[300]) // replay.FLOAT_SCALING
+        )
+
+        self.assertEqual(shared, 1)
+        self.assertEqual(per_order, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

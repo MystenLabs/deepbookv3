@@ -15,7 +15,7 @@ from typing import Any
 import python_replay as replay
 
 SCHEMA_VERSION = "predict_algebra_trace_v2"
-CONTRACT_BASELINE = "1a9489f6cb1a6f398307bd8576e20b5df5467126"
+CONTRACT_BASELINE = "eaab2d893856aa601d8e56f17f24fcd29f31666c"
 PRICING_PROFILE = "canonical_premium_protocol_fees_retained_1e18_sqrt_nav_bid_ask"
 F = replay.FLOAT_SCALING
 U64_MAX = (1 << 64) - 1
@@ -1633,7 +1633,7 @@ def trace_scenario(scenario: Scenario) -> AlgebraTrace:
         entry_probability,
         stored_quantity,
         "nav",
-        move_site="strike_payout_tree::boundary_linear_value",
+        move_site="strike_payout_tree::walk_linear_subtree",
         unit="dusdc_1e6",
         certify=True,
         expression="range_price*quantity",
@@ -1641,16 +1641,16 @@ def trace_scenario(scenario: Scenario) -> AlgebraTrace:
     linear = trace._node(
         "payout_tree_linear",
         "nav",
-        "correlated_boundary_product",
+        "signed_shared_boundary_aggregation",
         linear_product.center,
         (entry_probability, stored_quantity, linear_product),
         exact_raw=linear_product.exact_raw,
         error=_sat_add(linear_product.error, 1),
         unit="dusdc_1e6",
         scale=replay.DUSDC_DECIMALS,
-        rounding="down",
-        move_site="strike_payout_tree::boundary_linear_value",
-        note="The tree preserves two separately rounded scalar products while charging price error only against the net boundary quantity, plus two product-floor units.",
+        rounding="toward_zero",
+        move_site="strike_payout_tree::walk_linear_subtree",
+        note="This single-order projection represents its two nonzero signed boundaries with one rounding leaf each; when starts and ends share a boundary, Move multiplies the signed net quantity once.",
     )
     range_value = trace.mul_scaled(
         "correction_range_value",
@@ -1685,7 +1685,7 @@ def trace_scenario(scenario: Scenario) -> AlgebraTrace:
         linear,
         correction,
         "nav",
-        move_site="strike_exposure::exact_live_liability",
+        move_site="strike_exposure::marked_live_liability",
         unit="dusdc_1e6",
         expression="linear-correction",
     )
@@ -1693,7 +1693,7 @@ def trace_scenario(scenario: Scenario) -> AlgebraTrace:
         "live_liability",
         liability_raw,
         "nav",
-        move_site="strike_exposure::exact_live_liability",
+        move_site="strike_exposure::marked_live_liability",
         boundary="valuation_policy",
         note="The economic liability is semantically floored at zero.",
     )

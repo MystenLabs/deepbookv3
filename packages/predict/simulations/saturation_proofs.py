@@ -17,11 +17,6 @@ DISPOSITIONS = {
         "meaning": "rebate reserve remaining after realized gross profit",
         "witness": {"reserve": "10", "gross_profit": "11", "result": "0"},
     },
-    "packages/predict/sources/expiry_cash.move::free_cash": {
-        "status": "keep_semantic_positive_part",
-        "meaning": "cash available after reserving unresolved rebates",
-        "witness": {"cash": "10", "rebate_reserve": "20", "result": "0"},
-    },
     "packages/predict/sources/predict_account.move::resolve_expiry_summary": {
         "status": "keep_semantic_positive_part",
         "meaning": "positive trading profit, excluding a net trading loss",
@@ -32,27 +27,6 @@ DISPOSITIONS = {
         "meaning": "live redeem after the conserved closed-floor slice",
         "witness": {"gross_redeem": "0", "removed_floor": "1", "result": "0"},
     },
-    "packages/predict/sources/plp/pool_accounting.move::available_expiry_funding": {
-        "status": "proven_remove_outer_saturation",
-        "meaning": "allocation cap less nonnegative net funding",
-        "proof": (
-            "source-complete induction over every writer of sent_to_expiry, "
-            "received_from_expiry, and max_expiry_allocation "
-            "(available_expiry_funding_induction); the bounded BFS is "
-            "supporting illustration, not the proof"
-        ),
-    },
-    "packages/predict/sources/plp/pool_accounting.move::record_fee_incentives_allocated_up_to": {
-        "status": "keep_unless_cap_identity_is_owned",
-        "meaning": "remaining lifetime incentive capacity",
-        "witness": {
-            "allocated": "10",
-            "later_caller_cap": "9",
-            "result": "0",
-            "plain_sub": "underflow",
-        },
-        "proof": "plain subtraction is safe only when every call uses one stable cap",
-    },
     "packages/predict/sources/plp/pool_accounting.move::flow_net_funding": {
         "status": "keep_semantic_positive_part",
         "meaning": "positive pool funding still deployed into an expiry",
@@ -62,11 +36,6 @@ DISPOSITIONS = {
         "status": "keep_semantic_positive_part",
         "meaning": "top-up needed to reach the live incentive target",
         "witness": {"target": "10", "market_balance": "11", "result": "0"},
-    },
-    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::boundary_linear_value": {
-        "status": "keep_error_cap",
-        "meaning": "one-unit rounding leaf added without overflowing the error domain",
-        "witness": {"error": str((1 << 64) - 1), "result": str((1 << 64) - 1)},
     },
     "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::positive_net_delta": {
         "status": "keep_semantic_positive_part",
@@ -357,16 +326,13 @@ def build_saturation_bundle() -> dict[str, Any]:
             funding["outer_subtraction_never_underflows"]
             == induction["induction_holds"]
         ),
-        "proved_immediate_reductions": [
+        "proved_landed_reductions": [
             "packages/predict/sources/plp/pool_accounting.move::available_expiry_funding"
         ]
         if induction["induction_holds"]
         else [],
-        "conditional_reductions": [
-            "packages/predict/sources/plp/pool_accounting.move::record_fee_incentives_allocated_up_to"
-        ]
-        if fee_cap["plain_subtraction_safe_for_fixed_cap"]
-        else [],
+        "proved_immediate_reductions": [],
+        "conditional_reductions": [],
     }
 
 

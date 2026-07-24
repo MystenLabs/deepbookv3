@@ -202,14 +202,15 @@ def transformation_results() -> list[dict[str, Any]]:
         },
         {
             "name": "boundary_net_quantity_product",
-            "status": "candidate_rejected_not_bit_equivalent",
-            "current_operations": 2,
-            "candidate_operations": 1,
+            "status": "current_form_minimal_certified_not_bit_equivalent",
+            "current_operations": 1,
+            "candidate_operations": 2,
             "proof": "bounded exhaustive residue search",
             "mutation_counterexample": boundary_witness,
             "note": (
-                "This is the operation-saving rewrite behind the P-13 discussion; "
-                "it changes the scalar liability by one raw unit on reachable residues."
+                "The fused signed product changes the legacy scalar by one raw "
+                "unit on reachable residues, but the revised Approx radius "
+                "certifies that difference against ideal rational liability."
             ),
         },
         {
@@ -274,11 +275,10 @@ FUNCTION_MINIMALITY = {
     "packages/predict/sources/expiry_market.move::current_nav_approx": "one_signed_difference_plus_required_nonnegative_projection",
     "packages/predict/sources/plp/plp.move::lp_pool_value_approx": "exact_cash_sum_minus_two_distinct_exclusions",
     "packages/predict/sources/plp/plp.move::value_expiry": "phase_specific_single_value_path",
-    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::boundary_linear_value": "two_scalar_floors_required_for_parity_with_correlated_error",
-    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::walk_linear": "one_shared_boundary_walk_plus_nonnegative_projection",
-    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::walk_linear_subtree": "one_cached_price_per_distinct_boundary",
+    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::walk_linear": "one_shared_boundary_walk",
+    "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::walk_linear_subtree": "one_signed_product_per_nonzero_net_boundary",
     "packages/predict/sources/strike_exposure/index/strike_payout_tree.move::combine_summaries": "exact_associative_tree_summary",
-    "packages/predict/sources/strike_exposure/strike_exposure.move::exact_live_liability": "separate_aggregation_domains_plus_required_nonnegative_projection",
+    "packages/predict/sources/strike_exposure/strike_exposure.move::marked_live_liability": "separate_aggregation_domains_plus_required_nonnegative_projection",
     "packages/predict/sources/config/expiry_cash_config.move::rebate_reserve_for_fee_basis": "atomic_floor_product",
     "packages/predict/sources/config/stake_config.move::fee_amount_after_discount": "reviewed_discount_complement",
     "packages/predict/sources/config/stake_config.move::rebate_amount": "atomic_floor_product",
@@ -297,7 +297,8 @@ FUNCTION_MINIMALITY = {
     "packages/predict/sources/plp/plp.move::sync_fee_incentives": "two_independent_policy_caps",
     "packages/predict/sources/plp/plp.move::expiry_rebalance_cash_terms": "one_shared_buffer_product",
     "packages/predict/sources/plp/plp.move::materialize_expiry_profit": "one_floor_plus_exact_complement",
-    "packages/predict/sources/plp/plp.move::finish_flush": "two_nav_endpoints_required_by_competing_counterparty_invariants",
+    "packages/predict/sources/plp/plp.move::pool_nav_bid_ask": "two_nav_endpoints_required_by_competing_counterparty_invariants",
+    "packages/predict/sources/plp/pool_accounting.move::register_expiry": "one_lifetime_cap_product_at_immutable_registration",
     "packages/predict/sources/strike_exposure/strike_exposure.move::payout_liability": "one_optional_buffer_product",
     "packages/predict/sources/strike_exposure/strike_exposure.move::quote_mint_terms": "binary_search_reuses_canonical_premium_helper",
     "packages/predict/sources/strike_exposure/strike_exposure.move::quote_close": "atomic_floor_product",
@@ -357,15 +358,13 @@ def cross_module_conclusions() -> dict[str, Any]:
             ),
         },
         "available_expiry_funding_outer_saturation": {
-            "verdict": (
-                "proven_reduction"
-                if induction["induction_holds"]
-                else "candidate_only_pending_stronger_state_proof"
-            ),
+            "verdict": "proven_reduction_landed"
+            if induction["induction_holds"]
+            else "proof_regressed",
             "owner": "saturation_proofs.available_expiry_funding_induction",
             "proven": induction["induction_holds"],
             "reason": (
-                "The outer saturating_sub is redundant only because the "
+                "The removed outer saturating_sub was redundant only because the "
                 "source-complete induction (fail-closed writer scan + "
                 "exhaustive transition lemmas) holds; the bounded BFS alone "
                 "would not establish it."

@@ -62,10 +62,29 @@ class MoneyMathInventoryTests(unittest.TestCase):
             record["operator"]
             for record in inventory.build_inventory()["records"]
         }
-        self.assertIn("sqrt", operators)
-        self.assertIn("sqrt_u128", operators)
+        self.assertIn("sqrt_down", operators)
+        self.assertIn("sqrt_u128_down", operators)
         self.assertIn("sqrt_u128_up", operators)
+        self.assertIn("from_certified_parts", operators)
         self.assertIn("raw_mod", operators)
+
+    def test_scanner_preserves_directed_rounding_operator(self) -> None:
+        relative = "packages/predict/sources/example.move"
+        source = """
+module example::example;
+fun charge(a: u64, b: u64): u64 {
+    math::mul_up(a, b)
+}
+"""
+        original = inventory.scan_source_text(relative, source)
+        mutated = inventory.scan_source_text(
+            relative,
+            source.replace("math::mul_up", "math::mul_down"),
+        )
+        self.assertEqual(original[0].site_id, mutated[0].site_id)
+        self.assertEqual(original[0].operator, "mul_up")
+        self.assertEqual(mutated[0].operator, "mul_down")
+        self.assertNotIn("mul", {original[0].operator, mutated[0].operator})
 
 
 if __name__ == "__main__":

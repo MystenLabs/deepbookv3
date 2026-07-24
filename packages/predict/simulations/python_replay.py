@@ -1211,19 +1211,17 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
     return curve
 
 
-# --- Exact NAV liability (replaces the deleted dense StrikeNavMatrix + curve). ---
-# The contract's `strike_exposure::exact_live_liability` is `linear - correction`.
-# The payout-tree `walk_linear` and leveraged-book `correction_value` are efficient
-# on-chain aggregations of per-order sums when the active boundary UP prices are
-# monotone. The contract rejects non-monotone active boundary sets during the price
-# memo walk; mirror that precondition, then sum order-by-order here (the simulation
-# has one book, so the O(n) walk is fine and exact):
-#   linear     = Σ_active           quantity · range_price(lower, higher)
+# --- Certified NAV-liability center (shared-boundary parity with Move). ---
+# The payout-tree walk multiplies each distinct boundary price by the signed net
+# quantity at that boundary once. That center is not bit-equivalent to summing
+# independently floored per-order range values. The correction remains per
+# leveraged order:
+#   linear     = base_quantity + Σ_boundary trunc(price · (starts - ends))
 #   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
 #                                       floor_shares)
-#   exact_live_liability = max(0, linear - correction)
-# There is NO conservative band anymore (deleted with the approximate-NAV world):
-# the flush prices one exact mark for both supply and withdraw.
+#   marked_live_liability.center = max(0, linear - correction)
+# The on-chain Approx radius covers the distinct-boundary and correction products;
+# this scalar replay mirrors only its center.
 def assert_active_book_monotone(model: dict[str, Any]) -> None:
     boundaries = sorted(
         {
@@ -1242,15 +1240,67 @@ def assert_active_book_monotone(model: dict[str, Any]) -> None:
         previous = price
 
 
-def exact_live_liability(model: dict[str, Any]) -> int:
+def _signed_mul_scaled_toward_zero(value: int, signed_quantity: int) -> int:
+    product = value * signed_quantity
+    magnitude = abs(product) // FLOAT_SCALING
+    return -magnitude if product < 0 else magnitude
+
+
+def shared_boundary_linear(
+    orders: list[dict[str, Any]],
+    boundary_prices: dict[int, int],
+) -> int:
+    starts: dict[int, int] = {}
+    ends: dict[int, int] = {}
+    base_quantity = 0
+    for order in orders:
+        quantity = order["quantity"]
+        lower = order["lower"]
+        higher = order["higher"]
+        if lower == NEG_INF_STRIKE:
+            base_quantity += quantity
+        else:
+            starts[lower] = starts.get(lower, 0) + quantity
+        if higher != POS_INF_STRIKE:
+            ends[higher] = ends.get(higher, 0) + quantity
+
+    linear = base_quantity
+    for strike in sorted(set(starts) | set(ends)):
+        net_quantity = starts.get(strike, 0) - ends.get(strike, 0)
+        if net_quantity:
+            linear += _signed_mul_scaled_toward_zero(
+                boundary_prices[strike],
+                net_quantity,
+            )
+    return linear
+
+
+def marked_live_liability_center(model: dict[str, Any]) -> int:
     if model["current_svi"] is None or model["current_forward"] == 0:
         raise ValueError("pool valuation requires prior price and SVI updates")
     assert_active_book_monotone(model)
-    linear = 0
+    active_orders = [
+        order
+        for order in model["orders"].values()
+        if order["status"] == "active"
+    ]
+    boundaries = {
+        strike
+        for order in active_orders
+        for strike in (order["lower"], order["higher"])
+        if strike not in (NEG_INF_STRIKE, POS_INF_STRIKE)
+    }
+    boundary_prices = {
+        strike: compute_up_price(
+            model["current_svi"],
+            model["current_forward"],
+            strike,
+        )
+        for strike in boundaries
+    }
+    linear = shared_boundary_linear(active_orders, boundary_prices)
     correction = 0
-    for order in model["orders"].values():
-        if order["status"] != "active":
-            continue
+    for order in active_orders:
         range_value = deepbook_mul(
             compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"]),
             order["quantity"],
@@ -1266,7 +1316,7 @@ def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] |
     # `curve` is accepted for call-site compatibility but ignored: the exact walk
     # needs no curve. (Kept positional so the Python-only derived sampler, which
     # passes a curve, still type-checks.)
-    return exact_live_liability(model)
+    return marked_live_liability_center(model)
 
 
 # Scalar replay of the `current_nav_approx` center for one ExpiryMarket: free cash
@@ -1274,8 +1324,10 @@ def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] |
 # expiry_cash - rebate_reserve. This helper does not reproduce the Approx radius.
 def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    free_cash = max(0, state["expiry_cash_balance"] - rebate_reserve)
-    return max(0, free_cash - exact_live_liability(model))
+    if state["expiry_cash_balance"] < rebate_reserve:
+        raise ValueError("expiry cash below rebate reserve")
+    free_cash = state["expiry_cash_balance"] - rebate_reserve
+    return max(0, free_cash - marked_live_liability_center(model))
 
 
 def compute_pool_value(
@@ -1854,7 +1906,8 @@ def append_pool_sync_phase(
 ) -> tuple[int, dict[str, int]]:
     # The flush still runs a passive liquidation pass, but NAV no longer needs its
     # verified-floor/range output (the exact per-order floor-capped liability makes
-    # an underwater order net to zero with no scan — see exact_live_liability), so
+    # an underwater order net to zero with no scan — see
+    # marked_live_liability_center), so
     # the verification plumbing and the band it fed are dropped.
     updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
     sync_updates, pool_value, synced_state = flush_valuation(model, state)

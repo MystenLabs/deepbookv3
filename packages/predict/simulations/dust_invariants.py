@@ -1601,6 +1601,9 @@ def build_dust_invariant_bundle(
             "proved_redundant_saturations": saturation[
                 "proved_immediate_reductions"
             ],
+            "proved_landed_saturation_reductions": saturation[
+                "proved_landed_reductions"
+            ],
             "partial_close_sequence_surface_classified": partial_close[
                 "all_sequence_sites_classified"
             ],
@@ -1744,7 +1747,7 @@ def render_report(bundle: dict[str, Any]) -> str:
             "",
             "Two simplifications are already validated: fused live-forward reanchoring removes a second floor, and the complementary partial-close split removes an independently rounded floor atom. Fusing net-premium stages and reusing per-order range products are not bit-preserving. P-13 supplies a concrete `linear=872`, knocked-out-correction `=873` witness, so the inner liability clamp cannot become plain subtraction; the outer zero floor at `free_cash - liability` is independently an economic policy boundary.",
             f"The minimality search is exhaustive over `{len(bundle['algebra_minimality']['rewrite_search_scope'])}` registered rewrite families and fail-closed over inventoried money functions. It does not prove universal maximal simplicity across every possible semantics-preserving program.",
-            f"The saturation sweep proves `{len(bundle['saturation_proofs']['proved_immediate_reductions'])}` immediate redundant saturation(s) and leaves `{len(bundle['saturation_proofs']['conditional_reductions'])}` conditional on owning a stronger state or API invariant.",
+            f"The saturation sweep proves `{len(bundle['saturation_proofs']['proved_immediate_reductions'])}` further immediate redundant saturation(s), retains evidence for `{len(bundle['saturation_proofs']['proved_landed_reductions'])}` landed reduction(s), and leaves `{len(bundle['saturation_proofs']['conditional_reductions'])}` conditional on owning a stronger state or API invariant.",
             "",
             "## Stateful flows",
             "",
