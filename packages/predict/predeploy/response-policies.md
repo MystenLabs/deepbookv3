@@ -967,8 +967,10 @@ exceeds 0.1% aborts before it can create an order; the user can retry after a fr
 oracle surface. A full-pool flush whose final pool-NAV certificate exceeds 1%
 aborts before it creates a frozen mark; inside that ceiling, supplies price at
 `center + error` and withdrawals at `center - error`, both over the same
-pre-drain PLP supply. A keeper retries an over-limit certificate after fresh
-pricing inputs or settlement. A zero scalar pool NAV proceeds under RP-1/RP-3
+pre-drain PLP supply. A nonzero certificate whose upper endpoint does not fit in
+u64 aborts under the same precision response before a mark is constructed rather
+than overflowing incidentally. A keeper retries an over-limit certificate after
+fresh pricing inputs or settlement. A zero scalar pool NAV proceeds under RP-1/RP-3
 as two zero, non-executable marks, and a purely relative NAV bound has no
 denominator. These checks do not reinterpret liquidation, live close, or other
 protocol branches: those continue to use the scalar center exactly as the

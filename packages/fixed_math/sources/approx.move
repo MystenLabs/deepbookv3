@@ -278,14 +278,16 @@ public fun ln_ratio(numerator: u64, denominator: u64): Approx {
 
 /// `sqrt` of a nonnegative ball (operand scale 1e9). Monotone, so the true value is
 /// enclosed by `[sqrt(x - dx), sqrt(x + dx)]`; the error is the larger endpoint
-/// deviation from `sqrt(x)`, plus one raw unit for `sqrt_down`'s own rounding. Uses the
-/// center magnitude; callers guard nonnegativity of the center.
+/// deviation from `sqrt(x)`, plus one raw unit for `sqrt_down`'s own rounding.
+/// The upper input endpoint is evaluated in u128 because `x + dx` may exceed u64
+/// even though its scaled square root always fits in u64. Uses the center
+/// magnitude; callers guard nonnegativity of the center.
 public fun sqrt(a: &Approx): Approx {
     let x = a.value.magnitude();
     let root = math::sqrt_down(x);
     let low = if (x > a.error) math::sqrt_down(x - a.error) else 0;
-    let upper = if (a.error > std::u64::max_value!() - x) std::u64::max_value!() else x + a.error;
-    let high = math::sqrt_down(upper);
+    let upper_scaled = ((x as u128) + (a.error as u128)) * (math::float_scaling!() as u128);
+    let high = math::sqrt_u128_down(upper_scaled) as u64;
     let spread = if (root - low >= high - root) { root - low } else { high - root };
     Approx { value: i64::from_u64(root), error: spread + sqrt_leaf!() }
 }

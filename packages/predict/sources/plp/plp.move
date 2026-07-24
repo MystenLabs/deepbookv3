@@ -299,23 +299,10 @@ public fun finish_flush(
         config.protocol_reserve_profit_share(),
         &total_nav,
     );
-    // NAV precision policy; a zero pool NAV is a valid liveness mark (RP-1/RP-3:
-    // both sides become non-executable at the drain, and a purely relative bound
-    // has no denominator), so it skips the check rather than stalling the flush.
-    assert!(
-        pool_nav.magnitude() == 0
-            || pool_nav.true_relative_deviation_within(max_nav_deviation!()),
-        ENavTooImprecise,
-    );
     let active_market_nav = total_nav.magnitude();
     let active_market_nav_error = total_nav.error();
     let pool_nav_center = pool_nav.magnitude();
-    let pool_nav_error = pool_nav.error();
-    let (withdraw_pool_value, supply_pool_value) = if (pool_nav_center == 0) {
-        (0, 0)
-    } else {
-        (pool_nav_center - pool_nav_error, pool_nav_center + pool_nav_error)
-    };
+    let (withdraw_pool_value, supply_pool_value) = pool_nav_bid_ask(&pool_nav);
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
@@ -686,6 +673,22 @@ public(package) fun register_expiry(
     vault
         .expiry_accounting
         .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
+}
+
+/// Deconstruct one nonnegative pool-NAV certificate into the protocol-favored
+/// withdrawal bid and supply ask. A zero center remains a live zero mark; every
+/// nonzero mark must satisfy the relative precision ceiling and have a
+/// representable upper endpoint before it can move LP value.
+public(package) fun pool_nav_bid_ask(pool_nav: &Approx): (u64, u64) {
+    let center = pool_nav.magnitude();
+    if (center == 0) return (0, 0);
+    let error = pool_nav.error();
+    assert!(
+        pool_nav.true_relative_deviation_within(max_nav_deviation!())
+            && error <= std::u64::max_value!() - center,
+        ENavTooImprecise,
+    );
+    (center - error, center + error)
 }
 
 // === Private Functions ===

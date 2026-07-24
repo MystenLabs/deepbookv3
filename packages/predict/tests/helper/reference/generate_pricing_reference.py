@@ -45,12 +45,12 @@ scale). No param is ever rounded, shortened, or re-derived from another column.
 
 The *forward the contract actually prices with* is NOT the raw pushed forward: in
 `pricing::load_live_pricer` the fresh-Pyth path re-derives it as
-    forward_live = mul(spot, div(forward, spot))            (two fixed_math floors)
-This is the dominant production path (Pyth spot fresh). We reproduce that floor
-round-trip below to obtain the byte-identical forward the model prices at, then
-compute the TRUE adjusted digital from it. The round-trip is INPUT CONSTRUCTION
+    forward_live = floor(spot * forward / bs_spot)          (one fused floor)
+This is the dominant production path (Pyth spot fresh). We reproduce that fused
+operation below to obtain the byte-identical forward the model prices at, then
+compute the TRUE adjusted digital from it. The re-anchoring is INPUT CONSTRUCTION
 (it builds the model's forward input), not the pricer; ref and contract therefore
-price the identical forward, so the round-trip contributes NO error to the budget.
+price the identical forward, so it contributes NO error to the budget.
 
 ============================================================================
 PRECISION BUDGET (derived, never measured from contract output)
@@ -199,13 +199,9 @@ CSV_PATH = os.environ.get("PREDICT_SCENARIO_DATASET", DEFAULT_CSV_PATH)
 OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "pricing_reference_data.move")
 
 
-# --- predict math floor ops (INPUT construction only: forward round-trip) ---
-def fp_div(x, y):  # math::div: floor(x * F / y)
-    return (x * F) // y
-
-
-def fp_mul(x, y):  # math::mul: floor(x * y / F)
-    return (x * y) // F
+# --- predict math floor op (INPUT construction only: forward re-anchoring) ---
+def fp_mul_div_down(x, y, denominator):
+    return (x * y) // denominator
 
 
 def phi(x):  # standard normal CDF via stdlib erf (independent of Cody approx)
@@ -237,8 +233,12 @@ class Scenario:
         self.rf = (-self.rho_mag if self.rho_neg else self.rho_mag) / F
         self.mf = (-self.m_mag if self.m_neg else self.m_mag) / F
         self.sf = self.sigma / F
-        # The forward the contract actually prices with (fresh-Pyth round-trip).
-        self.forward_live = fp_mul(self.spot, fp_div(self.forward, self.spot))
+        # The forward the contract actually prices with (fresh-Pyth re-anchoring).
+        self.forward_live = fp_mul_div_down(
+            self.spot,
+            self.forward,
+            self.spot,
+        )
         self.fwd_f = self.forward_live / F
         # Reference ladder for selecting raw strikes around spot. Production
         # markets use absolute ticks; this generator emits raw strike points.
@@ -483,7 +483,7 @@ def emit_move(scenarios, scen_points, budget_units):
     w("// the generator header for the full derivation. The short-dated scenario instead")
     w("// pins the protocol's 0.1% mint-price ceiling at w~3.26e-8. The forward priced is")
     w("// the fresh-Pyth")
-    w("// round-trip mul(spot, div(forward, spot)).")
+    w("// fused floor(spot * forward / bs_spot) re-anchoring.")
     w("//")
     w("// `expected_center` is the exact production fixed-point output.")
     w("// It detects value drift only; the independent reference + tolerance above decides correctness.")

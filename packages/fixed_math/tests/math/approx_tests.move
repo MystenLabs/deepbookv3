@@ -14,6 +14,10 @@ const LN_RATIO_TWO_REFERENCE: u64 = 693_147_181;
 const LN_RATIO_ONE_RAW_REFERENCE_MAG: u64 = 20_723_265_837;
 const LN_RATIO_UNDERFLOW_REFERENCE_MAG: u64 = 20_772_056_001;
 const LN_RATIO_U64_MAX_REFERENCE: u64 = 44_361_419_556;
+const WIDE_SQRT_CENTER: u64 = 1_000_000;
+// Python math.isqrt((u64::MAX + WIDE_SQRT_CENTER) * 1e9).
+const WIDE_SQRT_UPPER_FLOOR: u64 = 135_818_791_312_949;
+const WIDE_SQRT_ERROR: u64 = 135_818_759_690_174;
 
 fun assert_center(ball: &Approx, magnitude: u64, negative: bool) {
     assert_eq!(ball.magnitude(), magnitude);
@@ -259,6 +263,17 @@ fun transcendental_balls_enclose_independent_endpoint_references() {
     assert_eq!(square_root.error(), 267_949_194);
     assert_contains(&square_root, i64::from_u64(1_732_050_807)); // floor(sqrt(3) * 1e9)
     assert_contains(&square_root, i64::from_u64(2_236_067_977)); // floor(sqrt(5) * 1e9)
+
+    let wide_square_root_input = approx::from_certified_parts(
+        i64::from_u64(WIDE_SQRT_CENTER),
+        std::u64::max_value!(),
+    );
+    let wide_square_root = wide_square_root_input.sqrt();
+    assert_eq!(wide_square_root.error(), WIDE_SQRT_ERROR);
+    assert_contains(
+        &wide_square_root,
+        i64::from_u64(WIDE_SQRT_UPPER_FLOOR),
+    );
 
     let normal_input = approx::from_certified_parts(i64::from_u64(float!()), float!() / 2);
     let cdf = normal_input.normal_cdf();
