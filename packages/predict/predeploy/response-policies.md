@@ -705,10 +705,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   lifts it.
 - **Blast radius:** every version-gated flow — the same surface a package-version
   disable covers, reached because the freeze is folded into
-  `protocol_config::assert_version`. Account-package custody withdrawals are not
-  Predict-version-gated and stay available, so balances already credited to
-  account custody remain withdrawable; unredeemed positions and pending LP-queue
-  escrow are frozen (reversibly) until admin lifts it. The ungated bypasses
+  `protocol_config::assert_version`. Account-package custody withdrawals and
+  builder-fee claims are not Predict-version-gated and stay available, so
+  already-credited custody balances and earned builder fees remain withdrawable;
+  unredeemed positions and pending LP-queue escrow are frozen (reversibly) until
+  admin lifts it. The ungated bypasses
   (existence-level cap revocations, the watermark setter, and freeze/unfreeze
   themselves) stay available.
 - **Response:** `pause`-with-recovery. Force-on via

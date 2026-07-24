@@ -392,9 +392,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   lifted only by `AdminCap` (`set_frozen`, deliberately ungated so a freeze is never
   unrecoverable-without-upgrade). It reuses the watermark's blast radius by folding
   into the one gate (zero new call sites) but is reversible, where a version-disable
-  recovers only by upgrade; account-package custody withdrawals stay ungated, so
-  balances already credited to custody remain withdrawable while frozen (unredeemed
-  positions and pending LP-queue escrow are frozen until admin lifts it). *Rejected:* freezing via
+  recovers only by upgrade; account-package custody withdrawals and builder-fee
+  claims stay ungated, so already-credited custody balances and earned builder fees
+  remain withdrawable while frozen (unredeemed positions and pending LP-queue escrow
+  are frozen until admin lifts it). *Rejected:* freezing via
   `bump_version_watermark` (it cannot set the floor above the running version, so it
   cannot freeze the current version at all, and relaxing its advance assert reopens a
   downgrade through an old package); and a one-way upgrade-to-resume freeze (it

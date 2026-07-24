@@ -53,7 +53,8 @@ public struct ProtocolConfig has key {
     /// version-gated flow (mint, redeem, settlement, valuation, LP supply/withdraw,
     /// admin config) — the same blast radius as a version-disable, but reversible
     /// without a package upgrade. Force-on via `PauseCap`; cleared by `AdminCap`.
-    /// Account-package custody withdrawals are ungated and stay available.
+    /// Account-package custody withdrawals and builder-fee claims are ungated and
+    /// stay available (already-earned funds).
     frozen: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled, so no
     /// NAV-changing op can interleave between per-market value steps in the PTB.
