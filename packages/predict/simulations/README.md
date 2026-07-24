@@ -293,7 +293,7 @@ Full localnet runs can produce:
 
 Localnet/Python parity is a confidence gate, not a proof of every possible terminal state. The normal replay validates that Python and localnet agree on canonical live economics for the same generated CSV rows and runner-synthesized maintenance transactions: oracle refreshes, mints, redeems, passive liquidations, supply, withdraw, queue drains, expiry-cash rebalances, normalized event fields, and tracked state deltas.
 
-`compare_parity.py` removes chain-clock landing timestamps and oracle source timestamps because localnet rebases feed timestamps onto its live `Clock` while Python replays the economic inputs without reproducing that wall clock. It also removes the Move `FlushExecuted` bid/ask certificate fields and Python's independently aggregated center: those diagnostic values can differ by fixed-point dust, while the priced fill outputs and resulting state must still match exactly. Both artifacts retain their full fields; queue depths, pre/post LP supply, fill amounts, maintenance records, and every tracked state value remain parity-gated.
+`compare_parity.py` removes chain-clock landing timestamps and oracle source timestamps because localnet rebases feed timestamps onto its live `Clock` while Python replays the economic inputs without reproducing that wall clock. Every economic field remains exact-parity gated, including the `FlushExecuted` active-NAV certificate, directional pool marks, queue depths, pre/post LP supply, fill amounts, maintenance records, and tracked state values.
 
 Live pool-sync sweeps increase aggregate pricing credits and can also realize
 previously carried protocol profit into the reserve when returned idle cash is

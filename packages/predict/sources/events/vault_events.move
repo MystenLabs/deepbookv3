@@ -231,6 +231,11 @@ public fun flush_supply_pool_value(event: &FlushExecuted): u64 {
     event.supply_pool_value
 }
 
+#[test_only]
+public fun flush_active_market_nav_error(event: &FlushExecuted): u64 {
+    event.active_market_nav_error
+}
+
 // === Public-Package Functions ===
 
 public(package) fun emit_expiry_cash_received(

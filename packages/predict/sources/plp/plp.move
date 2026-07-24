@@ -28,7 +28,7 @@ use deepbook_predict::{
     vault_events
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::{approx::{Self, Approx}, math};
+use fixed_math::{approx::{Self, Approx}, i64, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -753,24 +753,55 @@ fun lp_pool_value_approx(
     protocol_reserve_profit_share: u64,
     active_expiry_value: &Approx,
 ): Approx {
-    let idle_balance = approx::exact_u64(vault.expiry_accounting.idle_balance());
-    let profit_basis_credits = approx::exact_u64(vault.expiry_accounting.profit_basis_credits());
-    let profit_basis_debits = approx::exact_u64(vault.expiry_accounting.profit_basis_debits());
-    let pending_protocol_profit = approx::exact_u64(vault
+    let center = active_expiry_value.magnitude();
+    let error = active_expiry_value.error();
+    let pool_center = lp_pool_value_at_active_nav(
+        vault,
+        protocol_reserve_profit_share,
+        center,
+    );
+    if (error > std::u64::max_value!() - center) {
+        return approx::from_certified_parts(i64::from_u64(pool_center), std::u64::max_value!())
+    };
+
+    // Active NAV is the one uncertain input on both sides of the protocol-profit
+    // exclusion. Evaluate that shared input at its certified endpoints instead of
+    // treating the two appearances as independent balls and double-counting its
+    // radius. The scalar pool-value function is monotone because the configured
+    // protocol share is at most 1.
+    let lower = lp_pool_value_at_active_nav(
+        vault,
+        protocol_reserve_profit_share,
+        center.saturating_sub(error),
+    );
+    let upper = lp_pool_value_at_active_nav(
+        vault,
+        protocol_reserve_profit_share,
+        center + error,
+    );
+    let pool_error = (pool_center - lower).max(upper - pool_center);
+    approx::from_certified_parts(i64::from_u64(pool_center), pool_error)
+}
+
+fun lp_pool_value_at_active_nav(
+    vault: &PoolVault,
+    protocol_reserve_profit_share: u64,
+    active_expiry_value: u64,
+): u64 {
+    let gross_pool_value = vault.expiry_accounting.idle_balance() + active_expiry_value;
+    let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
+    let excess_credits = aggregate_credits.saturating_sub(vault
         .expiry_accounting
-        .pending_protocol_profit());
-    let gross_pool_value = idle_balance.add(active_expiry_value);
-    let aggregate_credits = profit_basis_credits.add(active_expiry_value);
-    let excess_credits = aggregate_credits.sub(&profit_basis_debits).clamp_nonnegative();
-    let protocol_share = approx::exact_u64(protocol_reserve_profit_share);
-    let exclusion = excess_credits.mul_scaled(&protocol_share);
+        .profit_basis_debits());
+    let exclusion = math::mul_down(excess_credits, protocol_reserve_profit_share);
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the held-out total (`exclusion + pending_protocol_profit`) can
-    // exceed gross. LP value can never be negative, so floor it at 0 to keep the
-    // subtraction from underflow-aborting. A 0/dust pool NAV makes non-executable
-    // LP queue heads refund inside `lp_book::drain`, rather than aborting the flush.
-    gross_pool_value.sub(&exclusion).sub(&pending_protocol_profit).clamp_nonnegative()
+    // exceed gross. LP value can never be negative, so floor it at 0. A 0/dust
+    // pool NAV makes non-executable queue heads refund inside `lp_book::drain`.
+    gross_pool_value
+        .saturating_sub(exclusion)
+        .saturating_sub(vault.expiry_accounting.pending_protocol_profit())
 }
 
 /// Sweep a settled market, rebalance a live market, or leave an expired unsettled

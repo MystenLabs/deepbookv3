@@ -540,7 +540,35 @@ reference.
 The final projection cannot be removed: shared-boundary product residue can
 make `L` negative by one atom, and `C` is nonnegative.
 
-### Theorem 7.2 — NAV endpoints prevent both LP transfer directions
+### Theorem 7.2 — Shared active-NAV uncertainty is evaluated once
+
+Let the fixed-point protocol-profit share be `s` with `0 <= s <= 1`, exact idle
+cash be `I`, exact profit-basis credits and debits be `C` and `D`, and exact
+pending protocol profit be `P`. Write `floor_s(y)` for the implementation's
+down-rounded fixed-point product `floor(s y)`. As a function of the one uncertain
+active-market NAV input `x`, canonical LP pool value is
+
+```text
+f(x) = max(0, I + x - floor_s(max(0, C + x - D)) - P).
+```
+
+Increasing integer `x` by one increases the gross term by one and increases
+`floor_s` by either zero or one because `s <= 1`. The expression before the
+outer projection is therefore nondecreasing, and projection onto the
+nonnegative half-line preserves monotonicity. Therefore, for a certified
+active-NAV interval `[c-e,c+e]`,
+
+```text
+f(max(0,c-e)) <= f(true active NAV) <= f(c+e).
+```
+
+Evaluating these two endpoints and taking the larger distance from `f(c)`
+certifies pool value without treating the two correlated appearances of `x` as
+independent errors. Generic ball subtraction would remain sound but would count
+the same radius once through gross value and again through the profit exclusion,
+causing avoidable rejections at the 1% pool-NAV gate.
+
+### Theorem 7.3 — NAV endpoints prevent both LP transfer directions
 
 Let true pool NAV `V` satisfy
 

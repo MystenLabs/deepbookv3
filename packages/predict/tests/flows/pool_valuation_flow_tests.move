@@ -92,7 +92,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     );
 
     // Hand-derived fixture values. This pins `finish_flush` reading the
-    // vault-owned ledger fields without copying the private `lp_pool_value` formula.
+    // vault-owned ledger fields without copying its private pool-value formula.
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
     assert_eq!(nav1, POST_VALUATION_MARKET_NAV);
@@ -107,8 +107,13 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let flush = &flushes[0];
     let withdraw_pool_value = vault_events::flush_withdraw_pool_value(flush);
     let supply_pool_value = vault_events::flush_supply_pool_value(flush);
+    let active_market_nav_error = vault_events::flush_active_market_nav_error(flush);
     assert!(withdraw_pool_value < pool_nav);
     assert_eq!(pool_nav - withdraw_pool_value, supply_pool_value - pool_nav);
+    // Active NAV is the shared uncertain input to gross value and the
+    // protocol-profit exclusion. Preserving that dependency keeps the resulting
+    // monotone pool-value radius no larger than the input radius.
+    assert!(supply_pool_value - pool_nav <= active_market_nav_error);
 
     return_shared(config);
     return_shared(pyth);

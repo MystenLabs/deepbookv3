@@ -20,24 +20,12 @@ OBSERVATIONAL_EVENT_FIELDS = {
     "block_scholes_forward_source_timestamp_ms",
     "block_scholes_svi_source_timestamp_ms",
 }
-FLUSH_DIAGNOSTIC_FIELDS = {
-    "pool_value",
-    "withdraw_pool_value",
-    "supply_pool_value",
-    "active_market_nav",
-    "active_market_nav_error",
-}
-
-
 def parity_projection(payload: dict[str, Any]) -> dict[str, Any]:
     projected = copy.deepcopy(payload)
     for record in projected.get("records", []):
         for update in record.get("updates", []):
             for field in OBSERVATIONAL_EVENT_FIELDS:
                 update.pop(field, None)
-            if update.get("type") == "flush_executed":
-                for field in FLUSH_DIAGNOSTIC_FIELDS:
-                    update.pop(field, None)
     return projected
 
 
