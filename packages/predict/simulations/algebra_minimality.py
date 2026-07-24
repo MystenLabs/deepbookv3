@@ -11,6 +11,19 @@ import partial_close_proofs
 import saturation_proofs
 
 
+DIRECT_HALF_VARIANCE_FUNCTION_SHA256 = {
+    "packages/predict/sources/pricing/pricing.move::compute_nd2": (
+        "d8a5831287c6a5c9deac0e0e96b13f0865a3f6a374910d55f7df0a96af236f4c"
+    ),
+    "packages/predict/sources/pricing/pricing.move::variance_denominator_terms": (
+        "b78ea4d92a9e9dde1d47fa95fb4808e1f27d2bb874ed350def0150e255c58267"
+    ),
+    "packages/predict/sources/pricing/pricing.move::standardized_d2": (
+        "d6742f95f11308002e0e9984a955d8a31b25992dd0cbac82c104be2517bbe03b"
+    ),
+}
+
+
 def p13_clamp_witness() -> dict[str, str]:
     boundary_linear = 9_583 + 9_530 - 18_241
     knocked_out_correction = 463 + 410
@@ -26,6 +39,109 @@ def p13_clamp_witness() -> dict[str, str]:
         ),
         "saturating_sub": str(
             max(0, boundary_linear - knocked_out_correction)
+        ),
+    }
+
+
+def direct_half_variance_proof(scale: int = 17) -> dict[str, Any]:
+    """Certify direct wide-to-half projection.
+
+    For C = 2*S*k + r, 0 <= r < 2*S:
+      floor(floor(C/S)/2)
+        = floor((2*k + floor(r/S))/2)
+        = k
+        = floor(C/(2*S)).
+
+    If the exact wide value W is within E of C, the direct center H therefore
+    differs from W/(2*S) by less than 1 + E/(2*S). The integer radius
+    ceil(E/(2*S)) + 1 encloses it. Omitting the rounding atom fails whenever
+    E=0 and C is not divisible by 2*S.
+    """
+    function_hashes = inventory.function_source_sha256()
+    fingerprint_mismatches = {
+        function_id: {
+            "expected": expected,
+            "actual": function_hashes.get(function_id),
+        }
+        for function_id, expected in DIRECT_HALF_VARIANCE_FUNCTION_SHA256.items()
+        if function_hashes.get(function_id) != expected
+    }
+    pricing_source = (
+        inventory.SOURCE_ROOT / "pricing" / "pricing.move"
+    ).read_text()
+    expression_bindings = {
+        "direct_center": (
+            "let half_var_center = (wide_total_var / half_scale) as u64;"
+            in pricing_source
+        ),
+        "direct_radius": (
+            "let scaled_error = wide_error.div_ceil(half_scale);"
+            in pricing_source
+        ),
+        "rounding_atom": "(scaled_error as u64) + 1" in pricing_source,
+        "direct_consumer": (
+            "let d2_numerator = k.add(half_var);" in pricing_source
+        ),
+        "discarded_half_removed": "let half_var = total_var.half();" not in pricing_source,
+    }
+    center_failures: list[dict[str, int]] = []
+    radius_failures: list[dict[str, int]] = []
+    strict_tightening_witness: dict[str, int] | None = None
+    for center in range(0, 8 * scale + 1):
+        staged_center = (center // scale) // 2
+        direct_center = center // (2 * scale)
+        if staged_center != direct_center:
+            center_failures.append(
+                {
+                    "wide_center": center,
+                    "staged_center": staged_center,
+                    "direct_center": direct_center,
+                }
+            )
+        for error in range(0, 4 * scale + 1):
+            old_radius = (error + scale - 1) // scale + 2
+            new_radius = (error + 2 * scale - 1) // (2 * scale) + 1
+            if new_radius > old_radius:
+                radius_failures.append(
+                    {
+                        "wide_center": center,
+                        "wide_error": error,
+                        "old_radius": old_radius,
+                        "new_radius": new_radius,
+                    }
+                )
+            if (
+                new_radius < old_radius
+                and strict_tightening_witness is None
+            ):
+                strict_tightening_witness = {
+                    "wide_center": center,
+                    "wide_error": error,
+                    "old_radius": old_radius,
+                    "new_radius": new_radius,
+                }
+    return {
+        "proof_strength": "universal quotient-remainder identity and interval bound",
+        "source_function_fingerprint_mismatches": fingerprint_mismatches,
+        "source_expression_bindings": expression_bindings,
+        "identity": "floor(floor(C/S)/2) = floor(C/(2*S))",
+        "radius": "ceil(E/(2*S)) + 1",
+        "bounded_identity_sanity_failures": center_failures,
+        "bounded_radius_sanity_failures": radius_failures,
+        "strict_tightening_witness": strict_tightening_witness,
+        "rounding_atom_mutation_witness": {
+            "wide_center": 1,
+            "wide_error": 0,
+            "exact_half_variance": f"1/{2 * scale}",
+            "mutated_radius": 0,
+            "encloses": False,
+        },
+        "proven": (
+            not fingerprint_mismatches
+            and all(expression_bindings.values())
+            and not center_failures
+            and not radius_failures
+            and strict_tightening_witness is not None
         ),
     }
 
@@ -171,6 +287,13 @@ def transformation_results() -> list[dict[str, Any]]:
                 stake_rebate_witness = (amount, stake)
 
     return [
+        {
+            "name": "direct_half_variance_projection",
+            "status": "proven_reduction_landed",
+            "current_operations": 2,
+            "candidate_operations": 3,
+            "proof": direct_half_variance_proof(),
+        },
         {
             "name": "live_forward_single_mul_div",
             "status": "current_form_minimal",

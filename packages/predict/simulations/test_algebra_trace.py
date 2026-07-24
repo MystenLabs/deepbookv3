@@ -14,10 +14,10 @@ import python_replay as replay
 
 
 # The 1e9 tables freeze contract SHA 94758ffd before the retained-1e18
-# variance-to-sqrt seam. The accepted tables freeze current contract SHA
-# eaab2d89 after the canonical round-up premium and valuation fixes. These pin change
-# detection only; the committed reference enclosures remain the independent
-# mathematical correctness oracle for price containment.
+# variance-to-sqrt seam. The accepted tables freeze the direct wide-to-half
+# variance projection after the canonical round-up premium and valuation fixes.
+# These pin change detection only; the committed reference enclosures remain the
+# independent mathematical correctness oracle for price containment.
 TARGET_94758FFD_1E9_KEY_OUTPUTS = {
     "ordinary_1x": {
         "active_market_nav": (50_000_059_904, 9),
@@ -101,46 +101,46 @@ TARGET_94758FFD_1E9_PARITY_VALUES = {
 
 ACCEPTED_SQRT_ISLAND_KEY_OUTPUTS = {
     "ordinary_1x": {
-        "active_market_nav": (50_000_059_904, 8),
+        "active_market_nav": (50_000_059_904, 7),
         "floor_shares": (0, 0),
         "liquidation_decision": (0, 0),
-        "mint_range_price": (528_329_883, 448),
+        "mint_range_price": (528_329_883, 399),
         "net_premium": (6_339_958, 0),
-        "pool_value": (500_000_059_904, 8),
+        "pool_value": (500_000_059_904, 7),
         "redeem_amount": (2_113_319, 0),
         "settlement_winner_payout": (12_000_000, 0),
-        "supply_pool_value": (500_000_059_912, 0),
+        "supply_pool_value": (500_000_059_911, 0),
         "supply_shares": (5_000_099, 0),
         "withdraw_dusdc": (4_999_999, 0),
-        "withdraw_pool_value": (500_000_059_896, 0),
+        "withdraw_pool_value": (500_000_059_897, 0),
     },
     "leveraged_boundary": {
-        "active_market_nav": (50_000_100_000, 83),
+        "active_market_nav": (50_000_100_000, 79),
         "floor_shares": (5_989_560, 0),
         "liquidation_decision": (1, 0),
-        "mint_range_price": (499_130_085, 1_951),
+        "mint_range_price": (499_130_085, 1_877),
         "net_premium": (3_993_041, 0),
-        "pool_value": (500_000_100_000, 83),
+        "pool_value": (500_000_100_000, 79),
         "redeem_amount": (1_996, 0),
         "settlement_winner_payout": (14_010_440, 0),
-        "supply_pool_value": (500_000_100_083, 0),
+        "supply_pool_value": (500_000_100_079, 0),
         "supply_shares": (5_000_098, 0),
         "withdraw_dusdc": (4_999_998, 0),
-        "withdraw_pool_value": (500_000_099_917, 0),
+        "withdraw_pool_value": (500_000_099_921, 0),
     },
     "precision_sensitive": {
-        "active_market_nav": (50_000_098_481, 93),
+        "active_market_nav": (50_000_098_481, 91),
         "floor_shares": (15_788_661, 0),
         "liquidation_decision": (1, 0),
-        "mint_range_price": (877_147_899, 1_468),
+        "mint_range_price": (877_147_899, 1_440),
         "net_premium": (10_525_775, 0),
-        "pool_value": (500_000_098_481, 93),
+        "pool_value": (500_000_098_481, 91),
         "redeem_amount": (3_508_591, 0),
         "settlement_winner_payout": (14_211_339, 0),
-        "supply_pool_value": (500_000_098_574, 0),
+        "supply_pool_value": (500_000_098_572, 0),
         "supply_shares": (5_000_099, 0),
         "withdraw_dusdc": (4_999_999, 0),
-        "withdraw_pool_value": (500_000_098_388, 0),
+        "withdraw_pool_value": (500_000_098_390, 0),
     },
 }
 
@@ -498,9 +498,9 @@ class AlgebraTraceTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                "ordinary_1x": 448,
-                "leveraged_boundary": 1_951,
-                "precision_sensitive": 1_468,
+                "ordinary_1x": 399,
+                "leveraged_boundary": 1_877,
+                "precision_sensitive": 1_440,
             },
         )
 

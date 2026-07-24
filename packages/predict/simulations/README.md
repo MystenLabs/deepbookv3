@@ -80,7 +80,7 @@ high gas budget because this mode does not benchmark individual mint gas;
 
 A source-pinned Python proof bundle establishes the money-math dust, algebra, and
 saturation properties of the `predict` package. It is anchored to contract
-baseline commit `eaab2d89` and reads the Move sources directly. The SHA-256
+baseline commit `66b49c5d` and reads the Move sources directly. The SHA-256
 content digest of `packages/predict/sources/**` is a freshness gate, while stable
 call-site identities and exact operator bindings independently connect each
 rounding certificate to the implemented Move expression. A source edit, digest
@@ -106,7 +106,10 @@ deterministic proof runners that assert it. `algebra_trace.py` writes an operati
 DAG and a knot report under `runs/algebra-trace/`; `dust_invariants.py` writes its
 typed collapse ledger, NAV bid/ask mutation matrix, and stateful lifecycle checks
 beside them, and its source census classifies fixed-point, raw-integer, clamp,
-`Approx`, and custody arithmetic in every Predict Move source. `math_dust_proofs.py`
+`Approx`, and custody arithmetic in every Predict Move source.
+`algebra_minimality.py` additionally proves the direct wide-to-half variance
+projection with a quotient-remainder identity and a mutation witness for its
+required rounding atom. `math_dust_proofs.py`
 gives each money-collapse function an exact-rational rounding-direction certificate,
 names its residual owner, and verifies its exact source operator bindings; its
 negative-control test flips the trading-fee direction and requires the aggregate
@@ -175,9 +178,9 @@ runner digests to a generated proof bundle.
     fixed-point, raw-integer, clamp, `Approx`, guard, and custody arithmetic.
 -   `math_dust_proofs.py`: exact-rational rounding and residual certificates for
     every inventoried money-collapse function.
--   `algebra_minimality.py`: per-function minimality dispositions,
-    bit-equivalence counterexamples for candidate rewrites, and the folded
-    partial-close and saturation conclusions.
+-   `algebra_minimality.py`: per-function minimality dispositions, the universal
+    direct-half-variance projection proof, bit-equivalence counterexamples for
+    candidate rewrites, and the folded partial-close and saturation conclusions.
 -   `economic_lifecycle_proofs.py`: independent cash-state reconciliation for
     mint fees, live redeem deductions, rebate claims, and exact-amount sizing.
 -   `payout_tree_proofs.py`: bounded-exhaustive containment of the fused signed

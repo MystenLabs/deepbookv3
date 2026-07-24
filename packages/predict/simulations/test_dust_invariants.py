@@ -81,7 +81,7 @@ class DustInvariantBundleTests(unittest.TestCase):
     def test_bundle_is_pinned_to_requested_contract_sha(self) -> None:
         self.assertEqual(
             self.bundle["contract_baseline"],
-            "eaab2d893856aa601d8e56f17f24fcd29f31666c",
+            "66b49c5ddc8495cf58d8cc00b27d28fce3c8f252",
         )
         self.assertEqual(
             self.bundle["pricing_profile"],
@@ -115,7 +115,7 @@ class DustInvariantBundleTests(unittest.TestCase):
         )
         self.assertEqual(
             precision["changes"]["pool_value"]["error_delta"],
-            "-154",
+            "-156",
         )
         self.assertEqual(
             precision["changes"]["pool_value"]["center_delta"],

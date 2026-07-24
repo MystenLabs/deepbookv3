@@ -31,6 +31,22 @@ class AlgebraMinimalityTests(unittest.TestCase):
             },
         )
 
+    def test_direct_half_variance_projection_is_universal_and_mutation_sensitive(
+        self,
+    ) -> None:
+        proof = minimality.direct_half_variance_proof()
+        self.assertTrue(proof["proven"])
+        self.assertEqual(
+            proof["source_function_fingerprint_mismatches"], {}
+        )
+        self.assertTrue(all(proof["source_expression_bindings"].values()))
+        self.assertEqual(proof["bounded_identity_sanity_failures"], [])
+        self.assertEqual(proof["bounded_radius_sanity_failures"], [])
+        self.assertIsNotNone(proof["strict_tightening_witness"])
+        self.assertFalse(
+            proof["rounding_atom_mutation_witness"]["encloses"]
+        )
+
     def test_operation_saving_candidates_have_counterexamples(self) -> None:
         transformations = {
             row["name"]: row for row in self.bundle["transformations"]

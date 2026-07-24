@@ -15,7 +15,7 @@ from typing import Any
 import python_replay as replay
 
 SCHEMA_VERSION = "predict_algebra_trace_v2"
-CONTRACT_BASELINE = "eaab2d893856aa601d8e56f17f24fcd29f31666c"
+CONTRACT_BASELINE = "66b49c5ddc8495cf58d8cc00b27d28fce3c8f252"
 PRICING_PROFILE = "canonical_premium_protocol_fees_retained_1e18_sqrt_nav_bid_ask"
 F = replay.FLOAT_SCALING
 U64_MAX = (1 << 64) - 1
@@ -1085,7 +1085,7 @@ def _trace_up_price(
         phase,
         unit="probability_1e9",
         scale=F,
-        move_site="pricing::total_variance_terms",
+        move_site="pricing::variance_denominator_terms",
     )
     wide_increment = b.center * inner.center
     wide_a = abs(a.center) * F
@@ -1106,23 +1106,23 @@ def _trace_up_price(
         unit="variance_1e18",
         scale=F * F,
         rounding="exact_wide",
-        move_site="pricing::total_variance_terms",
+        move_site="pricing::variance_denominator_terms",
         note="Only total variance is retained at 1e18 through sqrt; downstream Approx arithmetic remains 1e9.",
     )
-    total_var_center = wide_total_center // F
-    total_var_error = _ceil_div(wide_error, F) + 1
-    total_var = trace._node(
-        f"{label}_total_variance",
+    half_var_center = wide_total_center // (2 * F)
+    half_var_error = _ceil_div(wide_error, 2 * F) + 1
+    half_var = trace._node(
+        f"{label}_half_variance",
         phase,
-        "narrow_total_variance",
-        total_var_center,
+        "direct_half_variance",
+        half_var_center,
         (wide_total,),
         exact_raw=None,
-        error=total_var_error,
+        error=half_var_error,
         unit="probability_1e9",
         scale=F,
         rounding="down",
-        move_site="pricing::total_variance_terms",
+        move_site="pricing::variance_denominator_terms",
     )
     sqrt_center = math.isqrt(wide_total_center)
     sqrt_low = (
@@ -1147,9 +1147,8 @@ def _trace_up_price(
         unit="probability_1e9",
         scale=F,
         rounding="outward",
-        move_site="pricing::total_variance_terms",
+        move_site="pricing::variance_denominator_terms",
     )
-    half_var = trace.half(f"{label}_half_variance", total_var, phase, move_site="pricing::standardized_d2")
     d2_numerator = trace.add(
         f"{label}_d2_numerator",
         k,
