@@ -829,11 +829,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Release settled cash above payout liability and unresolved rebate reserve.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
-    let reserved_cash = market.cash.required_cash(settled_liability);
-    market.cash.assert_backing(settled_liability);
-
-    let returned_cash_amount = market.cash.balance() - reserved_cash;
-    market.release_pool_cash(returned_cash_amount)
+    market.cash.release_all_surplus(settled_liability)
 }
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.

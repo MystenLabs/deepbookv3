@@ -179,6 +179,65 @@ fun release_exact_surplus_preserves_payout_and_rebate_backing() {
 }
 
 #[test]
+fun release_all_surplus_leaves_exact_required_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    cash.collect_trade_fee(
+        coin::mint_for_testing<DUSDC>(
+            FEE_AMOUNT,
+            ctx,
+        ).into_balance(),
+        FEE_AMOUNT,
+    );
+    cash.receive(coin::mint_for_testing<DUSDC>(EXTRA_SURPLUS_CASH, ctx).into_balance());
+
+    let released = cash.release_all_surplus(SURPLUS_PAYOUT_LIABILITY);
+
+    assert_eq!(released.value(), EXACT_SURPLUS_AMOUNT);
+    assert_eq!(cash.balance(), EXPECTED_REQUIRED_CASH);
+    assert_eq!(cash.required_cash(SURPLUS_PAYOUT_LIABILITY), EXPECTED_REQUIRED_CASH);
+
+    destroy(released);
+    destroy(cash);
+}
+
+#[test]
+fun release_all_surplus_at_exact_backing_returns_zero() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    cash.collect_trade_fee(
+        coin::mint_for_testing<DUSDC>(
+            FEE_AMOUNT,
+            ctx,
+        ).into_balance(),
+        FEE_AMOUNT,
+    );
+    let released = cash.release_all_surplus(EXPECTED_REBATE_RESERVE);
+
+    assert_eq!(released.value(), 0);
+    assert_eq!(cash.balance(), FEE_AMOUNT);
+
+    destroy(released);
+    destroy(cash);
+}
+
+#[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
+fun release_all_surplus_underfunded_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let config = expiry_cash_config::new();
+    let mut cash = expiry_cash::new(config);
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+
+    let released = cash.release_all_surplus(REQUIRED_PAYOUT_LIABILITY);
+    destroy(released);
+    abort 999
+}
+
+#[test]
 fun collect_trade_fee_tracks_rebate_basis_separately_from_cash() {
     let ctx = &mut tx_context::dummy();
     let mut config = expiry_cash_config::new();

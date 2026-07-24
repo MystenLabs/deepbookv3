@@ -77,6 +77,19 @@ public(package) fun release_surplus(
     cash.cash_balance.split(amount)
 }
 
+/// Release every atom above payout liability and unresolved rebate backing.
+public(package) fun release_all_surplus(
+    cash: &mut ExpiryCash,
+    payout_liability: u64,
+): Balance<DUSDC> {
+    let required = cash.required_cash(payout_liability);
+    let available = cash.balance();
+    assert!(available >= required, EInsufficientCash);
+    let amount = available - required;
+    if (amount == 0) return balance::zero();
+    cash.cash_balance.split(amount)
+}
+
 /// Pay an already-authorized payout, rebate claim, or cash release.
 ///
 /// The caller owns the surrounding liability or rebate-basis transition and the

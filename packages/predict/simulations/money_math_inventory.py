@@ -14,7 +14,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ROOT = REPO_ROOT / "packages" / "predict" / "sources"
 EXPECTED_SOURCE_TREE_SHA256 = (
-    "9442492c2be835df115e0ce876ac3edc56261393543c6ac40820f7864775b9f6"
+    "cece5daf6318082e26044918a1302a27c8ca8ae73b2569ecc02b898419aebc03"
 )
 
 CANDIDATE_RE = re.compile(
@@ -144,6 +144,7 @@ FUNCTION_CLASSIFICATION = {
     "packages/predict/sources/strike_exposure/range_codec.move::prefix_limit_tick": GUARD_ONLY,
     # Integer balance splits are exact custody operations, not dust births.
     "packages/predict/sources/expiry_cash.move::release_surplus": EXACT_CUSTODY,
+    "packages/predict/sources/expiry_cash.move::release_all_surplus": EXACT_CUSTODY,
     "packages/predict/sources/expiry_cash.move::pay_authorized": EXACT_CUSTODY,
     "packages/predict/sources/expiry_market.move::release_fee_incentives": EXACT_CUSTODY,
     "packages/predict/sources/expiry_market.move::settle_mint_payment": EXACT_CUSTODY,
@@ -171,7 +172,6 @@ EXACT_ACCOUNTING_FUNCTIONS = {
     "packages/predict/sources/expiry_cash.move::resolve_rebate_reserve_for_fee_basis",
     "packages/predict/sources/expiry_market.move::compute_mint_quote",
     "packages/predict/sources/expiry_market.move::redeem",
-    "packages/predict/sources/expiry_market.move::release_settled_pool_cash",
     "packages/predict/sources/order.move::decode_floor_shares",
     "packages/predict/sources/order.move::decode_quantity_lots",
     "packages/predict/sources/order.move::encode_floor_shares_key",

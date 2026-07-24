@@ -802,32 +802,36 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   releases and cached prices remain bit-identical.
 - **Response:** compute `free_cash = cash - rebate_reserve` exactly; validate
   `lower_tick < higher_tick` before cached lookup and return the memo-center
-  difference without a clamp; rely on `release_surplus`'s leaf precondition
-  instead of rechecking backing in its caller. Keep the uncached range-price
+  difference without a clamp; compute a settled market's entire releasable
+  complement once inside `release_all_surplus`. Keep the uncached range-price
   clamp because externally supplied pricing surfaces do not yet have the same
   monotonicity proof.
 - **Reasoning:** protocol-controlled state should expose a broken invariant,
   not manufacture a plausible zero. Valid expiry cash always covers at least
   its rebate reserve. The payout walk inserts cached UP centers in ascending tick
   order and rejects an increase, so a valid cached range is nonnegative.
-  `release_surplus` requires `cash_before ≥ required_cash + amount`, which
-  directly proves `cash_after ≥ required_cash`.
+  `release_surplus` requires `cash_before ≥ required_cash + amount`, while
+  `release_all_surplus` requires `cash_before ≥ required_cash` and releases the
+  exact difference; both directly prove `cash_after ≥ required_cash`.
 - **Duty inventory:** the removed free-cash saturation only hid
   `cash < rebate_reserve`; cash joins cannot violate the inequality, fee
   collection adds at least the new reserve, and every authorized payment either
   updates its paired liability/reserve first and checks backing or uses
-  `release_surplus`. The cached clamp hid invalid bounds or a broken monotone
+  `release_surplus` or `release_all_surplus`. The cached clamp hid invalid bounds or a broken monotone
   memo; the new range guard, order validation, in-order traversal, and
   `price_and_cache` monotonicity check own those duties. The removed caller
-  backing check duplicated the leaf's stronger precondition and owned no
-  independent flow gate.
+  settled-cash calculation and second payout walk duplicated the leaf's exact
+  complement and owned no independent flow gate.
 - **Risk profile:** `BEST-GUESS` only for whether future package changes could
   violate these writer inventories. The current exact-subtraction and
   post-release proofs are deterministic.
 - **Pinning tests:** `expiry_cash_tests.move` —
   `free_cash_at_rebate_reserve_is_zero`,
   `free_cash_below_rebate_reserve_aborts`, and
-  `release_exact_surplus_preserves_payout_and_rebate_backing`;
+  `release_exact_surplus_preserves_payout_and_rebate_backing`,
+  `release_all_surplus_leaves_exact_required_cash`,
+  `release_all_surplus_at_exact_backing_returns_zero`, and
+  `release_all_surplus_underfunded_aborts`;
   `pricing_guard_tests.move` —
   `cached_range_price_preserves_direct_range_center_and_error`,
   `cached_range_price_with_equal_bounds_aborts_before_lookup`, and
@@ -835,8 +839,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reopen when:** expiry cash or rebate basis gains a new writer; an authorized
   payment path stops maintaining backing; `PriceMemo` gains another producer or
   stops enforcing insertion order and non-increasing centers; cached ranges gain
-  a caller outside validated order terms; or `release_surplus` weakens its
-  precondition.
+  a caller outside validated order terms; or either surplus-release helper
+  weakens its precondition.
 
 ---
 
