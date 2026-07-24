@@ -912,3 +912,33 @@ fun revoked_pause_cap_cannot_pause_trading() {
     registry::pause_trading_pause_cap(&mut config, &reg, &pause_cap);
     abort 999
 }
+
+#[test]
+fun pause_cap_freezes_protocol() {
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    let pause_cap = reg.mint_pause_cap(&admin_cap, scenario.ctx());
+    assert!(!config.frozen());
+    registry::freeze_protocol_pause_cap(&mut config, &reg, &pause_cap);
+    assert!(config.frozen());
+    // PauseCap is force-on only; only the AdminCap lifts the freeze.
+    config.set_frozen(&admin_cap, false);
+    assert!(!config.frozen());
+
+    pause_cap.destroy();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EPauseCapNotValid)]
+fun revoked_pause_cap_cannot_freeze_protocol() {
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    let pause_cap = reg.mint_pause_cap(&admin_cap, scenario.ctx());
+    reg.revoke_pause_cap(&admin_cap, pause_cap.id());
+    // A revoked pause cap can no longer force the freeze.
+    registry::freeze_protocol_pause_cap(&mut config, &reg, &pause_cap);
+    abort 999
+}

@@ -59,6 +59,34 @@ fun expiry_market_mint_pause_defaults_false_and_toggles() {
     fx.finish();
 }
 
+#[test]
+fun frozen_defaults_false_and_admin_toggles() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    assert!(!config.frozen());
+    config.set_frozen(&admin_cap, true);
+    assert!(config.frozen());
+    // Admin lifts the freeze while frozen: `set_frozen` is intentionally ungated,
+    // so an engaged freeze never bricks its own recovery.
+    config.set_frozen(&admin_cap, false);
+    assert!(!config.frozen());
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun frozen_blocks_version_gated_flow() {
+    // The freeze folds into `assert_version`, so every version-gated flow aborts
+    // while frozen. `set_ewma_enabled` is a representative gated entrypoint.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_frozen(&admin_cap, true);
+    config.set_ewma_enabled(&admin_cap, true);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = protocol_config::EVersionWatermarkNotAdvanced)]
 fun bump_version_watermark_at_current_version_aborts() {
     // At genesis the watermark already equals the running `current_version!()`, so
