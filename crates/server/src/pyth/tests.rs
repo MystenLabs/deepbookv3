@@ -457,11 +457,20 @@ fn chart_history_canonicalizes_tradingview_resolution_aliases() {
 }
 
 #[test]
-fn chart_history_requires_only_pyth_required_parameters() {
-    assert!(ChartHistoryQuery::parse(Some(
-        "symbol=Crypto.BTC%2FUSD&resolution=1&from=0&to=604800"
-    ))
+fn chart_history_requires_pyth_parameters_and_enforces_range() {
+    let max_range = Duration::from_secs(86_400);
+
+    // The configured boundary is inclusive.
+    assert!(ChartHistoryQuery::parse(
+        Some("symbol=Crypto.BTC%2FUSD&resolution=1&from=0&to=86400"),
+        max_range
+    )
     .is_ok());
+    assert!(ChartHistoryQuery::parse(
+        Some("symbol=Crypto.BTC%2FUSD&resolution=1&from=0&to=86401"),
+        max_range,
+    )
+    .is_err());
 
     for query in [
         "resolution=1&from=0&to=60",
@@ -469,8 +478,22 @@ fn chart_history_requires_only_pyth_required_parameters() {
         "symbol=Crypto.BTC%2FUSD&resolution=1&to=60",
         "symbol=Crypto.BTC%2FUSD&resolution=1&from=0",
     ] {
-        assert!(ChartHistoryQuery::parse(Some(query)).is_err());
+        assert!(ChartHistoryQuery::parse(Some(query), max_range).is_err());
     }
+}
+
+#[test]
+fn chart_history_max_range_must_be_nonzero() {
+    let mut config = test_config(Vec::new());
+    config.chart_history.max_range = Duration::ZERO;
+
+    let error = PythProxy::new(Url::parse(DEFAULT_PRO_URL).unwrap(), None, config)
+        .err()
+        .expect("zero maximum range must be rejected");
+    assert_eq!(
+        error.to_string(),
+        "Pyth Pro chart history maximum range must be greater than zero"
+    );
 }
 
 #[tokio::test]
@@ -486,6 +509,7 @@ async fn chart_history_rejects_unsupported_queries_without_loading() {
         "symbol=Crypto.ETH%2FUSD&resolution=1&from=1700000000&to=1700003600",
         "symbol=Crypto.BTC%2FUSD&resolution=3&from=1700000000&to=1700003600",
         "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700003600&to=1700000000",
+        "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700100000",
     ] {
         let response = reqwest::get(
             server_url

@@ -126,6 +126,8 @@ Configure the server with:
   defaults to `60`.
 - `PYTH_PRO_CHART_HISTORY_CACHE_MAX_ENTRIES` — maximum chart-history responses
   cached per process; defaults to `256`.
+- `PYTH_PRO_CHART_HISTORY_MAX_RANGE_SECS` — maximum `to - from` span accepted
+  by the chart-history route; defaults to `86400` (24 hours).
 
 One background task requests all configured latest feeds in a single Pyth Pro
 call every polling interval, then atomically publishes the parsed snapshot.
@@ -142,7 +144,9 @@ Chart history uses a separate bounded Moka cache keyed by canonical
 are normalized so equivalent requests share an entry. Moka coalesces concurrent
 misses for the same key into one authenticated History API request. Successful
 responses are cached as serialized bytes, so cache hits do not clone or
-re-serialize the JSON. Errors and rate limits are not cached.
+re-serialize the JSON. Requests exceeding the configured maximum range are
+rejected before contacting Pyth, bounding upstream work and cached response
+size. Errors and rate limits are not cached.
 
 The familiar route and query shape is intended to make migration simple, but
 the parsed-only response is not a drop-in replacement for

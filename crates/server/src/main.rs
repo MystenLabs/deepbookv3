@@ -4,9 +4,9 @@
 use clap::Parser;
 use deepbook_server::pyth::{
     PythChartHistoryConfig, PythProConfig, DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES,
-    DEFAULT_CHART_HISTORY_CACHE_TTL_SECS, DEFAULT_HISTORY_CACHE_MAX_ENTRIES,
-    DEFAULT_HISTORY_CACHE_TTL_SECS, DEFAULT_MAX_STALENESS_MS, DEFAULT_POLL_INTERVAL_MS,
-    DEFAULT_PRO_HISTORY_URL, DEFAULT_PRO_URL,
+    DEFAULT_CHART_HISTORY_CACHE_TTL_SECS, DEFAULT_CHART_HISTORY_MAX_RANGE_SECS,
+    DEFAULT_HISTORY_CACHE_MAX_ENTRIES, DEFAULT_HISTORY_CACHE_TTL_SECS, DEFAULT_MAX_STALENESS_MS,
+    DEFAULT_POLL_INTERVAL_MS, DEFAULT_PRO_HISTORY_URL, DEFAULT_PRO_URL,
 };
 use deepbook_server::server::run_server;
 use std::{net::SocketAddr, time::Duration};
@@ -92,6 +92,9 @@ struct Args {
     /// Maximum chart-history responses cached in this process.
     #[clap(env, long, default_value_t = DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES)]
     pyth_pro_chart_history_cache_max_entries: u64,
+    /// Maximum chart-history query range, in seconds.
+    #[clap(env, long, default_value_t = DEFAULT_CHART_HISTORY_MAX_RANGE_SECS)]
+    pyth_pro_chart_history_max_range_secs: u64,
 }
 
 #[tokio::main]
@@ -124,6 +127,7 @@ async fn main() -> Result<(), anyhow::Error> {
         pyth_pro_history_symbols,
         pyth_pro_chart_history_cache_ttl_secs,
         pyth_pro_chart_history_cache_max_entries,
+        pyth_pro_chart_history_max_range_secs,
     } = Args::parse();
     // Read the secret from the environment only so it never needs to appear in
     // process arguments or clap's help output.
@@ -139,6 +143,7 @@ async fn main() -> Result<(), anyhow::Error> {
             symbols: pyth_pro_history_symbols,
             cache_ttl: Duration::from_secs(pyth_pro_chart_history_cache_ttl_secs),
             cache_max_entries: pyth_pro_chart_history_cache_max_entries,
+            max_range: Duration::from_secs(pyth_pro_chart_history_max_range_secs),
         },
     };
 

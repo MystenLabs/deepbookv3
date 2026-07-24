@@ -184,7 +184,9 @@ paths:
       description: |
         TradingView-compatible chart history backed by the authenticated Pyth
         Pro History API. Successful responses are cached by canonical symbol,
-        resolution, and minute-aligned bounds.
+        resolution, and minute-aligned bounds. Requests exceeding the
+        server-configured maximum range (24 hours by default) are rejected
+        before contacting Pyth.
       operationId: getPythChartHistory
       parameters:
         - in: query
@@ -223,7 +225,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PythTradingViewHistory"
         "400":
-          description: Invalid query or symbol is not configured.
+          description: Invalid query, range exceeds the configured maximum, or symbol is not configured.
         "429":
           description: Pyth Pro rate limit response.
         "502":

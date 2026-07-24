@@ -57,6 +57,7 @@ pub struct PythProxy {
     // that cross-key batch the way it can for one chart-history response.
     history_load_guards: Cache<u64, Arc<Mutex<()>>>,
     chart_history_symbols: Arc<HashSet<String>>,
+    chart_history_max_range: Duration,
     chart_history: Cache<ChartHistoryQuery, Bytes>,
 }
 
@@ -90,6 +91,11 @@ impl PythProxy {
             config.chart_history.cache_max_entries > 0,
             "Pyth Pro chart history cache capacity must be greater than zero"
         );
+        anyhow::ensure!(
+            !config.chart_history.max_range.is_zero(),
+            "Pyth Pro chart history maximum range must be greater than zero"
+        );
+
         config.feed_ids.sort_unstable();
         config.feed_ids.dedup();
         config.chart_history.symbols = config
@@ -154,6 +160,7 @@ impl PythProxy {
             history,
             history_load_guards,
             chart_history_symbols: Arc::new(config.chart_history.symbols.into_iter().collect()),
+            chart_history_max_range: config.chart_history.max_range,
             chart_history,
         })
     }
@@ -508,7 +515,7 @@ async fn tradingview_history(
     State(proxy): State<PythProxy>,
     RawQuery(query): RawQuery,
 ) -> Response {
-    match ChartHistoryQuery::parse(query.as_deref()) {
+    match ChartHistoryQuery::parse(query.as_deref(), proxy.chart_history_max_range) {
         Ok(query) => proxy.chart_history(query).await,
         Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
     }
