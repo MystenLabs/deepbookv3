@@ -763,6 +763,14 @@ fun lp_pool_value_approx(
     if (error > std::u64::max_value!() - center) {
         return approx::from_certified_parts(i64::from_u64(pool_center), std::u64::max_value!())
     };
+    let upper_active_expiry_value = center + error;
+    let max = std::u64::max_value!();
+    if (
+        upper_active_expiry_value > max - vault.expiry_accounting.idle_balance()
+            || upper_active_expiry_value > max - vault.expiry_accounting.profit_basis_credits()
+    ) {
+        return approx::from_certified_parts(i64::from_u64(pool_center), max)
+    };
 
     // Active NAV is the one uncertain input on both sides of the protocol-profit
     // exclusion. Evaluate that shared input at its certified endpoints instead of
@@ -777,7 +785,7 @@ fun lp_pool_value_approx(
     let upper = lp_pool_value_at_active_nav(
         vault,
         protocol_reserve_profit_share,
-        center + error,
+        upper_active_expiry_value,
     );
     let pool_error = (pool_center - lower).max(upper - pool_center);
     approx::from_certified_parts(i64::from_u64(pool_center), pool_error)

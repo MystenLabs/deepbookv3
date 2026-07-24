@@ -1136,9 +1136,9 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-// Row counts after which the runner synthesizes a privileged LP flush. Defaults to
-// rows 300 and 999 (the chosen batched cadence); SIM_FLUSH_AFTER="a,b,..." overrides
-// it for fast smoke runs.
+// Row counts after which the runner synthesizes a privileged LP flush. Full runs
+// default to rows 300 and 999; a shorter run flushes on its final row so benchmark
+// smoke tests still exercise pool valuation and queue draining.
 function flushCheckpoints(rowCount: number, defaultToFinalRow = false): Set<number> {
     const raw = process.env.SIM_FLUSH_AFTER;
     if (raw) {
@@ -1149,7 +1149,7 @@ function flushCheckpoints(rowCount: number, defaultToFinalRow = false): Set<numb
                 .filter((n) => Number.isInteger(n) && n > 0),
         );
     }
-    if (defaultToFinalRow) return new Set([rowCount]);
+    if (defaultToFinalRow || rowCount < 300) return new Set([rowCount]);
     return new Set([300, 999]);
 }
 

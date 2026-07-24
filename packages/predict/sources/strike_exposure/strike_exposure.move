@@ -335,12 +335,11 @@ public(package) fun quote_mint_terms(
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
             let entry_value = math::mul_down(entry_probability, mid * lot);
-            if (
-                strike_exposure_config::net_premium_from_entry_value(
-                    entry_value,
-                    leverage,
-                ) <= max_premium
-            ) {
+            let net_premium = strike_exposure_config::net_premium_from_entry_value(
+                entry_value,
+                leverage,
+            );
+            if (net_premium <= max_premium) {
                 lo = mid
             } else {
                 hi = mid - 1
@@ -432,13 +431,12 @@ public(package) fun quote_close(
     // read this one observation.
     let range_probability = exposure.order_range_price(pricer.borrow(), order);
     let gross_value = math::mul_down(range_probability, order.quantity());
-    if (
-        strike_exposure_config::is_liquidatable(
-            gross_value,
-            order.floor_shares(),
-            exposure.config.liquidation_ltv(),
-        )
-    ) {
+    let is_liquidatable = strike_exposure_config::is_liquidatable(
+        gross_value,
+        order.floor_shares(),
+        exposure.config.liquidation_ltv(),
+    );
+    if (is_liquidatable) {
         return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
     exposure.close_terms(
@@ -722,13 +720,12 @@ fun liquidate_order_if_under_floor(
     liquidated_at_ms: u64,
 ): bool {
     let gross_value = exposure.gross_order_value(pricer, order);
-    if (
-        !strike_exposure_config::is_liquidatable(
-            gross_value,
-            order.floor_shares(),
-            exposure.config.liquidation_ltv(),
-        )
-    ) return false;
+    let is_liquidatable = strike_exposure_config::is_liquidatable(
+        gross_value,
+        order.floor_shares(),
+        exposure.config.liquidation_ltv(),
+    );
+    if (!is_liquidatable) return false;
 
     exposure.apply_liquidation(pricer, order, gross_value, liquidated_at_ms);
     true

@@ -568,6 +568,11 @@ independent errors. Generic ball subtraction would remain sound but would count
 the same radius once through gross value and again through the profit exclusion,
 causing avoidable rejections at the 1% pool-NAV gate.
 
+Both endpoint additions must remain representable in the canonical `u64`
+domain. If the upper endpoint lacks headroom against either idle cash or the
+sticky cumulative credit basis, the implementation returns the maximum error
+radius, and the NAV precision gate rejects the certificate before value moves.
+
 ### Theorem 7.3 — NAV endpoints prevent both LP transfer directions
 
 Let true pool NAV `V` satisfy

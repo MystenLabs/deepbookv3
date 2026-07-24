@@ -84,13 +84,12 @@ public(package) fun correction_value(
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.
-        let cap = if (
-            strike_exposure_config::is_liquidatable(
-                range_value.magnitude(),
-                order.floor_shares(),
-                liquidation_ltv,
-            )
-        ) {
+        let is_liquidatable = strike_exposure_config::is_liquidatable(
+            range_value.magnitude(),
+            order.floor_shares(),
+            liquidation_ltv,
+        );
+        let cap = if (is_liquidatable) {
             range_value
         } else {
             range_value.clamp_upper(order.floor_shares())

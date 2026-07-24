@@ -1742,13 +1742,19 @@ def compute_pool_value_approx(
     center = pool_value_at_active_nav(state, active.center)
     if active.error > U64_MAX - active.center:
         return ApproxValue(center, U64_MAX), active
+    upper_active = active.center + active.error
+    if (
+        upper_active > U64_MAX - state["vault_idle_balance"]
+        or upper_active > U64_MAX - state["profit_basis_credits"]
+    ):
+        return ApproxValue(center, U64_MAX), active
     lower = pool_value_at_active_nav(
         state,
         max(0, active.center - active.error),
     )
     upper = pool_value_at_active_nav(
         state,
-        active.center + active.error,
+        upper_active,
     )
     return (
         ApproxValue(
@@ -3270,6 +3276,8 @@ def flush_checkpoints(row_count: int) -> set[int]:
             for part in raw.split(",")
             if (value := part.strip()).isdigit() and int(value) > 0
         }
+    if row_count < 300:
+        return {row_count}
     return {checkpoint for checkpoint in (300, 999) if checkpoint <= row_count}
 
 
