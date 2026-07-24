@@ -165,9 +165,9 @@ class Generator:
         # The raw `forward` is written to the CSV (localnet pushes it to
         # update_block_scholes_prices), but pricing must use the value the
         # contracts actually quote with: forward re-derived from the live Pyth
-        # spot via pricing::load_live_pricer. Mirror that here so admission decisions
-        # (dynamic leverage cap, LTV, min premium) match localnet and the replay.
-        pricing_forward = replay.live_forward(snapshot["spot"], forward)
+        # spot via pricing::resolve_live_pricer. Generated rows push the same
+        # snapshot spot to Pyth and Block Scholes, so pass it in both roles here.
+        pricing_forward = replay.live_forward(snapshot["spot"], forward, snapshot["spot"])
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
             is_up = bool(self.rng.randrange(2))
