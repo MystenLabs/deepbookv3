@@ -539,6 +539,126 @@ def mul_div_round_up(a: int, b: int, c: int) -> int:
     return (a * b + c - 1) // c
 
 
+def stake_benefit_ratio(
+    active_stake: int,
+    lower_benefit_power: int,
+    upper_benefit_power: int,
+) -> int:
+    if active_stake >= upper_benefit_power:
+        return FLOAT_SCALING
+    half = FLOAT_SCALING // 2
+    if active_stake <= lower_benefit_power:
+        return mul_div_round_down(
+            half,
+            active_stake,
+            lower_benefit_power,
+        )
+    return half + mul_div_round_down(
+        half,
+        active_stake - lower_benefit_power,
+        upper_benefit_power - lower_benefit_power,
+    )
+
+
+def fee_after_discount_fraction(
+    amount: int,
+    discount_fraction: int,
+) -> int:
+    return amount - deepbook_mul(amount, discount_fraction)
+
+
+def fee_amount_after_discount(
+    amount: int,
+    active_stake: int,
+    lower_benefit_power: int,
+    upper_benefit_power: int,
+    max_fee_discount: int,
+) -> int:
+    benefit = stake_benefit_ratio(
+        active_stake,
+        lower_benefit_power,
+        upper_benefit_power,
+    )
+    discount_fraction = deepbook_mul(benefit, max_fee_discount)
+    return fee_after_discount_fraction(amount, discount_fraction)
+
+
+def stake_rebate_amount(
+    eligible_rebate: int,
+    active_stake: int,
+    lower_benefit_power: int,
+    upper_benefit_power: int,
+) -> int:
+    benefit = stake_benefit_ratio(
+        active_stake,
+        lower_benefit_power,
+        upper_benefit_power,
+    )
+    return deepbook_mul(eligible_rebate, benefit)
+
+
+def fee_incentive_subsidy_amount(
+    fee_amount: int,
+    subsidy_rate: int,
+    available_reserve: int,
+) -> int:
+    return min(
+        deepbook_mul(fee_amount, subsidy_rate),
+        available_reserve,
+    )
+
+
+def builder_fee_amount(
+    fee_amount: int,
+    quantity: int,
+    builder_present: bool,
+    builder_fee_multiplier: int,
+    max_builder_fee_rate: int,
+) -> int:
+    if not builder_present:
+        return 0
+    return min(
+        deepbook_mul(fee_amount, builder_fee_multiplier),
+        deepbook_mul(quantity, max_builder_fee_rate),
+    )
+
+
+def quote_supply_shares(
+    amount: int,
+    total_supply: int,
+    supply_pool_value: int,
+    supply_executable: bool = True,
+) -> int | None:
+    if not supply_executable or supply_pool_value == 0:
+        return None
+    shares = mul_div_round_down(
+        amount,
+        total_supply,
+        supply_pool_value,
+    )
+    if shares == 0 or shares > POS_INF_STRIKE:
+        return None
+    return shares
+
+
+def quote_withdraw_dusdc(
+    shares: int,
+    withdraw_pool_value: int,
+    total_supply: int,
+    withdraw_executable: bool = True,
+) -> int | None:
+    if not withdraw_executable or total_supply == 0:
+        return None
+    payout = mul_div_round_down(
+        shares,
+        withdraw_pool_value,
+        total_supply,
+    )
+    if payout == 0 or payout > POS_INF_STRIKE:
+        return None
+    return payout
+
+
 def live_forward(
     pyth_spot: int,
     block_scholes_forward: int,

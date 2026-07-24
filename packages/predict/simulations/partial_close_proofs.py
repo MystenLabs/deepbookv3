@@ -56,10 +56,6 @@ def _is_liquidatable(
     )
 
 
-def _fee_after_discount(amount: int, discount_fraction: int) -> int:
-    return amount - replay.deepbook_mul(amount, discount_fraction)
-
-
 def _close_step(
     *,
     probability: int,
@@ -95,12 +91,18 @@ def _close_step(
         close_quantity,
     )
     capped_fee = min(raw_fee, redeem_amount)
-    charged_fee = _fee_after_discount(capped_fee, discount_fraction)
+    charged_fee = replay.fee_after_discount_fraction(
+        capped_fee,
+        discount_fraction,
+    )
     builder_fee = 0
     if builder_present:
-        builder_fee = min(
-            replay.deepbook_mul(charged_fee, BUILDER_FEE_MULTIPLIER),
-            replay.deepbook_mul(close_quantity, MAX_BUILDER_FEE_RATE),
+        builder_fee = replay.builder_fee_amount(
+            charged_fee,
+            close_quantity,
+            True,
+            BUILDER_FEE_MULTIPLIER,
+            MAX_BUILDER_FEE_RATE,
         )
         builder_fee = min(builder_fee, redeem_amount - charged_fee)
     penalty_fee = 0

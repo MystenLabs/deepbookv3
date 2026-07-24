@@ -605,7 +605,15 @@ def quote_supply(
     pool_value: int,
     rounding: str,
 ) -> int | None:
-    if not is_executable_mark(pool_value, total_supply):
+    executable = is_executable_mark(pool_value, total_supply)
+    if rounding == "down":
+        return replay.quote_supply_shares(
+            amount,
+            total_supply,
+            pool_value,
+            executable,
+        )
+    if not executable:
         return None
     shares = _round_fraction(Fraction(amount * total_supply, pool_value), rounding)
     return shares if shares > 0 else None
@@ -617,7 +625,15 @@ def quote_withdraw(
     pool_value: int,
     rounding: str,
 ) -> int | None:
-    if not is_executable_mark(pool_value, total_supply):
+    executable = is_executable_mark(pool_value, total_supply)
+    if rounding == "down":
+        return replay.quote_withdraw_dusdc(
+            shares,
+            pool_value,
+            total_supply,
+            executable,
+        )
+    if not executable:
         return None
     payout = _round_fraction(Fraction(shares * pool_value, total_supply), rounding)
     return payout if payout > 0 else None

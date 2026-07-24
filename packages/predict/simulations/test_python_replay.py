@@ -8,6 +8,68 @@ sys.path.insert(0, str(SIMULATIONS_DIR))
 import python_replay as replay
 
 
+class MoneyKernelParityTests(unittest.TestCase):
+    def test_stake_discount_uses_the_staged_floor_complement(self) -> None:
+        benefit = replay.stake_benefit_ratio(
+            73_000_001,
+            100_000_003,
+            300_000_011,
+        )
+        discount = replay.deepbook_mul(benefit, 250_000_000)
+
+        self.assertEqual(
+            replay.fee_amount_after_discount(
+                17_000_003,
+                73_000_001,
+                100_000_003,
+                300_000_011,
+                250_000_000,
+            ),
+            replay.fee_after_discount_fraction(17_000_003, discount),
+        )
+
+    def test_builder_fee_floors_both_caps_before_minimum(self) -> None:
+        self.assertEqual(
+            replay.builder_fee_amount(
+                17_000_003,
+                31_000_009,
+                True,
+                200_000_000,
+                50_000_000,
+            ),
+            min(
+                replay.deepbook_mul(17_000_003, 200_000_000),
+                replay.deepbook_mul(31_000_009, 50_000_000),
+            ),
+        )
+
+    def test_lp_quotes_share_the_fused_floor_kernel(self) -> None:
+        self.assertEqual(
+            replay.quote_supply_shares(
+                5_000_003,
+                500_000_000_000,
+                499_999_999_937,
+            ),
+            replay.mul_div_round_down(
+                5_000_003,
+                500_000_000_000,
+                499_999_999_937,
+            ),
+        )
+        self.assertEqual(
+            replay.quote_withdraw_dusdc(
+                5_000_003,
+                499_999_999_911,
+                500_000_000_000,
+            ),
+            replay.mul_div_round_down(
+                5_000_003,
+                499_999_999_911,
+                500_000_000_000,
+            ),
+        )
+
+
 class NetPremiumParityTests(unittest.TestCase):
     def test_fractional_leverage_rounds_net_premium_up(self) -> None:
         entry_probability = 100_000_000

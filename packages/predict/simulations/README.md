@@ -80,7 +80,7 @@ high gas budget because this mode does not benchmark individual mint gas;
 
 A source-pinned Python proof bundle establishes the money-math dust, algebra, and
 saturation properties of the `predict` package. It is anchored to contract
-baseline commit `66b49c5d` and reads the Move sources directly. The SHA-256
+baseline commit `4d5206a3` and reads the Move sources directly. The SHA-256
 content digest of `packages/predict/sources/**` is a freshness gate, while stable
 call-site identities and exact operator bindings independently connect each
 rounding certificate to the implemented Move expression. A source edit, digest
@@ -110,11 +110,15 @@ beside them, and its source census classifies fixed-point, raw-integer, clamp,
 `algebra_minimality.py` additionally proves the direct wide-to-half variance
 projection with a quotient-remainder identity and a mutation witness for its
 required rounding atom. `math_dust_proofs.py`
-gives each money-collapse function an exact-rational rounding-direction certificate,
+uses `python_replay.py` as the single integer parity kernel while retaining independent
+`Fraction` formulas for each ideal real-number value. It gives every money-collapse function an exact-rational rounding-direction certificate,
 names its residual owner, and verifies its exact source operator bindings; its
-negative-control test flips the trading-fee direction and requires the aggregate
-proof to turn red. `economic_lifecycle_proofs.py` and `payout_tree_proofs.py`
-reconcile cash-state lifecycles and bounded live/settled aggregation, including the
+negative-control tests flip both the Move trading-fee direction and the canonical
+integer parity kernel and require the aggregate proof to turn red. The aggregate
+is complete only when the source census is fresh, every binding and exact relation
+holds, and no protocol-bias mismatch remains. `economic_lifecycle_proofs.py` and `payout_tree_proofs.py`
+consume that same integer kernel for implemented results and reconcile them against
+independent exact ideals and cash-state lifecycles, including the
 current one-product signed shared-boundary valuation and the universal associative
 max-prefix recurrence. `saturation_proofs.py`
 classifies every remaining `saturating_sub`/`saturating_add` site and retains the

@@ -15,7 +15,7 @@ from typing import Any
 import python_replay as replay
 
 SCHEMA_VERSION = "predict_algebra_trace_v2"
-CONTRACT_BASELINE = "66b49c5ddc8495cf58d8cc00b27d28fce3c8f252"
+CONTRACT_BASELINE = "4d5206a3a197e5b48cacf84c7fcb4ba18fb54a55"
 PRICING_PROFILE = "canonical_premium_protocol_fees_retained_1e18_sqrt_nav_bid_ask"
 F = replay.FLOAT_SCALING
 U64_MAX = (1 << 64) - 1

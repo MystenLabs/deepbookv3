@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import unittest
+from unittest.mock import patch
 
 import math_dust_proofs as proofs
 import money_math_inventory as inventory
@@ -101,6 +102,28 @@ class MathDustProofTests(unittest.TestCase):
         )
         self.assertEqual(mismatch["function_id"], function_id)
         self.assertEqual(mismatch["actual_sha256"], "mutated-operands")
+
+    def test_integer_parity_kernel_mutation_turns_certificate_red(
+        self,
+    ) -> None:
+        floor_product = proofs.replay.deepbook_mul
+        with patch.object(
+            proofs.replay,
+            "deepbook_mul_up",
+            side_effect=floor_product,
+        ):
+            bundle = proofs.build_proof_bundle()
+
+        trading_fee = next(
+            row
+            for row in bundle["certificates"]
+            if row["name"] == "trading_fee"
+        )
+        self.assertFalse(trading_fee["relation_holds"])
+        self.assertFalse(bundle["all_relations_hold"])
+        self.assertFalse(
+            bundle["complete_for_inventoried_money_collapse_functions"]
+        )
 
 
 if __name__ == "__main__":

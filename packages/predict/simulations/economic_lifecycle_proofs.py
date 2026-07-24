@@ -13,14 +13,6 @@ import python_replay as replay
 F = replay.FLOAT_SCALING
 
 
-def _floor(value: Fraction) -> int:
-    return value.numerator // value.denominator
-
-
-def _ceil(value: Fraction) -> int:
-    return -(-value.numerator // value.denominator)
-
-
 def _fraction_text(value: Fraction) -> str:
     return f"{value.numerator}/{value.denominator}"
 
@@ -85,12 +77,16 @@ def benefit_ratio(
     half = F // 2
     if active_stake <= lower:
         exact = Fraction(half * active_stake, lower)
-        return exact, _floor(exact)
-    exact = Fraction(half) + Fraction(
-        half * (active_stake - lower),
-        upper - lower,
+    else:
+        exact = Fraction(half) + Fraction(
+            half * (active_stake - lower),
+            upper - lower,
+        )
+    return exact, replay.stake_benefit_ratio(
+        active_stake,
+        lower,
+        upper,
     )
-    return exact, _floor(exact)
 
 
 def discounted_fee(
@@ -102,10 +98,16 @@ def discounted_fee(
 ) -> dict[str, Any]:
     benefit_exact, benefit = benefit_ratio(active_stake, lower, upper)
     discount_fraction_exact = Fraction(benefit * max_discount, F)
-    discount_fraction = _floor(discount_fraction_exact)
+    discount_fraction = replay.deepbook_mul(benefit, max_discount)
     discount_amount_exact = Fraction(amount * discount_fraction, F)
-    discount_amount = _floor(discount_amount_exact)
-    actual = amount - discount_amount
+    discount_amount = replay.deepbook_mul(amount, discount_fraction)
+    actual = replay.fee_amount_after_discount(
+        amount,
+        active_stake,
+        lower,
+        upper,
+        max_discount,
+    )
     exact_complement = Fraction(amount) - discount_amount_exact
     return {
         "benefit_exact": benefit_exact,
@@ -134,11 +136,14 @@ def run_mint_payment_lifecycle() -> dict[str, Any]:
     penalty_rate = 21_000_007
 
     entry_exact = Fraction(probability * quantity, F)
-    entry_value = _floor(entry_exact)
+    entry_value = replay.deepbook_mul(probability, quantity)
     premium_exact = Fraction(entry_value * F, leverage)
-    net_premium = _ceil(premium_exact)
+    net_premium = replay.net_premium_from_entry_value(
+        entry_value,
+        leverage,
+    )
     raw_fee_exact = Fraction(fee_rate * quantity, F)
-    raw_fee = _ceil(raw_fee_exact)
+    raw_fee = replay.deepbook_mul_up(fee_rate, quantity)
     discount = discounted_fee(
         raw_fee,
         active_stake=73_000_001,
@@ -148,15 +153,22 @@ def run_mint_payment_lifecycle() -> dict[str, Any]:
     )
     trading_fee = int(discount["actual"])
     subsidy_exact = Fraction(trading_fee * 100_000_000, F)
-    subsidy = min(_floor(subsidy_exact), before.fee_incentive_reserve)
+    subsidy = replay.fee_incentive_subsidy_amount(
+        trading_fee,
+        100_000_000,
+        before.fee_incentive_reserve,
+    )
     builder_share_exact = Fraction(trading_fee * 200_000_000, F)
     builder_cap_exact = Fraction(quantity * 50_000_000, F)
-    builder_fee = min(
-        _floor(builder_share_exact),
-        _floor(builder_cap_exact),
+    builder_fee = replay.builder_fee_amount(
+        trading_fee,
+        quantity,
+        True,
+        200_000_000,
+        50_000_000,
     )
     penalty_exact = Fraction(penalty_rate * quantity, F)
-    penalty = _ceil(penalty_exact)
+    penalty = replay.deepbook_mul_up(penalty_rate, quantity)
     trader_fee = trading_fee - subsidy
     all_in = net_premium + trader_fee + builder_fee + penalty
 
@@ -285,10 +297,19 @@ def run_live_redeem_lifecycle() -> dict[str, Any]:
         Fraction(fee * 200_000_000, F),
         Fraction(close_quantity * 50_000_000, F),
     )
-    builder_fee = min(_floor(builder_exact), redeem_amount - fee)
+    builder_fee = min(
+        replay.builder_fee_amount(
+            fee,
+            close_quantity,
+            True,
+            200_000_000,
+            50_000_000,
+        ),
+        redeem_amount - fee,
+    )
     penalty_exact = Fraction(21_000_007 * close_quantity, F)
     penalty = min(
-        _floor(penalty_exact),
+        replay.deepbook_mul_up(21_000_007, close_quantity),
         redeem_amount - fee - builder_fee,
     )
     trader_proceeds = redeem_amount - fee - builder_fee - penalty
@@ -320,8 +341,8 @@ def run_live_redeem_lifecycle() -> dict[str, Any]:
             name="redeem_ewma_penalty",
             exact=penalty_exact,
             actual=penalty,
-            owner="trader",
-            policy="uniform round-down before the payout clamp",
+            owner="expiry_cash",
+            policy="final penalty-rate conversion rounds protocol inflow upward",
         ),
     ]
     invariants = {
@@ -373,7 +394,10 @@ def run_rebate_lifecycle() -> dict[str, Any]:
         unresolved_fee_basis=trading_fees_paid,
     )
     reserve_exact = Fraction(trading_fees_paid * 200_000_000, F)
-    resolved_reserve = _floor(reserve_exact)
+    resolved_reserve = replay.deepbook_mul(
+        trading_fees_paid,
+        200_000_000,
+    )
     eligible_rebate = max(0, resolved_reserve - gross_profit)
     benefit_exact, benefit = benefit_ratio(
         active_stake=73_000_001,
@@ -381,7 +405,12 @@ def run_rebate_lifecycle() -> dict[str, Any]:
         upper=300_000_011,
     )
     rebate_exact = Fraction(eligible_rebate * benefit, F)
-    rebate = _floor(rebate_exact)
+    rebate = replay.stake_rebate_amount(
+        eligible_rebate,
+        73_000_001,
+        100_000_003,
+        300_000_011,
+    )
     residual_return = resolved_reserve - rebate
     after = CashState(
         trader=before.trader + rebate,
@@ -444,6 +473,11 @@ def staged_premium(
     *,
     scale: int = F,
 ) -> int:
+    if scale == F:
+        return replay.net_premium_from_entry_value(
+            replay.deepbook_mul(probability, quantity),
+            leverage,
+        )
     entry_value = probability * quantity // scale
     numerator = entry_value * scale
     return (numerator + leverage - 1) // leverage

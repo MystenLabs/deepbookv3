@@ -35,6 +35,26 @@ class EconomicLifecycleProofTests(unittest.TestCase):
         self.assertTrue(flow["invariants"]["all_clamps_are_total"])
         self.assertTrue(flow["invariants"]["penalty_never_leaves_expiry_cash"])
 
+    def test_redeem_penalty_rounds_up_for_expiry_cash(self) -> None:
+        flow = lifecycle.run_live_redeem_lifecycle()
+        penalty = int(flow["terms"]["penalty"])
+        exact_floor = 21_000_007 * 31_000_009 // lifecycle.F
+        residual = next(
+            row
+            for row in flow["residuals"]
+            if row["name"] == "redeem_ewma_penalty"
+        )
+
+        self.assertEqual(
+            penalty,
+            lifecycle.replay.deepbook_mul_up(
+                21_000_007,
+                31_000_009,
+            ),
+        )
+        self.assertEqual(penalty, exact_floor + 1)
+        self.assertEqual(residual["owner"], "expiry_cash")
+
     def test_rebate_pays_claimant_and_returns_exact_residual(self) -> None:
         flow = lifecycle.run_rebate_lifecycle()
         self.assertTrue(flow["invariants"]["reserve_decomposition_exact"])

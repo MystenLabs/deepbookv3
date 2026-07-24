@@ -236,21 +236,17 @@ class DustCertificate:
 
 def _floor_product(a: int, b: int) -> tuple[Fraction, int]:
     exact = Fraction(a * b, F)
-    return exact, exact.numerator // exact.denominator
-
-
-def _ceil_fraction(value: Fraction) -> int:
-    return -(-value.numerator // value.denominator)
+    return exact, replay.deepbook_mul(a, b)
 
 
 def _ceil_product(a: int, b: int) -> tuple[Fraction, int]:
     exact = Fraction(a * b, F)
-    return exact, _ceil_fraction(exact)
+    return exact, replay.deepbook_mul_up(a, b)
 
 
 def _floor_ratio(a: int, b: int, denominator: int) -> tuple[Fraction, int]:
     exact = Fraction(a * b, denominator)
-    return exact, exact.numerator // exact.denominator
+    return exact, replay.mul_div_round_down(a, b, denominator)
 
 
 def build_certificates() -> list[dict[str, Any]]:
@@ -295,7 +291,8 @@ def build_certificates() -> list[dict[str, Any]]:
     )
 
     lower, upper, stake = 100_000_003, 300_000_011, 73_000_001
-    benefit_exact, benefit = _floor_ratio(F // 2, stake, lower)
+    benefit_exact = Fraction((F // 2) * stake, lower)
+    benefit = replay.stake_benefit_ratio(stake, lower, upper)
     add(
         "stake_benefit_ratio",
         "packages/predict/sources/config/stake_config.move::benefit_ratio",
@@ -308,11 +305,16 @@ def build_certificates() -> list[dict[str, Any]]:
         "ratio_1e9",
     )
     max_discount = 250_000_000
-    discount_exact, discount = _floor_product(benefit, max_discount)
+    discount_exact = Fraction(benefit * max_discount, F)
+    discount = replay.deepbook_mul(benefit, max_discount)
     fee_amount = 17_000_003
     fee_discount_exact = Fraction(fee_amount * discount, F)
-    discounted_fee = fee_amount - (
-        fee_discount_exact.numerator // fee_discount_exact.denominator
+    discounted_fee = replay.fee_amount_after_discount(
+        fee_amount,
+        stake,
+        lower,
+        upper,
+        max_discount,
     )
     add(
         "discount_fraction",
@@ -335,7 +337,13 @@ def build_certificates() -> list[dict[str, Any]]:
         "expiry_cash",
         "Subtracting a floored discount rounds the fee upward.",
     )
-    rebate_exact, rebate = _floor_product(29_000_009, benefit)
+    rebate_exact = Fraction(29_000_009 * benefit, F)
+    rebate = replay.stake_rebate_amount(
+        29_000_009,
+        stake,
+        lower,
+        upper,
+    )
     add(
         "stake_rebate",
         "packages/predict/sources/config/stake_config.move::rebate_amount",
@@ -373,7 +381,10 @@ def build_certificates() -> list[dict[str, Any]]:
         "Entry value is a stored accounting atom shared by premium and floor.",
     )
     premium_exact = Fraction(entry_value * F, leverage)
-    net_premium = _ceil_fraction(premium_exact)
+    net_premium = replay.net_premium_from_entry_value(
+        entry_value,
+        leverage,
+    )
     add(
         "net_premium",
         "packages/predict/sources/config/strike_exposure_config.move::net_premium_from_entry_value",
@@ -448,7 +459,12 @@ def build_certificates() -> list[dict[str, Any]]:
         "expiry_cash",
         "The final penalty-rate conversion rounds protocol inflow upward.",
     )
-    subsidy_exact, subsidy = _floor_product(17_000_003, 100_000_000)
+    subsidy_exact = Fraction(17_000_003 * 100_000_000, F)
+    subsidy = replay.fee_incentive_subsidy_amount(
+        17_000_003,
+        100_000_000,
+        replay.POS_INF_STRIKE,
+    )
     add(
         "fee_incentive_subsidy",
         "packages/predict/sources/expiry_market.move::fee_incentive_subsidy_amount",
@@ -459,19 +475,20 @@ def build_certificates() -> list[dict[str, Any]]:
         "trader",
         "The sponsor reserve retains subsidy dust; total expiry fee is unchanged.",
     )
-    builder_share_exact, builder_share = _floor_product(
+    builder_share_exact = Fraction(17_000_003 * 200_000_000, F)
+    builder_cap_exact = Fraction(31_000_009 * 50_000_000, F)
+    builder_fee = replay.builder_fee_amount(
         17_000_003,
-        200_000_000,
-    )
-    builder_cap_exact, builder_cap = _floor_product(
         31_000_009,
+        True,
+        200_000_000,
         50_000_000,
     )
     add(
         "builder_fee",
         "packages/predict/sources/expiry_market.move::builder_fee_amount",
         min(builder_share_exact, builder_cap_exact),
-        min(builder_share, builder_cap),
+        builder_fee,
         "down",
         "trader",
         "builder",
@@ -479,11 +496,16 @@ def build_certificates() -> list[dict[str, Any]]:
     )
 
     # LP, reserve, and pool-accounting surfaces.
-    supply_exact, supply_shares = _floor_ratio(
+    supply_exact = Fraction(
+        5_000_003 * 500_000_000_000,
+        499_999_999_937,
+    )
+    supply_shares = replay.quote_supply_shares(
         5_000_003,
         500_000_000_000,
         499_999_999_937,
     )
+    assert supply_shares is not None
     add(
         "lp_supply_shares",
         "packages/predict/sources/plp/lp_book.move::quote_supply_shares",
@@ -495,11 +517,16 @@ def build_certificates() -> list[dict[str, Any]]:
         "The supplier receives no more than the ask-priced entitlement.",
         "plp_1e6",
     )
-    withdraw_exact, withdraw = _floor_ratio(
+    withdraw_exact = Fraction(
+        5_000_003 * 499_999_999_911,
+        500_000_000_000,
+    )
+    withdraw = replay.quote_withdraw_dusdc(
         5_000_003,
         499_999_999_911,
         500_000_000_000,
     )
+    assert withdraw is not None
     add(
         "lp_withdraw_dusdc",
         "packages/predict/sources/plp/lp_book.move::quote_withdraw_dusdc",
@@ -738,8 +765,20 @@ def build_proof_bundle(
         )
     }
     unbound_directed_money_sites = sorted(directed_money_sites - bound_sites)
+    all_relations_hold = all(
+        row["relation_holds"] for row in certificates
+    )
+    protocol_bias_mismatches = [
+        row
+        for row in certificates
+        if (
+            row["dust_exists"]
+            and row["protocol_bias_applicable"]
+            and not row["protocol_favored"]
+        )
+    ]
     return {
-        "schema": "predict_math_dust_proofs_v1",
+        "schema": "predict_math_dust_proofs_v2",
         "certificates": certificates,
         "money_collapse_functions": sorted(
             inventoried_money_collapse_functions
@@ -753,26 +792,19 @@ def build_proof_bundle(
             not source_binding_mismatches
             and not unbound_directed_money_sites
         ),
-        "all_relations_hold": all(
-            row["relation_holds"] for row in certificates
-        ),
+        "all_relations_hold": all_relations_hold,
         "nonzero_dust_witness_count": sum(
             row["dust_exists"] for row in certificates
         ),
-        "protocol_bias_mismatches": [
-            row
-            for row in certificates
-            if (
-                row["dust_exists"]
-                and row["protocol_bias_applicable"]
-                and not row["protocol_favored"]
-            )
-        ],
+        "protocol_bias_mismatches": protocol_bias_mismatches,
         "complete_for_inventoried_money_collapse_functions": (
-            not missing
+            inventory_bundle["complete_for_candidate_pattern"]
+            and not missing
             and not extra
             and not source_binding_mismatches
             and not unbound_directed_money_sites
+            and all_relations_hold
+            and not protocol_bias_mismatches
         ),
     }
 
