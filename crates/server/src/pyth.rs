@@ -26,16 +26,45 @@ use tokio::{
 use url::Url;
 
 pub const DEFAULT_PRO_URL: &str = "https://pyth-lazer-0.dourolabs.app/v1";
+pub const DEFAULT_PRO_HISTORY_URL: &str = "https://pyth.dourolabs.app/v1";
 pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 pub const DEFAULT_MAX_STALENESS_MS: u64 = 5_000;
 pub const DEFAULT_HISTORY_CACHE_TTL_SECS: u64 = 86_400;
 pub const DEFAULT_HISTORY_CACHE_MAX_ENTRIES: u64 = 10_000;
+pub const DEFAULT_CHART_HISTORY_CACHE_TTL_SECS: u64 = 60;
+pub const DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES: u64 = 256;
+pub const DEFAULT_CHART_HISTORY_MAX_RANGE_SECS: u64 = 86_400;
 pub const LATEST_PRICE_PATH: &str = "/v2/updates/price/latest";
 pub const PRICE_AT_TIMESTAMP_PATH: &str = "/v2/updates/price/:publish_time";
+pub const TRADINGVIEW_HISTORY_PATH: &str = "/v1/shims/tradingview/history";
 
 const MICROS_PER_SECOND: u64 = 1_000_000;
+const SECONDS_PER_MINUTE: u64 = 60;
 const LATEST_UPSTREAM_PATH: &str = "latest_price";
 const HISTORY_UPSTREAM_PATH: &str = "price";
+const CHART_HISTORY_UPSTREAM_PATH: &str = "fixed_rate@200ms/history";
+
+#[derive(Clone, Debug)]
+pub struct PythChartHistoryConfig {
+    pub upstream_url: Url,
+    pub symbols: Vec<String>,
+    pub cache_ttl: Duration,
+    pub cache_max_entries: u64,
+    pub max_range: Duration,
+}
+
+impl Default for PythChartHistoryConfig {
+    fn default() -> Self {
+        Self {
+            upstream_url: Url::parse(DEFAULT_PRO_HISTORY_URL)
+                .expect("default Pyth Pro History URL must be valid"),
+            symbols: Vec::new(),
+            cache_ttl: Duration::from_secs(DEFAULT_CHART_HISTORY_CACHE_TTL_SECS),
+            cache_max_entries: DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES,
+            max_range: Duration::from_secs(DEFAULT_CHART_HISTORY_MAX_RANGE_SECS),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct PythProConfig {
@@ -44,6 +73,7 @@ pub struct PythProConfig {
     pub max_staleness: Duration,
     pub history_cache_ttl: Duration,
     pub history_cache_max_entries: u64,
+    pub chart_history: PythChartHistoryConfig,
 }
 
 impl Default for PythProConfig {
@@ -54,6 +84,7 @@ impl Default for PythProConfig {
             max_staleness: Duration::from_millis(DEFAULT_MAX_STALENESS_MS),
             history_cache_ttl: Duration::from_secs(DEFAULT_HISTORY_CACHE_TTL_SECS),
             history_cache_max_entries: DEFAULT_HISTORY_CACHE_MAX_ENTRIES,
+            chart_history: PythChartHistoryConfig::default(),
         }
     }
 }
@@ -113,6 +144,104 @@ impl PriceQuery {
             .filter(|id| seen.insert(*id))
             .collect()
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+struct ChartHistoryQuery {
+    symbol: String,
+    resolution: String,
+    from: u64,
+    to: u64,
+}
+
+impl ChartHistoryQuery {
+    fn parse(raw_query: Option<&str>, max_range: Duration) -> Result<Self, String> {
+        let mut symbol = None;
+        let mut resolution = None;
+        let mut from = None;
+        let mut to = None;
+
+        for (name, value) in url::form_urlencoded::parse(raw_query.unwrap_or_default().as_bytes()) {
+            match name.as_ref() {
+                "symbol" => symbol = Some(normalize_history_symbol(&value)),
+                "resolution" => resolution = Some(normalize_history_resolution(&value)?),
+                "from" => {
+                    from = Some(
+                        value
+                            .parse::<u64>()
+                            .map_err(|_| "`from` must be a Unix timestamp in seconds".to_owned())?,
+                    )
+                }
+                "to" => {
+                    to = Some(
+                        value
+                            .parse::<u64>()
+                            .map_err(|_| "`to` must be a Unix timestamp in seconds".to_owned())?,
+                    )
+                }
+                _ => {}
+            }
+        }
+
+        let symbol = symbol
+            .filter(|symbol| !symbol.is_empty())
+            .ok_or_else(|| "`symbol` is required (for example, `Crypto.BTC/USD`)".to_owned())?;
+        let resolution = resolution.ok_or_else(|| "`resolution` is required".to_owned())?;
+        let from = from.ok_or_else(|| "`from` is required".to_owned())?;
+        let to = to.ok_or_else(|| "`to` is required".to_owned())?;
+        if from > to {
+            return Err("`from` must be less than or equal to `to`".to_owned());
+        }
+        if to - from > max_range.as_secs() {
+            return Err(format!(
+                "requested chart history exceeds the maximum range of {} seconds",
+                max_range.as_secs()
+            ));
+        }
+
+        // TradingView bars are minute-aligned. Canonicalizing inclusive bounds
+        // makes requests from different browser sessions share the same cache key
+        // without changing which complete bars fall inside the requested window.
+        let aligned_from = from
+            .checked_add(SECONDS_PER_MINUTE - 1)
+            .map(|value| value / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE)
+            .ok_or_else(|| "`from` is too large".to_owned())?;
+        let aligned_to = to / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE;
+        let (from, to) = if aligned_from <= aligned_to {
+            (aligned_from, aligned_to)
+        } else {
+            (from, to)
+        };
+
+        Ok(Self {
+            symbol,
+            resolution,
+            from,
+            to,
+        })
+    }
+}
+
+fn normalize_history_symbol(symbol: &str) -> String {
+    symbol.trim().to_ascii_lowercase()
+}
+
+fn normalize_history_resolution(resolution: &str) -> Result<String, String> {
+    let resolution = resolution.trim().to_ascii_uppercase();
+    let canonical = match resolution.as_str() {
+        "1" | "2" | "5" | "15" | "30" | "60" | "120" | "240" | "360" | "720" => {
+            resolution
+        }
+        "D" | "1D" => "D".to_owned(),
+        "W" | "1W" => "W".to_owned(),
+        "M" | "1M" => "M".to_owned(),
+        _ => {
+            return Err(format!(
+                "unsupported `resolution` `{resolution}`; expected 1, 2, 5, 15, 30, 60, 120, 240, 360, 720, D, W, or M"
+            ))
+        }
+    };
+    Ok(canonical)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -288,7 +417,7 @@ impl TryFrom<PythProFeed> for PriceUpdate {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 enum PythError {
     #[error("Pyth Pro is not configured")]
     NotConfigured,
@@ -329,13 +458,18 @@ impl PythError {
 
 #[derive(Clone)]
 struct PythProClient {
-    upstream_url: Url,
+    router_url: Url,
+    history_url: Url,
     api_key: Option<Arc<Secret<String>>>,
     http: reqwest::Client,
 }
 
 impl PythProClient {
-    fn new(upstream_url: Url, api_key: Option<String>) -> Result<Self, anyhow::Error> {
+    fn new(
+        router_url: Url,
+        history_url: Url,
+        api_key: Option<String>,
+    ) -> Result<Self, anyhow::Error> {
         let api_key = api_key
             .map(|key| key.trim().to_owned())
             .filter(|key| !key.is_empty())
@@ -347,7 +481,8 @@ impl PythProClient {
             .build()?;
 
         Ok(Self {
-            upstream_url,
+            router_url,
+            history_url,
             api_key,
             http,
         })
@@ -357,8 +492,8 @@ impl PythProClient {
         self.api_key.is_some()
     }
 
-    fn endpoint(&self, path: &str) -> Url {
-        let mut url = self.upstream_url.clone();
+    fn endpoint(base_url: &Url, path: &str) -> Url {
+        let mut url = base_url.clone();
         let mut full_path = url.path().trim_end_matches('/').to_owned();
         full_path.push('/');
         full_path.push_str(path.trim_start_matches('/'));
@@ -388,16 +523,52 @@ impl PythProClient {
         path: &str,
         request: PythProRequest,
     ) -> Result<PythProParsedPayload, PythError> {
-        let api_key = self.api_key.as_ref().ok_or(PythError::NotConfigured)?;
         let response = self
-            .http
-            .post(self.endpoint(path))
+            .send(
+                self.http
+                    .post(Self::endpoint(&self.router_url, path))
+                    .json(&request),
+            )
+            .await?;
+        response
+            .json::<PythProJsonUpdate>()
+            .await
+            .map_err(|error| PythError::InvalidResponse(error.to_string()))?
+            .parsed
+            .ok_or_else(|| {
+                PythError::InvalidResponse("response did not include parsed prices".to_owned())
+            })
+    }
+
+    async fn chart_history(
+        &self,
+        query: &ChartHistoryQuery,
+    ) -> Result<serde_json::Value, PythError> {
+        let response = self
+            .send(
+                self.http
+                    .get(Self::endpoint(
+                        &self.history_url,
+                        CHART_HISTORY_UPSTREAM_PATH,
+                    ))
+                    .query(query),
+            )
+            .await?;
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|error| PythError::InvalidResponse(error.to_string()))?;
+        validate_chart_history(&body)?;
+        Ok(body)
+    }
+
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, PythError> {
+        let api_key = self.api_key.as_ref().ok_or(PythError::NotConfigured)?;
+        let response = request
             .bearer_auth(api_key.expose_secret())
-            .json(&request)
             .send()
             .await
             .map_err(|error| PythError::Transport(error.to_string()))?;
-
         let status = response.status();
         let retry_after = response
             .headers()
@@ -415,16 +586,42 @@ impl PythProClient {
                 retry_after,
             });
         }
-
-        response
-            .json::<PythProJsonUpdate>()
-            .await
-            .map_err(|error| PythError::InvalidResponse(error.to_string()))?
-            .parsed
-            .ok_or_else(|| {
-                PythError::InvalidResponse("response did not include parsed prices".to_owned())
-            })
+        Ok(response)
     }
+}
+
+fn validate_chart_history(body: &serde_json::Value) -> Result<(), PythError> {
+    let status = body
+        .get("s")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            PythError::InvalidResponse("chart history response has no status".to_owned())
+        })?;
+    if status != "ok" {
+        return Err(PythError::InvalidResponse(format!(
+            "chart history returned status `{status}`"
+        )));
+    }
+
+    let mut expected_len = None;
+    for field in ["t", "o", "h", "l", "c", "v"] {
+        let values = body
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| {
+                PythError::InvalidResponse(format!("chart history response has no `{field}` array"))
+            })?;
+        match expected_len {
+            Some(expected_len) if values.len() != expected_len => {
+                return Err(PythError::InvalidResponse(
+                    "chart history arrays have different lengths".to_owned(),
+                ))
+            }
+            None => expected_len = Some(values.len()),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -439,7 +636,7 @@ struct HistoricalPriceKey {
     timestamp_us: u64,
 }
 
-/// Authenticated Pyth Pro access exposed through Hermes-like HTTP GET routes.
+/// Authenticated Pyth Pro access exposed through Hermes- and TradingView-like HTTP GET routes.
 #[derive(Clone)]
 pub struct PythProxy {
     client: PythProClient,
@@ -448,6 +645,9 @@ pub struct PythProxy {
     max_staleness: Duration,
     history: Cache<HistoricalPriceKey, Arc<PriceUpdate>>,
     history_load_guards: Cache<u64, Arc<Mutex<()>>>,
+    chart_history_symbols: Arc<HashSet<String>>,
+    chart_history_max_range: Duration,
+    chart_history: Cache<ChartHistoryQuery, Arc<serde_json::Value>>,
 }
 
 impl PythProxy {
@@ -472,11 +672,36 @@ impl PythProxy {
             config.history_cache_max_entries > 0,
             "Pyth Pro history cache capacity must be greater than zero"
         );
+        anyhow::ensure!(
+            !config.chart_history.cache_ttl.is_zero(),
+            "Pyth Pro chart history cache TTL must be greater than zero"
+        );
+        anyhow::ensure!(
+            config.chart_history.cache_max_entries > 0,
+            "Pyth Pro chart history cache capacity must be greater than zero"
+        );
+        anyhow::ensure!(
+            !config.chart_history.max_range.is_zero(),
+            "Pyth Pro chart history maximum range must be greater than zero"
+        );
 
         config.feed_ids.sort_unstable();
         config.feed_ids.dedup();
+        config.chart_history.symbols = config
+            .chart_history
+            .symbols
+            .into_iter()
+            .map(|symbol| normalize_history_symbol(&symbol))
+            .filter(|symbol| !symbol.is_empty())
+            .collect();
+        config.chart_history.symbols.sort();
+        config.chart_history.symbols.dedup();
 
-        let client = PythProClient::new(upstream_url, api_key)?;
+        let client = PythProClient::new(
+            upstream_url,
+            config.chart_history.upstream_url.clone(),
+            api_key,
+        )?;
         if !client.is_configured() {
             tracing::warn!(
                 "No Pyth Pro API key configured (PYTH_PRO_API_KEY); Pyth routes will return HTTP 503"
@@ -487,6 +712,11 @@ impl PythProxy {
                 "No Pyth Pro feed IDs configured (PYTH_PRO_FEED_IDS); Pyth price routes cannot serve feeds"
             );
         }
+        if config.chart_history.symbols.is_empty() {
+            tracing::warn!(
+                "No Pyth Pro chart symbols configured (PYTH_PRO_HISTORY_SYMBOLS); Pyth chart history cannot serve symbols"
+            );
+        }
 
         let history = Cache::builder()
             .max_capacity(config.history_cache_max_entries)
@@ -495,6 +725,10 @@ impl PythProxy {
         let history_load_guards = Cache::builder()
             .max_capacity(config.history_cache_max_entries.max(1))
             .time_to_idle(Duration::from_secs(60))
+            .build();
+        let chart_history = Cache::builder()
+            .max_capacity(config.chart_history.cache_max_entries)
+            .time_to_live(config.chart_history.cache_ttl)
             .build();
         let (latest_sender, latest_snapshot) = watch::channel(None);
 
@@ -514,6 +748,9 @@ impl PythProxy {
             max_staleness: config.max_staleness,
             history,
             history_load_guards,
+            chart_history_symbols: Arc::new(config.chart_history.symbols.into_iter().collect()),
+            chart_history_max_range: config.chart_history.max_range,
+            chart_history,
         })
     }
 
@@ -690,6 +927,35 @@ impl PythProxy {
 
         Json(PriceResponse { parsed: ordered }).into_response()
     }
+
+    async fn chart_history(&self, query: ChartHistoryQuery) -> Response {
+        if let Err(error) = self.configured() {
+            return error.into_response();
+        }
+        if !self.chart_history_symbols.contains(&query.symbol) {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "chart history is not configured for symbol `{}`",
+                    query.symbol
+                ),
+            )
+                .into_response();
+        }
+
+        let client = self.client.clone();
+        let request = query.clone();
+        match self
+            .chart_history
+            .try_get_with(query, async move {
+                client.chart_history(&request).await.map(Arc::new)
+            })
+            .await
+        {
+            Ok(body) => Json((*body).clone()).into_response(),
+            Err(error) => (*error).clone().into_response(),
+        }
+    }
 }
 
 fn spawn_latest_poller(
@@ -777,6 +1043,7 @@ pub fn routes(proxy: PythProxy) -> Router {
     Router::new()
         .route(LATEST_PRICE_PATH, get(latest_price))
         .route(PRICE_AT_TIMESTAMP_PATH, get(price_at_timestamp))
+        .route(TRADINGVIEW_HISTORY_PATH, get(tradingview_history))
         .with_state(proxy)
 }
 
@@ -798,13 +1065,23 @@ async fn price_at_timestamp(
     }
 }
 
+async fn tradingview_history(
+    State(proxy): State<PythProxy>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    match ChartHistoryQuery::parse(query.as_deref(), proxy.chart_history_max_range) {
+        Ok(query) => proxy.chart_history(query).await,
+        Err(error) => (StatusCode::BAD_REQUEST, error).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::{
         extract::{OriginalUri, State},
         http::{header::AUTHORIZATION, HeaderMap},
-        routing::post,
+        routing::{get, post},
     };
     use futures::future::join_all;
     use serde_json::{json, Value};
@@ -824,7 +1101,9 @@ mod tests {
     struct MockPyth {
         latest_requests: Arc<AtomicUsize>,
         history_requests: Arc<AtomicUsize>,
+        chart_history_requests: Arc<AtomicUsize>,
         captured: Arc<StdMutex<Vec<(String, String, Value)>>>,
+        chart_history_captured: Arc<StdMutex<Vec<(String, String, String)>>>,
         delay: Duration,
     }
 
@@ -877,6 +1156,38 @@ mod tests {
         }))
     }
 
+    async fn mock_chart_history(
+        State(mock): State<MockPyth>,
+        OriginalUri(uri): OriginalUri,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        mock.chart_history_requests.fetch_add(1, Ordering::SeqCst);
+        let authorization = headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        mock.chart_history_captured.lock().unwrap().push((
+            uri.path().to_owned(),
+            uri.query().unwrap_or_default().to_owned(),
+            authorization,
+        ));
+
+        if !mock.delay.is_zero() {
+            sleep(mock.delay).await;
+        }
+
+        Json(json!({
+            "s": "ok",
+            "t": [1_700_000_100_u64, 1_700_000_160_u64],
+            "o": [100.0, 101.0],
+            "h": [102.0, 103.0],
+            "l": [99.0, 100.0],
+            "c": [101.0, 102.0],
+            "v": [0, 0]
+        }))
+    }
+
     async fn spawn(app: Router) -> (Url, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -890,6 +1201,7 @@ mod tests {
         let app = Router::new()
             .route("/v1/latest_price", post(mock_prices))
             .route("/v1/price", post(mock_prices))
+            .route("/v1/fixed_rate@200ms/history", get(mock_chart_history))
             .with_state(mock);
         let (url, task) = spawn(app).await;
         (url.join("/v1").unwrap(), task)
@@ -902,6 +1214,13 @@ mod tests {
             max_staleness: Duration::from_secs(30),
             history_cache_ttl: Duration::from_secs(60),
             history_cache_max_entries: 100,
+            chart_history: PythChartHistoryConfig {
+                symbols: vec!["Crypto.BTC/USD".to_owned()],
+                cache_ttl: Duration::from_secs(60),
+                cache_max_entries: 100,
+                max_range: Duration::from_secs(86_400),
+                ..PythChartHistoryConfig::default()
+            },
         }
     }
 
@@ -1112,6 +1431,145 @@ mod tests {
         let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
         let url = server_url
             .join("/pyth/v2/updates/price/1700000000?ids%5B%5D=1")
+            .unwrap();
+
+        for _ in 0..2 {
+            let response = reqwest::get(url.clone()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(response.headers().get(RETRY_AFTER).unwrap(), "3");
+            assert_eq!(response.text().await.unwrap(), "rate limited");
+        }
+        assert_eq!(count.0.load(Ordering::SeqCst), 2);
+
+        server_task.abort();
+        upstream_task.abort();
+    }
+
+    #[tokio::test]
+    async fn chart_history_normalizes_and_coalesces_requests() {
+        let mock = MockPyth {
+            delay: Duration::from_millis(40),
+            ..Default::default()
+        };
+        let (upstream_url, upstream_task) = spawn_mock(mock.clone()).await;
+        let mut config = test_config(Vec::new());
+        config.chart_history.upstream_url = upstream_url.clone();
+        let proxy = PythProxy::new(upstream_url, Some("test-key".to_owned()), config).unwrap();
+        let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
+        let url = server_url
+            .join(
+                "/pyth/v1/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000041&to=1700003699",
+            )
+            .unwrap();
+
+        let responses = join_all((0..20).map(|_| reqwest::get(url.clone()))).await;
+        for response in responses {
+            let response = response.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response.json::<Value>().await.unwrap();
+            assert_eq!(body["s"], "ok");
+            assert_eq!(body["c"], json!([101.0, 102.0]));
+        }
+        assert_eq!(mock.chart_history_requests.load(Ordering::SeqCst), 1);
+
+        let captured = mock.chart_history_captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].0, "/v1/fixed_rate@200ms/history");
+        assert_eq!(captured[0].2, "Bearer test-key");
+        let query: HashMap<_, _> = url::form_urlencoded::parse(captured[0].1.as_bytes())
+            .into_owned()
+            .collect();
+        assert_eq!(query["symbol"], "crypto.btc/usd");
+        assert_eq!(query["resolution"], "1");
+        assert_eq!(query["from"], "1700000100");
+        assert_eq!(query["to"], "1700003640");
+        drop(captured);
+
+        let equivalent_url = server_url
+            .join(
+                "/pyth/v1/shims/tradingview/history?symbol=crypto.btc%2Fusd&resolution=1&from=1700000100&to=1700003641",
+            )
+            .unwrap();
+        let cached = reqwest::get(equivalent_url).await.unwrap();
+        assert_eq!(cached.status(), StatusCode::OK);
+        assert_eq!(mock.chart_history_requests.load(Ordering::SeqCst), 1);
+
+        server_task.abort();
+        upstream_task.abort();
+    }
+
+    #[test]
+    fn chart_history_canonicalizes_tradingview_resolution_aliases() {
+        for (resolution, canonical) in [
+            ("d", "D"),
+            ("1D", "D"),
+            ("w", "W"),
+            ("1W", "W"),
+            ("m", "M"),
+            ("1M", "M"),
+        ] {
+            assert_eq!(normalize_history_resolution(resolution).unwrap(), canonical);
+        }
+    }
+
+    #[tokio::test]
+    async fn chart_history_rejects_unsupported_queries_without_loading() {
+        let mock = MockPyth::default();
+        let (upstream_url, upstream_task) = spawn_mock(mock.clone()).await;
+        let mut config = test_config(Vec::new());
+        config.chart_history.upstream_url = upstream_url.clone();
+        let proxy = PythProxy::new(upstream_url, Some("test-key".to_owned()), config).unwrap();
+        let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
+
+        for query in [
+            "symbol=Crypto.ETH%2FUSD&resolution=1&from=1700000000&to=1700003600",
+            "symbol=Crypto.BTC%2FUSD&resolution=3&from=1700000000&to=1700003600",
+            "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700003600&to=1700000000",
+            "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700100000",
+        ] {
+            let response = reqwest::get(
+                server_url
+                    .join(&format!("/pyth/v1/shims/tradingview/history?{query}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(mock.chart_history_requests.load(Ordering::SeqCst), 0);
+
+        server_task.abort();
+        upstream_task.abort();
+    }
+
+    #[tokio::test]
+    async fn chart_history_errors_are_not_cached() {
+        #[derive(Clone, Default)]
+        struct Count(Arc<AtomicUsize>);
+
+        async fn rate_limited(State(count): State<Count>) -> impl IntoResponse {
+            count.0.fetch_add(1, Ordering::SeqCst);
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(RETRY_AFTER, "3")],
+                "rate limited",
+            )
+        }
+
+        let count = Count::default();
+        let upstream = Router::new()
+            .route("/v1/fixed_rate@200ms/history", get(rate_limited))
+            .with_state(count.clone());
+        let (upstream_url, upstream_task) = spawn(upstream).await;
+        let history_url = upstream_url.join("/v1").unwrap();
+        let mut config = test_config(Vec::new());
+        config.chart_history.upstream_url = history_url.clone();
+        let proxy = PythProxy::new(history_url, Some("test-key".to_owned()), config).unwrap();
+        let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
+        let url = server_url
+            .join(
+                "/pyth/v1/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700003600",
+            )
             .unwrap();
 
         for _ in 0..2 {

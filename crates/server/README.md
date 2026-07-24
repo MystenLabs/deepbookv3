@@ -76,18 +76,29 @@ This endpoint is useful for monitoring the indexer's synchronization status and 
 
 ## Pyth Pro price adapter
 
-The server exposes Hermes-like HTTP GET routes backed by authenticated Pyth Pro
-[Router API](https://pyth-lazer-0.dourolabs.app/docs/openapi.json) requests:
+The server exposes Hermes- and TradingView-like HTTP GET routes backed by
+authenticated Pyth Pro requests:
 
 - `GET /pyth/v2/updates/price/latest`
 - `GET /pyth/v2/updates/price/:publish_time`
+- `GET /pyth/v1/shims/tradingview/history`
 
-Both routes accept repeatable numeric Pyth Pro feed IDs in `ids[]`, plus
+The first two routes use the Pyth Pro
+[Router API](https://pyth-lazer-0.dourolabs.app/docs/openapi.json). They accept
+repeatable numeric Pyth Pro feed IDs in `ids[]`, plus
 `parsed=true` and optional `ignore_invalid_price_ids=true`. The historical path
 uses a Unix timestamp in seconds; the server converts it to the microsecond
 timestamp required by Pyth Pro. Responses deliberately provide only the parsed,
 Hermes-like price fields used by DeepBook. They do not contain signed Hermes or
 Pyth Pro binary payloads and are not intended for on-chain price updates.
+
+The chart-history route uses the Pyth Pro
+[History API](https://docs.pyth.network/price-feeds/pro/api/history). It keeps
+the app's existing TradingView query and response shape: `symbol`,
+`resolution`, `from`, and `to` produce aligned `s`, `t`, `o`, `h`, `l`, `c`,
+and `v` arrays. Symbols are case-insensitive, and bounds use Unix seconds.
+Supported resolutions are `1`, `2`, `5`, `15`, `30`, `60`, `120`, `240`,
+`360`, `720`, `D`, `W`, and `M`.
 
 Configure the server with:
 
@@ -105,6 +116,18 @@ Configure the server with:
   `86400`.
 - `PYTH_PRO_HISTORY_CACHE_MAX_ENTRIES` — maximum historical
   `(feed_id, timestamp_us)` entries per process; defaults to `10000`.
+- `PYTH_PRO_HISTORY_URL` — optional History API base URL; defaults to
+  `https://pyth.dourolabs.app/v1`.
+- `PYTH_PRO_HISTORY_SYMBOLS` — comma-separated TradingView symbols the
+  chart-history route may serve, such as `Crypto.BTC/USD,Crypto.ETH/USD`.
+  Other symbols are rejected so the route cannot become an unrestricted proxy
+  for the Pyth Pro quota.
+- `PYTH_PRO_CHART_HISTORY_CACHE_TTL_SECS` — chart-history response lifetime;
+  defaults to `60`.
+- `PYTH_PRO_CHART_HISTORY_CACHE_MAX_ENTRIES` — maximum chart-history responses
+  cached per process; defaults to `256`.
+- `PYTH_PRO_CHART_HISTORY_MAX_RANGE_SECS` — maximum `to - from` chart-history
+  range; defaults to `86400` (one day).
 
 One background task requests all configured latest feeds in a single Pyth Pro
 call every polling interval, then atomically publishes the parsed snapshot.
@@ -112,7 +135,12 @@ Latest HTTP requests only read that snapshot and never call Pyth. Historical
 prices use a bounded Moka cache keyed by numeric feed ID and microsecond
 timestamp. A request containing several IDs fetches all cache misses in one
 Pyth Pro call, and concurrent requests for the same timestamp share the load.
-Errors and rate limits are not cached.
+
+Chart history uses a separate bounded Moka cache keyed by canonical
+`(symbol, resolution, from, to)`. Symbol casing and minute-aligned query bounds
+are normalized so equivalent requests share an entry. Moka coalesces concurrent
+misses for the same key into one authenticated History API request. Errors and
+rate limits are not cached.
 
 The familiar route and query shape is intended to make migration simple, but
 the parsed-only response is not a drop-in replacement for
@@ -127,6 +155,7 @@ the repository root:
 export DATABASE_URL="postgres://postgres:postgrespw@localhost:5432/deepbook"
 export PYTH_PRO_API_KEY="<your-api-key>"
 export PYTH_PRO_FEED_IDS="1,2"
+export PYTH_PRO_HISTORY_SYMBOLS="Crypto.BTC/USD,Crypto.ETH/USD"
 cargo run -p deepbook-server
 ```
 
@@ -142,4 +171,7 @@ curl \
 
 curl \
   "http://localhost:9008/pyth/v2/updates/price/1700000000?ids[]=1&parsed=true"
+
+curl \
+  "http://localhost:9008/pyth/v1/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1704067200&to=1704070800"
 ```
