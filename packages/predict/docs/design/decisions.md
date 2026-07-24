@@ -297,7 +297,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   asset's price scale — the tick size is sized operationally and a mismatch fails
   loud at the first mint.
 - **Finite deep-tail pricing stays calculable; only strike sentinels are exact endpoints.**
-  `compute_nd2` delegates log-moneyness to `fixed_math::approx::ln_ratio`. The
+  `compute_up_price` delegates log-moneyness to `fixed_math::approx::ln_ratio`. The
   ordinary domain keeps the existing one-log quotient path; quotient underflow, a
   one-raw-unit quotient, and quotient overflow use certified
   `ln(strike) - ln(forward)` instead of promoting a finite strike to the `neg_inf`

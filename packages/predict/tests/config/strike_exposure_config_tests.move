@@ -7,7 +7,7 @@
 /// probability guard on the template setters). Leaf math guard:
 /// `EInvalidFeeProbability` — unreachable
 /// from the public mint surface because `pricing` quotes come from
-/// `compute_nd2`'s explicitly clamped digital, so it is exercised by a direct
+/// `compute_up_price`'s explicitly clamped digital, so it is exercised by a direct
 /// package-internal `trading_fee` call (rule 4). Mint-admission policy is
 /// exercised through `assert_mint_admission`, which is the package boundary the
 /// real trade flow calls after it has loaded the live price.

@@ -205,7 +205,7 @@ fun at_the_forward_is_exactly_one_half() {
 /// Production-valid SVI envelope point where strike == forward, m == 0, |rho| == 1,
 /// b == max_svi_input, and sigma == min_svi_sigma. Then d2 is near -0.158, so the
 /// normal CDF/PDF tail guards do not fire; the enormous signed `w'` term is what
-/// pushes the raw adjusted digital outside [0, 1] and exercises compute_nd2's final
+/// pushes the raw adjusted digital outside [0, 1] and exercises compute_up_price's final
 /// clamp.
 fun skew_clamp_up_price(rho_is_negative: bool): u64 {
     let mut fx = oracle_fixture::setup_oracle_default();

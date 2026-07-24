@@ -14,7 +14,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ROOT = REPO_ROOT / "packages" / "predict" / "sources"
 EXPECTED_SOURCE_TREE_SHA256 = (
-    "a34b472a220b8a8ec105353ec5bd7094919c04f922dd9359eb7115bf65f1475d"
+    "9442492c2be835df115e0ce876ac3edc56261393543c6ac40820f7864775b9f6"
 )
 
 CANDIDATE_RE = re.compile(
@@ -132,11 +132,9 @@ FUNCTION_CLASSIFICATION = {
     "packages/predict/sources/pricing/pricing.move::compute_up_price": NUMERICAL_EVALUATION,
     "packages/predict/sources/pricing/pricing.move::digital_price": NUMERICAL_EVALUATION,
     "packages/predict/sources/pricing/pricing.move::moneyness_terms": NUMERICAL_EVALUATION,
-    "packages/predict/sources/pricing/pricing.move::standardized_d2": NUMERICAL_EVALUATION,
     "packages/predict/sources/pricing/pricing.move::variance_slope": NUMERICAL_EVALUATION,
     "packages/predict/sources/pricing/pricing.move::resolve_live_pricer": NUMERICAL_EVALUATION,
     "packages/predict/sources/pricing/pricing.move::min_svi_variance_increment": NUMERICAL_EVALUATION,
-    "packages/predict/sources/pricing/pricing.move::compute_nd2": NUMERICAL_EVALUATION,
     "packages/predict/sources/pricing/pricing.move::variance_denominator_terms": NUMERICAL_EVALUATION,
     # Admission or branch guards consume rounded values but do not transfer them.
     "packages/predict/sources/config/strike_exposure_config.move::is_liquidatable": GUARD_ONLY,

@@ -992,12 +992,18 @@ def _trace_up_price(
         scaling,
         forward,
         phase,
-        move_site="pricing::compute_nd2",
+        move_site="pricing::compute_up_price",
         unit="probability_1e9",
         forced_error=1,
         note="Move hands one raw unit of ratio-floor error to approx::ln.",
     )
-    k = trace.ln(f"{label}_log_moneyness", ratio, phase, move_site="pricing::compute_nd2", input_error=1)
+    k = trace.ln(
+        f"{label}_log_moneyness",
+        ratio,
+        phase,
+        move_site="pricing::compute_up_price",
+        input_error=1,
+    )
     m_signed = -svi["m"] if svi["mNegative"] else svi["m"]
     m = trace.input(
         f"{label}_svi_m",
@@ -1154,18 +1160,18 @@ def _trace_up_price(
         k,
         half_var,
         phase,
-        move_site="pricing::standardized_d2",
+        move_site="pricing::compute_up_price",
     )
     d2_unnegated = trace.div_scaled(
         f"{label}_d2_unnegated",
         d2_numerator,
         sqrt_var,
         phase,
-        move_site="pricing::standardized_d2",
+        move_site="pricing::compute_up_price",
         unit="probability_1e9",
         certify=True,
     )
-    d2 = trace.neg(f"{label}_d2", d2_unnegated, phase, move_site="pricing::standardized_d2")
+    d2 = trace.neg(f"{label}_d2", d2_unnegated, phase, move_site="pricing::compute_up_price")
     slope_ratio = trace.div_scaled(
         f"{label}_slope_ratio",
         k_minus_m,
@@ -1773,14 +1779,14 @@ def trace_scenario(scenario: Scenario) -> AlgebraTrace:
         "lp",
         unit="dusdc_1e6",
         scale=replay.DUSDC_DECIMALS,
-        move_site="plp::lp_pool_value",
+        move_site="plp::lp_pool_value_approx",
     )
     pool_value = trace.add(
         "pool_value",
         vault_idle,
         nav,
         "lp",
-        move_site="plp::lp_pool_value",
+        move_site="plp::lp_pool_value_approx",
         unit="dusdc_1e6",
     )
     if pool_value.center == 0:

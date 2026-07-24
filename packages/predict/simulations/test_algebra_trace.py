@@ -278,7 +278,7 @@ class AlgebraTraceTests(unittest.TestCase):
         }
         forward = 75_050_000_000_000
         strike = 75_000_000_000_000
-        accepted = replay.compute_nd2(svi, forward, strike)
+        accepted = replay.compute_up_price(svi, forward, strike)
         self.assertEqual(accepted, 598_464_213)
         self.assertTrue(0 <= accepted <= replay.FLOAT_SCALING)
 

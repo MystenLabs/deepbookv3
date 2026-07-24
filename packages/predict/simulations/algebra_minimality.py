@@ -13,14 +13,11 @@ import saturation_proofs
 
 
 DIRECT_HALF_VARIANCE_FUNCTION_SHA256 = {
-    "packages/predict/sources/pricing/pricing.move::compute_nd2": (
-        "d8a5831287c6a5c9deac0e0e96b13f0865a3f6a374910d55f7df0a96af236f4c"
+    "packages/predict/sources/pricing/pricing.move::compute_up_price": (
+        "a0b68e434079fed5f532482582324c78e6aef9061add7a1bc1b71a2f0d512039"
     ),
     "packages/predict/sources/pricing/pricing.move::variance_denominator_terms": (
         "b78ea4d92a9e9dde1d47fa95fb4808e1f27d2bb874ed350def0150e255c58267"
-    ),
-    "packages/predict/sources/pricing/pricing.move::standardized_d2": (
-        "d6742f95f11308002e0e9984a955d8a31b25992dd0cbac82c104be2517bbe03b"
     ),
 }
 
@@ -81,7 +78,7 @@ def direct_half_variance_proof(scale: int = 17) -> dict[str, Any]:
         ),
         "rounding_atom": "(scaled_error as u64) + 1" in pricing_source,
         "direct_consumer": (
-            "let d2_numerator = k.add(half_var);" in pricing_source
+            "let d2 = k.add(&half_var).div_scaled(&sqrt_var).neg();" in pricing_source
         ),
         "discarded_half_removed": "let half_var = total_var.half();" not in pricing_source,
     }

@@ -33,7 +33,7 @@
 /// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
 /// a boundary surface whose rounded analytical minimum is positive at load but
 /// whose concrete at-forward quote rounds total variance non-positive.
-/// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
+/// `ECannotBeNegative` inside `compute_up_price` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
 /// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
 /// directly below; active-book non-monotone UP prices are covered by
@@ -634,7 +634,7 @@ fun surface_with_svi_sigma_above_max_aborts() {
 
 /// A surface whose forward is tiny relative to the BS spot passes the envelope
 /// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
-/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
+/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_up_price` aborts on
 /// the first finite-strike quote.
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {

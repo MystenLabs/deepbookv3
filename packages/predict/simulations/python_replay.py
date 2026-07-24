@@ -867,48 +867,6 @@ def normal_pdf(value: I64) -> int:
     return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
 
 
-def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
-    k = ln_ratio_fixed(strike, forward)
-    m = I64(svi["m"], svi["mNegative"])
-    k_minus_m = k.sub(m)
-    k_minus_m_squared = k_minus_m.square_scaled()
-    sigma = svi["sigma"]
-    sigma_squared = deepbook_mul(sigma, sigma)
-    sq = sqrt_fixed(k_minus_m_squared + sigma_squared, FLOAT_SCALING)
-    rho = I64(svi["rho"], svi["rhoNegative"])
-    rho_km = rho.mul_scaled(k_minus_m)
-    inner = rho_km.add(I64(sq))
-    if inner.is_negative:
-        raise ValueError("SVI inner term cannot be negative")
-    a = I64(svi["a"], svi.get("aNegative", False))
-    wide_increment = svi["b"] * inner.magnitude
-    wide_a = a.magnitude * FLOAT_SCALING
-    if a.is_negative:
-        if wide_increment < wide_a:
-            raise ValueError("SVI total variance must be positive")
-        wide_total_var = wide_increment - wide_a
-    else:
-        wide_total_var = wide_increment + wide_a
-    total_var = wide_total_var // FLOAT_SCALING
-    if total_var == 0:
-        raise ValueError("SVI total variance must be positive")
-    sqrt_var = sqrt_u128(wide_total_var)
-    d2_numerator = k.add(I64(total_var // 2))
-    d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
-    nd2 = normal_cdf(d2)
-
-    slope_ratio = k_minus_m.div_scaled(I64(sq))
-    slope = rho.add(slope_ratio)
-    w_prime = I64(svi["b"]).mul_scaled(slope)
-    if w_prime.magnitude == 0:
-        return nd2
-
-    correction = mul_div_round_down(normal_pdf(d2), w_prime.magnitude, 2 * sqrt_var)
-    if w_prime.is_negative:
-        return min(FLOAT_SCALING, nd2 + correction)
-    return nd2 - correction if nd2 > correction else 0
-
-
 def svi_cache_key(svi: dict[str, Any]) -> tuple[int, bool, int, int, bool, int, bool, int]:
     return (
         svi["a"],
@@ -939,20 +897,42 @@ def compute_up_price_cached(
         return FLOAT_SCALING
     if strike == POS_INF_STRIKE:
         return 0
-    return compute_nd2(
-        {
-            "a": a,
-            "aNegative": a_negative,
-            "b": b,
-            "rho": rho,
-            "rhoNegative": rho_negative,
-            "m": m,
-            "mNegative": m_negative,
-            "sigma": sigma,
-        },
-        forward,
-        strike,
-    )
+    k = ln_ratio_fixed(strike, forward)
+    m_value = I64(m, m_negative)
+    k_minus_m = k.sub(m_value)
+    k_minus_m_squared = k_minus_m.square_scaled()
+    sigma_squared = deepbook_mul(sigma, sigma)
+    root = sqrt_fixed(k_minus_m_squared + sigma_squared, FLOAT_SCALING)
+    rho_value = I64(rho, rho_negative)
+    inner = rho_value.mul_scaled(k_minus_m).add(I64(root))
+    if inner.is_negative:
+        raise ValueError("SVI inner term cannot be negative")
+    a_value = I64(a, a_negative)
+    wide_increment = b * inner.magnitude
+    wide_a = a_value.magnitude * FLOAT_SCALING
+    if a_value.is_negative:
+        if wide_increment < wide_a:
+            raise ValueError("SVI total variance must be positive")
+        wide_total_var = wide_increment - wide_a
+    else:
+        wide_total_var = wide_increment + wide_a
+    total_var = wide_total_var // FLOAT_SCALING
+    if total_var == 0:
+        raise ValueError("SVI total variance must be positive")
+    sqrt_var = sqrt_u128(wide_total_var)
+    d2 = k.add(I64(total_var // 2)).div_scaled(I64(sqrt_var)).neg()
+    nd2 = normal_cdf(d2)
+
+    slope_ratio = k_minus_m.div_scaled(I64(root))
+    slope = rho_value.add(slope_ratio)
+    w_prime = I64(b).mul_scaled(slope)
+    if w_prime.magnitude == 0:
+        return nd2
+
+    correction = mul_div_round_down(normal_pdf(d2), w_prime.magnitude, 2 * sqrt_var)
+    if w_prime.is_negative:
+        return min(FLOAT_SCALING, nd2 + correction)
+    return nd2 - correction if nd2 > correction else 0
 
 
 def compute_up_price(svi: dict[str, Any], forward: int, strike: int) -> int:

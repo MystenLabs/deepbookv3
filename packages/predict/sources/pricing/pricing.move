@@ -472,22 +472,18 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): Approx {
         return approx::exact_u64(0)
     };
 
-    compute_nd2(svi, forward, strike.value())
-}
-
-/// Binary pricing from SVI total variance:
-/// - k = ln(strike / forward)
-/// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
-/// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-/// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): Approx {
     assert!(forward > 0, EZeroForward);
 
-    let k = approx::ln_ratio(strike, forward);
-    let (k_minus_m, root) = moneyness_terms(svi_params, &k);
-    let (half_var, sqrt_var) = variance_denominator_terms(svi_params, &k_minus_m, &root);
-    let d2 = standardized_d2(&k, &half_var, &sqrt_var);
-    let w_prime = variance_slope(svi_params, &k_minus_m, &root);
+    // Binary pricing from SVI total variance:
+    // - k = ln(strike / forward)
+    // - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
+    // - d2 = -((k + w(k) / 2) / sqrt(w(k)))
+    // - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
+    let k = approx::ln_ratio(strike.value(), forward);
+    let (k_minus_m, root) = moneyness_terms(svi, &k);
+    let (half_var, sqrt_var) = variance_denominator_terms(svi, &k_minus_m, &root);
+    let d2 = k.add(&half_var).div_scaled(&sqrt_var).neg();
+    let w_prime = variance_slope(svi, &k_minus_m, &root);
     digital_price(&d2, &w_prime, &sqrt_var)
 }
 
@@ -553,11 +549,6 @@ fun variance_denominator_terms(
         sqrt_error as u64,
     );
     (half_var, sqrt_var)
-}
-
-fun standardized_d2(k: &Approx, half_var: &Approx, sqrt_var: &Approx): Approx {
-    let d2_numerator = k.add(half_var);
-    d2_numerator.div_scaled(sqrt_var).neg()
 }
 
 fun variance_slope(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): Approx {
