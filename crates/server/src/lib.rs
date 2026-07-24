@@ -7,6 +7,7 @@ pub mod grpc;
 pub mod live_ohclv;
 pub mod margin_metrics;
 mod metrics;
+pub mod pyth;
 mod reader;
 pub mod server;
 pub mod writer;

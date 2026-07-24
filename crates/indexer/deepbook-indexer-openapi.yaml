@@ -15,6 +15,7 @@ tags:
   - name: Market Data
   - name: Order Flow
   - name: Reference
+  - name: Pyth
   - name: Health
 
 paths:
@@ -72,6 +73,109 @@ paths:
               schema:
                 $ref: "#/components/schemas/IndexerStatus"
       x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /pyth/v2/updates/price/latest:
+    get:
+      tags: [Pyth]
+      summary: Latest parsed Pyth Pro price updates
+      description: |
+        Hermes-like HTTP interface backed by an authenticated Pyth Pro
+        background poller. The handler reads an in-memory snapshot and never
+        makes an upstream request. Feed IDs are numeric Pyth Pro IDs configured
+        on the server. This parsed response does not contain signed binary
+        payloads for on-chain use.
+      operationId: getLatestPythPriceUpdates
+      parameters:
+        - in: query
+          name: "ids[]"
+          required: true
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int32
+              minimum: 0
+          style: form
+          explode: true
+          description: Repeatable server-configured numeric Pyth Pro feed IDs.
+        - in: query
+          name: parsed
+          schema: { type: boolean, default: true }
+          description: Must be true; binary responses are not supported.
+        - in: query
+          name: ignore_invalid_price_ids
+          schema: { type: boolean, default: false }
+          description: Omit IDs not configured in the latest-price poller.
+      responses:
+        "200":
+          description: Parsed Hermes-like price response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PythPriceResponse"
+        "400":
+          description: Invalid query or latest feed ID is not configured.
+        "503":
+          description: Pyth Pro is not configured or the snapshot is warming up.
+        "502":
+          description: The latest-price snapshot is stale.
+
+  /pyth/v2/updates/price/{publish_time}:
+    get:
+      tags: [Pyth]
+      summary: Parsed Pyth Pro prices at a timestamp
+      description: |
+        Hermes-like HTTP interface backed by Pyth Pro `/v1/price`. The Unix
+        timestamp in seconds is converted to microseconds before the upstream
+        request. Successful prices are cached independently by numeric feed ID
+        and microsecond timestamp in a bounded server-local cache.
+      operationId: getPythPriceUpdatesAtTimestamp
+      parameters:
+        - in: path
+          name: publish_time
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Unix timestamp in seconds.
+        - in: query
+          name: "ids[]"
+          required: true
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int32
+              minimum: 0
+          style: form
+          explode: true
+          description: Repeatable server-configured numeric Pyth Pro feed IDs.
+        - in: query
+          name: parsed
+          schema: { type: boolean, default: true }
+          description: Must be true; binary responses are not supported.
+        - in: query
+          name: ignore_invalid_price_ids
+          schema: { type: boolean, default: false }
+          description: Omit feed IDs for which no historical price is returned.
+      responses:
+        "200":
+          description: Parsed Hermes-like price response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PythPriceResponse"
+        "400":
+          description: Invalid query, timestamp, or feed ID is not configured.
+        "404":
+          description: Pyth Pro has no price for a requested feed and timestamp.
+        "429":
+          description: Pyth Pro rate limit response.
+        "503":
+          description: Pyth Pro is not configured or its history service is unavailable.
+        "502":
+          description: Pyth Pro could not be reached or returned an invalid response.
 
   /get_pools:
     get:
@@ -374,6 +478,47 @@ paths:
 
 components:
   schemas:
+    PythPriceResponse:
+      type: object
+      required: [parsed]
+      properties:
+        parsed:
+          type: array
+          items:
+            $ref: "#/components/schemas/PythParsedPrice"
+
+    PythParsedPrice:
+      type: object
+      required: [id, price, metadata]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Numeric Pyth Pro feed ID encoded as a string.
+        price:
+          $ref: "#/components/schemas/PythPrice"
+        ema_price:
+          $ref: "#/components/schemas/PythPrice"
+        metadata:
+          type: object
+          required: [publish_time_us]
+          properties:
+            publish_time_us:
+              type: string
+              pattern: "^[0-9]+$"
+
+    PythPrice:
+      type: object
+      required: [price, conf, expo, publish_time]
+      properties:
+        price: { type: string }
+        conf: { type: string }
+        expo: { type: integer, format: int32 }
+        publish_time:
+          type: integer
+          format: int64
+          minimum: 0
+
     Pool:
       type: object
       required:
