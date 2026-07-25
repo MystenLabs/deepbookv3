@@ -898,6 +898,44 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-22: An over-limit pool-NAV certificate aborts the flush for keeper retry
+
+- **Trigger state:** the final nonzero pool-NAV certificate exceeds the ratified
+  1% relative-deviation ceiling, or its upper endpoint cannot be represented in
+  `u64`.
+- **Controller:** market × oracle — the active book, live prices, SVI surface,
+  and pool composition determine the final center and propagated radius. The
+  protocol controls the certificate construction and threshold, but cannot
+  force a market state to become precise.
+- **Blast radius:** `pool_nav_bid_ask` runs inside `finish_flush`, the single
+  mandatory pool-wide PTB. An abort rolls back valuation, cash rebalancing, and
+  every queued LP fill for that attempt.
+- **Response:** abort before constructing a frozen mark or draining either LP
+  queue. The privileged keeper retries with fresh pricing inputs; if live
+  uncertainty persists through expiry, successful exact-timestamp settlement
+  replaces the live mark with exact terminal accounting on a later attempt.
+- **Reasoning:** unlike RP-1's known but economically extreme certified mark,
+  this state has no pool value known within the accepted accuracy envelope.
+  Executing either LP direction would transfer value from an uncertified mark;
+  zeroing the mark would instead protocol-refund queued requests under RP-2,
+  changing queue ownership semantics. Atomic abort therefore preserves every
+  request and all pre-flush state until a certifiable mark exists.
+- **Risk profile:** `BEST-GUESS`. Production-shaped ordinary surfaces have not
+  reproduced the abort; the reachable regression uses a valid but
+  cancellation-heavy SVI update. Frequency remains an operational measurement,
+  not an algebraic claim.
+- **Pinning tests:** `pool_valuation_flow_tests.move` —
+  `finish_flush_rejects_an_uncertifiable_active_nav`; and
+  `precision_guard_tests.move` — `pool_nav_at_boundary_is_within`,
+  `pool_nav_above_boundary_is_not_within`, and
+  `pool_nav_with_unrepresentable_supply_ask_aborts`.
+- **Reopen when:** ordinary production surfaces reach the gate often enough to
+  impair LP service; the keeper can no longer obtain fresh pricing or exact
+  settlement; LP queues gain an explicit carry-without-drain response; or the
+  ratified NAV accuracy ceiling changes.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

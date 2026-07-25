@@ -16,6 +16,8 @@ module fixed_math::approx;
 
 use fixed_math::{i64::{Self, I64}, math};
 
+const ENegativeSqrtInput: u64 = 0;
+
 /// A fixed-point value with a certified absolute error radius (raw 1e9 units).
 public struct Approx has copy, drop {
     value: I64,
@@ -269,9 +271,10 @@ public fun ln_ratio(numerator: u64, denominator: u64): Approx {
 /// enclosed by `[sqrt(x - dx), sqrt(x + dx)]`; the error is the larger endpoint
 /// deviation from `sqrt(x)`, plus one raw unit for `sqrt_down`'s own rounding.
 /// The upper input endpoint is evaluated in u128 because `x + dx` may exceed u64
-/// even though its scaled square root always fits in u64. Uses the center
-/// magnitude; callers guard nonnegativity of the center.
+/// even though its scaled square root always fits in u64. Aborts when the
+/// canonical center is negative.
 public fun sqrt(a: &Approx): Approx {
+    assert!(!a.value.is_negative(), ENegativeSqrtInput);
     let x = a.value.magnitude();
     let root = math::sqrt_down(x);
     let low = if (x > a.error) math::sqrt_down(x - a.error) else 0;

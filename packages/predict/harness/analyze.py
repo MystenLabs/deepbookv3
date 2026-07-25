@@ -31,7 +31,7 @@ GUARD_MODULES = {
 }
 # INVARIANT modules: arithmetic / accounting / index / custody. A healthy run NEVER aborts
 # here, so a hit is a likely contract bug and is flagged regardless of code. (These were
-# previously swallowed because classification keyed on the module name only; e.g. math:3
+# previously swallowed because classification keyed on the module name only; e.g. math:2
 # EExpOverflow, i64:0 EZeroDivisor, lp_book EInvalidDrainMark, strike_payout_tree
 # EInsufficientPayoutTerms.)
 INVARIANT_MODULES = {
@@ -43,11 +43,13 @@ INVARIANT_MODULES = {
 #   liquidation_book:4 = EMaxActiveLeveragedOrders (per-market 5000 leveraged-order cap)
 #   strike_payout_tree:1 = EMaxPayoutTreeNodes (per-market 1000 payout-boundary-node cap) — the same
 #     mint-time admission-cap class as liquidation_book:4 (hitting it is a full market, not a bug).
+#   plp:10 = ENavTooImprecise (the full-pool flush retries after fresh pricing or settlement).
 #   lp_book:0..3 = ERequestNotFound / EBelowMinSupplyRequest / EBelowMinWithdrawRequest / ENotRequestOwner
 # (lp_book:4 EInvalidDrainMark + liquidation_book:0..3 index invariants stay FLAGGED.)
 EXPECTED_CODES = {
     "liquidation_book:4",
     "strike_payout_tree:1",
+    "plp:10",
     "lp_book:0", "lp_book:1", "lp_book:2", "lp_book:3",
 }
 # Submission-level / external-data failures — NOT contract bugs (consensus, network, and the

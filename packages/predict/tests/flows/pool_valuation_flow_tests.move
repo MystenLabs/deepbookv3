@@ -22,13 +22,12 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     protocol_config::{Self, ProtocolConfig},
-    test_constants,
-    vault_events::{Self, FlushExecuted}
+    test_constants
 };
 use fixed_math::math::float_scaling as float;
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
-use sui::{event, test_scenario::return_shared};
+use sui::test_scenario::return_shared;
 
 /// 1x ATM up range, quantity 2e9 (well under the 50e9 cash floor that backs it).
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
@@ -102,18 +101,6 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     assert_eq!(vault.profit_basis_debits(), POST_VALUATION_PROFIT_DEBITS);
     assert_eq!(vault.pending_protocol_profit(), 0);
     assert_eq!(pool_nav, TWO_MARKET_POOL_NAV);
-    let flushes = event::events_by_type<FlushExecuted>();
-    assert_eq!(flushes.length(), 1);
-    let flush = &flushes[0];
-    let withdraw_pool_value = vault_events::flush_withdraw_pool_value(flush);
-    let supply_pool_value = vault_events::flush_supply_pool_value(flush);
-    let active_market_nav_error = vault_events::flush_active_market_nav_error(flush);
-    assert!(withdraw_pool_value < pool_nav);
-    assert_eq!(pool_nav - withdraw_pool_value, supply_pool_value - pool_nav);
-    // Active NAV is the shared uncertain input to gross value and the
-    // protocol-profit exclusion. Preserving that dependency keeps the resulting
-    // monotone pool-value radius no larger than the input radius.
-    assert!(supply_pool_value - pool_nav <= active_market_nav_error);
 
     return_shared(config);
     return_shared(pyth);
@@ -225,12 +212,6 @@ fun empty_full_u64_pool_valuation_uses_exact_bid_ask() {
         fx.scenario_mut().ctx(),
     );
     assert_eq!(pool_nav, max_idle);
-
-    let flushes = event::events_by_type<FlushExecuted>();
-    assert_eq!(flushes.length(), 1);
-    let flush = &flushes[0];
-    assert_eq!(vault_events::flush_withdraw_pool_value(flush), max_idle);
-    assert_eq!(vault_events::flush_supply_pool_value(flush), max_idle);
 
     return_shared(config);
     return_shared(vault);

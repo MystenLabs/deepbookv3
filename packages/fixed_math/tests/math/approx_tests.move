@@ -245,6 +245,13 @@ fun mul_div_down_zero_center_denominator_aborts() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = approx::ENegativeSqrtInput)]
+fun sqrt_negative_center_aborts() {
+    let negative = approx::exact(i64::from_parts(4 * float!(), true));
+    negative.sqrt();
+    abort EUnexpectedSuccess
+}
+
 #[test]
 fun transcendental_balls_enclose_independent_endpoint_references() {
     // Python stdlib references, rounded to 1e9; these are independent of the
