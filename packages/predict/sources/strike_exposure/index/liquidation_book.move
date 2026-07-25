@@ -10,7 +10,7 @@
 module deepbook_predict::liquidation_book;
 
 use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo, strike_exposure_config};
-use fixed_math::approx::{Self, Approx};
+use fixed_math::{approx::{Self, Approx}, i64};
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -79,8 +79,7 @@ public(package) fun correction_value(
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
         let range_price = memo.cached_range_price(order.lower_tick(), order.higher_tick());
-        let quantity = approx::exact_u64(order.quantity());
-        let range_value = range_price.mul_scaled(&quantity);
+        let range_value = range_price.mul_exact(&i64::from_u64(order.quantity()));
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.

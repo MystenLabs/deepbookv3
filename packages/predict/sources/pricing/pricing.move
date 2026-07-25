@@ -590,8 +590,7 @@ fun variance_denominator_terms(
     k_minus_m: &Approx,
     root: &Approx,
 ): (Approx, Approx) {
-    let rho = approx::exact(svi_params.rho());
-    let inner = rho.mul_scaled(k_minus_m).add(root);
+    let inner = k_minus_m.mul_exact(&svi_params.rho()).add(root);
     // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
@@ -642,8 +641,7 @@ fun variance_slope(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): A
     let rho = approx::exact(svi_params.rho());
     let slope_ratio = k_minus_m.div_scaled(root);
     let slope = rho.add(&slope_ratio);
-    let b = approx::exact_u64(svi_params.b());
-    b.mul_scaled(&slope)
+    slope.mul_exact(&i64::from_u64(svi_params.b()))
 }
 
 fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {

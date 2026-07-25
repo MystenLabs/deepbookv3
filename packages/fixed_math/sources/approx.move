@@ -136,22 +136,18 @@ public fun double(a: &Approx): Approx {
 
 // === Scaled multiplicative operations ===
 
-/// Scaled product. A certified exact zero is absorbing, with no rounding or
-/// propagated error. Otherwise propagates via the product rule
-/// `d(ab) = |a| db + |b| da + da db`, each term rounded up, plus one raw unit.
-public fun mul_scaled(a: &Approx, b: &Approx): Approx {
-    if ((a.value.is_zero() && a.error == 0)
-            || (b.value.is_zero() && b.error == 0)) {
+/// Scaled product with an exact signed multiplier. Every protocol product has one
+/// exact operand — an order quantity, a stored SVI parameter — so the general
+/// product rule `d(ab) = |a| db + |b| da + da db` keeps only its `|k| da` term,
+/// rounded up, plus one raw unit. Either zero is absorbing: an exact zero
+/// multiplier annihilates, and a certified exact zero stays exact.
+public fun mul_exact(a: &Approx, k: &I64): Approx {
+    if (k.is_zero() || (a.value.is_zero() && a.error == 0)) {
         return exact_u64(0)
     };
 
-    let ma = a.value.magnitude();
-    let mb = b.value.magnitude();
-    let error = ceil_mul(ma, b.error)
-        .saturating_add(ceil_mul(mb, a.error))
-        .saturating_add(ceil_mul(a.error, b.error))
-        .saturating_add(round_leaf!());
-    Approx { value: a.value.mul_scaled(&b.value), error }
+    let error = ceil_mul(k.magnitude(), a.error).saturating_add(round_leaf!());
+    Approx { value: a.value.mul_scaled(k), error }
 }
 
 /// Scaled square of a signed ball, returning a nonnegative ball.

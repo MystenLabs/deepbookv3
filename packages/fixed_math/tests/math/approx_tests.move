@@ -84,47 +84,44 @@ fun continuous_clamps_retain_the_radius() {
 }
 
 #[test]
-fun mul_scaled_encloses_all_positive_corners_and_keeps_scalar_center() {
+fun mul_exact_encloses_both_corners_and_keeps_scalar_center() {
+    // 1.5 +/- 0.2 scaled by an exact 2.0: center 3.0, corners 2.6 and 3.4.
     let a = approx::from_certified_parts(i64::from_u64(3 * float!() / 2), float!() / 5);
-    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), 3 * float!() / 10);
-    let result = a.mul_scaled(&b);
+    let result = a.mul_exact(&i64::from_u64(2 * float!()));
 
     assert_center(&result, 3 * float!(), false);
-    assert_eq!(result.error(), 910_000_001);
-    assert_contains(&result, i64::from_u64(2_210_000_000));
-    assert_contains(&result, i64::from_u64(3_910_000_000));
+    assert_eq!(result.error(), 400_000_001);
+    assert_contains(&result, i64::from_u64(2_600_000_000));
+    assert_contains(&result, i64::from_u64(3_400_000_000));
 }
 
 #[test]
-fun mul_scaled_encloses_negative_product_corners() {
+fun mul_exact_encloses_negative_product_corners() {
     let a = approx::from_certified_parts(i64::from_parts(3 * float!() / 2, true), float!() / 5);
-    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), 3 * float!() / 10);
-    let result = a.mul_scaled(&b);
+    let result = a.mul_exact(&i64::from_u64(2 * float!()));
 
     assert_center(&result, 3 * float!(), true);
-    assert_contains(&result, i64::from_parts(2_210_000_000, true));
-    assert_contains(&result, i64::from_parts(3_910_000_000, true));
+    assert_contains(&result, i64::from_parts(2_600_000_000, true));
+    assert_contains(&result, i64::from_parts(3_400_000_000, true));
 }
 
 #[test]
-fun exact_zero_absorbs_multiplication_uncertainty_in_both_orders() {
-    let zero = approx::exact_u64(0);
+fun exact_zero_absorbs_multiplication_uncertainty_on_either_side() {
     let uncertain = approx::from_certified_parts(i64::from_parts(2 * float!(), true), float!() / 5);
 
-    let left_zero = zero.mul_scaled(&uncertain);
-    assert_center(&left_zero, 0, false);
-    assert_eq!(left_zero.error(), 0);
+    let zero_multiplier = uncertain.mul_exact(&i64::zero());
+    assert_center(&zero_multiplier, 0, false);
+    assert_eq!(zero_multiplier.error(), 0);
 
-    let right_zero = uncertain.mul_scaled(&zero);
-    assert_center(&right_zero, 0, false);
-    assert_eq!(right_zero.error(), 0);
+    let zero_ball = approx::exact_u64(0).mul_exact(&i64::from_u64(2 * float!()));
+    assert_center(&zero_ball, 0, false);
+    assert_eq!(zero_ball.error(), 0);
 }
 
 #[test]
 fun zero_center_with_error_does_not_absorb_multiplication_uncertainty() {
     let uncertain_zero = approx::from_certified_parts(i64::zero(), 1);
-    let one = approx::exact_u64(float!());
-    let result = uncertain_zero.mul_scaled(&one);
+    let result = uncertain_zero.mul_exact(&i64::from_u64(float!()));
 
     assert_center(&result, 0, false);
     assert_eq!(result.error(), 2);
@@ -339,5 +336,5 @@ fun error_arithmetic_saturates_instead_of_wrapping() {
     let exact = approx::exact_u64(float!());
     assert_eq!(saturated.add(&exact).error(), std::u64::max_value!());
     assert_eq!(saturated.sub(&exact).error(), std::u64::max_value!());
-    assert_eq!(saturated.mul_scaled(&exact).error(), std::u64::max_value!());
+    assert_eq!(saturated.mul_exact(&i64::from_u64(float!())).error(), std::u64::max_value!());
 }

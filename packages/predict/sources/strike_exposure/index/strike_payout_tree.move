@@ -428,7 +428,7 @@ fun walk_linear_subtree(
         start_quantity.diff(end_quantity),
         start_quantity < end_quantity,
     );
-    let local = price.mul_scaled(&approx::exact(net_quantity));
+    let local = price.mul_exact(&net_quantity);
 
     let right = walk_linear_subtree(
         nodes,
