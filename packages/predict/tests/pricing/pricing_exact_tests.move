@@ -140,9 +140,8 @@ fun run_scenario(s: u64, enforce_mint_deviation: bool) {
             boundary_tick(p.lower(), tick_size),
             boundary_tick(p.higher(), tick_size),
         );
-        assert!(!priced.is_negative());
         assert!(priced.error() < std::u64::max_value!());
-        let actual = priced.magnitude();
+        let actual = priced.value();
         assert_eq!(pricer.range_price(lower, higher), actual);
         assert_eq!(actual, p.expected_center());
         test_helpers::assert_within(actual, p.reference(), p.tolerance());

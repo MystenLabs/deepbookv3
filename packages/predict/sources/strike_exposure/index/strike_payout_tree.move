@@ -16,8 +16,8 @@
 /// enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
-use fixed_math::{approx::{Self, Approx}, i64};
+use deepbook_predict::{certified, constants, pricing::{Pricer, PriceMemo}, range_codec};
+use fixed_math::i64::{Self, I64};
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
@@ -108,16 +108,18 @@ public(package) fun walk_linear(
     pricer: &Pricer,
     memo: &mut PriceMemo,
     tick_size: u64,
-): Approx {
+    error: &mut u64,
+): I64 {
     let running = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         memo,
+        error,
     );
-    let base = approx::exact_u64(tree.base.quantity);
-    base.add(&running)
+    // The `P(-inf) = 1` anchor enters at face value, exactly, so it adds no radius.
+    i64::from_u64(tree.base.quantity).add(&running)
 }
 
 /// Create an empty sparse payout tree.
@@ -411,8 +413,9 @@ fun walk_linear_subtree(
     pricer: &Pricer,
     tick_size: u64,
     memo: &mut PriceMemo,
-): Approx {
-    if (root.is_none()) return approx::exact_u64(0);
+    error: &mut u64,
+): I64 {
+    if (root.is_none()) return i64::zero();
     let tick = *root.borrow();
     let node = nodes[tick];
 
@@ -422,6 +425,7 @@ fun walk_linear_subtree(
         pricer,
         tick_size,
         memo,
+        error,
     );
 
     let price = memo.price_and_cache(pricer, tick, tick_size);
@@ -431,7 +435,11 @@ fun walk_linear_subtree(
         start_quantity.diff(end_quantity),
         start_quantity < end_quantity,
     );
-    let local = price.mul_exact(&net_quantity);
+    let local = i64::from_u64(price.value()).mul_scaled(&net_quantity);
+    *error =
+        (*error).saturating_add(
+            certified::term_error(net_quantity.magnitude(), price.value(), price.error()),
+        );
 
     let right = walk_linear_subtree(
         nodes,
@@ -439,6 +447,7 @@ fun walk_linear_subtree(
         pricer,
         tick_size,
         memo,
+        error,
     );
     left.add(&local).add(&right)
 }

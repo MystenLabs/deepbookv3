@@ -164,8 +164,8 @@ fun cached_range_price_matches_a_freshly_computed_range_center() {
     let lower = range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size);
     let higher = range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size);
     let cached = memo.cached_range_price(CACHED_RANGE_LOWER_TICK, CACHED_RANGE_HIGHER_TICK);
-    assert_eq!(cached.magnitude(), pricer.range_price(lower, higher));
-    assert_eq!(cached.magnitude(), pricer.admitted_range_price(lower, higher));
+    assert_eq!(cached.value(), pricer.range_price(lower, higher));
+    assert_eq!(cached.value(), pricer.admitted_range_price(lower, higher));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

@@ -9,8 +9,14 @@
 /// same bounded active set supplies the floor-correction term for pool valuation.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::{Self, Order}, pricing::PriceMemo, strike_exposure_config};
-use fixed_math::{approx::{Self, Approx}, i64};
+use deepbook_predict::{
+    certified,
+    constants,
+    order::{Self, Order},
+    pricing::PriceMemo,
+    strike_exposure_config
+};
+use fixed_math::math;
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -72,28 +78,34 @@ public(package) fun correction_value(
     book: &LiquidationBook,
     memo: &PriceMemo,
     liquidation_ltv: u64,
-): Approx {
-    let mut correction = approx::exact_u64(0);
+    error: &mut u64,
+): u64 {
+    let mut correction = 0;
     let mut cursor = book.first_cursor();
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
         let range_price = memo.cached_range_price(order.lower_tick(), order.higher_tick());
-        let range_value = range_price.mul_exact(&i64::from_u64(order.quantity()));
+        let quantity = order.quantity();
+        let range_value = math::mul_down(range_price.value(), quantity);
+        // The radius is the same on both branches below: capping at an exact floor
+        // is 1-Lipschitz, so it never changes how far the term can be from truth.
+        *error =
+            (*error).saturating_add(
+                certified::term_error(quantity, range_price.value(), range_price.error()),
+            );
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.
         let is_liquidatable = strike_exposure_config::is_liquidatable(
-            range_value.magnitude(),
+            range_value,
             order.floor_shares(),
             liquidation_ltv,
         );
-        let cap = if (is_liquidatable) {
-            range_value
-        } else {
-            range_value.clamp_upper(order.floor_shares())
+        let cap = if (is_liquidatable) { range_value } else {
+            range_value.min(order.floor_shares())
         };
-        correction = correction.add(&cap);
+        correction = correction + cap;
         cursor = book.next_cursor(scan);
     };
     correction

@@ -56,6 +56,7 @@
 module deepbook_predict::current_nav_flow_tests;
 
 use deepbook_predict::{
+    certified::Certified,
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
@@ -65,7 +66,7 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use fixed_math::{approx::Approx, math::{Self, float_scaling as float}};
+use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
@@ -124,7 +125,7 @@ fun empty_live_market_values_at_free_cash() {
     check_nav(&fx, &market, vector[]);
     let pricer = fx.load_pricer_bundle(&market);
     let approximate = helpers::market(&market).current_nav_approx(&pricer);
-    assert_eq!(approximate.magnitude(), nav);
+    assert_eq!(approximate.value(), nav);
     assert_eq!(approximate.error(), 0);
 
     helpers::return_market_bundle(market);
@@ -652,10 +653,10 @@ fun check_single_order_nav_enclosure(
         };
     });
     let price = memo.cached_range_price(decoded.lower_tick(), decoded.higher_tick());
-    let price_low = price.magnitude().saturating_sub(price.error());
-    let price_high = price.magnitude().saturating_add(price.error()).min(float!());
+    let price_low = price.value().saturating_sub(price.error());
+    let price_high = price.value().saturating_add(price.error()).min(float!());
 
-    let canonical_gross = math::mul_down(price.magnitude(), decoded.quantity());
+    let canonical_gross = math::mul_down(price.value(), decoded.quantity());
     let knocked_out =
         decoded.floor_shares() > 0
             && canonical_gross
@@ -675,14 +676,13 @@ fun check_single_order_nav_enclosure(
     let nav_low = free_cash.saturating_sub(liability_high);
     let nav_high = free_cash.saturating_sub(liability_low);
     let approximate = expiry_market.current_nav_approx(&pricer);
-    assert_eq!(approximate.magnitude(), expiry_market.current_nav(&pricer));
+    assert_eq!(approximate.value(), expiry_market.current_nav(&pricer));
     assert_contains(&approximate, nav_low);
     assert_contains(&approximate, nav_high);
 }
 
-fun assert_contains(ball: &Approx, candidate: u64) {
-    assert!(!ball.is_negative());
-    assert!(ball.magnitude().diff(candidate) <= ball.error());
+fun assert_contains(ball: &Certified, candidate: u64) {
+    assert!(ball.value().diff(candidate) <= ball.error());
 }
 
 /// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ contribution` per

@@ -14,6 +14,7 @@ module deepbook_predict::expiry_market;
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
+    certified::{Self, Certified},
     config_events,
     constants,
     ewma::{Self, EwmaState},
@@ -29,7 +30,7 @@ use deepbook_predict::{
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::{approx::{Self, Approx}, math};
+use fixed_math::math;
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -237,18 +238,21 @@ public fun load_live_pricer(
 /// `Pricer`; an expired but unsettled market cannot be valued through this path.
 /// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
-    market.current_nav_approx(pricer).magnitude()
+    market.current_nav_approx(pricer).value()
 }
 
 /// Return live marked NAV with its certified numerical error retained for pool
 /// valuation. The public `current_nav` is the value-only read wrapper.
-public(package) fun current_nav_approx(market: &ExpiryMarket, pricer: &Pricer): Approx {
+public(package) fun current_nav_approx(market: &ExpiryMarket, pricer: &Pricer): Certified {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.marked_live_liability(pricer);
     // Marked liability and free cash are computed through different rounded
-    // aggregates; negative marked NAV is represented as zero.
-    let cash = approx::exact_u64(market.cash.free_cash());
-    cash.sub(&liability).clamp_nonnegative()
+    // aggregates; negative marked NAV is represented as zero. Free cash is exact, so
+    // the liability's radius carries through unchanged.
+    certified::new(
+        market.cash.free_cash().saturating_sub(liability.value()),
+        liability.error(),
+    )
 }
 
 /// Return one order's close value before fees. Liquidated or currently

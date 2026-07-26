@@ -18,6 +18,7 @@ module deepbook_predict::plp;
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
+    certified::{Self, Certified},
     constants,
     expiry_market::ExpiryMarket,
     lp_book::{Self, LpBook},
@@ -28,7 +29,7 @@ use deepbook_predict::{
     vault_events
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::{approx::{Self, Approx}, i64, math};
+use fixed_math::math;
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -94,7 +95,7 @@ public struct PoolValuation {
     /// Markets valued so far this flow; folded against `expected` at finish.
     valued_expiry_markets: vector<ID>,
     /// Running Σ of each valued market's NAV (settled markets contribute exact 0).
-    total_nav: Approx,
+    total_nav: Certified,
 }
 
 // === Package Initializer ===
@@ -246,7 +247,7 @@ public fun value_expiry(
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     let nav = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
-        approx::exact_u64(0)
+        certified::exact(0)
     } else {
         let pricer = market.load_live_pricer(
             config,
@@ -260,7 +261,12 @@ public fun value_expiry(
         market.current_nav_approx(&pricer)
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
-    valuation.total_nav = valuation.total_nav.add(&nav);
+    // Per-market NAVs are independent marks, so their radii add.
+    valuation.total_nav =
+        certified::new(
+            valuation.total_nav.value() + nav.value(),
+            valuation.total_nav.error().saturating_add(nav.error()),
+        );
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -299,14 +305,14 @@ public fun finish_flush(
         config.protocol_reserve_profit_share(),
         &total_nav,
     );
-    let active_market_nav = total_nav.magnitude();
+    let active_market_nav = total_nav.value();
     let active_market_nav_error = total_nav.error();
-    let pool_nav_center = pool_nav.magnitude();
+    let pool_nav_center = pool_nav.value();
     let (withdraw_pool_value, supply_pool_value) = pool_nav_bid_ask(&pool_nav);
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
 
-    // Deconstruct Approx exactly once at the economic boundary. Suppliers pay the
+    // Deconstruct the certificate exactly once at the economic boundary. Suppliers pay the
     // high pool value and withdrawals receive the low pool value, both over the
     // same frozen pre-drain supply.
     let vault_id = vault.id();
@@ -679,12 +685,12 @@ public(package) fun register_expiry(
 /// withdrawal bid and supply ask. A zero center remains a live zero mark; every
 /// nonzero mark must satisfy the relative precision ceiling and have a
 /// representable upper endpoint before it can move LP value.
-public(package) fun pool_nav_bid_ask(pool_nav: &Approx): (u64, u64) {
-    let center = pool_nav.magnitude();
+public(package) fun pool_nav_bid_ask(pool_nav: &Certified): (u64, u64) {
+    let center = pool_nav.value();
     if (center == 0) return (0, 0);
     let error = pool_nav.error();
     assert!(
-        pool_nav.true_relative_deviation_within(max_nav_deviation!())
+        pool_nav.relative_deviation_within(max_nav_deviation!())
             && error <= std::u64::max_value!() - center,
         ENavTooImprecise,
     );
@@ -751,9 +757,9 @@ fun claim_trading_loss_rebate_internal(
 fun lp_pool_value_approx(
     vault: &PoolVault,
     protocol_reserve_profit_share: u64,
-    active_expiry_value: &Approx,
-): Approx {
-    let center = active_expiry_value.magnitude();
+    active_expiry_value: &Certified,
+): Certified {
+    let center = active_expiry_value.value();
     let error = active_expiry_value.error();
     let pool_center = lp_pool_value_at_active_nav(
         vault,
@@ -761,7 +767,7 @@ fun lp_pool_value_approx(
         center,
     );
     if (error > std::u64::max_value!() - center) {
-        return approx::from_certified_parts(i64::from_u64(pool_center), std::u64::max_value!())
+        return certified::new(pool_center, std::u64::max_value!())
     };
     let upper_active_expiry_value = center + error;
     let max = std::u64::max_value!();
@@ -769,7 +775,7 @@ fun lp_pool_value_approx(
         upper_active_expiry_value > max - vault.expiry_accounting.idle_balance()
             || upper_active_expiry_value > max - vault.expiry_accounting.profit_basis_credits()
     ) {
-        return approx::from_certified_parts(i64::from_u64(pool_center), max)
+        return certified::new(pool_center, max)
     };
 
     // Active NAV is the one uncertain input on both sides of the protocol-profit
@@ -788,7 +794,7 @@ fun lp_pool_value_approx(
         upper_active_expiry_value,
     );
     let pool_error = (pool_center - lower).max(upper - pool_center);
-    approx::from_certified_parts(i64::from_u64(pool_center), pool_error)
+    certified::new(pool_center, pool_error)
 }
 
 fun lp_pool_value_at_active_nav(
@@ -1016,7 +1022,7 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
         pool_vault_id: vault.id(),
         expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
-        total_nav: approx::exact_u64(0),
+        total_nav: certified::exact(0),
     }
 }
 

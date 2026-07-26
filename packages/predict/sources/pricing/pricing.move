@@ -10,8 +10,13 @@
 /// Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
-use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math};
+use deepbook_predict::{
+    certified::{Self, Certified},
+    constants,
+    pricing_config::PricingConfig,
+    range_codec::{Self, Strike}
+};
+use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -59,7 +64,7 @@ public struct PriceMemo has drop {
     /// Finite boundary ticks in ascending order (the in-order walk appends them).
     ticks: vector<u64>,
     /// `up_price(ticks[i] * tick_size)`, with its certified error, parallel to `ticks`.
-    prices: vector<Approx>,
+    prices: vector<Certified>,
 }
 
 const EZeroForward: u64 = 0;
@@ -144,14 +149,14 @@ public(package) fun admitted_range_price(pricer: &Pricer, lower: Strike, higher:
 
     let lower_up_price = up_price_certified(&pricer.svi, pricer.forward, lower);
     let higher_up_price = up_price_certified(&pricer.svi, pricer.forward, higher);
-    // Fixed-point approximation or a non-monotone SVI surface can invert the
-    // boundary prices; the range probability is floored at zero.
-    let price = lower_up_price.sub(&higher_up_price).clamp_nonnegative();
-    assert!(
-        price.true_relative_deviation_within(max_contract_price_deviation!()),
-        EPriceTooImprecise,
+    // The two boundaries come from independent kernel runs, so approximation or a
+    // non-monotone surface can invert them; the range probability floors at zero.
+    let price = certified::new(
+        lower_up_price.value().saturating_sub(higher_up_price.value()),
+        lower_up_price.error().saturating_add(higher_up_price.error()),
     );
-    price.magnitude()
+    assert!(price.relative_deviation_within(max_contract_price_deviation!()), EPriceTooImprecise);
+    price.value()
 }
 
 /// Return the expiry market this pricer was loaded for.
@@ -257,11 +262,13 @@ public(package) fun cached_range_price(
     memo: &PriceMemo,
     lower_tick: u64,
     higher_tick: u64,
-): Approx {
+): Certified {
     assert!(lower_tick < higher_tick, EInvalidRange);
     let lower = memo.cached_up_price(lower_tick);
     let higher = memo.cached_up_price(higher_tick);
-    lower.sub(&higher)
+    // The memo is non-increasing in tick and its sentinels bracket every price, so
+    // this subtraction cannot underflow; the VM abort is a free invariant check.
+    certified::new(lower.value() - higher.value(), lower.error().saturating_add(higher.error()))
 }
 
 /// Price `tick` through `pricer` and append its approximate value to the cache.
@@ -273,7 +280,7 @@ public(package) fun price_and_cache(
     pricer: &Pricer,
     tick: u64,
     tick_size: u64,
-): Approx {
+): Certified {
     let price = up_price_certified(
         &pricer.svi,
         pricer.forward,
@@ -283,7 +290,7 @@ public(package) fun price_and_cache(
         let previous = memo.prices[memo.prices.length() - 1];
         // Higher strikes should not have higher UP prices. NAV's linear tree walk
         // relies on that order; an inverted surface can overstate pool value.
-        assert!(price.magnitude() <= previous.magnitude(), ENonMonotonePriceMemo);
+        assert!(price.value() <= previous.value(), ENonMonotonePriceMemo);
     };
     memo.ticks.push_back(tick);
     memo.prices.push_back(price);
@@ -295,9 +302,9 @@ public(package) fun price_and_cache(
 /// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
 /// nodes, so they short-circuit to `compute_up_price_approx`'s sentinels (`P(-inf) = 1`,
 /// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
-fun cached_up_price(memo: &PriceMemo, tick: u64): Approx {
-    if (tick == 0) return approx::exact_u64(math::float_scaling!()); // neg-inf sentinel
-    if (tick == constants::pos_inf_tick!()) return approx::exact_u64(0);
+fun cached_up_price(memo: &PriceMemo, tick: u64): Certified {
+    if (tick == 0) return certified::exact(math::float_scaling!()); // neg-inf sentinel
+    if (tick == constants::pos_inf_tick!()) return certified::exact(0);
 
     let ticks = &memo.ticks;
     let mut lo = 0;
@@ -565,7 +572,7 @@ fun compute_up_price_center(svi_params: &SVIParams, forward: u64, strike: Strike
     adjusted.magnitude().min(math::float_scaling!())
 }
 
-/// Center of `Approx::ln_ratio` without constructing its discarded radius.
+/// Center of `certified_ln_ratio` without constructing its discarded radius.
 fun ln_ratio_center(numerator: u64, denominator: u64): I64 {
     let ratio_opt = math::try_div_down(numerator, denominator);
     if (ratio_opt.is_some()) {
@@ -593,12 +600,12 @@ fun ln_ratio_center(numerator: u64, denominator: u64): I64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Approx {
+fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Certified {
     if (strike.is_neg_inf()) {
-        return approx::exact_u64(math::float_scaling!())
+        return certified::exact(math::float_scaling!())
     };
     if (strike.is_pos_inf()) {
-        return approx::exact_u64(0)
+        return certified::exact(0)
     };
 
     assert!(forward > 0, EZeroForward);
@@ -743,12 +750,13 @@ fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Ap
 
     // N(d2) - correction, floored then capped to [0, 1]. Both projections are
     // 1-Lipschitz, so each retains the radius even on its clamped branch.
-    approx::from_certified_parts(
-        i64::from_u64(nd2).sub(&correction),
-        nd2_error.saturating_add(correction_error),
-    )
-        .clamp_nonnegative()
-        .clamp_upper(math::float_scaling!())
+    let adjusted = i64::from_u64(nd2).sub(&correction);
+    let value = if (adjusted.is_negative()) {
+        0
+    } else {
+        adjusted.magnitude().min(math::float_scaling!())
+    };
+    certified::new(value, nd2_error.saturating_add(correction_error))
 }
 
 /// `ln(numerator / denominator)` for exact positive inputs, with its radius. The

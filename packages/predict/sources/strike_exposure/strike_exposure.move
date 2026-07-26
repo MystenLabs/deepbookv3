@@ -14,6 +14,7 @@
 module deepbook_predict::strike_exposure;
 
 use deepbook_predict::{
+    certified::{Self, Certified},
     constants,
     liquidation_book::{Self, LiquidationBook},
     order::{Self, Order},
@@ -23,7 +24,7 @@ use deepbook_predict::{
     strike_exposure_config::{Self, StrikeExposureConfig},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use fixed_math::{approx::Approx, math};
+use fixed_math::math;
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
@@ -214,16 +215,27 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// order contributes its positive `range_value - floor_shares`. Boundary
 /// aggregation and per-order correction round at different points, so the final
 /// subtraction clamps at zero.
-public(package) fun marked_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Approx {
+public(package) fun marked_live_liability(exposure: &StrikeExposure, pricer: &Pricer): Certified {
     let mut memo = pricing::new_price_memo();
-    let signed_boundary_linear = exposure.payout.walk_linear(pricer, &mut memo, exposure.tick_size);
+    // Both walks visit exactly the priced terms, so one accumulator collects the
+    // whole radius as they go; nothing downstream of a price is nonlinear.
+    let mut error = 0;
+    let signed_boundary_linear = exposure
+        .payout
+        .walk_linear(pricer, &mut memo, exposure.tick_size, &mut error);
     let correction = exposure
         .liquidation
         .correction_value(
             &memo,
             exposure.config.liquidation_ltv(),
+            &mut error,
         );
-    signed_boundary_linear.sub(&correction).clamp_nonnegative()
+    let value = if (signed_boundary_linear.is_negative()) {
+        0
+    } else {
+        signed_boundary_linear.magnitude().saturating_sub(correction)
+    };
+    certified::new(value, error)
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.
