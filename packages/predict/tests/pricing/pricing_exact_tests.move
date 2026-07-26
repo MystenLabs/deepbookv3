@@ -249,12 +249,18 @@ fun at_the_forward_is_exactly_one_half() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let up = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
+    let lower = strike(test_constants::default_live_price());
+    let higher = strike(constants::pos_inf!());
+    let up = pricer.range_price(lower, higher);
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
     assert_eq!(up, math::float_scaling!() / 2);
+    // A flat-variance surface (`b == 0`) is the ONLY admissible input that gives the
+    // certified kernel a slope of exactly zero with a zero radius, so it is the only
+    // input that reaches its early return — the branch that skips the smile
+    // correction outright. Every other fixture rounds the slope to zero while
+    // keeping a radius, which flows through the correction instead. Pin both kernels
+    // on this surface so the two zero-slope regimes stay distinguishable.
+    assert_eq!(pricer.admitted_range_price(lower, higher), up);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
