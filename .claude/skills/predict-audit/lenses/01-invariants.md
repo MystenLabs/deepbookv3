@@ -18,7 +18,7 @@ Produce:
    across ALL touching flows. Give special weight to **cross-module and cross-package** invariants — a
    property established in one module/package and silently relied on in another (e.g. `expiry_cash`'s
    `cash_balance >= payout_liability + rebate_reserve`; the exact `current_nav` mark used identically for PLP
-   supply and withdraw; the `strike_payout_tree::payout_terms` round-trip — mint insert must add bit-equal what remove subtracts).
+   supply and withdraw; the `strike_payout_tree::payout_terms_from_order` round-trip — mint insert must add bit-equal what remove subtracts).
 
 2. **ECONOMIC FLOW MAP** — trace every path where value (DUSDC, DEEP, SUI, PLP) enters, moves, or leaves:
    mint, live redeem, settled redeem, passive liquidation, rebate claim, async supply/withdraw + privileged

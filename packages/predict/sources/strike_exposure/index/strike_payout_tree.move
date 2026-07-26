@@ -498,6 +498,11 @@ fun is_empty_node(node: PayoutNode): bool {
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
     apply_net_delta(&mut value.quantity, delta.quantity, add);
     apply_net_delta(&mut value.net_payout, delta.net_payout, add);
+    // Net payout can never exceed quantity (floor_shares = quantity - net_payout
+    // >= 0). A remove that breaks this subtracted a floor component that was never
+    // inserted -- a caller/index desync -- so abort rather than leave the boundary
+    // holding a phantom net payout above zero quantity.
+    assert!(value.net_payout <= value.quantity, EInsufficientPayoutTerms);
 }
 
 fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {

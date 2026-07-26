@@ -179,7 +179,7 @@ fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 0, 1, 200, 0);
     // Partial-close survivor terms from the C1 gap-one row, now stored as
-    // quantity plus static floor shares.
+    // quantity plus net payout (quantity - floor_shares).
     insert_range(
         &mut tree,
         1,
@@ -187,7 +187,7 @@ fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
         PARTIAL_SURVIVOR_QUANTITY,
         PARTIAL_SURVIVOR_FLOOR_SHARES,
     );
-    // Leveraged UP terms stored as quantity plus static floor shares.
+    // Leveraged UP terms stored as quantity plus net payout (quantity - floor_shares).
     insert_range(
         &mut tree,
         2,
@@ -280,6 +280,19 @@ fun insert_finite_range_requiring_two_new_boundaries_above_node_cap_aborts() {
     seed_single_boundary_one_slot_below_node_cap(&mut tree);
 
     insert_range(&mut tree, 2, 3, 1, 0);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutTerms)]
+fun remove_floor_never_inserted_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    // Insert an unleveraged slice (floor 0), then remove it as if leveraged
+    // (floor 20). The net payout subtracts cleanly (50 - 30 <= 50) and quantity
+    // reaches zero, but the floor component was never inserted -- so removal must
+    // abort rather than leave the boundary holding a net payout above quantity.
+    insert_range(&mut tree, 2, 6, 50, 0);
+    remove_range(&mut tree, 2, 6, 50, 20);
     abort 999
 }
 
@@ -575,8 +588,8 @@ fun settled_liability_sums_multiple_winners() {
 
 #[test]
 fun settled_liability_nets_floor_shares() {
-    // The tree stores quantity and static floor shares; settled payout is the
-    // derived net payout `quantity - floor_shares`.
+    // The tree stores quantity and net payout (`quantity - floor_shares`);
+    // settled payout reads that net payout directly.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 2, 6, 50, 20);
