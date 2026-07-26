@@ -239,7 +239,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Rounding
 
-- All fixed-point math is at 1e9 scale; `math::mul` and `math::div` round **down**
+- All fixed-point math is at 1e9 scale; `math::mul_down` and `math::div_down` round **down**
   uniformly.
 - **Solvency rests on bit-identical pairing:** where a reserve and a payout derive
   from the same quantity/floor atoms, they use the same net-payout calculation

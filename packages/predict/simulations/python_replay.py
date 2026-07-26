@@ -535,7 +535,7 @@ def live_forward(spot: int, forward: int) -> int:
     # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
     # every live quote/valuation/liquidation is NOT the pushed forward, but is
     # re-derived from the live Pyth spot and the stored Block Scholes basis as
-    # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
+    # mul_down(spot, div_down(forward, spot)). That round-trip is lossy (two floors), so it
     # generally differs from `forward` by a few units. In the localnet parity flow
     # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
     # is exactly the forward the contracts price with.
@@ -745,10 +745,8 @@ def sqrt_u128(x: int) -> int:
     return g
 
 
-def sqrt_fixed(x: int, precision: int) -> int:
-    multiplier = FLOAT_SCALING // precision
-    scaled = x * multiplier * F
-    return sqrt_u128(scaled) // multiplier
+def sqrt_down(x: int) -> int:
+    return sqrt_u128(x * F)
 
 
 def normal_cdf_u128(x: int, x_negative: bool) -> int:
@@ -822,7 +820,7 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     k_minus_m_squared = k_minus_m.square_scaled()
     sigma = svi["sigma"]
     sigma_squared = deepbook_mul(sigma, sigma)
-    sq = sqrt_fixed(k_minus_m_squared + sigma_squared, FLOAT_SCALING)
+    sq = sqrt_down(k_minus_m_squared + sigma_squared)
     rho = I64(svi["rho"], svi["rhoNegative"])
     rho_km = rho.mul_scaled(k_minus_m)
     inner = rho_km.add(I64(sq))
@@ -834,7 +832,7 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     if total_var_i64.is_negative or total_var_i64.magnitude == 0:
         raise ValueError("SVI total variance must be positive")
     total_var = total_var_i64.magnitude
-    sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
+    sqrt_var = sqrt_down(total_var)
     d2_numerator = k.add(I64(total_var // 2))
     d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
     nd2 = normal_cdf(d2)
@@ -1410,7 +1408,7 @@ def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
     else:
         complement = FLOAT_SCALING - probability
         variance = deepbook_mul(probability, complement)
-        bernoulli_factor = sqrt_fixed(variance, FLOAT_SCALING)
+        bernoulli_factor = sqrt_down(variance)
         raw_fee = deepbook_mul(BASE_FEE, bernoulli_factor)
     base = raw_fee if raw_fee > MIN_FEE else MIN_FEE
     return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))

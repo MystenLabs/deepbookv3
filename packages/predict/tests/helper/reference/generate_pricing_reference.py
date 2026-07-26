@@ -148,11 +148,11 @@ OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "pricing_reference_data.mov
 
 
 # --- predict math floor ops (INPUT construction only: forward round-trip) ---
-def fp_div(x, y):  # math::div: floor(x * F / y)
+def fp_div(x, y):  # math::div_down: floor(x * F / y)
     return (x * F) // y
 
 
-def fp_mul(x, y):  # math::mul: floor(x * y / F)
+def fp_mul(x, y):  # math::mul_down: floor(x * y / F)
     return (x * y) // F
 
 

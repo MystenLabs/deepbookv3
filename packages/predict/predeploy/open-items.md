@@ -149,7 +149,7 @@ accepted bound. (2026-07-17 clean-room gap audit)
 
 The `up_price` on short-dated markets breaches the ratified 0.1% price-deviation
 bound (`response-policies.md § Pricing and valuation deviation bounds`).
-`pricing::compute_nd2` forms the SVI variance increment as `math::mul(b, inner)`
+`pricing::compute_nd2` forms the SVI variance increment as `math::mul_down(b, inner)`
 = `(b · inner) / 1e9`, truncating the sub-unit fraction to an integer 1e9 unit.
 At the low total variance of short-dated markets that fraction is a material
 share of total variance, so `total_var` is biased systematically downward

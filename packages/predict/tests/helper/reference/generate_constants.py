@@ -88,9 +88,8 @@ POINTS = [
     ("LN_1EM9_MAG", abs(scaled(math.log(1e-9)))),
     ("LN_U64MAX", scaled(math.log((2**64 - 1) / F))),
     ("LN_1_5", scaled(math.log(1.5))),  # x in (F, 2F): non-degenerate Horner series
-    # sqrt with non-default precision: sqrt(x, P) == isqrt(x * P) in raw units.
-    ("SQRT_4F_PREC_ONE", math.isqrt(4 * F * 1)),
-    ("SQRT_U64MAX_PREC_ONE", math.isqrt((2**64 - 1) * 1)),  # high-bit Newton path; = 2^32-1
+    # sqrt_down(x) = isqrt(x * F): the 1e9-scaled sqrt of a 1e9-scaled value.
+    ("SQRT_U64MAX", math.isqrt((2**64 - 1) * F)),  # widest input; high-bit Newton path
 ]
 
 if __name__ == "__main__":
