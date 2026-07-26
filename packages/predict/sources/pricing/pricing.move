@@ -455,7 +455,12 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
-    assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    // `b` is SVI's wing slope and is strictly positive on any published surface: a
+    // zero slope is a flat total variance with no smile at all. Requiring it here
+    // rather than tolerating it downstream keeps the certified kernel's slope
+    // radius strictly positive, which is what makes its zero-slope shortcut
+    // unrepresentable instead of merely untaken.
+    assert!(svi.b() > 0 && svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(
@@ -695,15 +700,12 @@ fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Ap
     // w'(k) = b * (rho + x / root), with exact rho and b.
     let (slope_ratio, slope_ratio_error) = certified_div(&x, x_error, &root, root_error);
     let slope = rho.add(&slope_ratio);
+    // Neither zero is reachable here, so the product needs no absorbing branch:
+    // `b > 0` is an admission requirement, and `certified_div` always returns a
+    // radius of at least one raw unit, so the slope is never a certified exact zero.
     let b = i64::from_u64(svi_params.b());
-    let (w_prime, w_prime_error) = if (b.is_zero() || (slope.is_zero() && slope_ratio_error == 0)) {
-        (i64::zero(), 0)
-    } else {
-        (
-            slope.mul_scaled(&b),
-            ceil_mul(b.magnitude(), slope_ratio_error).saturating_add(round_leaf!()),
-        )
-    };
+    let w_prime = slope.mul_scaled(&b);
+    let w_prime_error = ceil_mul(b.magnitude(), slope_ratio_error).saturating_add(round_leaf!());
 
     // N(d2). `Phi' = phi`, maximized over the ball at the point nearest zero; the
     // PDF primitive's own error is added before using it as an upper derivative
@@ -718,12 +720,11 @@ fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Ap
     let sup_phi = math::normal_pdf(&nearest).saturating_add(pdf_leaf!());
     let nd2_error = ceil_mul(sup_phi, d2_error).saturating_add(cdf_leaf!());
 
-    // A certified-exact zero slope is the flat-variance digital: no smile
-    // correction, N(d2) exactly. A rounded zero with nonzero radius still carries
-    // a possible correction and must flow through the approximate quotient.
-    if (w_prime.is_zero() && w_prime_error == 0) {
-        return approx::from_certified_parts(i64::from_u64(nd2), nd2_error)
-    };
+    // Every admitted surface carries a possible correction: the slope's radius is
+    // strictly positive, so even a slope that rounds to zero flows through the
+    // quotient below rather than short-circuiting to N(d2). The scalar kernel does
+    // short-circuit on a zero slope center, and the two still agree — a zero center
+    // makes `mul_div_down`'s product zero, so the subtraction is a no-op.
 
     // Smile correction phi(d2) * w'(k) / (2 sqrt(w)), carried signed so the
     // subtraction moves in the correct direction. `|phi'|` is bounded globally by

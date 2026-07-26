@@ -46,7 +46,9 @@ const SKEW_CLAMP_RHO_UNIT: u64 = 1_000_000_000;
 const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
-const FLAT_SVI_B: u64 = 0;
+// The smallest admissible wing slope. `b == 0` is rejected at load, so "flat" here
+// means the smallest smile the envelope permits rather than none at all.
+const FLAT_SVI_B: u64 = 1;
 // `max_contract_price_deviation` is 1e6 at 1e9 scale, i.e. one part in a thousand.
 const MINT_DEVIATION_DENOMINATOR: u64 = 1_000;
 // Three-input re-anchor fixture: fresh Pyth spot != Block Scholes spot != forward.
@@ -254,12 +256,11 @@ fun at_the_forward_is_exactly_one_half() {
     let up = pricer.range_price(lower, higher);
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
     assert_eq!(up, math::float_scaling!() / 2);
-    // A flat-variance surface (`b == 0`) is the ONLY admissible input that gives the
-    // certified kernel a slope of exactly zero with a zero radius, so it is the only
-    // input that reaches its early return — the branch that skips the smile
-    // correction outright. Every other fixture rounds the slope to zero while
-    // keeping a radius, which flows through the correction instead. Pin both kernels
-    // on this surface so the two zero-slope regimes stay distinguishable.
+    // The minimum admissible slope rounds `w'` to a zero CENTER while its radius
+    // stays positive, so the two kernels reach this price through different code:
+    // the scalar one short-circuits to N(d2), while the certified one runs the smile
+    // correction, whose product is zero and whose subtraction is therefore a no-op.
+    // That is the non-trivial case of the centers-agree theorem, so pin it directly.
     assert_eq!(pricer.admitted_range_price(lower, higher), up);
 
     oracle_fixture::return_oracle_bundle(oracle);

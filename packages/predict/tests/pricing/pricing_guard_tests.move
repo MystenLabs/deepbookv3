@@ -579,6 +579,15 @@ fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
     abort EUnexpectedSuccess
 }
 
+/// A zero wing slope is a flat total variance with no smile. No published surface
+/// carries one, and admitting it would give the certified kernel a slope that is
+/// exactly zero with a zero radius — a shape the pricing math no longer represents.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_with_zero_svi_b_aborts() {
+    load_pricer_with_invalid_svi(default_svi_a(), 0, default_svi_sigma());
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun surface_with_svi_b_above_max_aborts() {
     load_pricer_with_invalid_svi(
@@ -718,7 +727,9 @@ fun zero_total_variance_aborts_at_load() {
         test_constants::default_live_price(),
         0, // svi_a == 0
         false,
-        0, // svi_b == 0, so total_var = a + b*inner == 0
+        // |rho| == 1 zeroes the minimum wing increment, so total_var = a + 0 == 0
+        // even with an admissible positive slope.
+        1,
         default_svi_sigma(),
         test_constants::default_svi_rho_magnitude(),
         false,
