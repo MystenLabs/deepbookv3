@@ -21,18 +21,18 @@
 /// is covered here too: one test per reachable branch seeds a surface that violates
 /// exactly that bound (`forward` ceiling, `basis`, `a` magnitude, `b`, `rho`, `m`,
 /// `sigma`), leaving every other input default so only the targeted branch fires.
+/// `a` and `b` must both be strictly positive: SVI's raw form permits a negative
+/// baseline offset by the wing term, but Predict does not read those surfaces, and a
+/// positive baseline is what makes total variance positive at every strike by
+/// construction. That replaced the analytical minimum-variance check and the
+/// per-strike positive-variance backstop, whose aborts no longer exist.
 /// The `spot == 0` / `forward == 0` branch of that assert is unreachable through
 /// `load_live_pricer`: the split Block Scholes feed reads drop a zero spot or zero
 /// forward upstream, so the read arrives as `none` and pricing aborts on absence
 /// (-> `EBlockScholesPriceUnavailable`) before any staleness check runs. Those two
-/// conditions are defensive-only and not tested here. `EBlockScholesMinVarianceInvalid`
-/// covers surfaces whose analytical minimum total variance is non-positive,
-/// including negative `a` values that over-offset the SVI increment and the
-/// degenerate `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot
+/// conditions are defensive-only and not tested here. `EZeroForward` is reached via a pyth spot
 /// far below the BS spot (no LOWER basis bound), where the re-anchored
-/// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
-/// a boundary surface whose rounded analytical minimum is positive at load but
-/// whose concrete at-forward quote rounds total variance non-positive.
+/// `spot * bs_forward / bs_spot` floors to 0.
 /// `ECannotBeNegative` inside `compute_up_price` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
 /// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
@@ -85,14 +85,6 @@ const MINT_DEVIATION_DENOMINATOR: u64 = 1_000;
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
 const PRICE_MEMO_MISSING_TICK: u64 = 100;
 const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
-const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
-const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
-const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
-const NONPOSITIVE_MIN_VARIANCE_A_MAG: u64 = 5_000_001;
-const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
-const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
-const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
-const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
 const NON_MONOTONE_LOW_TICK: u64 = 90;
 const NON_MONOTONE_HIGH_TICK: u64 = 95;
 const CACHED_RANGE_LOWER_TICK: u64 = 90;
@@ -518,8 +510,12 @@ fun surface_with_svi_a_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test]
-fun negative_svi_a_with_positive_min_variance_prices() {
+/// SVI's raw parameterization permits a negative baseline offset by the wing term,
+/// but Predict does not read those surfaces. A strictly positive baseline is what
+/// makes total variance positive at every strike by construction, so both a negative
+/// and a zero `a` are refused before a `Pricer` exists.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_with_negative_svi_a_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(
@@ -528,54 +524,20 @@ fun negative_svi_a_with_positive_min_variance_prices() {
         test_constants::default_live_price(),
         NEGATIVE_SVI_A_MAG,
         true,
-        POSITIVE_MIN_VARIANCE_SVI_B,
-        POSITIVE_MIN_VARIANCE_SIGMA,
-        0,
+        default_svi_b(),
+        default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
         false,
-        0,
+        default_svi_m_magnitude(),
         false,
     );
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    let up = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
-    // Independent Python true-math reference:
-    // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
-    // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
-    // The tolerance uses the committed pricing-reference generator's worst-case
-    // per-endpoint error budget. This at-forward, zero-skew point is less
-    // ill-conditioned than that generated small-variance worst case.
-    test_helpers::assert_within(
-        up,
-        NEGATIVE_A_AT_FORWARD_REFERENCE,
-        ref_data::worst_case_budget(),
-    );
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
+    let _pricer = fx.load_pricer_bundle(&oracle);
+    abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
-fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        test_constants::default_live_price(),
-        NONPOSITIVE_MIN_VARIANCE_A_MAG,
-        true,
-        POSITIVE_MIN_VARIANCE_SVI_B,
-        POSITIVE_MIN_VARIANCE_SIGMA,
-        0,
-        false,
-        0,
-        false,
-    );
-
-    let _pricer = fx.load_pricer_bundle(&oracle);
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_with_zero_svi_a_aborts() {
+    load_pricer_with_invalid_svi(0, default_svi_b(), default_svi_sigma());
     abort EUnexpectedSuccess
 }
 
@@ -673,69 +635,6 @@ fun re_anchored_zero_forward_aborts() {
     );
     // Re-anchor at a pyth spot far below the BS spot: 1e9 * 1 / 1e17 floors to 0.
     fx.set_pyth_bundle(&mut oracle, 1_000_000_000, fx.clock().timestamp_ms());
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    pricer.up_price(strike(test_constants::default_live_price()));
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-    abort EUnexpectedSuccess
-}
-
-/// A boundary-valid surface can still hit the quote-time positive-variance
-/// backstop: the load-time rounded analytical minimum is positive by 4 units,
-/// but at the forward strike this specific surface rounds the per-strike SVI
-/// increment 5 units lower, making total variance negative.
-#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
-fun boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        test_constants::default_live_price(),
-        PER_STRIKE_NONPOSITIVE_A_MAG,
-        true,
-        PER_STRIKE_NONPOSITIVE_B,
-        test_constants::pricing_min_svi_sigma(),
-        PER_STRIKE_NONPOSITIVE_RHO,
-        false,
-        PER_STRIKE_NONPOSITIVE_M,
-        false,
-    );
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    pricer.up_price(strike(test_constants::default_live_price()));
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-    abort EUnexpectedSuccess
-}
-
-// === Surface minimum-variance abort ===
-
-/// A degenerate surface (`a == 0, b == 0`) has zero analytical minimum total
-/// variance (`a + b*sigma*sqrt(1-rho^2) == 0`), so it is rejected while loading
-/// the live pricer rather than reaching the first finite-strike quote.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
-fun zero_total_variance_aborts_at_load() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        test_constants::default_live_price(),
-        0, // svi_a == 0
-        false,
-        // |rho| == 1 zeroes the minimum wing increment, so total_var = a + 0 == 0
-        // even with an admissible positive slope.
-        1,
-        default_svi_sigma(),
-        test_constants::default_svi_rho_magnitude(),
-        false,
-        default_svi_m_magnitude(),
-        false,
-    );
     let pricer = fx.load_pricer_bundle(&oracle);
 
     pricer.up_price(strike(test_constants::default_live_price()));

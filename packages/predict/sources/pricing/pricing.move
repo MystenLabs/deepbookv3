@@ -69,23 +69,21 @@ public struct PriceMemo has drop {
 
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
-const ENonPositiveVariance: u64 = 2;
-const EInvalidRange: u64 = 3;
-const EBlockScholesPriceStale: u64 = 4;
-const EBlockScholesInputsInvalid: u64 = 5;
-const EPythSpotInvalid: u64 = 6;
-const EWrongPythFeed: u64 = 7;
-const EWrongBlockScholesSpotFeed: u64 = 8;
-const ELivePricingExpired: u64 = 9;
-const EBlockScholesSVIStale: u64 = 10;
-const EWrongBlockScholesForwardFeed: u64 = 11;
-const EWrongBlockScholesSVIFeed: u64 = 12;
-const ETickNotInPriceMemo: u64 = 13;
-const EBlockScholesPriceUnavailable: u64 = 14;
-const EBlockScholesSVIUnavailable: u64 = 15;
-const EBlockScholesMinVarianceInvalid: u64 = 16;
-const ENonMonotonePriceMemo: u64 = 17;
-const EPriceTooImprecise: u64 = 18;
+const EInvalidRange: u64 = 2;
+const EBlockScholesPriceStale: u64 = 3;
+const EBlockScholesInputsInvalid: u64 = 4;
+const EPythSpotInvalid: u64 = 5;
+const EWrongPythFeed: u64 = 6;
+const EWrongBlockScholesSpotFeed: u64 = 7;
+const ELivePricingExpired: u64 = 8;
+const EBlockScholesSVIStale: u64 = 9;
+const EWrongBlockScholesForwardFeed: u64 = 10;
+const EWrongBlockScholesSVIFeed: u64 = 11;
+const ETickNotInPriceMemo: u64 = 12;
+const EBlockScholesPriceUnavailable: u64 = 13;
+const EBlockScholesSVIUnavailable: u64 = 14;
+const ENonMonotonePriceMemo: u64 = 15;
+const EPriceTooImprecise: u64 = 16;
 
 /// Ceiling on how far an admitted contract price may sit from its true value,
 /// relative, 1e9-scaled. An uncertain entry price transfers real value between the
@@ -461,7 +459,14 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
-    assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    // `a` is SVI's baseline total variance. The raw parameterization permits a
+    // negative baseline offset by the wing term, but Predict does not read those
+    // surfaces: a strictly positive baseline is what makes total variance positive
+    // at every strike by construction, rather than by a separate analytical check
+    // whose directed rounding was never a proof.
+    let a = svi.a();
+    assert!(!a.is_negative() && !a.is_zero(), EBlockScholesInputsInvalid);
+    assert!(a.magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     // `b` is SVI's wing slope and is strictly positive on any published surface: a
     // zero slope is a flat total variance with no smile at all. Requiring it here
     // rather than tolerating it downstream keeps the certified kernel's slope
@@ -474,29 +479,6 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
         svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
         EBlockScholesInputsInvalid,
     );
-    assert_min_total_variance_positive(svi);
-}
-
-fun assert_min_total_variance_positive(svi: &SVIParams) {
-    let min_variance_increment = min_svi_variance_increment(svi);
-    let a = svi.a();
-    let min_total_var = i64::from_u64(min_variance_increment).add(&a);
-    assert!(
-        !min_total_var.is_negative() && !min_total_var.is_zero(),
-        EBlockScholesMinVarianceInvalid,
-    );
-}
-
-// SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
-// `x = k - m`. This returns the smallest possible non-`a` part over all strikes:
-// `b * sigma * sqrt(1 - rho^2)`, or 0 at the `|rho| == 1` boundary.
-fun min_svi_variance_increment(svi: &SVIParams): u64 {
-    let rho_mag = svi.rho().magnitude();
-    if (rho_mag == math::float_scaling!()) return 0;
-
-    let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
-    let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
-    math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
 /// Compute only the canonical scalar center for `(lower, higher]`. Live close
@@ -542,13 +524,9 @@ fun compute_up_price_center(svi_params: &SVIParams, forward: u64, strike: Strike
     let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
     let a = svi_params.a();
     let wide_a = (a.magnitude() as u128) * scale;
-    let wide_total_var = if (a.is_negative()) {
-        assert!(wide_increment >= wide_a, ENonPositiveVariance);
-        wide_increment - wide_a
-    } else {
-        wide_increment + wide_a
-    };
-    assert!(wide_total_var >= scale, ENonPositiveVariance);
+    // `a > 0` is an admission requirement, so the baseline alone puts total variance
+    // at or above one raw unit and the SVI wing only adds to it.
+    let wide_total_var = wide_increment + wide_a;
 
     let half_var = i64::from_u64((wide_total_var / (scale + scale)) as u64);
     let sqrt_var = math::sqrt_u128_down(wide_total_var) as u64;
@@ -665,13 +643,9 @@ fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Ce
     let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
     let a = svi_params.a();
     let wide_a = (a.magnitude() as u128) * scale;
-    let wide_total_var = if (a.is_negative()) {
-        assert!(wide_increment >= wide_a, ENonPositiveVariance);
-        wide_increment - wide_a
-    } else {
-        wide_increment + wide_a
-    };
-    assert!(wide_total_var >= scale, ENonPositiveVariance);
+    // `a > 0` is an admission requirement, so the baseline alone puts total variance
+    // at or above one raw unit and the SVI wing only adds to it.
+    let wide_total_var = wide_increment + wide_a;
 
     let wide_error = (svi_params.b() as u128) * (inner_error as u128);
     let half_scale = scale + scale;
