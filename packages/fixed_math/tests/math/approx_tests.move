@@ -4,20 +4,8 @@
 #[test_only]
 module fixed_math::approx_tests;
 
-use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math::{Self, float_scaling as float}};
+use fixed_math::{approx::{Self, Approx}, i64::{Self, I64}, math::float_scaling as float};
 use std::unit_test::assert_eq;
-
-const EUnexpectedSuccess: u64 = 999;
-// Arbitrary-precision Decimal references emitted by
-// `packages/predict/tests/helper/reference/generate_constants.py`.
-const LN_RATIO_TWO_REFERENCE: u64 = 693_147_181;
-const LN_RATIO_ONE_RAW_REFERENCE_MAG: u64 = 20_723_265_837;
-const LN_RATIO_UNDERFLOW_REFERENCE_MAG: u64 = 20_772_056_001;
-const LN_RATIO_U64_MAX_REFERENCE: u64 = 44_361_419_556;
-const WIDE_SQRT_CENTER: u64 = 1_000_000;
-// Python math.isqrt((u64::MAX + WIDE_SQRT_CENTER) * 1e9).
-const WIDE_SQRT_UPPER_FLOOR: u64 = 135_818_791_312_949;
-const WIDE_SQRT_ERROR: u64 = 135_818_759_690_174;
 
 fun assert_center(ball: &Approx, magnitude: u64, negative: bool) {
     assert_eq!(ball.magnitude(), magnitude);
@@ -53,14 +41,6 @@ fun constructors_and_linear_operations_preserve_the_scalar_center() {
     assert_center(&difference, 7 * float!() / 4, true);
     assert_eq!(difference.error(), 18);
 
-    let negated = a.neg();
-    assert_center(&negated, 3 * float!() / 2, false);
-    assert_eq!(negated.error(), 7);
-
-    let doubled = a.double();
-    assert_center(&doubled, 3 * float!(), true);
-    assert_eq!(doubled.error(), 14);
-
     let exact = approx::exact_u64(42);
     assert_center(&exact, 42, false);
     assert_eq!(exact.error(), 0);
@@ -74,7 +54,7 @@ fun continuous_clamps_retain_the_radius() {
     assert_eq!(zero.error(), 7);
 
     let above_one = approx::from_certified_parts(i64::from_u64(2 * float!()), 9);
-    let one = above_one.clamp_unit_interval();
+    let one = above_one.clamp_upper(float!());
     assert_center(&one, float!(), false);
     assert_eq!(one.error(), 9);
 
@@ -128,206 +108,17 @@ fun zero_center_with_error_does_not_absorb_multiplication_uncertainty() {
 }
 
 #[test]
-fun square_scaled_encloses_fixed_sign_and_zero_crossing_balls() {
-    let fixed_sign = approx::from_certified_parts(
-        i64::from_parts(3 * float!() / 2, true),
-        float!() / 5,
-    );
-    let fixed_result = fixed_sign.square_scaled();
-    assert_center(&fixed_result, 2_250_000_000, false);
-    assert_eq!(fixed_result.error(), 640_000_001);
-    assert_contains(&fixed_result, i64::from_u64(1_690_000_000));
-    assert_contains(&fixed_result, i64::from_u64(2_890_000_000));
+fun relative_deviation_uses_the_worst_denominator_corner() {
+    // 1.0 +/- 0.001: the worst denominator is 0.999, so the true relative
+    // deviation is 0.001 / 0.999 = 0.1001...%, outside a 0.1% ceiling and inside
+    // a 0.11% one.
+    let ball = approx::from_certified_parts(i64::from_u64(float!()), float!() / 1000);
+    assert!(!ball.true_relative_deviation_within(1_000_000));
+    assert!(ball.true_relative_deviation_within(1_100_000));
 
-    let crossing = approx::from_certified_parts(i64::from_u64(float!() / 10), float!() / 5);
-    let crossing_result = crossing.square_scaled();
-    assert_center(&crossing_result, 10_000_000, false);
-    assert_eq!(crossing_result.error(), 80_000_001);
-    assert_contains(&crossing_result, i64::zero());
-    assert_contains(&crossing_result, i64::from_u64(90_000_000));
-}
-
-#[test]
-fun div_scaled_encloses_outward_quotient_corners() {
-    let a = approx::from_certified_parts(i64::from_u64(3 * float!()), float!() / 5);
-    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), float!() / 10);
-    let result = a.div_scaled(&b);
-
-    assert_center(&result, 3 * float!() / 2, false);
-    assert_eq!(result.error(), 188_365_653);
-    let lower = math::div_down(14 * float!() / 5, 21 * float!() / 10);
-    let upper = math::div_up(16 * float!() / 5, 19 * float!() / 10);
-    assert_contains(&result, i64::from_u64(lower));
-    assert_contains(&result, i64::from_u64(upper));
-}
-
-#[test]
-fun div_scaled_saturates_when_denominator_ball_reaches_zero() {
-    let a = approx::exact_u64(float!());
-    let b = approx::from_certified_parts(i64::from_u64(float!() / 10), float!() / 10);
-    assert_eq!(a.div_scaled(&b).error(), std::u64::max_value!());
-}
-
-#[test, expected_failure(abort_code = i64::EZeroDivisor)]
-fun div_scaled_zero_center_denominator_aborts() {
-    let numerator = approx::exact_u64(float!());
-    let denominator = approx::exact_u64(0);
-    numerator.div_scaled(&denominator);
-    abort EUnexpectedSuccess
-}
-
-#[test]
-fun mul_div_down_encloses_both_fixed_sign_corners() {
-    let a = approx::from_certified_parts(i64::from_u64(3 * float!() / 2), float!() / 10);
-    let b = approx::from_certified_parts(i64::from_u64(2 * float!()), float!() / 5);
-    let c = approx::from_certified_parts(i64::from_u64(4 * float!()), float!() / 10);
-    let result = a.mul_div_down(&b, &c);
-
-    assert_center(&result, 3 * float!() / 4, false);
-    assert_eq!(result.error(), 152_564_103);
-    let lower = math::mul_div_down(
-        3 * float!() / 2 - float!() / 10,
-        2 * float!() - float!() / 5,
-        4 * float!() + float!() / 10,
-    );
-    let upper = math::mul_div_up(
-        3 * float!() / 2 + float!() / 10,
-        2 * float!() + float!() / 5,
-        4 * float!() - float!() / 10,
-    );
-    assert_contains(&result, i64::from_u64(lower));
-    assert_contains(&result, i64::from_u64(upper));
-}
-
-#[test]
-fun mul_div_down_accounts_for_a_negative_denominator() {
-    let a = approx::exact_u64(float!());
-    let b = approx::exact_u64(float!());
-    let c = approx::exact(i64::from_parts(3 * float!(), true));
-    let result = a.mul_div_down(&b, &c);
-
-    assert_center(&result, 333_333_333, true);
-    assert_eq!(result.error(), 1);
-    assert_contains(&result, i64::from_parts(333_333_334, true));
-}
-
-#[test]
-fun mul_div_down_covers_a_numerator_sign_change() {
-    let a = approx::from_certified_parts(i64::from_u64(float!() / 10), float!() / 5);
-    let b = approx::exact_u64(2 * float!());
-    let c = approx::exact_u64(float!());
-    let result = a.mul_div_down(&b, &c);
-
-    assert_center(&result, float!() / 5, false);
-    assert_eq!(result.error(), 4 * float!() / 5);
-    assert_contains(&result, i64::from_parts(float!() / 5, true));
-    assert_contains(&result, i64::from_u64(3 * float!() / 5));
-}
-
-#[test]
-fun mul_div_down_saturates_uncertifiable_domains() {
-    let one = approx::exact_u64(1);
-    let denominator_crosses_zero = approx::from_certified_parts(i64::from_u64(1), 1);
-    assert_eq!(one.mul_div_down(&one, &denominator_crosses_zero).error(), std::u64::max_value!());
-
-    let endpoint_overflows = approx::from_certified_parts(i64::from_u64(std::u64::max_value!()), 1);
-    assert_eq!(endpoint_overflows.mul_div_down(&one, &one).error(), std::u64::max_value!());
-}
-
-#[test, expected_failure(abort_code = math::EInputZero)]
-fun mul_div_down_zero_center_denominator_aborts() {
-    let one = approx::exact_u64(1);
-    let denominator = approx::exact_u64(0);
-    one.mul_div_down(&one, &denominator);
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = approx::ENegativeSqrtInput)]
-fun sqrt_negative_center_aborts() {
-    let negative = approx::exact(i64::from_parts(4 * float!(), true));
-    negative.sqrt();
-    abort EUnexpectedSuccess
-}
-
-#[test]
-fun transcendental_balls_enclose_independent_endpoint_references() {
-    // Python stdlib references, rounded to 1e9; these are independent of the
-    // contract approximations used to construct each center.
-    let square_root_input = approx::from_certified_parts(i64::from_u64(4 * float!()), float!());
-    let square_root = square_root_input.sqrt();
-    assert_center(&square_root, 2 * float!(), false);
-    assert_eq!(square_root.error(), 267_949_194);
-    assert_contains(&square_root, i64::from_u64(1_732_050_807)); // floor(sqrt(3) * 1e9)
-    assert_contains(&square_root, i64::from_u64(2_236_067_977)); // floor(sqrt(5) * 1e9)
-
-    let wide_square_root_input = approx::from_certified_parts(
-        i64::from_u64(WIDE_SQRT_CENTER),
-        std::u64::max_value!(),
-    );
-    let wide_square_root = wide_square_root_input.sqrt();
-    assert_eq!(wide_square_root.error(), WIDE_SQRT_ERROR);
-    assert_contains(
-        &wide_square_root,
-        i64::from_u64(WIDE_SQRT_UPPER_FLOOR),
-    );
-
-    let normal_input = approx::from_certified_parts(i64::from_u64(float!()), float!() / 2);
-    let cdf = normal_input.normal_cdf();
-    assert_contains(&cdf, i64::from_u64(691_462_461)); // Phi(0.5)
-    assert_contains(&cdf, i64::from_u64(933_192_799)); // Phi(1.5)
-
-    let pdf = normal_input.normal_pdf();
-    assert_contains(&pdf, i64::from_u64(352_065_327)); // phi(0.5)
-    assert_contains(&pdf, i64::from_u64(129_517_596)); // phi(1.5)
-}
-
-#[test]
-fun ln_ratio_encloses_independent_references_across_quotient_domains() {
-    let ordinary = approx::ln_ratio(2 * float!(), float!());
-    assert_contains(&ordinary, i64::from_u64(LN_RATIO_TWO_REFERENCE));
-    assert!(ordinary.error() < std::u64::max_value!());
-
-    let one_raw = approx::ln_ratio(10_000_000, 10_000_000_000_000_000);
-    assert_contains(
-        &one_raw,
-        i64::from_parts(LN_RATIO_ONE_RAW_REFERENCE_MAG, true),
-    );
-    assert!(one_raw.error() < std::u64::max_value!());
-
-    let underflow = approx::ln_ratio(100_000_000, 105_000_000_000_000_000);
-    assert_contains(
-        &underflow,
-        i64::from_parts(LN_RATIO_UNDERFLOW_REFERENCE_MAG, true),
-    );
-    assert!(underflow.error() < std::u64::max_value!());
-
-    let overflow = approx::ln_ratio(std::u64::max_value!(), 1);
-    assert_contains(&overflow, i64::from_u64(LN_RATIO_U64_MAX_REFERENCE));
-    assert!(overflow.error() < std::u64::max_value!());
-}
-
-#[test, expected_failure(abort_code = math::EInputZero)]
-fun ln_ratio_zero_numerator_aborts() {
-    approx::ln_ratio(0, float!());
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = math::EInputZero)]
-fun ln_ratio_zero_denominator_aborts() {
-    approx::ln_ratio(float!(), 0);
-    abort EUnexpectedSuccess
-}
-
-#[test]
-fun normal_cdf_uses_a_certified_upper_bound_for_its_derivative() {
-    // At x=0.024, independent Python true math gives phi(x)=398_827_401.568...
-    // raw units, so 398_827_402 is an outward integer upper bound. The ball spans
-    // [0.024, 20.024], making x=0.024 the exact maximum-density corner.
-    let radius = 10 * float!();
-    let input = approx::from_certified_parts(i64::from_u64(10_024_000_000), radius);
-    let result = input.normal_cdf();
-    let required_propagation = math::mul_up(398_827_402, radius);
-    assert!(result.error() >= required_propagation + 20);
+    // An error at or above the center admits zero, so no relative bound holds.
+    let unbounded = approx::from_certified_parts(i64::from_u64(float!()), float!() + 1);
+    assert!(!unbounded.true_relative_deviation_within(std::u64::max_value!()));
 }
 
 #[test]

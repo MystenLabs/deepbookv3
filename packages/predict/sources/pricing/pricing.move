@@ -96,6 +96,22 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+// Leaf approximation error of each `math` primitive consumed by the certified
+// kernel, in raw 1e9 units, taken from the primitive's documented accuracy.
+macro fun cdf_leaf(): u64 { 20 }
+
+macro fun pdf_leaf(): u64 { 50 }
+
+macro fun sqrt_leaf(): u64 { 1 }
+
+// `mul_down`/`div_down`, the scaled `i64` ops, and a floored quotient each carry at
+// most one raw unit of rounding.
+macro fun round_leaf(): u64 { 1 }
+
+// Global bound on `|phi'(x)| = |x| * phi(x)`, maximized at `|x| = 1`
+// (`phi(1) = 0.241971`), rounded up. Bounds `normal_pdf`'s sensitivity to its input.
+macro fun max_pdf_slope(): u64 { 242_000_000 }
+
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and
@@ -239,7 +255,7 @@ public(package) fun price_and_cache(
     tick: u64,
     tick_size: u64,
 ): Approx {
-    let price = compute_up_price_approx(
+    let price = up_price_certified(
         &pricer.svi,
         pricer.forward,
         range_codec::strike_from_tick(tick, tick_size),
@@ -475,8 +491,8 @@ fun compute_range_price_approx(
 ): Approx {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
-    let lower_up_price = compute_up_price_approx(svi, forward, lower);
-    let higher_up_price = compute_up_price_approx(svi, forward, higher);
+    let lower_up_price = up_price_certified(svi, forward, lower);
+    let higher_up_price = up_price_certified(svi, forward, higher);
     lower_up_price.sub(&higher_up_price).clamp_nonnegative()
 }
 
@@ -550,8 +566,24 @@ fun ln_ratio_center(numerator: u64, denominator: u64): I64 {
     math::ln(numerator).sub(&math::ln(denominator))
 }
 
-/// Compute the adjusted UP digital probability with its numerical certificate.
-fun compute_up_price_approx(svi: &SVIParams, forward: u64, strike: Strike): Approx {
+/// Compute the adjusted UP digital probability together with the certified error
+/// radius of that same evaluation. Value and radius are produced side by side:
+/// each fixed-point step is immediately followed by the propagation bounding its
+/// distance from the true real-valued quantity, so the certificate reads against
+/// the arithmetic it certifies.
+///
+/// Leaf error comes from each `math` primitive's documented accuracy; continuous
+/// propagation uses derivative bounds or endpoint evaluation. Every error term
+/// rounds UP and saturates at `u64::MAX` rather than overflowing, so an input
+/// domain this arithmetic cannot certify surfaces as an unusable radius that every
+/// downstream precision gate rejects, never as a wrong one.
+///
+/// Binary pricing from SVI total variance:
+/// - k = ln(strike / forward)
+/// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
+/// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
+/// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
+fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Approx {
     if (strike.is_neg_inf()) {
         return approx::exact_u64(math::float_scaling!())
     };
@@ -561,43 +593,57 @@ fun compute_up_price_approx(svi: &SVIParams, forward: u64, strike: Strike): Appr
 
     assert!(forward > 0, EZeroForward);
 
-    // Binary pricing from SVI total variance:
-    // - k = ln(strike / forward)
-    // - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
-    // - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-    // - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-    let k = approx::ln_ratio(strike.value(), forward);
-    let (k_minus_m, root) = moneyness_terms(svi, &k);
-    let (half_var, sqrt_var) = variance_denominator_terms(svi, &k_minus_m, &root);
-    let d2 = k.add(&half_var).div_scaled(&sqrt_var).neg();
-    let w_prime = variance_slope(svi, &k_minus_m, &root);
-    digital_price(&d2, &w_prime, &sqrt_var)
-}
+    // k = ln(strike / forward).
+    let (k, k_error) = certified_ln_ratio(strike.value(), forward);
 
-fun moneyness_terms(svi_params: &SVIParams, k: &Approx): (Approx, Approx) {
-    let m = approx::exact(svi_params.m());
-    let k_minus_m = k.sub(&m);
-    let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = approx::exact_u64(svi_params.sigma());
-    let sigma_squared = sigma.square_scaled();
-    let sqrt_input = k_minus_m_squared.add(&sigma_squared);
-    let root = approx::sqrt(&sqrt_input);
-    (k_minus_m, root)
-}
+    // x = k - m. The stored SVI parameter is exact, so the radius carries over.
+    let m = svi_params.m();
+    let x = k.sub(&m);
+    let x_error = k_error;
 
-fun variance_denominator_terms(
-    svi_params: &SVIParams,
-    k_minus_m: &Approx,
-    root: &Approx,
-): (Approx, Approx) {
-    let inner = k_minus_m.mul_exact(&svi_params.rho()).add(root);
+    // root = sqrt(x^2 + sigma^2). The square propagates via `d(x^2) = 2|x| dx + dx^2`;
+    // exact sigma contributes only its own rounding unit.
+    let cross = ceil_mul(x.magnitude(), x_error);
+    let sqrt_input = x.square_scaled() + math::mul_down(svi_params.sigma(), svi_params.sigma());
+    let sqrt_input_error = cross
+        .saturating_add(cross)
+        .saturating_add(ceil_mul(x_error, x_error))
+        .saturating_add(round_leaf!())
+        .saturating_add(round_leaf!());
+    // `sqrt` is monotone, so the true root is enclosed by the roots of the input
+    // endpoints; the radius is the larger endpoint deviation plus `sqrt_down`'s own
+    // rounding. The upper endpoint is evaluated in u128 because `x + dx` may exceed
+    // u64 even though its scaled root always fits.
+    let root_center = math::sqrt_down(sqrt_input);
+    let root_low = if (sqrt_input > sqrt_input_error) {
+        math::sqrt_down(sqrt_input - sqrt_input_error)
+    } else {
+        0
+    };
+    let root_high =
+        math::sqrt_u128_down(
+            ((sqrt_input as u128) + (sqrt_input_error as u128)) * (math::float_scaling!() as u128),
+        ) as u64;
+    let root = i64::from_u64(root_center);
+    let root_error = (root_center - root_low).max(root_high - root_center) + sqrt_leaf!();
+
+    // inner = rho * x + root. Exact rho keeps only the `|rho| dx` product term;
+    // either zero is absorbing.
+    let rho = svi_params.rho();
+    let (scaled_x, scaled_x_error) = if (rho.is_zero() || (x.is_zero() && x_error == 0)) {
+        (i64::zero(), 0)
+    } else {
+        (x.mul_scaled(&rho), ceil_mul(rho.magnitude(), x_error).saturating_add(round_leaf!()))
+    };
+    let inner = scaled_x.add(&root);
+    let inner_error = scaled_x_error.saturating_add(root_error);
     // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     // Keep `b * inner + a` at 1e18 until both downstream projections. For the
     // d2 numerator, floor(floor(wide / 1e9) / 2) = floor(wide / 2e9), so construct
-    // w / 2 directly without narrowing to a discarded total-variance Approx.
+    // w / 2 directly without narrowing to a discarded total-variance value.
     let scale = math::float_scaling!() as u128;
     let wide_increment = (svi_params.b() as u128) * (inner.magnitude() as u128);
     let a = svi_params.a();
@@ -610,9 +656,9 @@ fun variance_denominator_terms(
     };
     assert!(wide_total_var >= scale, ENonPositiveVariance);
 
-    let wide_error = (svi_params.b() as u128) * (inner.error() as u128);
+    let wide_error = (svi_params.b() as u128) * (inner_error as u128);
     let half_scale = scale + scale;
-    let half_var_center = (wide_total_var / half_scale) as u64;
+    let half_var = i64::from_u64((wide_total_var / half_scale) as u64);
     let scaled_error = wide_error.div_ceil(half_scale);
     let max_error = std::u64::max_value!() as u128;
     let half_var_error = if (scaled_error >= max_error) {
@@ -620,7 +666,6 @@ fun variance_denominator_terms(
     } else {
         (scaled_error as u64) + 1
     };
-    let half_var = approx::from_certified_parts(i64::from_u64(half_var_center), half_var_error);
 
     let sqrt_center = math::sqrt_u128_down(wide_total_var);
     let sqrt_low = if (wide_total_var > wide_error) {
@@ -629,35 +674,193 @@ fun variance_denominator_terms(
         0
     };
     let sqrt_high = math::sqrt_u128_up(wide_total_var + wide_error);
-    let sqrt_error = (sqrt_center - sqrt_low).max(sqrt_high - sqrt_center);
-    let sqrt_var = approx::from_certified_parts(
-        i64::from_u64(sqrt_center as u64),
-        sqrt_error as u64,
+    let sqrt_var = i64::from_u64(sqrt_center as u64);
+    let sqrt_var_error = ((sqrt_center - sqrt_low).max(sqrt_high - sqrt_center)) as u64;
+
+    // d2 = -((k + w / 2) / sqrt(w)).
+    let d2_numerator = k.add(&half_var);
+    let (d2_magnitude, d2_error) = certified_div(
+        &d2_numerator,
+        k_error.saturating_add(half_var_error),
+        &sqrt_var,
+        sqrt_var_error,
     );
-    (half_var, sqrt_var)
-}
+    let d2 = d2_magnitude.neg();
 
-fun variance_slope(svi_params: &SVIParams, k_minus_m: &Approx, root: &Approx): Approx {
-    let rho = approx::exact(svi_params.rho());
-    let slope_ratio = k_minus_m.div_scaled(root);
+    // w'(k) = b * (rho + x / root), with exact rho and b.
+    let (slope_ratio, slope_ratio_error) = certified_div(&x, x_error, &root, root_error);
     let slope = rho.add(&slope_ratio);
-    slope.mul_exact(&i64::from_u64(svi_params.b()))
-}
+    let b = i64::from_u64(svi_params.b());
+    let (w_prime, w_prime_error) = if (b.is_zero() || (slope.is_zero() && slope_ratio_error == 0)) {
+        (i64::zero(), 0)
+    } else {
+        (
+            slope.mul_scaled(&b),
+            ceil_mul(b.magnitude(), slope_ratio_error).saturating_add(round_leaf!()),
+        )
+    };
 
-fun digital_price(d2: &Approx, w_prime: &Approx, sqrt_var: &Approx): Approx {
-    let nd2 = approx::normal_cdf(d2);
+    // N(d2). `Phi' = phi`, maximized over the ball at the point nearest zero; the
+    // PDF primitive's own error is added before using it as an upper derivative
+    // bound, then `phi_upper * dx` is rounded up and the CDF leaf error added.
+    let nd2 = math::normal_cdf(&d2);
+    let d2_magnitude = d2.magnitude();
+    let nearest = if (d2_magnitude > d2_error) {
+        i64::from_u64(d2_magnitude - d2_error)
+    } else {
+        i64::zero()
+    };
+    let sup_phi = math::normal_pdf(&nearest).saturating_add(pdf_leaf!());
+    let nd2_error = ceil_mul(sup_phi, d2_error).saturating_add(cdf_leaf!());
+
     // A certified-exact zero slope is the flat-variance digital: no smile
     // correction, N(d2) exactly. A rounded zero with nonzero radius still carries
     // a possible correction and must flow through the approximate quotient.
-    if (w_prime.magnitude() == 0 && w_prime.error() == 0) {
-        return nd2
+    if (w_prime.is_zero() && w_prime_error == 0) {
+        return approx::from_certified_parts(i64::from_u64(nd2), nd2_error)
     };
 
-    // Smile correction phi(d2) * w'(k) / (2 sqrt(w)), carried signed so `sub` clamps
-    // in the correct direction; N(d2) - correction is then floored/capped to [0, 1].
-    let pdf = approx::normal_pdf(d2);
-    let two_sqrt_var = sqrt_var.double();
-    let correction = pdf.mul_div_down(w_prime, &two_sqrt_var);
-    let adjusted = nd2.sub(&correction);
-    adjusted.clamp_unit_interval()
+    // Smile correction phi(d2) * w'(k) / (2 sqrt(w)), carried signed so the
+    // subtraction moves in the correct direction. `|phi'|` is bounded globally by
+    // `max_pdf_slope`, so `max_pdf_slope * dx` bounds phi's propagated error.
+    let pdf = math::normal_pdf(&d2);
+    let pdf_error = ceil_mul(max_pdf_slope!(), d2_error).saturating_add(pdf_leaf!());
+    let two_sqrt_var = sqrt_var.add(&sqrt_var);
+    let (correction, correction_error) = certified_smile_correction(
+        pdf,
+        pdf_error,
+        &w_prime,
+        w_prime_error,
+        &two_sqrt_var,
+        sqrt_var_error.saturating_add(sqrt_var_error),
+    );
+
+    // N(d2) - correction, floored then capped to [0, 1]. Both projections are
+    // 1-Lipschitz, so each retains the radius even on its clamped branch.
+    approx::from_certified_parts(
+        i64::from_u64(nd2).sub(&correction),
+        nd2_error.saturating_add(correction_error),
+    )
+        .clamp_nonnegative()
+        .clamp_upper(math::float_scaling!())
+}
+
+/// `ln(numerator / denominator)` for exact positive inputs, with its radius. The
+/// ordinary 1e9 quotient path certifies one raw unit of quotient rounding; ratios
+/// whose floored quotient cannot keep a positive lower corner instead subtract two
+/// certified logarithms, so every finite ratio remains finite.
+fun certified_ln_ratio(numerator: u64, denominator: u64): (I64, u64) {
+    let ratio_opt = math::try_div_down(numerator, denominator);
+    if (ratio_opt.is_some()) {
+        let ratio = ratio_opt.destroy_some();
+        if (ratio > 1) return certified_ln(ratio, round_leaf!())
+    };
+
+    let (numerator_log, numerator_error) = certified_ln(numerator, 0);
+    let (denominator_log, denominator_error) = certified_ln(denominator, 0);
+    // Subtraction cannot cancel uncertainty, so the absolute errors add.
+    (numerator_log.sub(&denominator_log), numerator_error.saturating_add(denominator_error))
+}
+
+/// `ln` of a positive value carrying radius `x_error`. Error is the worst-corner
+/// `1 / x` derivative bound `dx / (x - dx)`, rounded up, plus `ln`'s approximation
+/// error: `1e-7` relative plus a three-raw-unit margin covering the near-`ln(1)`
+/// quantization regime. Callers reach the propagation only after `math::ln` has
+/// established `x > 0`, and both supplied radii keep the lower endpoint positive.
+fun certified_ln(x: u64, x_error: u64): (I64, u64) {
+    let value = math::ln(x);
+    let leaf = value.magnitude() / 10_000_000 + 3;
+    (value, ceil_div(x_error, x - x_error).saturating_add(leaf))
+}
+
+/// Scaled quotient with the quotient rule taken at the worst denominator corner
+/// `|b| - db`. The `|a| db / b^2` term is computed division-first (`ceil(|a| db / b)`
+/// then `/ b`) so a small numerator cannot underflow it to zero. The center is
+/// evaluated first and aborts when the denominator center is zero; a nonzero center
+/// whose ball can reach zero saturates so any downstream gate rejects it.
+fun certified_div(a: &I64, a_error: u64, b: &I64, b_error: u64): (I64, u64) {
+    let value = a.div_scaled(b);
+    let magnitude = b.magnitude();
+    if (magnitude <= b_error) {
+        return (value, std::u64::max_value!())
+    };
+    let denominator = magnitude - b_error;
+    let numerator_term = ceil_div(a_error, denominator);
+    let denominator_term = ceil_div(
+        ceil_mul_div(a.magnitude(), b_error, denominator),
+        denominator,
+    );
+    (value, numerator_term.saturating_add(denominator_term).saturating_add(round_leaf!()))
+}
+
+/// The smile correction `phi * w' / (2 sqrt(w))`. The center matches
+/// `math::mul_div_down`'s single floor so the scalar kernel stays bit-identical.
+/// The radius is exact outward corner evaluation, not a linearization: `phi` and
+/// `2 sqrt(w)` are nonnegative, so the result carries `w'`'s sign and — while both
+/// numerator factors keep their signs — its magnitude lies in
+/// `[(phi-dphi)(|w'|-dw)/(D+dD), (phi+dphi)(|w'|+dw)/(D-dD)]`. Otherwise the
+/// numerator may cross zero and either output sign must be covered. A denominator
+/// ball reaching zero, or an endpoint outside the u64 error domain, saturates.
+fun certified_smile_correction(
+    pdf: u64,
+    pdf_error: u64,
+    w_prime: &I64,
+    w_prime_error: u64,
+    denominator: &I64,
+    denominator_error: u64,
+): (I64, u64) {
+    let slope_magnitude = w_prime.magnitude();
+    let denominator_magnitude = denominator.magnitude();
+    let center = math::mul_div_down(pdf, slope_magnitude, denominator_magnitude);
+    let value = i64::from_parts(center, w_prime.is_negative());
+    let max = std::u64::max_value!();
+    if (denominator_magnitude <= denominator_error) {
+        return (value, max)
+    };
+    if (pdf > max - pdf_error || slope_magnitude > max - w_prime_error) {
+        return (value, max)
+    };
+
+    let upper = ceil_mul_div(
+        pdf + pdf_error,
+        slope_magnitude + w_prime_error,
+        denominator_magnitude - denominator_error,
+    );
+    if (upper == max) {
+        return (value, max)
+    };
+    if (pdf > pdf_error && slope_magnitude > w_prime_error) {
+        let lower = if (denominator_magnitude > max - denominator_error) {
+            0
+        } else {
+            math::mul_div_down(
+                pdf - pdf_error,
+                slope_magnitude - w_prime_error,
+                denominator_magnitude + denominator_error,
+            )
+        };
+        let upper_distance = if (upper > center) upper - center else 0;
+        (value, (center - lower).max(upper_distance))
+    } else {
+        // Crossing either numerator factor through zero can reverse the quotient's
+        // sign relative to the canonical center, so the farthest endpoint is the
+        // sum of their magnitudes.
+        (value, center.saturating_add(upper))
+    }
+}
+
+/// `ceil(x * y / 1e9)`, saturating to `u64::MAX`. Scaled error products round up.
+fun ceil_mul(x: u64, y: u64): u64 {
+    ceil_mul_div(x, y, math::float_scaling!())
+}
+
+/// `ceil(x * 1e9 / y)`, saturating to `u64::MAX`. Scaled error quotients round up.
+fun ceil_div(x: u64, y: u64): u64 {
+    ceil_mul_div(x, math::float_scaling!(), y)
+}
+
+/// `ceil(x * y / d)`, saturating to `u64::MAX` when the denominator is zero or
+/// the result does not fit in `u64`.
+fun ceil_mul_div(x: u64, y: u64, d: u64): u64 {
+    math::try_mul_div_up(x, y, d).destroy_or!(std::u64::max_value!())
 }
