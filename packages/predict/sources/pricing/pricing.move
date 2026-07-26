@@ -625,7 +625,9 @@ fun up_price_certified(svi_params: &SVIParams, forward: u64, strike: Strike): Ce
     // inner = rho * x + root. Exact rho keeps only the `|rho| dx` product term;
     // either zero is absorbing.
     let rho = svi_params.rho();
-    let (scaled_x, scaled_x_error) = if (rho.is_zero() || (x.is_zero() && x_error == 0)) {
+    // Only an exact zero rho can absorb this product: `certified_ln` always adds a
+    // leaf of at least three raw units, so `x` is never a certified exact zero.
+    let (scaled_x, scaled_x_error) = if (rho.is_zero()) {
         (i64::zero(), 0)
     } else {
         (x.mul_scaled(&rho), ceil_mul(rho.magnitude(), x_error).saturating_add(round_leaf!()))
