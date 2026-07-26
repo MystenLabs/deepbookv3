@@ -62,7 +62,8 @@ use deepbook_predict::{
     order,
     pricing::{Self, Pricer},
     range_codec,
-    test_constants
+    test_constants,
+    test_helpers
 };
 use fixed_math::{approx::Approx, math::{Self, float_scaling as float}};
 use std::unit_test::assert_eq;
@@ -86,6 +87,30 @@ const NON_MONOTONE_HIGHER_TICK: u64 = 100;
 /// below the ~5.88e8 liquidation threshold (`up_price ≈ 0.27` → range ≈ 5.4e8).
 const KNOCKOUT_BAND_A: u64 = 100_000_000;
 const KNOCKOUT_BAND_FORWARD: u64 = 86_600_000_000;
+
+// === Multi-tick smile fixture ===
+//
+// Admission is on a 10-tick grid (`default_admission_tick_size` is ten times
+// `default_tick_size`), so boundaries must be multiples of ten. On the
+// `KNOCKOUT_BAND_A` surface (total variance ~0.1, sqrt ~0.32) ticks 80..120 span
+// roughly UP 0.70 down to 0.23 — smooth, strictly monotone, comfortably inside the
+// [0.01, 0.99] entry band, and nowhere near the CDF clamps where prices go exact.
+const SMILE_TICK_80: u64 = 80;
+const SMILE_TICK_90: u64 = 90;
+const SMILE_TICK_100: u64 = 100;
+const SMILE_TICK_110: u64 = 110;
+const SMILE_TICK_120: u64 = 120;
+// Quantities are lot multiples (`position_lot_size` is 10_000) chosen NOT to be
+// round in 1e9 terms, so `price * quantity / 1e9` is non-integral at a real smile
+// price and every product actually truncates. This is what the ATM fixtures above
+// deliberately avoid.
+const SMILE_Q_UP_80: u64 = 1_230_010_000;
+const SMILE_Q_UP_100: u64 = 870_030_000;
+const SMILE_Q_DOWN_90: u64 = 1_110_070_000;
+const SMILE_Q_RANGE_90_110: u64 = 990_050_000;
+const SMILE_Q_LEV_80: u64 = 1_500_010_000;
+const SMILE_Q_LEV_110: u64 = 1_020_030_000;
+const SMILE_Q_LEV_100_120: u64 = 750_090_000;
 
 #[test]
 fun empty_live_market_values_at_free_cash() {
@@ -354,6 +379,107 @@ fun mixed_one_x_and_leveraged_book() {
     fx.finish();
 }
 
+/// A book that actually rounds: seven orders over five distinct boundary ticks on a
+/// real smile, so the boundary-aggregated walk and the per-order reference truncate
+/// at different points and exact equality no longer holds. This is the regime every
+/// other fixture in this module is built to avoid, and the one production runs in.
+///
+/// It covers what the ATM fixtures structurally cannot:
+///   - five distinct payout-tree nodes rather than one, so the walk has real shape;
+///   - shared boundaries carrying BOTH signs of net quantity (tick 90 and tick 120
+///     net negative), exercising `mul_scaled`'s toward-zero truncation in the
+///     direction that rounds a signed total UP;
+///   - a `(-inf, h]` order, whose `tree.base` anchor makes the contract floor where
+///     the reference ceils;
+///   - 1x and leveraged orders sharing ticks, so the correction walk subtracts over
+///     a boundary set it does not itself define;
+///   - both `is_liquidatable` branches, after the surface is repriced beneath the book.
+#[test]
+fun multi_tick_smile_book_values_within_the_aggregation_dust_bound() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Mint against a smooth high-variance surface anchored at the grid, so every
+    // boundary from 80 to 120 prices inside the entry-probability band.
+    seed_smile(&mut fx, &mut market, test_constants::default_live_price(), 0);
+
+    let ids = vector[
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            SMILE_TICK_80,
+            constants::pos_inf_tick!(),
+            SMILE_Q_UP_80,
+            test_constants::leverage_one_x(),
+        ),
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            SMILE_TICK_100,
+            constants::pos_inf_tick!(),
+            SMILE_Q_UP_100,
+            test_constants::leverage_one_x(),
+        ),
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            constants::neg_inf!(),
+            SMILE_TICK_90,
+            SMILE_Q_DOWN_90,
+            test_constants::leverage_one_x(),
+        ),
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            SMILE_TICK_90,
+            SMILE_TICK_110,
+            SMILE_Q_RANGE_90_110,
+            test_constants::leverage_one_x(),
+        ),
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            SMILE_TICK_80,
+            constants::pos_inf_tick!(),
+            SMILE_Q_LEV_80,
+            LEVERAGE_TWO_X,
+        ),
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            SMILE_TICK_110,
+            constants::pos_inf_tick!(),
+            SMILE_Q_LEV_110,
+            LEVERAGE_TWO_X,
+        ),
+        fx.mint_bundle(
+            &mut market,
+            &mut account,
+            SMILE_TICK_100,
+            SMILE_TICK_120,
+            SMILE_Q_LEV_100_120,
+            LEVERAGE_TWO_X,
+        ),
+    ];
+
+    // Every leveraged order is above its floor here, so the correction takes its
+    // capped branch throughout.
+    check_nav_within_dust_bound(&fx, &market, ids);
+
+    // Reprice beneath the book. The leveraged orders fall through their knock-out
+    // thresholds, so the correction now mixes capped and knocked-out branches over
+    // the same boundary set.
+    seed_smile(&mut fx, &mut market, KNOCKOUT_BAND_FORWARD, 1);
+    assert!(knocked_out_count(&fx, &market, &ids) > 0);
+    check_nav_within_dust_bound(&fx, &market, ids);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 #[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
 fun current_nav_rejects_non_monotone_active_book_surface() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
@@ -407,6 +533,94 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
 ///
 /// Exact equality, not the module doc's `N + M` bound: every fixture here is
 /// dust-free by construction, so any difference at all is a real defect.
+/// The smooth high-variance smile the multi-tick fixture prices against, at
+/// `forward`. `m = 0` keeps the SVI wing term safely positive; `nonce` advances the
+/// source timestamp so a reprice is accepted as strictly newer.
+fun seed_smile(
+    fx: &mut helpers::Fixture,
+    market: &mut helpers::MarketBundle,
+    forward: u64,
+    nonce: u64,
+) {
+    fx.seed_bs_surface_with_svi_bundle(
+        market,
+        test_constants::default_live_price(),
+        forward,
+        KNOCKOUT_BAND_A,
+        false,
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        0,
+        false,
+        test_constants::live_source_timestamp_ms() + 1 + nonce,
+    );
+}
+
+/// How many of `order_ids` the reference considers knocked out at the current
+/// surface. A precondition check: a repriced book that knocks nobody out would
+/// leave the correction walk's two branches untested and the test vacuous.
+fun knocked_out_count(
+    fx: &helpers::Fixture,
+    market: &helpers::MarketBundle,
+    order_ids: &vector<u256>,
+): u64 {
+    let pricer = fx.load_pricer_bundle(market);
+    let expiry_market = helpers::market(market);
+    let mut count = 0;
+    order_ids.do_ref!(|id| {
+        let decoded = order::from_order_id(*id);
+        if (decoded.floor_shares() == 0) return;
+        let range_value = math::mul_down(
+            pricer.range_price(
+                range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size()),
+                range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size()),
+            ),
+            decoded.quantity(),
+        );
+        let threshold =
+            (decoded.floor_shares() as u128) * (float!() as u128)
+                / (expiry_market.liquidation_ltv() as u128);
+        if ((range_value as u128) <= threshold) count = count + 1;
+    });
+    count
+}
+
+/// `N + M` from the module doc: distinct finite boundary ticks across the open
+/// orders, plus the order count. Derived from the fixture's own orders rather than
+/// the tree's stored `node_count`, so the bound stays independent of contract state.
+fun aggregation_dust_bound(order_ids: &vector<u256>): u64 {
+    let mut ticks = vector<u64>[];
+    order_ids.do_ref!(|id| {
+        let decoded = order::from_order_id(*id);
+        vector[decoded.lower_tick(), decoded.higher_tick()].do!(|tick| {
+            if (tick == constants::neg_inf!() || tick == constants::pos_inf_tick!()) return;
+            if (!ticks.contains(&tick)) ticks.push_back(tick);
+        });
+    });
+    ticks.length() + order_ids.length()
+}
+
+/// Assert `current_nav` sits within the module doc's `N + M` aggregation-dust bound
+/// of the independent per-order reference, and the market stays solvent. For books
+/// that price a real smile, where exact equality is not available.
+fun check_nav_within_dust_bound(
+    fx: &helpers::Fixture,
+    market: &helpers::MarketBundle,
+    order_ids: vector<u256>,
+) {
+    let pricer = fx.load_pricer_bundle(market);
+    let nav = fx.current_nav_bundle(market);
+    let expiry_market = helpers::market(market);
+    test_helpers::assert_within(
+        nav,
+        reference_nav(expiry_market, &pricer, &order_ids),
+        aggregation_dust_bound(&order_ids),
+    );
+    helpers::assert_market_backed(expiry_market);
+}
+
 fun check_nav(fx: &helpers::Fixture, market: &helpers::MarketBundle, order_ids: vector<u256>) {
     let pricer = fx.load_pricer_bundle(market);
     let nav = fx.current_nav_bundle(market);
