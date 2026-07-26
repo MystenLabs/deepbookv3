@@ -80,6 +80,12 @@ const EBlockScholesPriceUnavailable: u64 = 14;
 const EBlockScholesSVIUnavailable: u64 = 15;
 const EBlockScholesMinVarianceInvalid: u64 = 16;
 const ENonMonotonePriceMemo: u64 = 17;
+const EPriceTooImprecise: u64 = 18;
+
+/// Ceiling on how far an admitted contract price may sit from its true value,
+/// relative, 1e9-scaled. An uncertain entry price transfers real value between the
+/// trader and the pool, so mint refuses the quote rather than admit one.
+macro fun max_contract_price_deviation(): u64 { 1_000_000 }
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -128,11 +134,24 @@ public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
 
 // === Public-Package Functions ===
 
-/// Return the probability for `(lower, higher]` with its certified error retained
-/// for package-internal protocol decisions. The public `range_price` is the
-/// value-only view for external reads.
-public(package) fun range_price_approx(pricer: &Pricer, lower: Strike, higher: Strike): Approx {
-    compute_range_price_approx(&pricer.svi, pricer.forward, lower, higher)
+/// Return the probability for `(lower, higher]`, admitted only if this module can
+/// certify it to within `max_contract_price_deviation`. Producing the price and
+/// bounding its numerical error are one computation, so the bound is enforced here
+/// rather than handed to a caller as a certificate to re-check. Callers receive a
+/// price they may act on or no price at all.
+public(package) fun admitted_range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+
+    let lower_up_price = up_price_certified(&pricer.svi, pricer.forward, lower);
+    let higher_up_price = up_price_certified(&pricer.svi, pricer.forward, higher);
+    // Fixed-point approximation or a non-monotone SVI surface can invert the
+    // boundary prices; the range probability is floored at zero.
+    let price = lower_up_price.sub(&higher_up_price).clamp_nonnegative();
+    assert!(
+        price.true_relative_deviation_within(max_contract_price_deviation!()),
+        EPriceTooImprecise,
+    );
+    price.magnitude()
 }
 
 /// Return the expiry market this pricer was loaded for.
@@ -480,20 +499,6 @@ fun compute_range_price_center(svi: &SVIParams, forward: u64, lower: Strike, hig
     // Fixed-point approximation or a non-monotone SVI surface can invert the
     // boundary prices; the range probability is floored at zero.
     lower_up_price.saturating_sub(higher_up_price)
-}
-
-/// Compute the certified probability for `(lower, higher]`.
-fun compute_range_price_approx(
-    svi: &SVIParams,
-    forward: u64,
-    lower: Strike,
-    higher: Strike,
-): Approx {
-    assert!(lower.value() < higher.value(), EInvalidRange);
-
-    let lower_up_price = up_price_certified(svi, forward, lower);
-    let higher_up_price = up_price_certified(svi, forward, higher);
-    lower_up_price.sub(&higher_up_price).clamp_nonnegative()
 }
 
 /// Compute the canonical scalar center of the adjusted UP digital probability.

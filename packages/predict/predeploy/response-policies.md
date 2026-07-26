@@ -833,7 +833,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `release_all_surplus_at_exact_backing_returns_zero`, and
   `release_all_surplus_underfunded_aborts`;
   `pricing_guard_tests.move` —
-  `cached_range_price_preserves_direct_range_center_and_error`,
+  `cached_range_price_matches_a_freshly_computed_range_center`,
   `cached_range_price_with_equal_bounds_aborts_before_lookup`, and
   `cached_range_price_with_reversed_bounds_aborts_before_lookup`.
 - **Reopen when:** expiry cash or rebate basis gains a new writer; an authorized

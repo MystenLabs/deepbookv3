@@ -9,32 +9,42 @@ use deepbook_predict::{
     config_constants,
     constants,
     flow_test_helpers as helpers,
-    pricing::Pricer,
-    range_codec,
-    strike_exposure,
+    pricing,
+    range_codec::{Self, Strike},
     test_constants
 };
-use fixed_math::{approx::Approx, math};
+use fixed_math::math;
 use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
-// The ratified contract-price deviation bound at 1e9 scale (0.1%), mirroring
-// `strike_exposure::max_contract_price_deviation`.
-const CONTRACT_MAX_DEVIATION: u64 = 1_000_000;
 
+/// The extreme surface still sits inside the economic entry-probability band, so
+/// the numerical gate is what rejects it, not mint admission policy. The rejection
+/// itself is pinned by `uncertifiable_price_is_not_admitted`.
 #[test]
-fun extreme_surface_is_admissible_but_not_numerically_certifiable() {
+fun extreme_surface_stays_inside_the_economic_admission_band() {
     let (mut fx, expiry_id, _trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     seed_uncertifiable_surface(&mut fx, &mut market);
-    let price = atm_up_price(&fx.load_pricer_bundle(&market));
-    assert!(price.magnitude() >= config_constants::default_min_entry_probability!());
-    assert!(price.magnitude() <= config_constants::default_max_entry_probability!());
-    assert!(!price.true_relative_deviation_within(CONTRACT_MAX_DEVIATION));
+    let (lower, higher) = atm_range();
+    let price = fx.load_pricer_bundle(&market).range_price(lower, higher);
+    assert!(price >= config_constants::default_min_entry_probability!());
+    assert!(price <= config_constants::default_max_entry_probability!());
 
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EPriceTooImprecise)]
+fun uncertifiable_price_is_not_admitted() {
+    let (mut fx, expiry_id, _trader) = helpers::setup_everything();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    seed_uncertifiable_surface(&mut fx, &mut market);
+    let (lower, higher) = atm_range();
+    fx.load_pricer_bundle(&market).admitted_range_price(lower, higher);
+    abort EUnexpectedSuccess
 }
 
 #[test]
@@ -43,8 +53,11 @@ fun production_mint_accepts_a_certified_default_price() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    let price = atm_up_price(&fx.load_pricer_bundle(&market));
-    assert!(price.true_relative_deviation_within(CONTRACT_MAX_DEVIATION));
+    // The default surface is certifiable: admission returns the canonical center
+    // rather than aborting, which is the precondition the mint below relies on.
+    let (lower, higher) = atm_range();
+    let pricer = fx.load_pricer_bundle(&market);
+    assert_eq!(pricer.admitted_range_price(lower, higher), pricer.range_price(lower, higher));
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -61,7 +74,7 @@ fun production_mint_accepts_a_certified_default_price() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = strike_exposure::EPriceTooImprecise)]
+#[test, expected_failure(abort_code = pricing::EPriceTooImprecise)]
 fun production_mint_rejects_an_uncertifiable_price() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -97,16 +110,13 @@ fun seed_uncertifiable_surface(fx: &mut helpers::Fixture, market: &mut helpers::
     );
 }
 
-fun atm_up_price(pricer: &Pricer): Approx {
-    let lower = range_codec::strike_from_tick(
-        helpers::strike_tick(),
-        test_constants::default_tick_size(),
-    );
-    let higher = range_codec::strike_from_tick(
-        constants::pos_inf_tick!(),
-        test_constants::default_tick_size(),
-    );
-    let approximate = pricer.range_price_approx(lower, higher);
-    assert_eq!(pricer.range_price(lower, higher), approximate.magnitude());
-    approximate
+/// The at-the-money `(strike, +inf]` range every test in this module prices.
+fun atm_range(): (Strike, Strike) {
+    (
+        range_codec::strike_from_tick(helpers::strike_tick(), test_constants::default_tick_size()),
+        range_codec::strike_from_tick(
+            constants::pos_inf_tick!(),
+            test_constants::default_tick_size(),
+        ),
+    )
 }

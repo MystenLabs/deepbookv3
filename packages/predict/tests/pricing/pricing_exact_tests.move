@@ -47,7 +47,8 @@ const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
-const MAX_MINT_PRICE_DEVIATION: u64 = 1_000_000;
+// `max_contract_price_deviation` is 1e6 at 1e9 scale, i.e. one part in a thousand.
+const MINT_DEVIATION_DENOMINATOR: u64 = 1_000;
 // Three-input re-anchor fixture: fresh Pyth spot != Block Scholes spot != forward.
 // Expected forward = floor(pyth_spot * bs_forward / bs_spot)
 //                  = floor(75_100e9 * 75_050e9 / 75_000e9) = 75_150_066_666_666.
@@ -56,6 +57,40 @@ const REANCHOR_BS_FORWARD: u64 = 75_050_000_000_000;
 const REANCHOR_PYTH_SPOT: u64 = 75_100_000_000_000;
 const REANCHOR_EXPECTED_FORWARD: u64 = 75_150_066_666_666;
 const REANCHOR_PYTH_SOURCE_MS: u64 = 119_001;
+
+/// The payout-tree tick a reference strike maps to. Infinity boundaries are never
+/// tree nodes; the memo answers them from its own sentinels.
+fun boundary_tick(reference_strike: u64, tick_size: u64): u64 {
+    if (reference_strike == constants::neg_inf!()) return constants::neg_inf!();
+    if (reference_strike == constants::pos_inf!()) return constants::pos_inf_tick!();
+    reference_strike / tick_size
+}
+
+/// Every distinct finite boundary tick across a scenario's points, ascending —
+/// the order `price_and_cache` requires, mirroring the in-order payout-tree walk.
+fun ascending_finite_boundary_ticks(
+    points: &vector<ref_data::RefPoint>,
+    tick_size: u64,
+): vector<u64> {
+    let mut ticks = vector[];
+    points.do_ref!(|p| {
+        vector[p.lower(), p.higher()].do!(|reference_strike| {
+            if (
+                reference_strike == constants::neg_inf!()
+                    || reference_strike == constants::pos_inf!()
+            ) return;
+            let tick = reference_strike / tick_size;
+            let mut at = 0;
+            while (at < ticks.length() && ticks[at] < tick) at = at + 1;
+            if (at == ticks.length()) {
+                ticks.push_back(tick)
+            } else if (ticks[at] != tick) {
+                ticks.insert(tick, at)
+            };
+        });
+    });
+    ticks
+}
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
 /// spot/forward, and assert `Pricer.range_price` matches its fixed-point regression
@@ -82,14 +117,27 @@ fun run_scenario(s: u64, enforce_mint_deviation: bool) {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
+    let tick_size = ref_data::tick_size(s);
     let points = ref_data::points(s);
+
+    // Price every distinct finite boundary once, ascending, exactly as NAV's payout
+    // walk does; `cached_range_price` then reads each point back the way NAV's
+    // leveraged correction walk does. That is the production path the certified
+    // price travels, so the certificate under test here is the one the protocol acts on.
+    let mut memo = pricing::new_price_memo();
+    let ticks = ascending_finite_boundary_ticks(&points, tick_size);
+    ticks.do_ref!(|tick| { memo.price_and_cache(&pricer, *tick, tick_size); });
+
     let n = points.length();
     let mut i = 0;
     while (i < n) {
         let p = &points[i];
         let lower = strike(p.lower());
         let higher = strike(p.higher());
-        let priced = pricer.range_price_approx(lower, higher);
+        let priced = memo.cached_range_price(
+            boundary_tick(p.lower(), tick_size),
+            boundary_tick(p.higher(), tick_size),
+        );
         assert!(!priced.is_negative());
         assert!(priced.error() < std::u64::max_value!());
         let actual = priced.magnitude();
@@ -99,7 +147,14 @@ fun run_scenario(s: u64, enforce_mint_deviation: bool) {
         test_helpers::assert_within(actual, p.reference_lower(), priced.error());
         test_helpers::assert_within(actual, p.reference_upper(), priced.error());
         if (enforce_mint_deviation) {
-            assert!(priced.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
+            // The production promise mint relies on: the admitted price is the same
+            // center, and it really is within 0.1% of the independent reference.
+            assert_eq!(pricer.admitted_range_price(lower, higher), actual);
+            test_helpers::assert_within(
+                actual,
+                p.reference(),
+                p.reference().divide_and_round_up(MINT_DEVIATION_DENOMINATOR),
+            );
         };
         i = i + 1;
     };

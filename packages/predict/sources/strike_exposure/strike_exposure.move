@@ -34,11 +34,6 @@ const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EWrongCloseOutcome: u64 = 6;
 const EPricerRequired: u64 = 7;
-const EPriceTooImprecise: u64 = 8;
-
-/// The protocol invariant on produced contract prices: a quoted probability may
-/// deviate from its true value by at most 0.1% (1e6 at 1e9 scale).
-macro fun max_contract_price_deviation(): u64 { 1_000_000 }
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -559,8 +554,9 @@ public(package) fun new(
 }
 
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
-/// validation, and enforce the contract-price precision invariant. The single
-/// pricing-prefix orchestration shared by every mint quote/terms path.
+/// validation. The single pricing-prefix orchestration shared by every mint
+/// quote/terms path. `pricing` owns the numerical-precision bound on what it
+/// produces and aborts rather than return a price mint may not act on.
 fun admitted_entry_probability(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -568,16 +564,10 @@ fun admitted_entry_probability(
     higher_tick: u64,
 ): u64 {
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
-    let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
-    let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
-    let price = pricer.range_price_approx(lower, higher);
-    // Contract prices cannot deviate from true by more than 0.1%; an over-wide
-    // certified error aborts the quote rather than admitting an imprecise price.
-    assert!(
-        price.true_relative_deviation_within(max_contract_price_deviation!()),
-        EPriceTooImprecise,
-    );
-    price.magnitude()
+    pricer.admitted_range_price(
+        range_codec::strike_from_tick(lower_tick, exposure.tick_size),
+        range_codec::strike_from_tick(higher_tick, exposure.tick_size),
+    )
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {

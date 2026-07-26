@@ -77,7 +77,8 @@ const FINITE_TAIL_UPPER_STRIKE: u64 = 100_000_000_000;
 const FINITE_TAIL_LOWER_UP_REFERENCE: u64 = 561_894_965;
 const FINITE_TAIL_UPPER_UP_REFERENCE: u64 = 575_761_066;
 const FINITE_TAIL_RANGE_REFERENCE: u64 = 0;
-const MAX_MINT_PRICE_DEVIATION: u64 = 1_000_000;
+// `pricing::max_contract_price_deviation` is 1e6 at 1e9 scale — one part in a thousand.
+const MINT_DEVIATION_DENOMINATOR: u64 = 1_000;
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
@@ -148,8 +149,11 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
     abort EUnexpectedSuccess
 }
 
+/// NAV reads boundary prices back out of the memo instead of re-pricing. That read
+/// must land on the same center the freshly-computed price would, or the pool marks
+/// itself against a surface it never priced.
 #[test]
-fun cached_range_price_preserves_direct_range_center_and_error() {
+fun cached_range_price_matches_a_freshly_computed_range_center() {
     let (fx, oracle) = setup_live();
     let pricer = fx.load_pricer_bundle(&oracle);
     let tick_size = test_constants::default_tick_size();
@@ -157,20 +161,11 @@ fun cached_range_price_preserves_direct_range_center_and_error() {
     memo.price_and_cache(&pricer, CACHED_RANGE_LOWER_TICK, tick_size);
     memo.price_and_cache(&pricer, CACHED_RANGE_HIGHER_TICK, tick_size);
 
+    let lower = range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size);
+    let higher = range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size);
     let cached = memo.cached_range_price(CACHED_RANGE_LOWER_TICK, CACHED_RANGE_HIGHER_TICK);
-    let direct = pricer.range_price_approx(
-        range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size),
-        range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size),
-    );
-    assert_eq!(cached.magnitude(), direct.magnitude());
-    assert_eq!(cached.error(), direct.error());
-    assert_eq!(
-        pricer.range_price(
-            range_codec::strike_from_tick(CACHED_RANGE_LOWER_TICK, tick_size),
-            range_codec::strike_from_tick(CACHED_RANGE_HIGHER_TICK, tick_size),
-        ),
-        direct.magnitude(),
-    );
+    assert_eq!(cached.magnitude(), pricer.range_price(lower, higher));
+    assert_eq!(cached.magnitude(), pricer.admitted_range_price(lower, higher));
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -384,8 +379,12 @@ fun smallest_nonzero_strike_ratio_still_prices_the_tail() {
 
 /// Python stdlib true math gives UP(lower)=0.5618949647268344 and
 /// UP(upper)=0.5757610655414342, hence a clamped range price of exactly zero.
-/// Both finite strikes and this SVI surface satisfy the live pricing envelope.
-#[test]
+/// Both finite strikes and this SVI surface satisfy the live pricing envelope, and
+/// both boundaries price accurately on their own — so a range price that collapses
+/// to zero between two accurate boundaries is the case admission has to refuse.
+/// Admitting it would sell a contract at zero on a surface where neither boundary
+/// is anywhere near zero.
+#[test, expected_failure(abort_code = pricing::EPriceTooImprecise)]
 fun finite_ratio_underflow_does_not_false_certify_range() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
@@ -404,50 +403,43 @@ fun finite_ratio_underflow_does_not_false_certify_range() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let lower_up = pricer.range_price_approx(
+    // Each boundary is admitted, and an admitted price really is within 0.1% of the
+    // independent reference — the promise mint relies on.
+    let lower_up = pricer.admitted_range_price(
         strike(FINITE_TAIL_LOWER_STRIKE),
         strike(constants::pos_inf!()),
     );
-    assert_eq!(pricer.up_price(strike(FINITE_TAIL_LOWER_STRIKE)), lower_up.magnitude());
+    assert_eq!(pricer.up_price(strike(FINITE_TAIL_LOWER_STRIKE)), lower_up);
     test_helpers::assert_within(
-        lower_up.magnitude(),
+        lower_up,
         FINITE_TAIL_LOWER_UP_REFERENCE,
-        lower_up.error(),
+        FINITE_TAIL_LOWER_UP_REFERENCE.divide_and_round_up(MINT_DEVIATION_DENOMINATOR),
     );
-    assert!(lower_up.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
 
-    let upper_up = pricer.range_price_approx(
+    let upper_up = pricer.admitted_range_price(
         strike(FINITE_TAIL_UPPER_STRIKE),
         strike(constants::pos_inf!()),
     );
-    assert_eq!(pricer.up_price(strike(FINITE_TAIL_UPPER_STRIKE)), upper_up.magnitude());
+    assert_eq!(pricer.up_price(strike(FINITE_TAIL_UPPER_STRIKE)), upper_up);
     test_helpers::assert_within(
-        upper_up.magnitude(),
+        upper_up,
         FINITE_TAIL_UPPER_UP_REFERENCE,
-        upper_up.error(),
+        FINITE_TAIL_UPPER_UP_REFERENCE.divide_and_round_up(MINT_DEVIATION_DENOMINATOR),
     );
-    assert!(upper_up.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
 
-    let range = pricer.range_price_approx(
-        strike(FINITE_TAIL_LOWER_STRIKE),
-        strike(FINITE_TAIL_UPPER_STRIKE),
-    );
+    // The scalar center underflows to the reference zero, and admission refuses it.
     assert_eq!(
         pricer.range_price(
             strike(FINITE_TAIL_LOWER_STRIKE),
             strike(FINITE_TAIL_UPPER_STRIKE),
         ),
-        range.magnitude(),
-    );
-    test_helpers::assert_within(
-        range.magnitude(),
         FINITE_TAIL_RANGE_REFERENCE,
-        range.error(),
     );
-    assert!(!range.true_relative_deviation_within(MAX_MINT_PRICE_DEVIATION));
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
+    pricer.admitted_range_price(
+        strike(FINITE_TAIL_LOWER_STRIKE),
+        strike(FINITE_TAIL_UPPER_STRIKE),
+    );
+    abort EUnexpectedSuccess
 }
 
 // === Surface pricing-safe envelope rejects (EBlockScholesInputsInvalid) ===

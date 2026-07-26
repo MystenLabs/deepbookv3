@@ -401,9 +401,17 @@ fun check_single_order_nav_enclosure(
     let pricer = fx.load_pricer_bundle(market);
     let expiry_market = helpers::market(market);
     let decoded = order::from_order_id(order_id);
-    let lower = range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size());
-    let higher = range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size());
-    let price = pricer.range_price_approx(lower, higher);
+
+    // Read the certified boundary price the way NAV itself does: price each finite
+    // boundary into a memo in ascending order, then read the range back out of it.
+    let tick_size = expiry_market.tick_size();
+    let mut memo = pricing::new_price_memo();
+    vector[decoded.lower_tick(), decoded.higher_tick()].do!(|tick| {
+        if (tick != constants::neg_inf!() && tick != constants::pos_inf_tick!()) {
+            memo.price_and_cache(&pricer, tick, tick_size);
+        };
+    });
+    let price = memo.cached_range_price(decoded.lower_tick(), decoded.higher_tick());
     let price_low = price.magnitude().saturating_sub(price.error());
     let price_high = price.magnitude().saturating_add(price.error()).min(float!());
 

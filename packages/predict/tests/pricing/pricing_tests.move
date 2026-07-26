@@ -137,20 +137,15 @@ fun scalar_and_certified_pricing_share_centers() {
     let finite = strike(test_constants::default_live_price());
     let neg_inf = strike(constants::neg_inf!());
     let pos_inf = strike(constants::pos_inf!());
-    let certified_up = pricer.range_price_approx(finite, pos_inf);
-    assert_eq!(pricer.up_price(finite), certified_up.magnitude());
-    assert_eq!(pricer.range_price(finite, pos_inf), certified_up.magnitude());
+    let certified_up = pricer.admitted_range_price(finite, pos_inf);
+    assert_eq!(pricer.up_price(finite), certified_up);
+    assert_eq!(pricer.range_price(finite, pos_inf), certified_up);
 
-    let certified_below = pricer.range_price_approx(neg_inf, finite);
-    assert_eq!(pricer.range_price(neg_inf, finite), certified_below.magnitude());
-
-    let certified_whole = pricer.range_price_approx(neg_inf, pos_inf);
-    assert_eq!(pricer.range_price(neg_inf, pos_inf), certified_whole.magnitude());
-
-    let finite_range = pricer.range_price_approx(strike(STRIKE_BELOW), strike(STRIKE_ABOVE));
+    assert_eq!(pricer.range_price(neg_inf, finite), pricer.admitted_range_price(neg_inf, finite));
+    assert_eq!(pricer.range_price(neg_inf, pos_inf), pricer.admitted_range_price(neg_inf, pos_inf));
     assert_eq!(
         pricer.range_price(strike(STRIKE_BELOW), strike(STRIKE_ABOVE)),
-        finite_range.magnitude(),
+        pricer.admitted_range_price(strike(STRIKE_BELOW), strike(STRIKE_ABOVE)),
     );
 
     oracle_fixture::return_oracle_bundle(oracle);
