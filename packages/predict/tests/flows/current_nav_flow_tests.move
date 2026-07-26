@@ -249,7 +249,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     let pricer = fx.load_pricer_bundle(&market);
     let expiry_market = helpers::market(&market);
     let decoded = order::from_order_id(id);
-    let range_value = math::mul(
+    let range_value = math::mul_down(
         pricer.range_price(
             range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size()),
             range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size()),
@@ -258,7 +258,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     );
     let floor = decoded.floor_shares();
     assert!(range_value > floor, 0);
-    assert!(range_value <= math::div(floor, expiry_market.liquidation_ltv()), 1);
+    assert!(range_value <= math::div_down(floor, expiry_market.liquidation_ltv()), 1);
 
     // The knocked-out order is credited its full range value (zero live liability),
     // so NAV rises to the knock-out-aware reference — above the old floor-capped
@@ -399,11 +399,11 @@ fun reference_nav(
         let decoded = order::from_order_id(*id);
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
-        let range_value = math::mul(pricer.range_price(lower, higher), decoded.quantity());
-        let floor_value = math::mul(decoded.floor_shares(), index_now);
+        let range_value = math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
+        let floor_value = math::mul_down(decoded.floor_shares(), index_now);
         let knocked_out =
             decoded.floor_shares() > 0
-                && range_value <= math::div(decoded.floor_shares(), market.liquidation_ltv());
+                && range_value <= math::div_down(decoded.floor_shares(), market.liquidation_ltv());
         let contribution = if (knocked_out) 0 else range_value.saturating_sub(floor_value);
         liability = liability + contribution;
     });

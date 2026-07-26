@@ -421,9 +421,9 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
     let rho_mag = svi.rho().magnitude();
     if (rho_mag == math::float_scaling!()) return 0;
 
-    let one_minus_rho_squared = math::float_scaling!() - math::mul(rho_mag, rho_mag);
-    let sqrt_one_minus_rho_squared = math::sqrt(one_minus_rho_squared, math::float_scaling!());
-    math::mul(svi.b(), math::mul(svi.sigma(), sqrt_one_minus_rho_squared))
+    let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
+    let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
+    math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
@@ -470,9 +470,9 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
     let sigma = svi_params.sigma();
-    let sigma_squared = math::mul(sigma, sigma);
+    let sigma_squared = math::mul_down(sigma, sigma);
     let sqrt_input = k_minus_m_squared + sigma_squared;
-    let sq = math::sqrt(sqrt_input, math::float_scaling!());
+    let sq = math::sqrt_down(sqrt_input);
     let sq_i64 = i64::from_u64(sq);
 
     let rho = svi_params.rho();
@@ -483,14 +483,14 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b();
-    let variance_increment = math::mul(b, inner.magnitude());
+    let variance_increment = math::mul_down(b, inner.magnitude());
     let a = svi_params.a();
     let total_var = i64::from_u64(variance_increment).add(&a);
     // Total variance must be positive because pricing takes sqrt(w) below.
     assert!(is_positive(&total_var), ENonPositiveVariance);
     let total_var = total_var.magnitude();
 
-    let sqrt_var = math::sqrt(total_var, math::float_scaling!());
+    let sqrt_var = math::sqrt_down(total_var);
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
     let half_var_i64 = i64::from_u64(total_var / 2);
     let d2_numerator = k.add(&half_var_i64);

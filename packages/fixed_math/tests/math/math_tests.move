@@ -74,8 +74,7 @@ const PDF_8: u64 = 0;
 const LN_1EM9_MAG: u64 = 20_723_265_837; // |ln(1e-9)|; smallest input x = 1
 const LN_U64MAX: u64 = 23_638_153_719; // ln(u64::MAX / 1e9)
 const LN_1_5: u64 = 405_465_108; // ln(1.5); x in (F, 2F): non-degenerate Horner series
-const SQRT_4F_PREC_ONE: u64 = 63_245; // sqrt(4*F, 1) = isqrt(4e9)
-const SQRT_U64MAX_PREC_ONE: u64 = 4_294_967_295; // sqrt(u64::MAX, 1) = isqrt(u64::MAX) = 2^32-1
+const SQRT_U64MAX: u64 = 135_818_791_312_945; // isqrt(u64::MAX * 1e9), Python math.isqrt
 
 // Input boundaries mirrored from math.move private constants (for branch-edge tests).
 const EXP_MAX_INPUT: u64 = 23_638_153_618; // = math::EXP_MAX_INPUT (budget-conservative u64-fit bound)
@@ -87,25 +86,25 @@ const CDF_MEDIUM_THRESHOLD: u64 = 5_656_854_249; // medium/clamp split = sqrt(32
 #[test]
 fun mul_floors_scaled_product() {
     // 1.5 * 2.25 = 3.375
-    assert_eq!(math::mul(float!() + float!() / 2, 2 * float!() + float!() / 4), 3_375_000_000);
+    assert_eq!(math::mul_down(float!() + float!() / 2, 2 * float!() + float!() / 4), 3_375_000_000);
 }
 
 #[test]
 fun mul_rounds_down_to_integer_unit() {
     // floor(1 * 1 / 1e9) = 0
-    assert_eq!(math::mul(1, 1), 0);
+    assert_eq!(math::mul_down(1, 1), 0);
 }
 
 #[test]
 fun div_floors_scaled_quotient() {
     // floor(5 / 2 * 1e9) = 2.5e9
-    assert_eq!(math::div(5 * float!(), 2 * float!()), 2_500_000_000);
+    assert_eq!(math::div_down(5 * float!(), 2 * float!()), 2_500_000_000);
 }
 
 #[test]
 fun div_rounds_down_to_integer_unit() {
     // floor(1 * 1e9 / 3) = 333_333_333
-    assert_eq!(math::div(1, 3), 333_333_333);
+    assert_eq!(math::div_down(1, 3), 333_333_333);
 }
 
 #[test]
@@ -181,7 +180,7 @@ fun mul_div_up_at_float_scaling_rounds_dust_up() {
     // this same sub-unit dust DOWN to 0, so the round-up form is what biases the
     // deduction toward the pool.
     assert_eq!(math::mul_div_up(1, 1, float!()), 1);
-    assert_eq!(math::mul(1, 1), 0);
+    assert_eq!(math::mul_down(1, 1), 0);
 }
 
 #[test]
@@ -675,101 +674,51 @@ fun normal_pdf_clamps_past_eight_to_zero() {
     assert_eq!(math::normal_pdf(&i64::from_parts(100 * float!(), true)), 0);
 }
 
-// === sqrt ===
+// === sqrt_down ===
 
 #[test]
-fun sqrt_of_zero_is_zero() {
-    assert_eq!(math::sqrt(0, float!()), 0);
-}
-
-#[test]
-fun sqrt_of_one_is_one() {
-    assert_eq!(math::sqrt(float!(), float!()), float!());
+fun sqrt_down_of_zero_is_zero() {
+    assert_eq!(math::sqrt_down(0), 0);
 }
 
 #[test]
-fun sqrt_of_four_is_two() {
-    assert_eq!(math::sqrt(4 * float!(), float!()), 2 * float!());
+fun sqrt_down_of_one_is_one() {
+    assert_eq!(math::sqrt_down(float!()), float!());
 }
 
 #[test]
-fun sqrt_of_nine_is_three() {
-    assert_eq!(math::sqrt(9 * float!(), float!()), 3 * float!());
+fun sqrt_down_of_four_is_two() {
+    assert_eq!(math::sqrt_down(4 * float!()), 2 * float!());
 }
 
 #[test]
-fun sqrt_of_twentyfive_is_five() {
-    assert_eq!(math::sqrt(25 * float!(), float!()), 5 * float!());
+fun sqrt_down_of_nine_is_three() {
+    assert_eq!(math::sqrt_down(9 * float!()), 3 * float!());
 }
 
 #[test]
-fun sqrt_of_two_within_reference() {
-    test_helpers::assert_within(math::sqrt(2 * float!(), float!()), SQRT_2, SQRT_BUDGET_ABS);
+fun sqrt_down_of_twentyfive_is_five() {
+    assert_eq!(math::sqrt_down(25 * float!()), 5 * float!());
 }
 
 #[test]
-fun sqrt_of_three_within_reference() {
-    test_helpers::assert_within(math::sqrt(3 * float!(), float!()), SQRT_3, SQRT_BUDGET_ABS);
+fun sqrt_down_of_two_within_reference() {
+    test_helpers::assert_within(math::sqrt_down(2 * float!()), SQRT_2, SQRT_BUDGET_ABS);
 }
 
 #[test]
-fun sqrt_of_half_within_reference() {
-    test_helpers::assert_within(math::sqrt(float!() / 2, float!()), SQRT_HALF, SQRT_BUDGET_ABS);
-}
-
-// `precision` < F (multiplier > 1) is never used in production (all callers pass
-// float_scaling), but it is public surface: sqrt(x, P) computes sqrt(x * P) raw.
-
-#[test]
-fun sqrt_with_half_precision() {
-    // precision = F/2: sqrt(4 * 0.5) = sqrt(2). Independent: isqrt(4e9 * 5e8).
-    test_helpers::assert_within(math::sqrt(4 * float!(), float!() / 2), SQRT_2, SQRT_BUDGET_ABS);
+fun sqrt_down_of_three_within_reference() {
+    test_helpers::assert_within(math::sqrt_down(3 * float!()), SQRT_3, SQRT_BUDGET_ABS);
 }
 
 #[test]
-fun sqrt_with_half_precision_perfect_square() {
-    // sqrt(2 * 0.5) = sqrt(1) = 1 exactly.
-    assert_eq!(math::sqrt(2 * float!(), float!() / 2), float!());
+fun sqrt_down_of_half_within_reference() {
+    test_helpers::assert_within(math::sqrt_down(float!() / 2), SQRT_HALF, SQRT_BUDGET_ABS);
 }
 
 #[test]
-fun sqrt_with_quarter_precision_perfect_square() {
-    // sqrt(1 * 0.25) = sqrt(0.25) = 0.5 exactly.
-    assert_eq!(math::sqrt(float!(), float!() / 4), float!() / 2);
-}
-
-#[test]
-fun sqrt_with_min_precision() {
-    // precision = 1 (max multiplier): sqrt(4F, 1) = isqrt(4e9) = 63_245.
-    test_helpers::assert_within(math::sqrt(4 * float!(), 1), SQRT_4F_PREC_ONE, SQRT_BUDGET_ABS);
-}
-
-#[test]
-fun sqrt_of_u64_max_min_precision() {
-    // Largest input at max multiplier: scaled ~ 2^123 bits, the high-bit Newton path.
-    // sqrt(u64::MAX, 1) = isqrt(u64::MAX) = 2^32 - 1.
-    test_helpers::assert_within(
-        math::sqrt(std::u64::max_value!(), 1),
-        SQRT_U64MAX_PREC_ONE,
-        SQRT_BUDGET_ABS,
-    );
-}
-
-// Note: sqrt_u128's `x < 4` fast-path and its `g*g > x` floor correction are private
-// and unreachable through the public *F-scaled wrapper (scaled is always 0 or a
-// multiple of 1e9 >= 1e9, on which the Newton iteration never overshoots), so they
-// have no public test by construction — defensive code for the raw u128 helper.
-
-#[test, expected_failure(abort_code = math::EInvalidPrecision)]
-fun sqrt_precision_zero_aborts() {
-    math::sqrt(1, 0);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = math::EInvalidPrecision)]
-fun sqrt_precision_above_float_aborts() {
-    math::sqrt(1, float!() + 1);
-    abort 999
+fun sqrt_down_of_u64_max_is_exact_floor() {
+    assert_eq!(math::sqrt_down(std::u64::max_value!()), SQRT_U64MAX);
 }
 
 // === pow10 ===
