@@ -14,11 +14,44 @@
 /// decomposes into a boundary-aggregated linear walk minus a leveraged-book
 /// correction walk.
 ///
-/// All fixtures anchor every finite boundary at `strike_tick` (whose raw strike ==
-/// the seeded forward, so `UP(strike) = Φ(0) = 0.5` exactly with the SVI wing
-/// rounded to zero) and use even quantities, so the boundary-aggregated linear term
-/// equals the per-order sum bit-for-bit and `assert_eq` holds with no rounding dust.
-/// The far default expiry keeps the floor index flat at `1.0`, so `index_now = float!()`.
+/// ## How far the two may legitimately differ
+///
+/// The contract and the reference compute the same function; they differ only in
+/// WHERE integer truncation lands. Three of the four candidate divergence sites
+/// contribute exactly zero:
+///
+/// - The knock-out predicates are equivalent, not merely similar. The contract
+///   tests `ceil(rv*ltv/S) <= F` and the reference `rv <= floor(F*S/ltv)`; since
+///   `F` and `rv` are integers, both reduce to `rv * ltv <= F * S`.
+/// - The floor cap agrees exactly: `clamp_upper` is `min(rv, F)`, so the contract's
+///   per-order net `rv - cap` is `0` when knocked out and `max(0, rv - F)`
+///   otherwise — the reference's contribution verbatim.
+/// - The range price feeding the correction agrees bit-for-bit: `cached_range_price`
+///   then `mul_exact` floors `(P(l) - P(h)) * q / S` once, exactly as the
+///   reference's `mul_down` does.
+///
+/// All divergence therefore sits in the linear term, where the reference floors
+/// once per ORDER and the contract's boundary walk floors once per NODE. The
+/// pre-truncation identity is exact
+/// (`Σ_o q(P(l)-P(h))/S == base_q + Σ_t n_t P(t)/S`), each node's signed
+/// `mul_scaled` errs within one raw unit, each order's `mul_down` errs within one
+/// raw unit downward, and nodes with zero net quantity contribute nothing
+/// (`mul_exact` absorbs them). Hence
+///
+///   `|current_nav - reference_nav| <= N + M` raw units,
+///
+/// with `N` the distinct finite boundary ticks and `M` the open orders — both
+/// structural counts, independent of prices, quantities, floors, and leverage.
+///
+/// A `(-inf, h]` order biases that difference upward by construction: the contract
+/// computes `q - floor(P(h)q/S)` where the reference computes `q - ceil(P(h)q/S)`.
+///
+/// The fixtures in this module are all engineered to sit at `N + M = 0` slack:
+/// every finite boundary is anchored at `strike_tick` (whose raw strike == the
+/// seeded forward, so `UP(strike) = Φ(0) = 0.5` exactly with the SVI wing rounded
+/// to zero) with even quantities, making every product integral. They therefore
+/// keep the strictly stronger `assert_eq`. Fixtures that price a real multi-tick
+/// smile cannot be dust-free and assert within the bound instead.
 #[test_only]
 module deepbook_predict::current_nav_flow_tests;
 
@@ -63,7 +96,7 @@ fun empty_live_market_values_at_free_cash() {
     // No orders: NAV is exactly the seeded free cash (no fees yet -> rebate 0).
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, test_constants::default_seeded_expiry_cash());
-    check_nav(&fx, &market, vector[], float!());
+    check_nav(&fx, &market, vector[]);
     let pricer = fx.load_pricer_bundle(&market);
     let approximate = helpers::market(&market).current_nav_approx(&pricer);
     assert_eq!(approximate.magnitude(), nav);
@@ -89,7 +122,7 @@ fun single_one_x_up_order() {
         test_constants::leverage_one_x(),
     );
 
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&fx, &market, vector[id]);
     check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
@@ -115,7 +148,7 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
     );
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&fx, &market, vector[id]);
     check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
@@ -150,7 +183,7 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
 
     // Both up orders share the strike start boundary -> one tree node priced
     // once at P(strike); the aggregate quantity equals the per-order sum.
-    check_nav(&fx, &market, vector[id1, id2], float!());
+    check_nav(&fx, &market, vector[id1, id2]);
 
     helpers::return_account_bundle(account);
 
@@ -176,7 +209,7 @@ fun single_leveraged_order_above_floor() {
 
     // value = mul_down(0.5, 2e9) = 1e9 > floor = mul_down(floor_shares 5e8, 1.0) = 5e8, so the
     // correction min() picks the floor and the order's net liability is 5e8.
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&fx, &market, vector[id]);
     check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
@@ -209,7 +242,7 @@ fun single_leveraged_order_underwater_nets_to_zero() {
     let expiry_market = helpers::market(&market);
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve()));
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&fx, &market, vector[id]);
     check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
@@ -271,7 +304,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     // The knocked-out order is credited its full range value (zero live liability),
     // so NAV rises to the knock-out-aware reference — above the old floor-capped
     // mark. `check_nav` asserts `current_nav` equals that independent reference.
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&fx, &market, vector[id]);
     check_single_order_nav_enclosure(&fx, &market, id);
 
     helpers::return_account_bundle(account);
@@ -313,12 +346,7 @@ fun mixed_one_x_and_leveraged_book() {
 
     // strike now carries start quantity (1x up + leveraged up) and end quantity
     // (1x down); only the leveraged order is in the correction book.
-    check_nav(
-        &fx,
-        &market,
-        vector[up, down, leveraged],
-        float!(),
-    );
+    check_nav(&fx, &market, vector[up, down, leveraged]);
 
     helpers::return_account_bundle(account);
 
@@ -376,16 +404,14 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
 /// Assert `current_nav` equals the independent per-order reference and the market
 /// stays solvent (S1 backing). The contract builds its own pricer internally; we
 /// build an identical one (the oracle is frozen within the tx) for the reference.
-fun check_nav(
-    fx: &helpers::Fixture,
-    market: &helpers::MarketBundle,
-    order_ids: vector<u256>,
-    index_now: u64,
-) {
+///
+/// Exact equality, not the module doc's `N + M` bound: every fixture here is
+/// dust-free by construction, so any difference at all is a real defect.
+fun check_nav(fx: &helpers::Fixture, market: &helpers::MarketBundle, order_ids: vector<u256>) {
     let pricer = fx.load_pricer_bundle(market);
     let nav = fx.current_nav_bundle(market);
     let expiry_market = helpers::market(market);
-    assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids, index_now));
+    assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids));
     helpers::assert_market_backed(expiry_market);
 }
 
@@ -453,23 +479,27 @@ fun assert_contains(ball: &Approx, candidate: u64) {
 /// contributes `max(0, qty·P - floor)`. The order's ticks are converted to raw
 /// strikes through the same `range_codec` boundary the contract uses (the codec
 /// is the pricing boundary, not the NAV math under test).
-fun reference_nav(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    order_ids: &vector<u256>,
-    index_now: u64,
-): u64 {
+fun reference_nav(market: &ExpiryMarket, pricer: &Pricer, order_ids: &vector<u256>): u64 {
     let mut liability = 0;
     order_ids.do_ref!(|id| {
         let decoded = order::from_order_id(*id);
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
         let range_value = math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
-        let floor_value = math::mul_down(decoded.floor_shares(), index_now);
+        // The economic threshold as stated: gross at or below `floor / ltv`. Kept in
+        // this form (not the contract's `ceil(rv * ltv / S) <= F`) so the oracle stays
+        // an independent expression, and evaluated in u128 because a large floor
+        // overflows `math::div_down`'s u64 return.
         let knocked_out =
             decoded.floor_shares() > 0
-                && range_value <= math::div_down(decoded.floor_shares(), market.liquidation_ltv());
-        let contribution = if (knocked_out) 0 else range_value.saturating_sub(floor_value);
+                && (range_value as u128)
+                <= (decoded.floor_shares() as u128) * (float!() as u128)
+                    / (market.liquidation_ltv() as u128);
+        let contribution = if (knocked_out) {
+            0
+        } else {
+            range_value.saturating_sub(decoded.floor_shares())
+        };
         liability = liability + contribution;
     });
     let free_cash = market.cash_balance().saturating_sub(market.rebate_reserve());
