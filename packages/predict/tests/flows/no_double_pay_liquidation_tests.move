@@ -16,20 +16,14 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-/// 2x ATM mint of quantity 1e9 on `(default_strike_tick, +inf]`: entry_value =
-/// floor(0.5 * 1e9) = 500_000_000 (p = Φ(0) = 0.5 exactly); net_premium =
-/// floor(entry_value / 2) = 250_000_000.
-const MINT_CONTRIBUTION: u64 = 250_000_000;
+/// The 2x at-the-money mint's net premium is read from its quote, and the floor
+/// it implies is read back off the packed order: both follow the digital, which
+/// `pricing_exact_tests` owns. This file owns the no-double-pay invariant.
 /// Fee floors at min_fee (fixture base_fee = 1 makes the raw Bernoulli fee
 /// round to 0; the default max-multiplier 1.0 keeps the short-expiry ramp inert).
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// mint_deposit − net_premium − fee = 1e9 − 250e6 − 5e6.
-const POST_MINT_BALANCE: u64 = 745_000_000;
-/// financed_amount = entry_value - net_premium = 250_000_000. The current short
-/// expiry floor index is 1.0 at open, so floor_shares = financed_amount and the
-/// live backing is quantity - floor_at_open.
-const FLOOR_SHARES: u64 = 250_000_000;
-const LIVE_BACKING: u64 = 750_000_000;
+/// The short expiry's floor index is 1.0 at open, so `floor_shares` equals the
+/// financed amount and live backing is `quantity - floor_shares`.
 /// floor(5e6 fee basis * 0.5 default rebate rate).
 const MINT_REBATE: u64 = 2_500_000;
 /// 1% spot drop: with the default near-zero SVI variance the digital collapses to
@@ -61,6 +55,15 @@ fun liquidated_order_pays_zero_once_and_only_once() {
 
     // --- Mint the 2x semi-infinite order. Live backing is quantity minus the
     // floor at open (one unit below the seed from the round-down round-trip).
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        LEVERAGE_TWO_X,
+    );
+    helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
+    let mint_contribution = quote.net_premium();
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -69,16 +72,20 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
     );
-    assert_eq!(order::from_order_id(order_id).floor_shares(), FLOOR_SHARES);
-    let cash_after_mint = seeded_cash + MINT_CONTRIBUTION + MINT_MIN_FEE;
+    // financed_amount = entry_value - net_premium, and at 2x the two halves of
+    // the entry value are the premium and the floor.
+    let floor_shares = order::from_order_id(order_id).floor_shares();
+    let live_backing = test_constants::mint_quantity() - floor_shares;
+    let post_mint_balance = test_constants::mint_deposit() - mint_contribution - MINT_MIN_FEE;
+    let cash_after_mint = seeded_cash + mint_contribution + MINT_MIN_FEE;
     helpers::check_market_cash_bundle(
         &market,
-        helpers::expected_market_cash(cash_after_mint, LIVE_BACKING, MINT_REBATE),
+        helpers::expected_market_cash(cash_after_mint, live_backing, MINT_REBATE),
     );
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
+        helpers::expected_manager_state(post_mint_balance, MINT_MIN_FEE, 1, 0, 0),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
@@ -95,7 +102,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
+        helpers::expected_manager_state(post_mint_balance, MINT_MIN_FEE, 1, 0, 0),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
@@ -119,7 +126,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 0, 0, 0),
+        helpers::expected_manager_state(post_mint_balance, MINT_MIN_FEE, 0, 0, 0),
     );
     helpers::check_market_cash_bundle(
         &market,

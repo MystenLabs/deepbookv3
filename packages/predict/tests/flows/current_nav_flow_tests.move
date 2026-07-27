@@ -230,6 +230,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     // the leveraged UP range lands in the knock-out band (floor, floor / ltv]:
     // worth more than its floor but at or below the liquidation threshold. m = 0
     // keeps the SVI wing term safely positive.
+    fx.set_clock_for_testing(test_constants::now_ms() + 1);
     fx.seed_bs_surface_with_svi_bundle(
         &mut market,
         test_constants::default_live_price(),
@@ -242,7 +243,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
         false,
         0,
         false,
-        test_constants::live_source_timestamp_ms() + 1,
+        test_constants::now_ms() + 1,
     );
 
     // Precondition: the order really is in the band, or the test is vacuous.
@@ -340,6 +341,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
     // min `sigma`, and `rho = -1`. Together they make the model report a higher
     // chance of finishing above tick 100 than above tick 90, which is impossible
     // for a valid UP price curve.
+    fx.set_clock_for_testing(test_constants::now_ms() + 1);
     fx.seed_bs_surface_with_svi_bundle(
         &mut market,
         test_constants::default_live_price(),
@@ -352,7 +354,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         true,
         0,
         false,
-        test_constants::live_source_timestamp_ms() + 1,
+        test_constants::now_ms() + 1,
     );
 
     fx.current_nav_bundle(&market);

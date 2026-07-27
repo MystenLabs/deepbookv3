@@ -15,7 +15,13 @@
 #[test_only]
 module deepbook_predict::liquidation_boundary_tests;
 
-use deepbook_predict::{config_constants, constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{
+    config_constants,
+    constants,
+    flow_test_helpers as helpers,
+    order,
+    test_constants
+};
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use std::unit_test::assert_eq;
@@ -36,27 +42,17 @@ const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// 84_000 lots, chosen so floor_shares = financed_amount / 1.05 = 200_000_000 is an
 /// EXACT division (no dependence on the floor_shares rounding direction).
 const QUANTITY: u64 = 840_000_000;
-/// entry_value = floor(0.5 * 840e6) = 420_000_000 (ATM digital p = 0.5 exactly);
-/// net_premium = floor(entry_value / 2x) = 210_000_000.
-const CONTRIBUTION: u64 = 210_000_000;
+/// The 2x net premium, the floor it implies, and the live order value are all
+/// read from the quote, the packed order and the public value reader rather than
+/// written down: each follows the digital, which `pricing_exact_tests` owns.
 /// Per-unit fee RATE floors at min_fee = 5e6 (fixture base_fee = 1):
 /// trade fee = floor(5e6 * 840e6 / 1e9) per mint/redeem of this quantity.
 const TRADE_FEE: u64 = 4_200_000;
-/// mint_deposit − 2 * (net_premium + fee).
-const POST_MINT_BALANCE: u64 = 571_600_000;
-/// floor_at_open = floor(200_000_000 * 1.05e9 / 1e9) = 210_000_000 exact;
-/// live backing per order = quantity − floor_at_open.
-const LIVE_BACKING_PER_ORDER: u64 = 630_000_000;
+
 /// floor(cumulative fees * 0.5 default rebate rate): 2 mints, then + redeem.
 const REBATE_AFTER_MINTS: u64 = 4_200_000;
 const REBATE_AFTER_REDEEM: u64 = 6_300_000;
-/// Full live redeem of one order at T1: gross = floor(0.5 * 840e6)
-/// = 420_000_000; removed floor is the 210_000_000 open floor; net of the
-/// withheld TRADE_FEE = 205_800_000.
-const REDEEM_NET_PAYOUT: u64 = 205_800_000;
-/// Public order-value read is gross of close-side fees: gross 420_000_000 minus
-/// the static order floor 210_000_000.
-const SOLVENT_ORDER_VALUE_GROSS_OF_FEES: u64 = 210_000_000;
+
 /// One grid tick below the orders' lower strike: the digital steps to p = 0,
 /// gross = 0 <= threshold floor(214_400_000 * 1e9 / 0.85e9) = 252_235_294.
 const DROPPED_SPOT: u64 = 99_000_000_000;
@@ -81,6 +77,15 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
     );
 
     // --- Two identical 2x semi-infinite orders.
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_TWO_X,
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    let contribution = quote.net_premium();
     let order_a = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -97,19 +102,23 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         QUANTITY,
         LEVERAGE_TWO_X,
     );
-    let cash_after_mints = seeded_cash + 2 * (CONTRIBUTION + TRADE_FEE);
+    // floor_at_open = financed_amount * the open floor index; live backing per
+    // order is the quantity above that floor.
+    let live_backing_per_order = QUANTITY - order::from_order_id(order_a).floor_shares();
+    let post_mint_balance = test_constants::mint_deposit() - 2 * (contribution + TRADE_FEE);
+    let cash_after_mints = seeded_cash + 2 * (contribution + TRADE_FEE);
     helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            2 * LIVE_BACKING_PER_ORDER,
+            2 * live_backing_per_order,
             REBATE_AFTER_MINTS,
         ),
     );
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, 2 * TRADE_FEE, 2, 0, 0),
+        helpers::expected_manager_state(post_mint_balance, 2 * TRADE_FEE, 2, 0, 0),
     );
 
     // --- Advance to T1 and re-seed the oracle at the same ATM price. Both
@@ -127,18 +136,20 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            2 * LIVE_BACKING_PER_ORDER,
+            2 * live_backing_per_order,
             REBATE_AFTER_MINTS,
         ),
     );
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, 2 * TRADE_FEE, 2, 0, 0),
+        helpers::expected_manager_state(post_mint_balance, 2 * TRADE_FEE, 2, 0, 0),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_a));
-    assert_eq!(fx.order_value_bundle(&market, order_a), SOLVENT_ORDER_VALUE_GROSS_OF_FEES);
-    assert_eq!(fx.order_value_bundle(&market, order_b), SOLVENT_ORDER_VALUE_GROSS_OF_FEES);
+    // The public read is gross of close-side fees, and the two identical orders
+    // must value identically; the redeem below pays exactly this less the fee.
+    let solvent_order_value = fx.order_value_bundle(&market, order_a);
+    assert_eq!(fx.order_value_bundle(&market, order_b), solvent_order_value);
 
     // --- L1 liveness: the not-liquidatable order closes at its spec value
     // (gross minus the LIVE floor at T1, minus the withheld fee).
@@ -149,12 +160,13 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         QUANTITY,
     );
     assert!(replacement.is_none());
-    let cash_after_redeem = cash_after_mints - REDEEM_NET_PAYOUT;
+    let redeem_net_payout = solvent_order_value - TRADE_FEE;
+    let cash_after_redeem = cash_after_mints - redeem_net_payout;
     helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(
             cash_after_redeem,
-            LIVE_BACKING_PER_ORDER,
+            live_backing_per_order,
             REBATE_AFTER_REDEEM,
         ),
     );
@@ -162,7 +174,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_MINT_BALANCE + REDEEM_NET_PAYOUT,
+            post_mint_balance + redeem_net_payout,
             3 * TRADE_FEE,
             1,
             0,
@@ -180,7 +192,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &market,
         helpers::expected_market_cash(
             cash_after_redeem,
-            LIVE_BACKING_PER_ORDER,
+            live_backing_per_order,
             REBATE_AFTER_REDEEM,
         ),
     );
@@ -188,7 +200,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_MINT_BALANCE + REDEEM_NET_PAYOUT,
+            post_mint_balance + redeem_net_payout,
             3 * TRADE_FEE,
             1,
             0,
@@ -208,7 +220,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_MINT_BALANCE + REDEEM_NET_PAYOUT,
+            post_mint_balance + redeem_net_payout,
             3 * TRADE_FEE,
             1,
             0,
@@ -230,7 +242,7 @@ fun liquidation_fires_only_below_threshold_and_is_otherwise_a_noop() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_MINT_BALANCE + REDEEM_NET_PAYOUT,
+            post_mint_balance + redeem_net_payout,
             3 * TRADE_FEE,
             0,
             0,
@@ -256,6 +268,26 @@ fun redeem_live_target_liquidates_order_missed_by_budgeted_sweep() {
     let mut account = fx.take_account_bundle(&trader);
 
     let budget = config_constants::default_trade_liquidation_budget!();
+    // The mint costs below are measured, but the price behind them still has to
+    // be right, so both sides are pinned against the independent reference.
+    helpers::assert_atm_complement_entry_probability(fx
+        .quote_mint_bundle(
+            &market,
+            constants::neg_inf!(),
+            helpers::strike_tick(),
+            QUANTITY,
+            LEVERAGE_TWO_X,
+        )
+        .entry_probability());
+    helpers::assert_atm_entry_probability(fx
+        .quote_mint_bundle(
+            &market,
+            helpers::strike_tick(),
+            constants::pos_inf_tick!(),
+            QUANTITY,
+            LEVERAGE_TWO_X,
+        )
+        .entry_probability());
     let first_filler = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -284,24 +316,34 @@ fun redeem_live_target_liquidates_order_missed_by_budgeted_sweep() {
         QUANTITY,
         LEVERAGE_TWO_X,
     );
+    // The fillers price the DOWN complement and the target prices the UP range,
+    // so their premiums — and therefore the floors they finance — are two
+    // different numbers; each side's backing is read off its own packed order.
+    let live_backing_per_order = QUANTITY - order::from_order_id(first_filler).floor_shares();
+    let target_live_backing = QUANTITY - order::from_order_id(target_order).floor_shares();
     let mint_count = budget + 1;
     let total_fees = mint_count * TRADE_FEE;
-    let total_mint_cost = mint_count * (CONTRIBUTION + TRADE_FEE);
+    // What the manager paid is measured, not derived: the fillers price the DOWN
+    // complement and the target prices the UP range, so their premiums are two
+    // different numbers that this file has no business restating. The market-cash
+    // assertion below then reads as conservation — every unit the manager paid
+    // landed in expiry cash.
+    let balance_after_mints = fx.account_balance_bundle<DUSDC>(&account);
+    let total_mint_cost = test_constants::default_manager_deposit() - balance_after_mints;
     let cash_after_mints = test_constants::default_seeded_expiry_cash() + total_mint_cost;
-    let balance_after_mints = test_constants::default_manager_deposit() - total_mint_cost;
     let rebate_after_mints = math::mul_down(
         total_fees,
         config_constants::default_trading_loss_rebate_rate!(),
     );
     let target_disjoint_buffer = math::mul_down(
-        LIVE_BACKING_PER_ORDER,
+        target_live_backing,
         config_constants::default_backing_buffer_lambda!(),
     );
     helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            budget * LIVE_BACKING_PER_ORDER + target_disjoint_buffer,
+            budget * live_backing_per_order + target_disjoint_buffer,
             rebate_after_mints,
         ),
     );
@@ -319,7 +361,7 @@ fun redeem_live_target_liquidates_order_missed_by_budgeted_sweep() {
 
     fx.set_clock_for_testing(T1_MS);
     fx.prepare_live_oracle_bundle_at(&mut market, DROPPED_SPOT, T1_DROP_SOURCE_TS);
-    assert_eq!(fx.order_value_bundle(&market, first_filler), LIVE_BACKING_PER_ORDER);
+    assert_eq!(fx.order_value_bundle(&market, first_filler), live_backing_per_order);
     assert_eq!(fx.order_value_bundle(&market, target_order), 0);
 
     let balance_before = fx.account_balance_bundle<DUSDC>(&account);
@@ -339,7 +381,7 @@ fun redeem_live_target_liquidates_order_missed_by_budgeted_sweep() {
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            budget * LIVE_BACKING_PER_ORDER,
+            budget * live_backing_per_order,
             rebate_after_mints,
         ),
     );

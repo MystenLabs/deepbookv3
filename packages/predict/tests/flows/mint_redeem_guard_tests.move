@@ -29,14 +29,11 @@ const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 const REDEEM_MS: u64 = 121_000;
 const REDEEM_SOURCE_TS: u64 = 120_000;
 const MAX_COST_BELOW_QUOTE: u64 = 1;
-/// Independent all-in withdrawal for an at-the-money `mint_quantity()` (1e9) 1x
-/// mint in this fixture: entry probability is the at-the-money digital Φ(0) = 0.5
-/// exactly, and a 1x order fronts its full premium, so net_premium =
-/// floor(0.5 * 1e9) = 500_000_000; the fixture floors base_fee to 1, so the fee
-/// binds at min_fee (0.005) * quantity = 5_000_000; no builder code, no
-/// fee-incentive balance, and no EWMA penalty exist here, so those components
-/// are zero. Total = 505_000_000.
-const ALL_IN_MINT_COST: u64 = 505_000_000;
+// The all-in cost of the at-the-money mint below is taken from the quote rather
+// than hardcoded. That is what the boundary pair is actually about: the guard
+// must accept exactly what the quote published and reject one unit less, so
+// driving both sides from the quote states the claim directly. The quote's own
+// decomposition into premium and fee components is pinned in `quote_mint_tests`.
 const MAX_PROBABILITY_ZERO: u64 = 0;
 const ZERO_NET_PREMIUM_AMOUNT: u64 = 0;
 const MIN_PROBABILITY_CERTAIN: u64 = 1_000_000_000;
@@ -110,6 +107,15 @@ fun mint_exact_quantity_at_exact_all_in_cost_succeeds() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_X,
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    let all_in_cost = quote.all_in_cost();
     let order = fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -117,14 +123,14 @@ fun mint_exact_quantity_at_exact_all_in_cost_succeeds() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         LEVERAGE_ONE_X,
-        ALL_IN_MINT_COST,
+        all_in_cost,
         std::u64::max_value!(),
     );
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - ALL_IN_MINT_COST,
+        test_constants::mint_deposit() - all_in_cost,
     );
 
     helpers::return_account_bundle(account);
@@ -142,6 +148,15 @@ fun mint_exact_quantity_one_below_all_in_cost_aborts() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        LEVERAGE_ONE_X,
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    let all_in_cost = quote.all_in_cost();
     fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -149,7 +164,7 @@ fun mint_exact_quantity_one_below_all_in_cost_aborts() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
         LEVERAGE_ONE_X,
-        ALL_IN_MINT_COST - 1,
+        all_in_cost - 1,
         std::u64::max_value!(),
     );
 

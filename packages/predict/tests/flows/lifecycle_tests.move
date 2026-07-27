@@ -13,14 +13,10 @@ use std::unit_test::assert_eq;
 
 /// Per-trade fee floors at `min_fee` (base_fee floored to 1 in the fixture).
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// Independent derivation of the post-mint free balance:
-///   The order is `(default_strike_tick, +inf]` and the live forward equals that
-///   tick's raw strike, so its entry probability is the at-the-money digital Φ(0)
-///   = 0.5 (the SVI wing rounds to zero, leaving d2 = 0). A 1x order fronts its
-///   full premium, so net_premium = floor(0.5 * mint_quantity) = 500_000_000, and
-///   the fee floors at min_fee = 5_000_000. balance = mint_deposit - net_premium
-///   - fee = 1_000_000_000 - 500_000_000 - 5_000_000 = 495_000_000.
-const POST_MINT_BALANCE: u64 = 495_000_000;
+/// The post-mint free balance is `mint_deposit - net_premium - fee`. The premium
+/// is read from the quote the mint pays rather than written down: a 1x order
+/// fronts its full premium, `quote_mint_tests` owns that composition, and
+/// `pricing_exact_tests` owns the at-the-money digital behind it.
 
 #[test]
 fun one_x_lifecycle_fund_mint() {
@@ -43,6 +39,15 @@ fun one_x_lifecycle_fund_mint() {
     fx.check_manager_bundle(&account, expiry_id, expected);
 
     // --- Mint one 1x in-range order.
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
+    let premium = quote.net_premium();
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -52,7 +57,14 @@ fun one_x_lifecycle_fund_mint() {
         test_constants::leverage_one_x(),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
-    expected = helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0);
+    expected =
+        helpers::expected_manager_state(
+            test_constants::mint_deposit() - premium - MINT_MIN_FEE,
+            MINT_MIN_FEE,
+            1,
+            0,
+            0,
+        );
     fx.check_manager_bundle(&account, expiry_id, expected);
 
     helpers::return_account_bundle(account);
