@@ -568,12 +568,11 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
     // `b` is at 1e18 and `slope` at 1e9, so the product comes back down by 1e18
-    // to leave `w'` at 1e9. `b <= max_svi_input * 1e9` and `|slope| <= 2e9`, so
-    // the u128 product and the u64 narrowing both fit.
-    let w_prime_magnitude =
-        (
-            (b * (slope.magnitude() as u128)) / ((math::float_scaling!() as u128) * (math::float_scaling!() as u128)),
-        ) as u64;
+    // to leave `w'` at 1e9. `b <= max_svi_input * 1e9` and `|slope| <= 2e9`
+    // (`|rho| <= 1e9` and `|k - m| <= sq`), so the u128 product and the u64
+    // narrowing both fit.
+    let scale = math::float_scaling!() as u128;
+    let w_prime_magnitude = (b * (slope.magnitude() as u128) / (scale * scale)) as u64;
     let nd2 = math::normal_cdf(&d2);
     if (w_prime_magnitude == 0) return nd2;
 
