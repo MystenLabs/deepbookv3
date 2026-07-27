@@ -53,6 +53,8 @@ public struct Account has store {
     balances: Bag,
     /// Type-indexed timestamps of the latest settlement attempt.
     settlements: Bag,
+    /// Canonical account ID supplied at referral-based creation, if any.
+    referrer_account_id: Option<ID>,
 }
 
 /// Dynamic-field key for one app's per-account data slot. The phantom `App` is the
@@ -94,6 +96,11 @@ public fun owner(self: &Account): address {
 /// Returns the canonical account ID.
 public fun account_id(self: &Account): ID {
     self.account_id.to_inner()
+}
+
+/// Returns the canonical referrer account ID recorded at creation for external Move composition.
+public fun referrer_account_id(self: &Account): Option<ID> {
+    self.referrer_account_id
 }
 
 /// Returns the accumulator receive address for this account (the wrapper address).
@@ -235,6 +242,7 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
     wrapper_key: WrapperKey,
     account_key: AccountKey,
     owner: address,
+    referrer_account_id: Option<ID>,
     ctx: &mut TxContext,
 ): AccountWrapper {
     let id = derived_object::claim(parent, wrapper_key);
@@ -246,6 +254,7 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
             receive_address: id.to_address(),
             balances: bag::new(ctx),
             settlements: bag::new(ctx),
+            referrer_account_id,
         },
         id,
     }

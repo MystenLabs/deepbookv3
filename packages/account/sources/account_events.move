@@ -9,13 +9,14 @@ use std::ascii::String;
 use sui::event;
 
 /// A canonical derived account was created. `self_owned` is true when it was
-/// created via `new_self_owned` (the owner is an object address) rather than `new`
-/// (the owner is the transaction sender).
+/// created via `new_self_owned` (the owner is an object address).
+/// `referrer_account_id` is the canonical account ID supplied to `new_with_referrer`, if any.
 public struct AccountCreated has copy, drop {
     account_id: ID,
     wrapper_id: ID,
     owner: address,
     self_owned: bool,
+    referrer_account_id: Option<ID>,
 }
 
 public(package) fun emit_account_created(
@@ -23,8 +24,15 @@ public(package) fun emit_account_created(
     wrapper_id: ID,
     owner: address,
     self_owned: bool,
+    referrer_account_id: Option<ID>,
 ) {
-    event::emit(AccountCreated { account_id, wrapper_id, owner, self_owned });
+    event::emit(AccountCreated {
+        account_id,
+        wrapper_id,
+        owner,
+        self_owned,
+        referrer_account_id,
+    });
 }
 
 /// An app witness type was added to the registry's mutable-load whitelist.

@@ -27,6 +27,7 @@ public struct Account has store {
     receive_address: address,
     balances: Bag,
     settlements: Bag,
+    referrer_account_id: Option<ID>,
 }
 ```
 
@@ -40,6 +41,8 @@ the **wrapper object's address** — the accumulator/funds-receive anchor. Coins
 delivered to and settled from the wrapper address, because only a real shared
 object's UID can back an address-balance withdrawal (the nested `account_id` UID
 never can). Use `receive_address` for `balance::send_funds`, never the account ID.
+`Account.referrer_account_id()` returns the immutable canonical account ID supplied
+at referral-based creation, if any.
 
 ### `account::account_registry`
 
@@ -49,6 +52,11 @@ The registry creates canonical accounts:
 
 ```move
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper
+public fun new_with_referrer(
+    registry: &mut AccountRegistry,
+    referrer: &Account,
+    ctx: &mut TxContext,
+): AccountWrapper
 public fun new_self_owned(
     registry: &mut AccountRegistry,
     owner_uid: &mut UID,
@@ -57,6 +65,11 @@ public fun new_self_owned(
 ```
 
 The returned wrapper must be shared with `account::share`.
+
+`new_with_referrer` records the supplied account's canonical ID on the created
+account and in its `AccountCreated` event. This is caller-selected attribution:
+passing an account proves that it exists, not that its owner authorized or endorsed
+the referral. The package does not provide a setter or removal path.
 
 The registry exposes both derived addresses:
 
@@ -78,6 +91,9 @@ Each owner gets two derived IDs under the registry root:
 - canonical account ID: app data root and event `account_id`
 - wrapper ID: shared object handle that gates account loading; its address is the
   accumulator/funds-receive anchor (`Account.receive_address`)
+
+An account created through `new_with_referrer` also stores the supplied canonical
+account ID as immutable creation attribution and mirrors it in `AccountCreated`.
 
 The canonical account ID is the account's public identity. The wrapper ID is an
 implementation detail needed because Sui shared objects are what transactions pass
@@ -254,6 +270,14 @@ wrapper.share();
 let auth = account::generate_auth(ctx);
 let account = wrapper.load_account_mut(auth);
 some_app::do_something(account, ...);
+```
+
+Referred EOA-owned account:
+
+```move
+let referrer = referrer_wrapper.load_account();
+let wrapper = registry.new_with_referrer(referrer, ctx);
+wrapper.share();
 ```
 
 Object-owned account:

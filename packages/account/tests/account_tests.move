@@ -51,6 +51,7 @@ fun registry_creates_one_canonical_account_per_owner() {
 
     assert_eq!(account.owner(), ALICE);
     assert_eq!(account.account_id(), account_id);
+    assert!(account.referrer_account_id().is_none());
     // Funds receive/settle at the wrapper address now (a real shared input object),
     // not the nested account_id.
     assert_eq!(account.receive_address(), wrapper_id.to_address());
@@ -61,6 +62,31 @@ fun registry_creates_one_canonical_account_per_owner() {
 
     wrapper.share();
     return_shared(registry);
+    scenario.end();
+}
+
+#[test]
+fun registry_records_referrer_on_account() {
+    let mut scenario = setup_with_account(BOB);
+    scenario.next_tx(ALICE);
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let referrer_wrapper_id = registry.derived_wrapper_address(BOB).to_id();
+    let referrer_wrapper = scenario.take_shared_by_id<AccountWrapper>(referrer_wrapper_id);
+    let referrer_account_id = referrer_wrapper.load_account().account_id();
+    let wrapper = registry.new_with_referrer(referrer_wrapper.load_account(), scenario.ctx());
+    let wrapper_id = wrapper.id();
+
+    assert_eq!(wrapper.load_account().referrer_account_id(), option::some(referrer_account_id));
+
+    wrapper.share();
+    return_shared(referrer_wrapper);
+    return_shared(registry);
+    scenario.next_tx(ADMIN);
+
+    let wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    assert_eq!(wrapper.load_account().referrer_account_id(), option::some(referrer_account_id));
+
+    return_shared(wrapper);
     scenario.end();
 }
 
@@ -90,6 +116,19 @@ fun creating_second_account_for_same_owner_aborts() {
     first.share();
 
     let second = registry.new(scenario.ctx());
+    second.share();
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = account_registry::EAccountAlreadyExists)]
+fun referral_constructor_cannot_create_second_account_for_same_owner() {
+    let mut scenario = setup();
+    scenario.next_tx(ALICE);
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let first = registry.new(scenario.ctx());
+    let second = registry.new_with_referrer(first.load_account(), scenario.ctx());
+    first.share();
     second.share();
 
     abort 999
@@ -156,6 +195,7 @@ fun object_auth_opens_self_owned_account() {
     let wrapper = registry.new_self_owned(&mut owner.id, scenario.ctx());
 
     assert_eq!(wrapper.load_account().owner(), owner_address);
+    assert!(wrapper.load_account().referrer_account_id().is_none());
     wrapper.share();
     return_shared(registry);
     scenario.next_tx(ADMIN);
